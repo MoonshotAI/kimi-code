@@ -25,7 +25,9 @@
 /// here is pure state.
 ///
 /// Corresponds to `packages/agent-core-v2/src/agent/profile/`.
+pub mod agent_file;
 pub mod ops;
+pub mod registry;
 pub mod thinking;
 
 use std::collections::HashSet;
@@ -35,6 +37,10 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 pub use ops::{ConfigUpdatePayload, ProfileBindPayload, ProfileModelState, config_update, profile_bind};
+pub use registry::{
+    AgentProfileRegistration, AgentProfileRegistry, AgentProfileRegistryChange,
+    SOURCE_EXPLICIT, SOURCE_EXTRA, SOURCE_PLUGIN, SOURCE_PROJECT, SOURCE_USER,
+};
 pub use thinking::{
     ModelCapabilities, ModelThinkingMetadata, ThinkingConfig, default_thinking_effort_for_model,
     model_supports_thinking, model_supports_thinking_effort, normalize_requested_thinking_effort,

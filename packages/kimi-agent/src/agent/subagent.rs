@@ -17,7 +17,7 @@
 use std::sync::Arc;
 
 use crate::agent::agent::{Agent, CaptureCallbacks};
-use crate::agent::types::AgentConfig;
+use crate::agent::types::{AgentConfig, SubagentModelPreference};
 use crate::callbacks::HostCallbacks;
 use crate::permission::gate::PermissionGate;
 use crate::persistence::session_store::SessionStore;
@@ -34,6 +34,29 @@ pub(crate) fn generate_agent_id() -> String {
         .map(|d| d.as_millis())
         .unwrap_or_default();
     format!("swarm-{ts}-{}", fastrand::u32(..))
+}
+
+/// Resolve the model a subagent should bind to given its [`SubagentModelPreference`]
+/// and the configured secondary model. `None` means "inherit the parent model":
+///
+/// - `Primary` (or no preference) → `None` — run on the parent's model.
+/// - `Secondary` with a configured secondary model → `Some(secondary)`.
+/// - `Secondary` without one → `None` — fall back to the parent's model.
+///
+/// `parent_model` is the caller's current model name — the inheritance
+/// baseline a `None` result keeps. It is carried so callers can pass the
+/// model they already hold without re-resolving it; the choice itself only
+/// ever resolves the secondary model.
+pub(crate) fn resolve_subagent_model(
+    parent_model: &str,
+    preference: SubagentModelPreference,
+    secondary_model: Option<&str>,
+) -> Option<String> {
+    let _ = parent_model;
+    match preference {
+        SubagentModelPreference::Primary => None,
+        SubagentModelPreference::Secondary => secondary_model.map(str::to_string),
+    }
 }
 
 /// Resolve the session store backing swarm-child persistence. Mirrors
@@ -98,6 +121,43 @@ pub(crate) async fn run_child_agent(
         hooks,
         None,
         false,
+        None,
+    )
+    .await
+    .map(|(_, text)| text)
+}
+
+/// Spawn a child agent with an explicit model override (subagent model
+/// routing). Same as [`run_child_agent`], but the child binds the resolved
+/// `model_override` (see [`resolve_subagent_model`]) instead of inheriting
+/// the parent's model. `None` behaves exactly like [`run_child_agent`].
+pub(crate) async fn run_child_agent_with_model(
+    host: Arc<dyn HostCallbacks>,
+    homedir: Option<String>,
+    native_llm: Option<NativeLlmConfig>,
+    permission: PermissionGate,
+    parent_prompt: &str,
+    max_steps: u32,
+    depth: u32,
+    subagent_type: &str,
+    prompt: &str,
+    hooks: Option<Arc<crate::hooks::external::HookManager>>,
+    model_override: Option<String>,
+) -> Result<String, String> {
+    run_child_agent_core(
+        host,
+        homedir,
+        native_llm,
+        permission,
+        parent_prompt,
+        max_steps,
+        depth,
+        subagent_type,
+        prompt,
+        hooks,
+        None,
+        false,
+        model_override,
     )
     .await
     .map(|(_, text)| text)
@@ -131,6 +191,45 @@ pub(crate) async fn run_child_agent_persistent(
         hooks,
         Some(agent_id.to_string()),
         false,
+        None,
+    )
+    .await
+}
+
+/// Spawn a swarm child with an explicit model override (subagent model
+/// routing). Same as [`run_child_agent_persistent`], but newly spawned
+/// children bind the resolved `model_override` (see [`resolve_subagent_model`])
+/// instead of inheriting the parent's model. `None` behaves exactly like
+/// [`run_child_agent_persistent`].
+#[allow(dead_code)] // wired up when the AgentSwarm schema exposes a model parameter
+pub(crate) async fn run_child_agent_persistent_with_model(
+    host: Arc<dyn HostCallbacks>,
+    homedir: Option<String>,
+    native_llm: Option<NativeLlmConfig>,
+    permission: PermissionGate,
+    parent_prompt: &str,
+    max_steps: u32,
+    depth: u32,
+    subagent_type: &str,
+    prompt: &str,
+    hooks: Option<Arc<crate::hooks::external::HookManager>>,
+    agent_id: &str,
+    model_override: Option<String>,
+) -> Result<(String, String), String> {
+    run_child_agent_core(
+        host,
+        homedir,
+        native_llm,
+        permission,
+        parent_prompt,
+        max_steps,
+        depth,
+        subagent_type,
+        prompt,
+        hooks,
+        Some(agent_id.to_string()),
+        false,
+        model_override,
     )
     .await
 }
@@ -165,13 +264,18 @@ pub(crate) async fn resume_child_agent(
         hooks,
         Some(agent_id.to_string()),
         true,
+        None,
     )
     .await
 }
 
 /// Shared implementation for the three child paths: plain single-shot
 /// (`agent_id: None`), swarm spawn (fresh id, persist on success), and swarm
-/// resume (restore context by id before the turn).
+/// resume (restore context by id before the turn). When `model_override` is
+/// `Some`, the child binds that model instead of inheriting the parent's:
+/// the override is stamped onto both the config alias (host-proxy mode) and
+/// the native transport's `model` field (`NativeHttpLlm` reads it off
+/// `NativeLlmConfig` each turn). `None` keeps the parent's model.
 #[allow(clippy::too_many_arguments)]
 async fn run_child_agent_core(
     host: Arc<dyn HostCallbacks>,
@@ -186,6 +290,7 @@ async fn run_child_agent_core(
     hooks: Option<Arc<crate::hooks::external::HookManager>>,
     agent_id: Option<String>,
     resume: bool,
+    model_override: Option<String>,
 ) -> Result<(String, String), String> {
     // SubagentStart hooks: fire-and-forget before spawning.
     if let Some(manager) = hooks.as_ref() {
@@ -235,6 +340,20 @@ async fn run_child_agent_core(
         inner: host,
         last_text: captured.clone(),
     });
+    // Route the child to an explicitly requested model: stamp the override
+    // onto the config alias (host-proxy mode) and the native transport's
+    // `model` field (`NativeHttpLlm` reads it off `NativeLlmConfig` each turn,
+    // mirroring `Agent::set_model`). `None` inherits the parent's model.
+    let (model_alias, native_llm) = match model_override {
+        Some(model) => {
+            let mut native_llm = native_llm;
+            if let Some(ref mut cfg) = native_llm {
+                cfg.model = model.clone();
+            }
+            (Some(model), native_llm)
+        }
+        None => (None, native_llm),
+    };
     let mut child = Agent::new(
         child_host,
         crate::agent::types::AgentOptions {
@@ -242,7 +361,7 @@ async fn run_child_agent_core(
             homedir: homedir.clone(),
             config: Some(AgentConfig {
                 cwd: homedir.unwrap_or_default(),
-                model_alias: None,
+                model_alias,
                 system_prompt,
                 has_provider: true,
                 has_model: true,
@@ -349,5 +468,42 @@ mod tests {
         let b = generate_agent_id();
         assert!(a.starts_with("swarm-"));
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn resolve_primary_or_no_preference_inherits_parent_model() {
+        // Primary preference (or none): never overrides, even with a
+        // secondary model configured.
+        assert_eq!(
+            resolve_subagent_model(
+                "parent-model",
+                SubagentModelPreference::Primary,
+                Some("secondary-model"),
+            ),
+            None,
+        );
+    }
+
+    #[test]
+    fn resolve_secondary_uses_configured_secondary_model() {
+        // Secondary preference with a configured secondary model routes to it.
+        assert_eq!(
+            resolve_subagent_model(
+                "parent-model",
+                SubagentModelPreference::Secondary,
+                Some("secondary-model"),
+            ),
+            Some("secondary-model".to_string()),
+        );
+    }
+
+    #[test]
+    fn resolve_secondary_without_config_inherits_parent_model() {
+        // Secondary preference without a configured secondary model falls
+        // back to inheriting the parent's model.
+        assert_eq!(
+            resolve_subagent_model("parent-model", SubagentModelPreference::Secondary, None),
+            None,
+        );
     }
 }

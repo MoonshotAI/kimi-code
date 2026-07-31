@@ -6,6 +6,20 @@ use std::sync::Arc;
 
 use crate::turn_loop::types as loop_types;
 
+/// Subagent model preference — which model a spawned child agent binds to
+/// when the caller (or the selected agent profile) requests one explicitly.
+/// Mirrors the `model` argument of the upstream `Agent` / `AgentSwarm` tools
+/// (`"primary"` / `"secondary"`): `Primary` keeps the caller's model, while
+/// `Secondary` routes to the configured `[secondary_model]` model when one is
+/// configured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubagentModelPreference {
+    /// Bind to the caller's (primary) model.
+    Primary,
+    /// Bind to the configured secondary model, when one is configured.
+    Secondary,
+}
+
 /// Configuration for the Agent.
 #[derive(Clone)]
 pub struct AgentConfig {

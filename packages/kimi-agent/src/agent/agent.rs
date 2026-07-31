@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::agent::subagent::run_child_agent;
+use crate::agent::subagent::{run_child_agent, run_child_agent_with_model};
 use crate::agent::types::*;
 use crate::callbacks::HostCallbacks;
 use crate::callbacks::NativeToolCallbacks;
@@ -384,6 +384,10 @@ pub(crate) struct SubagentInterceptor {
     /// External lifecycle hooks (optional): SubagentStart/Stop fire around
     /// each child turn.
     pub hooks: Option<Arc<crate::hooks::external::HookManager>>,
+    /// Agent-profile registry for custom-agent model preferences (A12).
+    pub profile_registry: std::sync::Arc<
+        std::sync::Mutex<crate::profile::registry::AgentProfileRegistry>,
+    >,
 }
 
 impl HostCallbacks for SubagentInterceptor {
@@ -460,9 +464,42 @@ impl HostCallbacks for SubagentInterceptor {
         let max_steps = self.max_steps_per_turn;
         let child_depth = self.depth + 1;
         let hooks = self.hooks.clone();
+        // A12: resolve the sub-agent model preference — a custom agent file
+        // (by type name) may declare `model_preference: secondary`, which
+        // selects the configured secondary model when present; otherwise the
+        // child inherits the parent model. The secondary-model config is
+        // host-supplied and currently absent on the native path, so this
+        // resolves to inheritance until the config surface lands.
+        let parent_model = self
+            .native_llm
+            .as_ref()
+            .map(|c| c.model.clone())
+            .unwrap_or_else(|| "default".to_string());
+        let preference = {
+            let registry = self.profile_registry.lock().unwrap_or_else(|e| e.into_inner());
+            registry
+                .catalog()
+                .into_iter()
+                .find(|def| def.name == subagent_type)
+                .and_then(|def| def.model_preference)
+                .map(|p| match p {
+                    crate::profile::agent_file::ModelPreference::Primary => {
+                        crate::agent::types::SubagentModelPreference::Primary
+                    }
+                    crate::profile::agent_file::ModelPreference::Secondary => {
+                        crate::agent::types::SubagentModelPreference::Secondary
+                    }
+                })
+                .unwrap_or(crate::agent::types::SubagentModelPreference::Primary)
+        };
+        let model_override = crate::agent::subagent::resolve_subagent_model(
+            &parent_model,
+            preference,
+            None,
+        );
 
         Box::pin(async move {
-            match run_child_agent(
+            match run_child_agent_with_model(
                 host,
                 homedir,
                 native_llm,
@@ -473,6 +510,7 @@ impl HostCallbacks for SubagentInterceptor {
                 &subagent_type,
                 &prompt,
                 hooks,
+                model_override,
             )
             .await
             {
@@ -522,6 +560,20 @@ pub(crate) fn final_assistant_text(agent: &Agent) -> String {
     String::new()
 }
 
+/// Snapshot of non-conversation state at a user-prompt turn boundary.
+///
+/// Taken before each real user turn runs, restored by `/undo` together
+/// with the conversation history cut (upstream agent-core-v2 #2055).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct UndoCheckpoint {
+    /// Plan-mode state at the boundary.
+    pub plan_active: bool,
+    pub plan_id: Option<String>,
+    /// Task notification keys (scheduled, delivered) at the boundary.
+    pub task_scheduled_notification_keys: Vec<String>,
+    pub task_delivered_notification_keys: Vec<String>,
+}
+
 /// The core Agent struct.
 pub struct Agent {
     /// Agent type: "main", "sub", or "independent".
@@ -534,6 +586,10 @@ pub struct Agent {
     pub config: AgentConfig,
     /// Context memory (message history).
     pub context: ContextMemory,
+    /// Non-conversation state snapshots taken at each real user-prompt turn
+    /// boundary, restored on `/undo` (upstream #2055 participant rewind:
+    /// todo / plan mode / task notifications rewind with the undone turns).
+    pub undo_checkpoints: Vec<UndoCheckpoint>,
     /// Host callbacks (JS bridge).
     pub callbacks: Arc<dyn HostCallbacks>,
     /// Agent hooks (permission, injection, etc.).
@@ -554,6 +610,15 @@ pub struct Agent {
     /// Host-provided tool definitions, presented to the model alongside the
     /// engine's own tools; calls settle at the host via `execute_tool`.
     pub host_tools: Vec<loop_types::ToolInfo>,
+    /// Session-scoped tool registry: user tools registered via
+    /// `session/register_tool` (with per-tool disclosure) plus MCP tools.
+    /// Projected into the model-visible list through `tool_defs_for`
+    /// (upstream #2119 / #2196).
+    pub tool_manager: std::sync::Arc<std::sync::Mutex<crate::tools::manager::ToolManager>>,
+    /// Agent-profile registry (upstream #2366): aggregates agent-file roots
+    /// (user/plugin/...) and projects the merged custom-agent catalog used
+    /// for sub-agent model preferences and custom agent types.
+    pub profile_registry: std::sync::Arc<std::sync::Mutex<crate::profile::registry::AgentProfileRegistry>>,
     /// Whether goal mode is enabled.
     pub goal_enabled: bool,
     /// Goal mode state machine (active goal lifecycle).
@@ -640,6 +705,12 @@ impl Agent {
             max_steps_per_turn: options.max_steps_per_turn,
             max_retries_per_step: options.max_retries_per_step,
             host_tools: options.host_tools.clone(),
+            tool_manager: std::sync::Arc::new(std::sync::Mutex::new(
+                crate::tools::manager::ToolManager::new(),
+            )),
+            profile_registry: std::sync::Arc::new(std::sync::Mutex::new(
+                crate::profile::registry::AgentProfileRegistry::new(),
+            )),
             goal_enabled: options.goal_enabled,
             goal: if options.goal_enabled { Some(GoalMode::new()) } else { None },
             native_llm: options.native_llm.clone(),
@@ -684,6 +755,7 @@ impl Agent {
                 )))
             }),
             metadata: serde_json::json!({}),
+            undo_checkpoints: Vec::new(),
             turn_id_counter: 0,
             has_active_turn: false,
         }
@@ -859,7 +931,27 @@ impl Agent {
         }));
 
         // Append user input to context.
+        let is_user_origin = matches!(&origin, crate::context::types::MessageOrigin::User);
         self.context.append_user_message(&input, origin);
+
+        // Record a state checkpoint at real user-prompt boundaries so `/undo`
+        // can rewind plan mode and task notifications along with the history
+        // (upstream #2055). Goal continuations and other system-triggered
+        // turns use non-User origins and are transparent to undo.
+        if is_user_origin {
+            let (plan_active, plan_id) = self.plan.snapshot();
+            let task = self.task.clone();
+            let (scheduled, delivered) = {
+                let guard = task.lock().unwrap_or_else(|e| e.into_inner());
+                guard.notifications_snapshot()
+            };
+            self.undo_checkpoints.push(UndoCheckpoint {
+                plan_active,
+                plan_id,
+                task_scheduled_notification_keys: scheduled,
+                task_delivered_notification_keys: delivered,
+            });
+        }
 
         // Drain any steer input queued via `session/steer` (possibly while a
         // previous turn was still running) and append it as a real user
@@ -962,6 +1054,7 @@ impl Agent {
                 } else {
                     Some(self.external_hooks.clone())
                 },
+                profile_registry: self.profile_registry.clone(),
             });
         }
         // AgentSwarm interceptor (native parallel subagent dispatch): spawns
@@ -1050,6 +1143,15 @@ impl Agent {
                 input_schema: td.input_schema.unwrap_or(serde_json::Value::Null),
             }).collect()).unwrap_or_default();
         if self.goal_enabled { tool_defs.extend(goal_tool_definitions()); }
+        // Session-registered user tools (upstream #2119/#2196): inline tools
+        // carry their full schema; deferred tools are withheld from the main
+        // list — the model has no dynamic-loading capability on this path
+        // (the experiment is off, matching the #2449 default), so they are
+        // hidden rather than announce-only. MCP tools stay on the separate
+        // `self.mcp` assembly below.
+        if let Ok(tm) = self.tool_manager.lock() {
+            tool_defs.extend(tm.tool_defs_for(false));
+        }
         // Native `Task` (subagent) — advertised only below the depth cap so
         // leaf subagents cannot spawn further children.
         if self.subagent_depth < MAX_SUBAGENT_DEPTH {
@@ -1313,6 +1415,10 @@ impl Agent {
             if matches!(result.stop_reason, crate::turn_loop::types::LoopTurnStopReason::Aborted) {
                 self.pause_goal("Paused after an interruption");
                 self.maybe_auto_exit_swarm();
+                // A22 (upstream #2400): remind the model that the previous
+                // turn was deliberately interrupted by the user, appended at
+                // most once (dedup on the `interruption` injection variant).
+                self.append_interruption_reminder_once();
                 return Ok(result);
             }
             // Only a still-active goal continues; complete clears the record,
@@ -1530,10 +1636,80 @@ impl Agent {
         self.plan.data()
     }
 
+    /// Append the user-interruption reminder to the context, at most once.
+    ///
+    /// Upstream #2400: when a turn is cancelled with Esc, preserve the
+    /// assistant's partial output and tell the model the previous turn was
+    /// deliberately interrupted. The reminder is deduplicated on the
+    /// `interruption` injection variant so repeated cancels never stack.
+    const INTERRUPTION_REMINDER_VARIANT: &'static str = "interruption";
+    fn append_interruption_reminder_once(&mut self) {
+        use crate::context::types::MessageOrigin;
+        // Check the raw history, not the projected view — projection strips
+        // message metadata (including origin), which would defeat dedup.
+        let already = self.context.history().iter().any(|m| {
+            matches!(&m.origin, Some(MessageOrigin::Injection { variant }) if variant == Self::INTERRUPTION_REMINDER_VARIANT)
+        });
+        if already {
+            return;
+        }
+        let text = "The previous turn was interrupted by the user before completion; \
+any partial output shown above is incomplete. The user's next message continues the conversation.";
+        self.context.append_system_reminder(
+            text,
+            MessageOrigin::Injection {
+                variant: Self::INTERRUPTION_REMINDER_VARIANT.to_string(),
+            },
+        );
+    }
+
     /// Clear the active plan's file content (writes empty) — the engine side of
     /// SDK `clearPlan`. A no-op when no plan is active.
     pub fn clear_plan(&mut self) -> Result<(), String> {
         self.plan.clear()
+    }
+
+    /// Undo the last `count` real user turns (SDK `undoHistory` parity).
+    ///
+    /// Rewinds the conversation history AND the non-conversation state
+    /// captured at each user-prompt boundary — plan mode and task
+    /// notifications rewind together with the undone turns (upstream
+    /// agent-core-v2 #2055 participant rewind). All-or-nothing: when the
+    /// requested count is not fully available (or would cross a compaction
+    /// boundary), returns the reason and leaves everything untouched.
+    pub fn undo_history(
+        &mut self,
+        count: usize,
+    ) -> Result<crate::context::context_ops::UndoCut, String> {
+        if let Some(reason) = self.context.undo_unavailable_message(count) {
+            return Err(reason);
+        }
+        let cut = self.context.undo(count);
+        let removed = cut.removed_count;
+
+        // Pop the checkpoints of the undone turns; the checkpoint left on top
+        // (or the empty default when none remain) is the state to restore.
+        let keep = self.undo_checkpoints.len().saturating_sub(removed);
+        let restore = if keep > 0 {
+            self.undo_checkpoints
+                .get(keep - 1)
+                .cloned()
+                .unwrap_or_default()
+        } else {
+            UndoCheckpoint::default()
+        };
+        self.undo_checkpoints.truncate(keep);
+
+        self.plan.restore(restore.plan_active, restore.plan_id);
+        {
+            let mut guard = self.task.lock().unwrap_or_else(|e| e.into_inner());
+            guard.restore_notification_keys(
+                &restore.task_scheduled_notification_keys,
+                &restore.task_delivered_notification_keys,
+            );
+        }
+
+        Ok(cut)
     }
 
     /// Activate a skill (`session/activate_skill`). Renders the skill prompt,
@@ -1732,6 +1908,7 @@ impl Agent {
         serde_json::json!({
             "goal": self.goal.as_ref().and_then(|g| g.persisted_state()),
             "context": self.context.messages(),
+            "undo_checkpoints": self.undo_checkpoints,
         })
     }
 
@@ -1744,6 +1921,13 @@ impl Agent {
                     serde_json::from_value::<crate::context::types::ContextMessage>(value.clone())
                 {
                     let _ = self.context.append_message(message);
+                }
+            }
+        }
+        if let Some(checkpoints) = state.get("undo_checkpoints").and_then(|v| v.as_array()) {
+            for value in checkpoints {
+                if let Ok(cp) = serde_json::from_value::<UndoCheckpoint>(value.clone()) {
+                    self.undo_checkpoints.push(cp);
                 }
             }
         }
@@ -2418,6 +2602,173 @@ mod tests {
                 matches!(part, crate::context::types::ContentPart::Text { text } if text.contains(needle))
             })
         })
+    }
+
+    #[tokio::test]
+    async fn interruption_reminder_appended_once_on_abort() {
+        use crate::turn_loop::types::LoopTurnStopReason;
+        // A driver that aborts the turn (simulating a user Esc cancel).
+        struct AbortDriver;
+        impl AgentTurnOverride for AbortDriver {
+            fn run_turn(
+                &self,
+                _input: crate::turn_loop::types::RunTurnInput,
+                _callbacks: &dyn HostCallbacks,
+            ) -> crate::rpc::types::BoxFuture<
+                'static,
+                Result<crate::turn_loop::types::TurnResult, Box<dyn std::error::Error + Send + Sync>>,
+            > {
+                Box::pin(async move {
+                    Ok(crate::turn_loop::types::TurnResult {
+                        stop_reason: LoopTurnStopReason::Aborted,
+                        steps: 0,
+                        usage: crate::rpc::types::TokenUsage::default(),
+                        new_messages: Vec::new(),
+                    })
+                })
+            }
+        }
+        let agent = Agent::new(
+            Arc::new(NoopHost),
+            AgentOptions {
+                run_turn_override: Some(Arc::new(AbortDriver)),
+                ..AgentOptions::default()
+            },
+        );
+        let mut agent = agent;
+        let result = agent.run_prompt(text_input("do the thing")).await.expect("prompt");
+        assert!(matches!(
+            result.stop_reason,
+            crate::turn_loop::types::LoopTurnStopReason::Aborted
+        ));
+
+        // Check the raw history — projection strips origin metadata.
+        let reminders: Vec<&crate::context::types::ContextMessage> = agent
+            .context
+            .history()
+            .iter()
+            .filter(|m| {
+                matches!(
+                    &m.origin,
+                    Some(crate::context::types::MessageOrigin::Injection { variant })
+                        if variant == Agent::INTERRUPTION_REMINDER_VARIANT
+                )
+            })
+            .collect();
+        assert_eq!(reminders.len(), 1, "one interruption reminder on cancel");
+        let text = reminders[0]
+            .content
+            .iter()
+            .filter_map(|p| match p {
+                crate::context::types::ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(
+            text.contains("interrupted by the user"),
+            "reminder text must explain the deliberate interruption: {text}"
+        );
+
+        // A second abort does not stack another reminder.
+        agent.run_prompt(text_input("again")).await.expect("prompt");
+        let count = agent
+            .context
+            .history()
+            .iter()
+            .filter(|m| {
+                matches!(
+                    &m.origin,
+                    Some(crate::context::types::MessageOrigin::Injection { variant })
+                        if variant == Agent::INTERRUPTION_REMINDER_VARIANT
+                )
+            })
+            .count();
+        assert_eq!(count, 1, "reminder must be deduplicated");
+    }
+
+    #[tokio::test]
+    async fn undo_history_rewinds_plan_mode_with_the_turn() {
+        let (mut agent, _) = driver_agent(vec![]);
+
+        // Turn 1: a real user-prompt boundary is recorded with plan mode off.
+        agent.run_prompt(text_input("first prompt")).await.expect("prompt");
+        assert_eq!(agent.undo_checkpoints.len(), 1);
+        assert!(!agent.plan.is_active());
+
+        // The model's work enters plan mode after turn 1.
+        agent.set_plan_mode(true).expect("enter plan mode");
+        assert!(agent.plan.is_active());
+
+        // Turn 2: a second boundary, now with plan mode active.
+        agent.run_prompt(text_input("second prompt")).await.expect("prompt");
+        assert_eq!(agent.undo_checkpoints.len(), 2);
+
+        // Undo the last turn: plan mode rewinds to the previous boundary's
+        // state (inactive) together with the conversation history.
+        let cut = agent.undo_history(1).expect("undo");
+        assert_eq!(cut.removed_count, 1);
+        assert!(
+            !agent.plan.is_active(),
+            "plan mode must rewind with the undone turn"
+        );
+        assert_eq!(agent.undo_checkpoints.len(), 1);
+        assert!(
+            !context_contains(&agent, "second prompt"),
+            "undone turn must leave the history"
+        );
+        assert!(context_contains(&agent, "first prompt"));
+    }
+
+    #[tokio::test]
+    async fn undo_history_rewinds_task_notifications() {
+        let (mut agent, _) = driver_agent(vec![]);
+        agent.run_prompt(text_input("first prompt")).await.expect("prompt");
+
+        // Register + settle a task so a notification key is recorded.
+        let task = agent.task.clone();
+        {
+            let mut guard = task.lock().unwrap_or_else(|e| e.into_inner());
+            let entry = guard
+                .track(crate::task::AgentTaskTrackOptions {
+                    id_prefix: "t".to_string(),
+                    description: "a task".to_string(),
+                    kind: "agent".to_string(),
+                    detached: true,
+                    timeout_ms: None,
+                    detach_timeout_ms: None,
+                    agent_id: Some("main".to_string()),
+                })
+                .expect("track");
+            guard.settle(
+                &entry.task_id,
+                crate::task::TaskSettlement {
+                    status: crate::task::TaskSettlementStatus::Completed,
+                    stop_reason: Some("done".to_string()),
+                },
+            );
+        }
+        assert!(
+            !task
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .notifications_snapshot()
+                .0
+                .is_empty(),
+            "settling a detached task must schedule a notification key"
+        );
+
+        // A second user prompt captures the notification bookkeeping.
+        agent.run_prompt(text_input("second prompt")).await.expect("prompt");
+        assert_eq!(agent.undo_checkpoints.len(), 2);
+
+        // Undo: the delivered-notification key set must rewind to the first
+        // boundary's (empty) state.
+        agent.undo_history(1).expect("undo");
+        let (scheduled, delivered) =
+            task.lock().unwrap_or_else(|e| e.into_inner()).notifications_snapshot();
+        assert!(scheduled.is_empty());
+        assert!(delivered.is_empty(), "notifications must rewind with the turn");
     }
 
     #[tokio::test]
