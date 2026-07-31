@@ -661,6 +661,10 @@ pub struct RunTurnResult {
 /// Parameters for the host/llm_chat RPC call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmChatRequest {
+    /// Owning session (multi-session thin clients route host callbacks by
+    /// this). Stamped by the engine; absent on legacy callers.
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub system_prompt: String,
     pub model_name: String,
     pub messages: Vec<LlmChatMessage>,
@@ -702,6 +706,9 @@ pub struct LlmToolCall {
 /// Parameters for the host/execute_tool RPC call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolExecuteRequest {
+    /// Owning session (see [`LlmChatRequest::session_id`]).
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub turn_id: String,
     pub tool_call_id: String,
     pub tool_name: String,
@@ -749,6 +756,9 @@ pub struct TokenUsage {
 /// Request for the prepare_tool_execution hook.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrepareToolRequest {
+    /// Owning session (see [`LlmChatRequest::session_id`]).
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub turn_id: String,
     pub step_number: u32,
     pub tool_call_id: String,
@@ -786,6 +796,9 @@ pub struct PrepareToolResponse {
 /// Request for the authorize_tool_execution hook.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthorizeToolRequest {
+    /// Owning session (see [`LlmChatRequest::session_id`]).
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub turn_id: String,
     pub step_number: u32,
     pub tool_call_id: String,
@@ -820,6 +833,9 @@ pub struct AuthorizeToolResponse {
 /// Request for the finalize_tool_result hook.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FinalizeToolRequest {
+    /// Owning session (see [`LlmChatRequest::session_id`]).
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub turn_id: String,
     pub step_number: u32,
     pub tool_call_id: String,
@@ -1141,6 +1157,7 @@ mod tests {
     #[test]
     fn test_llm_chat_request_roundtrip() {
         let req = LlmChatRequest {
+            session_id: None,
             system_prompt: "You are helpful.".to_string(),
             model_name: "gpt-4".to_string(),
             messages: vec![
@@ -1191,6 +1208,7 @@ mod tests {
     #[test]
     fn test_tool_execute_request_roundtrip() {
         let req = ToolExecuteRequest {
+            session_id: None,
             turn_id: "turn-1".to_string(),
             tool_call_id: "call_1".to_string(),
             tool_name: "read".to_string(),
@@ -1223,6 +1241,7 @@ mod tests {
     #[test]
     fn test_tool_execute_request_force_precise_true() {
         let req = ToolExecuteRequest {
+            session_id: None,
             turn_id: "turn-1".to_string(),
             tool_call_id: "call_1".to_string(),
             tool_name: "read".to_string(),

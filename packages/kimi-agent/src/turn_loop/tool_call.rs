@@ -35,6 +35,8 @@ pub struct ToolCallStepContext {
     pub hooks: Option<LoopHooks>,
     /// Trace id from the LLM request that produced these tool calls.
     pub trace_id: Option<String>,
+    /// Owning session id (stamped onto host-bound hook requests).
+    pub session_id: Option<String>,
 }
 
 /// Descriptor of an available tool (name + validation).
@@ -299,6 +301,7 @@ async fn prepare_tool_call(
             // Try host callbacks first (napi bridge → JS), then local hooks.
             let prepare_result = if let Some(cb) = host_callbacks {
                 let req = PrepareToolRequest {
+                    session_id: step.session_id.clone(),
                     turn_id: step.turn_id.clone(),
                     step_number: step.current_step,
                     tool_call_id: tool_call.id.clone(),
@@ -419,6 +422,7 @@ where
     // Try host callbacks first (napi bridge → JS), then local hooks.
     let authorize_result = if let Some(cb) = host_callbacks {
         let req = AuthorizeToolRequest {
+            session_id: step.session_id.clone(),
             turn_id: step.turn_id.clone(),
             step_number: step.current_step,
             tool_call_id: tool_call.id.clone(),
@@ -510,6 +514,7 @@ async fn finalize_pending_tool_result(
     // Try host callbacks first (napi bridge → JS), then local hooks.
     let finalized_from_host = if let Some(cb) = host_callbacks {
         let req = FinalizeToolRequest {
+            session_id: step.session_id.clone(),
             turn_id: step.turn_id.clone(),
             step_number: step.current_step,
             tool_call_id: pending.tool_call.id.clone(),
@@ -662,6 +667,7 @@ mod tests {
             }).collect(),
             hooks: None,
             trace_id: None,
+            session_id: None,
         }
     }
 
@@ -767,6 +773,7 @@ mod tests {
                 ..Default::default()
             }),
             trace_id: None,
+            session_id: None,
         };
 
         let calls = vec![make_tool_call("c1", "read")];
@@ -804,6 +811,7 @@ mod tests {
                 ..Default::default()
             }),
             trace_id: None,
+            session_id: None,
         };
 
         let calls = vec![make_tool_call("c1", "read")];
@@ -857,6 +865,7 @@ mod tests {
                 ..Default::default()
             }),
             trace_id: None,
+            session_id: None,
         };
 
         let calls = vec![make_tool_call("c1", "read")];
@@ -914,6 +923,7 @@ mod tests {
                 ..Default::default()
             }),
             trace_id: None,
+            session_id: None,
         };
 
         let calls = vec![make_tool_call("c1", "dangerous")];

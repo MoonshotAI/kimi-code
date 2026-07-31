@@ -526,6 +526,7 @@ async fn execute_gated_write(
     // ── Prepare ──────────────────────────────────────────────────────────
     let prepare = inner
         .prepare_tool_execution(PrepareToolRequest {
+            session_id: request.session_id.clone(),
             turn_id: request.turn_id.clone(),
             step_number: 0,
             tool_call_id: request.tool_call_id.clone(),
@@ -559,6 +560,7 @@ async fn execute_gated_write(
         NativeAuth::Defer => {
             let authorize = inner
                 .authorize_tool_execution(AuthorizeToolRequest {
+                    session_id: request.session_id.clone(),
                     turn_id: request.turn_id.clone(),
                     step_number: 0,
                     tool_call_id: request.tool_call_id.clone(),
@@ -611,6 +613,7 @@ async fn execute_gated_write(
     // ── Finalize (redaction / truncation) ──────────────────────────────────
     let finalized = inner
         .finalize_tool_result(FinalizeToolRequest {
+            session_id: request.session_id.clone(),
             turn_id: request.turn_id.clone(),
             step_number: 0,
             tool_call_id: request.tool_call_id.clone(),
@@ -668,6 +671,7 @@ async fn execute_gated_bash(
     // ── Prepare ──────────────────────────────────────────────────────────
     let prepare = inner
         .prepare_tool_execution(PrepareToolRequest {
+            session_id: request.session_id.clone(),
             turn_id: request.turn_id.clone(),
             step_number: 0,
             tool_call_id: request.tool_call_id.clone(),
@@ -718,6 +722,7 @@ async fn execute_gated_bash(
         NativeAuth::Defer => {
             let authorize = inner
                 .authorize_tool_execution(AuthorizeToolRequest {
+                    session_id: request.session_id.clone(),
                     turn_id: request.turn_id.clone(),
                     step_number: 0,
                     tool_call_id: request.tool_call_id.clone(),
@@ -765,6 +770,7 @@ async fn execute_gated_bash(
     // ── Finalize (redaction / truncation) ──────────────────────────────────
     let finalized = inner
         .finalize_tool_result(FinalizeToolRequest {
+            session_id: request.session_id.clone(),
             turn_id: request.turn_id.clone(),
             step_number: 0,
             tool_call_id: request.tool_call_id.clone(),
@@ -813,6 +819,7 @@ async fn execute_gated_background_bash(
     // ── Prepare ──────────────────────────────────────────────────────────
     let prepare = inner
         .prepare_tool_execution(PrepareToolRequest {
+            session_id: request.session_id.clone(),
             turn_id: request.turn_id.clone(),
             step_number: 0,
             tool_call_id: request.tool_call_id.clone(),
@@ -863,6 +870,7 @@ async fn execute_gated_background_bash(
         NativeAuth::Defer => {
             let authorize = inner
                 .authorize_tool_execution(AuthorizeToolRequest {
+                    session_id: request.session_id.clone(),
                     turn_id: request.turn_id.clone(),
                     step_number: 0,
                     tool_call_id: request.tool_call_id.clone(),
@@ -943,6 +951,7 @@ async fn execute_gated_background_bash(
     // ── Finalize (redaction / truncation) ──────────────────────────────────
     let finalized = inner
         .finalize_tool_result(FinalizeToolRequest {
+            session_id: request.session_id.clone(),
             turn_id: request.turn_id.clone(),
             step_number: 0,
             tool_call_id: request.tool_call_id.clone(),
@@ -1012,6 +1021,7 @@ async fn execute_gated_network(
     // ── Prepare ──────────────────────────────────────────────────────────
     let prepare = inner
         .prepare_tool_execution(PrepareToolRequest {
+            session_id: request.session_id.clone(),
             turn_id: request.turn_id.clone(),
             step_number: 0,
             tool_call_id: request.tool_call_id.clone(),
@@ -1058,6 +1068,7 @@ async fn execute_gated_network(
         NativeAuth::Defer => {
             let authorize = inner
                 .authorize_tool_execution(AuthorizeToolRequest {
+                    session_id: request.session_id.clone(),
                     turn_id: request.turn_id.clone(),
                     step_number: 0,
                     tool_call_id: request.tool_call_id.clone(),
@@ -1110,6 +1121,7 @@ async fn execute_gated_network(
     // ── Finalize ─────────────────────────────────────────────────────────────
     let finalized = inner
         .finalize_tool_result(FinalizeToolRequest {
+            session_id: request.session_id.clone(),
             turn_id: request.turn_id.clone(),
             step_number: 0,
             tool_call_id: request.tool_call_id.clone(),
@@ -1269,6 +1281,7 @@ mod tests {
 
     fn write_request(path: &str) -> ToolExecuteRequest {
         ToolExecuteRequest {
+            session_id: None,
             turn_id: "t".into(),
             tool_call_id: "c1".into(),
             tool_name: "Write".into(),
@@ -1317,6 +1330,7 @@ mod tests {
         std::fs::write(dir.path().join("r.txt"), "data").unwrap();
         let response = callbacks
             .execute_tool(ToolExecuteRequest {
+                session_id: None,
                 turn_id: "t".into(),
                 tool_call_id: "c2".into(),
                 tool_name: "Read".into(),
@@ -1381,6 +1395,7 @@ mod tests {
 
     fn bash_request(command: &str) -> ToolExecuteRequest {
         ToolExecuteRequest {
+            session_id: None,
             turn_id: "t".into(),
             tool_call_id: "b1".into(),
             tool_name: "Bash".into(),
@@ -1429,6 +1444,7 @@ mod tests {
         };
         let response = callbacks
             .execute_tool(ToolExecuteRequest {
+                session_id: None,
                 turn_id: "t".into(),
                 tool_call_id: "b2".into(),
                 tool_name: "Bash".into(),
@@ -1461,6 +1477,7 @@ mod tests {
 
         let response = callbacks
             .execute_tool(ToolExecuteRequest {
+                session_id: None,
                 turn_id: "t".into(),
                 tool_call_id: "b3".into(),
                 tool_name: "Bash".into(),
@@ -1504,6 +1521,7 @@ mod tests {
         // TaskOutput claims the native task and returns status + output.
         let output = callbacks
             .execute_tool(ToolExecuteRequest {
+                session_id: None,
                 turn_id: "t".into(),
                 tool_call_id: "b4".into(),
                 tool_name: "TaskOutput".into(),
@@ -1527,6 +1545,7 @@ mod tests {
         )));
         let response = callbacks
             .execute_tool(ToolExecuteRequest {
+                session_id: None,
                 turn_id: "t".into(),
                 tool_call_id: "b5".into(),
                 tool_name: "TaskOutput".into(),
@@ -1627,6 +1646,7 @@ mod tests {
 
         let response = callbacks
             .execute_tool(ToolExecuteRequest {
+                session_id: None,
                 turn_id: "t".into(),
                 tool_call_id: "w1".into(),
                 tool_name: "WebSearch".into(),
@@ -1658,6 +1678,7 @@ mod tests {
 
         let response = callbacks
             .execute_tool(ToolExecuteRequest {
+                session_id: None,
                 turn_id: "t".into(),
                 tool_call_id: "d1".into(),
                 tool_name: "Bash".into(),
@@ -1694,6 +1715,7 @@ mod tests {
 
         let response = callbacks
             .execute_tool(ToolExecuteRequest {
+                session_id: None,
                 turn_id: "t".into(),
                 tool_call_id: "d2".into(),
                 tool_name: "Bash".into(),
@@ -1727,6 +1749,7 @@ mod tests {
 
         let response = callbacks
             .execute_tool(ToolExecuteRequest {
+                session_id: None,
                 turn_id: "t".into(),
                 tool_call_id: "d3".into(),
                 tool_name: "Bash".into(),
@@ -1755,6 +1778,7 @@ mod tests {
         };
         let response = callbacks
             .execute_tool(ToolExecuteRequest {
+                session_id: None,
                 turn_id: "t".into(),
                 tool_call_id: "w2".into(),
                 tool_name: "WebSearch".into(),

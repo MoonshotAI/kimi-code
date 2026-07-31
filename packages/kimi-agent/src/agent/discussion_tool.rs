@@ -512,6 +512,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let resp = rt.block_on(async {
             i.execute_tool(ToolExecuteRequest {
+                session_id: None,
                 turn_id: "t".into(),
                 tool_call_id: "c1".into(),
                 tool_name: "SwarmDiscussion".into(),
@@ -532,6 +533,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let resp = rt.block_on(async {
             i.execute_tool(ToolExecuteRequest {
+                session_id: None,
                 turn_id: "t".into(),
                 tool_call_id: "c1".into(),
                 tool_name: "SwarmDiscussion".into(),

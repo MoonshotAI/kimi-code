@@ -333,6 +333,7 @@ export interface LlmChatMessage {
 }
 
 export interface LlmChatRequest {
+  session_id?: string | undefined;
   system_prompt: string;
   model_name: string;
   messages: Array<LlmChatMessage>;
@@ -347,6 +348,7 @@ export interface LlmChatResponse {
 }
 
 export interface ToolExecuteRequest {
+  session_id?: string | undefined;
   turn_id: string;
   tool_call_id: string;
   tool_name: string;
@@ -363,6 +365,7 @@ export interface ToolExecuteResponse {
 }
 
 export interface PrepareToolRequest {
+  session_id?: string | undefined;
   turn_id: string;
   step_number: number;
   tool_call_id: string;
@@ -390,6 +393,7 @@ export interface PrepareToolResponse {
 }
 
 export interface AuthorizeToolRequest {
+  session_id?: string | undefined;
   turn_id: string;
   step_number: number;
   tool_call_id: string;
@@ -409,6 +413,7 @@ export interface AuthorizeToolResponse {
 }
 
 export interface FinalizeToolRequest {
+  session_id?: string | undefined;
   turn_id: string;
   step_number: number;
   tool_call_id: string;

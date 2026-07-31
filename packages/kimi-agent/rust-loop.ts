@@ -119,6 +119,8 @@ type RpcMessage = {
 /** Fire-and-forget engine event (Rust → host, `host/event`). */
 interface EngineEvent {
   type: string;
+  /** Owning session; multi-session hosts route events by this. */
+  session_id?: string;
   [key: string]: unknown;
 }
 
@@ -395,6 +397,58 @@ class AgentProcess {
   /** Callback for fire-and-forget host/event notifications from Rust. */
   private eventHandler: ((event: EngineEvent) => void) | null = null;
 
+  /**
+   * Per-session host handlers (session-owned thin clients). The engine stamps
+   * every host-bound request with its session id, so a multi-session host
+   * routes callbacks here; requests without a session id (RUN_TURN override
+   * path) fall back to the singleton handlers above.
+   */
+  private readonly sessionHandlers = new Map<string, SessionHostHandlers>();
+
+  /**
+   * Register the host handlers for one session-owned client. Replaces any
+   * prior registration for the same session id.
+   */
+  registerSessionHandlers(sessionId: string, handlers: SessionHostHandlers): void {
+    this.sessionHandlers.set(sessionId, handlers);
+  }
+
+  /** Remove a session-owned client's host handlers. */
+  unregisterSessionHandlers(sessionId: string): void {
+    this.sessionHandlers.delete(sessionId);
+  }
+
+  /** Resolve the handlers for a host request: session-scoped first, then the
+   *  singleton (RUN_TURN path). */
+  private resolveHandlers(sessionId: string | undefined): SessionHostHandlers | null {
+    if (sessionId !== undefined) {
+      const scoped = this.sessionHandlers.get(sessionId);
+      if (scoped !== undefined) return scoped;
+    }
+    if (
+      this.llmChatHandler === null &&
+      this.toolExecuteHandler === null &&
+      this.prepareToolHandler === null &&
+      this.authorizeToolHandler === null &&
+      this.finalizeToolHandler === null &&
+      this.eventHandler === null
+    ) {
+      return null;
+    }
+    return {
+      llmChat: this.llmChatHandler ?? (async () => {
+        throw new Error('No LLM chat handler registered');
+      }),
+      toolExecute: this.toolExecuteHandler ?? (async () => {
+        throw new Error('No tool execute handler registered');
+      }),
+      prepareTool: this.prepareToolHandler ?? undefined,
+      authorizeTool: this.authorizeToolHandler ?? undefined,
+      finalizeTool: this.finalizeToolHandler ?? undefined,
+      onEvent: this.eventHandler ?? undefined,
+    };
+  }
+
   setLlmChatHandler(handler: (req: LlmChatRequest) => Promise<LlmChatResponse>) {
     this.llmChatHandler = handler;
   }
@@ -548,11 +602,15 @@ class AgentProcess {
           case 'ignore':
             // A method without an id is a notification — the engine's
             // fire-and-forget event channel arrives this way.
-            if (msg.method === 'host/event' && this.eventHandler) {
-              try {
-                this.eventHandler(msg.params as EngineEvent);
-              } catch {
-                // Event handler failures must never break the RPC loop.
+            if (msg.method === 'host/event') {
+              const event = msg.params as EngineEvent;
+              const handlers = this.resolveHandlers(event?.session_id);
+              if (handlers?.onEvent) {
+                try {
+                  handlers.onEvent(event);
+                } catch {
+                  // Event handler failures must never break the RPC loop.
+                }
               }
             }
             break;
@@ -585,12 +643,15 @@ class AgentProcess {
   }
 
   private async handleHostLlmChat(msg: RpcMessage) {
-    if (!this.llmChatHandler) {
+    const handlers = this.resolveHandlers(
+      (msg.params as { session_id?: string } | undefined)?.session_id,
+    );
+    if (!handlers) {
       this.writeHostError(msg.id, 'No LLM chat handler registered');
       return;
     }
     try {
-      const result = await this.llmChatHandler(msg.params as LlmChatRequest);
+      const result = await handlers.llmChat(msg.params as LlmChatRequest);
       this.writeHostResult(msg.id, result);
     } catch (error) {
       this.writeHostError(msg.id, error instanceof Error ? error.message : String(error));
@@ -598,12 +659,15 @@ class AgentProcess {
   }
 
   private async handleHostExecuteTool(msg: RpcMessage) {
-    if (!this.toolExecuteHandler) {
+    const handlers = this.resolveHandlers(
+      (msg.params as { session_id?: string } | undefined)?.session_id,
+    );
+    if (!handlers) {
       this.writeHostError(msg.id, 'No tool execute handler registered');
       return;
     }
     try {
-      const result = await this.toolExecuteHandler(msg.params as ToolExecuteRequest);
+      const result = await handlers.toolExecute(msg.params as ToolExecuteRequest);
       this.writeHostResult(msg.id, result);
     } catch (error) {
       this.writeHostError(msg.id, error instanceof Error ? error.message : String(error));
@@ -611,13 +675,16 @@ class AgentProcess {
   }
 
   private async handleHostPrepareTool(msg: RpcMessage) {
-    if (!this.prepareToolHandler) {
+    const handlers = this.resolveHandlers(
+      (msg.params as { session_id?: string } | undefined)?.session_id,
+    );
+    if (!handlers?.prepareTool) {
       // No handler registered — respond with null (allow unchanged).
       this.writeHostResult(msg.id, null);
       return;
     }
     try {
-      const result = await this.prepareToolHandler(msg.params as PrepareToolRequest);
+      const result = await handlers.prepareTool(msg.params as PrepareToolRequest);
       this.writeHostResult(msg.id, result);
     } catch (error) {
       this.writeHostError(msg.id, error instanceof Error ? error.message : String(error));
@@ -625,13 +692,16 @@ class AgentProcess {
   }
 
   private async handleHostAuthorizeTool(msg: RpcMessage) {
-    if (!this.authorizeToolHandler) {
+    const handlers = this.resolveHandlers(
+      (msg.params as { session_id?: string } | undefined)?.session_id,
+    );
+    if (!handlers?.authorizeTool) {
       // No handler registered — respond with null (allow unchanged).
       this.writeHostResult(msg.id, null);
       return;
     }
     try {
-      const result = await this.authorizeToolHandler(msg.params as AuthorizeToolRequest);
+      const result = await handlers.authorizeTool(msg.params as AuthorizeToolRequest);
       this.writeHostResult(msg.id, result);
     } catch (error) {
       this.writeHostError(msg.id, error instanceof Error ? error.message : String(error));
@@ -639,13 +709,16 @@ class AgentProcess {
   }
 
   private async handleHostFinalizeTool(msg: RpcMessage) {
-    if (!this.finalizeToolHandler) {
+    const handlers = this.resolveHandlers(
+      (msg.params as { session_id?: string } | undefined)?.session_id,
+    );
+    if (!handlers?.finalizeTool) {
       // No handler registered — respond with null (use result as-is).
       this.writeHostResult(msg.id, null);
       return;
     }
     try {
-      const result = await this.finalizeToolHandler(msg.params as FinalizeToolRequest);
+      const result = await handlers.finalizeTool(msg.params as FinalizeToolRequest);
       this.writeHostResult(msg.id, result);
     } catch (error) {
       this.writeHostError(msg.id, error instanceof Error ? error.message : String(error));
@@ -2554,6 +2627,8 @@ export interface SessionClient {
   startBtw?(): Promise<string | null>;
   /** Destroy the active side-question subagent. */
   endBtw?(): Promise<boolean>;
+  /** Release this client's host-callback registration (multi-session hosts). */
+  close?(): void;
 }
 
 /**
@@ -2595,7 +2670,7 @@ export async function createSessionClient(
   }
 
   const toolMap = new Map((options.tools ?? []).map((tool) => [tool.name, tool]));
-  installSessionHostHandlers({
+  const handlers: SessionHostHandlers = {
     llmChat:
       options.llmStep ??
       (() =>
@@ -2621,7 +2696,15 @@ export async function createSessionClient(
     prepareTool: options.lifecycle?.prepareTool,
     authorizeTool: options.lifecycle?.authorizeTool,
     finalizeTool: options.lifecycle?.finalizeTool,
-  });
+  };
+  // Multi-session routing: register under this session id so the engine's
+  // session-stamped host callbacks (and events) land on this client even
+  // when other sessions share the engine process.
+  const agent = getAgent();
+  if (agent === null) {
+    return null;
+  }
+  agent.registerSessionHandlers(sessionId, handlers);
 
   return {
     sessionId,
@@ -2632,6 +2715,9 @@ export async function createSessionClient(
     load: async () => (await sessionLoad(sessionId))?.found ?? false,
     startBtw: async () => (await sessionStartBtw(sessionId))?.btw_id ?? null,
     endBtw: async () => (await sessionEndBtw(sessionId))?.ended ?? false,
+    close: () => {
+      agent.unregisterSessionHandlers(sessionId);
+    },
   };
 }
 

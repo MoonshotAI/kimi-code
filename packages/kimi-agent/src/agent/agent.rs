@@ -67,6 +67,47 @@ impl HostCallbacks for ToolEventInterceptor {
     fn finalize_tool_result(&self, r: crate::rpc::types::FinalizeToolRequest) -> BoxFuture<'static, Result<crate::rpc::types::FinalizeToolResponse, String>> { self.inner.finalize_tool_result(r) }
 }
 
+/// Stamps the owning session id onto every host-bound request so a
+/// multi-session thin client (kap-server, TUI) can route host callbacks
+/// (llm_chat / execute_tool / prepare / authorize / finalize) back to the
+/// session that issued them. Sits at the base of the interceptor chain —
+/// only the raw host callbacks pass through it.
+struct SessionStampingCallbacks {
+    inner: Arc<dyn HostCallbacks>,
+    session_id: Option<String>,
+}
+
+impl SessionStampingCallbacks {
+    fn new(inner: Arc<dyn HostCallbacks>, session_id: Option<String>) -> Arc<dyn HostCallbacks> {
+        Arc::new(Self { inner, session_id })
+    }
+}
+
+impl HostCallbacks for SessionStampingCallbacks {
+    fn supports_tool_lifecycle(&self) -> bool { self.inner.supports_tool_lifecycle() }
+    fn llm_chat(&self, mut r: LlmChatRequest) -> BoxFuture<'static, Result<LlmChatResponse, String>> {
+        r.session_id = self.session_id.clone();
+        self.inner.llm_chat(r)
+    }
+    fn execute_tool(&self, mut req: ToolExecuteRequest) -> BoxFuture<'static, Result<ToolExecuteResponse, String>> {
+        req.session_id = self.session_id.clone();
+        self.inner.execute_tool(req)
+    }
+    fn emit_event(&self, e: serde_json::Value) { self.inner.emit_event(e); }
+    fn prepare_tool_execution(&self, mut r: crate::rpc::types::PrepareToolRequest) -> BoxFuture<'static, Result<Option<crate::rpc::types::PrepareToolResponse>, String>> {
+        r.session_id = self.session_id.clone();
+        self.inner.prepare_tool_execution(r)
+    }
+    fn authorize_tool_execution(&self, mut r: crate::rpc::types::AuthorizeToolRequest) -> BoxFuture<'static, Result<Option<crate::rpc::types::AuthorizeToolResponse>, String>> {
+        r.session_id = self.session_id.clone();
+        self.inner.authorize_tool_execution(r)
+    }
+    fn finalize_tool_result(&self, mut r: crate::rpc::types::FinalizeToolRequest) -> BoxFuture<'static, Result<crate::rpc::types::FinalizeToolResponse, String>> {
+        r.session_id = self.session_id.clone();
+        self.inner.finalize_tool_result(r)
+    }
+}
+
 /// Event payloads are for rendering, not transcripts: cap the content so a
 /// huge tool output cannot flood the notification channel.
 fn truncate_for_event(content: &str) -> String {
@@ -388,6 +429,10 @@ pub(crate) struct SubagentInterceptor {
     pub profile_registry: std::sync::Arc<
         std::sync::Mutex<crate::profile::registry::AgentProfileRegistry>,
     >,
+    /// Session-wide task service: `Task` tool calls register a detached
+    /// tracked task, append the child's result, and settle it — so subagent
+    /// work is visible, persistent, and notifiable like any background task.
+    pub task_service: Option<std::sync::Arc<std::sync::Mutex<crate::task::TaskService>>>,
 }
 
 impl HostCallbacks for SubagentInterceptor {
@@ -498,6 +543,27 @@ impl HostCallbacks for SubagentInterceptor {
             None,
         );
 
+        // Track the subagent as a detached task (TS `AgentBackgroundTask`
+        // parity: kind `agent`, prefix `agent`, output appended on success).
+        // The session-wide service is optional — a bare agent without one
+        // simply skips tracking.
+        let task_service = self.task_service.clone();
+        let task_id = task_service.as_ref().and_then(|ts| {
+            ts.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .track(crate::task::AgentTaskTrackOptions {
+                    id_prefix: "agent".to_string(),
+                    description: prompt.trim().chars().take(80).collect(),
+                    kind: "agent".to_string(),
+                    detached: true,
+                    timeout_ms: None,
+                    detach_timeout_ms: None,
+                    agent_id: None,
+                })
+                .ok()
+                .map(|entry| entry.task_id)
+        });
+
         Box::pin(async move {
             match run_child_agent_with_model(
                 host,
@@ -514,20 +580,32 @@ impl HostCallbacks for SubagentInterceptor {
             )
             .await
             {
-                Ok(text) => Ok(ToolExecuteResponse {
-                    content: text,
-                    is_error: false,
-                    is_prediction: false,
-                    stop_turn: false,
-                    media: Vec::new(),
-                }),
-                Err(e) => Ok(ToolExecuteResponse {
-                    content: e,
-                    is_error: true,
-                    is_prediction: false,
-                    stop_turn: false,
-                    media: Vec::new(),
-                }),
+                Ok(text) => {
+                    settle_task(&task_service, &task_id, false, None);
+                    if let (Some(ts), Some(id)) = (&task_service, &task_id) {
+                        let _ = ts
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .append_output(id, &text);
+                    }
+                    Ok(ToolExecuteResponse {
+                        content: text,
+                        is_error: false,
+                        is_prediction: false,
+                        stop_turn: false,
+                        media: Vec::new(),
+                    })
+                }
+                Err(e) => {
+                    settle_task(&task_service, &task_id, true, Some(e.clone()));
+                    Ok(ToolExecuteResponse {
+                        content: e,
+                        is_error: true,
+                        is_prediction: false,
+                        stop_turn: false,
+                        media: Vec::new(),
+                    })
+                }
             }
         })
     }
@@ -535,6 +613,30 @@ impl HostCallbacks for SubagentInterceptor {
     fn prepare_tool_execution(&self, r: crate::rpc::types::PrepareToolRequest) -> BoxFuture<'static, Result<Option<crate::rpc::types::PrepareToolResponse>, String>> { self.inner.prepare_tool_execution(r) }
     fn authorize_tool_execution(&self, r: crate::rpc::types::AuthorizeToolRequest) -> BoxFuture<'static, Result<Option<crate::rpc::types::AuthorizeToolResponse>, String>> { self.inner.authorize_tool_execution(r) }
     fn finalize_tool_result(&self, r: crate::rpc::types::FinalizeToolRequest) -> BoxFuture<'static, Result<crate::rpc::types::FinalizeToolResponse, String>> { self.inner.finalize_tool_result(r) }
+}
+
+/// Settle a tracked Task-tool task (no-op when tracking was skipped).
+fn settle_task(
+    task_service: &Option<std::sync::Arc<std::sync::Mutex<crate::task::TaskService>>>,
+    task_id: &Option<String>,
+    failed: bool,
+    stop_reason: Option<String>,
+) {
+    if let (Some(ts), Some(id)) = (task_service, task_id) {
+        ts.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .settle(
+                id,
+                crate::task::TaskSettlement {
+                    status: if failed {
+                        crate::task::TaskSettlementStatus::Failed
+                    } else {
+                        crate::task::TaskSettlementStatus::Completed
+                    },
+                    stop_reason,
+                },
+            );
+    }
 }
 
 /// Concatenate the text of the last `assistant` message in an agent's context.
@@ -685,6 +787,10 @@ impl Agent {
         callbacks: Arc<dyn HostCallbacks>,
         options: AgentOptions,
     ) -> Self {
+        // Stamp every host-bound request (llm_chat / execute_tool / lifecycle
+        // hooks) with this agent's session id so multi-session thin clients
+        // can route callbacks back to the right session.
+        let callbacks = SessionStampingCallbacks::new(callbacks, options.session_id.clone());
         Self {
             agent_type: "main".to_string(),
             session_id: options.session_id.clone(),
@@ -1055,6 +1161,7 @@ impl Agent {
                     Some(self.external_hooks.clone())
                 },
                 profile_registry: self.profile_registry.clone(),
+                task_service: Some(self.task.clone()),
             });
         }
         // AgentSwarm interceptor (native parallel subagent dispatch): spawns
@@ -2535,6 +2642,7 @@ mod tests {
             let index = self.turn.fetch_add(1, Ordering::SeqCst);
             let action = self.script.get(index).copied().unwrap_or("noop");
             let call = |name: &str, args: serde_json::Value| ToolExecuteRequest {
+                session_id: None,
                 turn_id: index.to_string(),
                 tool_call_id: format!("c{index}"),
                 tool_name: name.to_string(),
@@ -2553,6 +2661,10 @@ mod tests {
                 "blocked" => Some(callbacks.execute_tool(call(
                     "UpdateGoal",
                     serde_json::json!({ "status": "blocked", "reason": "stuck" }),
+                ))),
+                "task" => Some(callbacks.execute_tool(call(
+                    "Task",
+                    serde_json::json!({ "prompt": "do the thing" }),
                 ))),
                 _ => None,
             };
@@ -2718,6 +2830,27 @@ mod tests {
             "undone turn must leave the history"
         );
         assert!(context_contains(&agent, "first prompt"));
+    }
+
+    #[tokio::test]
+    async fn task_tool_tracks_and_settles_a_detached_task() {
+        let (mut agent, _) = driver_agent(vec!["task"]);
+        agent.run_prompt(text_input("run the task")).await.expect("prompt");
+
+        let mut guard = agent.task.lock().unwrap_or_else(|e| e.into_inner());
+        let tasks = guard.list(false, None);
+        // The child agent runs against the NoopHost; whether it settles
+        // completed or failed depends on the LLM stub — the track + settle
+        // wiring is what we assert.
+        assert_eq!(tasks.len(), 1, "Task tool must register a tracked task");
+        let task = tasks.first().expect("one task");
+        assert_eq!(task.kind, "agent");
+        assert!(task.status.is_terminal(), "task must settle after the child ends");
+        // A settled detached task schedules a terminal notification key.
+        assert!(
+            !guard.notifications_snapshot().0.is_empty(),
+            "settling a detached task must schedule a notification key"
+        );
     }
 
     #[tokio::test]

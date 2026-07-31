@@ -81,6 +81,7 @@ impl LLM for HostLlmProxy {
                 .collect();
 
             let request = types::LlmChatRequest {
+                session_id: None,
                 system_prompt,
                 model_name,
                 messages,

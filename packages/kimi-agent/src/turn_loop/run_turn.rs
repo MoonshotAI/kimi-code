@@ -241,6 +241,7 @@ pub fn run_turn<'a>(
  let callbacks = callbacks.clone();
  async move {
  let req = ToolExecuteRequest {
+ session_id: None,
  turn_id: turn_id.clone(),
  tool_call_id: tc.id.clone(),
  tool_name: tc.name.clone(),
@@ -908,6 +909,7 @@ mod tests {
  let server = server.clone();
  Box::pin(async move {
  let params = serde_json::to_value(&ToolExecuteRequest {
+ session_id: None,
  turn_id: "test".into(),
  tool_call_id: tc.id.clone(),
  tool_name: tc.name.clone(),

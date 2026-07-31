@@ -209,6 +209,7 @@ mod tests {
 
     fn request(tool: &str) -> ToolExecuteRequest {
         ToolExecuteRequest {
+            session_id: None,
             turn_id: "t1".into(),
             tool_call_id: "tc1".into(),
             tool_name: tool.into(),
