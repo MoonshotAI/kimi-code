@@ -192,11 +192,9 @@ import {
   ISessionSecondaryModelWarningService,
   ISessionSkillCatalog,
   ISessionWorkspaceContext,
-  ISkillCatalogRuntimeOptions,
   ISkillDiscovery,
   ITelemetryService,
   IWorkspaceAliases,
-  hostRequestHeadersSeed,
   IWorkspaceDirs,
   ISessionLifecycleService,
   IWorkspaceLifecycleService,
@@ -222,7 +220,6 @@ import {
   resolveKimiHome,
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
-  skillCatalogRuntimeOptionsSeed,
   summarizeSkill,
   userRoots,
   type IAgentScopeHandle,
@@ -327,8 +324,7 @@ export interface SDKRpcClientV2Options {
    * Explicit skill directories for this process (v1's SDK `skillDirs` /
    * the CLI's `--skills-dir`): when non-empty, default user / project skill
    * discovery is skipped and these directories serve as the user skill
-   * source. Seeded into the engine's app-scope
-   * `ISkillCatalogRuntimeOptions`.
+   * source. Passed into the engine through `BootstrapInput.args.skillDirs`.
    */
   readonly skillDirs?: readonly string[];
   readonly telemetry?: TelemetryClient;
@@ -430,19 +426,17 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         homeDir: this.homeDir,
         configPath: this.configPath,
         clientIdentity: identity,
+        args: {
+          // Host identity headers for the engine's outbound requests (model,
+          // WebSearch, registry refresh). Without them the managed vendors go
+          // out with the SDK's default User-Agent and no X-Msh-* at all.
+          requestHeaders: createKimiDefaultHeaders({ homeDir: this.homeDir, ...identity }),
+          // `--skills-dir` (v1 parity): explicit skill dirs replace default
+          // user / project discovery for every session this client hosts.
+          skillDirs: options.skillDirs,
+        },
       },
-      [
-        ...logSeed(resolveLoggingConfig({ homeDir: this.homeDir, env: process.env })),
-        // Host identity headers for the engine's outbound requests (model,
-        // WebSearch, registry refresh). Without this seed the managed vendors
-        // go out with the SDK's default User-Agent and no X-Msh-* at all.
-        ...hostRequestHeadersSeed(
-          createKimiDefaultHeaders({ homeDir: this.homeDir, ...identity }),
-        ),
-        // `--skills-dir` (v1 parity): explicit skill dirs replace default
-        // user / project discovery for every session this client hosts.
-        ...skillCatalogRuntimeOptionsSeed(options.skillDirs),
-      ],
+      [...logSeed(resolveLoggingConfig({ homeDir: this.homeDir, env: process.env }))],
     );
     this.app = app;
     this.klient = createKlient({ scope: app });
@@ -550,7 +544,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
     const bootstrapService = this.engineAccessor.get(IBootstrapService);
     const discovery = this.engineAccessor.get(ISkillDiscovery);
-    const explicitDirs = this.engineAccessor.get(ISkillCatalogRuntimeOptions).explicitDirs ?? [];
+    const explicitDirs = bootstrapService.args.skillDirs ?? [];
     const roots =
       explicitDirs.length > 0
         ? await configuredRoots(explicitDirs, workDir, bootstrapService.osHomeDir, 'user')
@@ -659,9 +653,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /**
    * v1's removal cascades: the provider entry, every model pointing at it,
    * and the default pointers when they dangle. The engine's own
-   * `kosong.removeProvider` only clears the default-provider pointer, so
-   * the full v1 cascade is computed from the user-layer values and applied
-   * through the config facade (see `planProviderRemoval`).
+   * `kosong.removeProvider` only clears the default-provider pointer, so the
+   * full v1 cascade is computed from the user-layer values (see
+   * `planProviderRemoval`) and persisted as ONE atomic multi-section replace —
+   * the same single-write shape as v1's `removeKimiProvider`, so a process
+   * exit can never leave the file in a halfway-cascaded state.
    */
   override async removeProvider(providerId: string): Promise<KimiConfig> {
     await this.configReady;
@@ -678,15 +674,27 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       defaultProvider: defaultProvider.userValue,
       providerId,
     });
-    await this.klient.global.config.replace({ domain: 'providers', value: plan.providers });
-    await this.klient.global.config.replace({ domain: 'models', value: plan.models });
+    const sections: Record<string, unknown> = {
+      providers: plan.providers,
+      models: plan.models,
+    };
     if (plan.clearDefaultModel) {
-      await this.klient.global.config.replace({ domain: 'defaultModel', value: undefined });
+      sections['defaultModel'] = undefined;
     }
     if (plan.clearDefaultProvider) {
-      await this.klient.global.config.replace({ domain: 'defaultProvider', value: undefined });
+      sections['defaultProvider'] = undefined;
     }
+    await this.klient.global.config.replaceSections({ sections });
     return this.getConfig();
+  }
+
+  override supportsAtomicSectionReplace(): boolean {
+    return true;
+  }
+
+  override async replaceConfigSections(sections: Record<string, unknown>): Promise<void> {
+    await this.configReady;
+    await this.klient.global.config.replaceSections({ sections });
   }
 
   override async listPlugins(): Promise<readonly PluginSummary[]> {

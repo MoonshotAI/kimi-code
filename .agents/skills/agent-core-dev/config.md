@@ -42,9 +42,16 @@ If it fails any rule, it is not Config:
 
 **`IBootstrapService` is domain-agnostic.** It holds only generic facts shared by
 all domains — the env bag, resolved paths, and host facts (`platform`, `arch`,
-`cwd`, `osHomeDir`, `isCI`, …). It must **never** hold state tied to a specific
-upper domain (no `cron`, no `flags`, no feature-specific fields): that couples
-the foundational layer to an upstream one.
+`cwd`, `osHomeDir`, `isCI`, …) — plus the host's process-level invocation
+arguments in `args` (explicit `agentFiles` / `skillDirs`, `requestHeaders`,
+prompt identity). `args` mirrors VS Code's `NativeParsedArgs` on the
+environment service: the host states them once via `BootstrapInput.args` at
+the composition root, and downstream services read them from
+`IBootstrapService.args` instead of through per-domain runtime-options
+services (do not add new `IXxxRuntimeOptions` services or seed functions for
+host parameters). What must **never** land on `IBootstrapService` is state
+tied to a specific upper domain (no `cron`, no `flags`, no feature-specific
+fields): that couples the foundational layer to an upstream one.
 
 Any value that belongs to a specific domain — including env-only operational
 toggles (`KIMI_CRON_*`, `KIMI_CODE_EXPERIMENTAL_*`), model parameters, or feature
@@ -264,7 +271,7 @@ The authoritative, always-current list of registered sections — rendered in th
 - `config` never imports the domains that consume it — keep section schemas in the owning domain.
 - Config is the **preference registry**: register only values that are preferences, persistable, schema'd, and user/operator-facing. Facts → `IBootstrapService`; session state → Session scope; constants → code.
 - Business domains read `config.get(...)` or structured `IBootstrapService` facts; never call `IBootstrapService.getEnv()` directly — only `config` reads the raw env bag to build overlays.
-- Keep `IBootstrapService` domain-agnostic: never add state tied to a specific upper domain (cron, flags, model params, …). Domain-specific config goes through `registerSection` + `envBindings`, read via `config.get(...)`.
+- Keep `IBootstrapService` domain-agnostic: host invocation arguments (CLI flags, host identity headers, prompt identity) go into `BootstrapInput.args` / `IBootstrapService.args` — never into new per-domain runtime-options services; domain runtime state (cron, flags, model params, …) never goes onto `IBootstrapService` at all. Domain-specific config goes through `registerSection` + `envBindings`, read via `config.get(...)`.
 - Do not pass a whole config bag via options; read each section through `IConfigService`. There is no `KimiConfig` object — config is a registry of owner-owned sections.
 - `config.toml` is snake_case on disk, camelCase in memory — never write camelCase keys to disk, and never write to `config.toml` except through `IConfigService.set/replace`.
 - Reading config / calling `configure(...)` / switching model at runtime must not rewrite `config.toml`; runtime state lives in memory and the session wireRecord, not the file.

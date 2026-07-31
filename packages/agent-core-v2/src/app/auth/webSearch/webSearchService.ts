@@ -9,8 +9,9 @@
  * state after a successful Kimi login), whose bearer token comes from
  * `IOAuthService.resolveTokenProvider(...)` and whose base URL is derived from
  * the provider's `baseUrl`. The explicit config wins over the managed
- * derivation. Both use the host's Kimi identity headers (`IHostRequestHeaders`)
- * as default headers. When neither source is configured it yields `undefined`.
+ * derivation. Both use the host's Kimi identity headers
+ * (`IBootstrapService.args.requestHeaders`) as default headers. When neither
+ * source is configured it yields `undefined`.
  * Tests and hosts that need a custom backend bind `IWebSearchProviderService`
  * directly. Bound at App scope.
  */
@@ -22,8 +23,8 @@ import {
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
 import { IProviderService } from '#/kosong/provider/provider';
 import { isOAuthCatalogVendor } from '#/kosong/provider/providerDefinition';
 
@@ -38,7 +39,7 @@ export class WebSearchProviderService implements IWebSearchProviderService {
   constructor(
     @IProviderService private readonly providers: IProviderService,
     @IOAuthService private readonly oauth: IOAuthService,
-    @IHostRequestHeaders private readonly hostHeaders: IHostRequestHeaders,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
   ) {}
 
@@ -59,7 +60,7 @@ export class WebSearchProviderService implements IWebSearchProviderService {
       baseUrl: search.baseUrl,
       tokenProvider,
       apiKey: nonEmptyString(search.apiKey),
-      defaultHeaders: { ...this.hostHeaders.headers },
+      defaultHeaders: { ...this.bootstrap.args.requestHeaders },
       customHeaders: search.customHeaders,
     });
   }
@@ -80,7 +81,7 @@ export class WebSearchProviderService implements IWebSearchProviderService {
     return new MoonshotWebSearchProvider({
       baseUrl,
       tokenProvider,
-      defaultHeaders: { ...this.hostHeaders.headers },
+      defaultHeaders: { ...this.bootstrap.args.requestHeaders },
       customHeaders: provider.customHeaders,
     });
   }

@@ -18,6 +18,7 @@ import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/
 import {
   IBootstrapOptions,
   IBootstrapService,
+  type HostArgs,
   type PersistenceScopeName,
 } from './bootstrap';
 
@@ -31,6 +32,7 @@ export class BootstrapService implements IBootstrapService {
   readonly homeDir: string;
   readonly configPath: string;
   readonly clientIdentity: KimiHostIdentity;
+  readonly args: HostArgs;
   readonly sessionsDir: string;
   readonly blobsDir: string;
   readonly storeDir: string;
@@ -50,6 +52,7 @@ export class BootstrapService implements IBootstrapService {
     this.homeDir = options.homeDir;
     this.configPath = options.configPath;
     this.clientIdentity = options.clientIdentity;
+    this.args = options.args;
     this.sessionsDir = join(options.homeDir, 'sessions');
     this.blobsDir = join(options.homeDir, 'blobs');
     this.storeDir = join(options.homeDir, 'store');

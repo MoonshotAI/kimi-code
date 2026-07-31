@@ -37,7 +37,6 @@ import {
   EXTRA_SKILL_DIRS_SECTION,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
 } from '#/app/skillCatalog/configSection';
-import { ISkillCatalogRuntimeOptions } from '#/app/skillCatalog/skillCatalogRuntimeOptions';
 import { BuiltinSkillSource, IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
 import { IUserFileSkillSource, UserFileSkillSource } from '#/app/skillCatalog/userFileSkillSource';
 import { InMemorySkillDiscovery } from '#/app/skillCatalog/inMemorySkillDiscovery';
@@ -168,15 +167,10 @@ function makeHost(
   pluginReloadEmitter?: Emitter<ReloadSummary>,
 ) {
   const config = configStub();
-  const runtimeOptions = {
-    _serviceBrand: undefined,
-    explicitDirs,
-  } as unknown as ISkillCatalogRuntimeOptions;
   const host = createScopedTestHost([
     stubPair(ISkillDiscovery, store),
-    stubPair(IBootstrapService, bootstrapStub),
+    stubPair(IBootstrapService, stubBootstrap('/home', {}, { skillDirs: explicitDirs })),
     stubPair(IConfigService, config),
-    stubPair(ISkillCatalogRuntimeOptions, runtimeOptions),
     stubPair(IPluginService, pluginStub(pluginRoots, pluginReloadEmitter)),
     stubPair(IHostFsWatchService, fsWatchStub()),
   ]);
@@ -383,15 +377,11 @@ describe('WorkspaceSkillCatalogService', () => {
     } as unknown as IConfigService;
     const store = new InMemorySkillDiscovery();
     store.setExtraSkills([stubSkill('extra-only', { description: 'from extra', source: 'extra' })]);
-    const runtimeOptions = {
-      _serviceBrand: undefined,
-    } as unknown as ISkillCatalogRuntimeOptions;
     const ws = workspaceContextStub('/work');
     const host = createScopedTestHost([
       stubPair(ISkillDiscovery, store),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, config),
-      stubPair(ISkillCatalogRuntimeOptions, runtimeOptions),
       stubPair(IPluginService, pluginStub()),
       stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
@@ -423,15 +413,11 @@ describe('WorkspaceSkillCatalogService', () => {
     }
     const store = new CountingDiscovery();
     const config = configStub();
-    const runtimeOptions = {
-      _serviceBrand: undefined,
-    } as unknown as ISkillCatalogRuntimeOptions;
     const ws = workspaceContextStub('/work');
     const host = createScopedTestHost([
       stubPair(ISkillDiscovery, store),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, config),
-      stubPair(ISkillCatalogRuntimeOptions, runtimeOptions),
       stubPair(IPluginService, pluginStub()),
       stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
@@ -646,9 +632,6 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(ISkillDiscovery, new InMemorySkillDiscovery()),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
-      stubPair(ISkillCatalogRuntimeOptions, {
-        _serviceBrand: undefined,
-      } as unknown as ISkillCatalogRuntimeOptions),
       stubPair(IPluginService, pluginStub()),
       stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
@@ -706,9 +689,6 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(ISkillDiscovery, new InMemorySkillDiscovery()),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
-      stubPair(ISkillCatalogRuntimeOptions, {
-        _serviceBrand: undefined,
-      } as unknown as ISkillCatalogRuntimeOptions),
       stubPair(IPluginService, pluginService),
       stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
@@ -765,9 +745,6 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(ISkillDiscovery, store),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IConfigService, configStub()),
-      stubPair(ISkillCatalogRuntimeOptions, {
-        _serviceBrand: undefined,
-      } as unknown as ISkillCatalogRuntimeOptions),
       stubPair(IProviderService, stubProviderService()),
       stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
@@ -821,9 +798,6 @@ describe('WorkspaceSkillCatalogService', () => {
     const host = createScopedTestHost([
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
-      stubPair(ISkillCatalogRuntimeOptions, {
-        _serviceBrand: undefined,
-      } as unknown as ISkillCatalogRuntimeOptions),
       stubPair(IPluginService, pluginStub()),
       stubPair(ILogService, stubLog()),
       stubPair(ISkillDiscovery, new FileSkillDiscovery(stubLog())),

@@ -1,18 +1,18 @@
 /**
  * `workspaceSkillCatalog` domain — explicit `ISkillSource` producer.
  *
- * Mirrors v1 SDK `skillDirs`: when runtime options provide `explicitDirs`, this
- * source contributes those directories as the user source, resolving relative
- * paths against the workspace root. When no explicit dirs are configured,
- * it yields nothing so default user / project discovery remains active. Bound
- * at Workspace scope so every session of the handler shares one scan.
+ * Mirrors v1 SDK `skillDirs`: when the host invocation args provide
+ * `skillDirs`, this source contributes those directories as the user source,
+ * resolving relative paths against the workspace root. When no explicit dirs
+ * are configured, it yields nothing so default user / project discovery
+ * remains active. Bound at Workspace scope so every session of the handler
+ * shares one scan.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { configuredRoots } from '#/app/skillCatalog/skillRoots';
-import { ISkillCatalogRuntimeOptions } from '#/app/skillCatalog/skillCatalogRuntimeOptions';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import {
   SKILL_SOURCE_PRIORITY,
@@ -36,13 +36,12 @@ export class ExplicitFileSkillSource implements IExplicitFileSkillSource {
 
   constructor(
     @ISkillDiscovery private readonly discovery: ISkillDiscovery,
-    @ISkillCatalogRuntimeOptions private readonly runtimeOptions: ISkillCatalogRuntimeOptions,
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {}
 
   async load(): Promise<SkillContribution> {
-    const explicitDirs = this.runtimeOptions.explicitDirs ?? [];
+    const explicitDirs = this.bootstrap.args.skillDirs ?? [];
     if (explicitDirs.length === 0) {
       return { skills: [] };
     }

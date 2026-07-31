@@ -28,7 +28,6 @@ import { join } from 'node:path';
 import {
   IAgentLifecycleService,
   getLiveSessionById,
-  ISkillCatalogRuntimeOptions,
 } from '@moonshot-ai/agent-core-v2';
 import {
   activateSkillResultSchema,
@@ -313,7 +312,7 @@ describe('server-v2 /api/v1 skills', () => {
         port: 0,
         homeDir: home,
         logLevel: 'silent',
-        seeds: [[ISkillCatalogRuntimeOptions, { _serviceBrand: undefined, explicitDirs: [explicitDir] }]] as never,
+        skillDirs: [explicitDir],
       });
       base = `http://127.0.0.1:${server.port}`;
 

@@ -81,7 +81,6 @@ import {
   ISessionIndex,
   ISessionMetadata,
   ISessionSkillCatalog,
-  ISkillCatalogRuntimeOptions,
   ISkillDiscovery,
   IWorkspaceService,
   InMemorySkillCatalog,
@@ -342,11 +341,10 @@ async function listWorkspaceSkillsForRoot(
   const plugins = core.accessor.get(IPluginService);
   const config = core.accessor.get(IConfigService);
   await config.ready;
-  const runtimeOptions = core.accessor.get(ISkillCatalogRuntimeOptions);
   const extraSkillDirs = config.get<ExtraSkillDirsConfig>(EXTRA_SKILL_DIRS_SECTION) ?? [];
   const mergeAllAvailableSkills =
     config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
-  const explicitDirs = runtimeOptions.explicitDirs ?? [];
+  const explicitDirs = bootstrap.args.skillDirs ?? [];
   const useExplicitDirs = explicitDirs.length > 0;
   const rootOptions = { mergeAllAvailableSkills };
 

@@ -37,13 +37,11 @@ import {
   ITelemetryService,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
-  agentCatalogRuntimeOptionsSeed,
   applyPrintModeConfigDefaults,
   bootstrap,
   createCloudAppender,
   ensureMainAgent,
   resumeSessionById,
-  hostRequestHeadersSeed,
   logSeed,
   parseAgentFileText,
   resolveAgentPath,
@@ -51,7 +49,6 @@ import {
   resolveKimiHome,
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
-  skillCatalogRuntimeOptionsSeed,
   type DomainEvent,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
@@ -130,18 +127,24 @@ export async function runV2Print(
   const identity = createKimiCodeHostIdentity(version);
   const hostHeaders = createKimiDefaultHeaders({ homeDir, ...identity });
 
-  const { app } = bootstrap({ homeDir, clientIdentity: identity }, [
-    ...logSeed(logging),
-    ...hostRequestHeadersSeed(hostHeaders),
-    // `--skillsDir` (v1 print parity): explicit skill dirs replace default
-    // user / project discovery for this process.
-    ...skillCatalogRuntimeOptionsSeed(opts.skillsDirs),
-    // `--agent-file`: explicit agent definition files, registered with the
-    // highest-precedence source for this process. Passed through unresolved —
-    // the engine expands `~` and resolves relative paths against the session
-    // workDir (mirroring `--skills-dir`).
-    ...agentCatalogRuntimeOptionsSeed(opts.agentFiles),
-  ]);
+  const { app } = bootstrap(
+    {
+      homeDir,
+      clientIdentity: identity,
+      args: {
+        requestHeaders: hostHeaders,
+        // `--skillsDir` (v1 print parity): explicit skill dirs replace default
+        // user / project discovery for this process.
+        skillDirs: opts.skillsDirs,
+        // `--agent-file`: explicit agent definition files, registered with the
+        // highest-precedence source for this process. Passed through unresolved —
+        // the engine expands `~` and resolves relative paths against the session
+        // workDir (mirroring `--skills-dir`).
+        agentFiles: opts.agentFiles,
+      },
+    },
+    [...logSeed(logging)],
+  );
   const auth = app.accessor.get(IOAuthToolkit);
 
   const configService = app.accessor.get(IConfigService);

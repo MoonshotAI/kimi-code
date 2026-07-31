@@ -19,7 +19,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
 import type { ILogService } from '#/_base/log/log';
-import type { IAgentCatalogRuntimeOptions } from '#/workspace/workspaceAgentProfileLoader/agentCatalogRuntimeOptions';
 import { EXTRA_AGENT_DIRS_SECTION } from '#/workspace/workspaceAgentProfileLoader/configSection';
 import { UserAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoaderService';
 import type { PluginAgentRoot } from '#/app/plugin/types';
@@ -252,15 +251,11 @@ function makeStack(fixture: Fixture, opts?: StackOptions) {
   const config = configStub();
   if (opts?.extraAgentDirs !== undefined) config.setExtraAgentDirs(opts.extraAgentDirs);
   const bootstrap: IBootstrapService = {
-    ...stubBootstrap(fixture.homeDir),
+    ...stubBootstrap(fixture.homeDir, {}, { agentFiles: opts?.explicitFiles }),
     osHomeDir: fixture.osHomeDir,
   };
   const hostFs = opts?.hostFs ?? new HostFileSystem();
   const workspaceContext = workspaceContextStub(fixture.workDir);
-  const runtimeOptions = {
-    _serviceBrand: undefined,
-    explicitFiles: opts?.explicitFiles,
-  } as unknown as IAgentCatalogRuntimeOptions;
 
   const registry = new AgentProfileRegistryService();
   const builtinLoader = new BuiltinAgentProfileLoaderService(registry);
@@ -298,7 +293,6 @@ function makeStack(fixture: Fixture, opts?: StackOptions) {
     registry,
   );
   const explicitLoader = new ExplicitAgentProfileLoaderService(
-    runtimeOptions,
     workspaceContext,
     bootstrap,
     hostFs,

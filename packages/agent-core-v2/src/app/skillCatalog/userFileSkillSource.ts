@@ -17,7 +17,6 @@ import {
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   type MergeAllAvailableSkillsConfig,
 } from './configSection';
-import { ISkillCatalogRuntimeOptions } from './skillCatalogRuntimeOptions';
 import { ISkillDiscovery } from './skillDiscovery';
 import { userRoots } from './skillRoots';
 import { SKILL_SOURCE_PRIORITY, type ISkillSource, type SkillContribution } from './skillSource';
@@ -41,7 +40,6 @@ export class UserFileSkillSource extends Disposable implements IUserFileSkillSou
     @ISkillDiscovery private readonly discovery: ISkillDiscovery,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
-    @ISkillCatalogRuntimeOptions private readonly runtimeOptions: ISkillCatalogRuntimeOptions,
   ) {
     super();
     this._register(
@@ -52,7 +50,7 @@ export class UserFileSkillSource extends Disposable implements IUserFileSkillSou
   }
 
   async load(): Promise<SkillContribution> {
-    if ((this.runtimeOptions.explicitDirs?.length ?? 0) > 0) {
+    if ((this.bootstrap.args.skillDirs?.length ?? 0) > 0) {
       return { skills: [] };
     }
     await this.config.ready;
