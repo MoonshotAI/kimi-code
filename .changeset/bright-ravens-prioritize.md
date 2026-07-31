@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Add the `/priority` slash command to set priority service independently for the main agent and subagents. Run `/priority` to configure it.
+Add `/priority` to configure provider priority service independently for the main agent and subagents, with active tiers shown in model status displays. Run `/priority` to configure it.

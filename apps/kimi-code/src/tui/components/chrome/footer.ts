@@ -2,7 +2,7 @@
  * Footer/status bar — multi-line status display at the bottom of the TUI.
  *
  * Layout:
- *   Line 1: [yolo] [plan] <model> <cwd>  <git-badge>  <shortcut hints>
+ *   Line 1: [yolo] [plan] <model> [thinking] [priority] <cwd>  <git-badge>  <shortcut hints>
  *   Line 2: context: N% (tokens/max)
  */
 
@@ -400,7 +400,8 @@ export class FooterComponent implements Component {
             ? ` thinking: ${effort}`
             : ' thinking'
           : '';
-      const modelLabel = `${model}${thinkingLabel}`;
+      const priorityLabel = state.priority === true ? ' priority' : '';
+      const modelLabel = `${model}${thinkingLabel}${priorityLabel}`;
       let renderedModelLabel = chalk.hex(colors.text)(modelLabel);
       if (isRainbowDancing()) {
         renderedModelLabel = renderDanceFooterModel(modelLabel);

@@ -23,6 +23,7 @@ export interface AgentStatusUpdatedEvent {
   readonly type: 'agent.status.updated';
   readonly model?: string;
   readonly thinkingEffort?: string;
+  readonly priority?: boolean;
   readonly contextTokens?: number;
   readonly maxContextTokens?: number;
   readonly contextUsage?: number;

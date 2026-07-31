@@ -15,6 +15,7 @@ describe('status panel report lines', () => {
       sessionId: 'ses-1',
       sessionTitle: 'Implement status',
       thinkingEffort: 'on',
+      priority: false,
       permissionMode: 'manual',
       planMode: false,
       contextUsage: 0.25,
@@ -31,6 +32,7 @@ describe('status panel report lines', () => {
       status: {
         model: 'k2',
         thinkingEffort: 'high',
+        priority: true,
         permission: 'auto',
         planMode: true,
         contextTokens: 3000,
@@ -52,7 +54,7 @@ describe('status panel report lines', () => {
 
     const output = lines.join('\n');
     expect(output).toContain('>_ Kimi Code (v1.2.3)');
-    expect(output).toContain('Model        Kimi K2 (thinking high)');
+    expect(output).toContain('Model        Kimi K2 (thinking high) priority');
     expect(output).toContain('Directory    /tmp/project');
     expect(output).toContain('Permissions  auto');
     expect(output).toContain('Plan mode    on');
@@ -77,6 +79,7 @@ describe('status panel report lines', () => {
       sessionId: 'ses-1',
       sessionTitle: null,
       thinkingEffort: 'off',
+      priority: false,
       permissionMode: 'manual',
       planMode: false,
       contextUsage: 0,
@@ -115,6 +118,7 @@ describe('status panel report lines', () => {
       sessionId: '',
       sessionTitle: null,
       thinkingEffort: 'off',
+      priority: false,
       permissionMode: 'manual',
       planMode: false,
       contextUsage: 0,

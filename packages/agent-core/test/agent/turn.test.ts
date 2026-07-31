@@ -1795,6 +1795,18 @@ describe('Agent turn flow', () => {
     expect(configPayload?.['serviceTier']).toBe('priority');
   });
 
+  it('publishes the active priority tier in agent status updates', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.agent.config.update({ priority: true });
+
+    const status = ctx.allEvents.findLast(
+      (entry) => entry.event === 'agent.status.updated',
+    );
+    expect(status?.args).toMatchObject({ priority: true });
+  });
+
   it('logs changed LLM config when same-size system prompt content changes', async () => {
     const { logger, entries } = captureLogs();
     const ctx = testAgent({ log: logger });

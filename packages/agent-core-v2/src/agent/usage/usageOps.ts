@@ -31,6 +31,7 @@ declare module '#/app/event/eventBus' {
       planMode?: boolean;
       model?: string;
       thinkingEffort?: string;
+      priority?: boolean;
       maxContextTokens?: number;
       contextTokens?: number;
     };

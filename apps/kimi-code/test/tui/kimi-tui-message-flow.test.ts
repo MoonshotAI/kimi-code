@@ -3529,6 +3529,99 @@ command = "vim"
     });
   });
 
+  it('shows priority beside the model on a single subagent card', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_agent_priority',
+        name: 'Agent',
+        args: { description: 'Inspect the project' },
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_agent_priority',
+        subagentId: 'agent-priority',
+        subagentName: 'explore',
+        description: 'Inspect the project',
+        runInBackground: false,
+      } as Event,
+      sendQueued,
+    );
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'agent-priority',
+        sessionId: 'ses-1',
+        model: 'k2',
+        priority: true,
+      } as Event,
+      sendQueued,
+    );
+
+    expect(stripSgr(renderTranscript(driver))).toContain('moonshot-v1 priority');
+  });
+
+  it('shows priority beside the model in the AgentSwarm header', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_swarm_priority',
+        name: 'AgentSwarm',
+        args: {
+          description: 'Review changed files',
+          prompt_template: 'Review {{item}}',
+          items: ['src/a.ts'],
+        },
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_swarm_priority',
+        subagentId: 'agent-priority',
+        subagentName: 'coder',
+        description: 'Review changed files #1 (coder)',
+        swarmIndex: 1,
+        runInBackground: false,
+      } as Event,
+      sendQueued,
+    );
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'agent-priority',
+        sessionId: 'ses-1',
+        model: 'k2',
+        priority: true,
+      } as Event,
+      sendQueued,
+    );
+
+    expect(stripSgr(renderTranscript(driver))).toContain('moonshot-v1 priority');
+  });
+
   it('renders AgentSwarm progress in the transcript instead of the tool-card body', async () => {
     const { driver } = await makeDriver();
     const sendQueued = vi.fn();
@@ -4030,6 +4123,7 @@ command = "vim"
       getStatus: vi.fn(async () => ({
         model: 'k2',
         thinkingEffort: 'high',
+        priority: true,
         permission: 'auto',
         planMode: true,
         contextTokens: 25,
@@ -4050,6 +4144,7 @@ command = "vim"
       expect(output).toContain('>_ Kimi Code');
       expect(output).toContain('Model');
       expect(output).toContain('thinking high');
+      expect(output).toContain('thinking high) priority');
       expect(output).toContain('Permissions  auto');
       expect(output).toContain('Plan mode    on');
       expect(output).toContain('Context window');

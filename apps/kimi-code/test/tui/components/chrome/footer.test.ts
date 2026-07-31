@@ -143,6 +143,31 @@ describe('FooterComponent', () => {
     expect(rendered).toContain('thinking');
     expect(rendered).not.toContain('thinking:high');
   });
+
+  it('shows priority immediately after the model when thinking is off', () => {
+    const footer = new FooterComponent({ ...appState, priority: true });
+
+    expect(footer.render(120).join('\n')).toContain('kimi-k2 priority');
+  });
+
+  it('shows priority immediately after thinking when an effort is active', () => {
+    const effortModel: ModelAlias = {
+      provider: 'managed:kimi-code',
+      model: 'kimi-k2',
+      maxContextSize: 262144,
+      supportEfforts: ['low', 'high', 'max'],
+      defaultEffort: 'high',
+    };
+    const state: AppState = {
+      ...appState,
+      thinkingEffort: 'high',
+      priority: true,
+      availableModels: { 'kimi-k2': effortModel },
+    };
+    const footer = new FooterComponent(state);
+
+    expect(footer.render(120).join('\n')).toContain('kimi-k2 thinking: high priority');
+  });
 });
 
 describe('FooterComponent overrides', () => {

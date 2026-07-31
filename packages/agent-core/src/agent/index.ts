@@ -753,6 +753,7 @@ export class Agent {
       type: 'agent.status.updated',
       model,
       thinkingEffort: includeThinkingEffort ? this.config.thinkingEffort : undefined,
+      priority: this.config.priority ? true : undefined,
       contextTokens,
       maxContextTokens,
       contextUsage,

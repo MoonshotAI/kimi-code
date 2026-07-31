@@ -105,11 +105,12 @@ const USAGE = {
   total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
 };
 
-function bindStatusServices(agent: FakeAgentHandle, model: string): void {
+function bindStatusServices(agent: FakeAgentHandle, model: string, priority = false): void {
   agent.set(IAgentContextSizeService, { get: () => ({ size: 10 }) });
   agent.set(IAgentProfileService, {
     getModel: () => model,
     getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
+    data: () => ({ priority }),
   });
   agent.set(IAgentUsageService, { status: () => USAGE });
   agent.set(IWireService, {
@@ -127,7 +128,7 @@ function bindStatusServices(agent: FakeAgentHandle, model: string): void {
 describe('SessionEventWiring status snapshot fold', () => {
   it('folds a consistent usage + context + model snapshot into every status event', () => {
     const sub = new FakeAgentHandle('agent-1');
-    bindStatusServices(sub, 'sub-model');
+    bindStatusServices(sub, 'sub-model', true);
     const { sink, events } = collectingSink();
     const wiring = new SessionEventWiring(makeSession([sub]), sink);
     try {
@@ -150,6 +151,7 @@ describe('SessionEventWiring status snapshot fold', () => {
       contextTokens: 10,
       maxContextTokens: 128_000,
       model: 'sub-model',
+      priority: true,
     });
     expect(events[1]).toMatchObject({ type: 'assistant.delta', delta: 'Hi' });
     expect(events[1]).not.toHaveProperty('model');

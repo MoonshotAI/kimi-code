@@ -676,6 +676,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       thinkingEffort: includeThinkingEffort
         ? this.getEffectiveThinkingLevel()
         : undefined,
+      priority: this.profileState.priority ? true : undefined,
       maxContextTokens:
         this.getModelCapabilities().max_input_tokens ??
         this.getModelCapabilities().max_context_tokens,

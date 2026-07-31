@@ -17,7 +17,7 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/provider` | — | Open the interactive provider manager to view, add, and remove configured providers. See [Platforms & Models — `/provider` and provider management](../configuration/providers.md#provider-—-interactive-provider-management) | Yes |
 | `/model` | — | Switch the LLM model used in the current session | Yes |
 | `/secondary_model` | — | Configure the secondary model used by subagents (writes the [`[secondary_model]`](../configuration/config-files.md#secondary-model) section and applies to the current session immediately). Requires the `secondary-model` experiment | Yes |
-| `/priority` | — | Open a picker to configure the provider's priority service tier independently for the main agent and subagents (main only, subagents only, both, or neither). Both are off by default, and no secondary model is required. Priority may cost more; its price, speed, and reliability effects depend on the provider | Yes |
+| `/priority` | — | Open a picker to configure the provider's priority service tier independently for the main agent and subagents (main only, subagents only, both, or neither). Both are off by default, and no secondary model is required. Active priority tiers appear after the model and thinking effort in main-agent and subagent status displays. Priority may cost more; its price, speed, and reliability effects depend on the provider | Yes |
 | `/settings` | `/config` | Open the settings panel inside the TUI | Yes |
 | `/experiments` | `/experimental` | Open the experimental feature panel | Yes |
 | `/permission` | — | Select a permission mode | Yes |

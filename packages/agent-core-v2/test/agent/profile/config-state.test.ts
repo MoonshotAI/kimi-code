@@ -106,7 +106,7 @@ describe('ConfigState model capabilities', () => {
         },
       },
     };
-    profile.update({ modelAlias: 'kimi-code/kimi-for-coding' });
+    profile.update({ modelAlias: 'kimi-code/kimi-for-coding', priority: true });
     const before = ctx.allEvents.filter((entry) => entry.event === 'agent.status.updated').length;
 
     profile.republishStatus();
@@ -115,6 +115,7 @@ describe('ConfigState model capabilities', () => {
     expect(statuses).toHaveLength(before + 1);
     expect(statuses.at(-1)?.args).toMatchObject({
       model: 'kimi-code/kimi-for-coding',
+      priority: true,
       maxContextTokens: 1_000_000,
     });
   });

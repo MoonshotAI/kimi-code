@@ -40,6 +40,15 @@ export interface SubAgentEventHandlerDependencies {
   readonly syncBackgroundAgentBadge: () => void;
 }
 
+function subagentModelDisplay(
+  event: Extract<Event, { type: 'agent.status.updated' }>,
+  models: SessionEventHost['state']['appState']['availableModels'],
+): string | undefined {
+  if (event.model === undefined) return undefined;
+  const display = modelDisplayName(event.model, models[event.model]);
+  return event.priority === true ? `${display} priority` : display;
+}
+
 function renderedRowsAfterChild(
   children: readonly Component[],
   child: Component,
@@ -130,10 +139,10 @@ export class SubAgentEventHandler {
         // after spawn); surface it on the subagent card. `modelDisplayName`
         // falls back to the alias itself when the entry is unknown (e.g. the
         // synthesized `__secondary__` derived entry is missing).
-        modelDisplay:
-          event.model === undefined
-            ? undefined
-            : modelDisplayName(event.model, this.host.state.appState.availableModels[event.model]),
+        modelDisplay: subagentModelDisplay(
+          event,
+          this.host.state.appState.availableModels,
+        ),
       });
     }
     return true;
@@ -518,7 +527,7 @@ export class SubAgentEventHandler {
       // to the alias itself when the entry is unknown (e.g. the synthesized
       // `__secondary__` derived entry is missing).
       progress.setModelDisplay(
-        modelDisplayName(event.model, this.host.state.appState.availableModels[event.model]),
+        subagentModelDisplay(event, this.host.state.appState.availableModels) ?? event.model,
       );
     }
   }

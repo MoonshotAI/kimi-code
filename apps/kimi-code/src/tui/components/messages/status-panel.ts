@@ -42,6 +42,7 @@ export interface StatusReportOptions {
   readonly sessionId: string;
   readonly sessionTitle: string | null;
   readonly thinkingEffort: ThinkingEffort;
+  readonly priority: boolean;
   readonly permissionMode: PermissionMode;
   readonly planMode: boolean;
   readonly contextUsage: number;
@@ -67,7 +68,9 @@ function formatModelStatus(options: StatusReportOptions): string {
   if (model.trim().length === 0) return 'not set';
 
   const effort = options.status?.thinkingEffort ?? options.thinkingEffort;
-  return `${displayModelName(model, options.availableModels)} (thinking ${effort})`;
+  const priority = options.status?.priority ?? options.priority;
+  const priorityLabel = priority ? ' priority' : '';
+  return `${displayModelName(model, options.availableModels)} (thinking ${effort})${priorityLabel}`;
 }
 
 function addFieldRows(
