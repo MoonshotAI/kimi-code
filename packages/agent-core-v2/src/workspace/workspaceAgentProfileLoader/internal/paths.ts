@@ -1,10 +1,9 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — shared path primitives for agent-file
+ * `workspaceAgentProfileLoader` domain — shared path primitives for agent-file
  * discovery.
  *
- * `~` expansion, base-relative resolution, and `hostFs` type probes used by
- * the root resolvers, the directory walker, and the explicit-file source.
- * Callers pick the resolution base: discovery roots resolve against the
+ * `~` expansion, base-relative resolution, and `hostFs` type probes. Callers
+ * pick the resolution base: discovery roots resolve against the
  * project root, explicit files against the session workDir. Pure helpers; no
  * scoped state.
  */

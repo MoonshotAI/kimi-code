@@ -1,5 +1,5 @@
 /**
- * `mcpCore` domain (L2) — `McpConnectionManager`, the workspace-shared MCP
+ * `mcpCore` domain — `McpConnectionManager`, the workspace-shared MCP
  * server connection orchestrator.
  *
  * Owns the configured MCP servers and their runtime clients: connects
@@ -7,8 +7,6 @@
  * provider when tokens are present, flips failing servers into `needs-auth`
  * on 401, and reconnects after authentication. Applies per-server settings
  * over the configured defaults and emits status changes to subscribers.
- * Constructed by `WorkspaceMcpService` and shared by every session of the
- * workspace handler.
  */
 
 import { ErrorCodes, Error2 } from '#/errors';
@@ -60,11 +58,6 @@ const defaultLog: Logger = {
   child: () => defaultLog,
 };
 
-/**
- * Global default timeouts applied when a server entry does not set its own
- * `startupTimeoutMs` / `toolTimeoutMs`. Resolved at each (re)connect, not at
- * construction, so late-ready or changed configuration is picked up.
- */
 export interface McpDefaultTimeouts {
   readonly startupTimeoutMs?: number;
   readonly toolTimeoutMs?: number;
@@ -122,7 +115,6 @@ export class McpConnectionManager {
     return entry !== undefined ? toPublicEntry(entry) : undefined;
   }
 
-  /** The config an entry was last connected with, for idempotence checks. */
   configOf(name: string): McpServerConfig | undefined {
     return this.entries.get(name)?.config;
   }

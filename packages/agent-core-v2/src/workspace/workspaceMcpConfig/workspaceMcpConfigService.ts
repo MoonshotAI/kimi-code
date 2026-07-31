@@ -1,5 +1,5 @@
 /**
- * `workspaceMcpConfig` domain (L5) — `IWorkspaceMcpConfigService`
+ * `workspaceMcpConfig` domain — `IWorkspaceMcpConfigService`
  * implementation.
  *
  * Resolves the handler's effective MCP server set from exactly two sources —
@@ -41,7 +41,7 @@ import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 
-import { loadMcpServers, resolveMcpJsonPaths } from './config-loader';
+import { loadMcpServers, resolveMcpJsonPaths } from './internal/config-loader';
 import {
   IWorkspaceMcpConfigService,
   type McpServersChange,
@@ -54,13 +54,9 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   declare readonly _serviceBrand: undefined;
 
   readonly ready: Promise<void>;
-  /** Serializes watch/plugin reloads against each other. */
   private mutationTail: Promise<void> = Promise.resolve();
-  /** File-sourced server configs by name (the winning source on collisions). */
   private fileServers = new Map<string, McpServerConfig>();
-  /** Plugin-sourced server configs by name. */
   private pluginServers = new Map<string, McpServerConfig>();
-  /** The last published merged view; replaced wholesale on every change. */
   private current: Readonly<Record<string, McpServerConfig>> = {};
   private readonly watchDebounce = this._register(new TimeoutTimer());
   private readonly changeEmitter = this._register(new Emitter<McpServersChange>());
@@ -132,7 +128,6 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     this.current = this.merged();
   }
 
-  /** The effective set: file config wins on a name collision. */
   private merged(): Record<string, McpServerConfig> {
     return { ...Object.fromEntries(this.pluginServers), ...Object.fromEntries(this.fileServers) };
   }
@@ -143,9 +138,6 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
       cwd: this.workspace.cwd,
       homeDir: this.bootstrap.homeDir,
     });
-    // The user file's parent (the kimi home) always exists, so a direct
-    // watch is reliable; the project candidates' parents may not exist yet,
-    // so the project root is watched recursively and pruned to them.
     this.watchPaths([paths.user]);
     const projectRoot = dirname(paths.projectRoot);
     const handle = this.fsWatch.watch(projectRoot, {
@@ -202,12 +194,6 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     });
   }
 
-  /**
-   * Recomputes the merged view against the last published snapshot and fires
-   * the fingerprint diff; a change that leaves the effective set untouched
-   * (e.g. a vanished source shadowed by an identical same-named entry)
-   * produces no event.
-   */
   private publishIfChanged(): void {
     const next = this.merged();
     const upsert: Record<string, McpServerConfig> = {};

@@ -1,5 +1,5 @@
 /**
- * `telemetry` domain (L1) — `CloudAppender`, an `ITelemetryAppender` that
+ * `telemetry` domain — `CloudAppender`, an `ITelemetryAppender` that
  * batches events, drops non-primitive properties, redacts PII from string
  * values, enriches events with common context, and posts them to the
  * telemetry endpoint through `CloudTransport`, which persists failed events

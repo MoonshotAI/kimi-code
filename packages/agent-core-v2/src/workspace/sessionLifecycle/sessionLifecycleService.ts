@@ -1,35 +1,25 @@
 /**
- * `sessionLifecycle` domain (L6) — `ISessionLifecycleService` implementation.
+ * `sessionLifecycle` domain — `ISessionLifecycleService` implementation.
  *
  * Owns the registry of THIS handler's open Session child scopes, creating
  * them through the DI scope tree (children of the handler's Workspace
  * scope) and seeding each with its identity, storage addressing derived
- * from the handler's `workspaceContext.persistenceScope`, and a per-session
- * `sessionLifecycleHooks` slots instance it runs around create/close,
+ * from the handler's persistence scope, and a per-session lifecycle-hooks
+ * slots instance it runs around create/close,
  * tearing sessions down on close/archive — archiving flags the session's
- * `sessionMetadata`, removes its `agentLifecycle` agents, restoring clears
- * the archived flag, and broadcasts through `event`; session start and
- * resume failures are reported through `telemetry`. Each Session scope
+ * metadata, removes its agents, restoring clears
+ * the archived flag, and broadcasts the transition; session start and
+ * resume failures are reported through telemetry. Each Session scope
  * receives a telemetry view bound to its session id, while failures before
  * a scope is available use an ephemeral context view. Closing a session
  * never touches the handler itself.
  * Every Session scope is also seeded with the handler's shared workspace
- * resources as pure-data read views (the injection contracts):
- * `sessionSkillCatalogData` (the merged skill catalog),
- * `sessionAgentProfileCatalogSeed` (ONLY the handler's workspace id — the
- * Session-scope catalog reads the App-scope agent-profile registry directly
- * and picks out the contributions tagged with this key),
- * `sessionInstructionsProvider` (the AGENTS.md snapshot),
- * `sessionMcpHandle` (the one shared MCP connection manager),
- * `sessionWorkspaceInfo` (the shared additional-directory set — caller
- * `additionalDirs` options union into it at materialization; the
- * `workspaceDirs` service owns persistence and the `local.toml` watch), and
- * `sessionToolPolicyGate` (the workspace's os-level tool veto) — discovery,
+ * resources as pure-data read views (the injection contracts) — discovery,
  * watching and connecting all live on the Workspace-scope services; session
  * consumers read the seeds and refresh off their change events.
  * Materializes the session's initial metadata on
- * creation by resolving `sessionMetadata`. Bound at Workspace scope.
- * Persisted sessions are discovered through the `sessionIndex` read model.
+ * creation. Bound at Workspace scope.
+ * Persisted sessions are discovered through the session-index read model.
  * On create / fork the
  * session is also appended to the shared `session_index.jsonl` so v1 clients
  * (TUI, export) can discover sessions created by the v2 engine; the entry is
@@ -135,7 +125,7 @@ import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
 import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceToolPolicy';
 
-import { agentScopeOf, sessionDirOf, sessionScopeOf } from './addressing';
+import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
 import {
   type CreateChildSessionOptions,
   type CreateSessionOptions,
@@ -222,12 +212,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         const planAgent = main ?? (await ensureMainAgent(handle));
         await planAgent.accessor.get(IAgentPlanService).enter();
       }
-      // Index the session under the handler's workspace id (the same one
-      // seeding the session's storage scope), not a recomputed
-      // `encodeWorkDirKey` — with root folding the two can diverge.
       await this.appendSessionIndexEntry(sessionId, opts.workDir);
     } catch (error) {
-      // Roll back ONLY the session directory — the handler stays live.
       const sessionDir = handle.accessor.get(ISessionContext).sessionDir;
       this.sessions.delete(sessionId);
       await this.drainAgents(handle).catch(() => {});
@@ -244,12 +230,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const sessionScope = sessionScopeOf(this.handlerScope, opts.sessionId);
     const sessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, opts.sessionId);
     const metaScope = sessionScope;
-    // Caller-provided dirs join the handler's SHARED in-memory set (union
-    // across all sessions of this workspace, §6.1) — the workspace dirs
-    // service owns the local.toml set and its watch; sessions read the
-    // combined view through the `ISessionWorkspaceInfo` seed below. Await
-    // the initial local.toml load first so the seed starts from the
-    // assembled set.
     await this.workspaceDirs.ready;
     await this.workspaceDirs.mergeAdditionalDirs(opts.workDir, opts.additionalDirs ?? []);
     const ctx: ISessionContext = {
@@ -276,10 +256,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           ...sessionContextSeed(ctx),
           ...sessionLifecycleHooksSeed(hooks),
           [ITelemetryService, this.telemetry.withContext({ sessionId: opts.sessionId })],
-          // Workspace resource seeds (the §3.5 injection contracts): the
-          // handler's shared skill / agent-profile catalogs, AGENTS.md
-          // snapshot, and MCP manager reach the session as pure-data read
-          // views; refreshes fan out through their change events.
           ...sessionSkillCatalogDataSeed(this.skillCatalog.sessionData()),
           ...sessionAgentProfileCatalogSeed({
             _serviceBrand: undefined,
@@ -289,9 +265,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           ...sessionMcpHandleSeed(this.mcp.sessionHandle()),
           ...sessionWorkspaceInfoSeed(this.workspaceDirs.sessionInfo()),
           ...sessionToolPolicyGateSeed(this.toolPolicy.sessionGate()),
-          // The handler-shared Workspace-scope process runner shadows the
-          // Session-scope default registration in every session of this
-          // workspace (same seed pattern as the contracts above).
           [ISessionProcessRunner, this.processRunner],
         ],
       },
@@ -310,10 +283,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await this.mcp.ready;
     } catch (error) {
       handle.dispose();
-      // Re-arm the explicit agent-profile loader after a fatal rejection:
-      // its `ready` tracks the latest load pass, so without a reload the
-      // handler would keep rejecting every later session create even after
-      // the user fixes the offending agent file.
       void this.explicitAgentProfileLoader.reload().catch(() => undefined);
       throw error;
     }
@@ -321,14 +290,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return handle;
   }
 
-  /**
-   * Append one entry to the v1-compatible `session_index.jsonl`. The entry's
-   * `sessionDir` derives from THIS handler's persistence scope, so the bucket
-   * is structurally the same workspace id the session was materialized with
-   * (possibly folded from an alias spelling) — recomputing
-   * `encodeWorkDirKey(workDir)` here could mint a different bucket and orphan
-   * the session for v1 readers.
-   */
   private async appendSessionIndexEntry(sessionId: string, workDir: string): Promise<void> {
     const sessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, sessionId);
     this.appendLogStore.append('', 'session_index.jsonl', {
@@ -381,7 +342,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (live !== undefined) return live;
 
     const summary = await this.index.get(sessionId);
-    // A handler resumes only its own workspace's sessions.
     if (summary === undefined || summary.workspaceId !== this.workspaceId) return undefined;
     const workDir = summary.cwd ?? this.workspaceContext.cwd;
 
@@ -461,17 +421,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       (sourceHandle === undefined && indexSummary === undefined) ||
       (indexSummary !== undefined && indexSummary.workspaceId !== this.workspaceId)
     ) {
-      // Fork never crosses handlers: the source must live in this workspace.
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sourceId} does not exist`);
     }
 
-    // Fork is unconditional — it never rejects on the source being busy.
-    // Copying a live journal yields a torn prefix (a turn cut mid-flight),
-    // which is exactly the state a crash leaves behind, and replay already
-    // normalizes that on every restore. The source keeps running untouched;
-    // the fork simply continues from the copy point. No admission gate, no
-    // quiesce: the only requirement is a durable copy point, which
-    // `copyAgentWire`'s flush provides.
     let targetId: string | undefined;
     let target: ISessionScopeHandle | undefined;
     let targetSessionDir: string | undefined;

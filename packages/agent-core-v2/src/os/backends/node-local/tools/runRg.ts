@@ -1,15 +1,10 @@
 /**
  * `fileTools` domain — shared ripgrep subprocess plumbing.
  *
- * Single place that knows how Glob spawns `rg` through the host
+ * Single place that knows how to spawn `rg` through the host
  * `IHostProcessService`: timeout / abort handling, capped stdout / stderr
  * draining, two-phase kill with process disposal, and the EAGAIN retry
- * predicate. Mode-specific argument building and output parsing stay in the
- * tools themselves.
- *
- * Ported from `workspace/workspaceFs/runRg` onto the os tools: the subprocess now
- * goes through `IHostProcessService.spawn` instead of the session
- * `ISessionProcessRunner.exec`.
+ * predicate.
  */
 
 import type { Readable } from 'node:stream';

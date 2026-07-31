@@ -1,9 +1,9 @@
 /**
- * `kosong/provider` domain (L2) — shared OpenAI-family wire mechanics.
+ * `kosong/provider` domain — shared OpenAI-family wire mechanics.
  *
- * Everything the Chat Completions and Responses bases share: content-part and
- * tool conversion, usage extraction, finish-reason normalization, the
- * capability constants, and the error converter.
+ * The shared pieces: content-part and tool conversion, usage extraction,
+ * finish-reason normalization, the capability constants, and the error
+ * converter.
  *
  * `convertOpenAIError`'s FIRST line is the contract's `throwIfAbortError`
  * guard: a user cancellation (SDK `APIUserAbortError`, bare `AbortError`, the
@@ -120,9 +120,6 @@ export function convertOpenAIError(
   error: unknown,
   convertErrorHook?: (error: unknown) => ChatProviderError | undefined,
 ): ChatProviderError {
-  // Abort guard FIRST: throws (never returns) the standard abort DOMException
-  // for any abort shape, so a user cancellation is never misclassified as a
-  // retryable provider failure.
   throwIfAbortError(error);
   if (error instanceof ChatProviderError) {
     return error;
@@ -246,9 +243,6 @@ export function convertToolMessageContent(
     .filter((p): p is OpenAIContentPart => p !== null);
 }
 
-// ---------------------------------------------------------------------------
-// Capability constants shared by the OpenAI-family base catalogs.
-// ---------------------------------------------------------------------------
 
 export const OPENAI_REASONING_CAPABILITY = Object.freeze({
   image_in: false,

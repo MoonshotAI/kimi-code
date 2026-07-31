@@ -1,5 +1,5 @@
 /**
- * `workspaceDirs` domain (L3) — `IWorkspaceDirs` implementation.
+ * `workspaceDirs` domain — `IWorkspaceDirs` implementation.
  *
  * Holds the handler-shared additional-directory set as
  * `fileDirs ∪ ephemeralDirs`: `fileDirs` is the project-local
@@ -181,14 +181,6 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
     return !sameStringList(before, this.additionalDirs);
   }
 
-  /**
-   * Watch the project root recursively, pruned to the `local.toml`
-   * candidate: watching the file directly never fires when its parent
-   * `.kimi-code` directory does not exist yet either.
-   *
-   * Runs only after `ready` resolves, so `reloadFromDisk` has already
-   * populated `projectRoot` / `configPath`.
-   */
   private watchLocalToml(): void {
     try {
       const handle = this.fsWatch.watch(this.projectRoot, {

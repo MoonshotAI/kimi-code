@@ -125,3 +125,28 @@ export function planProviderRemoval(input: {
     clearDefaultProvider: input.defaultProvider === input.providerId,
   };
 }
+
+/**
+ * Apply the v1 remove-provider cascade to a whole `KimiConfig` in memory (no
+ * persistence): drop the provider entry, every model pointing at it, and the
+ * default pointers when they dangle. Hosts that stage a removal and fold it
+ * into a later atomic write (instead of persisting it immediately) build on
+ * this — the same role the v2 engine's `shapeWithoutProvider` plays for its
+ * own refresh path.
+ */
+export function removeProviderFromConfig(config: KimiConfig, providerId: string): KimiConfig {
+  const plan = planProviderRemoval({
+    providers: config.providers as Record<string, unknown> | undefined,
+    models: config.models as Record<string, Record<string, unknown>> | undefined,
+    defaultModel: config.defaultModel,
+    defaultProvider: config.defaultProvider,
+    providerId,
+  });
+  return {
+    ...config,
+    providers: plan.providers as KimiConfig['providers'],
+    models: plan.models as KimiConfig['models'],
+    defaultModel: plan.clearDefaultModel ? undefined : config.defaultModel,
+    defaultProvider: plan.clearDefaultProvider ? undefined : config.defaultProvider,
+  };
+}

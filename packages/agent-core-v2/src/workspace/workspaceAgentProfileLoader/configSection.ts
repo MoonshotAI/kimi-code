@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — agent-file config sections.
+ * `workspaceAgentProfileLoader` domain — agent-file config sections.
  *
  * Registers the top-level config domain `extraAgentDirs`: additional
  * directories scanned for agent Markdown files. Values stay camelCase in

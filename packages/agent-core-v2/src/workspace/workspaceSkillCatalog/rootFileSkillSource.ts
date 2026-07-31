@@ -1,5 +1,5 @@
 /**
- * `workspaceSkillCatalog` domain (L3) — workspace-root `ISkillSource`
+ * `workspaceSkillCatalog` domain — workspace-root `ISkillSource`
  * producer.
  *
  * Discovers project skills from the handler's workspace root
@@ -8,11 +8,8 @@
  * skill-root candidates (`.kimi-code/skills`, `.agents/skills` under the
  * project root, watched whether or not they exist yet) through
  * `hostFsWatch` and re-fires `onDidChange` debounced, so the catalog
- * re-scans THIS source only when project skill files change. Renamed from
- * the Session-scope `IWorkspaceFileSkillSource` (now
- * `IWorkspaceRootSkillSource`) to avoid the collision called out in the
- * workspace-domain plan. Bound at Workspace scope so every session of the
- * handler shares one scan.
+ * re-scans THIS source only when project skill files change. Bound at
+ * Workspace scope so every session of the handler shares one scan.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -22,11 +19,11 @@ import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
 import { IConfigService } from '#/app/config/config';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   type MergeAllAvailableSkillsConfig,
 } from '#/app/skillCatalog/configSection';
-import { ISkillCatalogRuntimeOptions } from '#/app/skillCatalog/skillCatalogRuntimeOptions';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import { projectRoots, projectSkillRootCandidates } from '#/app/skillCatalog/skillRoots';
 import {
@@ -62,7 +59,7 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
     @ISkillDiscovery private readonly discovery: ISkillDiscovery,
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IConfigService private readonly config: IConfigService,
-    @ISkillCatalogRuntimeOptions private readonly runtimeOptions: ISkillCatalogRuntimeOptions,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IHostFsWatchService private readonly fsWatch: IHostFsWatchService,
   ) {
     super();
@@ -75,10 +72,8 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
   }
 
   async load(): Promise<SkillContribution> {
-    // The watch attaches before the first scan returns, so a change landing
-    // right after the scan cannot slip between the two.
     await this.watchReady;
-    if ((this.runtimeOptions.explicitDirs?.length ?? 0) > 0) {
+    if ((this.bootstrap.args.skillDirs?.length ?? 0) > 0) {
       return { skills: [] };
     }
     await this.config.ready;
@@ -90,9 +85,6 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
   }
 
   private async watchProjectSkillRoots(): Promise<void> {
-    // Watch the project root recursively, pruned to the skill-root
-    // candidates: watching a candidate directory directly never fires when
-    // its parent (`.kimi-code` / `.agents`) does not exist yet either.
     const { projectRoot, candidates } = await projectSkillRootCandidates(this.workspace.cwd);
     const handle = this.fsWatch.watch(projectRoot, {
       ignored: subtreeWatchFilter(projectRoot, candidates),

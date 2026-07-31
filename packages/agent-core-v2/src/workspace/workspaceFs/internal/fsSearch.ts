@@ -1,12 +1,12 @@
 /**
- * `workspaceFs` domain (L3) — pure search/grep helpers.
+ * `workspaceFs` domain — pure search/grep helpers.
  *
  * Fuzzy filename scoring, glob matching, grep-pattern compilation, and
  * ripgrep `--json` record parsing. No IO, no DI — plain functions so they can
- * be unit-tested directly. Ported from v1 `services/fs/fsSearchService.ts`.
+ * be unit-tested directly. Ported from v1.
  */
 
-import type { FsGrepRequest } from './fs';
+import type { FsGrepRequest } from '../fs';
 
 export function computeFuzzyScore(name: string, queryLower: string): number {
   if (queryLower.length === 0) return 0;

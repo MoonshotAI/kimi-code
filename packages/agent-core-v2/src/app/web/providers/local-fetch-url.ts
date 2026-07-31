@@ -1,5 +1,5 @@
 /**
- * `web` domain (L4) — local `UrlFetcher` used when no managed fetch service
+ * `web` domain — local `UrlFetcher` used when no managed fetch service
  * is configured. GETs URLs with a Chrome-like UA and SSRF hardening: http(s)
  * schemes only; unless `allowPrivateAddresses` is set, IP literals and
  * DNS-resolved addresses in loopback / RFC1918 / link-local / CGNAT / ULA

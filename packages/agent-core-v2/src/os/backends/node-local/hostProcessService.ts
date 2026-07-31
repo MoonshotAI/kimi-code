@@ -1,5 +1,5 @@
 /**
- * `hostProcess` domain (L6) — `IHostProcessService` node-local implementation.
+ * `hostProcess` domain — `IHostProcessService` node-local implementation.
  *
  * Spawns child processes with `node:child_process.spawn`, wraps them in the
  * domain-facing `IHostProcess` handle, and provides cross-platform process-tree

@@ -1,5 +1,5 @@
 /**
- * `workspaceSkillCatalog` domain (L3) — Workspace-scoped skill catalog
+ * `workspaceSkillCatalog` domain — Workspace-scoped skill catalog
  * contract.
  *
  * Defines `IWorkspaceSkillCatalog`, the handler-level owner of skill

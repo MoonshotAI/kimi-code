@@ -1,15 +1,14 @@
 /**
- * `skill` domain (L3) — wire Model (`SkillModel`) and the `skill.activate` Op
+ * `skill` domain — wire Model (`SkillModel`) and the `skill.activate` Op
  * (`skillActivate`) for the agent's skill-activation fact log.
  *
  * Skill carries no state: the Model is a `null` placeholder and the Op's
  * `apply` is the identity function. `skill.activate` is live-only because it
  * is not a v1 record type; it exists to derive the `skill.activated` event and
  * carries no replayable state. The `randomUUID()` activation id is generated at
- * the dispatch call site (`skillService.recordActivation`) and carried inside
- * `origin`, keeping `apply` free of non-determinism. Also augments
+ * the dispatch call site and carried inside `origin`, keeping `apply` free
+ * of non-determinism. Also augments
  * `DomainEventMap` with `skill.activated`, derived from the Op via `toEvent`.
- * Consumed by the Agent-scope `skillService`.
  */
 
 import { z } from 'zod';

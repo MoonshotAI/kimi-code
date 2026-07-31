@@ -1,15 +1,19 @@
 /**
- * `loop` domain (L4) — persists and restores monotonically increasing turn
+ * `loop` domain — persists and restores monotonically increasing turn
  * identity.
  *
- * Owns the next available turn id and cancelled queued reservations. Consumed
- * by the Agent-scope `loopService`; the `interruptionReminder` domain projects
- * `turn.cancel` into its own model.
+ * Owns the next available turn id, including cancelled queued reservations and
+ * legacy loop-event observations. Also persists the terminal `turn.ended`
+ * record (reason / error / durationMs) so downstream history rebuilds can
+ * recover how a turn ended; the record carries no engine-restorable state, so
+ * its `apply` is a no-op. Consumed by the Agent-scope `loopService`; the
+ * `interruptionReminder` domain projects `turn.cancel` into its own model.
  */
 
 import { z } from 'zod';
 
 import { defineModel } from '#/wire/model';
+import type { KimiErrorPayload } from '#/_base/errors/serialize';
 import type { ContentPart } from '#/kosong/contract/message';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 
@@ -47,6 +51,7 @@ declare module '#/wire/types' {
     'turn.prompt': typeof promptTurn;
     'turn.steer': typeof steerTurn;
     'turn.cancel': typeof cancelTurn;
+    'turn.ended': typeof endTurn;
   }
 }
 
@@ -71,6 +76,16 @@ export const cancelTurn = TurnModel.defineOp('turn.cancel', {
     if (turnId < s.nextTurnId) return s;
     return advanceTurnClock(s, s.nextTurnId, [...s.cancelledTurnIds, turnId]);
   },
+});
+
+export const endTurn = TurnModel.defineOp('turn.ended', {
+  schema: z.object({
+    turnId: z.number(),
+    reason: z.enum(['completed', 'cancelled', 'failed', 'blocked']),
+    error: z.custom<KimiErrorPayload>().optional(),
+    durationMs: z.number().optional(),
+  }),
+  apply: (s) => s,
 });
 
 function advanceTurnClock(

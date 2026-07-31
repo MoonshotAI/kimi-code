@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `SubagentTool` implementation (the `Agent` tool).
+ * `tools` domain — `SubagentTool` implementation (the `Agent` tool).
  *
  * The LLM-facing wrapper over the `subagent` domain: translates the tool args
  * into a Profile + Model binding, creates (or resumes) an agent through
@@ -8,8 +8,7 @@
  * (`mirrorAgentRun`). The tool also owns the JSON schema + description,
  * approval rule, background-task registration (so the LLM can see the run
  * under TaskList/TaskOutput/TaskStop when `run_in_background=true` or after
- * detach), and terminal text formatting. The public contract (schemas,
- * constants, `ISubagentTool`) lives in `./agent`.
+ * detach), and terminal text formatting.
  *
  * Spawn bindings use an explicit tool choice first, then the target profile's
  * symbolic model preference, before `resolveSubagentBinding` falls back to the

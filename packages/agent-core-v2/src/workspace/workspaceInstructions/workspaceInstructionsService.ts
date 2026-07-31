@@ -1,5 +1,5 @@
 /**
- * `workspaceInstructions` domain (L4) — `IWorkspaceInstructionsService`
+ * `workspaceInstructions` domain — `IWorkspaceInstructionsService`
  * implementation.
  *
  * Loads the workspace root's AGENTS.md hierarchy at construction through the
@@ -124,9 +124,6 @@ export class WorkspaceInstructionsService
   }
 
   private async watchCandidateFiles(): Promise<void> {
-    // Watch each plan root recursively, pruned to its candidate files:
-    // watching a candidate file directly never fires when its parent
-    // directory (`.kimi-code` / `.agents`) does not exist yet either.
     const plan = await agentsMdWatchRoots(
       { fs: this.fs, homeDir: this.env.homeDir },
       this.workspace.cwd,

@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — `AgentProfileLoaderBase`, the shared
+ * `workspaceAgentProfileLoader` domain — `AgentProfileLoaderBase`, the shared
  * loader skeleton of the agent-profile extension point.
  *
  * A loader owns one source id: it loads an `AgentProfileContribution` and
@@ -43,7 +43,6 @@ export abstract class AgentProfileLoaderBase extends Disposable {
     return this.readyPromise;
   }
 
-  /** Starts the first load; subclass constructors call this after their own fields are set. */
   protected start(): void {
     this.readyPromise = this.enqueue();
     void this.readyPromise.catch(() => undefined);
@@ -57,7 +56,6 @@ export abstract class AgentProfileLoaderBase extends Disposable {
 
   protected abstract load(): Promise<AgentProfileContribution>;
 
-  /** Workspace-local loaders override to tag their registration. */
   protected get workspaceKey(): string | undefined {
     return undefined;
   }

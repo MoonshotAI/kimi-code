@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IExitPlanModeTool` implementation.
+ * `tools` domain — `IExitPlanModeTool` implementation.
  *
  * Reads the plan file tracked by the plan service (`plan`) and flips plan
  * mode off. Every submission — the moment the final content is read for the
@@ -70,13 +70,9 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
       return undefined;
     }
     if (data === null || data.content.trim().length === 0) return undefined;
-    // Every submission finalises a revision of the exact content under
-    // review (a Revise → resubmit records the next version). Best-effort:
-    // a recording failure must not block the review round-trip.
     try {
       await this.planMode.recordRevision();
     } catch {
-      // Revision recording failed; the review continues with the live file.
     }
     const display: ToolInputDisplay = {
       kind: 'plan_review',

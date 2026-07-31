@@ -1,5 +1,5 @@
 /**
- * `workspaceLifecycle` domain (L6) — `IWorkspaceLifecycleService` implementation.
+ * `workspaceLifecycle` domain — `IWorkspaceLifecycleService` implementation.
  *
  * Holds the live handler registry (`Map<workspaceId, IWorkspaceScopeHandle>`)
  * and materializes handlers through the DI scope tree, seeding each
@@ -37,7 +37,7 @@ import {
   type IWorkspaceContext,
 } from '#/workspace/workspaceContext/workspaceContext';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
-import { workspacePersistenceScope } from '#/workspace/sessionLifecycle/addressing';
+import { workspacePersistenceScope } from '#/workspace/sessionLifecycle/internal/addressing';
 
 import {
   IWorkspaceLifecycleService,
@@ -49,9 +49,6 @@ import {
 export class WorkspaceLifecycleService extends Disposable implements IWorkspaceLifecycleService {
   declare readonly _serviceBrand: undefined;
   private readonly live = new Map<string, IWorkspaceScopeHandle>();
-  /** In-flight materializations, keyed by workspaceId. Concurrent
-   *  `handlerFor` calls for the same workspace join the in-flight one
-   *  (never a duplicate handler). */
   private readonly materializing = new Map<string, Promise<IWorkspaceScopeHandle>>();
   private readonly _onDidMaterializeHandler = this._register(
     new Emitter<IWorkspaceScopeHandle>(),
@@ -96,10 +93,6 @@ export class WorkspaceLifecycleService extends Disposable implements IWorkspaceL
       }
       return this.joinMaterialization(ref.workspaceId, root);
     }
-    // Resolve the id through the catalog first (registry folding may reuse an
-    // id minted for another spelling) so alias spellings join one
-    // materialization; the resolved record doubles as the seed metadata, so
-    // the catalog is written exactly once per handler.
     const workspace = await this.workspaces.createOrTouch(ref.root);
     const existing = this.live.get(workspace.id);
     if (existing !== undefined) return existing;
@@ -125,9 +118,6 @@ export class WorkspaceLifecycleService extends Disposable implements IWorkspaceL
     root: string,
     known?: Workspace,
   ): Promise<IWorkspaceScopeHandle> {
-    // Refresh the catalog record (re-creating it when the caller addressed
-    // the handler by id + root hint and the record is gone) and seed the
-    // canonical root the registry resolved.
     const workspace = known ?? (await this.workspaces.createOrTouch(root));
     const ctx: IWorkspaceContext = {
       _serviceBrand: undefined,

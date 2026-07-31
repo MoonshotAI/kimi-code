@@ -1,5 +1,5 @@
 /**
- * `flag` domain (L3) — `IFlagRegistry` implementation.
+ * `flag` domain — `IFlagRegistry` implementation.
  *
  * In-memory catalog of flag definitions. Seeds itself from the import-time
  * contributions (`getContributedFlags`) on construction, and also accepts

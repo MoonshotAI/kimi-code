@@ -1,9 +1,9 @@
 /**
- * `state` domain (L1) — Workspace-scope keyed state container contract.
+ * `state` domain — Workspace-scope keyed state container contract.
  *
  * Defines `IWorkspaceStateService`, the Workspace-scope state service:
  * Workspace-tier services declare their plain-data state as typed keys
- * (`defineState` from `_base`) and read/write them through this container, so
+ * (`defineState`) and read/write them through this container, so
  * per-handler shared state lives in one observable place and dies with the
  * workspace handler. Shares the `IStateRegistry` method set with its
  * App/Session/Agent counterparts; its `inspect()` cascade continues into the

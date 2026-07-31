@@ -122,18 +122,12 @@ export * from '#/kosong/model/catalog';
 export * from '#/kosong/model/catalogService';
 export * from '#/kosong/model/modelRequester';
 import '#/kosong/model/errors';
-// `ModelCatalogConfig` / `MODEL_CATALOG_SECTION` live in the configSection
-// side-effect module but the edge (kap-server's refresh scheduler) consumes
-// them from the package root — re-export here.
 export {
   MODEL_CATALOG_SECTION,
   ModelCatalogConfigSchema,
   type ModelCatalogConfig,
 } from '#/app/kosongConfig/configSection';
 export type { SecondaryModelConfig } from '#/app/kosongConfig/configSection';
-// The secondary-model derived-entry overlay: the edge (kap-server's
-// `GET /models` route) hides the reserved id from pickers, and tests drive
-// the overlay directly — re-export from the package root.
 export {
   SECONDARY_DERIVED_MODEL_ID,
   secondaryModelOverlay,
@@ -143,6 +137,7 @@ export * from '#/app/kosongConfig/kosongConfig';
 export * from '#/app/kosongConfig/kosongConfigService';
 export * from '#/kosong/model/modelOAuth';
 export * from '#/app/kosongConfig/oauthTokenAdapter';
+export * from '#/app/kosongConfig/hostRequestHeadersAdapter';
 export * from '#/app/kosongConfig/discovery';
 export * from '#/app/kosongConfig/discoveryService';
 export * from '#/app/kosongConfig/errors';
@@ -150,9 +145,6 @@ export * from '#/app/kosongConfig/modelsDevImport';
 export * from '#/app/kosongConfig/modelsDevImportService';
 export * from '#/app/kosongConfig/modelsDevUpstream';
 export * from '#/app/kosongConfig/modelsDev';
-// kosong wire composition roots — importing these modules registers the four
-// protocol bases and every provider definition (kimi + the canonical vendor
-// endpoints); without them the adapter registry stays empty.
 import '#/kosong/provider/bases/anthropic/index';
 import '#/kosong/provider/bases/google-genai/index';
 import '#/kosong/provider/bases/openai/index';
@@ -172,14 +164,10 @@ export {
   _clearAgentProfileContributionsForTests,
 } from '#/app/agentProfileCatalog/contribution';
 export * from '#/workspace/workspaceAgentProfileLoader/configSection';
-// Public agent-file primitives consumed out-of-package (the v2 print CLI's
-// `--agent-file` path); everything else under `internal/` stays domain-private.
 export { parseAgentFileText } from '#/workspace/workspaceAgentProfileLoader/internal/agentFile';
 export { resolveAgentPath } from '#/workspace/workspaceAgentProfileLoader/internal/paths';
-export * from '#/workspace/workspaceAgentProfileLoader/agentCatalogRuntimeOptions';
 export * from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 export * from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoaderService';
-export * from '#/app/hostIdentity/hostIdentity';
 export * from '#/app/plugin/types';
 export * from '#/app/plugin/commands';
 export * from '#/app/plugin/manifest';
@@ -200,7 +188,6 @@ export * from '#/agent/skill/skill';
 export * from '#/agent/skill/skillService';
 export * from '#/app/skillCatalog/types';
 export * from '#/app/skillCatalog/configSection';
-export * from '#/app/skillCatalog/skillCatalogRuntimeOptions';
 export * from '#/app/skillCatalog/parser';
 export * from '#/app/skillCatalog/registry';
 export * from '#/app/skillCatalog/errors';
@@ -362,7 +349,7 @@ export * from '#/app/workspaceLifecycle/sessionLookup';
 export * from '#/workspace/workspaceContext/workspaceContext';
 export * from '#/workspace/sessionLifecycle/sessionLifecycle';
 export * from '#/workspace/sessionLifecycle/sessionLifecycleService';
-export * from '#/workspace/sessionLifecycle/addressing';
+export * from '#/workspace/sessionLifecycle/internal/addressing';
 export * from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 export * from '#/session/externalHooks/externalHooks';
 export * from '#/session/externalHooks/externalHooksService';
@@ -407,14 +394,14 @@ import '#/app/bashParser/bashParserService';
 export * from '#/session/process/processRunner';
 export * from '#/session/process/processRunnerService';
 export * from '#/workspace/workspaceProcess/workspaceProcessRunnerService';
-export * from '#/workspace/workspaceFs/errors';
+export * from '#/workspace/workspaceFs/internal/errors';
 export * from '#/workspace/workspaceFs/fs';
 export * from '#/workspace/workspaceFs/fsService';
 export * from '#/workspace/workspaceFs/fsWatch';
 export * from '#/workspace/workspaceFs/fsWatchService';
 export * from '#/session/agentLifecycle/profile/gitContext';
-export * from '#/workspace/workspaceFs/rgLocator';
-export * from '#/workspace/workspaceFs/runRg';
+export * from '#/workspace/workspaceFs/internal/rgLocator';
+export * from '#/workspace/workspaceFs/internal/runRg';
 export * from '#/workspace/workspaceGit/workspaceGit';
 export * from '#/workspace/workspaceGit/workspaceGitService';
 export * from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';

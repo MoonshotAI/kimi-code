@@ -1,9 +1,8 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — `IExplicitAgentProfileLoader` implementation.
+ * `workspaceAgentProfileLoader` domain — `IExplicitAgentProfileLoader` implementation.
  *
  * Loads the runtime-selected agent files through `hostFs`, resolving paths
  * against the workspace root (`workspaceContext`) and `bootstrap`.
- * `${base_prompt}` is backed by the user loader's effective default profile.
  * Bound at Workspace scope.
  */
 
@@ -11,7 +10,6 @@ import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/
 import { ILogService } from '#/_base/log/log';
 import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
-import { IAgentCatalogRuntimeOptions } from '#/workspace/workspaceAgentProfileLoader/agentCatalogRuntimeOptions';
 import { parseAgentFileText } from '#/workspace/workspaceAgentProfileLoader/internal/agentFile';
 import { AgentProfileLoaderBase } from '#/workspace/workspaceAgentProfileLoader/internal/agentProfileLoader';
 import { agentProfileFromFile } from '#/workspace/workspaceAgentProfileLoader/internal/agentProfileFromFile';
@@ -38,7 +36,6 @@ export class ExplicitAgentProfileLoaderService
   protected override readonly fatal = true;
 
   constructor(
-    @IAgentCatalogRuntimeOptions private readonly runtimeOptions: IAgentCatalogRuntimeOptions,
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
@@ -55,7 +52,7 @@ export class ExplicitAgentProfileLoaderService
   }
 
   protected async load(): Promise<AgentProfileContribution> {
-    const files = this.runtimeOptions.explicitFiles ?? [];
+    const files = this.bootstrap.args.agentFiles ?? [];
     const profiles: AgentProfile[] = [];
     for (const file of files) {
       const filePath = resolveAgentPath(file, this.workspace.cwd, this.bootstrap.osHomeDir);

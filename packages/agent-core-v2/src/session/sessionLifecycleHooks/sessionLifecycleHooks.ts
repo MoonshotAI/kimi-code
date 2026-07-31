@@ -1,14 +1,10 @@
 /**
- * `sessionLifecycleHooks` domain (L1) — per-session lifecycle hook slots.
+ * `sessionLifecycleHooks` domain — per-session lifecycle hook slots.
  *
  * Defines the `ISessionLifecycleHooks` seed: one ordered hook-slots instance
- * per session, created by the Workspace-scope `sessionLifecycle` when it
- * materializes the session, seeded into the Session scope, and run by the
- * handler around the session's create (`onDidCreateSession`) and close
- * (`onWillCloseSession`). Session-scope consumers (e.g. `externalHooks`)
- * register against this session-domain contract and never see the Workspace
- * domain — the §3.5 seed-channel shape. Also owns the shared
- * `SessionCreateSource` / `SessionCloseReason` vocabulary both sides speak.
+ * per session, with slots around the session's create (`onDidCreateSession`)
+ * and close (`onWillCloseSession`). Also owns the shared
+ * `SessionCreateSource` / `SessionCloseReason` vocabulary.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

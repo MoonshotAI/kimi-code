@@ -1,14 +1,12 @@
 /**
- * `gateway` domain (L7) — `IRestGateway` / `IWSGateway` implementations.
+ * `gateway` domain — `IRestGateway` / `IWSGateway` implementations.
  *
- * Owns the REST/WS entry points; resolves sessions through the live handler
- * registry (`workspaceLifecycle` → the handler's `ISessionLifecycleService`),
- * agents through `agentLifecycle`, drives turns through `prompt` / `loop`,
- * and flushes logs through `log`. Bound at App scope.
+ * Owns the REST/WS entry points; resolves sessions through the live workspace
+ * handler registry and agents through the agent lifecycle, drives turns, and
+ * flushes logs. Bound at App scope.
  *
  * WS event fan-out (sequencing, journaling, replay, per-connection dispatch)
- * is a transport concern and lives in the edge package (`packages/kap-server`)
- * on top of `IEventService` + `IAgentRecordService` — not here.
+ * is a transport concern of the edge server, not of this module.
  */
 
 import {

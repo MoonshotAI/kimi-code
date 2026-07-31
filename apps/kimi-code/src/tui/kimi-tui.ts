@@ -12,6 +12,7 @@ import type {
   PermissionMode,
   PromptPart,
   Session,
+  WorkspaceTrustInfo,
 } from '@moonshot-ai/kimi-code-sdk';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
 import {
@@ -64,6 +65,7 @@ import { CompactionComponent } from './components/dialogs/compaction';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
+import { TrustPromptComponent, type TrustPromptChoice } from './components/dialogs/trust-prompt';
 import {
   FileMentionProvider,
   type SlashAutocompleteCommand,
@@ -185,6 +187,8 @@ export interface KimiTUIStartupInput {
   readonly migrationPlan?: MigrationPlan | null;
   /** When true, run only the migration screen, then exit (the `kimi migrate` command). */
   readonly migrateOnly?: boolean;
+  /** agent-core-v2 engine (KIMI_CODE_EXPERIMENTAL_FLAG); enables the startup workspace-trust prompt. */
+  readonly engineV2?: boolean;
 }
 
 type EffectiveActivityPaneMode = ActivityPaneMode | 'idle' | 'session';
@@ -321,8 +325,10 @@ export class KimiTUI {
   private uninstallRainbowDance: () => void;
   private signalCleanupHandlers: Array<() => void> = [];
   private isShuttingDown = false;
+  private backgroundRefreshPromise: Promise<void> | undefined;
   private readonly migrationPlan: MigrationPlan | null;
   private readonly migrateOnly: boolean;
+  private readonly engineV2: boolean;
   private startupNotice: string | undefined;
   private lastActivityMode: string | undefined;
   private currentLoadingTip: { kind: LoadingTipKind; tip: string | undefined } | undefined =
@@ -396,6 +402,7 @@ export class KimiTUI {
     this.options = tuiOptions;
     this.migrationPlan = startupInput.migrationPlan ?? null;
     this.migrateOnly = startupInput.migrateOnly ?? false;
+    this.engineV2 = startupInput.engineV2 ?? false;
     this.startupNotice = startupInput.startupNotice;
     this.state = createTUIState(tuiOptions);
     this.uninstallRainbowDance = installRainbowDance(() => {
@@ -555,8 +562,13 @@ export class KimiTUI {
         return;
       }
 
+      const trustPromptStartedLoop = await this.maybeRunWorkspaceTrustPrompt();
       const shouldReplayHistory = await this.initMainTui();
-      this.startEventLoop();
+      // When the trust prompt already started the event loop, starting it
+      // again would re-run pi-tui's terminal.start() — stacking a second
+      // Kitty keyboard-protocol push (leaking CSI-u mode past exit) and
+      // duplicate stdin listeners.
+      if (!trustPromptStartedLoop) this.startEventLoop();
       try {
         this.startBackgroundFdAutocomplete();
         await this.finishStartup(shouldReplayHistory);
@@ -737,7 +749,7 @@ export class KimiTUI {
   private async init(): Promise<boolean> {
     setExperimentalFeatures(await this.harness.getExperimentalFeatures());
     await this.authFlow.refreshAvailableModels();
-    void this.refreshProviderModelsInBackground();
+    this.backgroundRefreshPromise = this.refreshProviderModelsInBackground();
 
     const { startup } = this.options;
     const { workDir } = this.state.appState;
@@ -841,6 +853,16 @@ export class KimiTUI {
     this.isShuttingDown = true;
     this.unregisterSignalHandlers();
     this.aborted = true;
+    // Give the startup provider-model refresh a brief chance to finish before
+    // the harness closes (and the process exits): its config writes are each
+    // atomic, so draining can only ever leave a complete file behind. Bounded
+    // so a slow network never delays the exit.
+    if (this.backgroundRefreshPromise !== undefined) {
+      await Promise.race([
+        this.backgroundRefreshPromise,
+        new Promise((resolve) => setTimeout(resolve, 1500)),
+      ]);
+    }
     this.streamingUI.discardPending();
     // Stop background polling, streaming intervals, and per-component timers
     // before tearing the UI down, so they can't keep firing requestRender after
@@ -2830,6 +2852,57 @@ export class KimiTUI {
       }
     }
     return result;
+  }
+
+  /**
+   * agent-core-v2 startup gate: before any session is created, ask whether to
+   * trust this folder when the workspace is not trusted yet (project-level MCP
+   * servers stay disabled while untrusted). Best-effort throughout — a failed
+   * check or trust write never blocks startup. Choosing "don't trust" (or Esc)
+   * exits the program before any session is created; the prompt reappears on
+   * the next launch: the engine's untrusted state is indistinguishable from
+   * never-trusted. Returns true when the prompt started the event loop (the
+   * caller must not start it again).
+   */
+  private async maybeRunWorkspaceTrustPrompt(): Promise<boolean> {
+    if (!this.engineV2) return false;
+    const workDir = this.state.appState.workDir;
+    let info: WorkspaceTrustInfo;
+    try {
+      info = await this.harness.getWorkspaceTrustInfo(workDir);
+    } catch {
+      return false;
+    }
+    if (info.trusted) return false;
+    this.startEventLoop();
+    const choice = await new Promise<TrustPromptChoice>((resolve) => {
+      this.state.activeDialog = 'trust-prompt';
+      this.mountEditorReplacement(
+        new TrustPromptComponent({
+          workDir,
+          gatedMcpServers: info.gatedMcpServers,
+          onSelect: (c) => {
+            resolve(c);
+          },
+        }),
+      );
+    });
+    this.state.activeDialog = null;
+    if (choice !== 'trust') {
+      // Declining trust exits the program (Claude Code's "No, exit" semantics):
+      // stop() runs the standard shutdown path and ends in process.exit. The
+      // editor is NOT restored first — its frame would linger as an orphaned
+      // input box above the exit message; the prompt stays as the last frame.
+      await this.stop();
+      return true;
+    }
+    this.restoreEditor();
+    try {
+      await this.harness.trustWorkspace(workDir);
+    } catch {
+      // A failed write leaves the workspace untrusted (re-asked next launch).
+    }
+    return true;
   }
 
   showHelpPanel(): void {

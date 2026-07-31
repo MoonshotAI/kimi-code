@@ -1,5 +1,5 @@
 /**
- * `_base/execEnv` (L0) — login-shell PATH probe.
+ * `_base/execEnv` — login-shell PATH probe.
  *
  * Enriches `process.env.PATH` with entries from the user's login shell. When
  * kimi-code is launched from a context that skipped the user's shell profile
@@ -14,12 +14,11 @@
  * launchd/daemon launches can leave `$SHELL` unset or blank, so the probe falls
  * back to the OS account's login shell from the user database before giving up.
  *
- * Like `probeHostEnvironment`, the probe is a pure function of injected deps so
- * the suite runs identically on any host. Windows is skipped: the problem is
- * specific to POSIX login-shell profiles.
+ * The probe is a pure function of injected deps so the suite runs identically
+ * on any host. Windows is skipped: the problem is specific to POSIX
+ * login-shell profiles.
  *
- * Vendored from `@moonshot-ai/kaos` `login-shell-path.ts` — kept as a pure
- * helper with no DI dependencies.
+ * Kept as a pure helper with no DI dependencies.
  */
 
 import { userInfo } from 'node:os';

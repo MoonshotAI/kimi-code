@@ -3,11 +3,9 @@
  *
  * Timeout / abort handling, capped stdout / stderr draining, two-phase kill
  * with process disposal, and the EAGAIN retry predicate for spawning `rg`
- * through the handler-shared `ISessionProcessRunner`. Ported from v1
- * (`packages/agent-core/src/tools/support/run-rg.ts`). The fs surface's Grep
- * keeps its own `runCommand` path in `fsService` (it streams JSON and has a
- * pure-node fallback); this helper is the reusable module for callers that
- * want the simpler buffered shape.
+ * through the handler-shared `ISessionProcessRunner`. Ported from v1. This
+ * helper is the reusable module for callers that want the simpler buffered
+ * shape.
  */
 
 import type { Readable } from 'node:stream';

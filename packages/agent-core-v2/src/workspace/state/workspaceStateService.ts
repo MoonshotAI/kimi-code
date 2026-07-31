@@ -1,7 +1,7 @@
 /**
- * `state` domain (L1) — `IWorkspaceStateService` implementation.
+ * `state` domain — `IWorkspaceStateService` implementation.
  *
- * Thin per-scope binding over the `_base` `StateRegistry`; the container owns
+ * Thin per-scope binding over the shared `StateRegistry`; the container owns
  * construction and disposal, so registered state dies with the scope. Injects
  * the App-tier state service as its `inspect()` cascade parent (the parameter
  * is optional so tests can construct a bare container; DI always injects).

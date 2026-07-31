@@ -1,5 +1,5 @@
 /**
- * `mcpCore` domain (L2) — Streamable HTTP transport MCP client.
+ * `mcpCore` domain — Streamable HTTP transport MCP client.
  */
 
 import type { McpServerHttpConfig } from './config-schema';

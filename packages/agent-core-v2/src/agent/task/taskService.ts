@@ -1,5 +1,5 @@
 /**
- * `task` domain (L5) — `AgentTaskService` implementation.
+ * `task` domain — `AgentTaskService` implementation.
  *
  * Owns the agent's registry of running and restored tasks:
  * registers and drives tasks to completion, retains a bounded output ring,

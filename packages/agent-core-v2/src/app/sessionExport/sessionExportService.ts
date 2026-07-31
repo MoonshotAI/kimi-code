@@ -1,11 +1,10 @@
 /**
- * `sessionExport` domain (L6) — `ISessionExportService` implementation.
+ * `sessionExport` domain — `ISessionExportService` implementation.
  *
- * Coordinates live session flushing through the live handler registry
- * (`workspaceLifecycle` → the handler's `ISessionLifecycleService`), derives
- * session paths from the handler-chain addressing, reads persisted summaries
- * through `sessionIndex`, and packages diagnostic files through the local
- * zip writer. Bound at App scope.
+ * Coordinates live session flushing through the live workspace handler
+ * registry, derives session paths from the handler-chain addressing, reads
+ * persisted summaries through the session index, and packages diagnostic
+ * files through the local zip writer. Bound at App scope.
  */
 
 import { join, resolve } from 'pathe';
@@ -22,7 +21,7 @@ import { IWorkspaceService } from '#/app/workspace/workspace';
 import {
   sessionDirOf,
   workspacePersistenceScope,
-} from '#/workspace/sessionLifecycle/addressing';
+} from '#/workspace/sessionLifecycle/internal/addressing';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';

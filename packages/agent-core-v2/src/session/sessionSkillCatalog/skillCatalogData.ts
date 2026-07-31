@@ -1,14 +1,9 @@
 /**
- * `sessionSkillCatalog` domain (L3) — seeded skill-catalog data contract.
+ * `sessionSkillCatalog` domain — seeded skill-catalog data contract.
  *
- * Defines `ISessionSkillCatalogData`, the pure-data injection contract the
- * Workspace-scope `workspaceSkillCatalog` hands to every Session scope it
- * creates: the workspace's merged skill catalog as a live read view plus the
- * source-keyed change event. The contract carries no IO — discovery, merging
- * and rescanning all live on the workspace side; the Session-scope
- * `ISessionSkillCatalog` business view reads this seed and refreshes itself
- * off `onDidChange`. Seeded into the Session scope by `sessionLifecycle` when
- * the session is materialized. Session-scoped.
+ * Defines `ISessionSkillCatalogData`, the pure-data injection contract
+ * carrying the workspace's merged skill catalog as a live read view plus the
+ * source-keyed change event. The contract carries no IO. Session-scoped.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

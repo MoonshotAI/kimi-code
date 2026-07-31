@@ -1,5 +1,5 @@
 /**
- * `sessionToolPolicy` domain (L3) — session-wide client tool restrictions.
+ * `sessionToolPolicy` domain — session-wide client tool restrictions.
  *
  * Defines the Session-scoped policy shared by every Agent in a session. The
  * client-managed denylist is persisted independently from each Agent's frozen

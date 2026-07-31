@@ -1,16 +1,10 @@
 /**
- * `sessionToolPolicyGate` domain (L1) — seeded workspace tool-veto contract.
+ * `sessionToolPolicyGate` domain — seeded workspace tool-veto contract.
  *
- * Defines `ISessionToolPolicyGate`, the pure-data injection contract the
- * Workspace-scope `workspaceToolPolicy` hands to every Session scope it
- * creates: the workspace's os-level disabled-tool set as a live read view
- * plus its change event. The contract carries no IO — capability probing and
- * workspace config live on the workspace side; the Agent-scope `toolPolicy`
- * and `toolActivation` read this seed and apply the veto (it outranks every
- * Agent-side policy layer). Seeded into the Session scope by
- * `sessionLifecycle` when the session is materialized; a no-op default
- * registration keeps scopes built without a handler (tests) resolvable.
- * Session-scoped.
+ * Defines `ISessionToolPolicyGate`, the pure-data injection contract carrying
+ * the workspace's os-level disabled-tool set as a live read view plus its
+ * change event — a veto that outranks every Agent-side policy layer. The
+ * contract carries no IO. Session-scoped.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

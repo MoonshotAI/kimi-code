@@ -1,13 +1,13 @@
 /**
- * `workspaceFs` domain (L3) — workspace-confined filesystem change feed.
+ * `workspaceFs` domain — workspace-confined filesystem change feed.
  *
  * Defines the `IWorkspaceFsWatchService` that turns the os
  * `IHostFsWatchService` raw events into a workspace-relative, debounced,
  * `.gitignore`-aware change feed (`FsChangeEvent`) for the whole handler.
  * One os watcher on the workspace root is shared by every subscriber —
- * subscribers are the sessions of this workspace (via the transport's
- * fs-watch bridge) and any Workspace-scope service that wants change
- * notifications. Each subscription declares the set of workspace-relative
+ * subscribers are the sessions of this workspace and any Workspace-scope
+ * service that wants change notifications. Each subscription declares the
+ * set of workspace-relative
  * paths it cares about; events outside that subtree are dropped, and every
  * subscription gets its own debounce window and truncation counters, so a
  * per-session feed through a subscription is indistinguishable from the old

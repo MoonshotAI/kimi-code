@@ -1,8 +1,8 @@
 /**
- * `state` domain (L1) — App-scope keyed state container contract.
+ * `state` domain — App-scope keyed state container contract.
  *
  * Defines `IAppStateService`, the App-scope state service: App-tier services
- * declare their plain-data state as typed keys (`defineState` from `_base`)
+ * declare their plain-data state as typed keys (via `defineState`)
  * and read/write them through this container, so process-wide shared state
  * lives in one observable place instead of scattering across private fields.
  * Shares the `IStateRegistry` method set with its Workspace/Session/Agent

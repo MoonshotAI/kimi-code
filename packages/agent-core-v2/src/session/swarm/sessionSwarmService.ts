@@ -1,5 +1,5 @@
 /**
- * `sessionSwarm` domain (L4) — `ISessionSwarmService` implementation.
+ * `sessionSwarm` domain — `ISessionSwarmService` implementation.
  *
  * Runs a batch of agents on behalf of a caller agent: builds an
  * `AgentRunBatchLauncher` on top of the `agentLifecycle` primitives
@@ -8,10 +8,9 @@
  * every in-flight run. The caller ↔ child association is this domain's own
  * business data: requester-side display facts (`subagent.spawned` wire signals
  * carrying the swarm's tool-call context, `subagent.suspended` when a task is
- * requeued after a provider rate limit) are emitted here / via the
- * `agentLifecycle` wrapper helper `mirrorAgentRun`; the lifecycle registry
- * itself stays flat. Spawn tasks may carry a concrete `binding` resolved by
- * the caller (the `AgentSwarm` tool via `resolveSubagentBinding`); without
+ * requeued after a provider rate limit) are emitted from this layer; the
+ * lifecycle registry itself stays flat. Spawn tasks may carry a concrete
+ * `binding` resolved by the caller; without
  * one, spawns inherit the caller agent's model and thinking level. Spawn
  * bindings are resolved through the model catalog before lifecycle allocation.
  * Resumed agents keep the model recorded in their own wire journal — with

@@ -1,14 +1,13 @@
 /**
- * `git` domain (L1) — git integration for a repository on the local disk.
+ * `git` domain — git integration for a repository on the local disk.
  *
  * Defines the `IGitService` that runs `git status` / `git diff` (plus `gh pr
  * view`) against a repository identified by an absolute `cwd`, and discovers
- * the enclosing git work tree of a directory (`findWorkTree`, the DI entry
- * point over the pure `workTree` probe). App-scoped; it spawns `git` / `gh`
- * through the `os/interface` process service rather than a Session's
- * execution environment, so it never depends on a Session. Path confinement
- * is the caller's responsibility — the service receives already-resolved
- * absolute `cwd` and repo-relative paths.
+ * the enclosing git work tree of a directory (`findWorkTree`). App-scoped; it
+ * spawns `git` / `gh` through the host process service rather than a
+ * Session's execution environment, so it never depends on a Session. Path
+ * confinement is the caller's responsibility — the service receives
+ * already-resolved absolute `cwd` and repo-relative paths.
  */
 
 import { z } from 'zod';
@@ -48,14 +47,8 @@ export const fsGitStatusResponseSchema = z.object({
   ahead: z.number().int().nonnegative(),
   behind: z.number().int().nonnegative(),
   entries: z.record(z.string(), fsGitStatusSchema),
-  // Aggregate working-tree diff against HEAD (`git diff --numstat HEAD`):
-  // summed added/deleted lines across all changed files. Binary files (numstat
-  // `-`) contribute 0. Both 0 for a clean tree or a repo with no commits yet.
   additions: z.number().int().nonnegative(),
   deletions: z.number().int().nonnegative(),
-  // GitHub pull request for the current branch, looked up via `gh pr view`.
-  // Null when not a GitHub repo, `gh` is unavailable/unauthenticated, the
-  // branch has no PR, or the lookup failed/timed out. Never fails the request.
   pullRequest: fsPullRequestSchema.nullable(),
 });
 export type FsGitStatusResponse = z.infer<typeof fsGitStatusResponseSchema>;

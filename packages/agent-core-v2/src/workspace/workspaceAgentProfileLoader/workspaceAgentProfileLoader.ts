@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — `IWorkspaceAgentProfileLoader` contract.
+ * `workspaceAgentProfileLoader` domain — `IWorkspaceAgentProfileLoader` contract.
  *
  * The workspace loader of the agent-profile extension point: owns the
  * `workspace` contribution in the App-scope `IAgentProfileRegistry` — the

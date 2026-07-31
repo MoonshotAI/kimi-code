@@ -1,10 +1,9 @@
 /**
- * `skillCatalog` domain (L3) — filesystem `ISkillDiscovery` backend.
+ * `skillCatalog` domain — filesystem `ISkillDiscovery` backend.
  *
  * Discovers skill bundles by walking caller-supplied roots and parsing each
- * SKILL.md through `parser`. Provides the App-scoped filesystem backend for
- * `ISkillDiscovery` and the same stateless path for `PluginManager`'s standalone
- * API; other consumers stay filesystem-agnostic through the interface.
+ * SKILL.md. Exposes both the App-scoped `ISkillDiscovery` service and a
+ * stateless standalone function.
  */
 
 import { promises as fs } from 'node:fs';

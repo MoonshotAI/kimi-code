@@ -1,11 +1,9 @@
 /**
- * `tool` domain (L3) — buffered tool-result builder.
+ * `tool` domain — buffered tool-result builder.
  *
  * Shared helper for tools that stream text into a bounded output buffer with
- * optional per-line and total-char truncation. Lives in the foundational tool
- * domain so every tool implementation (file, shell, web, …) can build
- * consistently-truncated `ExecutableToolResult`s without depending on a
- * sibling tool domain. Pure helper; no scoped service.
+ * optional per-line and total-char truncation. Pure helper; no scoped
+ * service.
  */
 
 import type { ExecutableToolErrorResult, ExecutableToolSuccessResult } from './toolContract';

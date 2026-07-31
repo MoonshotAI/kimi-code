@@ -1,10 +1,9 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — `IPluginAgentProfileLoader` implementation.
+ * `workspaceAgentProfileLoader` domain — `IPluginAgentProfileLoader` implementation.
  *
  * Discovers agent profiles contributed by enabled plugins (roots from the
  * App-scope `plugins.pluginAgentRoots()`) and registers them via the shared
- * loader skeleton. `${base_prompt}` is backed by the user loader's effective
- * default profile. Reloads when plugins reload; install / enable / remove
+ * loader skeleton. Reloads when plugins reload; install / enable / remove
  * mutations deliberately do not re-register — those take effect on the next
  * explicit reload. Bound at Workspace scope: agent-file discovery lives in
  * the workspace layer alongside every other source.

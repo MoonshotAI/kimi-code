@@ -1,10 +1,10 @@
 /**
- * `toolPolicy` domain (L4) — Agent-scope tool authorization service.
+ * `toolPolicy` domain — Agent-scope tool authorization service.
  *
  * Intersects the workspace os-level veto (the seeded `sessionToolPolicyGate`,
  * which outranks everything below it), the bound profile policy, global
  * `[tools]` configuration, and Session denylist (composed by
- * `isToolActiveComposed` in `./evaluate`), and installs the resulting
+ * `isToolActiveComposed`), and installs the resulting
  * authorization check into the L3 executor preflight so direct tool calls
  * cannot bypass schema filtering. Disclosure entries retain their implicit
  * availability when a profile allowlist omits them, while explicit deny

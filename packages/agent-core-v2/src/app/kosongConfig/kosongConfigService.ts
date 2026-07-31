@@ -1,9 +1,8 @@
 /**
- * `kosongConfig` domain (L3) — `IKosongConfigService` implementation.
+ * `kosongConfig` domain — `IKosongConfigService` implementation.
  *
  * The two-way persistence bridge between `IConfigService` and kosong's
- * in-memory provider/model registries. See `kosongConfig.ts` for the
- * contract-level description.
+ * in-memory provider/model registries.
  *
  * Both sync directions are idempotent by deep comparison, which is what
  * makes the loop terminate without any reentrancy flags:
@@ -47,7 +46,6 @@ import {
   PROVIDERS_SECTION,
 } from './configSection';
 
-/** Persist attempts per write; see `replaceWithRetry` for why this stays small. */
 const PERSIST_MAX_ATTEMPTS = 3;
 
 export class KosongConfigService extends Disposable implements IKosongConfigService {
@@ -65,8 +63,6 @@ export class KosongConfigService extends Disposable implements IKosongConfigServ
   ) {
     super();
     this.ready = this.initialize();
-    // The composition root instantiates the bridge without awaiting it; log
-    // initialization failures instead of surfacing an unhandled rejection.
     void this.ready.catch((error) => {
       this.log.warn('kosong config bridge initialization failed', {
         error: describeUnknownError(error),
@@ -76,9 +72,6 @@ export class KosongConfigService extends Disposable implements IKosongConfigServ
 
   private async initialize(): Promise<void> {
     await this.config.ready;
-    // Hydrate first, subscribe after: the initial load comes FROM config, so
-    // it must not echo back as a persist (the equality guards would catch it
-    // anyway, but skipping the round trip keeps startup quiet).
     this.providers.loadAll(
       this.config.get<ProvidersSection>(PROVIDERS_SECTION) ?? {},
       this.config.get<string>(DEFAULT_PROVIDER_SECTION),
@@ -88,10 +81,6 @@ export class KosongConfigService extends Disposable implements IKosongConfigServ
       this.config.get<string>(DEFAULT_MODEL_SECTION),
     );
     this._register(this.config.onDidSectionChange((e) => this.onConfigSectionChanged(e)));
-    // The guards mirror the ones inside the persist tasks: skipping the echo
-    // here (instead of registering a no-op `waitUntil`) keeps config-originated
-    // syncs fully synchronous for every other listener, even while the persist
-    // chain is busy with a retrying write.
     this._register(
       this.providers.onDidChangeProviders((e) => {
         if (
@@ -124,28 +113,18 @@ export class KosongConfigService extends Disposable implements IKosongConfigServ
     );
   }
 
-  // -------------------------------------------------------------------------
-  // config → kosong
-  // -------------------------------------------------------------------------
 
   private onConfigSectionChanged(e: ConfigSectionChangedEvent): void {
     switch (e.domain) {
       case PROVIDERS_SECTION:
         this.providers.loadAll(
           (e.value as ProvidersSection | undefined) ?? {},
-          // Sync the RECORDS only: the default pointer has its own domain
-          // event below. Re-applying config's pointer here would resurrect a
-          // stale value over a newer registry pointer — e.g. the cleared
-          // pointer of a default-provider delete, whose own persist has not
-          // run yet — and the two-way sync would livelock.
           this.providers.getDefaultProvider(),
         );
         break;
       case MODELS_SECTION:
         this.models.loadAll(
           (e.value as ModelsSection | undefined) ?? {},
-          // See PROVIDERS_SECTION above: the pointer syncs through its own
-          // DEFAULT_MODEL_SECTION event.
           this.models.getDefaultModel(),
         );
         break;
@@ -162,9 +141,6 @@ export class KosongConfigService extends Disposable implements IKosongConfigServ
     }
   }
 
-  // -------------------------------------------------------------------------
-  // kosong → config
-  // -------------------------------------------------------------------------
 
   private enqueuePersistProviders(): Promise<void> {
     return this.enqueue(async () => {
@@ -186,18 +162,8 @@ export class KosongConfigService extends Disposable implements IKosongConfigServ
     return this.enqueue(async () => {
       if (this.config.get<string>(domain) === value) return;
       await this.replaceWithRetry(domain, value);
-      // An effective overlay may pin the section (e.g. `KIMI_MODEL_NAME`
-      // pins `defaultModel` to the reserved env model): the write then lands
-      // only in the user layer — the effective value does not move and no
-      // change event fires — while the registry keeps the unpinned value.
-      // Re-assert the effective value so a registry read can never diverge
-      // from the pinned view; the re-assert's own change event no-ops back
-      // into this persist through the equality guard above.
       const effective = this.config.get<string>(domain);
       if (effective === value) return;
-      // Fire-and-forget: the re-assert's persist is a guaranteed no-op, and
-      // awaiting it from inside the persist chain would deadlock — its own
-      // `waitUntil` would queue behind this very task.
       if (domain === DEFAULT_PROVIDER_SECTION) {
         void this.providers
           .setDefaultProvider(effective)
@@ -210,13 +176,6 @@ export class KosongConfigService extends Disposable implements IKosongConfigServ
     });
   }
 
-  /**
-   * Disk-write failures are rare and usually transient, so a failed persist is
-   * retried with backoff before giving up to the log (via the chain's catch).
-   * The retry budget stays small on purpose: the persist chain serializes
-   * every mutation's await behind it, so a multi-minute budget would stall
-   * all callers instead of just logging the failure.
-   */
   private async replaceWithRetry(domain: string, value: unknown): Promise<void> {
     const delays = retryBackoffDelays(PERSIST_MAX_ATTEMPTS);
     for (let attempt = 0; ; attempt += 1) {
@@ -232,9 +191,6 @@ export class KosongConfigService extends Disposable implements IKosongConfigServ
   }
 
   private enqueue(task: () => Promise<void>): Promise<void> {
-    // The chain itself always recovers so one failed task cannot poison the
-    // persists queued behind it; the returned promise is what the registry's
-    // `waitUntil` (and thereby the mutation's caller) observes.
     this.persistChain = this.persistChain.then(task).catch((error) => this.logPersistFailure(error));
     return this.persistChain;
   }

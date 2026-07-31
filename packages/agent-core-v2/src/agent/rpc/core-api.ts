@@ -1,10 +1,9 @@
 /**
- * `rpc` domain (L7) — v2 native RPC contract.
+ * `rpc` domain — v2 native RPC contract.
  *
  * Request/response payloads and event types for the engine's native RPC
  * surface. `PromptPayload.disabledTools` is the client-managed session
- * denylist, applied via `IAgentProfileService.setSessionDisabledTools` before
- * the prompt is enqueued: full-replace semantics, the profile's own
+ * denylist, applied before the prompt is enqueued: full-replace semantics, the profile's own
  * `disallowedTools` always survive, omitting the field keeps the persisted
  * value, and `[]` clears the client portion. It is ignored by engines without
  * profile support.

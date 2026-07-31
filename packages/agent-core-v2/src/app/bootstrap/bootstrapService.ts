@@ -1,12 +1,10 @@
 /**
- * `bootstrap` domain (L1) — `IBootstrapService` implementation.
+ * `bootstrap` domain — `IBootstrapService` implementation.
  *
  * Holds the resolved startup snapshot from the seeded `IBootstrapOptions` and
  * exposes the host facts, app path layout, and top-level scope mapping. All
  * `scope(name)` values and `configKey` are computed once at construction so
- * business code can read them synchronously. Session/agent persistence
- * addressing is NOT here — it derives from the workspace handler's
- * persistence scope (`sessionLifecycle` addressing).
+ * business code can read them synchronously.
  *
  * Bound at App scope.
  */
@@ -20,6 +18,7 @@ import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/
 import {
   IBootstrapOptions,
   IBootstrapService,
+  type HostArgs,
   type PersistenceScopeName,
 } from './bootstrap';
 
@@ -33,6 +32,7 @@ export class BootstrapService implements IBootstrapService {
   readonly homeDir: string;
   readonly configPath: string;
   readonly clientIdentity: KimiHostIdentity;
+  readonly args: HostArgs;
   readonly sessionsDir: string;
   readonly blobsDir: string;
   readonly storeDir: string;
@@ -52,6 +52,7 @@ export class BootstrapService implements IBootstrapService {
     this.homeDir = options.homeDir;
     this.configPath = options.configPath;
     this.clientIdentity = options.clientIdentity;
+    this.args = options.args;
     this.sessionsDir = join(options.homeDir, 'sessions');
     this.blobsDir = join(options.homeDir, 'blobs');
     this.storeDir = join(options.homeDir, 'store');

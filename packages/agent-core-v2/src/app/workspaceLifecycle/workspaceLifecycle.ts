@@ -1,5 +1,5 @@
 /**
- * `workspaceLifecycle` domain (L6) — workspace handler lifecycle contract.
+ * `workspaceLifecycle` domain — workspace handler lifecycle contract.
  *
  * Defines the `IWorkspaceLifecycleService`, the App-scope owner of the live
  * workspace handler registry: one `IWorkspaceScopeHandle` per workspaceId,
@@ -15,18 +15,13 @@
  * handler's per-handler services. There is deliberately NO App-scope
  * session lifecycle entry point — session create/resume/fork lives on the
  * handler's `ISessionLifecycleService`; callers compose `sessionIndex` →
- * `handlerFor` → handler (see `sessionLookup`).
+ * `handlerFor` → handler.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { IWorkspaceScopeHandle } from '#/_base/di/scope';
 import type { Event } from '#/_base/event';
 
-/**
- * Handler address: a `workspaceId` (optionally with a `root` hint used when
- * the catalog record is missing and the handler must be materialized), or a
- * bare `root` resolved through the `workspace` catalog.
- */
 export type WorkspaceRef =
   | { readonly workspaceId: string; readonly root?: string }
   | { readonly root: string };
@@ -36,7 +31,6 @@ export interface WorkspaceHandlerRegistry {
 }
 
 export interface WorkspaceSessionRegistry {
-  /** Live session ids of one handler (empty when the handler is not materialized). */
   list(workspaceId: string): readonly string[];
 }
 

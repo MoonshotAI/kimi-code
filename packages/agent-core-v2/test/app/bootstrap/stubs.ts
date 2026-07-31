@@ -9,6 +9,8 @@
 import type { ServiceRegistration } from '#/_base/di/test';
 import {
   IBootstrapService,
+  resolveHostArgs,
+  type HostArgsInput,
   type PersistenceScopeName,
 } from '#/app/bootstrap/bootstrap';
 
@@ -18,7 +20,11 @@ export const stubClientIdentity = {
   platform: 'test_platform',
 } as const;
 
-export function stubBootstrap(homeDir = '/tmp/kimi-home', env: NodeJS.ProcessEnv = {}): IBootstrapService {
+export function stubBootstrap(
+  homeDir = '/tmp/kimi-home',
+  env: NodeJS.ProcessEnv = {},
+  args: HostArgsInput = {},
+): IBootstrapService {
   const scopes: Record<PersistenceScopeName, string> = {
     config: '',
     sessions: 'sessions',
@@ -39,6 +45,7 @@ export function stubBootstrap(homeDir = '/tmp/kimi-home', env: NodeJS.ProcessEnv
     configPath: `${homeDir}/config.toml`,
     configKey: 'config.toml',
     clientIdentity: stubClientIdentity,
+    args: resolveHostArgs(args),
     sessionsDir: `${homeDir}/sessions`,
     blobsDir: `${homeDir}/blobs`,
     storeDir: `${homeDir}/store`,

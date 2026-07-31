@@ -21,7 +21,7 @@
 // owning model offloads inline media to blob storage), cross-reducers
 // (foreign models that also reduce this record on dispatch and replay).
 
-// Index (45 record types)
+// Index (46 record types)
 //   config.update                      profile               persisted  src/agent/profile/profileOps.ts
 //   context_size.measured              contextSize           transient  src/agent/contextSize/contextSizeOps.ts
 //   context.append_loop_event          contextMemory         persisted  src/agent/contextMemory/contextOps.ts
@@ -64,6 +64,7 @@
 //   tools.unregister_user_tool         userTool              persisted  src/agent/userTool/userToolOps.ts
 //   tools.update_store                 todo                  persisted  src/session/todo/todoOps.ts
 //   turn.cancel                        turn                  persisted  src/agent/loop/turnOps.ts
+//   turn.ended                         turn                  persisted  src/agent/loop/turnOps.ts
 //   turn.prompt                        turn                  persisted  src/agent/loop/turnOps.ts
 //   turn.steer                         turn                  persisted  src/agent/loop/turnOps.ts
 //   usage.record                       usage                 persisted  src/agent/usage/usageOps.ts
@@ -586,6 +587,61 @@ interface TurnCancelPayload {
  * model: turn · persisted
  * owner: src/agent/loop/turnOps.ts
  */
+interface TurnEndedPayload {
+  _name: 'turn.ended';
+  turnId: number;
+  reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
+  /** KimiErrorPayload */
+  error?: {
+    code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+    message: string;
+    name?: string;
+    details?: Readonly<Record<string, unknown>>;
+    retryable: boolean;
+    cause?: {
+      code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+      message: string;
+      name?: string;
+      details?: Readonly<Record<string, unknown>>;
+      retryable: boolean;
+      cause?: {
+        code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+        message: string;
+        name?: string;
+        details?: Readonly<Record<string, unknown>>;
+        retryable: boolean;
+        cause?: {
+          code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+          message: string;
+          name?: string;
+          details?: Readonly<Record<string, unknown>>;
+          retryable: boolean;
+          cause?: {
+            code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+            message: string;
+            name?: string;
+            details?: Readonly<Record<string, unknown>>;
+            retryable: boolean;
+            cause?: {
+              code: ErrorCode;
+              message: string;
+              name?: string;
+              details?: Readonly<Record<string, unknown>>;
+              retryable: boolean;
+              cause?: ErrorPayload;
+            };
+          };
+        };
+      };
+    };
+  };
+  durationMs?: number;
+}
+
+/**
+ * model: turn · persisted
+ * owner: src/agent/loop/turnOps.ts
+ */
 interface TurnPromptPayload {
   _name: 'turn.prompt';
   input: readonly ContentPart[];
@@ -666,6 +722,7 @@ interface WirePayloadMap {
   "tools.unregister_user_tool": ToolsUnregisterUserToolPayload;
   "tools.update_store": ToolsUpdateStorePayload;
   "turn.cancel": TurnCancelPayload;
+  "turn.ended": TurnEndedPayload;
   "turn.prompt": TurnPromptPayload;
   "turn.steer": TurnSteerPayload;
   "usage.record": UsageRecordPayload;

@@ -1,5 +1,5 @@
 /**
- * `agentProfileCatalog` domain (L3) — `IAgentProfileRegistry` contract.
+ * `agentProfileCatalog` domain — `IAgentProfileRegistry` contract.
  *
  * The Registry of the Contribution / Registry / Catalog extension-point
  * pattern for agent profiles. A contribution is a plain data structure
@@ -28,7 +28,6 @@ import type { AgentProfileContribution } from './agentProfileContribution';
 export interface AgentProfileRegistration {
   readonly sourceId: string;
   readonly priority: number;
-  /** Absent = global contribution; present = specific to one workspace handler. */
   readonly workspaceKey?: string;
   readonly contribution: AgentProfileContribution;
 }
@@ -40,7 +39,6 @@ export interface AgentProfileRegistryChange {
 
 export interface RegisterAgentProfileOptions {
   readonly priority?: number;
-  /** Tag a workspace-local contribution; global contributors omit it. */
   readonly workspaceKey?: string;
 }
 

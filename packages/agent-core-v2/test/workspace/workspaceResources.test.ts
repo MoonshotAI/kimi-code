@@ -32,12 +32,11 @@ import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileReg
 import { AgentProfileRegistryService } from '#/app/agentProfileCatalog/agentProfileRegistryService';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { BuiltinAgentProfileLoaderService } from '#/app/agentProfileCatalog/builtinAgentProfileLoaderService';
-import { IAgentCatalogRuntimeOptions } from '#/workspace/workspaceAgentProfileLoader/agentCatalogRuntimeOptions';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { UserAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoaderService';
 import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
 import { PluginAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoaderService';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IBootstrapService, resolveHostArgs } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { IEventService } from '#/app/event/event';
@@ -47,7 +46,6 @@ import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { FileSkillDiscovery } from '#/app/skillCatalog/fileSkillDiscovery';
 import { InMemorySkillDiscovery } from '#/app/skillCatalog/inMemorySkillDiscovery';
-import { ISkillCatalogRuntimeOptions } from '#/app/skillCatalog/skillCatalogRuntimeOptions';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import { BuiltinSkillSource, IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
 import { IUserFileSkillSource, UserFileSkillSource } from '#/app/skillCatalog/userFileSkillSource';
@@ -278,6 +276,7 @@ describe('workspace resource sharing (handler chain)', () => {
         _serviceBrand: undefined,
         homeDir,
         osHomeDir: homeDir,
+        args: resolveHostArgs(undefined),
         scope: (name: string) => name,
       } as unknown as IBootstrapService),
       stubPair(IHostEnvironment, {
@@ -297,12 +296,6 @@ describe('workspace resource sharing (handler chain)', () => {
       } as unknown as IConfigService),
       stubPair(ITelemetryService, noopTelemetryService),
       stubPair(ISkillDiscovery, discovery),
-      stubPair(ISkillCatalogRuntimeOptions, {
-        _serviceBrand: undefined,
-      } as unknown as ISkillCatalogRuntimeOptions),
-      stubPair(IAgentCatalogRuntimeOptions, {
-        _serviceBrand: undefined,
-      } as unknown as IAgentCatalogRuntimeOptions),
       stubPair(IPluginService, pluginStub()),
       stubPair(IWorkspaceService, workspaceCatalogStub()),
       stubPair(ISessionIndex, {

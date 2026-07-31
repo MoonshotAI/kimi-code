@@ -1,11 +1,9 @@
 /**
- * `state` domain (L0) — scope-agnostic keyed state container primitives.
+ * `state` domain — scope-agnostic keyed state container primitives.
  *
- * Owns the typed `StateKey<T>` / `defineState(name, initial)` descriptor (the
- * state counterpart of wire's `defineModel`), the `IStateRegistry` base
- * interface shared by the per-scope state services (`IAppStateService` /
- * `IWorkspaceStateService` / `ISessionStateService` / `IAgentStateService`),
- * and the `StateRegistry` implementation backing them: a `Map`-backed store
+ * Owns the typed `StateKey<T>` / `defineState(name, initial)` descriptor, the
+ * `IStateRegistry` base interface shared by the per-scope state services, and
+ * the `StateRegistry` implementation backing them: a `Map`-backed store
  * where keys are declared
  * up front (`register`), read and replaced (`get` / `set`), and observed
  * (`onDidChange(key)` per key, `onDidChangeAny` globally). Two exports serve
@@ -29,8 +27,7 @@
  * Values are stored as-is — the container does not freeze or clone, so
  * replacing the whole value via `set` is the recommended update style;
  * mutating a held `Map` / `Set` in place bypasses change notification.
- * Persistence and replay are out of scope here: durable, replayable state
- * belongs to wire Models. Scope-agnostic.
+ * Persistence and replay are out of scope here. Scope-agnostic.
  */
 
 import { Disposable } from '../di/lifecycle';
@@ -51,11 +48,6 @@ export interface StateChange {
   readonly value: unknown;
 }
 
-/**
- * One scope tier's contribution to a cascading state inspection: the tier
- * name, its JSON-safe `snapshot()`, and the parent tiers' inspections
- * (absent at the App root).
- */
 export interface StateInspection {
   readonly scope: string;
   readonly state: Record<string, unknown>;
@@ -80,9 +72,7 @@ export class StateRegistry extends Disposable implements IStateRegistry {
   private readonly anyEmitter = this._register(new Emitter<StateChange>());
   readonly onDidChangeAny: Event<StateChange> = this.anyEmitter.event;
 
-  /** Scope-tier name reported by `inspect()`; each scoped binding sets it. */
   protected readonly inspectScope: string = 'unknown';
-  /** The parent scope's registry for the `inspect()` cascade; root = none. */
   protected inspectParent?: IStateRegistry;
 
   register<T>(key: StateKey<T>): void {
@@ -165,10 +155,6 @@ function toJsonSafe(value: unknown, seen: WeakSet<object>): unknown {
     if (value instanceof Set) {
       return [...value.values()].map((item) => toJsonSafe(item, seen));
     }
-    // Plain objects (literal / interface-shaped) are recursed; instances with
-    // a custom prototype (services, tools, AbortControllers, Promises, Errors)
-    // are resource graphs, not data — walking them fans out across the whole
-    // DI object graph and can exhaust the heap, so they collapse to a marker.
     const proto: unknown = Object.getPrototypeOf(value);
     if (proto !== Object.prototype && proto !== null) {
       const ctor = (value as { constructor?: { name?: string } }).constructor;

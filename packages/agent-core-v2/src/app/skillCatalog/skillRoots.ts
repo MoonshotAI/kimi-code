@@ -1,13 +1,11 @@
 /**
- * `skillCatalog` domain (L3) — skill-root resolution primitives.
+ * `skillCatalog` domain — skill-root resolution primitives.
  *
  * Resolves the ordered `SkillRoot` list a discovery backend should scan for the
  * user (home) and project (workspace) skill locations. Brand directories are
  * preferred over generic ones (`.kimi-code/skills` before `.agents/skills`),
- * and the project root is found by walking up to `.git`. Plugin roots are no
- * longer folded in here — plugins are a separate `ISkillSource`. These helpers
- * are exported so the edge can compose a workspace's skills without a Session.
- * Pure path/fs probes; no scoped state.
+ * and the project root is found by walking up to `.git`. Pure path/fs probes;
+ * no scoped state.
  */
 
 import { promises as fs } from 'node:fs';
@@ -48,12 +46,6 @@ export async function projectRoots(
   return roots;
 }
 
-/**
- * The project root and the raw project skill-root candidates
- * (`.kimi-code/skills` and `.agents/skills` under it) regardless of
- * existence — the watch plan for project-skill refreshes, since
- * `projectRoots` filters to directories that already exist.
- */
 export interface ProjectSkillRootCandidates {
   readonly projectRoot: string;
   readonly candidates: readonly string[];

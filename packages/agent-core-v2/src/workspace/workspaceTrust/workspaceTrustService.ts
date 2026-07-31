@@ -1,11 +1,10 @@
 /**
- * `workspaceTrust` domain (L2) — `IWorkspaceTrust` implementation.
+ * `workspaceTrust` domain — `IWorkspaceTrust` implementation.
  *
  * Persists the trust marker through the `persistence` domain's
  * `IAtomicDocumentStore` under the `workspace-trust` scope, one document per
- * workspace keyed by `encodeWorkDirKey(root)` — the same id the workspace
- * registry mints for the root — with the raw root kept in the value for
- * inspection. The document's presence IS the trusted state: `trust()`
+ * workspace keyed by `encodeWorkDirKey(root)`, with the raw root kept in the
+ * value for inspection. The document's presence IS the trusted state: `trust()`
  * writes it, `untrust()` deletes it. The record lives under the kimi home,
  * never inside the workspace, so a checked-out tree cannot pre-trust
  * itself. The flag is read once through `ready` and every later mutation

@@ -50,14 +50,6 @@ export class IntervalTimer implements IDisposable {
   }
 }
 
-/**
- * One-shot debounce primitive — a disposable `setTimeout` wrapper.
- *
- * `TimeoutTimer` owns a single `setTimeout` handle: every `cancelAndSet`
- * cancels the pending run and re-arms, so a burst of triggers collapses into
- * one deferred run (watch-event debounce). `dispose` guarantees the handle is
- * cleared. Mirrors VS Code's `TimeoutTimer`.
- */
 export class TimeoutTimer implements IDisposable {
   private handle: ReturnType<typeof setTimeout> | undefined;
 

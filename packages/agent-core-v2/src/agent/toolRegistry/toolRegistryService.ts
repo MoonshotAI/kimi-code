@@ -1,5 +1,5 @@
 /**
- * `toolRegistry` domain (L3) — `IAgentToolRegistryService` implementation.
+ * `toolRegistry` domain — `IAgentToolRegistryService` implementation.
  *
  * The per-agent tool table (`tools`) stays a plain instance field: its values
  * hold `ExecutableTool` class instances, not plain data, so it is not

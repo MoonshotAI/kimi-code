@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — side-effect module: registers the Anthropic
+ * `kosong/provider` domain — side-effect module: registers the Anthropic
  * Messages base (`id: 'anthropic'`).
  *
  * The factory aggregates construction-time trait declarations and composes

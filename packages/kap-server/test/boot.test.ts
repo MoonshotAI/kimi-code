@@ -13,12 +13,10 @@ import { pino } from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  hostRequestHeadersSeed,
   IBootstrapService,
   IFileSystemStorageService,
   IHostRequestHeaders,
   InMemoryStorageService,
-  ISkillCatalogRuntimeOptions,
   IOAuthToolkit,
   ITelemetryService,
   noopTelemetryService,
@@ -151,7 +149,7 @@ describe('server-v2 boot', () => {
     expect(defaults.headers['X-Msh-Platform']).toBe('test_platform');
 
     // Restart on the same homeDir with a host-provided seed; it must win over
-    // the default (the CLI passes full Kimi identity headers this way).
+    // the default (a host can always re-seed the port with its own instance).
     await server.close();
     server = undefined;
     server = await startServer({
@@ -160,7 +158,7 @@ describe('server-v2 boot', () => {
       port: 0,
       homeDir: home,
       logLevel: 'silent',
-      seeds: hostRequestHeadersSeed({ 'User-Agent': 'custom-host/9.9' }),
+      seeds: [[IHostRequestHeaders, { headers: { 'User-Agent': 'custom-host/9.9' } }]],
     });
     const overridden = server.core.accessor.get(IHostRequestHeaders);
     expect(overridden.headers['User-Agent']).toBe('custom-host/9.9');
@@ -176,11 +174,11 @@ describe('server-v2 boot', () => {
       logLevel: 'silent',
       skillDirs: ['/skills/explicit'],
     });
-    expect(server.core.accessor.get(ISkillCatalogRuntimeOptions).explicitDirs).toEqual([
+    expect(server.core.accessor.get(IBootstrapService).args.skillDirs).toEqual([
       '/skills/explicit',
     ]);
 
-    // Without skillDirs the registered default carries no explicit dirs.
+    // Without skillDirs the resolved args carry no explicit dirs.
     await server.close();
     server = undefined;
     server = await startServer({
@@ -190,7 +188,7 @@ describe('server-v2 boot', () => {
       homeDir: home,
       logLevel: 'silent',
     });
-    expect(server.core.accessor.get(ISkillCatalogRuntimeOptions).explicitDirs).toBeUndefined();
+    expect(server.core.accessor.get(IBootstrapService).args.skillDirs).toBeUndefined();
   });
 
   it('does not shut down a host-injected telemetry service when server telemetry is disabled', async () => {

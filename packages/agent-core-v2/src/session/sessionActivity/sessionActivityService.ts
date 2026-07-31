@@ -1,5 +1,5 @@
 /**
- * `sessionActivity` domain (L6) — `ISessionActivityView` implementation.
+ * `sessionActivity` domain — `ISessionActivityView` implementation.
  *
  * Folds every agent's activity projection — borrowed through the agent
  * handles from `agentLifecycle` (`IAgentActivityView.state()` seeded once at

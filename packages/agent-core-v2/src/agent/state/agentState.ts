@@ -1,5 +1,5 @@
 /**
- * `state` domain (L1) — Agent-scope keyed state container contract.
+ * `state` domain — Agent-scope keyed state container contract.
  *
  * Defines `IAgentStateService`, the Agent-scope state service: Agent-tier
  * services declare their plain-data state as typed keys (`defineState` from

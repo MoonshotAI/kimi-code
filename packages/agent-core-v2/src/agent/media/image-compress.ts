@@ -1,5 +1,5 @@
 /**
- * `media` domain (L4) — image compression for model ingestion.
+ * `media` domain — image compression for model ingestion.
  *
  * Shrink oversized images before they reach the model.
  *
@@ -18,23 +18,20 @@
  *    result satisfies their delivery limits before forwarding it.
  *  - Format gate first: content-part lists pass through
  *    {@link gateImageFormatParts} before any compression, so images outside
- *    the provider-accepted set (see ./image-format-policy) are never decoded
- *    or forwarded — one unsupported image in the session history would make
- *    every subsequent request fail.
+ *    the provider-accepted set are never decoded or forwarded — one
+ *    unsupported image in the session history would make every subsequent
+ *    request fail.
  *  - PNG, JPEG, and (non-animated) WebP are re-encoded; WebP re-encodes
- *    through the PNG/JPEG ladder after a wasm decode (see ./webp-decode).
- *    GIF and animated WebP are passed through to preserve animation. Formats
- *    outside the provider-accepted set never reach this module from the
- *    content-part paths (the format gate drops them first); direct callers
- *    get a passthrough.
+ *    through the PNG/JPEG ladder after a wasm decode. GIF and animated WebP
+ *    are passed through to preserve animation. Formats outside the
+ *    provider-accepted set never reach this module from the content-part
+ *    paths (the format gate drops them first); direct callers get a
+ *    passthrough.
  *  - Compression must never be silent to the model: results carry the
  *    original dimensions, {@link buildImageCompressionCaption} renders the
  *    shared "what was compressed, where is the original" note every ingestion
  *    point can place next to the image, and {@link cropImageForModel} lets a
- *    caller read a region of the original back at full fidelity. In user
- *    prompts the prompt layer later reroutes that note through the hidden
- *    system-reminder injection via {@link extractImageCompressionCaptions},
- *    so its raw `<system>` markup never renders in the UI.
+ *    caller read a region of the original back at full fidelity.
  */
 
 import type { ContentPart } from '#/kosong/contract/message';

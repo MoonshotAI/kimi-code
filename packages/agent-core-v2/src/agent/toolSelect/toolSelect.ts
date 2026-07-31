@@ -1,5 +1,5 @@
 /**
- * `toolSelect` domain (L4) — progressive tool disclosure contract.
+ * `toolSelect` domain — progressive tool disclosure contract.
  *
  * Defines the Agent-scope service that shapes provider-visible tool/history
  * views, loads selected dynamic schemas, and reports loadable-tool

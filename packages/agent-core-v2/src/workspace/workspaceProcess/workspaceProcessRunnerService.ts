@@ -1,5 +1,5 @@
 /**
- * `workspaceProcess` domain (L2) — `ISessionProcessRunner` implementation.
+ * `workspaceProcess` domain — `ISessionProcessRunner` implementation.
  *
  * Resolves the default cwd from the handler's `IWorkspaceContext` (chdir is
  * gone, so the workspace root is the one fixed default) and delegates the
@@ -10,10 +10,7 @@
  * omitted we pass `undefined` so the child inherits `process.env` verbatim.
  *
  * Bound at Workspace scope — one runner per handler, shared by every session
- * of the workspace. The contract (`ISessionProcessRunner`) stays in the
- * session domain so Session/Agent consumers keep importing it without
- * crossing the Workspace-tier import ban; the Workspace-scope registration
- * reaches them through ordinary parent-scope resolution.
+ * of the workspace.
  */
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';

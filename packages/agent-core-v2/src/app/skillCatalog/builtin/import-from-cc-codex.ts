@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — builtin `import-from-cc-codex` skill definition.
+ * `skillCatalog` domain — builtin `import-from-cc-codex` skill definition.
  */
 
 import type { SkillDefinition } from '#/app/skillCatalog/types';

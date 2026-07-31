@@ -1,5 +1,5 @@
 /**
- * `agentProfileCatalog` domain (L3) — `IBuiltinAgentProfileLoader` implementation.
+ * `agentProfileCatalog` domain — `IBuiltinAgentProfileLoader` implementation.
  *
  * Snapshots the module-level contributions (`registerAgentProfile`, the
  * "import = register" pattern) on construction and registers them into

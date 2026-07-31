@@ -1,10 +1,9 @@
 /**
- * `kosong/provider` domain (L2) — tool-call id rewrite machinery.
+ * `kosong/provider` domain — tool-call id rewrite machinery.
  *
- * The `ToolCallIdPolicy` shape is contract; this module is the shared
- * implementation the bases use: id sanitization plus history-wide id
- * normalization that rewrites every `toolCalls[].id` / `toolCallId` pair
- * consistently and keeps rewritten ids unique.
+ * The shared `ToolCallIdPolicy` implementation: id sanitization plus
+ * history-wide id normalization that rewrites every `toolCalls[].id` /
+ * `toolCallId` pair consistently and keeps rewritten ids unique.
  */
 
 import type { Message, ToolCall } from '#/kosong/contract/message';

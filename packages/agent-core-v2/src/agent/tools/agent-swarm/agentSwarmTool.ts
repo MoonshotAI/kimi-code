@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `AgentSwarmTool` implementation (the `AgentSwarm`
+ * `tools` domain — `AgentSwarmTool` implementation (the `AgentSwarm`
  * tool).
  *
  * Launches a batch of child agents (an ordinary Agent scope each) through the
@@ -14,8 +14,6 @@
  * service, which keeps its own "no model bound" check and inherit-caller
  * fallback. Swarm mode is entered through `IAgentSwarmService`; the caller's
  * agent id comes from `IAgentScopeContext`. Pure tool — owns no scoped state.
- * The public contract (input schema, constants, `IAgentSwarmTool`) lives in
- * `./agent-swarm`.
  *
  * Registered via the module-level `registerAgentToolService(IAgentSwarmTool,
  * AgentSwarmTool)` at the bottom of this file — the same "import = register"

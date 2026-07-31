@@ -1,16 +1,15 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — `AgentFileDefinition` → `AgentProfile` factory.
+ * `workspaceAgentProfileLoader` domain — `AgentFileDefinition` → `AgentProfile` factory.
  *
  * The file body is a prompt template rendered against the shared variable
- * table (`systemPromptVars`): `${var}` placeholders substitute live context,
+ * table: `${var}` placeholders substitute live context,
  * and `${base_prompt}` embeds the effective default profile's prompt so a file
  * can wrap the builtin behavior instead of replacing it. Explicit files are
  * marked as builtin overrides; directory files must opt in through frontmatter.
  * `tools` passes through as the allowlist (`undefined` = every tool active);
- * `disallowedTools` passes through as the denylist evaluated by
- * `IAgentToolPolicyService`; `subagents` passes through as the delegation
- * allowlist enforced by the `Agent` / `AgentSwarm` tools; `model_preference`
- * becomes the symbolic default those tools use when spawning the profile.
+ * `disallowedTools` passes through as the tool denylist; `subagents` passes
+ * through as the delegation allowlist; `model_preference` becomes the
+ * symbolic default model used when the profile is delegated to.
  * `profilesFromDiscovery` packs a whole discovery pass into an
  * `AgentProfileContribution`, binding each profile's `${base_prompt}`
  * placeholder lazily at render time so it always reflects the effective

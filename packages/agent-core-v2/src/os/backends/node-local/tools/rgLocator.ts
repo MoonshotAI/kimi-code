@@ -1,7 +1,7 @@
 /**
  * `fileTools` domain — shared ripgrep (`rg`) binary locator.
  *
- * Resolves the `rg` command used by Glob and Grep, preferring a file found on
+ * Resolves the `rg` command, preferring a file found on
  * PATH, then the vendor hook, then the app cache, and finally bootstrapping a
  * pinned ripgrep archive into `<KIMI_CODE_HOME|~/.kimi-code>/bin` when the
  * caller permits it. File lookup intentionally avoids spawning `rg --version`

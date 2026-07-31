@@ -3,8 +3,7 @@
  *
  * Derives title and last-prompt text from native and legacy prompt payloads,
  * persists metadata through `sessionMetadata`, and publishes live updates
- * through `event`. Shared by the native `rpc` prompt path and the v1 legacy
- * prompt adapter so both surfaces keep the same easy-title behavior.
+ * through `event`.
  */
 
 import type { IEventService } from '#/app/event/event';

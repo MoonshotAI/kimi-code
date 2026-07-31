@@ -1,5 +1,5 @@
 /**
- * `state` domain (L1) — `IAppStateService` implementation.
+ * `state` domain — `IAppStateService` implementation.
  *
  * Thin per-scope binding over the `_base` `StateRegistry`; the container owns
  * construction and disposal, so registered state dies with the scope. The

@@ -1,9 +1,8 @@
 /**
  * `storage` domain — the filesystem persistence backend.
  *
- * `IFileSystemStorageService` is the filesystem-specific byte store that the
- * `node-fs` Store implementations are built on. It exposes two irreducible
- * durable primitives side by side:
+ * `IFileSystemStorageService` is the filesystem-specific byte store. It
+ * exposes two irreducible durable primitives side by side:
  *
  *   - `write`  — atomic whole-value replacement (the `Config` access pattern).
  *   - `append` — ordered, durable byte extension   (the `Record` access pattern).
@@ -20,7 +19,7 @@
  * The service is byte-oriented and scope/key-addressed: `scope` maps to a
  * directory, `key` maps to a filename. It knows nothing about JSON, records,
  * configs, versions or framing. Those concerns live in the typed Store facades
- * above it (`IAppendLogStore`, `IAtomicDocumentStore`, `IBlobStore`).
+ * above it.
  *
  * Non-filesystem backends (Postgres, S3, Redis) do not implement this
  * interface — they implement the Store interfaces directly via their own

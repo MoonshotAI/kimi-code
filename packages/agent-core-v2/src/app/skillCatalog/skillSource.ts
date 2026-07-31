@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — skill-source contract.
+ * `skillCatalog` domain — skill-source contract.
  *
  * `ISkillSource` is the producer half of the skill subsystem: each source loads
  * a `SkillContribution` and advertises a `priority` so the Session sink can
@@ -30,11 +30,6 @@ export const SKILL_SOURCE_PRIORITY = {
   workspace: 30,
 } as const;
 
-/**
- * The well-known `ISkillSource.id` of the plugin source, shared by every
- * scope tier the source is bound at (today: Workspace scope) and by change
- * listeners matching plugin-sourced refreshes.
- */
 export const PLUGIN_SKILL_SOURCE_ID = 'plugin';
 
 export interface ISkillSource {

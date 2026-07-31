@@ -7,13 +7,21 @@
  * Wiring: real v2 engine bootstrapped on a temp KIMI_CODE_HOME; no provider calls.
  * Run: pnpm exec vitest run test/sdk-rpc-client-v2.test.ts
  */
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createKimiHarnessV2, ErrorCodes, KimiError, KimiHarness, SDKRpcClientV2 } from '#/index';
+import {
+  createKimiHarnessV2,
+  ErrorCodes,
+  KimiError,
+  KimiHarness,
+  removeProviderFromConfig,
+  SDKRpcClientV2,
+  type KimiConfig,
+} from '#/index';
 import { foldAgentWireReplay } from '#/v2/resume-replay';
 import { IHostRequestHeaders } from '@moonshot-ai/agent-core-v2';
 
@@ -144,6 +152,60 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
     }
   });
 
+  it('persists removeProvider as one atomic cascade (providers, models, defaults)', async () => {
+    const { harness } = await makeHarness();
+    try {
+      await harness.setConfig({
+        providers: {
+          a: { type: 'openai', baseUrl: 'https://a.example.test/v1', apiKey: 'sk-a' },
+          b: { type: 'openai', baseUrl: 'https://b.example.test/v1', apiKey: 'sk-b' },
+        },
+        models: {
+          'a/m1': { provider: 'a', model: 'm1', maxContextSize: 100 },
+          'b/m1': { provider: 'b', model: 'm1', maxContextSize: 100 },
+        },
+        defaultModel: 'b/m1',
+        defaultProvider: 'b',
+      });
+      const next = await harness.removeProvider('b');
+      expect(next.providers['b']).toBeUndefined();
+      expect(next.providers['a']).toBeDefined();
+      expect(next.models?.['b/m1']).toBeUndefined();
+      expect(next.models?.['a/m1']).toBeDefined();
+      expect(next.defaultModel).toBeUndefined();
+      expect(next.defaultProvider).toBeUndefined();
+      // A fresh read from disk sees the same state — the cascade landed as a
+      // single atomic write, never a halfway-removed intermediate.
+      const reread = await harness.getConfig({ reload: true });
+      expect(reread.providers['b']).toBeUndefined();
+      expect(reread.models?.['b/m1']).toBeUndefined();
+      expect(reread.defaultModel).toBeUndefined();
+      expect(reread.defaultProvider).toBeUndefined();
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('replaces config sections atomically and clears undefined sections', async () => {
+    const { harness } = await makeHarness();
+    try {
+      expect(harness.supportsAtomicSectionReplace()).toBe(true);
+      await harness.setConfig({
+        providers: { a: { type: 'openai', baseUrl: 'https://a.example.test/v1', apiKey: 'sk-a' } },
+        models: { 'a/m1': { provider: 'a', model: 'm1', maxContextSize: 100 } },
+        defaultModel: 'a/m1',
+      });
+      await harness.replaceConfigSections({ defaultModel: undefined });
+      const next = await harness.getConfig({ reload: true });
+      expect(next.defaultModel).toBeUndefined();
+      // Sections absent from the write stay untouched.
+      expect(next.providers['a']).toBeDefined();
+      expect(next.models?.['a/m1']).toBeDefined();
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('fails loudly with not_implemented for methods not yet migrated', async () => {
     const { harness } = await makeHarness();
     try {
@@ -154,6 +216,64 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
       await expect(harness.deleteSession('session_missing')).rejects.toMatchObject({
         code: ErrorCodes.NOT_IMPLEMENTED,
       });
+    } finally {
+      await harness.close();
+    }
+  });
+});
+
+describe('SDKRpcClientV2 workspace trust', () => {
+  it('reports an untrusted workspace with the project MCP servers it gates', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await writeFile(
+      join(workDir, '.mcp.json'),
+      JSON.stringify({ mcpServers: { 'root-server': { command: 'root-cmd' } } }),
+      'utf-8',
+    );
+    await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(workDir, '.kimi-code', 'mcp.json'),
+      JSON.stringify({ mcpServers: { 'nested-server': { command: 'nested-cmd' } } }),
+      'utf-8',
+    );
+    try {
+      const info = await harness.getWorkspaceTrustInfo(workDir);
+      expect(info.trusted).toBe(false);
+      expect(info.gatedMcpServers).toEqual(['nested-server', 'root-server']);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('degrades the gated-server list to empty on an invalid project mcp.json', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await writeFile(join(workDir, '.mcp.json'), '{not json', 'utf-8');
+    try {
+      const info = await harness.getWorkspaceTrustInfo(workDir);
+      expect(info).toEqual({ trusted: false, gatedMcpServers: [] });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('trustWorkspace flips the state and persists the marker in the kimi home', async () => {
+    const { harness, homeDir } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    try {
+      await harness.trustWorkspace(workDir);
+      expect(await harness.getWorkspaceTrustInfo(workDir)).toEqual({
+        trusted: true,
+        gatedMcpServers: [],
+      });
+      // The trust marker lives in the kimi home, never in the checkout.
+      const markers = await readdir(join(homeDir, 'workspace-trust'));
+      expect(markers.length).toBe(1);
+      expect(await readdir(workDir)).not.toContain('workspace-trust');
     } finally {
       await harness.close();
     }
@@ -274,8 +394,58 @@ describe('SDKRpcClientV2 engine telemetry', () => {
   });
 });
 
-async function writeSkill(dir: string, name: string): Promise<void> {
-  await mkdir(dir, { recursive: true });
+describe('removeProviderFromConfig', () => {
+  it('drops the provider, its models and dangling default pointers without mutating the input', () => {
+    const config = {
+      providers: {
+        a: { type: 'openai', baseUrl: 'https://a.example.test/v1' },
+        b: { type: 'openai', baseUrl: 'https://b.example.test/v1' },
+      },
+      models: {
+        'a/m1': { provider: 'a', model: 'm1', maxContextSize: 100 },
+        'b/m1': { provider: 'b', model: 'm1', maxContextSize: 100 },
+        'my-b': { provider: 'b', model: 'm1', maxContextSize: 100 },
+      },
+      defaultModel: 'my-b',
+      defaultProvider: 'b',
+    } as unknown as KimiConfig;
+
+    const next = removeProviderFromConfig(config, 'b');
+
+    expect(Object.keys(next.providers)).toEqual(['a']);
+    expect(Object.keys(next.models ?? {})).toEqual(['a/m1']);
+    expect(next.defaultModel).toBeUndefined();
+    expect(next.defaultProvider).toBeUndefined();
+    // The input config is left untouched (the staging host threads the copy).
+    expect(config.providers['b']).toBeDefined();
+    expect(config.models?.['b/m1']).toBeDefined();
+    expect(config.defaultModel).toBe('my-b');
+  });
+
+  it('keeps the default pointers when they do not dangle', () => {
+    const config = {
+      providers: {
+        a: { type: 'openai' },
+        b: { type: 'openai' },
+      },
+      models: {
+        'a/m1': { provider: 'a', model: 'm1', maxContextSize: 100 },
+        'b/m1': { provider: 'b', model: 'm1', maxContextSize: 100 },
+      },
+      defaultModel: 'a/m1',
+      defaultProvider: 'a',
+    } as unknown as KimiConfig;
+
+    const next = removeProviderFromConfig(config, 'b');
+
+    expect(Object.keys(next.providers)).toEqual(['a']);
+    expect(Object.keys(next.models ?? {})).toEqual(['a/m1']);
+    expect(next.defaultModel).toBe('a/m1');
+    expect(next.defaultProvider).toBe('a');
+  });
+});
+
+async function writeSkill(dir: string, name: string): Promise<void> {  await mkdir(dir, { recursive: true });
   await writeFile(
     join(dir, 'SKILL.md'),
     `---\nname: ${name}\ndescription: Skill ${name} for the escape-hatch test\n---\n\nBody of ${name}.\n`,

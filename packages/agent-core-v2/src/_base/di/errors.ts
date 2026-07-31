@@ -1,5 +1,5 @@
 /**
- * `di` domain (L0) — `CyclicDependencyError` raised on DI dependency cycles.
+ * `di` domain — `CyclicDependencyError` raised on DI dependency cycles.
  */
 
 import type { Graph } from './graph';

@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — `IWorkspaceAgentProfileLoader` implementation.
+ * `workspaceAgentProfileLoader` domain — `IWorkspaceAgentProfileLoader` implementation.
  *
  * Discovers the workspace's agent files (`.kimi-code/agents`, `.agents/agents`
  * under the project root, resolved through `workspaceContext` and `hostFs`)
@@ -63,8 +63,6 @@ export class WorkspaceAgentProfileLoaderService
   }
 
   protected async load(): Promise<AgentProfileContribution> {
-    // The watch attaches before the first scan returns, so a change landing
-    // right after the scan cannot slip between the two.
     await this.watchReady;
     const roots = await projectAgentRoots(this.fs, this.workspace.cwd, (message, error) => {
       this.log.warn(message, error);
@@ -76,9 +74,6 @@ export class WorkspaceAgentProfileLoaderService
   }
 
   private async watchProjectAgentRoots(): Promise<void> {
-    // Watch the project root recursively, pruned to the agent-root
-    // candidates: watching a candidate directory directly never fires when
-    // its parent (`.kimi-code` / `.agents`) does not exist yet either.
     const { projectRoot, candidates } = await projectAgentRootCandidates(
       this.fs,
       this.workspace.cwd,

@@ -1,5 +1,5 @@
 /**
- * `telemetry` domain (L1) — telemetry event registry.
+ * `telemetry` domain — telemetry event registry.
  *
  * Central registry of every business event emitted through
  * `ITelemetryService.track2`: each entry pairs the event's property type

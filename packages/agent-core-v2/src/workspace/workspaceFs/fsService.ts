@@ -1,7 +1,7 @@
 /**
- * `workspaceFs` domain (L3) — `IWorkspaceFsService` implementation.
+ * `workspaceFs` domain — `IWorkspaceFsService` implementation.
  *
- * Backs the fs REST surface (search / grep / git status / git diff) by
+ * Implements the fs operations (search / grep / git status / git diff) by
  * orchestrating the os `IHostFileSystem` (file IO, resolved against the
  * workspace root), the handler-shared `ISessionProcessRunner` (`rg`), and
  * `IWorkspaceGitService` (git status/diff bound to the handler root; this
@@ -9,11 +9,11 @@
  * calling it).
  *
  * Path confinement applies a lexical within-workspace check first (the
- * handler root plus the `workspaceDirs` additional-dir set, mirroring the
- * Session-scope `workspaceContext` view semantics), then re-verifies the
- * candidate through `IHostFileSystem.realpath` (resolving the longest
- * existing prefix, so not-yet-created paths still work): a symlink inside
- * the workspace must not steer fs actions to files outside it. The small
+ * handler root plus the `workspaceDirs` additional-dir set), then
+ * re-verifies the candidate through `IHostFileSystem.realpath` (resolving
+ * the longest existing prefix, so not-yet-created paths still work): a
+ * symlink inside the workspace must not steer fs actions to files outside
+ * it. The small
  * caches (`rgResolution`, `realRootsCache`) are plain per-handler fields.
  * Bound at Workspace scope — one instance per handler, shared by every
  * session of the workspace.
@@ -48,12 +48,6 @@ import {
   type FsStatResponse,
 } from './fs';
 
-/**
- * The v1 numeric wire codes this edge surface throws inside its
- * `{ code, msg }` wire errors (`toWireError`). Mirrors the envelope error
- * table owned by the transport (kap-server); kept as local literals because
- * they are part of this service's v1 edge contract.
- */
 const FsWireErrorCode = {
   FS_PATH_NOT_FOUND: 40409,
   FS_IS_DIRECTORY: 40906,
@@ -82,8 +76,8 @@ import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 
 import { type FsDownloadResolved, type FsPathResolved, IWorkspaceFsService } from './fs';
-import { readStream, runCommand } from './fsProcess';
-import { ensureRgPath, type RgProbe, type RgResolution } from './rgLocator';
+import { readStream, runCommand } from './internal/fsProcess';
+import { ensureRgPath, type RgProbe, type RgResolution } from './internal/rgLocator';
 import {
   compileGrepPattern,
   computeFuzzyScore,
@@ -93,7 +87,7 @@ import {
   rgPath,
   rgText,
   stripTrailingNewline,
-} from './fsSearch';
+} from './internal/fsSearch';
 
 const SEARCH_HARD_CAP = 500;
 const GREP_TIMEOUT_MS = 30_000;
@@ -435,9 +429,6 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   }
 
   async search(req: FsSearchRequest): Promise<FsSearchResponse> {
-    // Empty query: no fuzzy matching — list the workspace root's top-level
-    // entries (dirs first) so clients can show a starting set for @-mention
-    // style file pickers.
     if (req.query === '') {
       const listed = await this.list({
         path: '.',

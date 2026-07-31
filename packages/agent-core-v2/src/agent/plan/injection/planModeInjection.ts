@@ -1,5 +1,5 @@
 /**
- * `plan` domain (L4) — plan-mode context injection.
+ * `plan` domain — plan-mode context injection.
  *
  * Owns the `plan_mode` context-injection provider: while plan mode is active it
  * emits the full / sparse / re-entry reminders (deduped against recent history),
@@ -7,9 +7,7 @@
  * the live plan state through `IAgentPlanService.status()` and the recent history
  * through `IAgentContextMemoryService`, so no derived-state closures are needed.
  * The plain-data state (`wasActive`) is registered into `agentState`
- * (`IAgentStateService`) and read/written through it. The telemetry `mode`
- * restore on replay is NOT part of this provider — it lives
- * in `AgentPlanService.restoreTelemetryMode`.
+ * (`IAgentStateService`) and read/written through it.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';

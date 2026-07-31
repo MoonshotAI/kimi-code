@@ -361,6 +361,7 @@ describe('Agent config', () => {
       [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 2, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-5>", "turnId": "0", "step": 2, "stepUuid": "<uuid-4>", "part": { "type": "text", "text": "Still using the original turn config." } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-4>", "turnId": "0", "step": 2, "finishReason": "end_turn", "usage": { "inputOther": 31, "output": 13, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-2", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
+      [wire] turn.ended                  { "turnId": 0, "reason": "completed", "time": "<time>" }
       [emit] turn.ended                  { "turnId": 0, "reason": "completed" }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
@@ -395,6 +396,7 @@ describe('Agent config', () => {
       [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 1, "origin": { "kind": "user" }, "phase": "running", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-7>", "turnId": "1", "step": 1, "stepUuid": "<uuid-6>", "part": { "type": "text", "text": "Now the changed config is active." } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-6>", "turnId": "1", "step": 1, "finishReason": "end_turn", "usage": { "inputOther": 50, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-3", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
+      [wire] turn.ended                  { "turnId": 1, "reason": "completed", "time": "<time>" }
       [emit] turn.ended                  { "turnId": 1, "reason": "completed" }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
@@ -1954,6 +1956,31 @@ describe('ConfigService replaceSections', () => {
     // layer collapses to an empty object instead of disappearing — the
     // long-standing `replace(domain, undefined)` behavior, unchanged here.
     expect(config.inspect(THINKING_SECTION).userValue).toEqual({});
+
+    disposables.dispose();
+  });
+
+  it('treats null as clear — the wire encoding JSON transports use for undefined', async () => {
+    const { config, disposables, store } = await createSectionsConfig();
+    const setSpy = vi.spyOn(store, 'set');
+
+    await config.replaceSections({
+      [DEFAULT_MODEL_SECTION]: null,
+      [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
+    });
+
+    expect(setSpy).toHaveBeenCalledTimes(1);
+    expect(config.get(DEFAULT_MODEL_SECTION)).toBeUndefined();
+    expect(config.inspect(DEFAULT_MODEL_SECTION).userValue).toBeUndefined();
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme-2' },
+    });
+
+    // `replace(domain, null)` clears too, so JSON transports behave
+    // identically to in-process `replace(domain, undefined)` callers.
+    await config.replace(DEFAULT_MODEL_SECTION, 'acme/m1');
+    await config.replace(DEFAULT_MODEL_SECTION, null);
+    expect(config.inspect(DEFAULT_MODEL_SECTION).userValue).toBeUndefined();
 
     disposables.dispose();
   });

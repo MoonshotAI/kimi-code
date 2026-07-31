@@ -1,5 +1,5 @@
 /**
- * `contextInjector` domain (L4) — `IAgentContextInjectorService` implementation.
+ * `contextInjector` domain — `IAgentContextInjectorService` implementation.
  *
  * Injects registered context providers through `loop` and `systemReminder`,
  * tracks their positions in `contextMemory` through `eventBus`, and reconciles

@@ -1,18 +1,17 @@
 /**
- * `subagent` domain (L6) — subagent config-section schema, env binding, and
+ * `subagent` domain — subagent config-section schema, env binding, and
  * timeout / model resolution.
  *
  * Owns the `[subagent]` configuration section (`timeout_ms` on disk) together
- * with the `KIMI_SUBAGENT_TIMEOUT_MS` env override, mirroring v1's
- * `resolveSubagentTimeoutMs` precedence (env > config.toml > 2h default). While
+ * with the `KIMI_SUBAGENT_TIMEOUT_MS` env override (precedence: env >
+ * config.toml > 2h default). While
  * the env var is set, `stripEnvBoundFields` restores the env-free raw value
- * before persistence, so the override never leaks into `config.toml`. Both
- * collaboration tools — `Agent` in this domain and `AgentSwarm` in the `swarm`
- * domain — resolve their per-run timeout through `resolveSubagentTimeoutMs`,
- * and render the timeout message with `formatSubagentTimeoutDescription`.
+ * before persistence, so the override never leaks into `config.toml`. Per-run
+ * timeouts resolve through `resolveSubagentTimeoutMs`, and the timeout
+ * message renders with `formatSubagentTimeoutDescription`.
  *
- * The model half of the spawn binding is the secondary model (the section
- * and type in `app/kosongConfig` — `[secondary_model]` on disk): when its
+ * The model half of the spawn binding is the secondary model (the
+ * `[secondary_model]` section on disk): when its
  * experiment is enabled and the model is set, newly spawned subagents bind to
  * it by default instead of inheriting the caller's model, and the
  * `Agent`/`AgentSwarm` tools let the parent model pick per spawn via their
@@ -28,8 +27,7 @@
  * `wrapSubagentModelError`; while the experiment is off they also strip the
  * no-op `model` parameter from their advertised schemas via
  * `stripSubagentModelParameter`. Self-registered at module load via
- * `registerConfigSection`, so the `config` domain never imports this
- * domain's types.
+ * `registerConfigSection`.
  */
 
 import { z } from 'zod';
@@ -65,12 +63,10 @@ export const SubagentConfigSchema = z.object({
 
 export type SubagentConfig = z.infer<typeof SubagentConfigSchema>;
 
-/** Default per-run subagent timeout: 2 hours, same as v1. */
 export const DEFAULT_SUBAGENT_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 
 export const SUBAGENT_TIMEOUT_ENV = 'KIMI_SUBAGENT_TIMEOUT_MS';
 
-/** Parse the env override; anything but a positive integer is ignored (v1 semantics). */
 function parseTimeoutMsEnv(raw: string): number | undefined {
   const parsed = Number(raw);
   return Number.isInteger(parsed) && parsed >= 1 ? parsed : undefined;
@@ -91,11 +87,6 @@ registerConfigSection(SUBAGENT_SECTION, SubagentConfigSchema, {
   stripEnv: stripSubagentEnv,
 });
 
-/**
- * Resolve the effective per-run subagent timeout. Governs foreground and
- * background subagents (and AgentSwarm) through the task manager's per-task
- * timeout.
- */
 export function resolveSubagentTimeoutMs(config: IConfigService): number {
   return (
     config.get<SubagentConfig | undefined>(SUBAGENT_SECTION)?.timeoutMs ??
@@ -202,7 +193,6 @@ export function wrapSubagentModelError(
   );
 }
 
-/** Human-readable duration for the subagent timeout message. */
 export function formatSubagentTimeoutDescription(ms: number): string {
   if (ms % (60 * 60 * 1000) === 0) {
     const h = ms / (60 * 60 * 1000);

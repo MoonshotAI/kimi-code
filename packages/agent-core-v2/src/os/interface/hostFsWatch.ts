@@ -1,12 +1,10 @@
 /**
- * `hostFsWatch` domain (L1) — local real-filesystem change notifications.
+ * `hostFsWatch` domain — local real-filesystem change notifications.
  *
  * Defines the `IHostFsWatchService`, a thin primitive over the host OS file
  * watcher. It reports raw create/modify/delete events under an absolute path
  * and knows nothing about sessions, connections, workspaces or wire frames.
- * App-scoped — one shared instance. Higher layers (e.g. `workspaceFsWatch`)
- * subscribe, confine events to a workspace, debounce/coalesce and re-expose
- * them as domain events.
+ * App-scoped — one shared instance.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

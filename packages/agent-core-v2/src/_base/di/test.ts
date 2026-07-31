@@ -1,5 +1,5 @@
 /**
- * `di` domain (L0) — scoped test host and service-stub helpers for DI domain tests.
+ * `di` domain — scoped test host and service-stub helpers for DI domain tests.
  */
 
 export {

@@ -150,6 +150,7 @@ import { createMcpOAuthStore } from '@moonshot-ai/agent-core-v2/app/mcpConfig/oa
 import { SECONDARY_MODEL_SECTION } from '@moonshot-ai/agent-core-v2/app/kosongConfig/configSection';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
 import { wrapSubagentModelError } from '@moonshot-ai/agent-core-v2/session/subagent/configSection';
+import { loadMcpServers } from '@moonshot-ai/agent-core-v2/workspace/workspaceMcpConfig/internal/config-loader';
 import {
   applyPromptMetadataUpdate,
   bootstrap,
@@ -191,14 +192,13 @@ import {
   ISessionSecondaryModelWarningService,
   ISessionSkillCatalog,
   ISessionWorkspaceContext,
-  ISkillCatalogRuntimeOptions,
   ISkillDiscovery,
   ITelemetryService,
   IWorkspaceAliases,
-  hostRequestHeadersSeed,
   IWorkspaceDirs,
   ISessionLifecycleService,
   IWorkspaceLifecycleService,
+  IWorkspaceTrust,
   closeSessionById,
   followWorkspaceHandlers,
   getLiveSessionById,
@@ -220,7 +220,6 @@ import {
   resolveKimiHome,
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
-  skillCatalogRuntimeOptionsSeed,
   summarizeSkill,
   userRoots,
   type IAgentScopeHandle,
@@ -293,6 +292,7 @@ import type {
   SessionUsage,
   SkillSummary,
   TelemetryClient,
+  WorkspaceTrustInfo,
 } from '#/types';
 import {
   diagnosticsToConfigDiagnostics,
@@ -324,8 +324,7 @@ export interface SDKRpcClientV2Options {
    * Explicit skill directories for this process (v1's SDK `skillDirs` /
    * the CLI's `--skills-dir`): when non-empty, default user / project skill
    * discovery is skipped and these directories serve as the user skill
-   * source. Seeded into the engine's app-scope
-   * `ISkillCatalogRuntimeOptions`.
+   * source. Passed into the engine through `BootstrapInput.args.skillDirs`.
    */
   readonly skillDirs?: readonly string[];
   readonly telemetry?: TelemetryClient;
@@ -427,19 +426,17 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         homeDir: this.homeDir,
         configPath: this.configPath,
         clientIdentity: identity,
+        args: {
+          // Host identity headers for the engine's outbound requests (model,
+          // WebSearch, registry refresh). Without them the managed vendors go
+          // out with the SDK's default User-Agent and no X-Msh-* at all.
+          requestHeaders: createKimiDefaultHeaders({ homeDir: this.homeDir, ...identity }),
+          // `--skills-dir` (v1 parity): explicit skill dirs replace default
+          // user / project discovery for every session this client hosts.
+          skillDirs: options.skillDirs,
+        },
       },
-      [
-        ...logSeed(resolveLoggingConfig({ homeDir: this.homeDir, env: process.env })),
-        // Host identity headers for the engine's outbound requests (model,
-        // WebSearch, registry refresh). Without this seed the managed vendors
-        // go out with the SDK's default User-Agent and no X-Msh-* at all.
-        ...hostRequestHeadersSeed(
-          createKimiDefaultHeaders({ homeDir: this.homeDir, ...identity }),
-        ),
-        // `--skills-dir` (v1 parity): explicit skill dirs replace default
-        // user / project discovery for every session this client hosts.
-        ...skillCatalogRuntimeOptionsSeed(options.skillDirs),
-      ],
+      [...logSeed(resolveLoggingConfig({ homeDir: this.homeDir, env: process.env }))],
     );
     this.app = app;
     this.klient = createKlient({ scope: app });
@@ -547,7 +544,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
     const bootstrapService = this.engineAccessor.get(IBootstrapService);
     const discovery = this.engineAccessor.get(ISkillDiscovery);
-    const explicitDirs = this.engineAccessor.get(ISkillCatalogRuntimeOptions).explicitDirs ?? [];
+    const explicitDirs = bootstrapService.args.skillDirs ?? [];
     const roots =
       explicitDirs.length > 0
         ? await configuredRoots(explicitDirs, workDir, bootstrapService.osHomeDir, 'user')
@@ -571,6 +568,50 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       });
     }
     return [...byName.values()];
+  }
+
+  /**
+   * klient has no workspace-trust facade; composed directly from the engine
+   * via {@link engineAccessor} — the same `handlerFor({ root })` path
+   * `createSession` takes (materializing the workspace handler is a no-op
+   * cost here: session creation does it anyway). The gated-server list is
+   * what the pure config loader sees with project files included vs skipped
+   * (the workspaceTrust gate inside the engine's `workspaceMcpConfig`),
+   * computed best-effort: an unreadable/invalid project file degrades to an
+   * empty list rather than failing the caller.
+   */
+  override async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
+    const handler = await this.engineAccessor
+      .get(IWorkspaceLifecycleService)
+      .handlerFor({ root: workDir });
+    const trusted = await handler.accessor.get(IWorkspaceTrust).get();
+    if (trusted) return { trusted: true, gatedMcpServers: [] };
+    try {
+      const fs = this.engineAccessor.get(IHostFileSystem);
+      const [withProject, userOnly] = await Promise.all([
+        loadMcpServers({ fs, cwd: workDir, homeDir: this.homeDir, includeProject: true }),
+        loadMcpServers({ fs, cwd: workDir, homeDir: this.homeDir, includeProject: false }),
+      ]);
+      const gatedMcpServers = Object.keys(withProject)
+        .filter((name) => !(name in userOnly))
+        .toSorted();
+      return { trusted: false, gatedMcpServers };
+    } catch {
+      return { trusted: false, gatedMcpServers: [] };
+    }
+  }
+
+  /**
+   * klient has no workspace-trust facade; see {@link getWorkspaceTrustInfo}.
+   * The flip fires `IWorkspaceTrust.onDidChange`, which makes the engine's
+   * `workspaceMcpConfig` reload with project files included — project MCP
+   * servers connect live, no restart needed.
+   */
+  override async trustWorkspace(workDir: string): Promise<void> {
+    const handler = await this.engineAccessor
+      .get(IWorkspaceLifecycleService)
+      .handlerFor({ root: workDir });
+    await handler.accessor.get(IWorkspaceTrust).trust();
   }
 
   /**
@@ -612,9 +653,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /**
    * v1's removal cascades: the provider entry, every model pointing at it,
    * and the default pointers when they dangle. The engine's own
-   * `kosong.removeProvider` only clears the default-provider pointer, so
-   * the full v1 cascade is computed from the user-layer values and applied
-   * through the config facade (see `planProviderRemoval`).
+   * `kosong.removeProvider` only clears the default-provider pointer, so the
+   * full v1 cascade is computed from the user-layer values (see
+   * `planProviderRemoval`) and persisted as ONE atomic multi-section replace —
+   * the same single-write shape as v1's `removeKimiProvider`, so a process
+   * exit can never leave the file in a halfway-cascaded state.
    */
   override async removeProvider(providerId: string): Promise<KimiConfig> {
     await this.configReady;
@@ -631,15 +674,27 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       defaultProvider: defaultProvider.userValue,
       providerId,
     });
-    await this.klient.global.config.replace({ domain: 'providers', value: plan.providers });
-    await this.klient.global.config.replace({ domain: 'models', value: plan.models });
+    const sections: Record<string, unknown> = {
+      providers: plan.providers,
+      models: plan.models,
+    };
     if (plan.clearDefaultModel) {
-      await this.klient.global.config.replace({ domain: 'defaultModel', value: undefined });
+      sections['defaultModel'] = undefined;
     }
     if (plan.clearDefaultProvider) {
-      await this.klient.global.config.replace({ domain: 'defaultProvider', value: undefined });
+      sections['defaultProvider'] = undefined;
     }
+    await this.klient.global.config.replaceSections({ sections });
     return this.getConfig();
+  }
+
+  override supportsAtomicSectionReplace(): boolean {
+    return true;
+  }
+
+  override async replaceConfigSections(sections: Record<string, unknown>): Promise<void> {
+    await this.configReady;
+    await this.klient.global.config.replaceSections({ sections });
   }
 
   override async listPlugins(): Promise<readonly PluginSummary[]> {

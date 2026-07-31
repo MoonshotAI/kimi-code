@@ -1,11 +1,10 @@
 /**
- * `tool` domain (L3) — runtime tool-args validation.
+ * `tool` domain — runtime tool-args validation.
  *
  * Compiles tool-parameter JSON Schemas into AJV validators (draft-07 /
  * 2019-09 / 2020-12 detected per schema) and formats validation failures
- * into model-readable messages. Only the executor path loads this module,
- * so the AJV instances are paid for once, at execution time. Pure helper;
- * no scoped service.
+ * into model-readable messages. The AJV instances are paid for once, at
+ * execution time. Pure helper; no scoped service.
  */
 
 import Ajv, { type ErrorObject, type ValidateFunction } from 'ajv';

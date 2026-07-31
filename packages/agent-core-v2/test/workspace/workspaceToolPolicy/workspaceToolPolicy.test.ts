@@ -1,5 +1,5 @@
 /**
- * `workspaceToolPolicy` domain (L2) — verifies the capability-derived veto
+ * `workspaceToolPolicy` domain — verifies the capability-derived veto
  * set and the `ISessionToolPolicyGate` live read view the handler seeds into
  * every session.
  */

@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ISetGoalBudgetTool` implementation.
+ * `tools` domain — `ISetGoalBudgetTool` implementation.
  *
  * Normalizes the model's budget input, converts supported time units to
  * milliseconds, and rejects obviously unreasonable time limits before writing
