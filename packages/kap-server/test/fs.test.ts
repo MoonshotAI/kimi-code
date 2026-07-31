@@ -209,6 +209,42 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
     expect(body.data.items.map((i) => i.path)).toContain('alpha.ts');
   });
 
+  it('fs:search resolves a registered workspace id when no session exists', async () => {
+    await writeFile(join(work!, 'gamma.ts'), '');
+    // Register the workspace without creating any session (the kimi-web
+    // new-session draft addresses the workspace directly).
+    const res = await fetch(`${base}/api/v1/workspaces`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ root: work }),
+    } as never);
+    const created = (await res.json()) as Envelope<{ id: string }>;
+    expect(created.code).toBe(0);
+    const body = await postFs<{ items: { path: string }[]; truncated: boolean }>(
+      created.data.id,
+      'search',
+      { query: 'gamma' },
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.path)).toContain('gamma.ts');
+  });
+
+  it('fs:search resolves an unregistered workspace root path', async () => {
+    await writeFile(join(work!, 'delta.ts'), '');
+    const body = await postFs<{ items: { path: string }[]; truncated: boolean }>(
+      encodeURIComponent(work!),
+      'search',
+      { query: 'delta' },
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.path)).toContain('delta.ts');
+  });
+
+  it('fs:search still maps an unknown ref to SESSION_NOT_FOUND', async () => {
+    const body = await postFs<null>('does-not-exist', 'search', { query: 'x' });
+    expect(body.code).toBe(ErrorCode.SESSION_NOT_FOUND);
+  });
+
   it('fs:grep finds matching lines', async () => {
     await writeFile(join(work!, 'a.txt'), 'hello world\nfoo bar\n');
     const id = await createSession();

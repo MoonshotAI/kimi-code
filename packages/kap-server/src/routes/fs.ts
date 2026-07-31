@@ -10,13 +10,24 @@
  * "session → handler → workspace fs" chain (chdir is gone, so the handler
  * root is the one fixed fs root). The wire schema comes from the engine's own
  * `workspaceFs` domain contract (`agent-core-v2`).
+ *
+ * Draft-session fallback: a client composing the first prompt of a new
+ * session (e.g. kimi-web's new-session draft) has no session id yet, so it
+ * passes the workspace reference — registered workspace id or absolute root —
+ * in the `{session_id}` slot. Only `fs:search` serves those (the `@` file
+ * mention must work before the session exists): the route resolves the
+ * workspace's handler directly and uses the same Workspace-scope fs service a
+ * real session would resolve to. URL and wire schema are unchanged.
  */
 
 import { createReadStream } from 'node:fs';
+import { isAbsolute } from 'node:path';
 
 import {
   ErrorCodes,
   IWorkspaceFsService,
+  IWorkspaceLifecycleService,
+  IWorkspaceService,
   getLiveSessionById,
   resumeSessionById,
   isError2,
@@ -113,6 +124,32 @@ function resolveFs(core: Scope, sessionId: string): IWorkspaceFsService {
   return session.accessor.get(IWorkspaceFsService);
 }
 
+/**
+ * Workspace fallback for `fs:search` (see the file header): resolve a
+ * workspace reference — registered id, or an absolute root registered on the
+ * spot — to its handler's `IWorkspaceFsService`. `undefined` when the ref is
+ * neither a known workspace nor an existing absolute directory.
+ */
+async function resolveWorkspaceFs(
+  core: Scope,
+  ref: string,
+): Promise<IWorkspaceFsService | undefined> {
+  const workspaces = core.accessor.get(IWorkspaceService);
+  let ws = await workspaces.get(ref);
+  if (ws === undefined) {
+    if (!isAbsolute(ref)) return undefined;
+    try {
+      ws = await workspaces.createOrTouch(ref);
+    } catch {
+      return undefined;
+    }
+  }
+  const handler = await core.accessor
+    .get(IWorkspaceLifecycleService)
+    .handlerFor({ workspaceId: ws.id, root: ws.root });
+  return handler.accessor.get(IWorkspaceFsService);
+}
+
 export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
   const fsActionRoute = defineRoute(
     {
@@ -161,7 +198,13 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       // which reads the persisted cwd. `resume` returns undefined only when the
       // session is unknown or its workspace is gone.
       const session = await resumeSessionById(core.accessor, session_id);
-      if (session === undefined) {
+      // Draft-session fallback (file header): no session yet, but the client
+      // addressed a workspace — `fs:search` resolves it directly.
+      const workspaceFs =
+        session === undefined && fsAction === 'search'
+          ? await resolveWorkspaceFs(core, session_id)
+          : undefined;
+      if (session === undefined && workspaceFs === undefined) {
         reply.send(
           errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
         );
@@ -189,7 +232,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
             await handleMkdir(core, session_id, req, reply);
             return;
           case 'search':
-            await handleSearch(core, session_id, req, reply);
+            await handleSearch(workspaceFs ?? resolveFs(core, session_id), req, reply);
             return;
           case 'grep':
             await handleGrep(core, session_id, req, reply);
@@ -404,13 +447,13 @@ async function handleMkdir(core: Scope, sessionId: string, req: Req, reply: Repl
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleSearch(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
+async function handleSearch(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsSearchRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
     return;
   }
-  const data = await resolveFs(core, sessionId).search(parsed.data);
+  const data = await fs.search(parsed.data);
   reply.send(okEnvelope(data, req.id));
 }
 
