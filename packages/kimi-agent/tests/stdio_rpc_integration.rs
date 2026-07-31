@@ -769,10 +769,19 @@ fn session_prompt_drives_the_goal_and_persists() {
             return;
         }
     };
+    let goal_home = std::env::temp_dir().join(format!(
+        "kimi-agent-it-goal-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::create_dir_all(&goal_home);
     let mut child = Command::new(&binary)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        // Isolate the engine home: the integration tests run in parallel
+        // threads, and a shared default home (the SQLite sessions store)
+        // races concurrent create/save/destroy across child processes.
+        .env("KIMI_AGENT_HOME", &goal_home)
         .spawn()
         .expect("spawn kimi-agent");
     let mut stdin = child.stdin.take().expect("stdin");
