@@ -39,7 +39,7 @@ describe('PinnedUserMessageComponent', () => {
     expect(component.render(80)).toEqual([]);
   });
 
-  it('shows the message as a full-width band once it scrolled above the viewport', () => {
+  it('shows the pinned message with a divider once it scrolled above the viewport', () => {
     const { tui, setViewportTop } = makeTuiStub(0);
     const component = new PinnedUserMessageComponent(tui, () => true);
     component.setMessage('add the incident to the changelog', 10);
@@ -47,12 +47,14 @@ describe('PinnedUserMessageComponent', () => {
     setViewportTop(100);
     const lines = component.render(80);
 
-    expect(lines).toHaveLength(1);
+    expect(lines).toHaveLength(2);
     const plain = stripAnsi(lines[0]!);
     expect(plain).toContain('✨');
     expect(plain).toContain('add the incident to the changelog');
-    // Full-width band: occludes the transcript row underneath.
+    // Full-width rows: the transcript underneath is fully occluded.
     expect(visibleWidth(lines[0]!)).toBe(80);
+    // A thin rule separates the pin from the scrolling transcript.
+    expect(stripAnsi(lines[1]!)).toBe('─'.repeat(80));
   });
 
   it('caps long messages at three lines with an ellipsis', () => {
@@ -65,8 +67,9 @@ describe('PinnedUserMessageComponent', () => {
 
     const lines = component.render(40);
 
-    expect(lines).toHaveLength(3);
+    expect(lines).toHaveLength(4);
     expect(stripAnsi(lines[2]!)).toContain('…');
+    expect(stripAnsi(lines[3]!)).toBe('─'.repeat(40));
     for (const line of lines) {
       expect(visibleWidth(line)).toBe(40);
     }

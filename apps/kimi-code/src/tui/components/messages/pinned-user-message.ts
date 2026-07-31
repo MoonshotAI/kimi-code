@@ -107,12 +107,16 @@ export class PinnedUserMessageComponent implements Component {
         const last = truncateToWidth(capped[MAX_LINES - 1]!, Math.max(1, contentWidth - 2), '');
         capped[MAX_LINES - 1] = `${last} …`;
       }
+      // Subtle styling: kimi-blue text on the terminal's own background (the
+      // overlay compositor blanks the rows underneath), separated from the
+      // scrolling transcript by a thin muted rule.
       lines = capped.map((line, index) => {
         const prefix = index === 0 ? bullet : ' '.repeat(bulletWidth);
-        const styled = currentTheme.boldFg('roleUser', prefix + line);
+        const styled = currentTheme.fg('primary', prefix + line);
         const pad = Math.max(0, safeWidth - visibleWidth(styled));
-        return currentTheme.bg('border', styled + ' '.repeat(pad));
+        return styled + ' '.repeat(pad);
       });
+      lines.push(currentTheme.dimFg('textMuted', '─'.repeat(safeWidth)));
     }
 
     this.bandCache = { width: safeWidth, generation: this.generation, visible, lines };
