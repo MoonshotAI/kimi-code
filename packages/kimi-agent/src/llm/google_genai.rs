@@ -187,8 +187,11 @@ impl StreamAccumulator {
         Self::default()
     }
 
-    /// Feed one stream chunk. Returns the text delta contained in it, if any.
-    pub fn feed(&mut self, v: &Value) -> Option<String> {
+    /// Feed one stream chunk. Returns the delta contained in it, if any —
+    /// text deltas become assistant content, thought deltas are surfaced
+    /// separately and never enter the transcript.
+    pub fn feed(&mut self, v: &Value) -> Option<crate::llm::StreamDelta> {
+        use crate::llm::StreamDelta;
         if let Some(usage) = v.get("usageMetadata") {
             if let Some(n) = usage.get("promptTokenCount").and_then(|x| x.as_u64()) {
                 self.usage.input_tokens = n as u32;
@@ -200,6 +203,7 @@ impl StreamAccumulator {
 
         let candidates = v.get("candidates").and_then(|c| c.as_array())?;
         let mut delta = String::new();
+        let mut thinking = String::new();
 
         for candidate in candidates {
             // Early chunks carry FINISH_REASON_UNSPECIFIED while the model
@@ -215,9 +219,15 @@ impl StreamAccumulator {
                 continue;
             };
             for part in parts {
-                // Thought parts have no channel in LLMChatResponse; skip
-                // them (the Anthropic accumulator does the same).
+                // Thought parts carry the model's chain-of-thought: surfaced
+                // as a thinking delta for the host UI stream, kept out of
+                // `content`.
                 if part.get("thought").and_then(|t| t.as_bool()) == Some(true) {
+                    if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                        if !text.is_empty() {
+                            thinking.push_str(text);
+                        }
+                    }
                     continue;
                 }
                 if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
@@ -244,7 +254,13 @@ impl StreamAccumulator {
             }
         }
 
-        if delta.is_empty() { None } else { Some(delta) }
+        if !delta.is_empty() {
+            Some(StreamDelta::Text(delta))
+        } else if !thinking.is_empty() {
+            Some(StreamDelta::Thinking(thinking))
+        } else {
+            None
+        }
     }
 
     /// Finalize the accumulated stream into a response.
@@ -388,11 +404,11 @@ mod tests {
         let d1 = acc.feed(&json!({
             "candidates": [{ "content": { "parts": [{ "text": "Hi " }] } }]
         }));
-        assert_eq!(d1.as_deref(), Some("Hi "));
+        assert_eq!(d1, Some(crate::llm::StreamDelta::Text("Hi ".into())));
         let d2 = acc.feed(&json!({
             "candidates": [{ "content": { "parts": [{ "text": "there" }] } }]
         }));
-        assert_eq!(d2.as_deref(), Some("there"));
+        assert_eq!(d2, Some(crate::llm::StreamDelta::Text("there".into())));
 
         let d3 = acc.feed(&json!({
             "candidates": [{
@@ -418,7 +434,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_accumulator_skips_thought_parts_and_unspecified_finish() {
+    fn stream_accumulator_surfaces_thought_parts_as_thinking_delta() {
         let mut acc = StreamAccumulator::new();
         let d = acc.feed(&json!({
             "candidates": [{
@@ -426,7 +442,11 @@ mod tests {
                 "finishReason": "FINISH_REASON_UNSPECIFIED"
             }]
         }));
-        assert_eq!(d, None);
+        assert_eq!(
+            d,
+            Some(crate::llm::StreamDelta::Thinking("pondering".into()))
+        );
+        // Thinking never enters the transcript content.
         let resp = acc.finish();
         assert_eq!(resp.content, "");
         assert_eq!(resp.finish_reason, None);

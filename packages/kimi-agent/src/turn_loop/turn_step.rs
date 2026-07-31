@@ -83,12 +83,22 @@ pub fn execute_loop_step_with_retry<'a>(
             attempt += 1;
             // Match the chat result and extract only Send-safe values, so the
             // non-Send `Box<dyn Error>` is fully consumed before the `.await`.
-            let (break_resp, return_err) = match llm.chat(params.clone()).await {
-                Ok(resp) => (Some(resp), None),
-                Err(err) => match classify_llm_error(err, llm, attempt, &retry_config) {
-                    Ok(()) => (None, None),
-                    Err(e) => (None, Some(e)),
-                },
+            let (break_resp, return_err, delay) = match llm.chat(params.clone()).await {
+                Ok(resp) => (Some(resp), None, None),
+                Err(err) => {
+                    let err_str = err.to_string();
+                    match classify_llm_error(err, llm, attempt, &retry_config) {
+                        Ok(()) => {
+                            // Layered backoff (TS retry.ts): the delay tier is
+                            // chosen from the error class — 429 waits longest,
+                            // 503 moderate, transient uses the default ramp.
+                            let tier =
+                                super::retry::retry_config_for(super::retry::classify_error(&err_str));
+                            (None, None, Some(retry_delay(attempt, &tier)))
+                        }
+                        Err(e) => (None, Some(e), None),
+                    }
+                }
             };
             if let Some(resp) = break_resp {
                 break resp;
@@ -96,8 +106,9 @@ pub fn execute_loop_step_with_retry<'a>(
             if let Some(e) = return_err {
                 return Err(e);
             }
-            let delay = retry_delay(attempt, &retry_config);
-            tokio::time::sleep(delay).await;
+            if let Some(delay) = delay {
+                tokio::time::sleep(delay).await;
+            }
         };
 
         let usage = response.usage.clone();

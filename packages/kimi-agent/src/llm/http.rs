@@ -24,6 +24,50 @@ const DEFAULT_ANTHROPIC_MAX_TOKENS: u32 = 8192;
 /// the connect/idle behavior of the pool.
 const REQUEST_TIMEOUT_SECS: u64 = 600;
 
+/// Product token for the stable `User-Agent` sent on every outbound
+/// request, mirroring the JS host's `kimi-code-cli/<version>` UA so
+/// upstream traffic classification sees one host identity.
+const USER_AGENT_PRODUCT: &str = "kimi-code-cli";
+
+/// Environment variable naming the client identity sent as an
+/// `X-Kimi-Client` header. When unset (or empty), the header is omitted.
+const CLIENT_IDENTITY_ENV: &str = "KIMI_CODE_CLIENT_IDENTITY";
+
+/// Stable client identity headers attached to every request: a
+/// `kimi-code-cli/<version>` User-Agent plus, when `KIMI_CODE_CLIENT_IDENTITY`
+/// is set, an `X-Kimi-Client` value. Cheap enough to recompute per request;
+/// the env value is read at call time so a host identity can be injected
+/// without rebuilding the transport.
+fn identity_headers() -> Vec<(String, String)> {
+    let mut headers = vec![(
+        "User-Agent".to_string(),
+        format!("{USER_AGENT_PRODUCT}/{}", env!("CARGO_PKG_VERSION")),
+    )];
+    if let Ok(identity) = std::env::var(CLIENT_IDENTITY_ENV) {
+        let identity = identity.trim();
+        if !identity.is_empty() {
+            headers.push(("X-Kimi-Client".to_string(), identity.to_string()));
+        }
+    }
+    headers
+}
+
+/// Attach a header with replace semantics. `RequestBuilder::header` appends
+/// to an existing name, which would emit both a default and a user-supplied
+/// value (e.g. two `User-Agent`s); merging a one-entry map replaces instead,
+/// so user-supplied headers win over the identity defaults above.
+fn set_header(req: reqwest::RequestBuilder, name: &str, value: &str) -> reqwest::RequestBuilder {
+    let Ok(name) = reqwest::header::HeaderName::try_from(name) else {
+        return req;
+    };
+    let Ok(value) = reqwest::header::HeaderValue::try_from(value) else {
+        return req;
+    };
+    let mut map = reqwest::header::HeaderMap::new();
+    map.insert(name, value);
+    req.headers(map)
+}
+
 /// Fire-and-forget sink for streaming events (text deltas). The value is a
 /// JSON event object; the receiver forwards it to the JS host transcript.
 pub type EventSink = Arc<dyn Fn(serde_json::Value) + Send + Sync>;
@@ -96,6 +140,15 @@ impl NativeHttpLlm {
         }
     }
 
+    fn emit_thinking(&self, thinking: &str) {
+        if let Some(ref sink) = self.sink {
+            sink(serde_json::json!({
+                "type": "llm.delta",
+                "part": { "type": "think", "think": thinking },
+            }));
+        }
+    }
+
     fn emit(&self, event: serde_json::Value) {
         if let Some(ref sink) = self.sink {
             sink(event);
@@ -141,6 +194,10 @@ impl NativeHttpLlm {
         };
 
         let mut req = self.client.post(self.endpoint()).json(&body);
+        // Stable client identity first; custom_headers below may override.
+        for (name, value) in identity_headers() {
+            req = req.header(name, value);
+        }
         match protocol {
             Protocol::Anthropic => {
                 req = req
@@ -156,7 +213,9 @@ impl NativeHttpLlm {
             }
         }
         for (k, v) in &self.config.custom_headers {
-            req = req.header(k.as_str(), v.as_str());
+            // Replace rather than append so user-supplied headers win over
+            // the identity defaults (e.g. a custom `User-Agent`).
+            req = set_header(req, k.as_str(), v.as_str());
         }
 
         let response = req
@@ -200,8 +259,11 @@ impl NativeHttpLlm {
             } else {
                 None
             };
-            if let Some(text) = delta {
-                self.emit_delta(&text);
+            if let Some(delta) = delta {
+                match delta {
+                    crate::llm::StreamDelta::Text(text) => self.emit_delta(&text),
+                    crate::llm::StreamDelta::Thinking(thinking) => self.emit_thinking(&thinking),
+                }
             }
         }
 
@@ -370,5 +432,95 @@ mod tests {
         assert!(result.is_err());
         let msg = result.err().unwrap().to_string();
         assert!(msg.contains("llm http request failed"), "unexpected error: {msg}");
+    }
+
+    /// Run one chat round-trip against a one-shot loopback HTTP server and
+    /// return the request headers it observed. The server answers with a
+    /// minimal SSE stream (`[DONE]`) so the transport drains cleanly.
+    async fn capture_request_headers(cfg: NativeLlmConfig) -> HashMap<String, String> {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            // Read until the end of the request head.
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut chunk).unwrap();
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+            }
+            let head = String::from_utf8_lossy(&buf);
+            let headers = head
+                .lines()
+                .skip(1)
+                .filter_map(|line| {
+                    let (k, v) = line.split_once(':')?;
+                    Some((k.trim().to_ascii_lowercase(), v.trim().to_string()))
+                })
+                .collect::<HashMap<_, _>>();
+            let body = "data: [DONE]\n\n";
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(resp.as_bytes());
+            headers
+        });
+
+        let llm = NativeHttpLlm::new(cfg, String::new());
+        let _ = llm
+            .chat(LLMChatParams { messages: vec![], tools: vec![] })
+            .await;
+        handle.join().unwrap()
+    }
+
+    #[tokio::test]
+    async fn outbound_requests_carry_kimi_code_cli_user_agent() {
+        let headers = capture_request_headers(config("openai", "http://127.0.0.1:0/v1")).await;
+        let ua = headers.get("user-agent").expect("User-Agent header present");
+        assert!(
+            ua.starts_with("kimi-code-cli/"),
+            "unexpected User-Agent: {ua}"
+        );
+    }
+
+    #[tokio::test]
+    async fn client_identity_header_follows_env() {
+        // Single test owning the env var so parallel tests cannot race it.
+        // Edition 2024 marks set_var/remove_var unsafe: they are only safe
+        // when no other thread is concurrently reading the variable, which
+        // holds here because no other test touches KIMI_CODE_CLIENT_IDENTITY.
+        unsafe {
+            std::env::set_var(CLIENT_IDENTITY_ENV, "kimi-desktop/9.9");
+        }
+        let headers = capture_request_headers(config("anthropic", "http://127.0.0.1:0/v1")).await;
+        assert_eq!(
+            headers.get("x-kimi-client").map(String::as_str),
+            Some("kimi-desktop/9.9"),
+            "X-Kimi-Client should echo the env identity"
+        );
+
+        unsafe {
+            std::env::remove_var(CLIENT_IDENTITY_ENV);
+        }
+        let headers = capture_request_headers(config("anthropic", "http://127.0.0.1:0/v1")).await;
+        assert!(
+            !headers.contains_key("x-kimi-client"),
+            "X-Kimi-Client must be omitted when the env var is unset"
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_user_agent_overrides_the_default() {
+        let mut cfg = config("openai", "http://127.0.0.1:0/v1");
+        cfg.custom_headers.insert("user-agent".into(), "my-agent/1.2".into());
+        let headers = capture_request_headers(cfg).await;
+        let ua = headers.get("user-agent").expect("User-Agent header present");
+        assert_eq!(ua, "my-agent/1.2", "custom UA must replace the default, not append");
     }
 }

@@ -243,9 +243,11 @@ impl StreamAccumulator {
         &mut self.blocks[index]
     }
 
-    /// Feed one stream event. Returns the text delta contained in the
-    /// event, if any.
-    pub fn feed(&mut self, v: &Value) -> Option<String> {
+    /// Feed one stream event. Returns the delta contained in the event, if
+    /// any — text deltas become assistant content, thinking deltas are
+    /// surfaced separately and never enter the transcript.
+    pub fn feed(&mut self, v: &Value) -> Option<crate::llm::StreamDelta> {
+        use crate::llm::StreamDelta;
         let event_type = v.get("type").and_then(|t| t.as_str())?;
         match event_type {
             "message_start" => {
@@ -281,7 +283,17 @@ impl StreamAccumulator {
                             return None;
                         }
                         self.content.push_str(text);
-                        Some(text.to_string())
+                        Some(StreamDelta::Text(text.to_string()))
+                    }
+                    // Anthropic streams reasoning as `thinking_delta`
+                    // blocks. Forwarded to the host's `thinking.delta` UI
+                    // stream; kept out of `content`.
+                    Some("thinking_delta") => {
+                        let thinking = delta.get("thinking").and_then(|x| x.as_str())?;
+                        if thinking.is_empty() {
+                            return None;
+                        }
+                        Some(StreamDelta::Thinking(thinking.to_string()))
                     }
                     Some("input_json_delta") => {
                         if let Some(Some(PartialBlock::ToolUse { input_json, .. })) =
@@ -502,9 +514,9 @@ mod tests {
         acc.feed(&json!({ "type": "message_start", "message": { "usage": { "input_tokens": 25 } } }));
         acc.feed(&json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "text" } }));
         let d1 = acc.feed(&json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": "Hi " } }));
-        assert_eq!(d1.as_deref(), Some("Hi "));
+        assert_eq!(d1, Some(crate::llm::StreamDelta::Text("Hi ".into())));
         let d2 = acc.feed(&json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": "there" } }));
-        assert_eq!(d2.as_deref(), Some("there"));
+        assert_eq!(d2, Some(crate::llm::StreamDelta::Text("there".into())));
         acc.feed(&json!({ "type": "content_block_stop", "index": 0 }));
 
         acc.feed(&json!({ "type": "content_block_start", "index": 1, "content_block": { "type": "tool_use", "id": "tu_1", "name": "Read" } }));
@@ -525,6 +537,24 @@ mod tests {
         assert_eq!(resp.usage.input_tokens, 25);
         assert_eq!(resp.usage.output_tokens, 9);
         assert_eq!(resp.usage.total_tokens, 34);
+    }
+
+    #[test]
+    fn stream_accumulator_surfaces_thinking_delta() {
+        let mut acc = StreamAccumulator::new();
+        acc.feed(&json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "thinking" } }));
+        let d = acc.feed(&json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": { "type": "thinking_delta", "thinking": "pondering" }
+        }));
+        assert_eq!(
+            d,
+            Some(crate::llm::StreamDelta::Thinking("pondering".into()))
+        );
+        // Thinking never enters the transcript content.
+        let resp = acc.finish();
+        assert_eq!(resp.content, "");
     }
 
     #[test]

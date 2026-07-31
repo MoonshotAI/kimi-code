@@ -213,9 +213,11 @@ impl StreamAccumulator {
         Self::default()
     }
 
-    /// Feed one stream chunk. Returns the text delta contained in the
-    /// chunk, if any.
-    pub fn feed(&mut self, v: &Value) -> Option<String> {
+    /// Feed one stream chunk. Returns the delta contained in the chunk, if
+    /// any — text deltas become assistant content, reasoning deltas are
+    /// surfaced separately and never enter the transcript.
+    pub fn feed(&mut self, v: &Value) -> Option<crate::llm::StreamDelta> {
+        use crate::llm::StreamDelta;
         // The final usage-only chunk has an empty `choices` array.
         if let Some(usage) = v.get("usage") {
             if !usage.is_null() {
@@ -249,12 +251,19 @@ impl StreamAccumulator {
             }
         }
 
+        // Reasoning models stream chain-of-thought as `reasoning_content`.
+        if let Some(thinking) = delta.get("reasoning_content").and_then(|c| c.as_str()) {
+            if !thinking.is_empty() {
+                return Some(StreamDelta::Thinking(thinking.to_string()));
+            }
+        }
+
         let text = delta.get("content").and_then(|c| c.as_str())?;
         if text.is_empty() {
             return None;
         }
         self.content.push_str(text);
-        Some(text.to_string())
+        Some(StreamDelta::Text(text.to_string()))
     }
 
     /// Finalize the accumulated stream into a response.
@@ -429,9 +438,9 @@ mod tests {
 
         // Text deltas.
         let d1 = acc.feed(&json!({ "choices": [{ "delta": { "content": "Hel" } }] }));
-        assert_eq!(d1.as_deref(), Some("Hel"));
+        assert_eq!(d1, Some(crate::llm::StreamDelta::Text("Hel".into())));
         let d2 = acc.feed(&json!({ "choices": [{ "delta": { "content": "lo" } }] }));
-        assert_eq!(d2.as_deref(), Some("lo"));
+        assert_eq!(d2, Some(crate::llm::StreamDelta::Text("lo".into())));
 
         // Tool call split across chunks (arguments arrive in fragments).
         acc.feed(&json!({ "choices": [{ "delta": { "tool_calls": [
@@ -455,6 +464,20 @@ mod tests {
         assert_eq!(resp.usage.input_tokens, 7);
         assert_eq!(resp.usage.output_tokens, 3);
         assert_eq!(resp.usage.total_tokens, 10);
+    }
+
+    #[test]
+    fn stream_accumulator_surfaces_reasoning_content() {
+        let mut acc = StreamAccumulator::new();
+        let d = acc.feed(&json!({
+            "choices": [{ "delta": { "reasoning_content": "thinking..." } }]
+        }));
+        assert_eq!(
+            d,
+            Some(crate::llm::StreamDelta::Thinking("thinking...".into()))
+        );
+        // Reasoning never enters the transcript content.
+        assert_eq!(acc.finish().content, "");
     }
 
     #[test]

@@ -36,32 +36,35 @@ pub enum ErrorClass {
 
 impl Default for RetryConfig {
     fn default() -> Self {
+        // TS defaults (agent-core/src/loop/retry.ts): 10 attempts (9 retries),
+        // 500ms base, 32s cap — the transient/default tier.
         Self {
-            max_attempts: 3,
-            base_delay_ms: 1000,
-            max_delay_ms: 30000,
+            max_attempts: 10,
+            base_delay_ms: 500,
+            max_delay_ms: 32000,
         }
     }
 }
 
 /// Get retry config per error class.
+///
+/// The attempt budget is shared across classes (TS `DEFAULT_MAX_RETRY_ATTEMPTS`);
+/// only the delay tier varies. Rate-limit (429) waits longest because TPM
+/// windows refresh per minute; overload (503) is moderate; transient errors
+/// use the default ramp.
 pub fn retry_config_for(error_class: ErrorClass) -> RetryConfig {
     match error_class {
         ErrorClass::RateLimit => RetryConfig {
-            max_attempts: 5,
+            max_attempts: 10,
             base_delay_ms: 15000,
             max_delay_ms: 60000,
         },
         ErrorClass::Overload => RetryConfig {
-            max_attempts: 3,
+            max_attempts: 10,
             base_delay_ms: 5000,
             max_delay_ms: 30000,
         },
-        ErrorClass::Transient => RetryConfig {
-            max_attempts: 3,
-            base_delay_ms: 500,
-            max_delay_ms: 32000,
-        },
+        ErrorClass::Transient => RetryConfig::default(),
         ErrorClass::Default => RetryConfig::default(),
     }
 }
@@ -96,15 +99,15 @@ mod tests {
     #[test]
     fn test_retry_config_defaults() {
         let config = RetryConfig::default();
-        assert_eq!(config.max_attempts, 3);
-        assert_eq!(config.base_delay_ms, 1000);
-        assert_eq!(config.max_delay_ms, 30000);
+        assert_eq!(config.max_attempts, 10);
+        assert_eq!(config.base_delay_ms, 500);
+        assert_eq!(config.max_delay_ms, 32000);
     }
 
     #[test]
     fn test_retry_config_for_rate_limit() {
         let config = retry_config_for(ErrorClass::RateLimit);
-        assert_eq!(config.max_attempts, 5);
+        assert_eq!(config.max_attempts, 10);
         assert_eq!(config.base_delay_ms, 15000);
         assert_eq!(config.max_delay_ms, 60000);
     }
@@ -112,7 +115,7 @@ mod tests {
     #[test]
     fn test_retry_config_for_overload() {
         let config = retry_config_for(ErrorClass::Overload);
-        assert_eq!(config.max_attempts, 3);
+        assert_eq!(config.max_attempts, 10);
         assert_eq!(config.base_delay_ms, 5000);
     }
 
