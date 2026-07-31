@@ -814,7 +814,7 @@ onUnmounted(() => {
 
             <!-- ===== Toast ===== -->
             <h3 class="sub">Toast</h3>
-            <p>Unified information architecture: status icon + title + description. The status color appears only on the icon, avoiding large colored areas that create visual noise.</p>
+            <p>Unified information architecture: status icon + title + description. The status color appears only on the icon, avoiding large colored areas that create visual noise. For an <b>undoable action</b> there is a second, lighter form — the <b>Action toast</b> (<code>ActionToast.vue</code>): a pill floating top-center just below the 48px header, carrying a one-line sentence whose actions are plain inline <code>&lt;button&gt;</code>s (styled accent by the component), plus close. Self-timed (default 8s, hover pauses); the parent re-keys to reset and wraps it in a <code>&lt;Transition&gt;</code>. First used by session archive (Undo / Settings); warnings keep the bottom-right <code>Toast</code> stack.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Toast</span></div>
               <div class="stage p col">
@@ -826,6 +826,12 @@ onUnmounted(() => {
                   <span class="ti"><svg class="p-ic" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="m12.866 3l9.526 16.5a1 1 0 0 1-.866 1.5H2.474a1 1 0 0 1-.866-1.5L11.134 3a1 1 0 0 1 1.732 0m-8.66 16h15.588L12 5.5zM11 16h2v2h-2zm0-7h2v5h-2z"/></svg></span>
                   <div><div class="tt">Context usage 82%</div><div class="td">Consider running /compact to free up space.</div></div>
                 </div>
+              </div>
+            </div>
+            <div class="stage-wrap">
+              <div class="stage-bar"><span class="st">Action toast</span></div>
+              <div class="stage p col">
+                <div class="p-action-toast"><button class="lk">Undo</button><span>or view archived chats in</span><button class="lk">Settings</button><svg class="p-ic x" viewBox="0 0 24 24" fill="currentColor"><path d="M17.9542 4.77253C18.3056 4.42106 18.8761 4.42106 19.2276 4.77253C19.579 5.12401 19.579 5.69452 19.2276 6.04597L13.2735 12.0001L19.2276 17.9542C19.5791 18.3056 19.5791 18.8761 19.2276 19.2276C18.8761 19.5791 18.3056 19.5791 17.9542 19.2276L12.0001 13.2735L6.04595 19.2276C5.69451 19.5791 5.12399 19.579 4.77252 19.2276C4.42104 18.8761 4.42104 18.3056 4.77252 17.9542L10.7266 12.0001L4.77252 6.04597C4.42104 5.6945 4.42104 5.124 4.77252 4.77253C5.12399 4.42107 5.69448 4.42106 6.04595 4.77253L12.0001 10.7266L17.9542 4.77253Z"/></svg></div>
               </div>
             </div>
 
@@ -1534,18 +1540,18 @@ grid-template-rows: minmax(0, 1fr) auto;
             </div></div>
 
             <h3 class="sub">Session row</h3>
-            <p>A session row is an inset rounded pill, structured as: <code>status slot → title → time → attention Badge → kebab</code>.</p>
+            <p>A session row is an inset rounded pill, structured as: <code>status slot → title → time → attention Badge → hover actions (pin / archive)</code>.</p>
             <table class="dt">
               <thead><tr><th>Part</th><th>Rule</th></tr></thead>
               <tbody>
-                <tr><td>Container</td><td><code>padding: 8px 8px</code> inside the list's <code>--sb-inset</code> gutter, <code>radius-sm</code>; <b>no fixed/min height</b> — row height is font-driven (title <code>line-height: --leading-tight</code>, ≈16px) → ≈32px total, the sidebar-wide row rhythm. The hover kebab is absolutely positioned so it never forces the row taller (no hover jitter). hover = <code>--sb-hover</code> (the global <code>--color-hover</code> wash); active = <code>--sb-selected</code> (75% of the global selected wash) — neutral, no accent tint, no border, no weight change</td></tr>
+                <tr><td>Container</td><td><code>padding: 8px 8px</code> inside the list's <code>--sb-inset</code> gutter, <code>radius-sm</code>; <b>no fixed/min height</b> — row height is font-driven (title <code>line-height: --leading-tight</code>, ≈16px) → ≈32px total, the sidebar-wide row rhythm. The hover actions are absolutely positioned so they never force the row taller (no hover jitter). hover = <code>--sb-hover</code> (the global <code>--color-hover</code> wash); active = <code>--sb-selected</code> (75% of the global selected wash) — neutral, no accent tint, no border, no weight change</td></tr>
                 <tr><td>Status slot (lead)</td><td>fixed <code>--sb-gutter</code> width; running = <code>Spinner</code> sm, otherwise unread = 7px accent dot</td></tr>
                 <tr><td>Title</td><td>flex:1 with truncation and <code>user-select:none</code>; double-click enters inline rename (compact input, not Input), whose text remains selectable</td></tr>
-                <tr><td>Emoji icon</td><td>the session icon is the title's LEADING emoji cluster (web-core <code>splitSessionEmoji</code> — no icon field; every client renders the title as-is). The emoji is an ordinary title character — no decoration at rest or on hover (it stays a <code>&lt;button&gt;</code> for a11y), and clicking it opens <code>SessionEmojiPicker</code> — a Menu-shelled panel (bare list-style search row → scrollable sections: Recently used persisted in localStorage (cap 8) + the grouped emoji dataset, with remove/random as MenuItems in the footer; a query swaps the sections for keyword-search results), teleported + fixed + <code>--z-dropdown</code>, popping from the trigger corner like the kebab menu. The kebab's "Set Emoji…" opens the same picker and is the touch/keyboard path. Inline rename edits the whole title — the emoji is an ordinary character in the input</td></tr>
-                <tr><td>Time</td><td>mono xs, <code>fg-faint</code>; yields to the kebab on hover</td></tr>
+                <tr><td>Emoji icon</td><td>the session icon is the title's LEADING emoji cluster (web-core <code>splitSessionEmoji</code> — no icon field; every client renders the title as-is). The emoji is an ordinary title character — no decoration at rest or on hover (it stays a <code>&lt;button&gt;</code> for a11y), and clicking it opens <code>SessionEmojiPicker</code> — a Menu-shelled panel (bare list-style search row → scrollable sections: Recently used persisted in localStorage (cap 8) + the grouped emoji dataset, with remove/random as MenuItems in the footer; a query swaps the sections for keyword-search results), teleported + fixed + <code>--z-dropdown</code>, popping from the trigger corner like the right-click menu. The menu's "Set Emoji…" opens the same picker and is the discoverable path. Inline rename edits the whole title — the emoji is an ordinary character in the input</td></tr>
+                <tr><td>Time</td><td>mono xs, <code>fg-faint</code>; yields to the hover actions on hover</td></tr>
                 <tr><td>Attention Badge</td><td><code>Badge</code> sm: info (needs answer) / warning (needs approval) / danger (aborted)</td></tr>
-                <tr><td>kebab</td><td><code>IconButton</code> sm, shown on hover (and pinned visible + lit while its own menu is open); dropdown uses <code>Menu/MenuItem</code>. Right-clicking the row opens the same menu anchored to the cursor — without pinning the kebab — except over the inline rename input, where the native text-editing menu stays</td></tr>
-                <tr><td>Archive confirmation</td><td>replaces the title area, <code>Button</code> sm (danger confirm / secondary cancel)</td></tr>
+                <tr><td>Hover actions</td><td><code>IconButton</code> sm × 2 — pin + archive — cross-faded over the time on row hover (no kebab button). Right-clicking the row opens the full menu (copy ID / rename / emoji / fork / export / pin / archive + timestamp) anchored to the cursor, except over the inline rename input, where the native text-editing menu stays</td></tr>
+                <tr><td>Archive</td><td>no confirm — the hover archive button / menu item archives immediately, then App.vue shows the §03 <code>ActionToast</code> (top-center) with Undo (restores the session) and Settings (opens the archived list)</td></tr>
               </tbody>
             </table>
 
@@ -2261,6 +2267,14 @@ grid-template-rows: minmax(0, 1fr) auto;
   .p-toast.warning .ti { background: var(--p-warning-soft); color: var(--p-warning); }
   .p-toast .tt { font-size: var(--p-font-size-base); font-weight: 600; color: var(--p-text); }
   .p-toast .td { font-size: var(--p-font-size-sm); color: var(--p-text-muted); margin-top: 2px; line-height: 1.45; }
+  /* Action toast — the top-center undo pill (ActionToast.vue). */
+  .p-action-toast {
+    display: inline-flex; align-items: center; gap: 8px; align-self: center; padding: 4px 6px 4px 14px;
+    background: var(--p-surface-raised); border: 0.5px solid var(--p-line); border-radius: var(--p-r-lg); box-shadow: var(--p-sh-sm);
+    font-size: var(--p-font-size-base); color: var(--p-text); white-space: nowrap;
+  }
+  .p-action-toast .lk { border: 0; padding: 0; background: none; color: var(--p-accent); cursor: pointer; font: inherit; }
+  .p-action-toast .x { color: var(--p-text-muted); width: 14px; height: 14px; }
 
   /* ===== Spinner (plain SVG ring, the default loader) ===== */
   .p-spinner { width: 18px; height: 18px; animation: p-spin 0.85s linear infinite; }

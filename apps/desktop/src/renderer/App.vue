@@ -47,7 +47,7 @@ import {
 import type { AppConfig, ThinkingLevel } from './api/types';
 import { commitLevel, effectiveThinkingLevel, segmentsFor } from './lib/modelThinking';
 import { stripSkillPrefix } from './lib/slashCommands';
-import { Icon, IconButton } from '@moonshot-ai/web-ui';
+import { ActionToast, Icon, IconButton } from '@moonshot-ai/web-ui';
 import { isMacosDesktop, isWindowsDesktop } from './lib/desktopFlag';
 import WindowsTitleBar from './components/window/WindowsTitleBar.vue';
 import TerminalPanel from './components/terminal/TerminalPanel.vue';
@@ -440,16 +440,9 @@ function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'butto
       handleCreateSession();
       break;
     case 'archiveSession': {
-      // The shortcut archives immediately (no confirm dialog) by design.
+      // Same no-confirm + undo-toast path as the sidebar archive button.
       const sid = client.activeSessionId.value;
-      if (sid) {
-        void client.archiveSession(sid).then(() => {
-          // Same terminal cleanup as the confirm-dialog archive path.
-          if (!client.sessionsForView.value.some((s) => s.id === sid)) {
-            terminalStore.destroySession(sid);
-          }
-        });
-      }
+      if (sid) void archiveSessionWithToast(sid);
       break;
     }
     case 'toggleSideChat':
@@ -678,10 +671,17 @@ const showLogin = ref(false);
 const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
 const showSettings = ref(false);
-// Deep link into a settings tab (currently only the onboarding custom-provider
-// entry opens Settings → Providers). Read once at SettingsDialog mount, then
-// reset on close so later manual opens land on General again.
-const settingsInitialTab = ref<'providers' | undefined>(undefined);
+// Deep link into a settings tab (the onboarding custom-provider entry opens
+// Settings → Providers; the archive undo toast opens Settings → Archived).
+// Read once at SettingsDialog mount, then reset on close so later manual
+// opens land on General again.
+const settingsInitialTab = ref<'providers' | 'archived' | undefined>(undefined);
+// Same deep link for the mobile settings sheet (its archived sub-view).
+// Reset when the sheet closes so later manual opens land on the main view.
+const mobileSettingsInitialView = ref<'archived' | undefined>(undefined);
+watch(showMobileSettings, (open) => {
+  if (!open) mobileSettingsInitialView.value = undefined;
+});
 
 type SubmitPayload = {
   text: string;
@@ -779,23 +779,42 @@ async function handleComposerSelectModel(modelId: string): Promise<void> {
   }
 }
 
-// Destructive session/workspace actions confirm through the shared modal here
-// (the menu components only emit the intent). Each passes its work as the
-// dialog `action`, so the dialog stays open with a loading state until the
-// operation settles. Both client calls toast their own errors and never
-// reject.
-async function confirmArchiveSession(id: string): Promise<void> {
-  const confirmed = await confirm({
-    title: t('sidebar.archive'),
-    message: t('sidebar.archiveConfirm'),
-    variant: 'danger',
-    action: () => client.archiveSession(id),
-  });
+// Archive runs WITHOUT a confirm dialog: archive immediately, then show a
+// top-center toast with Undo / Settings links (design-system §03 ActionToast).
+// Every archive entry point (sidebar row, chat header, mobile switcher,
+// shortcut) funnels here. client.archiveSession toasts its own errors and
+// never rejects, so a failed archive simply shows no undo toast.
+const archiveToast = ref<{ id: string } | null>(null);
+
+async function archiveSessionWithToast(id: string): Promise<void> {
+  await client.archiveSession(id);
   // Only destroy terminals once the session is really gone (sessionsForView
-  // excludes archived entries).
-  if (!confirmed) return;
+  // excludes archived entries) — a failed archive keeps both.
   if (client.sessionsForView.value.some((s) => s.id === id)) return;
   terminalStore.destroySession(id);
+  archiveToast.value = { id };
+}
+
+// Undo puts the session back at the front of the sidebar list (no
+// re-selection). On failure the toast stays so the user can retry — the
+// error itself surfaces via WarningToasts.
+async function undoArchive(): Promise<void> {
+  const toast = archiveToast.value;
+  if (!toast) return;
+  if (await client.restoreSession(toast.id)) archiveToast.value = null;
+}
+
+// "Settings" deep-links to the archived-sessions tab (desktop dialog) or
+// sub-view (mobile sheet).
+function openArchivedSettings(): void {
+  archiveToast.value = null;
+  if (isMobile.value) {
+    mobileSettingsInitialView.value = 'archived';
+    showMobileSettings.value = true;
+  } else {
+    settingsInitialTab.value = 'archived';
+    showSettings.value = true;
+  }
 }
 
 async function confirmDeleteWorkspace(id: string): Promise<void> {
@@ -1351,7 +1370,6 @@ function openPr(url: string): void {
         :attention-by-session="client.attentionBySession.value"
         :pending-by-session="client.pendingBySession.value"
         :unread-by-session="client.unreadBySession.value"
-        :workspace-sort-mode="client.workspaceSortMode.value"
         :backend="client.backend.value"
         @select="handleSelectSession($event)"
         @create="runShortcutAction('newSession', 'button')"
@@ -1360,7 +1378,7 @@ function openPr(url: string): void {
         @add-workspace="runShortcutAction('openFolder', 'button')"
         @add-workspace-paths="void handleDropWorkspacePaths($event)"
         @rename="(id, title) => client.renameSession(id, title)"
-        @archive="confirmArchiveSession($event)"
+        @archive="archiveSessionWithToast($event)"
         @fork="(id) => client.forkSession(id)"
         @export="(id) => client.exportSession(id)"
         @pin="client.togglePinSession($event)"
@@ -1370,7 +1388,6 @@ function openPr(url: string): void {
         @rename-workspace="(id, name) => client.renameWorkspace(id, name)"
         @delete-workspace="confirmDeleteWorkspace($event)"
         @reorder-workspaces="client.reorderWorkspaces($event)"
-        @set-workspace-sort-mode="client.setWorkspaceSortMode($event)"
         @load-more-sessions="(id) => void client.loadMoreSessions(id)"
         @load-all-sessions="void client.loadAllSessions()"
         @open-settings="openSettingsFromButton"
@@ -1476,7 +1493,7 @@ function openPr(url: string): void {
       @refresh-git-status="client.activeSessionId.value && client.loadGitStatus(client.activeSessionId.value)"
       @rename-session="(id, title) => client.renameSession(id, title)"
       @fork-session="(id) => client.forkSession(id)"
-      @archive-session="confirmArchiveSession($event)"
+      @archive-session="archiveSessionWithToast($event)"
       @export-session="(id) => client.exportSession(id)"
       @compact="client.compact()"
       @pick-model="openModelPicker()"
@@ -1720,6 +1737,16 @@ function openPr(url: string): void {
          (the Dialog primitive teleports to body for the same reason). -->
     <Teleport to="body">
       <WarningToasts :warnings="client.warnings.value" @dismiss="client.dismissWarning" />
+      <!-- Archive undo toast (top-center): archiving skips the confirm dialog;
+           Undo restores the session, Settings opens the archived list. -->
+      <Transition name="action-toast">
+        <ActionToast v-if="archiveToast" :key="archiveToast.id" @dismiss="archiveToast = null">
+          <button type="button" @click="undoArchive">{{ t('sidebar.archiveToastUndo') }}</button>
+          {{ t('sidebar.archiveToastMid') }}
+          <button type="button" @click="openArchivedSettings">{{ t('sidebar.archiveToastSettings') }}</button>
+          {{ t('sidebar.archiveToastTail') }}
+        </ActionToast>
+      </Transition>
     </Teleport>
 
     <!-- KAP/daemon debug panel (opt-in, ?debug=1) -->
@@ -1743,7 +1770,7 @@ function openPr(url: string): void {
       @create-in-workspace="handleCreateSessionInWorkspace($event)"
       @add-workspace="runShortcutAction('openFolder', 'button')"
       @rename="(id, title) => client.renameSession(id, title)"
-      @archive="confirmArchiveSession($event)"
+      @archive="archiveSessionWithToast($event)"
       @delete-workspace="confirmDeleteWorkspace($event)"
       @load-more="(id) => void client.loadMoreSessions(id)"
     />
@@ -1752,6 +1779,7 @@ function openPr(url: string): void {
     <MobileSettingsSheet
       v-if="isMobile"
       v-model="showMobileSettings"
+      :initial-view="mobileSettingsInitialView"
       :status="client.status.value"
       :thinking="client.thinking.value"
       :models="client.models.value"
@@ -1803,6 +1831,20 @@ function openPr(url: string): void {
 /* Global connecting splash fade-out (only the leave matters; it mounts instantly). */
 .gload-fade-leave-active { transition: opacity 0.28s ease; }
 .gload-fade-leave-to { opacity: 0; }
+
+/* Archive undo toast enter/leave: fade + a slight settle from above. */
+.action-toast-enter-active,
+.action-toast-leave-active {
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
+}
+.action-toast-leave-active { transition-duration: var(--duration-fast); }
+.action-toast-enter-from,
+.action-toast-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
 
 .app-shell {
   /* Pinned to the visual viewport (see setAppHeight): --app-top tracks iOS's

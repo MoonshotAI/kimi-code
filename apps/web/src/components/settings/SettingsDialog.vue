@@ -23,9 +23,14 @@ import { Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Swit
 
 const { t } = useI18n();
 
+type SettingsTab = 'general' | 'agent' | 'account' | 'advanced' | 'archived';
+
 const props = defineProps<{
   colorScheme: ColorScheme;
   fontScale: FontScale;
+  /** Tab to open on (default 'general'); deep links (the archive undo toast)
+      land on 'archived'. */
+  initialTab?: SettingsTab;
   /** Managed Kimi account credential state from GET /api/v1/auth
       ('authenticated' | 'unauthenticated' | null when unconfigured). The
       account row keys off THIS, not a global "any usable model exists" flag —
@@ -91,9 +96,7 @@ const accountSubtitle = computed(() =>
   signedIn.value ? t('settings.signedIn') : t('settings.signedOutHint'),
 );
 
-type SettingsTab = 'general' | 'agent' | 'account' | 'advanced' | 'archived';
-
-const activeTab = ref<SettingsTab>('general');
+const activeTab = ref<SettingsTab>(props.initialTab ?? 'general');
 
 // Overlay-style scrollbar, same as the sidebar's .sessions: the thin thumb
 // stays hidden until the body is scrolled, then fades back out shortly after
@@ -383,11 +386,17 @@ async function loadAllArchived(): Promise<void> {
   }
 }
 
-watch(activeTab, (tab) => {
-  if (tab === 'archived' && !archivedLoaded.value) {
-    void loadAllArchived();
-  }
-});
+// immediate: the dialog may MOUNT on the archived tab (initialTab deep link,
+// e.g. the archive undo toast) — no tab change fires then.
+watch(
+  activeTab,
+  (tab) => {
+    if (tab === 'archived' && !archivedLoaded.value) {
+      void loadAllArchived();
+    }
+  },
+  { immediate: true },
+);
 
 const archiveWorkspaces = computed<string[]>(() => {
   const set = new Set<string>();

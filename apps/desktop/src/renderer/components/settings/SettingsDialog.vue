@@ -470,11 +470,17 @@ async function loadAllArchived(): Promise<void> {
   }
 }
 
-watch(activeTab, (tab) => {
-  if (tab === 'archived' && !archivedLoaded.value) {
-    void loadAllArchived();
-  }
-});
+// immediate: the dialog may MOUNT on the archived tab (initialTab deep link,
+// e.g. the archive undo toast) — no tab change fires then.
+watch(
+  activeTab,
+  (tab) => {
+    if (tab === 'archived' && !archivedLoaded.value) {
+      void loadAllArchived();
+    }
+  },
+  { immediate: true },
+);
 
 const archiveWorkspaces = computed<string[]>(() => {
   const set = new Set<string>();

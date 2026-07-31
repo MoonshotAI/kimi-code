@@ -56,7 +56,6 @@ function createWorkspaceState(getSession: (sessionId: string) => Promise<AppSess
     unreadBySession: {} as Record<string, boolean>,
     gitStatusBySession: {},
     hiddenWorkspaceRoots: [],
-    workspaceAddedAt: {},
   };
   getKimiWebApiMock.mockReturnValue({
     getSession,

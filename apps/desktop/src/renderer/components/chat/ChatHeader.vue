@@ -228,8 +228,8 @@ function exportSession(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Archive — the modal confirm and the async work live in App.vue
-// (confirmArchiveSession); the header only emits the intent.
+// Archive — no confirm; App.vue (archiveSessionWithToast) archives directly
+// and shows the undo toast. The header only emits the intent.
 // ---------------------------------------------------------------------------
 function startArchive(): void {
   if (!props.sessionId) return;

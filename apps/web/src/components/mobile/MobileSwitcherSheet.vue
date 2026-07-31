@@ -165,7 +165,8 @@ function onRename(s: Session): void {
 }
 function onArchive(id: string): void {
   menuFor.value = null;
-  // The modal confirm + async archive live in App.vue (confirmArchiveSession).
+  // No confirm — App.vue (archiveSessionWithToast) archives directly and shows
+  // the undo toast.
   emit('archive', id);
 }
 

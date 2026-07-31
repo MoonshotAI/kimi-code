@@ -9,10 +9,7 @@ import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
 import {
   reconcileWorkspaceOrder,
   sortByWorkspaceOrder,
-  sortWorkspacesByRecent,
-  workspaceRecentActivity,
   type DropPosition,
-  type WorkspaceSortMode,
 } from '../lib/workspaceOrder';
 import { logError, logWarn } from '../lib/log';
 import { track } from '../lib/track';
@@ -26,16 +23,13 @@ import type { DiffFullTexts } from '../lib/diffFullTexts';
 import {
   loadPinnedSessions,
   loadUnread,
-  loadWorkspaceAddedAt,
   loadWorkspaceOrder,
-  loadWorkspaceSort,
   safeGetString,
   safeRemove,
   safeSetString,
   savePinnedSessions,
   saveUnread,
   saveWorkspaceOrder,
-  saveWorkspaceSort,
   STORAGE_KEYS,
 } from '../lib/storage';
 import {
@@ -396,13 +390,6 @@ export interface ExtendedState extends KimiClientState {
   recentRoots: string[];
   // Root paths the user removed from the sidebar (see HIDDEN_WORKSPACES_KEY).
   hiddenWorkspaceRoots: string[];
-  /** Local "just added" timestamp (epoch ms) per workspace id, stamped when the
-   *  user adds a workspace. The sidebar's `recent` sort keys off session
-   *  activity, which a freshly added workspace does not have — without this it
-   *  would sink below every workspace that does. Acts as its activity floor
-   *  until a real session takes over. Persisted (see storage.ts) so the spot
-   *  survives a refresh; entries are dropped when the workspace is removed. */
-  workspaceAddedAt: Record<string, number>;
   /** Installed external apps that can be used with "Open in app". */
   availableOpenInApps: string[];
   /** Global daemon configuration (secrets redacted). */
@@ -468,7 +455,6 @@ const rawState: ExtendedState = reactive({
   fsHome: null,
   recentRoots: [],
   hiddenWorkspaceRoots: loadHiddenWorkspacesFromStorage(),
-  workspaceAddedAt: loadWorkspaceAddedAt(),
   availableOpenInApps: [],
   config: null,
   sideChatMessagesByAgent: {},
@@ -2848,15 +2834,6 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() =>
  */
 const workspaceOrder = ref<string[]>(loadWorkspaceOrder());
 
-/**
- * Sidebar workspace sort mode. `recent` (default) re-sorts by each workspace's
- * most recent session activity and stays live as sessions update; `manual` keeps
- * the persisted/dragged order. Persisted so the choice survives a refresh.
- */
-const workspaceSortMode = ref<WorkspaceSortMode>(
-  loadWorkspaceSort() === 'manual' ? 'manual' : 'recent',
-);
-
 // Reconcile the persisted order with the set of currently-known workspaces:
 // drop ids that no longer exist, and prepend newly-seen ids (newest first,
 // matching "createdAt desc" — the closest signal we have without a real
@@ -2948,11 +2925,8 @@ function pinSessionAt(id: string, targetId: string | null, position: DropPositio
   savePinnedSessions(next);
 }
 
-/** Sidebar-facing workspace list. Order follows `workspaceSortMode`: the
- *  persisted/dragged order in `manual` mode, or most-recent-session-first in
- *  `recent` mode. The recent map is only built (and `rawState.sessions` only
- *  read) in the recent branch, so manual mode does not re-sort on every session
- *  update. */
+/** Sidebar-facing workspace list, in the user's manual (dragged/persisted)
+ *  order, reconciled against the daemon's workspace set by the watcher above. */
 const workspacesView = computed<WorkspaceView[]>(() => {
   const views = mergedWorkspaces.value.map((w) => ({
     id: w.id,
@@ -2962,12 +2936,6 @@ const workspacesView = computed<WorkspaceView[]>(() => {
     branch: w.branch,
     sessionCount: w.sessionCount,
   }));
-  if (workspaceSortMode.value === 'recent') {
-    return sortWorkspacesByRecent(
-      views,
-      workspaceRecentActivity(rawState.sessions, rawState.workspaceAddedAt, workspaceIdForSession),
-    );
-  }
   return sortByWorkspaceOrder(views, workspaceOrder.value);
 });
 
@@ -3133,19 +3101,6 @@ const pinnedSessions = computed<Session[]>(() => {
 function reorderWorkspaces(ids: string[]): void {
   workspaceOrder.value = ids;
   saveWorkspaceOrder(ids);
-  // A drag is an explicit manual ordering, so drop out of `recent` mode — the
-  // dragged order would otherwise be overwritten by the live recency sort.
-  if (workspaceSortMode.value !== 'manual') {
-    workspaceSortMode.value = 'manual';
-    saveWorkspaceSort('manual');
-  }
-}
-
-/** Switch the sidebar workspace sort mode and persist the choice. */
-function setWorkspaceSortMode(mode: WorkspaceSortMode): void {
-  if (workspaceSortMode.value === mode) return;
-  workspaceSortMode.value = mode;
-  saveWorkspaceSort(mode);
 }
 
 /**
@@ -3395,7 +3350,6 @@ export function useKimiWebClient() {
 
     // Workspace view props
     workspacesView,
-    workspaceSortMode,
     visibleWorkspace,
     activeWorkspaceId,
     sessionsForView,
@@ -3540,7 +3494,6 @@ export function useKimiWebClient() {
     renameWorkspace: workspaceState.renameWorkspace,
     deleteWorkspace: workspaceState.deleteWorkspace,
     reorderWorkspaces,
-    setWorkspaceSortMode,
     pinSession,
     unpinSession,
     togglePinSession,

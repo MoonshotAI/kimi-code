@@ -23,8 +23,6 @@ export const STORAGE_KEYS = {
   workspaceOrder: 'kimi-web.workspace-order',
   pinnedSessions: 'kimi-web.pinned-sessions',
   workspaceNameOverrides: 'kimi-web.workspace-name-overrides',
-  workspaceSort: 'kimi-web.workspace-sort',
-  workspaceAddedAt: 'kimi-web.workspace-added-at',
   notifyEnabled: 'kimi-web.notify-enabled',
   notifySound: 'kimi-web.notify-sound',
   inputHistory: 'kimi-web.input-history',
@@ -209,38 +207,4 @@ export function loadWorkspaceNameOverrides(): Record<string, string> {
 
 export function saveWorkspaceNameOverrides(overrides: Record<string, string>): void {
   safeSetJson(STORAGE_KEYS.workspaceNameOverrides, overrides);
-}
-
-/**
- * Sidebar workspace sort mode preference (`'manual'` or `'recent'`). Stored as
- * a raw string with no enum check here — the call site narrows it to
- * `WorkspaceSortMode`. Returns null when unset or storage is unavailable.
- */
-export function loadWorkspaceSort(): string | null {
-  return safeGetString(STORAGE_KEYS.workspaceSort);
-}
-
-export function saveWorkspaceSort(mode: string): void {
-  safeSetString(STORAGE_KEYS.workspaceSort, mode);
-}
-
-/**
- * Local "just added" timestamps (epoch ms) per workspace id, stamped when the
- * user adds a workspace. Feeds the `recent` sidebar sort so a freshly added,
- * still session-less workspace opens at the top; persisted so it keeps that
- * spot across a refresh until real session activity takes over. Entries are
- * dropped when the workspace is removed.
- */
-export function loadWorkspaceAddedAt(): Record<string, number> {
-  const parsed = safeGetJson<unknown>(STORAGE_KEYS.workspaceAddedAt);
-  if (!parsed || typeof parsed !== 'object') return {};
-  const out: Record<string, number> = {};
-  for (const [id, at] of Object.entries(parsed as Record<string, unknown>)) {
-    if (typeof at === 'number' && Number.isFinite(at)) out[id] = at;
-  }
-  return out;
-}
-
-export function saveWorkspaceAddedAt(addedAt: Record<string, number>): void {
-  safeSetJson(STORAGE_KEYS.workspaceAddedAt, addedAt);
 }

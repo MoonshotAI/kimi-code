@@ -20,7 +20,7 @@ import {
   loadCollapsedWorkspaces,
   saveCollapsedWorkspaces,
 } from '../lib/storage';
-import { moveInOrder, type DropPosition, type WorkspaceSortMode } from '../lib/workspaceOrder';
+import { moveInOrder, type DropPosition } from '../lib/workspaceOrder';
 import {
   canDropWorkspaceFolders,
   extractDroppedFolderPaths,
@@ -78,8 +78,6 @@ const props = withDefaults(
      *  pinned section above all workspace groups; empty hides the section. */
     pinnedSessions?: Session[];
     activeId: string;
-    /** Current workspace sort mode — drives the section-header sort button. */
-    workspaceSortMode: WorkspaceSortMode;
     /** Backend engine generation from /meta — dev-only badge next to the brand. */
     backend?: 'v1' | 'v2';
     attentionBySession?: Record<string, number>;
@@ -130,7 +128,6 @@ const emit = defineEmits<{
   renameWorkspace: [id: string, name: string];
   deleteWorkspace: [id: string];
   reorderWorkspaces: [ids: string[]];
-  setWorkspaceSortMode: [mode: WorkspaceSortMode];
   loadMoreSessions: [workspaceId: string];
   loadAllSessions: [];
   openSettings: [];
@@ -606,61 +603,6 @@ function deleteWs(ws: WorkspaceView): void {
 }
 
 // ---------------------------------------------------------------------------
-// Workspace section overflow menu (the ⋯ in the WORKSPACES header). Holds the
-// sort mode and the "show paths" toggle as text items with a check mark for the
-// active one. Anchored to the trigger via position:fixed so the scrolling list
-// can't clip it.
-// ---------------------------------------------------------------------------
-const sectionMenuOpen = ref(false);
-const sectionMenuStyle = ref<Record<string, string>>({});
-const sectionMenuRef = ref<InstanceType<typeof Menu> | null>(null);
-
-function onSectionMenuDocClick(e: MouseEvent): void {
-  const target = e.target as Element;
-  if (target.closest('.side-section-kebab') || target.closest('.section-menu')) return;
-  closeSectionMenu();
-}
-
-async function toggleSectionMenu(e: MouseEvent): Promise<void> {
-  if (sectionMenuOpen.value) {
-    closeSectionMenu();
-    return;
-  }
-  const btn = e.currentTarget as HTMLElement;
-  sectionMenuOpen.value = true;
-  document.addEventListener('mousedown', onSectionMenuDocClick);
-  window.addEventListener('resize', closeSectionMenu);
-  await nextTick();
-  const menu = sectionMenuRef.value?.el;
-  const r = btn.getBoundingClientRect();
-  const gap = 4;
-  const margin = 8;
-  const menuH = menu?.offsetHeight ?? 0;
-  const menuW = menu?.offsetWidth ?? 0;
-  let top = r.bottom + gap;
-  if (top + menuH > window.innerHeight - margin) {
-    top = Math.max(margin, r.top - menuH - gap);
-  }
-  let left = r.right - menuW;
-  if (left < margin) left = margin;
-  sectionMenuStyle.value = {
-    top: `${Math.round(top)}px`,
-    left: `${Math.round(left)}px`,
-  };
-}
-
-function closeSectionMenu(): void {
-  sectionMenuOpen.value = false;
-  document.removeEventListener('mousedown', onSectionMenuDocClick);
-  window.removeEventListener('resize', closeSectionMenu);
-}
-
-function chooseSortMode(mode: WorkspaceSortMode): void {
-  emit('setWorkspaceSortMode', mode);
-  closeSectionMenu();
-}
-
-// ---------------------------------------------------------------------------
 // Dev backend switcher menu (the pill next to the brand). Dev-only: repoints
 // the Vite dev proxy at the other engine, then reloads so every client state
 // (REST, WS, /meta) re-initializes against the new backend.
@@ -727,10 +669,8 @@ async function chooseBackend(name: BackendName): Promise<void> {
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onGhMenuDocClick, true);
   document.removeEventListener('mousedown', onWsMenuDocClick);
-  document.removeEventListener('mousedown', onSectionMenuDocClick);
   document.removeEventListener('mousedown', onBackendMenuDocClick);
   window.removeEventListener('resize', closeWsMenu);
-  window.removeEventListener('resize', closeSectionMenu);
   window.removeEventListener('resize', closeBackendMenu);
 });
 
@@ -942,16 +882,6 @@ onBeforeUnmount(() => {
                 <Icon v-if="allCollapsed" name="expand" />
                 <Icon v-else name="collapse" />
               </IconButton>
-              <IconButton
-                class="side-section-toggle side-section-kebab"
-                size="sm"
-                :label="t('sidebar.options')"
-                aria-haspopup="menu"
-                :aria-expanded="sectionMenuOpen"
-                @click.stop="toggleSectionMenu($event)"
-              >
-                <Icon name="dots-horizontal" />
-              </IconButton>
             </div>
           </div>
           <div
@@ -1068,27 +998,6 @@ onBeforeUnmount(() => {
         </MenuItem>
       </Menu>
     </Transition>
-    <!-- Workspace sort menu (position:fixed, anchored to the sort button) -->
-    <Menu
-      v-if="sectionMenuOpen"
-      ref="sectionMenuRef"
-      class="section-menu"
-      :style="sectionMenuStyle"
-      @click.stop
-    >
-      <MenuItem @click="chooseSortMode('manual')">
-        <span class="section-menu-check">
-          <Icon v-if="workspaceSortMode === 'manual'" name="check" size="sm" />
-        </span>
-        {{ t('sidebar.sortManual') }}
-      </MenuItem>
-      <MenuItem @click="chooseSortMode('recent')">
-        <span class="section-menu-check">
-          <Icon v-if="workspaceSortMode === 'recent'" name="check" size="sm" />
-        </span>
-        {{ t('sidebar.sortRecent') }}
-      </MenuItem>
-    </Menu>
     <!-- Dev backend switcher menu (position:fixed, anchored to the brand pill) -->
     <Menu
       v-if="backendMenuOpen"
@@ -1568,7 +1477,6 @@ onBeforeUnmount(() => {
    fixed positioning stays here (anchored to the ⋯ trigger / cursor). */
 .ws-menu,
 .gh-menu,
-.section-menu,
 .backend-menu {
   position: fixed;
   top: 0;
