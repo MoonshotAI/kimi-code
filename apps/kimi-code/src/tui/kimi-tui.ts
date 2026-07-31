@@ -1352,7 +1352,13 @@ export class KimiTUI {
         nonCapturing: true,
       });
     }
-    this.pinnedUserMessage.setMessage(text, this.state.ui.getContentHeight());
+    // Anchor at the message's actual position: the transcript is the root
+    // layout's first child, so its rendered height right after the append is
+    // one past the new entry's last buffer line. (The engine's content height
+    // would be a frame stale and would include the bottom chrome and overlay
+    // padding.) Rendering here is cheap — child render caches do the work.
+    const anchorLine = this.state.transcriptContainer.render(this.state.terminal.columns).length;
+    this.pinnedUserMessage.setMessage(text, anchorLine);
     this.state.ui.requestRender();
   }
 

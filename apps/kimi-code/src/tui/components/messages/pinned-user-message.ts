@@ -26,8 +26,9 @@ export class PinnedUserMessageComponent implements Component {
   private readonly tui: TUI;
   private readonly isEnabled: () => boolean;
   private text = '';
-  /** Buffer line count recorded when the message was sent; the transcript
-   * entry occupies the lines right after it. */
+  /** Root-buffer line index one past the message's last line, measured from
+   * the transcript container's rendered height right after the append. The
+   * pin shows once the viewport top passes it. */
   private anchorLine = 0;
   private generation = 0;
 
@@ -42,7 +43,8 @@ export class PinnedUserMessageComponent implements Component {
   }
 
   /** Snapshot a freshly sent user message. `anchorLine` should be the
-   * engine's current content height (`TUI.getContentHeight`). */
+   * transcript container's rendered height right after the append (root-buffer
+   * line index one past the message's last line). */
   setMessage(text: string, anchorLine: number): void {
     this.text = text;
     this.anchorLine = anchorLine;
@@ -82,12 +84,10 @@ export class PinnedUserMessageComponent implements Component {
     const bullet = USER_MESSAGE_BULLET;
     const bulletWidth = visibleWidth(bullet);
     const contentWidth = Math.max(1, safeWidth - bulletWidth);
-    const wrapped = this.wrapLines(contentWidth);
 
-    // The transcript renders a 1-line spacer above the message; mirror that
-    // when estimating where the original entry ends.
-    const fullHeight = wrapped.length + 1;
-    const visible = this.tui.getViewportTop() > this.anchorLine + fullHeight;
+    // anchorLine sits one past the message's last buffer line, so the pin
+    // appears exactly when the original entry has fully scrolled off.
+    const visible = this.tui.getViewportTop() >= this.anchorLine;
 
     if (
       this.bandCache !== undefined &&
@@ -97,6 +97,8 @@ export class PinnedUserMessageComponent implements Component {
     ) {
       return this.bandCache.lines;
     }
+
+    const wrapped = this.wrapLines(contentWidth);
 
     let lines: string[] = EMPTY_LINES;
     if (visible) {

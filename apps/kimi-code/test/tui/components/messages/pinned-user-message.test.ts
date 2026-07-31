@@ -30,9 +30,9 @@ describe('PinnedUserMessageComponent', () => {
   });
 
   it('stays hidden while the original message is still inside the viewport', () => {
-    // Message anchored at line 10 with height 2 (1 text row + 1 spacer row):
-    // it has only scrolled off once viewportTop passes line 12.
-    const { tui } = makeTuiStub(12);
+    // anchorLine sits one past the message's last buffer line: the pin only
+    // appears once the viewport top reaches it.
+    const { tui } = makeTuiStub(9);
     const component = new PinnedUserMessageComponent(tui, () => true);
     component.setMessage('hello world', 10);
 
