@@ -200,7 +200,11 @@ export function foldLoopEvent(
       const count = event.count;
       const toolWord = count === 1 ? 'tool is' : 'tools are';
       const message = `[Speculative] ${count} ${toolWord} running: ${list}. Based on what you expect to find, start preparing your analysis while results arrive.`;
-      const systemMessage: ContextMessage = { role: 'system', content: message };
+      const systemMessage: ContextMessage = {
+        role: 'system',
+        content: [{ type: 'text', text: message }],
+        toolCalls: [],
+      };
       return bind([...state, systemMessage], ctx);
     }
     default:

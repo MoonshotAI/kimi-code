@@ -37,6 +37,12 @@ export async function resolveMcpJsonPaths(input: ResolveMcpJsonPathsInput): Prom
 export interface LoadMcpServersInput {
   readonly cwd: string;
   readonly homeDir?: string;
+  /**
+   * When false, project-level MCP declarations (`.mcp.json` and
+   * `.kimi-code/mcp.json`) are skipped — a headless/automated run must
+   * never auto-start untrusted project stdio. Defaults to true.
+   */
+  readonly trustProjectMcpConfig?: boolean;
 }
 
 /**
@@ -56,8 +62,12 @@ export async function loadMcpServers(
   const paths = await resolveMcpJsonPaths({ cwd: input.cwd, homeDir: input.homeDir });
   const [user, projectRoot, project] = await Promise.all([
     readMcpJson(paths.user),
-    readMcpJson(paths.projectRoot, { stdioCwdBase: dirname(paths.projectRoot) }),
-    readMcpJson(paths.project),
+    input.trustProjectMcpConfig === false
+      ? Promise.resolve({})
+      : readMcpJson(paths.projectRoot, { stdioCwdBase: dirname(paths.projectRoot) }),
+    input.trustProjectMcpConfig === false
+      ? Promise.resolve({})
+      : readMcpJson(paths.project),
   ]);
   return { ...user, ...projectRoot, ...project };
 }

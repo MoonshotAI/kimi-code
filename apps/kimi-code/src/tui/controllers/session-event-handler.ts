@@ -128,7 +128,7 @@ function estimateTokensFromText(text: string): number {
   let ascii = 0;
   let nonAscii = 0;
   for (let i = 0; i < text.length; i++) {
-    if (text.codePointAt(i) < 128) ascii++;
+    if ((text.codePointAt(i) ?? 0) < 128) ascii++;
     else nonAscii++;
   }
   return Math.ceil(ascii / 4 + nonAscii);

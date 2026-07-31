@@ -9,6 +9,7 @@ export interface SessionMcpConfig {
 export interface ResolveSessionMcpConfigInput {
   readonly cwd: string;
   readonly homeDir?: string;
+  readonly trustProjectMcpConfig?: boolean;
 }
 
 export async function resolveSessionMcpConfig(
@@ -17,6 +18,7 @@ export async function resolveSessionMcpConfig(
   const servers = await loadMcpServers({
     cwd: input.cwd,
     homeDir: input.homeDir,
+    trustProjectMcpConfig: input.trustProjectMcpConfig,
   });
   if (Object.keys(servers).length === 0) return undefined;
   return { servers };
