@@ -26,6 +26,9 @@ import {
 } from "./utils.ts";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
+const TERMINAL_STATUS_RESPONSE_PATTERN =
+	/^(?:\x1b\[\?[\d;]*c|\x1b(?:P.*\x1b\\|_.*\x1b\\))$/s;
+const OSC_STATUS_RESPONSE_PATTERN = /^\x1b\].*(?:\x07|\x1b\\)$/s;
 
 /** Shared empty id list for non-image lines in the per-line image-id cache. */
 const EMPTY_IMAGE_IDS: readonly number[] = [];
@@ -788,6 +791,11 @@ export class TUI extends Container {
 		if (this.consumeTerminalColorSchemeReport(data)) {
 			return;
 		}
+		// Terminal query replies are control traffic, not keyboard input. Consume
+		// known replies before global listeners can interpret them as user intent.
+		if (this.consumeCellSizeResponse(data) || TERMINAL_STATUS_RESPONSE_PATTERN.test(data)) {
+			return;
+		}
 
 		if (this.inputListeners.size > 0) {
 			let current = data;
@@ -805,9 +813,9 @@ export class TUI extends Container {
 			}
 			data = current;
 		}
-
-		// Consume terminal cell size responses without blocking unrelated input.
-		if (this.consumeCellSizeResponse(data)) {
+		// OSC reports may be consumed by application listeners (for example,
+		// live theme tracking), but must never fall through to focused input.
+		if (OSC_STATUS_RESPONSE_PATTERN.test(data)) {
 			return;
 		}
 
