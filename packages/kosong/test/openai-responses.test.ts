@@ -99,6 +99,19 @@ const MUL_TOOL: Tool = {
 };
 
 describe('OpenAIResponsesChatProvider', () => {
+  it('sends the priority service tier when requested', async () => {
+    const provider = createProvider();
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'Hello!' }], toolCalls: [] },
+    ];
+
+    const body = await captureRequestBody(provider, '', [], history, {
+      serviceTier: 'priority',
+    });
+
+    expect(body['service_tier']).toBe('priority');
+  });
+
   describe('message conversion', () => {
     it('sends system prompt as top-level instructions', async () => {
       const provider = createProvider();

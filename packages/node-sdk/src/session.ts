@@ -207,6 +207,11 @@ export class Session {
     await this.rpc.setThinking({ sessionId: this.id, effort: normalized });
   }
 
+  async setPriority(enabled: boolean): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.setPriority({ sessionId: this.id, enabled });
+  }
+
   /**
    * Live-apply the persisted `[secondary_model]` recipe to this session
    * (subagent model binding). Persist the recipe via `KimiHarness.setConfig`

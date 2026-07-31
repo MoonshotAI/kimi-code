@@ -102,6 +102,7 @@ export type ModelAlias = z.infer<typeof ModelAliasSchema>;
  */
 export const SecondaryModelConfigSchema = ModelAliasOverrideSchema.extend({
   model: z.string().min(1).optional(),
+  priority: z.boolean().optional(),
 });
 
 export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;

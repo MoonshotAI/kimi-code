@@ -224,6 +224,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     inputMode: 'prompt',
     swarmMode: false,
     thinkingEffort: 'off',
+    priority: false,
     contextUsage: 0,
     contextTokens: 0,
     maxContextTokens: 0,
@@ -1586,7 +1587,11 @@ export class KimiTUI {
     if (this.state.appState.additionalDirs.length > 0) {
       options.additionalDirs = [...this.state.appState.additionalDirs];
     }
-    return this.harness.createSession(options);
+    const session = await this.harness.createSession(options);
+    if (this.state.appState.priority === true) {
+      await session.setPriority(true);
+    }
+    return session;
   }
 
   async setSession(session: Session): Promise<void> {
@@ -1604,6 +1609,7 @@ export class KimiTUI {
       sessionId: session.id,
       model: status.model ?? '',
       thinkingEffort: status.thinkingEffort,
+      priority: status.priority ?? false,
       permissionMode: status.permission,
       planMode: status.planMode,
       swarmMode: status.swarmMode ?? false,

@@ -15,8 +15,10 @@
  * experiment is enabled and the model is set, newly spawned subagents bind to
  * it by default instead of inheriting the caller's model, and the
  * `Agent`/`AgentSwarm` tools let the parent model pick per spawn via their
- * `model` parameter. When unset, spawning behavior is unchanged (subagents
- * inherit the caller's model). A recipe with patch fields binds the
+ * `model` parameter. The section's `priority` switch is independent of the
+ * main agent's switch, applies even when no secondary model is configured,
+ * and defaults off. When the model is unset, subagents inherit the caller's
+ * model and thinking but not its priority. A recipe with patch fields binds the
  * synthesized derived entry (`SECONDARY_DERIVED_MODEL_ID`); a pointer-only
  * recipe binds the pointed entry directly. `default_effort` is passed as the
  * explicit subagent thinking; without it the subagent resolves thinking
@@ -104,12 +106,16 @@ export function resolveSecondaryModel(
   return config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
 }
 
+export function resolveSubagentPriority(config: IConfigService): boolean {
+  return config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION)?.priority ?? false;
+}
+
 export function resolveSubagentBinding(
   config: IConfigService,
   flags: IFlagService,
   own: { modelAlias: string; thinkingLevel: string },
   requested?: SubagentModelChoice,
-): { model: string; thinking?: string } {
+): { model: string; thinking?: string; priority: boolean } {
   const secondary = resolveSecondaryModel(config, flags);
   if (requested !== 'primary' && secondary?.model !== undefined) {
     return {
@@ -118,9 +124,14 @@ export function resolveSubagentBinding(
           ? secondary.model
           : SECONDARY_DERIVED_MODEL_ID,
       thinking: secondary.defaultEffort,
+      priority: resolveSubagentPriority(config),
     };
   }
-  return { model: own.modelAlias, thinking: own.thinkingLevel };
+  return {
+    model: own.modelAlias,
+    thinking: own.thinkingLevel,
+    priority: resolveSubagentPriority(config),
+  };
 }
 
 export function buildSubagentModelDescriptions(

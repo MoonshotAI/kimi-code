@@ -102,6 +102,10 @@ export interface SetSessionThinkingRpcInput extends SessionIdRpcInput {
   readonly effort: string;
 }
 
+export interface SetSessionPriorityRpcInput extends SessionIdRpcInput {
+  readonly enabled: boolean;
+}
+
 export interface SetSessionPermissionRpcInput extends SessionIdRpcInput {
   readonly mode: PermissionMode;
 }
@@ -470,6 +474,15 @@ export abstract class SDKRpcClientBase {
     });
   }
 
+  async setPriority(input: SetSessionPriorityRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.setPriority({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      enabled: input.enabled,
+    });
+  }
+
   async applyPersistedSecondaryModel(input: SessionIdRpcInput): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.applyPersistedSecondaryModel({ sessionId: input.sessionId });
@@ -634,6 +647,7 @@ export abstract class SDKRpcClientBase {
     return {
       model: config.modelAlias ?? config.provider?.model,
       thinkingEffort: config.thinkingEffort,
+      priority: config.priority ?? false,
       permission: permission.mode,
       planMode: plan !== null,
       swarmMode,

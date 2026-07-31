@@ -22,6 +22,7 @@ import { collectGitContext } from './git-context';
 import type { Session } from './index';
 import {
   resolveSubagentBinding,
+  resolveSubagentPriority,
   wrapSubagentModelError,
   type SubagentModelBinding,
   type SubagentModelChoice,
@@ -276,6 +277,7 @@ export class SessionSubagentHost {
     child.config.update({
       modelAlias: parent.config.modelAlias,
       thinkingEffort: parent.config.thinkingEffort,
+      priority: resolveSubagentPriority(this.session.kimiConfig),
       systemPrompt: parent.config.systemPrompt,
     });
     child.tools.copyLoopToolsFrom(parent.tools);
@@ -447,6 +449,7 @@ export class SessionSubagentHost {
       cwd: parent.config.cwd,
       modelAlias: binding.modelAlias,
       thinkingEffort: binding.thinkingEffort,
+      priority: binding.priority,
     });
 
     const context = await prepareSystemPromptContext(
@@ -476,7 +479,10 @@ export class SessionSubagentHost {
     const binding = resolveSubagentBinding(
       this.session.kimiConfig,
       this.session.experimentalFlags,
-      { modelAlias: parent.config.modelAlias, thinkingEffort: parent.config.thinkingEffort },
+      {
+        modelAlias: parent.config.modelAlias,
+        thinkingEffort: parent.config.thinkingEffort,
+      },
       modelChoice ?? profile.modelPreference,
     );
     if (binding.modelAlias !== undefined) {

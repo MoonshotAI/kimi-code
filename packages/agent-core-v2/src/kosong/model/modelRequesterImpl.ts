@@ -112,6 +112,7 @@ export class ModelRequesterImpl implements ModelRequester {
     const options: GenerateOptions = {
       signal,
       cacheKey: params?.cacheKey,
+      serviceTier: params?.serviceTier,
       sampling: params?.sampling,
       thinking:
         params?.thinkingEffort === undefined

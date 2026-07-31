@@ -92,6 +92,7 @@ export interface GenerateOptions {
   signal?: AbortSignal;
   auth?: ProviderRequestAuth;
   responseFormat?: ResponseFormat;
+  serviceTier?: 'priority';
   cacheKey?: string;
   sampling?: SamplingOptions;
   thinking?: ThinkingRequestOptions;

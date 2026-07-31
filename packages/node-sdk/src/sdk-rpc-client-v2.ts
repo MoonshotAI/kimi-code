@@ -248,6 +248,7 @@ import {
   type SetSessionModelRpcResult,
   type SetSessionPermissionRpcInput,
   type SetSessionPlanModeRpcInput,
+  type SetSessionPriorityRpcInput,
   type SetSessionSwarmModeRpcInput,
   type SetSessionThinkingRpcInput,
   type UpdateSessionMetadataRpcInput,
@@ -919,6 +920,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         modelCapabilities: profile.modelCapabilities,
         profileName: profile.profileName,
         thinkingEffort: profile.thinkingLevel,
+        priority: profile.priority ?? false,
         systemPrompt: profile.systemPrompt,
       },
       context: context as AgentContextData,
@@ -1337,18 +1339,23 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     agent.accessor.get(IAgentProfileService).setThinking(input.effort);
   }
 
+  override async setPriority(input: SetSessionPriorityRpcInput): Promise<void> {
+    const agent = await this.agentScope(input.sessionId);
+    agent.accessor.get(IAgentProfileService).setPriority(input.enabled);
+  }
+
   /**
    * v1 reloads the core config and pushes the resolved snapshot into the
    * session: the spawn binding, the tool descriptions, and the cached
-   * startup warning all read that snapshot. The v2 engine resolves the
-   * secondary model live against `IConfigService` at spawn time
+   * startup warning all read that snapshot. The v2 engine resolves subagent
+   * model and priority settings live against `IConfigService` at spawn time
    * (`resolveSubagentBinding`) and rebuilds the tool description on every
    * read, so the preceding `setConfig` write already took effect
    * session-wide — what remains of v1's contract is the reload (the recipe
    * may have been persisted through another channel), the same loud
-   * validations, and the warning-cache refresh. The recipe read is NOT
-   * flag-gated, mirroring v1's `setSecondaryModelConfig` (the experiment
-   * gate lives at the spawn binding on both engines).
+   * validations, the live priority update for existing subagents, and the
+   * warning-cache refresh. The section read is NOT flag-gated: only secondary
+   * model binding is experimental, while priority works without a model.
    */
   override async applyPersistedSecondaryModel(input: SessionIdRpcInput): Promise<void> {
     const session = this.requireLiveSession(input.sessionId);
@@ -1358,16 +1365,23 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const secondary = this.engineAccessor
       .get(IConfigService)
       .get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
-    if (secondary?.model === undefined) {
+    if (secondary?.model === undefined && secondary?.priority === undefined) {
       throw new KimiError(
         ErrorCodes.CONFIG_INVALID,
-        'Cannot set the secondary model: persist its recipe before applying it to a session.',
+        'Cannot set subagent settings: persist them before applying them to a session.',
       );
     }
-    try {
-      this.engineAccessor.get(IModelCatalog).get(secondary.model);
-    } catch (error) {
-      throw wrapSubagentModelError(error, secondary.model, undefined);
+    if (secondary.model !== undefined) {
+      try {
+        this.engineAccessor.get(IModelCatalog).get(secondary.model);
+      } catch (error) {
+        throw wrapSubagentModelError(error, secondary.model, undefined);
+      }
+    }
+    for (const agent of session.accessor.get(IAgentLifecycleService).list()) {
+      if (agent.id !== MAIN_AGENT_ID) {
+        agent.accessor.get(IAgentProfileService).setPriority(secondary.priority ?? false);
+      }
     }
     session.accessor
       .get(ISessionSecondaryModelWarningService)
@@ -1443,6 +1457,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return {
       model: profile.modelAlias,
       thinkingEffort: profile.thinkingLevel,
+      priority: profile.priority ?? false,
       permission: agent.accessor.get(IAgentPermissionModeService).mode,
       planMode: plan !== null,
       swarmMode: agent.accessor.get(IAgentSwarmService).isActive,

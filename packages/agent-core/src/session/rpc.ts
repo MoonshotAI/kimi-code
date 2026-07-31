@@ -27,6 +27,7 @@ import type {
   SessionAPI,
   SetActiveToolsPayload,
   SetModelPayload,
+  SetPriorityPayload,
   SetPermissionPayload,
   SetThinkingPayload,
   SkillSummary,
@@ -159,6 +160,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   async setThinking({ agentId, ...payload }: AgentScopedPayload<SetThinkingPayload>) {
     return (await this.getAgent(agentId)).setThinking(payload);
+  }
+
+  async setPriority({ agentId, ...payload }: AgentScopedPayload<SetPriorityPayload>) {
+    return (await this.getAgent(agentId)).setPriority(payload);
   }
 
   async setPermission({ agentId, ...payload }: AgentScopedPayload<SetPermissionPayload>) {

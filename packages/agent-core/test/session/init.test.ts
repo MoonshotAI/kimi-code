@@ -359,6 +359,34 @@ describe('Session.init', () => {
 });
 
 describe('AgentAPI.startBtw', () => {
+  it('applies priority-only subagent config to the side-question child', async () => {
+    const workDir = await makeTempDir();
+    const sessionDir = await makeTempDir();
+    const session = new Session({
+      id: 'test-btw-priority',
+      kaos: testKaos.withCwd(workDir),
+      homedir: sessionDir,
+      rpc: createSessionRpc([]),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      providerManager: testProviderManager(),
+      config: { providers: {}, secondaryModel: { priority: true } },
+    });
+    const { agent: mainAgent } = await session.createAgent(
+      { type: 'main', generate: createScriptedGenerate().generate },
+      { profile: testProfile() },
+    );
+    mainAgent.config.update({ priority: false });
+
+    try {
+      const agentId = await new SessionAPIImpl(session).startBtw({ agentId: 'main' });
+
+      expect(session.getReadyAgent(agentId)?.config.priority).toBe(true);
+      expect(mainAgent.config.priority).toBe(false);
+    } finally {
+      await session.close();
+    }
+  });
+
   it('runs a side subagent from a stable parent context snapshot without writing btw history', async () => {
     const workDir = await makeTempDir();
     const sessionDir = await makeTempDir();
@@ -766,6 +794,32 @@ describe('Session secondary-model live config', () => {
         { profile: testProfile(), parentAgentId: 'main' },
       );
       expect(second.kimiConfig?.secondaryModel).toEqual({ model: MOCK_PROVIDER.model });
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('live-applies subagent priority without a secondary model', async () => {
+    const session = await makeSession(SECONDARY_BASE_CONFIG);
+    try {
+      const { agent: main } = await session.createAgent(
+        { type: 'main', generate: createScriptedGenerate().generate },
+        { profile: testProfile() },
+      );
+      const { agent: child } = await session.createAgent(
+        { type: 'sub', generate: createScriptedGenerate().generate },
+        { profile: testProfile(), parentAgentId: 'main' },
+      );
+      main.config.update({ priority: true });
+
+      session.setSecondaryModelConfig({
+        ...SECONDARY_BASE_CONFIG,
+        secondaryModel: { priority: true },
+      });
+
+      expect(session.kimiConfig?.secondaryModel).toEqual({ priority: true });
+      expect(main.config.priority).toBe(true);
+      expect(child.config.priority).toBe(true);
     } finally {
       await session.close();
     }

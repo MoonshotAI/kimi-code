@@ -13,6 +13,7 @@ import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile'
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
+import { IConfigService } from '#/app/config/config';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { APIProviderRateLimitError } from '#/kosong/contract/errors';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
@@ -846,6 +847,7 @@ describe('SessionSwarmService metadata compatibility', () => {
   let createAgent: ReturnType<typeof vi.fn>;
   let runAgent: ReturnType<typeof vi.fn>;
   let eventBus: IEventBus;
+  let secondaryConfig: { readonly priority?: boolean } | undefined;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -853,6 +855,7 @@ describe('SessionSwarmService metadata compatibility', () => {
     agents = {};
     handles = new Map();
     eventBus = eventBusStub();
+    secondaryConfig = undefined;
     lifecycle = lifecycleStub(handles, eventBus);
     subagents = subagentStub();
     createAgent = lifecycle.create as ReturnType<typeof vi.fn>;
@@ -906,6 +909,9 @@ describe('SessionSwarmService metadata compatibility', () => {
       },
     });
     ix.stub(ILogService, stubLog());
+    ix.stub(IConfigService, {
+      get: (() => secondaryConfig) as IConfigService['get'],
+    });
     ix.stub(IModelCatalog, {
       _serviceBrand: undefined,
       get: (alias: string) => {
@@ -1013,8 +1019,25 @@ describe('SessionSwarmService metadata compatibility', () => {
           profile: 'coder',
           model: 'kimi-test',
           thinking: 'medium',
+          priority: false,
         },
         labels: { parentAgentId: 'main', swarmItem: 'src/a.ts' },
+      }),
+    );
+  });
+
+  it('uses priority-only subagent config when a spawn has no explicit binding', async () => {
+    secondaryConfig = { priority: true };
+    const service = ix.get(ISessionSwarmService);
+
+    await service.run({
+      callerAgentId: 'main',
+      tasks: [spawnSessionTask('src/a.ts')],
+    });
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({ priority: true }),
       }),
     );
   });
@@ -1124,6 +1147,7 @@ describe('SessionSwarmService metadata compatibility', () => {
           profile: 'coder',
           model: 'provider/secondary',
           thinking: 'low',
+          priority: false,
         },
       }),
     );

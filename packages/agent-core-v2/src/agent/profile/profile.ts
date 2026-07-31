@@ -2,7 +2,7 @@
  * `profile` domain — `IAgentProfileService` contract.
  *
  * Owns the active agent's identity: bound profile, model alias, thinking
- * level, system prompt, and active-tool set. `bind()` takes an optional
+ * level, priority-service selection, system prompt, and active-tool set. `bind()` takes an optional
  * `model`, falling back to the configured `defaultModel` so edges don't each
  * re-implement the fallback (a missing model everywhere throws
  * `model.not_configured`), and an optional `thinking`; `strictThinking` marks
@@ -42,6 +42,7 @@ export interface AgentConfigData {
   modelCapabilities: ModelCapability;
   profileName?: string;
   thinkingLevel: string;
+  priority?: boolean;
   systemPrompt: string;
 }
 
@@ -49,6 +50,7 @@ export type AgentConfigUpdateData = Partial<{
   modelAlias: string;
   profileName: string;
   thinkingLevel: string;
+  priority: boolean;
   systemPrompt: string;
 }>;
 
@@ -68,6 +70,7 @@ export type ProfileUpdateData = Partial<{
   modelAlias: string;
   profileName: string;
   thinkingLevel: string;
+  priority: boolean;
   systemPrompt: string;
   disallowedTools: readonly string[];
   activeToolNames: readonly string[];
@@ -77,6 +80,7 @@ export interface ProfileBindingSnapshot {
   readonly modelAlias?: string;
   readonly profileName?: string;
   readonly thinkingLevel: string;
+  readonly priority?: boolean;
   readonly systemPrompt: string;
   readonly activeToolNames?: readonly string[];
   readonly disallowedTools?: readonly string[];
@@ -110,6 +114,7 @@ export interface BindAgentInput {
   readonly profile: string;
   readonly model?: string;
   readonly thinking?: string;
+  readonly priority?: boolean;
   readonly strictThinking?: boolean;
 }
 
@@ -122,6 +127,7 @@ export interface IAgentProfileService {
   bind(input: BindAgentInput): Promise<void>;
   setModel(model: string): Promise<ProfileSetModelResult>;
   setThinking(level: string): void;
+  setPriority(enabled: boolean): void;
   republishStatus(): void;
   getModel(): string;
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void;

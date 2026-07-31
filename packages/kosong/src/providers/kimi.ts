@@ -545,6 +545,9 @@ export class KimiChatProvider implements ChatProvider {
       ...requestKwargs,
       ...(extraBody as Record<string, unknown> | undefined),
     };
+    if (options?.serviceTier !== undefined) {
+      createParams['service_tier'] = options.serviceTier;
+    }
     if (options?.responseFormat !== undefined) {
       createParams['response_format'] = responseFormatToOpenAI(options.responseFormat);
     }

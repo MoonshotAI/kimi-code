@@ -20,9 +20,10 @@ export class LlmRequestLogger {
     readonly systemPrompt: string;
     readonly tools: readonly Tool[];
     readonly messages: readonly Message[];
+    readonly serviceTier?: 'priority';
     readonly fields: LLMRequestLogFields | undefined;
   }): void {
-    const { provider, modelAlias, systemPrompt, tools, messages, fields } = input;
+    const { provider, modelAlias, systemPrompt, tools, messages, serviceTier, fields } = input;
     const requestLogFields = fields ?? {};
     // This logs the outbound request; deferred tools are stripped by kosong
     // generate() before the provider sees them, so mirror that here or the
@@ -33,6 +34,7 @@ export class LlmRequestLogger {
       model: provider.modelName,
       modelAlias,
       thinkingEffort: provider.thinkingEffort ?? undefined,
+      serviceTier,
       systemPromptChars: systemPrompt.length,
       toolCount: wireTools.length,
     };

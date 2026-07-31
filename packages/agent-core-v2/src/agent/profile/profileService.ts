@@ -314,6 +314,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         modelAlias: snapshot.modelAlias,
         profileName: snapshot.profileName,
         thinkingEffort: snapshot.thinkingLevel,
+        priority: snapshot.priority,
         systemPrompt: snapshot.systemPrompt,
         activeToolNames: snapshot.activeToolNames,
         disallowedTools: snapshot.disallowedTools ?? [],
@@ -324,6 +325,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       modelAlias: snapshot.modelAlias,
       profileName: snapshot.profileName,
       thinkingLevel: snapshot.thinkingLevel,
+      priority: snapshot.priority ?? false,
       systemPrompt: snapshot.systemPrompt,
       disallowedTools: snapshot.disallowedTools ?? [],
     });
@@ -375,6 +377,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       modelAlias: alias,
       profileName: profile.name,
       thinkingEffort: thinkingLevel,
+      priority: input.priority ?? this.profileState.priority,
       systemPrompt,
       activeToolNames: profile.tools,
       disallowedTools: profile.disallowedTools ?? [],
@@ -420,6 +423,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         from: previousEffort,
       });
     }
+  }
+
+  setPriority(enabled: boolean): void {
+    this.update({ priority: enabled });
   }
 
   private assertThinkingEffortSupported(
@@ -494,6 +501,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       modelCapabilities: model?.capabilities ?? UNKNOWN_CAPABILITY,
       profileName: this.profileName,
       thinkingLevel: this.thinkingLevel,
+      priority: this.profileState.priority,
       systemPrompt: this.systemPrompt,
       activeToolNames: this.activeToolNames === undefined ? undefined : [...this.activeToolNames],
       disallowedTools: [...(this.profileState.disallowedTools ?? [])],
@@ -532,6 +540,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     };
     return {
       cacheKey: this.sessionContext.sessionId,
+      serviceTier: this.profileState.priority ? 'priority' : undefined,
       sampling:
         sampling.temperature === undefined && sampling.topP === undefined ? undefined : sampling,
       thinkingEffort: thinking.effective,
@@ -597,6 +606,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         changed.thinkingLevel ?? (this.modelAlias === undefined ? undefined : this.thinkingLevel);
       payload.thinkingEffort = this.resolveThinkingEffort(requested, model);
     }
+    if (changed.priority !== undefined) payload.priority = changed.priority;
     if (changed.systemPrompt !== undefined) payload.systemPrompt = changed.systemPrompt;
     if (changed.disallowedTools !== undefined) {
       payload.disallowedTools = [...changed.disallowedTools];

@@ -37,6 +37,7 @@ export class ConfigState {
   // treating the never-chosen initial "off" as an explicit user choice.
   private _unforcedThinkingEffort: ThinkingEffort | undefined;
   private _thinkingEffort: ThinkingEffort = 'off';
+  private _priority = false;
   private _systemPrompt: string = '';
 
   constructor(protected readonly agent: Agent) {
@@ -107,6 +108,9 @@ export class ConfigState {
       this._unforcedThinkingEffort = unforcedThinkingEffort;
       this._thinkingEffort = thinkingEffort;
     }
+    if (changed.priority !== undefined) {
+      this._priority = changed.priority;
+    }
     if (changed.systemPrompt !== undefined) {
       this._systemPrompt = changed.systemPrompt;
     }
@@ -143,6 +147,7 @@ export class ConfigState {
       profileName: this.profileName,
       subagentNames: this.subagentNames,
       thinkingEffort: this.thinkingEffort,
+      priority: this.priority,
       systemPrompt: this.systemPrompt,
     };
   }
@@ -220,6 +225,10 @@ export class ConfigState {
     // Already resolved (with the always_thinking clamp applied) in update();
     // return it verbatim.
     return this._thinkingEffort;
+  }
+
+  get priority(): boolean {
+    return this._priority;
   }
 
   private get currentModel(): ModelAlias | undefined {

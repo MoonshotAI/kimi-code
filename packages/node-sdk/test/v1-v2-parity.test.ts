@@ -1651,6 +1651,7 @@ describe('v1↔v2 agent interaction parity', () => {
       expect(v1Status).toEqual({
         model: 'fixture-model',
         thinkingEffort: 'high',
+        priority: false,
         permission: 'auto',
         planMode: false,
         swarmMode: false,
@@ -1700,6 +1701,7 @@ describe('v1↔v2 agent interaction parity', () => {
       expect(v1Status).toEqual({
         model: undefined,
         thinkingEffort: 'off',
+        priority: false,
         permission: 'manual',
         planMode: false,
         swarmMode: false,
@@ -2641,6 +2643,17 @@ describe('v1↔v2 agent interaction parity', () => {
       expect(v1NoRecipe).toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
       expect(v2NoRecipe).toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
       expect(v2NoRecipe?.message).toBe(v1NoRecipe?.message);
+
+      // Priority is a complete subagent setting on its own: it does not
+      // require a secondary model or the secondary-model experiment.
+      await Promise.all([
+        pair.v1.setConfig({ secondaryModel: { priority: true } }),
+        pair.v2.setConfig({ secondaryModel: { priority: true } }),
+      ]);
+      await Promise.all([
+        pair.v1.applyPersistedSecondaryModel(input),
+        pair.v2.applyPersistedSecondaryModel(input),
+      ]);
 
       // A dangling recipe: both reject, pointing at [secondary_model].
       await Promise.all([

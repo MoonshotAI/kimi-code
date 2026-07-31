@@ -38,6 +38,8 @@ export interface AppState {
    * mirrors the runtime. The single source of truth for the thinking state in
    * the TUI. */
   thinkingEffort: ThinkingEffort;
+  /** Whether requests use the provider's priority service tier. */
+  priority?: boolean;
   contextUsage: number;
   contextTokens: number;
   maxContextTokens: number;

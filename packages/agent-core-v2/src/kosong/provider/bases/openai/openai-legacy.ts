@@ -614,6 +614,10 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       ...kwargs,
     };
 
+    if (options?.serviceTier !== undefined) {
+      createParams['service_tier'] = options.serviceTier;
+    }
+
     if (tools.length > 0) {
       const convertTool = this._hooks?.convertTool ?? ((tool: Tool) => toolToOpenAI(tool));
       createParams['tools'] = tools.map((tool) => convertTool(tool));

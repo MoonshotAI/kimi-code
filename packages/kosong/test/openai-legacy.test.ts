@@ -94,6 +94,19 @@ const MUL_TOOL: Tool = {
 };
 
 describe('OpenAILegacyChatProvider', () => {
+  it('sends the priority service tier when requested', async () => {
+    const provider = createProvider();
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'Hello!' }], toolCalls: [] },
+    ];
+
+    const body = await captureRequestBody(provider, '', [], history, {
+      serviceTier: 'priority',
+    });
+
+    expect(body['service_tier']).toBe('priority');
+  });
+
   describe('message conversion (COMMON_CASES)', () => {
     it('simple user message with system prompt', async () => {
       const provider = createProvider();

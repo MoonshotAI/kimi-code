@@ -818,8 +818,20 @@ describe('AgentSwarmTool', () => {
     expect(host.swarmService.run).toHaveBeenCalledWith(
       expect.objectContaining({
         tasks: [
-          expect.objectContaining({ binding: { model: SECONDARY_DERIVED_MODEL_ID, thinking: 'low' } }),
-          expect.objectContaining({ binding: { model: SECONDARY_DERIVED_MODEL_ID, thinking: 'low' } }),
+          expect.objectContaining({
+            binding: {
+              model: SECONDARY_DERIVED_MODEL_ID,
+              thinking: 'low',
+              priority: false,
+            },
+          }),
+          expect.objectContaining({
+            binding: {
+              model: SECONDARY_DERIVED_MODEL_ID,
+              thinking: 'low',
+              priority: false,
+            },
+          }),
         ],
       }),
     );
@@ -848,8 +860,12 @@ describe('AgentSwarmTool', () => {
     expect(host.swarmService.run).toHaveBeenCalledWith(
       expect.objectContaining({
         tasks: [
-          expect.objectContaining({ binding: { model: 'main-model', thinking: 'high' } }),
-          expect.objectContaining({ binding: { model: 'main-model', thinking: 'high' } }),
+          expect.objectContaining({
+            binding: { model: 'main-model', thinking: 'high', priority: false },
+          }),
+          expect.objectContaining({
+            binding: { model: 'main-model', thinking: 'high', priority: false },
+          }),
         ],
       }),
     );

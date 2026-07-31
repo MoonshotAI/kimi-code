@@ -307,6 +307,7 @@ merge_all_available_skills = true
 # default_effort: string
 # off_effort: string
 # model: string
+# priority: boolean
 
 # ##########################################################################
 # services

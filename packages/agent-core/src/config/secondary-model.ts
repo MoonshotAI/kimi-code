@@ -45,7 +45,7 @@ export function secondaryModelPatch(
   secondary: SecondaryModelConfig | undefined,
 ): ModelAliasOverrides | undefined {
   if (secondary === undefined) return undefined;
-  const { model: _model, ...rawPatch } = secondary;
+  const { model: _model, priority: _priority, ...rawPatch } = secondary;
   const patch = Object.fromEntries(
     Object.entries(rawPatch).filter(([, value]) => value !== undefined),
   ) as ModelAliasOverrides;

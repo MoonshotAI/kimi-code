@@ -1263,6 +1263,32 @@ describe('SessionSubagentHost', () => {
       expect(child.agent.config.modelAlias).not.toBe(parent.agent.config.modelAlias);
     });
 
+    it('binds subagent priority independently from the main agent', async () => {
+      const { parent, child } = await spawnChild({
+        experimentalFlags: secondaryFlags(),
+        config: {
+          providers: {},
+          secondaryModel: { model: 'cheap-model', priority: true },
+        },
+      });
+
+      expect(parent.agent.config.priority).toBe(false);
+      expect(child.agent.config.priority).toBe(true);
+    });
+
+    it('binds subagent priority without a secondary model', async () => {
+      const { parent, child } = await spawnChild({
+        config: {
+          providers: {},
+          secondaryModel: { priority: true },
+        },
+      });
+
+      expect(parent.agent.config.priority).toBe(false);
+      expect(child.agent.config.modelAlias).toBe(parent.agent.config.modelAlias);
+      expect(child.agent.config.priority).toBe(true);
+    });
+
     it('binds the derived entry when the recipe carries patch fields', async () => {
       const { child } = await spawnChild({
         experimentalFlags: secondaryFlags(),

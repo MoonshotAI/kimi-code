@@ -29,6 +29,7 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus } from '#/app/event/eventBus';
+import { IConfigService } from '#/app/config/config';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -40,7 +41,10 @@ import {
 } from '#/session/agentLifecycle/subagentMetadata';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
-import { wrapSubagentModelError } from '#/session/subagent/configSection';
+import {
+  resolveSubagentPriority,
+  wrapSubagentModelError,
+} from '#/session/subagent/configSection';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
@@ -89,6 +93,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
     @ILogService private readonly log: ILogService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IConfigService private readonly config: IConfigService,
   ) {}
 
   async getSwarmItem(args: {
@@ -154,6 +159,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     const binding = options.binding ?? {
       model: callerData.modelAlias,
       thinking: callerData.thinkingLevel,
+      priority: resolveSubagentPriority(this.config),
     };
     let child: IAgentScopeHandle;
     try {
@@ -163,6 +169,7 @@ export class SessionSwarmService implements ISessionSwarmService {
           profile: profile.name,
           model: binding.model,
           thinking: binding.thinking,
+          priority: binding.priority ?? false,
         },
         labels: subagentLabels(callerAgentId, { swarmItem: options.swarmItem }),
       });

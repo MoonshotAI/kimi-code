@@ -10,6 +10,7 @@ import {
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
+import { ChoicePickerComponent, type ChoiceOption } from '../components/dialogs/choice-picker';
 import { EffortSelectorComponent } from '../components/dialogs/effort-selector';
 import {
   ExperimentsSelectorComponent,
@@ -157,6 +158,98 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
     host.setAppState({ permissionMode: 'yolo' });
     host.showNotice('YOLO mode: ON', 'Tool actions auto-approved; the agent may still ask you questions.');
   }
+}
+
+export async function handlePriorityCommand(host: SlashCommandHost): Promise<void> {
+  const secondary = (await host.harness.getConfig()).secondaryModel;
+  showPriorityPicker(
+    host,
+    host.state.appState.priority ?? false,
+    secondary?.priority ?? false,
+  );
+}
+
+type PrioritySelection = 'both' | 'main' | 'subagents' | 'off';
+
+const PRIORITY_OPTIONS: readonly ChoiceOption[] = [
+  {
+    value: 'both',
+    label: 'Main agent and subagents',
+    description: 'Use the priority service tier for every agent request.',
+  },
+  {
+    value: 'main',
+    label: 'Main agent only',
+    description: 'Use priority for the main agent and standard service for subagents.',
+  },
+  {
+    value: 'subagents',
+    label: 'Subagents only',
+    description: 'Use standard service for the main agent and priority for subagents.',
+  },
+  {
+    value: 'off',
+    label: 'Neither',
+    description: 'Use standard service for both the main agent and subagents.',
+  },
+];
+
+function showPriorityPicker(
+  host: SlashCommandHost,
+  mainPriority: boolean,
+  subagentPriority: boolean,
+): void {
+  const currentValue = prioritySelection(mainPriority, subagentPriority);
+  host.mountEditorReplacement(
+    new ChoicePickerComponent({
+      title: 'Priority service tier',
+      options: PRIORITY_OPTIONS,
+      currentValue,
+      onSelect: (value) => {
+        host.restoreEditor();
+        void applyPrioritySelection(host, value as PrioritySelection, {
+          main: mainPriority,
+          subagents: subagentPriority,
+        });
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+function prioritySelection(main: boolean, subagents: boolean): PrioritySelection {
+  if (main && subagents) return 'both';
+  if (main) return 'main';
+  if (subagents) return 'subagents';
+  return 'off';
+}
+
+async function applyPrioritySelection(
+  host: SlashCommandHost,
+  selection: PrioritySelection,
+  current: { readonly main: boolean; readonly subagents: boolean },
+): Promise<void> {
+  const main = selection === 'both' || selection === 'main';
+  const subagents = selection === 'both' || selection === 'subagents';
+  try {
+    if (main !== current.main) {
+      await host.requireSession().setPriority(main);
+      host.setAppState({ priority: main });
+    }
+    if (subagents !== current.subagents) {
+      await host.harness.setConfig({ secondaryModel: { priority: subagents } });
+      await host.requireSession().applyPersistedSecondaryModel();
+    }
+  } catch (error) {
+    host.showError(`Failed to set priority tier: ${formatErrorMessage(error)}`);
+    return;
+  }
+  host.showStatus(
+    `Priority tier: main agent ${main ? 'enabled' : 'disabled'}, subagents ${subagents ? 'enabled' : 'disabled'}.`,
+    'success',
+  );
 }
 
 export async function handleAutoCommand(host: SlashCommandHost, args: string): Promise<void> {

@@ -1,3 +1,8 @@
+/**
+ * Session runtime-setting scenario: public setters persist agent config and
+ * status reflects it. The harness is real; only the remote model is absent.
+ */
+
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createKimiHarness, type KimiError } from '#/index';
@@ -68,6 +73,35 @@ describe('Session.setThinking', () => {
         name: 'KimiError',
         code: 'session.closed',
       } satisfies Partial<KimiError>);
+    } finally {
+      await harness.close();
+    }
+  });
+});
+
+describe('Session.setPriority', () => {
+  it('persists the enabled priority state through the public session surface', async () => {
+    const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-priority-home-');
+    const workDir = await makeTempDir(tempDirs, 'kimi-sdk-priority-work-');
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const session = await harness.createSession({ id: 'ses_priority_wire', workDir });
+
+      await session.setPriority(true);
+
+      await expect(session.getStatus()).resolves.toMatchObject({ priority: true });
+      await expect(
+        waitForAgentWireEvent(
+          homeDir,
+          session.id,
+          'config.update',
+          (event) => event['priority'] === true,
+        ),
+      ).resolves.toMatchObject({
+        type: 'config.update',
+        priority: true,
+      });
     } finally {
       await harness.close();
     }

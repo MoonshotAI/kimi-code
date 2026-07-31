@@ -806,15 +806,16 @@ export class Session {
   }
 
   /**
-   * Live-apply the core's fully resolved secondary-model config after a
-   * `[secondary_model]` change: the spawn
+   * Live-apply the core's fully resolved subagent config after a
+   * `[secondary_model]` model or priority change: the spawn
    * binding (`subagent-host`), the startup-warning computation, and every live
    * agent's `kimiConfig` (tool descriptions, loop control) all read the
    * session snapshot, so a mid-session `/secondary_model` switch takes effect
    * for the next subagent spawn without recreating the session. The core owns
    * config reload, environment overlays, and derived-model synthesis. Copying
-   * that complete recipe and its model entries keeps spawn binding and provider
-   * resolution aligned without live-applying unrelated session settings.
+   * that complete section and its model entries keeps spawn binding and provider
+   * resolution aligned without live-applying unrelated session settings. A
+   * priority-only section is complete and does not require a model.
    */
   setSecondaryModelConfig(config: KimiConfig): void {
     const base = this.runtimeConfig;
@@ -825,34 +826,54 @@ export class Session {
       );
     }
     const secondary = config.secondaryModel;
-    if (secondary?.model === undefined) {
+    if (secondary?.model === undefined && secondary?.priority === undefined) {
       throw new KimiError(
         ErrorCodes.CONFIG_INVALID,
-        'Cannot set the secondary model: persist its recipe before applying it to a session.',
+        'Cannot set subagent settings: persist them before applying them to a session.',
       );
     }
-    try {
-      this.options.providerManager?.resolveProviderConfig(secondary.model);
-    } catch (error) {
-      throw wrapSubagentModelError(error, secondary.model, undefined);
+    if (secondary.model !== undefined) {
+      try {
+        this.options.providerManager?.resolveProviderConfig(secondary.model);
+      } catch (error) {
+        throw wrapSubagentModelError(error, secondary.model, undefined);
+      }
     }
     const models = { ...base.models };
     delete models[SECONDARY_DERIVED_MODEL_ALIAS];
-    const pointedModel = config.models?.[secondary.model];
-    if (pointedModel !== undefined) models[secondary.model] = pointedModel;
+    if (secondary.model !== undefined) {
+      const pointedModel = config.models?.[secondary.model];
+      if (pointedModel !== undefined) models[secondary.model] = pointedModel;
+    }
     const derivedModel = config.models?.[SECONDARY_DERIVED_MODEL_ALIAS];
     if (derivedModel !== undefined) models[SECONDARY_DERIVED_MODEL_ALIAS] = derivedModel;
     const next = { ...base, models, secondaryModel: secondary };
     this.runtimeConfig = next;
     this.secondaryModelWarnings = undefined;
+    const subagentPriority = secondary.priority ?? false;
     for (const [, entry] of this.agents) {
       if (entry instanceof Agent) {
         entry.updateKimiConfig(next);
+        if (entry.type === 'sub') {
+          entry.config.update({ priority: subagentPriority });
+        }
       } else {
         // Resume in flight: push the update once the agent materializes (the
         // rejection is owned by the resume caller, not by this tap).
-        void entry.then(({ agent }) => agent.updateKimiConfig(next)).catch(() => {});
+        void this.updateResumingAgentConfig(entry, next, subagentPriority).catch(() => {});
       }
+    }
+  }
+
+  private async updateResumingAgentConfig(
+    entry: Promise<ResumedAgent>,
+    config: KimiConfig,
+    subagentPriority: boolean,
+  ): Promise<void> {
+    const { agent } = await entry;
+    agent.updateKimiConfig(config);
+    if (agent.type === 'sub') {
+      agent.config.update({ priority: subagentPriority });
     }
   }
 

@@ -192,22 +192,24 @@ display_name = "Kimi for Coding (custom)"
 
 次主力模型是主模型 `default_model` 之外的第二个模型指针——通常是一个更便宜的模型，供不需要主模型的功能绑定使用。目前的消费者是子 Agent 派生：设置后，新派生的子 Agent（`Agent` / `AgentSwarm`）默认绑定该模型，而不再继承主 Agent 的模型；主 Agent 会被告知每次派生可在 `"secondary"`（该模型）与 `"primary"`（主模型）之间选择。未设置时，子 Agent 继承主 Agent 的模型。
 
-该功能目前是实验功能，默认关闭。通过 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1` 启用，或使用 master `KIMI_CODE_EXPERIMENTAL_FLAG=1`。它在包括交互式 TUI 在内的所有启动方式下生效。
+次主力模型绑定目前是实验功能，默认关闭。通过 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1` 启用，或使用 master `KIMI_CODE_EXPERIMENTAL_FLAG=1`。它在包括交互式 TUI 在内的所有启动方式下生效。子 Agent 的 `priority` 设置不是实验功能，无需设置 `model` 即可生效。
 
-在交互式 TUI 中，可以使用 [`/secondary_model`](../reference/slash-commands.md) 命令打开模型选择器来设置该配置：选择后会写入本小节配置，并在当前会话立即生效——之后派生的子 Agent 会直接绑定新的第二模型。
+在交互式 TUI 中，可以使用 [`/secondary_model`](../reference/slash-commands.md) 命令打开模型选择器来设置该配置：选择后会写入本小节配置，并在当前会话立即生效——之后派生的子 Agent 会直接绑定新的第二模型。无论是否配置次主力模型，[`/priority`](../reference/slash-commands.md) 都会打开选择器，分别控制主 Agent 与子 Agent 的 priority。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `model` | `string` | — | 已配置 `[models]` 中的模型 id（不限 kimi 模型，可用任意供应商） |
 | `default_effort` | `string` | — | 子代理绑定次主力模型时使用的 thinking effort。未设置时按"全局 `[thinking]` 配置 → 模型默认 effort"的链路解析，不再继承主 Agent 的 effort。与主模型的 thinking effort 语义一致：严格校验 effort 的模型（如 kimi 模型）在不支持该取值时回退到模型默认 effort，其他供应商的模型按原样发送给后端 |
+| `priority` | `boolean` | `false` | 设为 `true` 时，子 Agent 请求会使用供应商的 priority service tier。它可以作为本小节的唯一字段；即使子 Agent 继承主 Agent 的模型，该设置仍与主 Agent 的 priority 独立。具体价格和运行效果取决于供应商 |
 | 其他字段 | — | — | 接受 [`[models."<alias>".overrides]`](#models) 的全部字段（`max_context_size`、`max_output_size`、`support_efforts` 等），作为仅对子代理生效的模型补丁 |
 
-`model` 之外的字段构成补丁：存在补丁字段时，运行时会在内存中合成一个派生模型条目（被指向条目的拷贝，补丁并入其 overrides 且补丁优先），子代理实际绑定该派生条目；没有补丁字段时，子代理直接绑定 `model` 指向的条目。派生条目只存在于内存中（不写回 `config.toml`），也不会出现在模型选择列表里。
+除 `model`、`default_effort` 和 `priority` 之外的字段构成补丁：存在补丁字段时，运行时会在内存中合成一个派生模型条目（被指向条目的拷贝，补丁并入其 overrides 且补丁优先），子代理实际绑定该派生条目；没有补丁字段时，子代理直接绑定 `model` 指向的条目。派生条目只存在于内存中（不写回 `config.toml`），也不会出现在模型选择列表里。
 
 ```toml
 [secondary_model]
 model = "kimi-code/kimi-k2.5"
 default_effort = "low"
+priority = false
 max_output_size = 8192
 ```
 

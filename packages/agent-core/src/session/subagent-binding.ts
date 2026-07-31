@@ -22,8 +22,10 @@ import type { AgentModelPreference } from '../profile';
  * the pointed entry directly. `default_effort` is passed as the explicit
  * subagent thinking effort; without it the child resolves thinking naturally
  * (global thinking config → the bound model's default effort) rather than
- * inheriting the caller's level. When unset, spawning behavior is unchanged:
- * subagents inherit the caller's model and effort.
+ * inheriting the caller's level. The section's `priority` switch applies even
+ * without a secondary model and defaults off, independently from the caller's
+ * priority. When the model is unset, subagents inherit only the caller's model
+ * and effort.
  */
 
 export type SubagentModelChoice = AgentModelPreference;
@@ -31,6 +33,7 @@ export type SubagentModelChoice = AgentModelPreference;
 export interface SubagentModelBinding {
   readonly modelAlias: string | undefined;
   readonly thinkingEffort?: string;
+  readonly priority: boolean;
 }
 
 export function resolveSecondaryModel(
@@ -41,6 +44,10 @@ export function resolveSecondaryModel(
   return config?.secondaryModel;
 }
 
+export function resolveSubagentPriority(config: KimiConfig | undefined): boolean {
+  return config?.secondaryModel?.priority ?? false;
+}
+
 /**
  * Resolve which model a newly spawned subagent binds to. `requested` is the
  * explicit per-spawn choice (tool argument or profile preference); `own` is
@@ -49,7 +56,10 @@ export function resolveSecondaryModel(
 export function resolveSubagentBinding(
   config: KimiConfig | undefined,
   flags: ExperimentalFlagResolver,
-  own: { readonly modelAlias: string | undefined; readonly thinkingEffort: string },
+  own: {
+    readonly modelAlias: string | undefined;
+    readonly thinkingEffort: string;
+  },
   requested?: SubagentModelChoice,
 ): SubagentModelBinding {
   const secondary = resolveSecondaryModel(config, flags);
@@ -60,9 +70,14 @@ export function resolveSubagentBinding(
           ? secondary.model
           : SECONDARY_DERIVED_MODEL_ALIAS,
       thinkingEffort: secondary.defaultEffort,
+      priority: resolveSubagentPriority(config),
     };
   }
-  return { modelAlias: own.modelAlias, thinkingEffort: own.thinkingEffort };
+  return {
+    modelAlias: own.modelAlias,
+    thinkingEffort: own.thinkingEffort,
+    priority: resolveSubagentPriority(config),
+  };
 }
 
 /**

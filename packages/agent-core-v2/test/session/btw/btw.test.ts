@@ -4,6 +4,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ToolCall } from '#/kosong/contract/message';
@@ -14,6 +15,7 @@ import {
   TOOL_CALL_DISABLED_MESSAGE,
 } from '#/session/btw/btw';
 import { SessionBtwService } from '#/session/btw/btwService';
+import { IConfigService } from '#/app/config/config';
 
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 
@@ -24,6 +26,8 @@ describe('SessionBtwService', () => {
   let appendSystemReminder: ReturnType<typeof vi.fn>;
   let formatDenyMessage: ReturnType<typeof vi.fn>;
   let executorEvents: ToolExecutorEventStubs;
+  let secondaryConfig: { readonly priority?: boolean } | undefined;
+  let setPriority: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -33,12 +37,15 @@ describe('SessionBtwService', () => {
     // for forked sub agents, so the assertion proves the reason went through it.
     formatDenyMessage = vi.fn((message: string) => `${message} [worker guidance]`);
     executorEvents = stubToolExecutorEvents();
+    secondaryConfig = undefined;
+    setPriority = vi.fn();
 
     const child = {
       id: 'agent-btw-1',
       accessor: {
         get: (id: unknown) => {
           if (id === IAgentSystemReminderService) return { appendSystemReminder };
+          if (id === IAgentProfileService) return { setPriority };
           if (id === IAgentToolApprovalService) return { formatDenyMessage };
           if (id === IAgentToolExecutorService) return executorEvents.executor;
           return undefined;
@@ -50,6 +57,9 @@ describe('SessionBtwService', () => {
       _serviceBrand: undefined,
       fork,
     } as unknown as IAgentLifecycleService);
+    ix.stub(IConfigService, {
+      get: (() => secondaryConfig) as IConfigService['get'],
+    });
     ix.set(ISessionBtwService, new SyncDescriptor(SessionBtwService));
   });
   afterEach(() => disposables.dispose());
@@ -64,6 +74,15 @@ describe('SessionBtwService', () => {
       kind: 'system_trigger',
       name: 'btw',
     });
+    expect(setPriority).toHaveBeenCalledWith(false);
+  });
+
+  it('applies priority-only subagent config to the side-question child', async () => {
+    secondaryConfig = { priority: true };
+
+    await ix.get(ISessionBtwService).start();
+
+    expect(setPriority).toHaveBeenCalledWith(true);
   });
 
   it('vetoes every tool call on the child through the btw deny listener', async () => {

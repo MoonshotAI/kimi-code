@@ -617,6 +617,9 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       stream: this._stream,
       ...kwargs,
     };
+    if (options?.serviceTier !== undefined) {
+      createParams['service_tier'] = options.serviceTier;
+    }
     if (options?.responseFormat !== undefined) {
       createParams['response_format'] = responseFormatToOpenAI(options.responseFormat);
     }

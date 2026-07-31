@@ -8,6 +8,7 @@ export interface AgentConfigData {
   profileName?: string;
   subagentNames?: readonly string[];
   thinkingEffort: string;
+  priority?: boolean;
   systemPrompt: string;
 }
 
@@ -17,5 +18,6 @@ export type AgentConfigUpdateData = Partial<{
   profileName: string;
   subagentNames: readonly string[];
   thinkingEffort: string;
+  priority: boolean;
   systemPrompt: string;
 }>;

@@ -14,10 +14,13 @@
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IConfigService } from '#/app/config/config';
+import { resolveSubagentPriority } from '#/session/subagent/configSection';
 
 import { ISessionBtwService, SIDE_QUESTION_SYSTEM_REMINDER, TOOL_CALL_DISABLED_MESSAGE } from './btw';
 
@@ -26,10 +29,12 @@ export class SessionBtwService implements ISessionBtwService {
 
   constructor(
     @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
+    @IConfigService private readonly config: IConfigService,
   ) {}
 
   async start(): Promise<string> {
     const child = await this.lifecycle.fork('main');
+    child.accessor.get(IAgentProfileService).setPriority(resolveSubagentPriority(this.config));
     child.accessor
       .get(IAgentSystemReminderService)
       ?.appendSystemReminder(SIDE_QUESTION_SYSTEM_REMINDER, {

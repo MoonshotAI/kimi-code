@@ -29,6 +29,7 @@ import {
   handleEffortCommand,
   handleModelCommand,
   handlePlanCommand,
+  handlePriorityCommand,
   handleSecondaryModelCommand,
   handleThemeCommand,
   handleYoloCommand,
@@ -72,6 +73,7 @@ export {
   handleEffortCommand,
   handleModelCommand,
   handlePlanCommand,
+  handlePriorityCommand,
   handleSecondaryModelCommand,
   handleThemeCommand,
   handleYoloCommand,
@@ -310,6 +312,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'effort':
       await handleEffortCommand(host, args);
+      return;
+    case 'priority':
+      await handlePriorityCommand(host);
       return;
     case 'provider':
       await handleProviderCommand(host);

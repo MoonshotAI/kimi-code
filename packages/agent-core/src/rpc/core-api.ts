@@ -237,6 +237,9 @@ export interface CancelPayload {
 export interface SetThinkingPayload {
   readonly effort: string;
 }
+export interface SetPriorityPayload {
+  readonly enabled: boolean;
+}
 export interface SetPermissionPayload {
   readonly mode: PermissionMode;
 }
@@ -469,6 +472,7 @@ export interface AgentAPI {
   cancel: (payload: CancelPayload) => void;
   undoHistory: (payload: UndoHistoryPayload) => void;
   setThinking: (payload: SetThinkingPayload) => void;
+  setPriority: (payload: SetPriorityPayload) => void;
   setPermission: (payload: SetPermissionPayload) => void;
   setModel: (payload: SetModelPayload) => SetModelResult;
   getModel: (payload: EmptyPayload) => string;

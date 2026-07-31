@@ -1429,16 +1429,18 @@ describe('subagent config section', () => {
   });
 
   it('resolves the spawn binding: secondary by default, primary on request, inherit otherwise', async () => {
-    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium', priority: true };
 
     const noModel = await createConfig({});
     expect(resolveSubagentBinding(noModel.config, secondaryModelFlags(), own)).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      priority: false,
     });
     expect(resolveSubagentBinding(noModel.config, secondaryModelFlags(), own, 'secondary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      priority: false,
     });
     noModel.disposables.dispose();
 
@@ -1448,10 +1450,12 @@ describe('subagent config section', () => {
     expect(resolveSubagentBinding(withModel.config, secondaryModelFlags(), own)).toEqual({
       model: 'provider/secondary',
       thinking: undefined,
+      priority: false,
     });
     expect(resolveSubagentBinding(withModel.config, secondaryModelFlags(), own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      priority: false,
     });
     withModel.disposables.dispose();
 
@@ -1464,11 +1468,13 @@ describe('subagent config section', () => {
     expect(resolveSubagentBinding(withEffort.config, secondaryModelFlags(), own)).toEqual({
       model: SECONDARY_DERIVED_MODEL_ID,
       thinking: 'low',
+      priority: false,
     });
     // default_effort only applies together with the secondary model.
     expect(resolveSubagentBinding(withEffort.config, secondaryModelFlags(), own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      priority: false,
     });
     withEffort.disposables.dispose();
 
@@ -1479,12 +1485,13 @@ describe('subagent config section', () => {
     expect(resolveSubagentBinding(withFactPatch.config, secondaryModelFlags(), own)).toEqual({
       model: SECONDARY_DERIVED_MODEL_ID,
       thinking: undefined,
+      priority: false,
     });
     withFactPatch.disposables.dispose();
   });
 
   it('inherits the caller binding when the secondary-model experiment is disabled', async () => {
-    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium', priority: true };
     const { config, disposables } = await createConfig(
       {},
       '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
@@ -1493,6 +1500,39 @@ describe('subagent config section', () => {
     expect(resolveSubagentBinding(config, secondaryModelFlags(false), own)).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      priority: false,
+    });
+
+    disposables.dispose();
+  });
+
+  it('uses configured subagent priority without a secondary model or experiment', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium', priority: false };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\npriority = true\n',
+    );
+
+    expect(resolveSubagentBinding(config, secondaryModelFlags(false), own)).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+      priority: true,
+    });
+
+    disposables.dispose();
+  });
+
+  it('uses configured subagent priority when main and secondary models are the same', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium', priority: false };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/main"\npriority = true\n',
+    );
+
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+      model: 'provider/main',
+      thinking: undefined,
+      priority: true,
     });
 
     disposables.dispose();

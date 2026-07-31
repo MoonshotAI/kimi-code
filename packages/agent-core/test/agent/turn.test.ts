@@ -1779,6 +1779,22 @@ describe('Agent turn flow', () => {
     expect(entries.filter((entry) => entry.message === 'llm request')).toHaveLength(2);
   });
 
+  it('logs the priority service tier with LLM config metadata', async () => {
+    const { logger, entries } = captureLogs();
+    const ctx = testAgent({ log: logger });
+    ctx.configure();
+    ctx.agent.config.update({ priority: true });
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
+    await ctx.untilTurnEnd();
+
+    const configPayload = entries.find((entry) => entry.message === 'llm config')?.payload as
+      | Record<string, unknown>
+      | undefined;
+    expect(configPayload?.['serviceTier']).toBe('priority');
+  });
+
   it('logs changed LLM config when same-size system prompt content changes', async () => {
     const { logger, entries } = captureLogs();
     const ctx = testAgent({ log: logger });

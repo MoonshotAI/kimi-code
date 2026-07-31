@@ -318,6 +318,7 @@ export const SECONDARY_MODEL_EFFORT_ENV = 'KIMI_SECONDARY_EFFORT';
 
 export const SecondaryModelConfigSchema = ModelOverrideSchema.extend({
   model: z.string().min(1).optional(),
+  priority: z.boolean().optional(),
 });
 
 export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;

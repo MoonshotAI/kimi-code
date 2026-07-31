@@ -1139,6 +1139,9 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
         stream: this._stream,
         ...kwargs,
       };
+      if (options?.serviceTier !== undefined) {
+        createParams['service_tier'] = options.serviceTier;
+      }
       if (systemPrompt) {
         createParams['instructions'] = systemPrompt;
       }

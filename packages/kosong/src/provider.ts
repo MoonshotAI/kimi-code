@@ -149,6 +149,8 @@ export interface GenerateOptions {
    * structured-output field when supported.
    */
   responseFormat?: ResponseFormat;
+  /** Optional upstream service tier for this request. */
+  serviceTier?: 'priority';
   /**
    * Host-side instrumentation hook fired immediately before invoking the
    * provider adapter's generate call.

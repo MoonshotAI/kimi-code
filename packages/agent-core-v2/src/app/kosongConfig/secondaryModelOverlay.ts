@@ -46,7 +46,7 @@ export function secondaryModelPatch(
   secondary: SecondaryModelConfig | undefined,
 ): ModelOverride | undefined {
   if (secondary === undefined) return undefined;
-  const { model: _model, ...patch } = secondary;
+  const { model: _model, priority: _priority, ...patch } = secondary;
   return Object.keys(patch).length > 0 ? patch : undefined;
 }
 

@@ -290,6 +290,7 @@ export class Agent {
       const { requestLogFields, generateOptions } = splitGenerateOptions(options);
       const modelAlias = this.config.modelAlias;
       const run = (requestOptions: Parameters<typeof generate>[5]) => {
+        const serviceTier = this.config.priority ? ('priority' as const) : undefined;
         // Mirror kosong generate()'s pre-flight abort check: a call whose
         // signal is already aborted never reaches the wire (generate throws
         // before dispatching), so it must not leave a request trace or a
@@ -302,6 +303,7 @@ export class Agent {
             systemPrompt,
             tools,
             messages: history,
+            serviceTier,
             fields: requestLogFields,
           });
           this.llmRequestRecorder.record({
@@ -312,7 +314,10 @@ export class Agent {
             fields: requestLogFields,
           });
         }
-        return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, requestOptions);
+        return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, {
+          ...requestOptions,
+          serviceTier,
+        });
       };
       if (generateOptions?.auth !== undefined) {
         return run(generateOptions);
@@ -582,6 +587,9 @@ export class Agent {
             from: previousEffort,
           });
         }
+      },
+      setPriority: (payload) => {
+        this.config.update({ priority: payload.enabled });
       },
       setPermission: (payload) => {
         const wasYolo = this.permission.mode === 'yolo';

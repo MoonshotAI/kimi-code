@@ -810,6 +810,30 @@ describe('KimiChatProvider', () => {
   });
 
   describe('generation kwargs', () => {
+    it('sends the priority service tier when requested', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history, {
+        serviceTier: 'priority',
+      });
+
+      expect(body['service_tier']).toBe('priority');
+    });
+
+    it('omits the service tier by default', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body).not.toHaveProperty('service_tier');
+    });
+
     it('applies temperature and normalizes legacy max_tokens to max_completion_tokens', async () => {
       const provider = createProvider().withGenerationKwargs({
         temperature: 0.7,

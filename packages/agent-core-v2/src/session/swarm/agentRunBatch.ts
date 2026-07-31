@@ -30,7 +30,11 @@ export interface AgentRunAttemptOptions {
 export interface AgentSpawnAttemptOptions extends AgentRunAttemptOptions {
   readonly profileName: string;
   readonly swarmItem?: string;
-  readonly binding?: { readonly model: string; readonly thinking?: string };
+  readonly binding?: {
+    readonly model: string;
+    readonly thinking?: string;
+    readonly priority?: boolean;
+  };
 }
 
 export type AgentRunAttemptHandle = {
@@ -649,4 +653,3 @@ export function resolveSwarmMaxConcurrency(
   }
   return value;
 }
-

@@ -135,6 +135,7 @@ import type {
   SetKimiConfigPayload,
   SetModelPayload,
   SetModelResult,
+  SetPriorityPayload,
   SetPermissionPayload,
   SetPluginEnabledPayload,
   SetPluginMcpServerEnabledPayload,
@@ -892,6 +893,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   setThinking({ sessionId, ...payload }: SessionAgentPayload<SetThinkingPayload>) {
     return this.sessionApi(sessionId).setThinking(payload);
+  }
+
+  setPriority({ sessionId, ...payload }: SessionAgentPayload<SetPriorityPayload>) {
+    return this.sessionApi(sessionId).setPriority(payload);
   }
 
   setPermission({ sessionId, ...payload }: SessionAgentPayload<SetPermissionPayload>) {

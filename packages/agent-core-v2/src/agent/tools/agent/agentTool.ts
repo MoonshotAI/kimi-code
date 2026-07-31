@@ -278,7 +278,10 @@ export class SubagentTool implements ISubagentTool {
       const binding = resolveSubagentBinding(
         this.config,
         this.flags,
-        { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
+        {
+          modelAlias: own.modelAlias,
+          thinkingLevel: own.thinkingLevel,
+        },
         args.model ?? profile.modelPreference,
       );
       let created: IAgentScopeHandle;
@@ -289,6 +292,7 @@ export class SubagentTool implements ISubagentTool {
             profile: profile.name,
             model: binding.model,
             thinking: binding.thinking,
+            priority: binding.priority,
           },
           labels: subagentLabels(this.callerAgentId),
         });

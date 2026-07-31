@@ -81,6 +81,7 @@ interface ConfigUpdatePayload {
   thinkingEffort?: 'off' | 'on' | (string & {});
   /** ThinkingEffort */
   thinkingLevel?: 'off' | 'on' | (string & {});
+  priority?: boolean;
   systemPrompt?: string;
   disallowedTools?: string[];
 }
@@ -459,6 +460,7 @@ interface ProfileBindPayload {
   profileName?: string;
   /** ThinkingEffort */
   thinkingEffort: 'off' | 'on' | (string & {});
+  priority?: boolean;
   systemPrompt: string;
   activeToolNames?: string[];
   disallowedTools: string[];

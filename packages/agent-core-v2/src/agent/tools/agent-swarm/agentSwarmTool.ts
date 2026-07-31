@@ -165,7 +165,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
     toolCallId: string,
   ): Promise<string> {
     const profileName = normalizeOptionalString(args.subagent_type) ?? DEFAULT_SUBAGENT_TYPE;
-    let binding: { model: string; thinking?: string } | undefined;
+    let binding: { model: string; thinking?: string; priority: boolean } | undefined;
     if ((args.items?.length ?? 0) > 0) {
       await this.catalog.ready;
       const own = this.profile.data();
@@ -181,7 +181,10 @@ export class AgentSwarmTool implements IAgentSwarmTool {
         binding = resolveSubagentBinding(
           this.config,
           this.flags,
-          { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
+          {
+            modelAlias: own.modelAlias,
+            thinkingLevel: own.thinkingLevel,
+          },
           args.model ?? targetProfile.modelPreference,
         );
       }
