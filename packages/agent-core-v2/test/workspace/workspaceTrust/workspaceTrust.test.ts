@@ -1,7 +1,8 @@
 /**
  * Scenario: workspace trust — explicit trust/untrust flips persisted outside
  * the workspace, idempotency and the change event, per-root independence,
- * and marker survival across a restart.
+ * marker survival across a restart, and the `workspaceTrust.trusted` state
+ * registration.
  *
  * Exercises the real `WorkspaceTrustService` against the real node-fs
  * `JsonAtomicDocumentStore` over a temp home. Run:
@@ -21,12 +22,18 @@ import { createServices } from '#/_base/di/test';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import {
   IWorkspaceTrust,
   type WorkspaceTrustChange,
 } from '#/workspace/workspaceTrust/workspaceTrust';
-import { WorkspaceTrustService } from '#/workspace/workspaceTrust/workspaceTrustService';
+import {
+  WorkspaceTrustService,
+  workspaceTrustTrustedKey,
+} from '#/workspace/workspaceTrust/workspaceTrustService';
+
+import { registerStateServices } from '../../state/stubs';
 
 describe('WorkspaceTrustService', () => {
   let homeDir: string;
@@ -47,10 +54,14 @@ describe('WorkspaceTrustService', () => {
     ]);
   });
 
-  function createService(root: string, events?: WorkspaceTrustChange[]): IWorkspaceTrust {
+  function createService(
+    root: string,
+    events?: WorkspaceTrustChange[],
+  ): { service: IWorkspaceTrust; states: IWorkspaceStateService } {
     const ix = createServices(disposables, {
       strict: true,
       additionalServices: (reg) => {
+        registerStateServices(reg);
         reg.definePartialInstance(IWorkspaceContext, { cwd: root });
         reg.defineInstance(
           IAtomicDocumentStore,
@@ -63,11 +74,11 @@ describe('WorkspaceTrustService', () => {
     if (events !== undefined) {
       service.onDidChange((change) => events.push(change));
     }
-    return service;
+    return { service, states: ix.get(IWorkspaceStateService) };
   }
 
   it('defaults to untrusted when no marker exists', async () => {
-    const service = createService(cwd);
+    const { service } = createService(cwd);
     await service.ready;
 
     expect(service.isTrusted()).toBe(false);
@@ -76,7 +87,7 @@ describe('WorkspaceTrustService', () => {
 
   it('trust() flips the state, fires once, and stays idempotent', async () => {
     const events: WorkspaceTrustChange[] = [];
-    const service = createService(cwd, events);
+    const { service } = createService(cwd, events);
     await service.ready;
 
     await service.trust();
@@ -89,7 +100,7 @@ describe('WorkspaceTrustService', () => {
 
   it('untrust() revokes the state and both directions stay idempotent', async () => {
     const events: WorkspaceTrustChange[] = [];
-    const service = createService(cwd, events);
+    const { service } = createService(cwd, events);
     await service.ready;
 
     await service.untrust();
@@ -102,11 +113,11 @@ describe('WorkspaceTrustService', () => {
   });
 
   it('keeps the marker across a restart', async () => {
-    const first = createService(cwd);
+    const { service: first } = createService(cwd);
     await first.ready;
     await first.trust();
 
-    const second = createService(cwd);
+    const { service: second } = createService(cwd);
     await second.ready;
 
     expect(second.isTrusted()).toBe(true);
@@ -115,16 +126,33 @@ describe('WorkspaceTrustService', () => {
   it('tracks different roots independently', async () => {
     const other = mkdtempSync(join(tmpdir(), 'kimi-workspace-trust-other-'));
     try {
-      const first = createService(cwd);
+      const { service: first } = createService(cwd);
       await first.ready;
       await first.trust();
 
-      const second = createService(other);
+      const { service: second } = createService(other);
       await second.ready;
 
       expect(second.isTrusted()).toBe(false);
     } finally {
       await rm(other, { recursive: true, force: true });
     }
+  });
+
+  it('registers the trusted flag into the workspace state container', async () => {
+    const { service, states } = createService(cwd);
+    await service.ready;
+
+    expect(states.has(workspaceTrustTrustedKey)).toBe(true);
+    expect(states.get(workspaceTrustTrustedKey)).toBe(false);
+
+    const seen: boolean[] = [];
+    states.onDidChange(workspaceTrustTrustedKey)((value) => seen.push(value));
+    await service.trust();
+    await service.untrust();
+
+    expect(seen).toEqual([true, false]);
+    expect(states.get(workspaceTrustTrustedKey)).toBe(false);
+    expect(states.snapshot()['workspaceTrust.trusted']).toBe(false);
   });
 });

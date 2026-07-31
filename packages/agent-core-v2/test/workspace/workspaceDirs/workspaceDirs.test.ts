@@ -73,7 +73,11 @@ import { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLo
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
+import {
+  WorkspaceDirsService,
+  workspaceDirsEphemeralDirsKey,
+  workspaceDirsFileDirsKey,
+} from '#/workspace/workspaceDirs/workspaceDirsService';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceToolPolicy';
@@ -485,6 +489,28 @@ describe('workspace add-dir (handler chain)', () => {
       await new Promise((resolve) => setTimeout(resolve, 400));
     }
   }, 15_000);
+
+  it('registers the additional-directory sets into the workspace state container', async () => {
+    const homeDir = await makeRoot('kimi-add-dir-home-');
+    const root = await makeProjectRoot();
+    const persisted = await makeRoot('kimi-add-dir-persisted-');
+    const ephemeral = await makeRoot('kimi-add-dir-ephemeral-');
+    const host = buildHost(homeDir);
+    const handler = await host.app.accessor.get(IWorkspaceLifecycleService).handlerFor({ root });
+    const dirs = handler.accessor.get(IWorkspaceDirs);
+    const states = handler.accessor.get(IWorkspaceStateService);
+
+    expect(states.get(workspaceDirsFileDirsKey)).toEqual([]);
+    expect(states.get(workspaceDirsEphemeralDirsKey)).toEqual([]);
+
+    await dirs.addDir({ path: persisted, persist: true });
+    expect(states.get(workspaceDirsFileDirsKey)).toEqual([persisted]);
+    expect(states.get(workspaceDirsEphemeralDirsKey)).toEqual([]);
+
+    await dirs.addDir({ path: ephemeral, persist: false });
+    expect(states.get(workspaceDirsFileDirsKey)).toEqual([persisted]);
+    expect(states.get(workspaceDirsEphemeralDirsKey)).toEqual([ephemeral]);
+  });
 
   it('unions caller additionalDirs from create options into the shared set', async () => {
     const homeDir = await makeRoot('kimi-add-dir-home-');

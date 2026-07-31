@@ -204,7 +204,7 @@ A scoped Service may expose a factory method that returns a **new** instance of 
 
 ### Runtime state goes into the per-scope state container
 
-Session/Agent-scope Services register their runtime state into the scope's state container (`ISessionStateService` / `IAgentStateService`, both over `_base`'s `StateRegistry`) instead of holding it in bare instance fields, so per-scope state lives in one observable place (`snapshot()` / `onDidChange`) and dies with the scope. Reference: `session/interaction/interactionService.ts`.
+Workspace/Session/Agent-scope Services register their runtime state into the scope's state container (`IWorkspaceStateService` / `ISessionStateService` / `IAgentStateService`, all over `_base`'s `StateRegistry`) instead of holding it in bare instance fields, so per-scope state lives in one observable place (`snapshot()` / `onDidChange`) and dies with the scope. Reference: `session/interaction/interactionService.ts`.
 
 - Declare keys in the domain file and export them: `export const interactionPendingKey = defineState<Map<string, Pending>>('interaction.pending', () => new Map())` — `<domain>.<field>` naming, factory initializers.
 - Inject `@ISessionStateService private readonly states` (or the Agent token) and `this.states.register(key)` per key at the top of the constructor.

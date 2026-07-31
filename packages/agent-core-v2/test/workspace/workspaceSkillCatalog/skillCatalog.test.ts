@@ -27,6 +27,10 @@ import { PluginService } from '#/app/plugin/pluginService';
 import type { ReloadSummary } from '#/app/plugin/types';
 import { IProviderService } from '#/kosong/provider/provider';
 import { IHostFsWatchService, type HostFsChange, type IHostFsWatchHandle } from '#/os/interface/hostFsWatch';
+import { IAppStateService } from '#/app/state/appState';
+import { AppStateService } from '#/app/state/appStateService';
+import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
+import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IConfigService } from '#/app/config/config';
 import {
@@ -39,7 +43,11 @@ import { IUserFileSkillSource, UserFileSkillSource } from '#/app/skillCatalog/us
 import { InMemorySkillDiscovery } from '#/app/skillCatalog/inMemorySkillDiscovery';
 import type { SkillContribution } from '#/app/skillCatalog/skillSource';
 import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
-import { WorkspaceSkillCatalogService } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalogService';
+import {
+  WorkspaceSkillCatalogService,
+  workspaceSkillCatalogContributionsKey,
+  workspaceSkillCatalogMergedKey,
+} from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalogService';
 import { ExplicitFileSkillSource, IExplicitFileSkillSource } from '#/workspace/workspaceSkillCatalog/explicitFileSkillSource';
 import { ExtraFileSkillSource, IExtraFileSkillSource } from '#/workspace/workspaceSkillCatalog/extraFileSkillSource';
 import { IWorkspaceRootSkillSource, WorkspaceRootSkillSource } from '#/workspace/workspaceSkillCatalog/rootFileSkillSource';
@@ -231,6 +239,8 @@ describe('WorkspaceSkillCatalogService', () => {
     registerScopedService(LifecycleScope.Workspace, IExtraFileSkillSource, ExtraFileSkillSource);
     registerScopedService(LifecycleScope.Workspace, IWorkspaceRootSkillSource, WorkspaceRootSkillSource);
     registerScopedService(LifecycleScope.Workspace, IPluginSkillSource, PluginSkillSource);
+    registerScopedService(LifecycleScope.App, IAppStateService, AppStateService);
+    registerScopedService(LifecycleScope.Workspace, IWorkspaceStateService, WorkspaceStateService);
   });
 
   it('merges global and project skills; project wins on name collision', async () => {
@@ -254,6 +264,24 @@ describe('WorkspaceSkillCatalogService', () => {
     expect(names).toContain('project-only');
     expect(names).toContain('shared');
     expect(catalog.catalog.getSkill('shared')?.description).toBe('from project');
+    host.dispose();
+  });
+
+  it('registers contributions and the merged view into the workspace state container', async () => {
+    const store = new InMemorySkillDiscovery();
+    store.setProjectSkills([stubSkill('project-only')]);
+    const ws = workspaceContextStub('/work');
+    const { host, workspace } = makeHost(store, ws);
+
+    const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+    await catalog.load();
+
+    const states = workspace.accessor.get(IWorkspaceStateService);
+    const contributions = states.get(workspaceSkillCatalogContributionsKey);
+    expect([...contributions.keys()]).toContain('workspace');
+    expect(states.get(workspaceSkillCatalogMergedKey)).toBe(catalog.catalog);
+    // A class instance collapses to a marker in the JSON-safe snapshot.
+    expect(states.snapshot()['workspaceSkillCatalog.merged']).toBe('(InMemorySkillCatalog)');
     host.dispose();
   });
 
