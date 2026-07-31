@@ -43,6 +43,7 @@ describe('update preference commands', () => {
       theme: 'auto',
       editorCommand: null,
       disablePasteBurst: false,
+      pinLastUserMessage: true,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: false },
     });

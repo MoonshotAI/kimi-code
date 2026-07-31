@@ -50,6 +50,9 @@ export interface AppState {
   editorCommand: string | null;
   /** Mirrors the TUI config toggle; defaults to false when absent from older fixtures. */
   disablePasteBurst?: boolean;
+  /** Mirrors the TUI config toggle pinning the last user message at the top of
+   * the viewport; defaults to true when absent from older fixtures. */
+  pinLastUserMessage?: boolean;
   notifications: NotificationsConfig;
   upgrade: UpgradePreferences;
   /** Footer status line customization from tui.toml; absent means the default layout. */

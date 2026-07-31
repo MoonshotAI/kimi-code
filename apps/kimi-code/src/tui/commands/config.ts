@@ -57,6 +57,8 @@ function currentTuiConfig(host: SlashCommandHost): TuiConfig {
     theme: host.state.appState.theme,
     editorCommand: host.state.appState.editorCommand,
     disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
+    pinLastUserMessage:
+      host.state.appState.pinLastUserMessage ?? DEFAULT_TUI_CONFIG.pinLastUserMessage,
     notifications: host.state.appState.notifications,
     upgrade: host.state.appState.upgrade,
   };

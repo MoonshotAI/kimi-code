@@ -92,6 +92,7 @@ function makeStartupInput(
     tuiConfig: {
       theme: 'dark',
       disablePasteBurst: false,
+      pinLastUserMessage: true,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },

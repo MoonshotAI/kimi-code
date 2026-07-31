@@ -60,6 +60,7 @@ auto_install = false
     expect(config).toEqual({
       theme: 'light',
       disablePasteBurst: false,
+      pinLastUserMessage: true,
       editorCommand: 'code --wait',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
@@ -76,6 +77,15 @@ disable_paste_burst = true
     expect(config.disablePasteBurst).toBe(true);
   });
 
+  it('parses pin_last_user_message', () => {
+    const config = parseTuiConfig(`
+theme = "dark"
+pin_last_user_message = false
+`);
+
+    expect(config.pinLastUserMessage).toBe(false);
+  });
+
   it('normalizes an empty editor command to auto-detect', () => {
     const config = parseTuiConfig(`
 [editor]
@@ -85,6 +95,7 @@ command = "   "
     expect(config).toEqual({
       theme: 'auto',
       disablePasteBurst: false,
+      pinLastUserMessage: true,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
@@ -118,6 +129,7 @@ command = "   "
       {
         theme: 'light',
         disablePasteBurst: false,
+        pinLastUserMessage: true,
         editorCommand: 'vim',
         notifications: { enabled: false, condition: 'always' },
         upgrade: { autoInstall: false },
@@ -129,6 +141,7 @@ command = "   "
     expect(await loadTuiConfig(filePath)).toEqual({
       theme: 'light',
       disablePasteBurst: false,
+      pinLastUserMessage: true,
       editorCommand: 'vim',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
@@ -142,6 +155,7 @@ command = "   "
       {
         theme,
         disablePasteBurst: DEFAULT_TUI_CONFIG.disablePasteBurst,
+        pinLastUserMessage: DEFAULT_TUI_CONFIG.pinLastUserMessage,
         editorCommand: null,
         notifications: DEFAULT_TUI_CONFIG.notifications,
         upgrade: DEFAULT_TUI_CONFIG.upgrade,

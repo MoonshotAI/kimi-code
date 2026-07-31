@@ -25,6 +25,7 @@ import {
   agentSwarmGridHeightForTerminalRows,
 } from '#/tui/components/messages/agent-swarm-progress';
 import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
+import { PinnedUserMessageComponent } from '#/tui/components/messages/pinned-user-message';
 import { StepSummaryComponent } from '#/tui/components/messages/step-summary';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import {
@@ -146,6 +147,7 @@ function makeStartupInput(): KimiTUIStartupInput {
     tuiConfig: {
       theme: 'dark',
       disablePasteBurst: false,
+      pinLastUserMessage: true,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
@@ -5877,5 +5879,93 @@ describe('transcript step and assistant folding', () => {
     // The conclusion stays mounted.
     const lastAssistant = assistants.at(-1)!;
     expect(stripSgr(lastAssistant.render(120).join('\n'))).toContain(`msg-${cycles - 1}`);
+  });
+});
+
+describe('pinned last user message', () => {
+  function getPinned(driver: MessageDriver): PinnedUserMessageComponent | undefined {
+    return (driver as unknown as { pinnedUserMessage?: PinnedUserMessageComponent })
+      .pinnedUserMessage;
+  }
+
+  it('mounts the pinned overlay and snapshots the sent message', async () => {
+    const { driver } = await makeDriver();
+
+    driver.handleUserInput('first pin probe');
+
+    expect(driver.state.ui.hasOverlay()).toBe(true);
+    const pinned = getPinned(driver);
+    expect(pinned).toBeInstanceOf(PinnedUserMessageComponent);
+
+    // Simulate the transcript having scrolled far past the message.
+    vi.spyOn(driver.state.ui, 'getViewportTop').mockReturnValue(1000);
+    const band = stripSgr(pinned!.render(120).join('\n'));
+    expect(band).toContain('first pin probe');
+  });
+
+  it('keeps a single overlay and updates the snapshot on the next send', async () => {
+    const { driver } = await makeDriver();
+
+    driver.handleUserInput('first pin probe');
+    // Let the first turn finish so the second message sends instead of queueing.
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'completed',
+      } as Event,
+      vi.fn(),
+    );
+    driver.handleUserInput('second pin probe');
+
+    vi.spyOn(driver.state.ui, 'getViewportTop').mockReturnValue(1000);
+    const band = stripSgr(getPinned(driver)!.render(120).join('\n'));
+    expect(band).toContain('second pin probe');
+    expect(band).not.toContain('first pin probe');
+  });
+
+  it('clears the pin on /clear', async () => {
+    const { driver } = await makeDriver();
+
+    driver.handleUserInput('first pin probe');
+    // Finish the turn so /clear (an alias of /new) is allowed to proceed.
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'completed',
+      } as Event,
+      vi.fn(),
+    );
+    vi.spyOn(driver.state.ui, 'getViewportTop').mockReturnValue(1000);
+    expect(getPinned(driver)!.render(120)).not.toEqual([]);
+
+    driver.handleUserInput('/clear');
+    await vi.waitFor(() => {
+      expect(getPinned(driver)!.render(120)).toEqual([]);
+    });
+  });
+
+  it('does not mount the overlay when pin_last_user_message is off', async () => {
+    const session = makeSession();
+    const harness = makeHarness(session);
+    const input = makeStartupInput();
+    const driver = new KimiTUI(harness as never, {
+      ...input,
+      tuiConfig: { ...input.tuiConfig, pinLastUserMessage: false },
+    }) as unknown as MessageDriver;
+    vi.spyOn(driver.state.ui, 'requestRender').mockImplementation(() => {});
+    vi.spyOn(driver.state.terminal, 'setProgress').mockImplementation(() => {});
+    driver.persistInputHistory = vi.fn(async () => {});
+    await driver.init();
+
+    driver.handleUserInput('first pin probe');
+
+    expect(driver.state.ui.hasOverlay()).toBe(false);
+    expect(getPinned(driver)).toBeUndefined();
   });
 });

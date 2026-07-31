@@ -629,6 +629,23 @@ export class TUI extends Container {
 		return this.overlayStack.some((o) => this.isOverlayVisible(o));
 	}
 
+	/**
+	 * Line index of the top of the visible viewport within the rendered buffer,
+	 * as of the last completed frame. 0 while the content still fits the screen;
+	 * grows as content scrolls into terminal scrollback.
+	 */
+	getViewportTop(): number {
+		return this.previousViewportTop;
+	}
+
+	/**
+	 * Number of lines in the rendered buffer as of the last completed frame
+	 * (0 before the first render).
+	 */
+	getContentHeight(): number {
+		return this.previousLines.length;
+	}
+
 	/** Check if an overlay entry is currently visible */
 	private isOverlayVisible(entry: OverlayStackEntry): boolean {
 		if (entry.hidden) return false;

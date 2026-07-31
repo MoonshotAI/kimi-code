@@ -21,8 +21,7 @@ import {
   type Focusable,
   getCapabilities,
   Spacer,
-} from '@moonshot-ai/pi-tui';
-import { resolve } from 'pathe';
+} from '@moonshot-ai/pi-tui';import { resolve } from 'pathe';
 
 import type { CLIOptions } from '#/cli/options';
 import { MigrationScreenComponent, type MigrationScreenResult } from '#/migration/index';
@@ -79,6 +78,7 @@ import {
   GoalSetMessageComponent,
 } from './components/messages/goal-panel';
 import { PluginCommandComponent } from './components/messages/plugin-command';
+import { PinnedUserMessageComponent } from './components/messages/pinned-user-message';
 import { ShellRunComponent } from './components/messages/shell-run';
 import { SkillActivationComponent } from './components/messages/skill-activation';
 import {
@@ -95,6 +95,7 @@ import {
 import { ActivityPaneComponent, type ActivityPaneMode } from './components/panes/activity-pane';
 import { QueuePaneComponent } from './components/panes/queue-pane';
 import type { TuiConfig } from './config';
+import { DEFAULT_TUI_CONFIG } from './config';
 import {
   LLM_NOT_SET_MESSAGE,
   MAIN_AGENT_ID,
@@ -235,6 +236,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     version: input.version,
     editorCommand: input.tuiConfig.editorCommand,
     disablePasteBurst: input.tuiConfig.disablePasteBurst,
+    pinLastUserMessage: input.tuiConfig.pinLastUserMessage,
     notifications: input.tuiConfig.notifications,
     upgrade: input.tuiConfig.upgrade,
     statusLine: input.tuiConfig.statusLine,
@@ -349,6 +351,12 @@ export class KimiTUI {
   readonly sessionReplay: SessionReplayRenderer;
   readonly tasksBrowserController: TasksBrowserController;
   readonly editorKeyboard: EditorKeyboardController;
+
+  /** Pinned band showing the last sent user message at the top of the
+   * viewport. Lazily created + mounted as an overlay on the first send; the
+   * component self-gates its visibility from the engine's scroll state, so no
+   * overlay handle is kept. */
+  private pinnedUserMessage: PinnedUserMessageComponent | undefined;
 
   /** Timer that auto-clears the one-shot "moved to background" footer hint. */
   private detachHintClearTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1324,6 +1332,30 @@ export class KimiTUI {
     this.sessionEventHandler.requestQueuedGoalPromotion();
   }
 
+  /**
+   * Snapshot a freshly sent user message into the pinned top-of-viewport band.
+   * The band stays hidden until the original transcript entry scrolls above
+   * the viewport, so it never duplicates on-screen content.
+   */
+  private pinLastUserMessage(text: string): void {
+    if (!(this.state.appState.pinLastUserMessage ?? DEFAULT_TUI_CONFIG.pinLastUserMessage)) {
+      return;
+    }
+    if (this.pinnedUserMessage === undefined) {
+      this.pinnedUserMessage = new PinnedUserMessageComponent(
+        this.state.ui,
+        () => this.state.appState.pinLastUserMessage ?? DEFAULT_TUI_CONFIG.pinLastUserMessage,
+      );
+      this.state.ui.showOverlay(this.pinnedUserMessage, {
+        anchor: 'top-left',
+        width: '100%',
+        nonCapturing: true,
+      });
+    }
+    this.pinnedUserMessage.setMessage(text, this.state.ui.getContentHeight());
+    this.state.ui.requestRender();
+  }
+
   private sendMessageInternal(session: Session, input: string, options?: SendMessageOptions): void {
     const imageAttachmentIds =
       options?.imageAttachmentIds !== undefined && options.imageAttachmentIds.length > 0
@@ -1337,6 +1369,7 @@ export class KimiTUI {
       content: input,
       imageAttachmentIds,
     });
+    this.pinLastUserMessage(input);
 
     this.beginSessionRequest();
 
@@ -1449,6 +1482,7 @@ export class KimiTUI {
             ? item.imageAttachmentIds
             : undefined,
       });
+      this.pinLastUserMessage(item.text);
     }
 
     void session.steer(combineSteerInput(input)).catch((error: unknown) => {
@@ -2068,6 +2102,7 @@ export class KimiTUI {
     this.sessionEventHandler.stopAllMcpServerStatusSpinners();
     this.disposeTranscriptChildren();
     this.state.transcriptContainer.clear();
+    this.pinnedUserMessage?.clear();
     this.btwPanelController.clear();
     this.clearTerminalInlineImages();
     this.state.todoPanel.clear();

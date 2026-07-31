@@ -162,6 +162,7 @@ function tuiConfig(overrides: Partial<TuiConfig> = {}): TuiConfig {
   return {
     theme: 'auto',
     disablePasteBurst: false,
+    pinLastUserMessage: true,
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },
     upgrade: { autoInstall: true },
