@@ -2228,6 +2228,101 @@ command = "vim"
     expect(transcript).not.toContain('<cron-fire');
   });
 
+  it('shows cron status only while a cron-triggered turn is running', async () => {
+    const { driver } = await makeDriver();
+    const origin = {
+      kind: 'cron_job' as const,
+      jobId: 'deadbeef',
+      cron: '* * * * *',
+      recurring: true,
+      coalescedCount: 1,
+      stale: false,
+    };
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'cron.fired',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        origin,
+        prompt: 'Run the scheduled check',
+      } as Event,
+      vi.fn(),
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        origin,
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(stripSgr(driver.state.footer.render(160)[0]!)).toContain('[cron running]');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'completed',
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(stripSgr(driver.state.footer.render(160)[0]!)).not.toContain('[cron running]');
+  });
+
+  it('shows cron status when a scheduled prompt is steered into an active user turn', async () => {
+    const { driver } = await makeDriver();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        origin: { kind: 'user' },
+      } as Event,
+      vi.fn(),
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'cron.fired',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        origin: {
+          kind: 'cron_job',
+          jobId: 'cafebabe',
+          cron: '*/5 * * * *',
+          recurring: true,
+          coalescedCount: 1,
+          stale: false,
+        },
+        prompt: 'Run the scheduled check',
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(stripSgr(driver.state.footer.render(160)[0]!)).toContain('[cron running]');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'completed',
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(stripSgr(driver.state.footer.render(160)[0]!)).not.toContain('[cron running]');
+  });
+
   it('coalesces assistant delta component updates', async () => {
     vi.useFakeTimers();
     try {

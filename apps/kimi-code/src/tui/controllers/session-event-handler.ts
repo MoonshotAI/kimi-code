@@ -155,6 +155,7 @@ export class SessionEventHandler {
   mcpServers: Map<string, McpServerStatusSnapshot> = new Map();
   private goalCompletionAwaitingClear = false;
   private goalCompletionTurnEnded = false;
+  private currentTurnIsCron = false;
   private currentTurnHasAssistantText = false;
   private pluginCommandTurns: Map<string, string> = new Map();
   private pluginMcpToolsUsedInTurn: Set<string> = new Set();
@@ -173,6 +174,8 @@ export class SessionEventHandler {
     this.mcpServers.clear();
     this.goalCompletionAwaitingClear = false;
     this.goalCompletionTurnEnded = false;
+    this.currentTurnIsCron = false;
+    this.host.state.footer.setCronRunning(false);
     this.currentTurnHasAssistantText = false;
     this.pluginCommandTurns.clear();
     this.pluginMcpToolsUsedInTurn.clear();
@@ -312,6 +315,8 @@ export class SessionEventHandler {
   // ---------------------------------------------------------------------------
 
   private handleTurnBegin(event: TurnStartedEvent): void {
+    this.currentTurnIsCron = event.origin?.kind === 'cron_job';
+    this.host.state.footer.setCronRunning(this.currentTurnIsCron);
     this.currentTurnHasAssistantText = false;
     if (event.origin?.kind === 'plugin_command') {
       this.pluginCommandTurns.set(String(event.turnId), event.origin.pluginId);
@@ -331,6 +336,8 @@ export class SessionEventHandler {
   }
 
   private handleCronFired(event: CronFiredEvent): void {
+    this.currentTurnIsCron = true;
+    this.host.state.footer.setCronRunning(true);
     this.host.streamingUI.flushNow();
     this.host.appendTranscriptEntry({
       id: nextTranscriptId(),
@@ -349,6 +356,10 @@ export class SessionEventHandler {
   }
 
   private handleTurnEnd(event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {
+    if (this.currentTurnIsCron) {
+      this.currentTurnIsCron = false;
+      this.host.state.footer.setCronRunning(false);
+    }
     this.host.streamingUI.flushNow();
     if (event.reason === 'cancelled') {
       this.markActiveAgentSwarmsCancelled();

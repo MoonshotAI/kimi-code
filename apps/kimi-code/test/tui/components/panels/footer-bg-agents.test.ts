@@ -34,12 +34,13 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
 }
 
 describe('FooterComponent — background task / agent badges', () => {
-  it('omits both badges when counts are 0', () => {
+  it('omits all background badges when counts are 0', () => {
     const footer = new FooterComponent(baseState());
     const [line1] = footer.render(120);
     expect(line1).toBeDefined();
     expect(strip(line1!)).not.toMatch(/tasks? running/);
     expect(strip(line1!)).not.toMatch(/agents? running/);
+    expect(strip(line1!)).not.toMatch(/cron running/);
   });
 
   it('renders the task badge alone when only bash tasks are running', () => {
@@ -66,6 +67,30 @@ describe('FooterComponent — background task / agent badges', () => {
     expect(out).toMatch(/\[3 agents running\]/);
     // Task badge appears before agent badge in the line.
     expect(out.indexOf('2 tasks')).toBeLessThan(out.indexOf('3 agents'));
+  });
+
+  it('renders a cron badge while a scheduled prompt is running', () => {
+    const footer = new FooterComponent(baseState());
+    footer.setCronRunning(true);
+
+    expect(strip(footer.render(120)[0]!)).toMatch(/\[cron running\]/);
+  });
+
+  it('renders cron alongside other background activity and clears it independently', () => {
+    const footer = new FooterComponent(baseState());
+    footer.setBackgroundCounts({ bashTasks: 1, agentTasks: 1 });
+    footer.setCronRunning(true);
+
+    const active = strip(footer.render(120)[0]!);
+    expect(active).toMatch(/\[1 task running\]/);
+    expect(active).toMatch(/\[1 agent running\]/);
+    expect(active).toMatch(/\[cron running\]/);
+
+    footer.setCronRunning(false);
+    const completed = strip(footer.render(120)[0]!);
+    expect(completed).toMatch(/\[1 task running\]/);
+    expect(completed).toMatch(/\[1 agent running\]/);
+    expect(completed).not.toMatch(/cron running/);
   });
 
   it('pluralizes correctly across both badges', () => {

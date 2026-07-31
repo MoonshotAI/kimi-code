@@ -207,6 +207,7 @@ export class FooterComponent implements Component {
    */
   private backgroundBashTaskCount = 0;
   private backgroundAgentCount = 0;
+  private cronRunning = false;
 
   constructor(state: AppState, onRefresh: () => void = () => {}) {
     this.state = state;
@@ -266,6 +267,10 @@ export class FooterComponent implements Component {
   setBackgroundCounts(counts: { bashTasks: number; agentTasks: number }): void {
     this.backgroundBashTaskCount = Math.max(0, counts.bashTasks);
     this.backgroundAgentCount = Math.max(0, counts.agentTasks);
+  }
+
+  setCronRunning(running: boolean): void {
+    this.cronRunning = running;
   }
 
   invalidate(): void {}
@@ -423,6 +428,9 @@ export class FooterComponent implements Component {
       taskBadges.push(
         chalk.hex(colors.primary)(`[${String(this.backgroundAgentCount)} ${noun} running]`),
       );
+    }
+    if (this.cronRunning) {
+      taskBadges.push(chalk.hex(colors.primary)('[cron running]'));
     }
     slots['tasks'] = taskBadges;
 

@@ -32,6 +32,7 @@ function makeHost() {
       toolOutputExpanded: false,
       todoPanel: { getTodos: vi.fn(() => []) },
       transcriptContainer: { addChild: vi.fn() },
+      footer: { setCronRunning: vi.fn() },
       ui: { requestRender: vi.fn() },
     },
     session: {},
