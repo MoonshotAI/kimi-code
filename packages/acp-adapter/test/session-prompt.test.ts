@@ -349,8 +349,8 @@ describe('AcpServer session/prompt', () => {
     const sessionId = 'sess-subagent';
     const { session, unsubscribeCount } = makeScriptedSession(sessionId, [
       { type: 'assistant.delta', sessionId, agentId: 'main', turnId: 1, delta: 'a' } as Event,
-      { type: 'assistant.delta', sessionId, agentId: 'sub-1', turnId: 99, delta: 'leak' } as Event,
-      { type: 'thinking.delta', sessionId, agentId: 'sub-1', turnId: 99, delta: 'leak' } as Event,
+      { type: 'assistant.delta', sessionId, agentId: 'sub-1', turnId: 99, delta: 'work' } as Event,
+      { type: 'thinking.delta', sessionId, agentId: 'sub-1', turnId: 99, delta: 'work' } as Event,
       {
         type: 'tool.call.started',
         sessionId,
@@ -358,7 +358,7 @@ describe('AcpServer session/prompt', () => {
         turnId: 99,
         toolCallId: 'sub-tool',
         name: 'Shell',
-        args: { command: 'echo leak' },
+        args: { command: 'echo work' },
       } as Event,
       {
         type: 'tool.result',
@@ -366,11 +366,13 @@ describe('AcpServer session/prompt', () => {
         agentId: 'sub-1',
         turnId: 99,
         toolCallId: 'sub-tool',
-        output: 'leak',
+        output: 'work',
       } as Event,
       // A subagent finishes its own turn while the main turn is still
       // running. Pre-fix this would resolve the parent prompt with
       // `end_turn` and leak the listener; post-fix it must be ignored.
+      // The subagent's own frames are NOT dropped, though: they are
+      // forwarded with `_meta.kimiCode.subagentId` so clients can nest them.
       {
         type: 'turn.ended',
         sessionId,
@@ -400,7 +402,20 @@ describe('AcpServer session/prompt', () => {
 
     expect(response.stopReason).toBe('end_turn');
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(collecting.promptUpdates).toHaveLength(2);
+    // 6 frames: 2 main deltas + 4 subagent frames (delta, thinking,
+    // tool_call, tool_call_update). The subagent's turn.ended contributed
+    // nothing and did not settle the parent turn.
+    expect(collecting.promptUpdates).toHaveLength(6);
+    const tagged = collecting.promptUpdates.filter(
+      (n) =>
+        (n.update as { _meta?: { kimiCode?: { subagentId?: string } } })._meta?.kimiCode
+          ?.subagentId === 'sub-1',
+    );
+    expect(tagged).toHaveLength(4);
+    const untagged = collecting.promptUpdates.filter(
+      (n) => (n.update as { _meta?: unknown })._meta === undefined,
+    );
+    expect(untagged).toHaveLength(2);
     expect(unsubscribeCount()).toBe(1);
   });
 });

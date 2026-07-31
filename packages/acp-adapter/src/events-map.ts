@@ -9,6 +9,11 @@ import type {
 } from '@agentclientprotocol/sdk';
 import type {
   AssistantDeltaEvent,
+  SubagentCompletedEvent,
+  SubagentFailedEvent,
+  SubagentSpawnedEvent,
+  SubagentStartedEvent,
+  SubagentSuspendedEvent,
   ThinkingDeltaEvent,
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
@@ -522,6 +527,151 @@ export function configOptionUpdateNotification(
     update: {
       sessionUpdate: 'config_option_update',
       configOptions: [...configOptions],
+    },
+  };
+}
+
+/**
+ * Wire id for a subagent's tool card.
+ *
+ * Prefixed so it can never collide with the `${turnId}:${toolCallId}` space
+ * of real tool calls (see {@link acpToolCallId}), and stable for the whole
+ * subagent life: `spawned` creates the card once, every later lifecycle event
+ * is a `tool_call_update` against this id.
+ */
+export function acpSubagentToolCallId(subagentId: string): string {
+  return `subagent:${subagentId}`;
+}
+
+/** `_meta` payload carried by every subagent lifecycle frame. */
+interface SubagentMeta {
+  event: 'spawned' | 'started' | 'suspended' | 'completed' | 'failed';
+  subagentId: string;
+  subagentName?: string;
+  /**
+   * The **raw** (unprefixed) id of the `Agent` tool call that spawned this
+   * subagent. The wire id of the parent's card is `${turnId}:${rawId}`, so
+   * clients match by suffix — see acpToolCallId.
+   */
+  parentToolCallId?: string;
+  description?: string;
+  swarmIndex?: number;
+  runInBackground?: boolean;
+  reason?: string;
+  resultSummary?: string;
+  usage?: unknown;
+  contextTokens?: number;
+  error?: string;
+}
+
+function subagentMeta(meta: SubagentMeta): { kimiCode: { subagent: SubagentMeta } } {
+  // Strip absent optional fields rather than serializing explicit
+  // `undefined`s: the wire is JSON, where they would become `null`s and a
+  // `null` parentToolCallId reads as "no parent" instead of "unknown".
+  const clean = Object.fromEntries(
+    Object.entries(meta).filter(([, v]) => v !== undefined),
+  ) as SubagentMeta;
+  return { kimiCode: { subagent: clean } };
+}
+
+/**
+ * Map `subagent.spawned` to a `tool_call` CREATE: one card per subagent,
+ * nested under the spawning `Agent` call via `_meta.kimiCode.subagent
+ * .parentToolCallId`. Emitted as an ordinary frame (not a custom update
+ * kind) because v1 SDKs drop unknown `sessionUpdate` kinds — see
+ * docs/subagent-frames-spec.md in the ACP UI repo.
+ */
+export function subagentSpawnedToSessionUpdate(
+  sessionId: string,
+  event: SubagentSpawnedEvent,
+): SessionNotification {
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: 'tool_call',
+      toolCallId: acpSubagentToolCallId(event.subagentId),
+      title: `Subagent · ${event.subagentName}`,
+      kind: 'other',
+      status: 'pending',
+      _meta: subagentMeta({
+        event: 'spawned',
+        subagentId: event.subagentId,
+        subagentName: event.subagentName,
+        parentToolCallId: event.parentToolCallId,
+        description: event.description,
+        swarmIndex: event.swarmIndex,
+        runInBackground: event.runInBackground,
+      }),
+    },
+  };
+}
+
+/**
+ * Map `subagent.started` / `.suspended` / `.completed` / `.failed` to a
+ * `tool_call_update` against the card `spawned` created. Status mirrors the
+ * ACP tool-call lifecycle; suspension stays `in_progress` with the reason in
+ * `_meta` (ACP has no paused status).
+ */
+export function subagentLifecycleToSessionUpdate(
+  sessionId: string,
+  event: SubagentStartedEvent | SubagentSuspendedEvent | SubagentCompletedEvent | SubagentFailedEvent,
+): SessionNotification {
+  let status: 'in_progress' | 'completed' | 'failed';
+  const meta: SubagentMeta = {
+    event: 'started',
+    subagentId: event.subagentId,
+  };
+  switch (event.type) {
+    case 'subagent.started':
+      status = 'in_progress';
+      break;
+    case 'subagent.suspended':
+      status = 'in_progress';
+      meta.event = 'suspended';
+      meta.reason = event.reason;
+      break;
+    case 'subagent.completed':
+      status = 'completed';
+      meta.event = 'completed';
+      meta.resultSummary = event.resultSummary;
+      meta.usage = event.usage;
+      meta.contextTokens = event.contextTokens;
+      break;
+    case 'subagent.failed':
+      status = 'failed';
+      meta.event = 'failed';
+      meta.error = event.error;
+      break;
+  }
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: 'tool_call_update',
+      toolCallId: acpSubagentToolCallId(event.subagentId),
+      status,
+      _meta: subagentMeta(meta),
+    },
+  };
+}
+
+/**
+ * Attach the nesting marker to a frame that belongs to a subagent's own
+ * stream (its `assistant.delta`, `tool.call.*`, … events). The client nests
+ * anything carrying `_meta.kimiCode.subagentId` under the subagent's card;
+ * frames from the main agent are returned untouched.
+ */
+export function withSubagentMeta<T extends SessionNotification>(
+  notification: T,
+  event: { agentId?: string },
+): T {
+  // 'main' is MAIN_AGENT_ID in session.ts; inlined here because session.ts
+  // already imports this module — the reverse edge would be a cycle.
+  if (event.agentId === undefined || event.agentId === 'main') return notification;
+  return {
+    ...notification,
+    update: {
+      ...notification.update,
+      _meta: { kimiCode: { subagentId: event.agentId } },
     },
   };
 }

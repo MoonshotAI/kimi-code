@@ -46,6 +46,8 @@ import {
   configOptionUpdateNotification,
   planFromDisplayBlock,
   stringifyArgs,
+  subagentLifecycleToSessionUpdate,
+  subagentSpawnedToSessionUpdate,
   thinkingDeltaToSessionUpdate,
   toolCallDeltaToSessionUpdate,
   toolCallLazyCreateToSessionUpdate,
@@ -54,6 +56,7 @@ import {
   toolProgressToSessionUpdate,
   toolResultToSessionUpdate,
   turnEndReasonToStopReason,
+  withSubagentMeta,
 } from './events-map';
 import { acpModeToToggles, DEFAULT_MODE_ID, isAcpModeId, type AcpModeId } from './modes';
 import { outcomeToQuestionAnswer, questionItemToPermissionOptions } from './question';
@@ -1045,6 +1048,40 @@ export class AcpSession {
         ) {
           this.currentTurnId = event.turnId;
         }
+        // Subagent lifecycle: forwarded as ordinary `tool_call` /
+        // `tool_call_update` frames with `_meta.kimiCode.subagent` (v1 SDKs
+        // drop unknown update kinds, so a custom kind is not an option).
+        // These events carry no `agentId`, so the main-agent guard below
+        // would not catch them — they need their own branches.
+        if (event.type === 'subagent.spawned') {
+          conn
+            .sessionUpdate(subagentSpawnedToSessionUpdate(sessionId, event))
+            .catch((err) => {
+              log.warn('acp: failed to push subagent tool_call', {
+                sessionId,
+                subagentId: event.subagentId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            });
+          return;
+        }
+        if (
+          event.type === 'subagent.started' ||
+          event.type === 'subagent.suspended' ||
+          event.type === 'subagent.completed' ||
+          event.type === 'subagent.failed'
+        ) {
+          conn
+            .sessionUpdate(subagentLifecycleToSessionUpdate(sessionId, event))
+            .catch((err) => {
+              log.warn('acp: failed to push subagent tool_call_update', {
+                sessionId,
+                subagentId: event.subagentId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            });
+          return;
+        }
         if (event.type === 'error') {
           if (settled) return;
           if (!isFromMainAgent(event)) return;
@@ -1068,7 +1105,9 @@ export class AcpSession {
           return;
         }
         if (event.type === 'assistant.delta') {
-          if (!isFromMainAgent(event)) return;
+          // Subagent deltas are forwarded too, tagged with
+          // `_meta.kimiCode.subagentId` so clients can nest them; everything
+          // else about the frame is unchanged.
           // `sessionUpdate` is itself async (it serializes onto the
           // ndjson stream). The text deltas form a strictly ordered
           // single-producer/single-consumer pipeline, so each await
@@ -1076,7 +1115,7 @@ export class AcpSession {
           // Fire-and-forget keeps the stream pumping; we log push
           // failures rather than dropping them silently.
           conn
-            .sessionUpdate(assistantDeltaToSessionUpdate(sessionId, event))
+            .sessionUpdate(withSubagentMeta(assistantDeltaToSessionUpdate(sessionId, event), event))
             .catch((err) => {
               log.warn('acp: failed to push agent_message_chunk', {
                 sessionId,
@@ -1086,9 +1125,8 @@ export class AcpSession {
           return;
         }
         if (event.type === 'thinking.delta') {
-          if (!isFromMainAgent(event)) return;
           conn
-            .sessionUpdate(thinkingDeltaToSessionUpdate(sessionId, event))
+            .sessionUpdate(withSubagentMeta(thinkingDeltaToSessionUpdate(sessionId, event), event))
             .catch((err) => {
               log.warn('acp: failed to push agent_thought_chunk', {
                 sessionId,
@@ -1098,7 +1136,6 @@ export class AcpSession {
           return;
         }
         if (event.type === 'tool.call.started') {
-          if (!isFromMainAgent(event)) return;
           // Seed the accumulator with the **stringified initial args**.
           // The wire-level `tool_call_update` is REPLACE-content (not
           // append) so each subsequent delta emits the cumulative args
@@ -1116,7 +1153,9 @@ export class AcpSession {
           const startedWireId = acpToolCallId(event.turnId, event.toolCallId);
           if (startedToolCalls.has(startedWireId)) {
             conn
-              .sessionUpdate(toolCallStartedUpgradeToSessionUpdate(sessionId, event))
+              .sessionUpdate(
+                withSubagentMeta(toolCallStartedUpgradeToSessionUpdate(sessionId, event), event),
+              )
               .catch((err) => {
                 log.warn('acp: failed to push tool_call_update (start upgrade)', {
                   sessionId,
@@ -1127,7 +1166,9 @@ export class AcpSession {
           } else {
             startedToolCalls.add(startedWireId);
             conn
-              .sessionUpdate(toolCallStartToSessionUpdate(sessionId, event))
+              .sessionUpdate(
+                withSubagentMeta(toolCallStartToSessionUpdate(sessionId, event), event),
+              )
               .catch((err) => {
                 log.warn('acp: failed to push tool_call', {
                   sessionId,
@@ -1143,7 +1184,9 @@ export class AcpSession {
           // into the tool_call card; only `todo_list` becomes a plan.
           // The emission is fire-and-forget under the same idle-stream
           // discipline as the assistant deltas above.
-          if (event.display) {
+          // Main-agent only: a subagent's TodoList is its own business —
+          // folding it into the session plan would mix two agents' work.
+          if (event.display && isFromMainAgent(event)) {
             const planNote = planFromDisplayBlock(sessionId, event.turnId, event.display);
             if (planNote !== null) {
               conn.sessionUpdate(planNote).catch((err) => {
@@ -1157,7 +1200,9 @@ export class AcpSession {
           return;
         }
         if (event.type === 'tool.call.delta') {
-          if (!isFromMainAgent(event)) return;
+          // Subagent tool streams flow through the same branches, tagged by
+          // withSubagentMeta — ids are unique per agent, so the shared
+          // accumulators below cannot cross-contaminate.
           // The agent-core emits these args-stream deltas BEFORE the
           // `tool.call.started` event (deltas come from the provider's
           // streaming phase; started is dispatched afterwards). If we
@@ -1171,7 +1216,9 @@ export class AcpSession {
             argsByToolCall.set(event.toolCallId, { args: initial });
             startedToolCalls.add(deltaWireId);
             conn
-              .sessionUpdate(toolCallLazyCreateToSessionUpdate(sessionId, event))
+              .sessionUpdate(
+                withSubagentMeta(toolCallLazyCreateToSessionUpdate(sessionId, event), event),
+              )
               .catch((err) => {
                 log.warn('acp: failed to push tool_call (lazy create from delta)', {
                   sessionId,
@@ -1189,7 +1236,9 @@ export class AcpSession {
             argsByToolCall.set(event.toolCallId, acc);
           }
           conn
-            .sessionUpdate(toolCallDeltaToSessionUpdate(sessionId, event, acc))
+            .sessionUpdate(
+              withSubagentMeta(toolCallDeltaToSessionUpdate(sessionId, event, acc), event),
+            )
             .catch((err) => {
               log.warn('acp: failed to push tool_call_update (delta)', {
                 sessionId,
@@ -1200,10 +1249,9 @@ export class AcpSession {
           return;
         }
         if (event.type === 'tool.progress') {
-          if (!isFromMainAgent(event)) return;
           const note = toolProgressToSessionUpdate(sessionId, event);
           if (note === null) return;
-          conn.sessionUpdate(note).catch((err) => {
+          conn.sessionUpdate(withSubagentMeta(note, event)).catch((err) => {
             log.warn('acp: failed to push tool_call_update (progress)', {
               sessionId,
               toolCallId: event.toolCallId,
@@ -1213,9 +1261,8 @@ export class AcpSession {
           return;
         }
         if (event.type === 'tool.result') {
-          if (!isFromMainAgent(event)) return;
           conn
-            .sessionUpdate(toolResultToSessionUpdate(sessionId, event))
+            .sessionUpdate(withSubagentMeta(toolResultToSessionUpdate(sessionId, event), event))
             .catch((err) => {
               log.warn('acp: failed to push tool_call_update (result)', {
                 sessionId,

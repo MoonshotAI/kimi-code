@@ -321,6 +321,10 @@ export class AcpServer implements Agent {
         list: {},
         resume: {},
       },
+      // This build forwards subagent lifecycle + streams (see events-map.ts):
+      // advertised per the spec's SHOULD so clients can gate their subagent UI
+      // on it instead of sniffing frames.
+      _meta: { kimiCode: { subagentEvents: true } },
     };
 
     return {
