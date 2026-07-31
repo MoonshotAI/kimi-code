@@ -1,19 +1,20 @@
 /**
- * `sessionIndex` domain (L2) — `FileSessionIndex` implementation.
+ * `sessionIndex` domain — `FileSessionIndex` implementation.
  *
- * Reads the persisted session set through the `storage` access-pattern stores,
- * rooted at the `sessionsDir` path layout fact from `bootstrap`. The directory
- * tree `<sessionsDir>/<workspaceId>/<sessionId>/` is the index: workspace and
- * session ids are enumerated via `IFileSystemStorageService.list`, and each session's
- * metadata document is read via `IAtomicDocumentStore` to build its summary.
+ * Reads the persisted session set through the `storage` access-pattern
+ * stores, rooted at the `sessionsDir` path layout fact. The directory tree
+ * `<sessionsDir>/<workspaceId>/<sessionId>/` is the index: workspace and
+ * session ids are enumerated via `IFileSystemStorageService.list`, and each
+ * session's metadata document is read via `IAtomicDocumentStore` to build its
+ * summary.
  *
  * One physical folder may be split across sibling buckets by legacy id
- * spellings (Windows casing/slash variants minted different `workspaceId`s for
- * the same directory; see `IWorkspaceAliases.resolveAliasIds`). A list or
- * `countActive` query takes the workspace-id *set*, enumerates each bucket,
- * and merges before the single recency sort and `limit` step — the merged
- * listing is observably identical to a single-bucket list (same sort key,
- * same cursor shape); filtering options keep their meaning.
+ * spellings (Windows casing/slash variants minted different `workspaceId`s
+ * for the same directory). A list or `countActive` query takes the
+ * workspace-id *set*, enumerates each bucket, and merges before the single
+ * recency sort and `limit` step — the merged listing is observably identical
+ * to a single-bucket list (same sort key, same cursor shape); filtering
+ * options keep their meaning.
  *
  * The session metadata document lives at `<sessionDir>/state.json`, a layout
  * shared by v1 and v2; the `version` field distinguishes them (`2` = v2,
@@ -33,8 +34,8 @@
  * N+1 path remains as the flag-off fallback — and as the runtime fallback if
  * the query store ever reports `storage.locked`: the first lock warns once and
  * disables the read model for the rest of the process lifetime. (The minidb
- * backend is a multi-process `ClusterDb` and no longer produces that error;
- * the wiring stays as defense in depth.)
+ * backend is multi-process and no longer produces that error; the wiring
+ * stays as defense in depth.)
  *
  * This is the local-deployment backend of `ISessionIndex`; a server deployment
  * would substitute a database-backed `DbSessionIndex`. Bound at App scope.
@@ -93,14 +94,6 @@ function matchesChildOf(summary: SessionSummary, parentId: string | undefined): 
   );
 }
 
-/**
- * Runtime shape check for read-model cache hits. The query store persists
- * caller-provided JSON with no schema enforcement (and entries mirrored before
- * a fix may predate required fields — e.g. `archived` written as `undefined`
- * and dropped by JSON), so a cached value is only trusted when it carries the
- * fields the session-summary contract requires; anything else is treated as a
- * cold miss and rebuilt from disk.
- */
 function isSessionSummaryShape(value: unknown): value is SessionSummary {
   if (value === null || typeof value !== 'object') return false;
   const summary = value as Record<string, unknown>;
@@ -241,7 +234,6 @@ export class FileSessionIndex implements ISessionIndex {
     if (isSessionSummaryShape(cached)) return cached;
     const summary = await this.readSummary(workspaceId, sessionId);
     if (summary !== undefined) {
-      // Also overwrites a cache entry that failed the shape check above.
       await this.queryStore.put(SESSION_COLLECTION, sessionId, summary);
     }
     return summary;

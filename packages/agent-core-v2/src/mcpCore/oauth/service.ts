@@ -1,17 +1,16 @@
 /**
- * `mcpCore` domain (L2) — `McpOAuthService`, the per-process OAuth orchestrator
+ * `mcpCore` domain — `McpOAuthService`, the per-process OAuth orchestrator
  * for MCP HTTP servers.
  *
  * Owns one {@link McpOAuthClientProvider} per server/resource and mediates the
  * synthetic `mcp__<server>__authenticate` tool flow:
  *
- *  1. `getProvider(serverName, serverUrl)` returns the cached provider.
- *     `HttpMcpClient` hands this to `StreamableHTTPClientTransport.authProvider`
- *     only when the server has no static bearer token configured **and** the
- *     provider has stored tokens for that same server URL — first-time
- *     connections that lack tokens skip the provider entirely so a 401 surfaces
- *     as `UnauthorizedError` from the transport instead of being swallowed by an
- *     in-flight `auth()` attempt.
+ *  1. `getProvider(serverName, serverUrl)` returns the cached provider. It is
+ *     only attached when the server has no static bearer token configured
+ *     **and** the provider has stored tokens for that same server URL —
+ *     first-time connections that lack tokens skip the provider entirely so a
+ *     401 surfaces as `UnauthorizedError` from the transport instead of being
+ *     swallowed by an in-flight `auth()` attempt.
  *  2. `beginAuthorization(serverName, serverUrl)` spins up a one-shot
  *     localhost callback listener, sets the redirect URL on the provider,
  *     and drives the SDK `auth()` orchestrator forward until it surfaces an

@@ -85,7 +85,7 @@ const daemonEndpoint = serverEndpointLabel();
 const backendLabel = computed(() =>
   props.backend === 'v2' ? 'v2 (kap-server)' : 'v1 (server)',
 );
-const permissionModes = ['manual', 'auto', 'yolo'] as const;
+const permissionModes = ['manual', 'yolo', 'auto'] as const;
 // Reuse the Composer's permission labels (status.permission*) so the
 // default-permission names stay in sync with the toolbar.
 const permissionLabelKey: Record<(typeof permissionModes)[number], string> = {

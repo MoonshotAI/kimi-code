@@ -94,8 +94,8 @@ if (!this.flags.enabled('my_feature')) return;
 
 ## Layering & scope
 
-- Domain `flag` is registered at **L3**. It imports only `config` (L2) downward.
-- It cannot live in `_base` (L0): registering/reading the config section requires importing `config`, and L0 must not import L2.
+- Domain `flag` imports only `config` downward.
+- It cannot live in `_base`: registering/reading the config section requires importing `config`, and `_base` is pure infrastructure that must not know any business domain.
 - Scope: `IFlagRegistry` and `IFlagService` are both `App`. Env + config are process-global inputs, so there is no per-session/agent state. Flag definitions are contributed at **import time** (top-level `registerFlagDefinition` calls), so they are queued before any scope is created and drained when `FlagRegistryService` is first instantiated — before `IFlagService` is first resolved.
 - Tests build `FlagService` + `FlagRegistryService` directly with a real `ConfigRegistry`/`ConfigService` and an injected env map, then `register` the flags they exercise.
 
@@ -105,4 +105,4 @@ if (!this.flags.enabled('my_feature')) return;
 - Contribute each flag from the **owning domain's** `flag.ts` (`src/<domain>/flag.ts`) via a top-level `registerFlagDefinition` call; there is no central catalog to edit. The directory names the domain, so the file is just `flag.ts`.
 - `env` must start with `KIMI_CODE_EXPERIMENTAL_`, be unique, and not equal `KIMI_CODE_EXPERIMENTAL_FLAG`; `id` must not be `flag`.
 - `FlagId` is `string` (decentralized registration) — do not reintroduce a central `FLAG_DEFINITIONS` array or a derived literal union.
-- `flag` lives at L3 and `App` scope — never in `_base`, never per-session.
+- `flag` lives at `App` scope — never in `_base`, never per-session.

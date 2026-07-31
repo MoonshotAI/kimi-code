@@ -20,7 +20,7 @@ import {
   IOAuthToolkit,
   ISessionCronService,
   ISessionIndex,
-  IWorkspaceHandlerService,
+  ISessionLifecycleService,
   IWorkspaceLifecycleService,
   ISkillCatalogRuntimeOptions,
   ITelemetryService,
@@ -182,7 +182,7 @@ function makeFakeHarness() {
 
   const handlerServices = new Map<unknown, unknown>([
     [
-      IWorkspaceHandlerService,
+      ISessionLifecycleService,
       {
         create: vi.fn(async () => session),
         resume: vi.fn(async () => session),
@@ -345,7 +345,7 @@ describe('runV2Print', () => {
     const seeded = seeds.find(([id]) => id === IAgentCatalogRuntimeOptions);
     expect(seeded?.[1]).toMatchObject({ explicitFiles: ['/agents/reviewer.md'] });
 
-    const lifecycle = handlerServices.get(IWorkspaceHandlerService) as {
+    const lifecycle = handlerServices.get(ISessionLifecycleService) as {
       create: ReturnType<typeof vi.fn>;
     };
     expect(lifecycle.create).toHaveBeenCalledWith({
@@ -380,7 +380,7 @@ describe('runV2Print', () => {
     const seeded = seeds.find(([id]) => id === IAgentCatalogRuntimeOptions);
     expect(seeded?.[1]).toMatchObject({ explicitFiles: [agentFile] });
 
-    const lifecycle = handlerServices.get(IWorkspaceHandlerService) as {
+    const lifecycle = handlerServices.get(ISessionLifecycleService) as {
       create: ReturnType<typeof vi.fn>;
     };
     expect(lifecycle.create).toHaveBeenCalledWith({
@@ -396,7 +396,7 @@ describe('runV2Print', () => {
     const stdout = writer();
     const stderr = writer();
     const { app, handlerServices } = makeFakeHarness();
-    const lifecycle = handlerServices.get(IWorkspaceHandlerService) as {
+    const lifecycle = handlerServices.get(ISessionLifecycleService) as {
       create: ReturnType<typeof vi.fn>;
     };
     lifecycle.create.mockRejectedValueOnce(new Error('Unknown agent profile'));

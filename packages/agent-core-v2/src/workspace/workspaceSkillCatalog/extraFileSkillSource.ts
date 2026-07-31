@@ -1,5 +1,5 @@
 /**
- * `workspaceSkillCatalog` domain (L3) — extra `ISkillSource` producer.
+ * `workspaceSkillCatalog` domain — extra `ISkillSource` producer.
  *
  * Discovers user-configured extra skill directories (`extraSkillDirs`) through
  * `ISkillDiscovery`, contributing them at priority 10 (above plugin / builtin,

@@ -1,8 +1,8 @@
 /**
- * `plugin` domain (L3) — manages installed plugin state and consumption metadata.
+ * `plugin` domain — manages installed plugin state and consumption metadata.
  *
- * Installs, reloads, persists, and summarizes plugins for `PluginService`,
- * using `skillCatalog` discovery to count loadable plugin skills.
+ * Installs, reloads, persists, and summarizes plugins, counting loadable
+ * plugin skills through skill discovery.
  */
 
 import { cp, mkdir, mkdtemp, realpath, rename, rm, stat } from 'node:fs/promises';
@@ -676,9 +676,6 @@ function withPluginMcpRuntime(
   };
 
   if (config.command === 'node' && isElectron()) {
-    // Electron host: run the entry with the bundled Node (`ELECTRON_RUN_AS_NODE`)
-    // instead of the CLI's `__plugin_run_node` subcommand, which only the CLI
-    // binary implements (Electron would try to open it as an app and fail).
     return {
       ...config,
       command: process.execPath,

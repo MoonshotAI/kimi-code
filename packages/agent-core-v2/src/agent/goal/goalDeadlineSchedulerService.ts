@@ -1,5 +1,5 @@
 /**
- * `goal` domain (L4) — `IGoalDeadlineScheduler` implementation.
+ * `goal` domain — `IGoalDeadlineScheduler` implementation.
  *
  * Measures monotonic elapsed time and schedules disposable one-shot deadlines
  * with the host timer API. Bound at App scope.

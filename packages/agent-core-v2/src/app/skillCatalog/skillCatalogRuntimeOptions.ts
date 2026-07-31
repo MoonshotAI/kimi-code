@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — runtime options for skill discovery.
+ * `skillCatalog` domain — runtime options for skill discovery.
  *
  * Holds process-level runtime overrides that affect how skill roots are
  * resolved. `explicitDirs` mirrors v1's SDK `skillDirs`: when present, default
@@ -7,7 +7,6 @@
  * the user source. Bound at App scope.
  *
  * Composition roots set it through {@link skillCatalogRuntimeOptionsSeed}
- * (kap-server's `startServer({ skillDirs })`, the v2 print CLI's `--skillsDir`)
  * — the registered default carries no explicit dirs.
  */
 

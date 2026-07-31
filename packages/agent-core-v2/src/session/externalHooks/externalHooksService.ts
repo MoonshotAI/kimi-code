@@ -1,16 +1,16 @@
 /**
- * `externalHooks` domain (L6) — Session-scope adapter for external hook
+ * `externalHooks` domain — Session-scope adapter for external hook
  * commands.
  *
  * Registers with the per-session `sessionLifecycleHooks` slots (seeded by
- * the Workspace-scope `workspaceHandler`, which runs them around
+ * the Workspace-scope `sessionLifecycle`, which runs them around
  * create/close) to run `SessionStart` and `SessionEnd` external commands
  * for the current `sessionContext`, and
  * observes the requester-side agent-run hook slot (`onWillStartAgentTask`) and
  * stop event (`onDidStopAgentTask`) hosted on the `subagent` domain's
  * `ISessionSubagentService` to translate them into the `SubagentStart` /
  * `SubagentStop` external commands. The slot/event host lives on the service
- * that owns the run (run by `mirrorAgentRun`); this adapter only registers its
+ * that owns the run; this adapter only registers its
  * own listeners here, so the runner owns the slots it runs — the same pattern
  * the Agent-scope adapter follows against the agent behavior services. The
  * actual hook execution is delegated to the shared App-scope

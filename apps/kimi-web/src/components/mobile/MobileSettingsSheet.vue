@@ -71,7 +71,9 @@ function onColorScheme(v: string): void {
   emit('setColorScheme', v as ColorScheme);
 }
 
-const PERM_MODES: PermissionMode[] = ['manual', 'auto', 'yolo'];
+// Tap-to-cycle order follows the same safest → most permissive progression
+// as the Composer menu and Agent settings (manual → yolo → auto).
+const PERM_MODES: PermissionMode[] = ['manual', 'yolo', 'auto'];
 
 // Identity is the model id — display/model names can collide across providers.
 const currentModel = computed<AppModel | undefined>(() =>
@@ -94,10 +96,11 @@ const thinkingOptions = computed(() =>
 const planOn = computed<boolean>(() => props.planMode === true);
 const swarmOn = computed<boolean>(() => props.swarmMode === true);
 
+// Risk progression matches the Composer: yolo = warning, auto = danger.
 const permColor = computed<string>(() => {
   const p = props.status.permission;
-  if (p === 'yolo') return 'var(--color-danger)';
-  if (p === 'auto') return 'var(--color-warning)';
+  if (p === 'yolo') return 'var(--color-warning)';
+  if (p === 'auto') return 'var(--color-danger)';
   return 'var(--color-text-muted)';
 });
 /** Permission sub-line, e.g. "manual · confirm every tool". */

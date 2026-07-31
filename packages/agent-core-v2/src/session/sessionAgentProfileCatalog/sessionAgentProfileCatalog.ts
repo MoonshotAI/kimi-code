@@ -1,5 +1,5 @@
 /**
- * `sessionAgentProfileCatalog` domain (L3) — Session-scoped merged agent-profile
+ * `sessionAgentProfileCatalog` domain — Session-scoped merged agent-profile
  * catalog contract.
  *
  * The Catalog of the agent-profile extension point: a read-only projection
@@ -9,10 +9,8 @@
  * (workspace / extra / explicit). Name-level dedup happens HERE, in the
  * projection: higher-priority sources win name collisions, while builtin
  * names require an explicit `override: true` opt-in to be replaced.
- * Consumers (`IAgentProfileService.bind`, the `Agent` tool, the swarm
- * scheduler) resolve profiles through this view; `inspect(name)` exposes the
- * projection's adjudication (winning source, suppressed candidates) for
- * debugging surfaces. Bound at Session scope.
+ * `inspect(name)` exposes the projection's adjudication (winning source,
+ * suppressed candidates) for debugging surfaces. Bound at Session scope.
  */
 
 import { createDecorator } from '#/_base/di/instantiation';

@@ -1,5 +1,5 @@
 /**
- * `workspaceSkillCatalog` domain (L3) — plugin `ISkillSource` producer.
+ * `workspaceSkillCatalog` domain — plugin `ISkillSource` producer.
  *
  * Discovers skills contributed by enabled plugins through `ISkillDiscovery`
  * (roots from `plugin.pluginSkillRoots()`), contributing them at priority 5

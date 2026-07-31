@@ -1,20 +1,17 @@
 /**
- * `workspaceHandler` domain (L6) — per-handler session lifecycle contract.
+ * `sessionLifecycle` domain — per-handler session lifecycle contract.
  *
  * Defines the public contract of one workspace handler: the
  * `CreateSessionOptions`, `ForkSessionOptions`, `CreateChildSessionOptions`,
- * `ResumeSessionOptions`, and the `IWorkspaceHandlerService` used to create
+ * `ResumeSessionOptions`, and the `ISessionLifecycleService` used to create
  * sessions (`create`), look up the live ones (`get` / `list`), close them
  * (`close`), archive/restore them, fork them (`fork`), and fork-then-tag
  * them as direct children (`createChild`) — always as child scopes of THIS
  * handler's Workspace scope, so a handler owns exactly the sessions of one
  * workspace and fork never crosses handlers. Announces lifecycle transitions
  * through `onDidCreateSession` / `onDidCloseSession` / `onDidArchiveSession`
- * / `onDidForkSession`; the ordered hook slots are per-session seeds
- * (`sessionLifecycleHooks`). Workspace-scoped — one instance per
- * materialized handler. Persisted sessions (open or closed) are the
- * `sessionIndex` read model; per-session behaviour lives in the
- * Session-scoped domains.
+ * / `onDidForkSession`; the ordered hook slots are per-session seeds.
+ * Workspace-scoped — one instance per materialized handler.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -31,11 +28,6 @@ export type { SessionCloseReason, SessionCreateSource };
 export interface CreateSessionOptions {
   readonly sessionId?: string;
   readonly workDir: string;
-  /**
-   * Caller-provided additional workspace directories, resolved against
-   * `workDir` and unioned into the handler's SHARED in-memory set (every
-   * session of this workspace sees them; never persisted).
-   */
   readonly additionalDirs?: readonly string[];
   readonly mainAgentBinding?: BindAgentInput;
 }
@@ -48,11 +40,6 @@ export interface ForkSessionOptions {
 }
 
 export interface ResumeSessionOptions {
-  /**
-   * Caller-provided additional workspace directories, re-resolved against the
-   * session workDir and unioned into the handler's shared in-memory set (same
-   * semantics as `CreateSessionOptions.additionalDirs`).
-   */
   readonly additionalDirs?: readonly string[];
 }
 
@@ -89,7 +76,7 @@ export interface SessionForkedEvent {
   readonly handle: ISessionScopeHandle;
 }
 
-export interface IWorkspaceHandlerService {
+export interface ISessionLifecycleService {
   readonly _serviceBrand: undefined;
 
   readonly onDidCreateSession: Event<SessionCreatedEvent>;
@@ -107,5 +94,5 @@ export interface IWorkspaceHandlerService {
   createChild(opts: CreateChildSessionOptions): Promise<ISessionScopeHandle>;
 }
 
-export const IWorkspaceHandlerService: ServiceIdentifier<IWorkspaceHandlerService> =
-  createDecorator<IWorkspaceHandlerService>('workspaceHandlerService');
+export const ISessionLifecycleService: ServiceIdentifier<ISessionLifecycleService> =
+  createDecorator<ISessionLifecycleService>('sessionLifecycleService');

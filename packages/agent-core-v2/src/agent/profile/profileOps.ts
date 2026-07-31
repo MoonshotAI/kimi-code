@@ -1,5 +1,5 @@
 /**
- * `profile` domain (L3) — wire Model (`ProfileModel`) and the `config.update`
+ * `profile` domain — wire Model (`ProfileModel`) and the `config.update`
  * Op (`configUpdate`) for the agent's persistent configuration slice.
  *
  * Declares the persistent profile config — `modelAlias`, `profileName`,
@@ -9,14 +9,14 @@
  * a pure merge of an already-resolved payload. Live records carry
  * `thinkingEffort` (matching the v1 wire field); legacy replay still accepts
  * `thinkingLevel`. The value is
- * resolved to a `ThinkingEffort` at the call site (via `resolveThinkingEffort` +
- * the `thinking` config section) and carried in the payload, so `apply` stays
+ * resolved to a `ThinkingEffort` at the call site and carried in the
+ * payload, so `apply` stays
  * pure and a resumed agent restores the persisted base value rather than
- * re-resolving against a possibly-drifted config. Runtime-only Kimi env forcing
- * is projected by `AgentProfileService`; keeping it out of this Model prevents
- * that Kimi-only value from leaking through model switches or agent forks.
+ * re-resolving against a possibly-drifted config. Runtime-only Kimi env
+ * forcing is intentionally kept out of this Model so the Kimi-only value
+ * cannot leak through model switches or agent forks.
  * `modelCapabilities` is intentionally NOT in the Model — it is
- * derived live from `IModelCatalog` so resume never pins stale capabilities.
+ * derived live at runtime so resume never pins stale capabilities.
  * Each `apply` returns the same reference when nothing changes so the wire's
  * reference-equality gate stays quiet. The `agent.status.updated` emission is
  * NOT part of `apply`: it runs after
@@ -31,9 +31,8 @@
  * replace, and the v2-only `tools.reset_active_tools` transition back to the
  * unrestricted default. Both persisted transitions replay the base set. The
  * ephemeral per-tool
- * `addActiveTool` / `removeActiveTool` deltas (used by `userTool`) are NOT Ops —
- * they are intentionally not persisted and are re-derived on resume.
- * Consumed by the Agent-scope `profileService`.
+ * `addActiveTool` / `removeActiveTool` deltas are NOT Ops — they are
+ * intentionally not persisted and are re-derived on resume.
  */
 
 import { z } from 'zod';

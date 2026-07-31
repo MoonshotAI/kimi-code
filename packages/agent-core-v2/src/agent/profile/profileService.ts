@@ -1,5 +1,5 @@
 /**
- * `profile` domain (L4) — `IAgentProfileService` implementation.
+ * `profile` domain — `IAgentProfileService` implementation.
  *
  * Owns the active agent's model alias, thinking level, system prompt, and
  * active-tool set; reads the bound model's pure data through the App-scope
@@ -16,12 +16,12 @@
  * `wire.getModel`. The effective active-tool set read by consumers is the
  * persisted base (`ActiveToolsModel`, rebuilt by `wire.replay`) overlaid with
  * the ephemeral per-tool deltas from `addActiveTool` / `removeActiveTool`
- * (used by `userTool`; intentionally not persisted, re-derived on resume); the
+ * (intentionally not persisted, re-derived on resume); the
  * live overlay is held in `agentState` and falls back to the Model when unset,
- * so no restore-ordering coupling with `userTool` arises. Profile and client
+ * so no restore-ordering coupling arises. Profile and client
  * policy are persisted independently. The `agent.status.updated`
- * / `warning` events now ride `IEventBus` (`agent.status.updated` canonical in
- * `usageOps`). `emitStatusUpdated` runs live-only after the dispatch, so
+ * / `warning` events ride `IEventBus`. `emitStatusUpdated` runs live-only
+ * after the dispatch, so
  * `wire.replay` rebuilds the Models silently; the same live-only path mirrors
  * the resolved
  * model protocol into the ambient telemetry context (`provider_type` /
@@ -236,8 +236,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       }),
     );
     this._register(
-      // The workspace AGENTS.md snapshot changed (fs watch on the handler
-      // side): rebuild the system prompt off the fresh snapshot.
       this.instructions.onDidChange(() => {
         void this.refreshSystemPrompt();
       }),
@@ -725,15 +723,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     return { effective: forced ?? base, forced };
   }
 
-  /**
-   * The registry-driven strict-validation verdict for one model (v1
-   * `provider.type === 'kimi'` parity): strict effort validation and
-   * trait-driven normalization apply only when the (protocol, providerType)
-   * pair's thinking driver marks `strictThinkingValidation`. Over a foreign
-   * transport (the `(kimi, anthropic)` registration, e.g. managed models on
-   * protocol `anthropic`) the profile stays lenient and warns instead of
-   * rejecting unlisted efforts.
-   */
   private strictThinkingValidation(model: Model | undefined): boolean {
     if (model === undefined) return false;
     return requiresStrictThinkingValidation(
@@ -811,9 +800,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   private publishToolPatternWarnings(profile?: ResolvedAgentProfile): void {
     const known = new Set<string>();
-    // The registry only holds tools the bound Profile activated; the
-    // contribution table is the full static universe, so a valid-but-inactive
-    // name never trips the unknown-tool warning.
     for (const contribution of getAgentToolContributions()) known.add(contribution.options.name);
     for (const ref of this.toolRegistry.listReferences()) known.add(ref.name);
     for (const builtin of this.builtinProfiles.list()) {
@@ -863,9 +849,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     profile: ResolvedAgentProfile,
     options?: ApplyProfileOptions,
   ): Promise<SystemPromptContext> {
-    // The working directory is always the session's frozen cwd, so the
-    // workspace instructions snapshot (which covers the handler root) always
-    // applies.
     const preloadedAgentsMd = await this.workspaceInstructionsSnapshot();
     const base = await prepareSystemPromptContext(
       { fs: this.fs, homeDir: this.env.homeDir },

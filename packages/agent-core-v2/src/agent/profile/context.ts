@@ -1,26 +1,21 @@
 /**
- * `profile` domain (L4) — system-prompt context assembly.
+ * `profile` domain — system-prompt context assembly.
  *
  * Loads the AGENTS.md instruction hierarchy (user-level brand + generic files,
  * then project-level files from the project root down to the cwd — the root
- * discovered through the `git` domain's work-tree probe) and assembles
- * the {@link SystemPromptContext} bag consumed by `IAgentProfileService.useProfile`.
- * `agentsMdWatchRoots` exposes the watch plan for the probed file set so the
- * Workspace-scope `workspaceInstructions` service can watch exactly what the
- * loader reads, and `prepareSystemPromptContext` accepts a
- * `preloadedAgentsMd` snapshot so the
- * agent-side profile service can inject that workspace snapshot instead of
- * re-reading the files.
+ * discovered through a git work-tree probe) and assembles
+ * the {@link SystemPromptContext} bag.
+ * `agentsMdWatchRoots` exposes the watch plan for the probed file set, and
+ * `prepareSystemPromptContext` accepts a `preloadedAgentsMd` snapshot so the
+ * caller can inject an already-read snapshot instead of re-reading the files.
  *
  * Runs on top of the os `IHostFileSystem` (for `readText` / `stat` / `readdir`)
  * plus the host's `homeDir` — supplied together as a small `ProfileContextDeps`
  * bag threaded through the helpers.
  *
- * Port of v1 `packages/agent-core/src/profile/context.ts`. The combined
- * AGENTS.md content is injected in full; when it exceeds the soft
- * {@link AGENTS_MD_RECOMMENDED_MAX_BYTES} budget a visible `agentsMdWarning`
- * is produced (surfaced through `getSessionWarnings`) instead of silently
- * truncating.
+ * The combined AGENTS.md content is injected in full; when it exceeds the
+ * soft {@link AGENTS_MD_RECOMMENDED_MAX_BYTES} budget a visible
+ * `agentsMdWarning` is produced instead of silently truncating.
  */
 
 import { dirname, join, normalize } from 'pathe';
@@ -51,10 +46,6 @@ export interface PreparedSystemPromptContext extends SystemPromptContext {
 
 export interface PrepareSystemPromptContextOptions {
   readonly additionalDirs?: readonly string[];
-  /**
-   * A pre-loaded AGENTS.md result (e.g. the workspace instructions snapshot).
-   * When provided, the loader is not re-run — the caller owns freshness.
-   */
   readonly preloadedAgentsMd?: LoadedAgentsMd;
 }
 
@@ -156,17 +147,6 @@ export async function loadAgentsMdForRoots(
   return { content, warning };
 }
 
-/**
- * The watch plan for {@link loadAgentsMdForRoots}: one entry per existing
- * watch root with the candidate instruction files beneath it (brand dir,
- * real home for the `.agents` generic files, and the project root for the
- * root→leaf `.kimi-code/AGENTS.md` / `AGENTS.md` / `agents.md` chain) —
- * regardless of existence or the first-existing-wins precedence the loader
- * applies, since a higher-precedence file appearing later must still
- * invalidate the snapshot. Consumers watch each root recursively and filter
- * events to the candidates (watching a missing file directly silently never
- * fires when its parent directory is missing too).
- */
 export interface AgentsMdWatchRoot {
   readonly root: string;
   readonly candidates: readonly string[];

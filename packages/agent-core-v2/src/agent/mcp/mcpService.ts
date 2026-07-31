@@ -1,5 +1,5 @@
 /**
- * `mcp` domain (L5) — `IAgentMcpService` implementation.
+ * `mcp` domain — `IAgentMcpService` implementation.
  *
  * Mirrors the workspace-level shared MCP connection manager's server set
  * into the agent's tool registry (the manager arrives through the seeded
@@ -225,11 +225,6 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
       return;
     }
     if (entry.status === 'failed' || entry.status === 'pending') {
-      // Keep the server's tools registered while it is down or reconnecting.
-      // The captured client is closed, so the next call fails fast at the
-      // transport layer and the tool adapter's reconnect-and-retry path heals
-      // the connection — a dropped server surfaces as a slow call instead of
-      // "tool not found" for the rest of the session.
       return;
     }
     if (entry.status === 'disabled') {

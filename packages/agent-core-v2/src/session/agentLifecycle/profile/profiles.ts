@@ -1,15 +1,10 @@
 /**
- * `agentLifecycle` domain (L6) — builtin agent profile contributions.
+ * `agentLifecycle` domain — builtin agent profile contributions.
  *
  * Registers the default `agent` profile plus the `coder` / `explore` task-agent
- * profiles. The `plan` task-agent profile lives in the `plan` domain. Each
- * profile is self-contained: its `systemPrompt` renderer merges the shared base
- * template with its own role text at call time, so a child agent no longer
- * inherits the parent's prompt through a runtime overlay.
- *
- * Import-triggered registration: this module is side-effect-imported by
- * `./profile` so loading the `agentLifecycle` barrel populates the contribution
- * list before `AgentProfileCatalogService` constructs.
+ * profiles. Each profile is self-contained: its `systemPrompt` renderer merges
+ * the shared base template with its own role text at call time, so a child
+ * agent no longer inherits the parent's prompt through a runtime overlay.
  */
 
 import { collectGitContext } from './gitContext';

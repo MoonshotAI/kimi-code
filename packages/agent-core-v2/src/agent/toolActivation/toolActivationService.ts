@@ -1,5 +1,5 @@
 /**
- * `toolActivation` domain (L4) — `IAgentToolActivationService` implementation.
+ * `toolActivation` domain — `IAgentToolActivationService` implementation.
  *
  * Iterates the `toolRegistry` contribution table and, for each entry allowed
  * by the workspace os-level veto (the seeded `sessionToolPolicyGate`) AND
@@ -8,9 +8,9 @@
  * `accessor.get` — and registers the real instance into the runtime
  * registry.
  *
- * Activation runs once explicitly from `AgentLifecycleService.create` (after
- * restore and profile binding) and re-runs on every `agent.status.updated`
- * from `event`, so tools newly allowed by a runtime re-bind or
+ * Activation runs once explicitly (after restore and profile binding) and
+ * re-runs on every `agent.status.updated` event, so tools newly allowed by a
+ * runtime re-bind or
  * `setActiveTools` are activated without a restart. Already-registered names
  * are skipped, and nothing is ever unregistered here: restricting visibility
  * remains the request-time tool policy's job.
@@ -61,9 +61,6 @@ export class AgentToolActivationService extends Disposable implements IAgentTool
       for (const { id, options } of getAgentToolContributions()) {
         const source = options.source ?? 'builtin';
         if (this.toolRegistry.resolve(options.name) !== undefined) continue;
-        // The workspace (os-level) veto outranks the profile: a disabled tool
-        // never activates, so it never reaches the registry (and therefore
-        // the schema) at all.
         if (!isToolActive(workspaceVeto, options.name, source)) continue;
         if (!isToolActive(policy, options.name, source)) continue;
         if (options.when !== undefined && !options.when(accessor)) continue;

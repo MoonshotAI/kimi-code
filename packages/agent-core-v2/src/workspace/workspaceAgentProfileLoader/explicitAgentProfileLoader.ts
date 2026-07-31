@@ -1,10 +1,9 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — `IExplicitAgentProfileLoader` contract.
+ * `workspaceAgentProfileLoader` domain — `IExplicitAgentProfileLoader` contract.
  *
  * The explicit loader of the agent-profile extension point: owns the
  * `explicit` contribution in the App-scope `IAgentProfileRegistry` — the
- * runtime-selected agent files (`--agent-file`, carried by
- * `IAgentCatalogRuntimeOptions`), tagged with this handler's `workspaceId`.
+ * runtime-selected agent files (`--agent-file`), tagged with this handler's `workspaceId`.
  * The loader is `fatal`: an invalid explicit file is an explicit user intent
  * that must not be silently dropped, so the rejection propagates into `ready`
  * and session materialization fails fast; `reload()` re-arms it once the

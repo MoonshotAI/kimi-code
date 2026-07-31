@@ -1,14 +1,13 @@
 /**
- * `workspaceFs` domain (L3) — wire-shaped filesystem operations.
+ * `workspaceFs` domain — wire-shaped filesystem operations.
  *
- * Defines the `IWorkspaceFsService` that backs the fs REST surface: content
- * search, content grep, and git status/diff, together with the zod DTO
- * schemas the transports validate against. It orchestrates the os
+ * Defines the `IWorkspaceFsService` contract — content search, content
+ * grep, and git status/diff — together with the zod DTO schemas the wire
+ * transports validate against. It orchestrates the os
  * `IHostFileSystem` (file IO, resolved against the workspace root) plus the
- * handler-shared `ISessionProcessRunner` (for `rg`). Git status/diff DTOs
- * live in the `git` domain. Workspace-scoped — one instance per handler,
- * pinned to the handler root (chdir is gone, so the root never changes); the
- * edge resolves it through any live session of the workspace.
+ * handler-shared `ISessionProcessRunner` (for `rg`). Workspace-scoped — one
+ * instance per handler, pinned to the handler root (chdir is gone, so the
+ * root never changes).
  */
 
 import { z } from 'zod';
@@ -181,9 +180,6 @@ export const fsStatManyResponseSchema = z.object({
 export type FsStatManyResponse = z.infer<typeof fsStatManyResponseSchema>;
 
 export const fsSearchRequestSchema = z.object({
-  // An empty query is allowed: the service then lists the workspace root's
-  // top-level entries (dirs first) instead of fuzzy-matching — the starting
-  // set for @-mention style file pickers.
   query: z.string(),
   limit: z.number().int().min(1).max(200).default(50),
   include_globs: z.array(z.string()).optional(),

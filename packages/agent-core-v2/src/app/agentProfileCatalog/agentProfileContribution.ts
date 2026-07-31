@@ -1,5 +1,5 @@
 /**
- * `agentProfileCatalog` domain (L3) — the agent-profile Contribution shape and
+ * `agentProfileCatalog` domain — the agent-profile Contribution shape and
  * source priorities.
  *
  * `AgentProfileContribution` is the Contribution of the agent-profile
@@ -7,9 +7,7 @@
  * App-scope `IAgentProfileRegistry` under its source id. It is pure payload —
  * the source id and priority are registration metadata passed to `register`,
  * never part of the contribution. Name-level dedup is NOT done here or in the
- * registry; it is the Session catalog's projection job. The shape lives beside
- * the registry (not beside any loader) because it is the registry's contract
- * with every contributor, whatever scope the contributor runs in.
+ * registry; it is the Session catalog's projection job.
  *
  * `AGENT_PROFILE_SOURCE_PRIORITY` orders the sources for that projection
  * (higher wins name collisions), with one deliberate deviation from the skill
@@ -20,7 +18,6 @@
 
 import type { AgentProfile } from './agentProfileCatalog';
 
-/** A file a discovery pass could not parse, paired with the reason. */
 export interface SkippedAgentFile {
   readonly path: string;
   readonly reason: string;

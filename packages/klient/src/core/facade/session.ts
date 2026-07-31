@@ -34,7 +34,7 @@ const NOT_FOUND = 40404;
 
 export type { ScopedCaller } from './global.js';
 
-/** What `workspaceHandlerService.create/fork/createChild` leaves on the wire. */
+/** What `sessionLifecycleService.create/fork/createChild` leaves on the wire. */
 interface HandleWire {
   readonly id: string;
 }
@@ -105,7 +105,7 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
     if (workspaceId === undefined) {
       throw new RPCError(NOT_FOUND, `session not found: ${sessionId}`);
     }
-    const handle = (await call({ workspaceId }, 'workspaceHandlerService', method, [
+    const handle = (await call({ workspaceId }, 'sessionLifecycleService', method, [
       { sourceSessionId: sessionId, title: input.title, metadata: input.metadata },
     ])) as HandleWire;
     return call({ sessionId: handle.id }, 'sessionMetadata', 'read', []) as Promise<SessionMeta>;
@@ -145,17 +145,17 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
     close: async () => {
       const workspaceId = await resolveWorkspaceId();
       if (workspaceId === undefined) return;
-      await call({ workspaceId }, 'workspaceHandlerService', 'close', [sessionId]);
+      await call({ workspaceId }, 'sessionLifecycleService', 'close', [sessionId]);
     },
     archive: async () => {
       const workspaceId = await resolveWorkspaceId();
       if (workspaceId === undefined) return;
-      await call({ workspaceId }, 'workspaceHandlerService', 'archive', [sessionId]);
+      await call({ workspaceId }, 'sessionLifecycleService', 'archive', [sessionId]);
     },
     restore: async () => {
       const workspaceId = await resolveWorkspaceId();
       if (workspaceId === undefined) return false;
-      const handle = (await call({ workspaceId }, 'workspaceHandlerService', 'restore', [
+      const handle = (await call({ workspaceId }, 'sessionLifecycleService', 'restore', [
         sessionId,
       ])) as HandleWire | null;
       return handle !== null;

@@ -1,5 +1,5 @@
 /**
- * `kosong/model` domain (L2) — shared pure-data types no single contract owns.
+ * `kosong/model` domain — shared pure-data types no single contract owns.
  *
  * One home for the small data interfaces that would otherwise each sit in a
  * near-empty file:
@@ -10,11 +10,11 @@
  *     completion budget. Each wire dialect encodes (or drops) the resulting
  *     intent in its own hooks.
  *   - `CompletionBudgetConfig` / `CompletionBudgetParams` — the budget knobs
- *     resolved and folded by the pure functions in `completionBudget.ts`.
- *   - `ResolvedModelAuthMaterial` — the credential material `modelAuth.ts`
- *     resolves out of the Model → Provider precedence chain.
- *   - `ThinkingDefaults` / `ModelThinkingMetadata` — the inputs `thinking.ts`
- *     resolves the effective thinking effort/keep from.
+ *     resolved and folded by the domain's pure budget functions.
+ *   - `ResolvedModelAuthMaterial` — the credential material resolved out of
+ *     the Model → Provider precedence chain.
+ *   - `ThinkingDefaults` / `ModelThinkingMetadata` — the inputs the effective
+ *     thinking effort/keep is resolved from.
  *
  * Types only — the functions and services that produce or consume them stay
  * in their own files.

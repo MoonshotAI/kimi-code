@@ -33,6 +33,7 @@ import type {
   TelemetryContextPatch,
   TelemetryProperties,
   TestMcpServerOptions,
+  WorkspaceTrustInfo,
 } from '#/types';
 
 export interface KimiHarnessRuntimeOptions {
@@ -253,6 +254,20 @@ export class KimiHarness {
   /** Skills visible to a new session in `workDir`, without creating that session. */
   async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
     return this.rpc.listWorkspaceSkills(workDir);
+  }
+
+  /**
+   * Trust state of `workDir` (agent-core-v2 only; the v1 engine reports an
+   * always-trusted workspace). Querying may register the workDir as a
+   * workspace, which session creation would do anyway.
+   */
+  async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
+    return this.rpc.getWorkspaceTrustInfo(workDir);
+  }
+
+  /** Mark `workDir` as trusted; project-level MCP servers connect live afterwards. */
+  async trustWorkspace(workDir: string): Promise<void> {
+    return this.rpc.trustWorkspace(workDir);
   }
 
   async getConfig(options: GetConfigOptions = {}): Promise<KimiConfig> {

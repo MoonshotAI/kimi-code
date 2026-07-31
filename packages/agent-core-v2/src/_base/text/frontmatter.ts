@@ -2,9 +2,7 @@
  * `_base` text helpers — Markdown frontmatter parsing.
  *
  * Splits a Markdown document into its YAML frontmatter block and body. Pure
- * text processing with no IO and no domain knowledge: skill definitions,
- * agent-definition files, and plugin command files all share this one parser
- * instead of depending on each other's domains for it. A document without a
+ * text processing with no IO and no domain knowledge. A document without a
  * leading `---` fence parses as all body with `data: null`; an unterminated
  * fence is a `FrontmatterError`.
  */

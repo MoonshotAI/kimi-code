@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — agent-root resolution primitives.
+ * `workspaceAgentProfileLoader` domain — agent-root resolution primitives.
  *
  * Resolves user, project, and configured discovery roots through the `hostFs`
  * filesystem boundary. Pure path probes; no scoped state.
@@ -46,12 +46,6 @@ export async function projectAgentRoots(
   return roots;
 }
 
-/**
- * The project root and the raw project agent-root candidates
- * (`.kimi-code/agents` and `.agents/agents` under it) regardless of
- * existence — the watch plan for project-agent refreshes, since
- * `projectAgentRoots` filters to directories that already exist.
- */
 export interface ProjectAgentRootCandidates {
   readonly projectRoot: string;
   readonly candidates: readonly string[];

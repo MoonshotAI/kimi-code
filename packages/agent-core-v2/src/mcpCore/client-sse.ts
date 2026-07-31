@@ -1,5 +1,5 @@
 /**
- * `mcpCore` domain (L2) — SSE transport MCP client.
+ * `mcpCore` domain — SSE transport MCP client.
  */
 
 import type { McpServerSseConfig } from './config-schema';

@@ -1,5 +1,5 @@
 /**
- * `workspaceToolPolicy` domain (L2) — os-level tool enable/disable contract.
+ * `workspaceToolPolicy` domain — os-level tool enable/disable contract.
  *
  * Defines the `IWorkspaceToolPolicy`, the Workspace-scope owner of the
  * tool-veto set that outranks every Agent-side policy layer (profile ×

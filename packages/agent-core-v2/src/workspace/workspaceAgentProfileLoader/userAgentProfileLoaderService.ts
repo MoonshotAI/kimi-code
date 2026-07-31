@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — `IUserAgentProfileLoader` implementation.
+ * `workspaceAgentProfileLoader` domain — `IUserAgentProfileLoader` implementation.
  *
  * Discovers user agent profiles through `bootstrap` home paths and `hostFs`,
  * reports skipped files through `log`, and appends the `<home>/SYSTEM.md`
@@ -7,8 +7,7 @@
  * App builtin loader) after the scanned profiles so it wins same-name
  * collisions within this contribution. The user roots are global os
  * directories, but per-workspace registration keeps every contribution
- * flowing through the same workspace-tagged lane, so the Session catalog
- * projection needs no special case. Bound at Workspace scope.
+ * flowing through the same workspace-tagged lane. Bound at Workspace scope.
  */
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';

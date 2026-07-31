@@ -1,5 +1,5 @@
 /**
- * `externalHooks` domain (L6) — Agent-scope adapter for external
+ * `externalHooks` domain — Agent-scope adapter for external
  * hook commands.
  *
  * Listens to hook slots and agent events owned by the agent behavior/lifecycle
@@ -7,9 +7,7 @@
  * `fullCompaction`, and `task`) and translates those minimal contexts into the
  * configured external hook commands, run through the shared App-scope
  * `IExternalHooksRunnerService` (so this adapter never owns an engine lifecycle
- * of its own). The requester-side `SubagentStart` / `SubagentStop` hooks are
- * translated by the Session-scope `SessionExternalHooksService`, which observes
- * the `agentLifecycle` run slots hosted on `IAgentLifecycleService`. Appends
+ * of its own). Appends
  * UserPromptSubmit hook results through `contextMemory`, drives Stop hook
  * continuations by enqueueing a mergeable `StepRequest` onto `loop`, and
  * passes the current session id from `sessionContext`

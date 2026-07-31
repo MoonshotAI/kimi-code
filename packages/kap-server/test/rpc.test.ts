@@ -13,7 +13,7 @@ import {
   IPluginService,
   ISessionIndex,
   ISessionMetadata,
-  IWorkspaceHandlerService,
+  ISessionLifecycleService,
   IWorkspaceService,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
@@ -296,7 +296,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
     const workspaceId = (await server!.core.accessor.get(ISessionIndex).get(id))!.workspaceId;
     const { body } = await call<null>(
       'POST',
-      rpc('workspace', IWorkspaceHandlerService, 'archive', { wid: workspaceId }),
+      rpc('workspace', ISessionLifecycleService, 'archive', { wid: workspaceId }),
       id,
     );
     expect(body.code).toBe(0);

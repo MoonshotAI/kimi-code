@@ -1,5 +1,5 @@
 /**
- * `workspaceDirs` domain (L3) — `IWorkspaceDirs` implementation.
+ * `workspaceDirs` domain — `IWorkspaceDirs` implementation.
  *
  * Holds the handler-shared additional-directory set as
  * `fileDirs ∪ ephemeralDirs`: `fileDirs` is the project-local
@@ -11,18 +11,23 @@
  * mutation serializes on one tail queue; the change event fires only when
  * the combined list actually changed. The set reaches every session of the
  * handler through the `ISessionWorkspaceInfo` seed (`sessionInfo()`), a
- * live read view over this service. Bound at Workspace scope.
+ * live read view over this service. The plain-data state (`fileDirs`,
+ * `ephemeralDirs`) is registered into `workspaceState`
+ * (`IWorkspaceStateService`) and read/written through it. Bound at
+ * Workspace scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
+import { defineState } from '#/_base/state/stateRegistry';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import type { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 import {
@@ -33,11 +38,18 @@ import {
 
 const WATCH_DEBOUNCE_MS = 200;
 
+export const workspaceDirsFileDirsKey = defineState<readonly string[]>(
+  'workspaceDirs.fileDirs',
+  () => [],
+);
+export const workspaceDirsEphemeralDirsKey = defineState<readonly string[]>(
+  'workspaceDirs.ephemeralDirs',
+  () => [],
+);
+
 export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
   declare readonly _serviceBrand: undefined;
 
-  private fileDirs: readonly string[] = [];
-  private ephemeralDirs: readonly string[] = [];
   private projectRoot: string;
   private configPath: string;
   readonly ready: Promise<void>;
@@ -51,12 +63,31 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
     @IProjectLocalConfigService private readonly localConfig: IProjectLocalConfigService,
     @IHostFsWatchService private readonly fsWatch: IHostFsWatchService,
     @ILogService private readonly log: ILogService,
+    @IWorkspaceStateService private readonly states: IWorkspaceStateService,
   ) {
     super();
+    this.states.register(workspaceDirsFileDirsKey);
+    this.states.register(workspaceDirsEphemeralDirsKey);
     this.projectRoot = workspace.cwd;
     this.configPath = '';
     this.ready = this.enqueue(() => this.reloadFromDisk());
     void this.ready.then(() => this.watchLocalToml());
+  }
+
+  private get fileDirs(): readonly string[] {
+    return this.states.get(workspaceDirsFileDirsKey);
+  }
+
+  private set fileDirs(value: readonly string[]) {
+    this.states.set(workspaceDirsFileDirsKey, value);
+  }
+
+  private get ephemeralDirs(): readonly string[] {
+    return this.states.get(workspaceDirsEphemeralDirsKey);
+  }
+
+  private set ephemeralDirs(value: readonly string[]) {
+    this.states.set(workspaceDirsEphemeralDirsKey, value);
   }
 
   get additionalDirs(): readonly string[] {
@@ -150,14 +181,6 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
     return !sameStringList(before, this.additionalDirs);
   }
 
-  /**
-   * Watch the project root recursively, pruned to the `local.toml`
-   * candidate: watching the file directly never fires when its parent
-   * `.kimi-code` directory does not exist yet either.
-   *
-   * Runs only after `ready` resolves, so `reloadFromDisk` has already
-   * populated `projectRoot` / `configPath`.
-   */
   private watchLocalToml(): void {
     try {
       const handle = this.fsWatch.watch(this.projectRoot, {

@@ -1,5 +1,5 @@
 /**
- * `sessionExport` domain (L6) — bounded file source ownership.
+ * `sessionExport` domain — bounded file source ownership.
  *
  * Opens one stable file handle, snapshots its current size, and exposes an
  * idempotent close operation shared by normal completion and failure cleanup.

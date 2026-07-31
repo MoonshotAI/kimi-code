@@ -1,5 +1,5 @@
 /**
- * `mcpConfig` domain (L5) — `IMcpOAuthStore`, the App-scope persistence
+ * `mcpConfig` domain — `IMcpOAuthStore`, the App-scope persistence
  * adapter for MCP OAuth credentials.
  *
  * Implements the `mcp` domain's `McpOAuthStore` port over the `persistence`
@@ -7,10 +7,10 @@
  * scope (`<homeDir>/credentials/mcp/<key>-*.json`). One App-scope instance is
  * shared by every workspace handler's `McpOAuthService`, replacing the
  * per-handler stores they used to build ad hoc; the on-disk layout is
- * unchanged, so credentials stay shared with out-of-engine readers (the
- * node-sdk global OAuth surface). The {@link createMcpOAuthStore} factory
- * remains exported for those out-of-engine callers, which run an
- * `McpOAuthService` outside the DI container.
+ * unchanged, so credentials stay shared with out-of-engine readers. The
+ * {@link createMcpOAuthStore} factory remains exported for those
+ * out-of-engine callers, which run an `McpOAuthService` outside the DI
+ * container.
  *
  * Read semantics: missing or corrupt JSON resolves to `undefined` (never
  * throws). The provider treats `undefined` as "not stored".

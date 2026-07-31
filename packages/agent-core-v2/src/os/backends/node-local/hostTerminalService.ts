@@ -1,10 +1,9 @@
 /**
- * `terminal` domain (L6) — `IHostTerminalService` implementation.
+ * `terminal` domain — `IHostTerminalService` implementation.
  *
  * App-scoped OS terminal process factory backed by `node-pty`. It spawns and
  * tracks every `TerminalProcess` so the whole process-wide PTY layer can be
- * torn down on disposal. It has no session, workspace, or buffering concerns;
- * those live in the Session-scoped `ISessionTerminalService`.
+ * torn down on disposal. It has no session, workspace, or buffering concerns.
  *
  * `node-pty` is loaded lazily so merely importing this module (for example in
  * tests that override the service with a fake) does not require the native

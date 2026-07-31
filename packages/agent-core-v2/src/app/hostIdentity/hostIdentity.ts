@@ -1,5 +1,5 @@
 /**
- * `hostIdentity` domain (L3) — runtime identity of the embedding host.
+ * `hostIdentity` domain — runtime identity of the embedding host.
  *
  * Holds process-level overrides the host product (CLI, desktop, …) injects at
  * the composition root: `displayName` fills the `${product_name}` slot in the

@@ -1,5 +1,5 @@
 /**
- * `telemetry` domain (L1) — outbound PII cleaning for telemetry properties.
+ * `telemetry` domain — outbound PII cleaning for telemetry properties.
  *
  * Redacts user-identifying content from string property values before events
  * leave the process: URLs, emails, common token formats, and absolute file

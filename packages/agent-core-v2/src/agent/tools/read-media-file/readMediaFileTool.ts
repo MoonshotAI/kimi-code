@@ -1,9 +1,7 @@
 /**
- * `tools` domain (L7) — `ReadMediaFileTool` implementation.
+ * `tools` domain — `ReadMediaFileTool` implementation.
  *
- * Reads image/video files as multi-modal content. The public contract
- * (input schema, size constants, `VideoUploader`) lives in
- * `./read-media-file`.
+ * Reads image/video files as multi-modal content.
  *
  * Returns a 3-part wrap as `output`:
  * `[TextPart('<image|video path="…">'), ImageContent|VideoContent,
@@ -45,13 +43,13 @@
  * (`provider.auth_error` / 401 / 403) always surface, because they drive
  * credential refresh rather than mask a bad token.
  *
- * Registration is capability-gated by `registerMediaTools`: this tool is
+ * Registration is capability-gated: this tool is
  * only registered when the active model supports image or video input.
  *
  * This tool is a deliberate exception to the `registerAgentToolService` contribution
  * table: its constructor depends on runtime model capabilities (capability
  * profile, video uploader, protocol flags), so it cannot be a static
- * Agent-scope Service and is instead `new`ed by `AgentMediaToolsRegistrar`
+ * Agent-scope Service and is instead instantiated
  * whenever the bound model changes. It still satisfies the `AgentTool`
  * contract.
  */
@@ -226,10 +224,6 @@ function buildFullResolutionLimitError(path: string, finalBytes: number): string
 }
 
 function shouldSurfaceVideoUploadError(error: unknown, inlineVideoSupported: boolean): boolean {
-  // No upload hook by design: surfacing the honest error only pays when the
-  // wire would drop an inline payload anyway (the OpenAI family). Protocols
-  // that convert video_url (kimi, anthropic, google-genai, …) take the
-  // inline fallback instead.
   if (error instanceof VideoUploadUnsupportedError) return !inlineVideoSupported;
   return isVideoUploadAuthError(error);
 }
@@ -270,7 +264,6 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
         });
       } catch (error) {
         if (shouldSurfaceVideoUploadError(error, this.inlineVideoSupported)) throw error;
-        // Fall through to the inline form.
       }
     }
     return inlineVideoPart(data, mimeType);

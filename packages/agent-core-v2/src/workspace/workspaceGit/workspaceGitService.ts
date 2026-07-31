@@ -1,10 +1,9 @@
 /**
- * `workspaceGit` domain (L2) — `IWorkspaceGitService` implementation.
+ * `workspaceGit` domain — `IWorkspaceGitService` implementation.
  *
  * Delegates every call to the App-scope `IGitService` with `cwd` pinned to
- * the handler's workspace root (`IWorkspaceContext.cwd`). Owns no state: the
- * PR-status cache (keyed by `cwd`, 60 s TTL) already lives in the App-scope
- * service, which makes it per-handler in effect. Bound at Workspace scope.
+ * the handler's workspace root (`IWorkspaceContext.cwd`). Owns no state.
+ * Bound at Workspace scope.
  */
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';

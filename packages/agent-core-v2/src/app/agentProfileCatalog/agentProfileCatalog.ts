@@ -1,5 +1,5 @@
 /**
- * `agentProfileCatalog` domain (L3) — the agent-profile domain types and the
+ * `agentProfileCatalog` domain — the agent-profile domain types and the
  * App-scope extension point (`IAgentProfileRegistry`).
  *
  * A profile is "how an Agent runs": the full system prompt it renders for a

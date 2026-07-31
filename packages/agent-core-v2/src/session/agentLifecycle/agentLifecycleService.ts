@@ -1,5 +1,5 @@
 /**
- * `agentLifecycle` domain (L6) — `IAgentLifecycleService` implementation.
+ * `agentLifecycle` domain — `IAgentLifecycleService` implementation.
  *
  * Creates and tracks the session's agents as child scopes in a flat registry,
  * serializing same-id bootstrap and dropping incomplete handles after startup
@@ -14,9 +14,7 @@
  *
  * No agent id is special here: the main agent is simply the agent created
  * with the conventional `MAIN_AGENT_ID`, and `fork` requires its source to
- * exist. Caller-facing orchestration (record mirroring, hooks, telemetry,
- * prompt prefixes) lives with the callers — driving turns on an agent is the
- * `subagent` domain (`ISessionSubagentService`); the workspace's shared MCP
+ * exist. The workspace's shared MCP
  * manager arrives through the seeded `ISessionMcpHandle`, whose initial
  * connect this service awaits during creation.
  */
@@ -68,9 +66,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   private readonly onDidCreateEmitter = this._register(new Emitter<IAgentScopeHandle>());
   private readonly onDidDisposeEmitter = this._register(new Emitter<string>());
   private readonly interactionBusDisposables = new Map<string, IDisposable>();
-  /** In-flight creation promises, keyed by agent id. Concurrent creations of
-   *  the same id join the in-flight one (never a duplicate scope), so a caller
-   *  always receives a fully-bootstrapped handle. */
   private readonly creating = new Map<string, Promise<IAgentScopeHandle>>();
 
   get onDidCreate() {
@@ -118,9 +113,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   }
 
   async create(opts: CreateAgentOptions = {}): Promise<IAgentScopeHandle> {
-    // Create-or-get for explicit ids: join a concurrent in-flight creation or
-    // return the existing agent, so callers never see a duplicate scope or a
-    // not-yet-ready handle. Auto-minted ids always create fresh.
     if (opts.agentId !== undefined) {
       const inflight = this.creating.get(opts.agentId);
       if (inflight !== undefined) return inflight;
@@ -153,19 +145,12 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
 
   private async doCreate(agentId: string, opts: CreateAgentOptions): Promise<IAgentScopeHandle> {
     const mcpReady = this.mcpHandle.ready;
-    // Agent persistence addressing derives from the session's scope string
-    // (itself handler-bound): `{sessionScope}/agents/{agentId}` — identical
-    // to the layout the pre-Workspace engine wrote.
     const agentScope = this.ctx.scope(`agents/${agentId}`);
     const agentHomedir = join(this.bootstrap.homeDir, agentScope);
     const handle = createScopedChildHandle(
       this.instantiation,
       LifecycleScope.Agent,
       agentId,
-      // Seed identity facts and the telemetry view. Every other agent-scope
-      // service either derives its configuration from `IAgentScopeContext`
-      // (wire, blob) or resolves it through the scope tree (the workspace's
-      // shared MCP manager via the seeded `ISessionMcpHandle`).
       {
         extra: [
           [IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope })],
@@ -188,14 +173,9 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       await mcpReady;
       await wire.restore();
       await this.bindBootstrap(handle, opts);
-      // Activate the AgentTool contributions allowed by the bound Profile
-      // before the handle admits turns: restore and binding own the final
-      // `activeToolNames`, so this must run after both.
       await handle.accessor.get(IAgentToolActivationService).activate();
       return handle;
     } catch (error) {
-      // Startup failed: drop the half-built agent so the next `create` starts
-      // fresh instead of returning a handle that can never admit turns.
       if (this.handles.get(agentId) === handle) this.handles.delete(agentId);
       try {
         handle.dispose();
@@ -212,10 +192,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (opts.binding !== undefined) {
       await handle.accessor.get(IAgentProfileService).bind(opts.binding);
     }
-    // Apply the configured default only when restore found no persisted mode.
-    // A resumed Agent's journal owns its permission posture; callers that need
-    // an explicit override (for example subagent inheritance) do so after
-    // creation through the permission service.
     const wire = handle.accessor.get(IWireService);
     const permissionMode = this.config.get<PermissionMode>(DEFAULT_PERMISSION_MODE_SECTION);
     const hasRestoredPermissionMode = wire.getModel(PermissionModeConfiguredModel);

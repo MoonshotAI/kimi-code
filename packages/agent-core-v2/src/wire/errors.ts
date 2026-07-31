@@ -1,10 +1,9 @@
 /**
- * `wire` domain (L2) — error codes, the `WireError` base class, and the domain
+ * `wire` domain — error codes, the `WireError` base class, and the domain
  * registration.
  *
- * Aggregates the wire domain's coded errors: `DuplicateOpError` (thrown by
- * `defineOp` in `op.ts`) and `CycleError` (thrown by the dispatch drain in
- * `wireService.ts`) stay co-located with their throw sites but extend
+ * Aggregates the wire domain's coded errors: `DuplicateOpError` and
+ * `CycleError` stay co-located with their throw sites but extend
  * `WireError`; `wire.unknown_record` is constructed here for replay-time
  * reporting of records whose Op type is absent from `OP_REGISTRY`.
  */

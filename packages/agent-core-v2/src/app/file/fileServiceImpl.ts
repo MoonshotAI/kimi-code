@@ -1,5 +1,5 @@
 /**
- * `file` domain (L2) — `IFileService` implementation.
+ * `file` domain — `IFileService` implementation.
  *
  * Streams uploads into the `IBlobStore` under the `files` scope and keeps a
  * JSON `FileMeta` index in the same store under the `file` scope. Uploads are
@@ -81,7 +81,6 @@ export class FileServiceImpl implements IFileService {
     try {
       await this.blobs.putStream(BLOB_SCOPE, id, counting());
     } catch (error) {
-      // best-effort cleanup of a partially written blob
       await this.blobs.delete(BLOB_SCOPE, id).catch(() => undefined);
       throw error;
     }

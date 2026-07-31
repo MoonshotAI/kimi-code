@@ -1,13 +1,13 @@
 /**
- * `plugin` domain (L3) — `IPluginService` implementation.
+ * `plugin` domain — `IPluginService` implementation.
  *
- * Manages the App-wide plugin catalog through the filesystem-backed
- * `PluginManager`, roots plugin storage at `bootstrap`, counts plugin skills
- * through `skillDiscovery`, and resolves managed endpoint settings through
- * `provider` plus the startup snapshot from `bootstrap`. Exposes plugin
- * contributions through the hook, MCP, skill, and system-prompt contracts.
- * Mutations serialize through `mutationQueue` and consumption reads wait on
- * it. Bound at App scope.
+ * Manages the App-wide plugin catalog through a filesystem-backed manager,
+ * roots plugin storage at the bootstrap paths, counts plugin skills through
+ * skill discovery, and resolves managed endpoint settings through the
+ * provider service plus the startup snapshot. Exposes plugin contributions
+ * through the hook, MCP, skill, and system-prompt contracts. Mutations
+ * serialize through a queue and consumption reads wait on it. Bound at App
+ * scope.
  */
 
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';

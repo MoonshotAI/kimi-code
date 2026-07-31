@@ -1,5 +1,5 @@
 /**
- * `agentProfileCatalog` domain (L3) — `IAgentProfileRegistry` impl.
+ * `agentProfileCatalog` domain — `IAgentProfileRegistry` impl.
  *
  * App-scope singleton backed by the generic `ContributionRegistry`: storage
  * keys encode the (sourceId, workspaceKey) pair so a workspace-local source id

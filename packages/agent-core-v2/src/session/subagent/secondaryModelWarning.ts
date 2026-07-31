@@ -1,5 +1,5 @@
 /**
- * `subagent` domain (L6) — `ISessionSecondaryModelWarningService` contract:
+ * `subagent` domain — `ISessionSecondaryModelWarningService` contract:
  * early validation of the configured secondary model.
  *
  * The secondary-model pointer (`[secondary_model]` / `KIMI_SECONDARY_MODEL`)
@@ -7,9 +7,8 @@
  * mid-conversation tool failure handed back to the parent model. This service
  * front-loads the same resolution to session start (main-agent creation): an
  * unresolvable model or an effort the model does not list becomes a `warning`
- * event on the main agent's event bus, and stays cached for the edge to pull
- * (`GET /sessions/{id}/warnings`). A mid-session `[secondary_model]` change
- * (the SDK's `applyPersistedSecondaryModel` path) refreshes the cache through
+ * event on the main agent's event bus, and stays cached for the edge to pull.
+ * A mid-session `[secondary_model]` change refreshes the cache through
  * `recheckSecondaryModelWarning`. Session-scoped — one instance per session.
  */
 

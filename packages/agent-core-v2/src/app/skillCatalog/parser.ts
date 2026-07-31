@@ -1,11 +1,9 @@
 /**
- * `skillCatalog` domain (L3) — SKILL.md parsing primitives.
+ * `skillCatalog` domain — SKILL.md parsing primitives.
  *
  * Parses a SKILL.md (frontmatter + body) into a `SkillDefinition` and extracts
- * flowchart blocks. Pure functions with no IO: callers (the catalog Store
- * backends) read bytes however they like and pass the decoded text in. Keeping
- * parsing here lets the Store layer stay filesystem-agnostic. The frontmatter
- * split itself is shared text infrastructure (`_base/text/frontmatter`).
+ * flowchart blocks. Pure functions with no IO: callers read bytes however they
+ * like and pass the decoded text in.
  */
 
 import path from 'pathe';

@@ -1,5 +1,5 @@
 /**
- * `toolExecutor` domain (L3) — `IAgentToolExecutorService` implementation.
+ * `toolExecutor` domain — `IAgentToolExecutorService` implementation.
  *
  * Resolves executable tools through `toolRegistry`, adjudicates tool calls
  * through the `onBeforeExecuteTool` veto event, awaits readiness work
@@ -64,9 +64,6 @@ import {
   type UnavailableToolDescriber,
 } from './toolExecutor';
 import { ToolScheduler } from './toolScheduler';
-// Loads the `DomainEventMap` augmentation for the `tool.call.*` / `tool.result`
-// events this service publishes (the augmentation lives with the event
-// definitions; without an import it would not enter every consumer's program).
 import './toolExecutorEvents';
 
 const ABORT_GRACE_MS = 2_000;

@@ -1,14 +1,10 @@
 /**
- * `kosong/model` domain (L2) — host-provided default headers for outbound
+ * `kosong/model` domain — host-provided default headers for outbound
  * provider requests.
  *
- * Mirrors v1's `kimiRequestHeaders`: the host (CLI / server) builds the full
- * Kimi identity headers (`User-Agent` + `X-Msh-*`) through
- * `createKimiDefaultHeaders` and seeds them here. `ModelCatalog` merges them
- * per vendor — the full set for vendors whose definition declares
- * `hostHeaders: 'full'`, only the `User-Agent` for everyone else (so device
- * identity never leaks to third-party endpoints). Defaults to empty so
- * non-host contexts (tests, embedders) send no extra headers.
+ * The host (CLI / server) builds the full Kimi identity headers (`User-Agent`
+ * + `X-Msh-*`) and seeds them here. Defaults to empty so non-host contexts
+ * (tests, embedders) send no extra headers.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

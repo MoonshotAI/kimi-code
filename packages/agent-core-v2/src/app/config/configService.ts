@@ -1,5 +1,5 @@
 /**
- * `config` domain (L2) — `IConfigRegistry` and `IConfigService` implementations.
+ * `config` domain — `IConfigRegistry` and `IConfigService` implementations.
  *
  * Owns the section registry and the layered global config state: resolves a
  * value by precedence across defaults, the user config file, and per-run memory
@@ -247,8 +247,6 @@ export class ConfigService extends Disposable implements IConfigService {
     this.configKey = this.bootstrap.configKey;
     this._register(this.registry.onDidRegisterSection((e) => this.revalidateDomain(e.domain)));
     this._register(this.registry.onDidRegisterOverlay(() => this.reapplyOverlays()));
-    // One-shot config migrations run before the first load (best-effort, never
-    // throws): rewrites a persisted thinking.effort "max" to "high" once.
     const { configKey } = this;
     const { homeDir } = this.bootstrap;
     this.ready = (async () => {
@@ -455,13 +453,6 @@ export class ConfigService extends Disposable implements IConfigService {
     this.applyEnvOverlay(next);
     this.effective = next;
 
-    // Commit candidates: the explicitly touched domains PLUS anything the
-    // recompute actually changed. Section env bindings and effective overlays
-    // rewrite sibling domains the caller's list never names (e.g. setting
-    // `[secondary_model]` synthesizes a derived entry into `models`; removing
-    // the recipe retracts it). `commit` re-checks every candidate with
-    // deepEqual before firing, so widening the set is free — missing a real
-    // change is what costs (a stale registry downstream).
     const candidates = new Set(
       domains ?? [...Object.keys(previous), ...Object.keys(next)],
     );

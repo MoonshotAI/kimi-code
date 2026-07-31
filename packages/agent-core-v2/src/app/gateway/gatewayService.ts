@@ -1,14 +1,12 @@
 /**
- * `gateway` domain (L7) — `IRestGateway` / `IWSGateway` implementations.
+ * `gateway` domain — `IRestGateway` / `IWSGateway` implementations.
  *
- * Owns the REST/WS entry points; resolves sessions through the live handler
- * registry (`workspaceLifecycle` → the handler's `IWorkspaceHandlerService`),
- * agents through `agentLifecycle`, drives turns through `prompt` / `loop`,
- * and flushes logs through `log`. Bound at App scope.
+ * Owns the REST/WS entry points; resolves sessions through the live workspace
+ * handler registry and agents through the agent lifecycle, drives turns, and
+ * flushes logs. Bound at App scope.
  *
  * WS event fan-out (sequencing, journaling, replay, per-connection dispatch)
- * is a transport concern and lives in the edge package (`packages/kap-server`)
- * on top of `IEventService` + `IAgentRecordService` — not here.
+ * is a transport concern of the edge server, not of this module.
  */
 
 import {
@@ -20,7 +18,7 @@ import {
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ILogService } from '#/_base/log/log';
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
-import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
+import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentLoopService } from '#/agent/loop/loop';
 
@@ -45,7 +43,7 @@ export class RestGateway implements IRestGateway {
 
   private liveSession(sessionId: string) {
     for (const handler of this.workspaceLifecycle.handlers.list()) {
-      const handle = handler.accessor.get(IWorkspaceHandlerService).get(sessionId);
+      const handle = handler.accessor.get(ISessionLifecycleService).get(sessionId);
       if (handle !== undefined) return handle;
     }
     return undefined;

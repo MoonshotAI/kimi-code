@@ -22,11 +22,15 @@
 // and gives ~5-10x compression for dense docID ranges.
 
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { crc32 } from './crc32.js';
 
 const HEADER_LEN = 2 + 4 + 4; // termLen + df + payloadLen (term is variable)
 const CRC_LEN = 4;
+// Coalesce record writes into ~1 MiB writev batches; each batch await is also
+// the rebuild's event-loop yield point.
+const FLUSH_BYTES = 1 << 20;
 
 // ---- varint (unsigned LEB128, uint32) ------------------------------------
 
@@ -147,7 +151,8 @@ export interface PostingEntry {
  * Append-only postings file with synchronous positioned reads. Synchronous I/O
  * is deliberate: `TextIndex.search()` is synchronous (so `db.search()` /
  * `db.query()` keep their sync API), and hot records are served from the OS
- * page cache or the in-memory LRU cache anyway.
+ * page cache or the in-memory LRU cache anyway. Rewrites ({@link rebuild}) are
+ * the async counterpart — they run in the background of a live database.
  */
 export class PostingsFile {
   private fd: number | null = null;
@@ -157,7 +162,7 @@ export class PostingsFile {
   /**
    * Open an existing postings file for positioned reads. Throws if the file is
    * missing — callers treat a missing file as an empty index. Read-only: the
-   * file is only ever rewritten wholesale by {@link rebuildSync}, so the fd
+   * file is only ever rewritten wholesale by {@link rebuild}, so the fd
    * stays valid until the next rebuild (which the caller must close + reopen).
    */
   static open(filePath: string): PostingsFile {
@@ -197,33 +202,53 @@ export class PostingsFile {
    * atomically renames over `<path>`. Returns the new term dictionary. The old
    * file (if any) is replaced only after the new one is fully durable, so a
    * crash mid-build leaves the previous file intact.
+   *
+   * Async so a large rebuild does not starve the event loop: record writes are
+   * coalesced into ~1 MiB writev batches (each batch await is a yield point).
+   * The commit section is SYNCHRONOUS — `hooks.beforeRename` (e.g. closing the
+   * previous read handle, required on Windows) and the rename itself run as
+   * one atomic step, so a reader swaps over without an interleavable gap.
    */
-  static rebuildSync(
+  static async rebuild(
     filePath: string,
     iter: Iterable<{ term: string; entries: readonly (readonly [number, number])[] }>,
-  ): Map<string, PostingEntry> {
+    hooks: { beforeRename?: () => void } = {},
+  ): Promise<Map<string, PostingEntry>> {
     const tmp = filePath + '.tmp';
-    const fd = fs.openSync(tmp, 'w');
     const dict = new Map<string, PostingEntry>();
     let off = 0;
+    let batch: Buffer[] = [];
+    let batchBytes = 0;
+    const fh = await fsp.open(tmp, 'w');
+    const flushBatch = async (): Promise<void> => {
+      if (batch.length === 0) return;
+      const buf = Buffer.concat(batch);
+      batch = [];
+      batchBytes = 0;
+      let written = 0;
+      while (written < buf.length) {
+        const { bytesWritten } = await fh.write(buf, written);
+        if (bytesWritten === 0) throw new Error('postings: rebuild write made no progress');
+        written += bytesWritten;
+      }
+    };
     try {
       for (const { term, entries } of iter) {
         if (entries.length === 0) continue;
         const payload = encodePostingList(entries);
         const rec = encodeRecord(term, entries.length, payload);
-        let written = 0;
-        while (written < rec.length) {
-          const w = fs.writeSync(fd, rec, written, rec.length - written, off + written);
-          if (w === 0) throw new Error('postings: rebuild write made no progress');
-          written += w;
-        }
         dict.set(term, { off, len: rec.length, df: entries.length });
+        batch.push(rec);
+        batchBytes += rec.length;
         off += rec.length;
+        if (batchBytes >= FLUSH_BYTES) await flushBatch();
       }
-      fs.fsyncSync(fd);
+      await flushBatch();
+      await fh.sync();
     } finally {
-      fs.closeSync(fd);
+      await fh.close();
     }
+    hooks.beforeRename?.();
     fs.renameSync(tmp, filePath);
     // Best-effort directory fsync so the rename survives a crash.
     try {

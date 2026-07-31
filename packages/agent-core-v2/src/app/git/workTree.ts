@@ -1,5 +1,5 @@
 /**
- * `git` domain (L1) — git work-tree discovery.
+ * `git` domain — git work-tree discovery.
  *
  * Walks up from a directory to find the enclosing git work tree: the nearest
  * ancestor containing a `.git` entry, either a directory (plain repository)
@@ -7,9 +7,7 @@
  * target is resolved into `controlDirPath`. Entries that are neither — or
  * files without a parseable pointer — do not count and the walk continues.
  * All filesystem access goes through the os `IHostFileSystem` and paths are
- * pathe-normalized (Windows-aware, forward slashes). Pure functions — the
- * single work-tree probe behind `IGitService.findWorkTree` and the direct
- * consumers in `profile` / `mcp`.
+ * pathe-normalized (Windows-aware, forward slashes). Pure functions.
  */
 
 import { dirname, isAbsolute, join, normalize } from 'pathe';
@@ -17,15 +15,8 @@ import { dirname, isAbsolute, join, normalize } from 'pathe';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 export interface GitWorkTree {
-  /** Ancestor directory that contains the `.git` entry. */
   readonly root: string;
-  /** Path of the `.git` entry itself (`<root>/.git`). */
   readonly dotGitPath: string;
-  /**
-   * The repository's real git control directory — `dotGitPath` for a plain
-   * repository, the resolved `gitdir:` target for a linked worktree /
-   * submodule.
-   */
   readonly controlDirPath: string;
 }
 

@@ -1,14 +1,13 @@
 /**
- * `workspaceMcp` domain (L5) — `IWorkspaceMcpService` implementation.
+ * `workspaceMcp` domain — `IWorkspaceMcpService` implementation.
  *
  * Owns the handler-wide `McpConnectionManager` (built at construction,
- * shared by every session of the workspace) and nothing else: where the
- * server set comes from is the `workspaceMcpConfig` domain's business. This
- * service drives the initial connect from the config domain's snapshot,
- * applies its reconciled change events incrementally (serialized on a
- * mutation tail, always after the initial connect settles), feeds the
- * manager's global timeout defaults from the config domain's tunables at
- * each (re)connect, and reports connection telemetry for the initial load.
+ * shared by every session of the workspace). This service drives the
+ * initial connect from the config domain's snapshot, applies its reconciled
+ * change events incrementally (serialized on a mutation tail, always after
+ * the initial connect settles), feeds the manager's global timeout defaults
+ * from the config domain's tunables at each (re)connect, and reports
+ * connection telemetry for the initial load.
  * An outright initial-load or change-apply failure is logged (per-server
  * failures are status entries). The manager (and its stdio child processes,
  * whose cwd is the handler root) lives as long as the handler — i.e. the
@@ -38,7 +37,6 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
 
   private readonly manager: McpConnectionManager;
   readonly ready: Promise<void>;
-  /** Serializes change applications against each other. */
   private mutationTail: Promise<void> = Promise.resolve();
 
   constructor(
@@ -93,7 +91,6 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     this.trackMcpInitialLoad();
   }
 
-  /** Applies a change after the initial connect settles, serialized. */
   private scheduleApply(change: McpServersChange): void {
     void this.ready
       .then(() => this.mutate(() => this.apply(change)))

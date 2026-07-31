@@ -33,6 +33,10 @@ import { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoade
 import { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
+import { IAppStateService } from '#/app/state/appState';
+import { AppStateService } from '#/app/state/appStateService';
+import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
+import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
@@ -41,8 +45,8 @@ import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
 import { Error2, ErrorCodes } from '#/errors';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
-import { WorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandlerService';
+import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceToolPolicy';
 import { WorkspaceToolPolicyService } from '#/workspace/workspaceToolPolicy/workspaceToolPolicyService';
 import { recordingTelemetry, type TelemetryRecord } from '../telemetry/stubs';
@@ -254,10 +258,10 @@ describe('WorkspaceLifecycleService', () => {
     );
     registerScopedService(
       LifecycleScope.Workspace,
-      IWorkspaceHandlerService,
-      WorkspaceHandlerService,
+      ISessionLifecycleService,
+      SessionLifecycleService,
       ScopeActivation.OnScopeCreated,
-      'workspaceHandler',
+      'sessionLifecycle',
     );
     registerScopedService(
       LifecycleScope.Workspace,
@@ -272,6 +276,20 @@ describe('WorkspaceLifecycleService', () => {
       WorkspaceDirsService,
       ScopeActivation.OnScopeCreated,
       'workspaceDirs',
+    );
+    registerScopedService(
+      LifecycleScope.App,
+      IAppStateService,
+      AppStateService,
+      ScopeActivation.OnScopeCreated,
+      'state',
+    );
+    registerScopedService(
+      LifecycleScope.Workspace,
+      IWorkspaceStateService,
+      WorkspaceStateService,
+      ScopeActivation.OnScopeCreated,
+      'state',
     );
     registerScopedService(
       LifecycleScope.App,
@@ -390,7 +408,7 @@ describe('WorkspaceLifecycleService', () => {
     ]);
     expect(handlerA).toBe(handlerB);
 
-    const sessions = handlerA.accessor.get(IWorkspaceHandlerService);
+    const sessions = handlerA.accessor.get(ISessionLifecycleService);
     const [s1, s2] = await Promise.all([
       sessions.create({ sessionId: 's1', workDir: '/tmp/proj' }),
       sessions.create({ sessionId: 's2', workDir: '/tmp/proj' }),
@@ -493,7 +511,7 @@ describe('WorkspaceLifecycleService', () => {
     it('getLiveSessionById finds only live sessions', async () => {
       const lifecycle = build();
       const handler = await lifecycle.handlerFor({ root: '/tmp/proj' });
-      const sessions = handler.accessor.get(IWorkspaceHandlerService);
+      const sessions = handler.accessor.get(ISessionLifecycleService);
       await sessions.create({ sessionId: 's1', workDir: '/tmp/proj' });
 
       expect(getLiveSessionById(host!.app.accessor, 's1')?.id).toBe('s1');
@@ -508,13 +526,13 @@ describe('WorkspaceLifecycleService', () => {
       );
 
       const first = await lifecycle.handlerFor({ root: '/tmp/proj' });
-      await first.accessor.get(IWorkspaceHandlerService).create({ sessionId: 's1', workDir: '/tmp/proj' });
+      await first.accessor.get(ISessionLifecycleService).create({ sessionId: 's1', workDir: '/tmp/proj' });
       // Materialized AFTER the follow subscription — still observed.
       const second = await lifecycle.handlerFor({ root: '/tmp/other' });
-      await second.accessor.get(IWorkspaceHandlerService).create({ sessionId: 's2', workDir: '/tmp/other' });
+      await second.accessor.get(ISessionLifecycleService).create({ sessionId: 's2', workDir: '/tmp/other' });
 
-      await first.accessor.get(IWorkspaceHandlerService).close('s1');
-      await second.accessor.get(IWorkspaceHandlerService).close('s2');
+      await first.accessor.get(ISessionLifecycleService).close('s1');
+      await second.accessor.get(ISessionLifecycleService).close('s2');
 
       expect(closed.toSorted()).toEqual(['s1', 's2']);
       sub.dispose();

@@ -1,5 +1,5 @@
 /**
- * `workspaceSkillCatalog` domain (L3) — explicit `ISkillSource` producer.
+ * `workspaceSkillCatalog` domain — explicit `ISkillSource` producer.
  *
  * Mirrors v1 SDK `skillDirs`: when runtime options provide `explicitDirs`, this
  * source contributes those directories as the user source, resolving relative

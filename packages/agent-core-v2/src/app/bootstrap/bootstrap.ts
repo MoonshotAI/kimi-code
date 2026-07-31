@@ -1,5 +1,5 @@
 /**
- * `bootstrap` domain (L1) — frozen startup snapshot and composition root.
+ * `bootstrap` domain — frozen startup snapshot and composition root.
  *
  * Defines the `IBootstrapService`, the snapshot of the world the process runs
  * in, resolved once at startup and frozen for the process: observed host facts
@@ -85,8 +85,6 @@ export interface BootstrapInput {
   readonly platform?: NodeJS.Platform;
   readonly arch?: string;
   readonly cwd?: string;
-  /** Required: every process names its host. There is deliberately no default
-      — a fabricated identity would silently misreport the host upstream. */
   readonly clientIdentity: KimiHostIdentity;
 }
 

@@ -1,5 +1,5 @@
 /**
- * `toolExecutor` domain (L3) — tool-execution event and hook contexts.
+ * `toolExecutor` domain — tool-execution event and hook contexts.
  *
  * Defines the event objects and context records carried by
  * `IAgentToolExecutorService`'s execution-interception surface:
@@ -22,8 +22,6 @@
  *   call reaches it — including preflight-rejected ones (missing/unavailable
  *   tool, guard denial, invalid args), which arrive without `tool` set.
  *
- * Participants such as `permissionGate`, `toolDedupe`, `externalHooks`,
- * `goal`, `plan`, `swarm`, `btw`, and `mcp` register through these surfaces.
  * Pure contract (types only); no scoped service.
  */
 
@@ -53,24 +51,9 @@ export interface BeforeExecuteDecision {
 }
 
 export interface BeforeToolExecuteEvent extends ResolvedToolExecutionHookContext {
-  /**
-   * Replace the execution with the given tool result: an `isError: true`
-   * result reads as a denial, anything else as a short-circuit with a
-   * synthetic result. First veto wins; later vetoes are ignored.
-   */
   veto(result: ExecutableToolResult): void;
-  /** Allow the call and end all adjudication: no further listener runs and no pending `waitUntil` factory is invoked. */
   allow(): void;
-  /** Allow the call but leave an `executionMetadata` trace; does not stop other listeners from adjudicating. */
   pass(metadata?: unknown): void;
-  /**
-   * Declare an adjudication that needs external input (e.g. an approval
-   * round-trip). The factory is cold: the fire side invokes it only after
-   * every listener ran without a veto or an allow, so its side effects
-   * (Interactions) can never happen while another listener would have
-   * denied. Returns the decision (`veto` to replace the execution,
-   * `executionMetadata` to pass with a trace), or `undefined` to allow.
-   */
   waitUntil(factory: () => Promise<BeforeExecuteDecision | undefined>): void;
 }
 

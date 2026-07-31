@@ -1,12 +1,9 @@
 /**
- * `mcpCore` domain (L2) — MCP protocol types and the minimal client contract
- * `ToolManager` consumes.
+ * `mcpCore` domain — MCP protocol types and the minimal client contract.
  *
- * Lives in its own file (rather than `toolset.ts`) because the agent-side
- * tool-runtime layer is `ExecutableTool`, not the legacy `Toolset` interface.
- * What remains here is the wire-level surface: tool definitions returned by
- * `tools/list`, the `tools/call` result shape, and the small interface that
- * lets tests inject a fake transport without pulling in the MCP SDK type graph.
+ * The wire-level surface: tool definitions returned by `tools/list`, the
+ * `tools/call` result shape, and the small interface that lets tests inject a
+ * fake transport without pulling in the MCP SDK type graph.
  */
 
 /**
@@ -50,12 +47,6 @@ export interface MCPClient {
     args: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<MCPToolResult>;
-  /**
-   * Sends a protocol-level `ping` with a short built-in timeout, so a hung
-   * server rejects instead of blocking. Used to probe liveness after an
-   * ambiguous call failure; a server that answers in any way — even with
-   * `MethodNotFound` — proves the transport is usable.
-   */
   ping(signal?: AbortSignal): Promise<void>;
 }
 

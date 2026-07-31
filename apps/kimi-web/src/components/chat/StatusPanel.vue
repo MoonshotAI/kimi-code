@@ -52,10 +52,11 @@ function permLabel(p: PermissionMode): string {
   return t('status.permissionManual');
 }
 
+// Risk progression matches the Composer: yolo = warning, auto = danger.
 const permColor = computed(() => {
   const p = props.status.permission;
-  if (p === 'yolo') return 'var(--color-danger)';
-  if (p === 'auto') return 'var(--color-warning)';
+  if (p === 'yolo') return 'var(--color-warning)';
+  if (p === 'auto') return 'var(--color-danger)';
   return 'var(--color-text)';
 });
 

@@ -1,5 +1,5 @@
 /**
- * `activityView` domain (L4) — `IAgentActivityView` implementation.
+ * `activityView` domain — `IAgentActivityView` implementation.
  *
  * A pure fold of the agent's own event bus: turn boundaries drive the turn
  * slice (active → detail updates → ended → `lastTurn`), step/delta/tool/retry
@@ -218,8 +218,6 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
     super.dispose();
   }
 
-  // -------------------------------------------------------------------------
-
   private seedFromLoop(): void {
     const status = this.loop.status();
     if (status.state !== 'running' || status.activeTurnId === undefined) return;
@@ -227,8 +225,6 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
     this.publish();
   }
 
-  /** Seed the background slice from the task registry (restart-persistent
-   *  tasks may already be running when the view is created). */
   private seedFromTasks(): void {
     for (const info of this.tasks.list(true)) {
       this.background.set(info.taskId, { kind: info.kind, id: info.taskId, since: info.startedAt });
@@ -252,17 +248,12 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
 
   private onTurnStarted(turnId: number, origin?: PromptOrigin): void {
     this.turn = new MutableTurn(turnId, origin ?? USER_PROMPT_ORIGIN);
-    // A fresh turn means there is no current outcome: drop the previous
-    // turn's terminal reason so consumers (the work_changed fold, REST
-    // session facts) stop reporting it while this turn runs. turn.ended
-    // publishes the new outcome when the turn finishes.
     this.lastTurn = undefined;
     this.publish();
   }
 
   private onTurnEnded(turnId: number, reason: TurnEndReason): void {
     if (this.turn === undefined || this.turn.turnId !== turnId) {
-      // A turn the view never saw (e.g. seeded late) — still record the outcome.
       this.lastTurn = { turnId, reason, at: Date.now() };
       this.publish();
       return;
@@ -327,8 +318,6 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
       t.pendingApprovals.delete(toolCallId);
     });
   }
-
-  // -------------------------------------------------------------------------
 
   private mutateTurn(mutate: (t: MutableTurn) => void): void {
     if (this.turn === undefined) return;

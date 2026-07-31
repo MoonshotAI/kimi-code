@@ -19,12 +19,13 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentPlanService } from '#/agent/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
+import { IConfigService } from '#/app/config/config';
 import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import { ISessionLegacyService } from '#/app/sessionLegacy/sessionLegacy';
 import { SessionLegacyService } from '#/app/sessionLegacy/sessionLegacyService';
 import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
-import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
+import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -51,7 +52,7 @@ function stubSessionChain(ix: TestInstantiationService, session: ISessionScopeHa
     kind: LifecycleScope.Workspace,
     accessor: accessor([
       [
-        IWorkspaceHandlerService,
+        ISessionLifecycleService,
         {
           resume: () => Promise.resolve(session),
           get: () => session,
@@ -153,6 +154,70 @@ describe('Session legacy status (best-effort runtime state)', () => {
       model: 'removed-model',
       thinking_level: 'high',
       max_context_tokens: 0,
+    });
+  });
+
+  it('reports an empty thinking level for a never-bound main agent', async () => {
+    // A fresh session's main agent is materialized unbound (no Profile / Model
+    // — see kap-server's ensureMainAgent). The wire model's initial
+    // thinkingLevel is the zero value 'off'; reporting it would make clients
+    // fold a level nobody chose into the session's real state, so the status
+    // edge must report '' (mirroring `model: undefined`) instead.
+    const profile = {
+      _serviceBrand: undefined,
+      data: () => ({
+        cwd: '/workspace',
+        modelAlias: undefined,
+        modelCapabilities: UNKNOWN_CAPABILITY,
+        thinkingLevel: 'off',
+        systemPrompt: '',
+      }),
+      getModel: () => '',
+      getModelCapabilities: () => UNKNOWN_CAPABILITY,
+      getEffectiveThinkingLevel: () => 'off',
+    } as unknown as IAgentProfileService;
+    const agent: IAgentScopeHandle = {
+      id: 'main',
+      kind: LifecycleScope.Agent,
+      accessor: accessor([
+        [IAgentProfileService, profile],
+        [IAgentContextSizeService, { get: () => ({ size: 0, measured: 0, estimated: 0 }) }],
+        [IAgentPermissionModeService, { mode: 'manual' }],
+        [IAgentPlanService, { status: () => Promise.resolve(null) }],
+        [IAgentSwarmService, { isActive: false }],
+        // Unbound: assembleStatus resolves the default model's context cap,
+        // which reads the `defaultModel` config section first.
+        [IConfigService, { get: () => undefined }],
+        [
+          IAgentActivityView,
+          { state: () => ({ lifecycle: 'ready', background: [] }) },
+        ],
+      ]),
+      dispose: () => {},
+    };
+    const agents = {
+      create: () => Promise.resolve(agent),
+      whenReady: () => Promise.resolve(agent),
+      list: () => [agent],
+    } as unknown as IAgentLifecycleService;
+    const session: ISessionScopeHandle = {
+      id: 'session-unbound',
+      kind: LifecycleScope.Session,
+      accessor: accessor([
+        [IAgentLifecycleService, agents],
+        [ISessionCronService, { _serviceBrand: undefined }],
+      ]),
+      dispose: () => {},
+    };
+    stubSessionChain(ix, session);
+    ix.set(ISessionLegacyService, new SyncDescriptor(SessionLegacyService));
+
+    const status = await ix.get(ISessionLegacyService).status('session-unbound');
+
+    expect(status).toMatchObject({
+      busy: false,
+      model: undefined,
+      thinking_level: '',
     });
   });
 

@@ -1,8 +1,8 @@
 /**
- * `subagent` domain (L6) — caller-side mirroring of an agent run.
+ * `subagent` domain — caller-side mirroring of an agent run.
  *
- * When one agent drives another through `ISessionSubagentService.run` (the
- * `Agent` tool, the swarm scheduler), the *requesting* agent surfaces that run
+ * When one agent drives another through `ISessionSubagentService.run`, the
+ * *requesting* agent surfaces that run
  * on its own record stream so the UI can nest the child transcript under the
  * launching tool call, external hooks fire, and telemetry is tracked. That
  * requester ↔ target association is business data of this wrapper layer — the
@@ -10,15 +10,12 @@
  *
  * External hooks (`SubagentStart` / `SubagentStop`) fire by observation, like
  * every other external hook: this wrapper announces "a run is about to start"
- * / "...has stopped" through the `ISessionSubagentService` agent-run hook slot
- * and stop event, and the Session-scope `externalHooks` adapter registers its
- * own listeners there to translate them into the configured external hook
- * commands.
+ * / "...has stopped" through the `ISessionSubagentService` agent-run hook
+ * slot and stop event.
  *
  * Wire shape note: the signals are still named `subagent.spawned / started /
  * completed / failed` and telemetry still tracks `subagent_created` so existing
- * session recordings and dashboards stay valid. Rename lives on a separate
- * wire-cleanup PR.
+ * session recordings and dashboards stay valid.
  */
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';

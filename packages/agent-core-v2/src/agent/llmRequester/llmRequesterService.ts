@@ -1,5 +1,5 @@
 /**
- * `llmRequester` domain (L3) — `IAgentLLMRequesterService` implementation.
+ * `llmRequester` domain — `IAgentLLMRequesterService` implementation.
  *
  * Assembles per-turn `ModelRequestInput` from `profile` (system prompt),
  * `contextMemory` + `contextProjector` (history), `toolRegistry` (tools), and
@@ -8,8 +8,7 @@
  * params, then drives a bounded request chain through the `ModelRequester`
  * resolved from `IModelCatalog`: one primary `requester.request(input, signal,
  * params)` attempt plus projection rebuilds for request structure or media
- * compatibility; general retry policy remains in the loop's `stepRetry`
- * plugin. Before each request the projected messages pass through `media`'s
+ * compatibility. Before each request the projected messages pass through `media`'s
  * video resolver, which rewrites every `kimi-file://` prompt-video reference
  * to a provider-acceptable part (uploaded `ms://`, inline base64, or a
  * `<video path>` tag) so the internal reference never reaches the wire. When a

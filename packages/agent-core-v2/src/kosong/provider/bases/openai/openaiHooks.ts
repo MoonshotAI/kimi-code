@@ -1,9 +1,9 @@
 /**
- * `kosong/provider` domain (L2) — the ONLY composition point from resolved
+ * `kosong/provider` domain — the ONLY composition point from resolved
  * traits to the OpenAI Chat Completions hook set, plus the construction-time
- * declaration aggregators every contrib factory uses.
+ * declaration aggregators.
  *
- * Composition rules (restated from the L1 trait contract):
+ * Composition rules:
  *
  *  - Pipeline hooks (`convertMessage` / `mergeHistory` / `buildParams`) chain
  *    in trait order, each stage receiving the previous stage's output;
@@ -27,8 +27,6 @@ export function composeOpenAIChatHooks(
 ): OpenAIChatCompletionsHooks | undefined {
   const hooks: OpenAIChatCompletionsHooks = {};
 
-  // Pipeline: convertMessage — chained in trait order; any stage returning
-  // null drops the message.
   const messageShapers = traits.filter(({ trait }) => trait.convertMessage !== undefined);
   if (messageShapers.length > 0) {
     hooks.convertMessage = (message, converted) => {
@@ -41,8 +39,6 @@ export function composeOpenAIChatHooks(
     };
   }
 
-  // Pipeline: mergeHistory — chained in trait order; undefined leaves the
-  // history unchanged.
   const historyMergers = traits.filter(({ trait }) => trait.mergeHistory !== undefined);
   if (historyMergers.length > 0) {
     hooks.mergeHistory = (messages) => {
@@ -55,7 +51,6 @@ export function composeOpenAIChatHooks(
     };
   }
 
-  // Pipeline: buildParams — chained in trait order, last hook before send.
   const paramsBuilders = traits.filter(({ trait }) => trait.buildParams !== undefined);
   if (paramsBuilders.length > 0) {
     hooks.buildParams = (params) => {
@@ -68,7 +63,6 @@ export function composeOpenAIChatHooks(
     };
   }
 
-  // Single-value hooks — bound in trait order, last declarer wins.
   for (const { trait, context } of traits) {
     if (trait.convertTool !== undefined) {
       hooks.convertTool = (tool: Tool) => trait.convertTool!(tool, context);
@@ -109,12 +103,6 @@ export function composeOpenAIChatHooks(
   return Object.keys(hooks).length > 0 ? hooks : undefined;
 }
 
-/**
- * The aggregated construction-time endpoint declaration: env fallback chains
- * concatenated in trait order (first resolvable value wins), `defaultBaseUrl`
- * last-declarer-wins. `undefined` when NO trait declares an endpoint at all —
- * the contrib factory then lets the base use its own environment defaults.
- */
 export interface AggregatedEndpoint {
   readonly apiKeyEnv: readonly string[];
   readonly baseUrlEnv: readonly string[];
@@ -138,7 +126,6 @@ export function traitEndpoint(traits: readonly ResolvedTrait[]): AggregatedEndpo
   return declared ? { apiKeyEnv, baseUrlEnv, defaultBaseUrl } : undefined;
 }
 
-/** The first non-empty `process.env` value in the chain, in order. */
 export function firstProcessEnv(names: readonly string[] | undefined): string | undefined {
   if (names === undefined) return undefined;
   for (const name of names) {
@@ -148,12 +135,6 @@ export function firstProcessEnv(names: readonly string[] | undefined): string | 
   return undefined;
 }
 
-/**
- * Aggregate the `provides` declarations of resolved traits: construction-time
- * extra base options, later declarer wins per key. The contrib factory
- * spreads the result UNDER the explicit config-derived options, so explicit
- * configuration always wins.
- */
 export function traitProvides(
   traits: readonly ResolvedTrait[],
 ): Record<string, unknown> | undefined {
@@ -167,10 +148,6 @@ export function traitProvides(
   return provides;
 }
 
-/**
- * Drop undefined-valued keys so an explicit-but-absent config value never
- * clobbers a `provides`-supplied option when the factory spreads them.
- */
 export function compactObject<T extends Record<string, unknown>>(obj: T): Partial<T> {
   const out: Partial<T> = {};
   for (const [key, value] of Object.entries(obj)) {

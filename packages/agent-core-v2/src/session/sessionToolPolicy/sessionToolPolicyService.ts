@@ -1,5 +1,5 @@
 /**
- * `sessionToolPolicy` domain (L3) — persisted session tool-policy service.
+ * `sessionToolPolicy` domain — persisted session tool-policy service.
  *
  * Stores the client-managed denylist as one atomic document below the session
  * scope and serializes replacements. A successful replacement awaits all

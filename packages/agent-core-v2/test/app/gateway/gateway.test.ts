@@ -12,7 +12,7 @@ import { RestGateway } from '#/app/gateway/gatewayService';
 import { ILogService } from '#/_base/log/log';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
-import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
+import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { createHooks } from '#/hooks';
 import { stubLog } from '../../_base/log/stubs';
@@ -88,7 +88,7 @@ describe('RestGateway', () => {
       dispose: () => {},
     };
 
-    const handlerService: IWorkspaceHandlerService = {
+    const sessionLifecycle: ISessionLifecycleService = {
       _serviceBrand: undefined,
       onDidCreateSession: () => ({ dispose: () => {} }),
       onDidCloseSession: () => ({ dispose: () => {} }),
@@ -107,7 +107,7 @@ describe('RestGateway', () => {
     const handlerHandle = {
       id: 'wd_stub',
       kind: LifecycleScope.Workspace,
-      accessor: makeAccessor([[IWorkspaceHandlerService, handlerService]]),
+      accessor: makeAccessor([[ISessionLifecycleService, sessionLifecycle]]),
       dispose: () => {},
     } as const;
     ix.stub(IWorkspaceLifecycleService, {

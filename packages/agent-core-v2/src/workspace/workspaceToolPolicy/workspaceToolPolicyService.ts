@@ -1,5 +1,5 @@
 /**
- * `workspaceToolPolicy` domain (L2) — `IWorkspaceToolPolicy` implementation.
+ * `workspaceToolPolicy` domain — `IWorkspaceToolPolicy` implementation.
  *
  * Computes the os-level disabled-tool set from the runtime capabilities the
  * handler binds (`IWorkspaceContext.osBackendId`). The local runtime carries
@@ -21,19 +21,6 @@ import {
 
 import { IWorkspaceToolPolicy } from './workspaceToolPolicy';
 
-/**
- * The os-level veto set for one os backend. Pure so the capability mapping is
- * unit-testable without a scope. The local backend has every capability, so
- * it disables nothing.
- *
- * An UNKNOWN backend also disables nothing — that fail-open is a deliberate
- * choice: the veto is a safety override, and guessing restrictions for a
- * backend nobody has mapped would break tools on a runtime that may be fully
- * capable. The cost is the opposite silence: a NEW runtime that forgets to
- * extend this mapping ships with no os-level veto. When a new os backend
- * lands, extend this mapping (or seed its own `IWorkspaceToolPolicy`) as
- * part of the runtime bring-up.
- */
 export function computeCapabilityDisabledTools(osBackendId: string): readonly string[] {
   if (osBackendId === LOCAL_OS_BACKEND_ID) return [];
   return [];

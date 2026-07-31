@@ -44,7 +44,7 @@ import {
 import { writeExportZip } from '#/app/sessionExport/zip';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
-import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
+import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import { Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -910,7 +910,7 @@ function registerSessionExportServices(
           kind: LifecycleScope.Workspace,
           accessor: accessorFrom([
             [
-              IWorkspaceHandlerService,
+              ISessionLifecycleService,
               {
                 _serviceBrand: undefined,
                 onDidCreateSession: noopEvent,
@@ -932,7 +932,7 @@ function registerSessionExportServices(
                 createChild: async () => {
                   throw new Error('createChild should not be called by session export');
                 },
-              } satisfies IWorkspaceHandlerService,
+              } satisfies ISessionLifecycleService,
             ],
           ]),
           dispose: () => {},

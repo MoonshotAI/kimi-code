@@ -1,5 +1,5 @@
 /**
- * `mcpCore` domain (L2) — error codes.
+ * `mcpCore` domain — error codes.
  */
 
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';

@@ -1,5 +1,5 @@
 /**
- * `task` domain (L5) — wire Model (`TaskModel`) and the persisted
+ * `task` domain — wire Model (`TaskModel`) and the persisted
  * `task.started` (`taskStarted`) / `task.terminated` (`taskTerminated`) Ops
  * that record the durable task-info registry, plus the `task.started` /
  * `task.terminated` edge events declared on `DomainEventMap` and derived from
@@ -21,8 +21,7 @@
  * an optional bounded `outputTail` snapshot of the task's retained output for
  * that fold; the tail is fold-only and never enters the Model.
  * `AgentTaskPersistence` (per-task JSON documents + output logs) stays the
- * full-fidelity registry and is reconciled on resume. Consumed by the
- * Agent-scope `taskService`.
+ * full-fidelity registry and is reconciled on resume.
  */
 
 import { z } from 'zod';

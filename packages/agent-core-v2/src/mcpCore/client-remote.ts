@@ -1,5 +1,5 @@
 /**
- * `mcpCore` domain (L2) — remote (HTTP/SSE) server config guards and request-header builders.
+ * `mcpCore` domain — remote (HTTP/SSE) server config guards and request-header builders.
  */
 
 import type { McpRemoteServerConfig, McpServerConfig } from './config-schema';

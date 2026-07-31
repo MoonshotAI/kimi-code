@@ -1,5 +1,5 @@
 /**
- * `sessionAgentProfileCatalog` domain (L3) — `ISessionAgentProfileCatalog`
+ * `sessionAgentProfileCatalog` domain — `ISessionAgentProfileCatalog`
  * implementation.
  *
  * Projects the App-scope `IAgentProfileRegistry` into this session's merged
@@ -12,10 +12,9 @@
  * candidate wins, except that replacing a same-name `builtin` profile
  * requires `override: true` in the frontmatter — a non-override collision is
  * warned about and skipped to the next candidate. `ready` resolves
- * immediately: loader readiness is the handler's job — it awaits every
- * agent-profile loader of the workspace before publishing the session handle,
- * so the registry is already populated when this service is constructed, and
- * every later change arrives through `onDidChange`. Bound at Session scope.
+ * immediately: the registry is already populated when this service is
+ * constructed, and every later change arrives through `onDidChange`. Bound at
+ * Session scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
