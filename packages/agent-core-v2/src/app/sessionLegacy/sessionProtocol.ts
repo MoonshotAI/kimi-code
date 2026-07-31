@@ -82,6 +82,9 @@ export type UpdateSessionProfileRequest = z.infer<typeof updateSessionProfileReq
 export const sessionStatusResponseSchema = z.object({
   busy: z.boolean(),
   model: z.string().optional(),
+  // '' when the main agent is not bound yet — there is no level to report, and
+  // clients should fall back to their catalog default rather than treat the
+  // wire model's zero value as a real pick.
   thinking_level: z.string(),
   permission: z.string(),
   plan_mode: z.boolean(),

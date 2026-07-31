@@ -204,7 +204,11 @@ export class SessionLegacyService implements ISessionLegacyService {
     return {
       busy: this.readBusy(sessionId),
       model: model === '' ? undefined : model,
-      thinking_level: profile.getEffectiveThinkingLevel(),
+      // An unbound agent has no thinking level to report: the effective value
+      // would be the wire model's zero value ('off'), which clients fold in as
+      // the session's real pick. Report '' instead — same "nothing to report"
+      // convention as `model` above — so they fall back to the catalog default.
+      thinking_level: model === '' ? '' : profile.getEffectiveThinkingLevel(),
       permission: permission.mode,
       plan_mode: planData !== null,
       swarm_mode: swarm.isActive,
