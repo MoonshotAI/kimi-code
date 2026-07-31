@@ -332,6 +332,11 @@ export interface ExtendedState extends KimiClientState {
    * backend badge in the Sidebar.
    */
   backend: 'v1' | 'v2';
+  /** Effective experimental-flag state (flag id → enabled) reported by the
+   * server via GET /meta; `{}` until the first meta fetch and on servers too
+   * old to report it. Drives flag-gated UI (e.g. the secondary-model settings
+   * section). */
+  experimentalFlags: Record<string, boolean>;
   workspaceName: string;
   connection: ConnectionState;
   permission: PermissionMode;
@@ -427,6 +432,7 @@ const rawState: ExtendedState = reactive({
   serverVersion: '',
   dangerousBypassAuth: false,
   backend: 'v1',
+  experimentalFlags: {},
   workspaceName: 'kimi-code',
   connection: 'disconnected' as ConnectionState,
   permission: loadPermissionFromStorage(),
@@ -2542,6 +2548,7 @@ const loadMoreMessagesError = computed<boolean>(() => {
   return sid ? rawState.messagesLoadMoreErrorBySession[sid] ?? false : false;
 });
 const serverVersion = computed<string>(() => rawState.serverVersion);
+const experimentalFlags = computed<Record<string, boolean>>(() => rawState.experimentalFlags);
 const backend = computed<'v1' | 'v2'>(() => rawState.backend);
 const dangerousBypassAuth = computed<boolean>(() => rawState.dangerousBypassAuth);
 
@@ -3400,6 +3407,7 @@ export function useKimiWebClient() {
     serverVersion,
     backend,
     dangerousBypassAuth,
+    experimentalFlags,
     clearDangerousBypassAuth,
     initialized,
     connectIssue,

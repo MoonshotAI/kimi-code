@@ -789,6 +789,7 @@ export function toAppConfig(wire: WireConfig): AppConfig {
     providers,
     defaultProvider: wire.default_provider,
     defaultModel: wire.default_model,
+    secondaryModel: wire.secondary_model as AppConfig['secondaryModel'],
     models: wire.models,
     thinking: wire.thinking as { enabled?: boolean; effort?: string } | undefined,
     planMode: wire.plan_mode,

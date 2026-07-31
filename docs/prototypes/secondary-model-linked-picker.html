@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>子代理模型 · 模型+effort 联动选择 — 两种交互对比</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", sans-serif; background: #ececed; color: #1f1f1f; padding: 32px 20px 80px; }
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  .note { font-size: 12.5px; color: #666; margin: 0 0 24px; }
+  h2 { font-size: 14px; margin: 34px 0 6px; }
+  h2 .tag { font-weight: 400; font-size: 12px; color: #777; }
+  .desc { font-size: 12.5px; color: #666; margin: 0 0 12px; max-width: 760px; line-height: 1.6; }
+
+  /* ---- 设置弹窗框（还原设置页视觉） ---- */
+  .dialog { width: 780px; background: #fff; border-radius: 16px; box-shadow: 0 24px 64px rgba(0,0,0,.18), 0 4px 16px rgba(0,0,0,.08); display: flex; overflow: hidden; }
+  .rail { width: 148px; flex: none; padding: 52px 10px 16px; border-right: 0.5px solid rgba(0,0,0,.08); }
+  .rail .t { font-size: 15px; font-weight: 600; padding: 0 10px 14px; }
+  .rail .item { font-size: 13px; color: #333; padding: 7px 10px; border-radius: 7px; margin-bottom: 2px; }
+  .rail .item.on { background: #f0f0f1; font-weight: 550; }
+  .rail .item:not(.on) { color: rgba(0,0,0,.55); }
+  .panel { flex: 1; padding: 22px 24px 40px; min-height: 380px; position: relative; }
+  .sec-title { font-size: 15px; font-weight: 600; margin: 4px 0 12px; }
+
+  /* ---- 设置卡片 / 行 ---- */
+  .group { background: #fff; border: 0.5px solid rgba(0,0,0,.1); border-radius: 12px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 16px; }
+  .row + .row { border-top: 0.5px solid rgba(0,0,0,.07); }
+  .rlabel { font-size: 13.5px; font-weight: 550; }
+  .hint { display: block; font-size: 12px; font-weight: 400; color: rgba(0,0,0,.45); margin-top: 2px; max-width: 300px; }
+
+  /* ---- Select 触发器 ---- */
+  .trigger { position: relative; min-width: 240px; height: 34px; display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px; background: #fff; border: 0.5px solid rgba(0,0,0,.14); border-radius: 8px; font-size: 13px; cursor: pointer; user-select: none; }
+  .trigger .val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .trigger .val.unset { color: rgba(0,0,0,.42); }
+  .trigger .val .sep { color: rgba(0,0,0,.35); margin: 0 4px; }
+  .trigger .val .eff { color: rgba(0,0,0,.55); }
+  .trigger svg { flex: none; width: 12px; height: 12px; color: rgba(0,0,0,.45); transition: transform .15s; }
+  .trigger.open { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.18); }
+  .trigger.open svg { transform: rotate(180deg); }
+
+  /* ---- 下拉菜单（§03 菜单面） ---- */
+  .menu { position: absolute; top: calc(100% + 4px); right: 0; min-width: 240px; background: #fff; border: 0.5px solid rgba(0,0,0,.09); border-radius: 10px; box-shadow: 0 4px 14px rgba(0,0,0,.07), 0 12px 36px rgba(0,0,0,.13); padding: 4px; z-index: 30; animation: pop .12s ease-out; transform-origin: top right; max-height: 320px; overflow-y: auto; }
+  @keyframes pop { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: scale(1); } }
+  .gh { font-size: 11px; color: rgba(0,0,0,.42); padding: 8px 10px 3px; }
+  .opt { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+  .opt:hover, .opt.hl { background: rgba(0,0,0,.05); }
+  .opt .ck { width: 14px; flex: none; font-size: 12px; color: #1f1f1f; }
+  .opt .sub { margin-left: auto; font-size: 11.5px; color: rgba(0,0,0,.4); }
+  .opt.muted { color: rgba(0,0,0,.42); }
+
+  /* ---- 方案 B 双栏 ---- */
+  .menu.two { display: flex; padding: 0; width: 470px; overflow: hidden; }
+  .col-l { width: 252px; flex: none; border-right: 0.5px solid rgba(0,0,0,.08); padding: 4px; max-height: 320px; overflow-y: auto; }
+  .col-r { flex: 1; padding: 4px; background: rgba(0,0,0,.015); max-height: 320px; overflow-y: auto; }
+  .col-r .gh { padding-top: 8px; }
+  .col-l .opt.sel { background: rgba(0,0,0,.06); font-weight: 550; }
+
+  /* ---- 底部写入回显 ---- */
+  .echo { margin-top: 14px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; color: rgba(0,0,0,.5); background: rgba(0,0,0,.035); border-radius: 8px; padding: 8px 12px; white-space: pre-wrap; word-break: break-all; }
+  .echo b { color: #2563eb; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>子代理模型：模型 + effort 联动选择 — 两种交互</h1>
+<p class="note">两种形态都只保留一行设置项；选择后原子写入 <code>{model, default_effort}</code>。点开下拉实际操作对比。模型数据为示意（注意各模型 effort 集合不同，K2.7 Coding Highspeed 无 effort 列表）。</p>
+
+<h2>方案 A · 单 Select 组合选项 <span class="tag">— 复用现有 Select，选项按模型分组、组内列该模型的 effort</span></h2>
+<p class="desc">改动最小：键盘 / 焦点 / 下拉样式全部现成。缺点：模型多时清单变长（模型 × effort 平铺）；组头即模型名。</p>
+
+<div class="dialog" id="dlgA">
+  <div class="rail"><div class="t">设置</div><div class="item">通用</div><div class="item on">Agent</div><div class="item">账户</div><div class="item">高级</div></div>
+  <div class="panel">
+    <div class="sec-title">子代理</div>
+    <div class="group">
+      <div class="row">
+        <span class="rlabel">子代理模型<span class="hint">子代理（Agent / AgentSwarm 工具）默认使用的模型与思考强度</span></span>
+        <span class="trigger" id="trigA">
+          <span class="val unset" id="valA">未设置（跟随主模型）</span>
+          <svg viewBox="0 0 12 12" fill="none"><path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+      </div>
+    </div>
+    <div class="echo" id="echoA">// 尚未设置 —— 等价于 subagent 继承主模型</div>
+  </div>
+</div>
+
+<h2>方案 B · 双栏弹出面板 <span class="tag">— 新组件：左栏模型（按 provider 分组），右栏联动显示其 effort</span></h2>
+<p class="desc">交互更接近 TUI / IDE 的联动选择；右栏始终只显示当前模型支持的 effort，不会选错。缺点：新组件模式，需登记进 DesignSystemView，实现与维护成本更高。</p>
+
+<div class="dialog" id="dlgB">
+  <div class="rail"><div class="t">设置</div><div class="item">通用</div><div class="item on">Agent</div><div class="item">账户</div><div class="item">高级</div></div>
+  <div class="panel">
+    <div class="sec-title">子代理</div>
+    <div class="group">
+      <div class="row">
+        <span class="rlabel">子代理模型<span class="hint">子代理（Agent / AgentSwarm 工具）默认使用的模型与思考强度</span></span>
+        <span class="trigger" id="trigB">
+          <span class="val unset" id="valB">未设置（跟随主模型）</span>
+          <svg viewBox="0 0 12 12" fill="none"><path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+      </div>
+    </div>
+    <div class="echo" id="echoB">// 尚未设置 —— 等价于 subagent 继承主模型</div>
+  </div>
+</div>
+
+<script>
+// ---- 示意数据：每个模型支持的 effort 集合不同；efforts 为空 = 无 supportEfforts ----
+const MODELS = [
+  { provider: 'kimi', label: 'K3-256k', efforts: ['low', 'medium', 'high'] },
+  { provider: 'kimi', label: 'K2.7 Coding Highspeed', efforts: [] },
+  { provider: 'kimi', label: 'K2.7', efforts: ['low', 'high'] },
+  { provider: 'moonshot-coding', label: 'K2 Coding', efforts: ['low', 'medium', 'high', 'max'] },
+  { provider: 'moonshot-coding', label: 'K2 Coding Mini', efforts: ['low', 'medium'] },
+  { provider: 'openai', label: 'GPT-5.2', efforts: ['none', 'low', 'medium', 'high', 'xhigh'] },
+];
+
+function groupByProvider() {
+  const map = new Map();
+  for (const m of MODELS) {
+    if (!map.has(m.provider)) map.set(m.provider, []);
+    map.get(m.provider).push(m);
+  }
+  return map;
+}
+
+function renderValue(el, sel) {
+  if (!sel) { el.className = 'val unset'; el.textContent = '未设置（跟随主模型）'; return; }
+  el.className = 'val';
+  el.innerHTML = '';
+  el.append(sel.model);
+  if (sel.effort) {
+    const sep = document.createElement('span'); sep.className = 'sep'; sep.textContent = '·';
+    const eff = document.createElement('span'); eff.className = 'eff'; eff.textContent = sel.effort;
+    el.append(sep, eff);
+  }
+}
+
+function renderEcho(el, sel) {
+  if (!sel) { el.textContent = '// 尚未设置 —— 等价于 subagent 继承主模型'; return; }
+  const body = sel.effort
+    ? `{ "secondary_model": { "model": "${sel.model}", "default_effort": "${sel.effort}" } }`
+    : `{ "secondary_model": { "model": "${sel.model}" } }  // 该模型无 effort 列表，跟随模型默认`;
+  el.innerHTML = 'POST /api/v1/config\n' + body;
+}
+
+function closeAll() {
+  document.querySelectorAll('.menu').forEach(m => m.remove());
+  document.querySelectorAll('.trigger.open').forEach(t => t.classList.remove('open'));
+}
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.trigger') && !e.target.closest('.menu')) closeAll();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAll(); });
+
+// ================= 方案 A：单 Select 组合选项 =================
+(() => {
+  const trig = document.getElementById('trigA');
+  const val = document.getElementById('valA');
+  const echo = document.getElementById('echoA');
+  let sel = null;
+
+  trig.addEventListener('click', () => {
+    if (trig.classList.contains('open')) { closeAll(); return; }
+    closeAll();
+    trig.classList.add('open');
+    const menu = document.createElement('div');
+    menu.className = 'menu';
+
+    for (const m of MODELS) {
+      const gh = document.createElement('div');
+      gh.className = 'gh'; gh.textContent = m.label;
+      menu.append(gh);
+      const efforts = m.efforts.length ? m.efforts : [null]; // null = 模型默认
+      for (const ef of efforts) {
+        const opt = document.createElement('div');
+        opt.className = 'opt' + (ef ? '' : ' muted');
+        const on = sel && sel.model === m.label && sel.effort === ef;
+        opt.innerHTML = `<span class="ck">${on ? '✓' : ''}</span><span>${ef ?? '模型默认'}</span>`;
+        opt.addEventListener('click', () => {
+          sel = { model: m.label, effort: ef };
+          renderValue(val, sel); renderEcho(echo, sel);
+          closeAll();
+        });
+        menu.append(opt);
+      }
+    }
+    trig.append(menu);
+  });
+})();
+
+// ================= 方案 B：双栏弹出面板 =================
+(() => {
+  const trig = document.getElementById('trigB');
+  const val = document.getElementById('valB');
+  const echo = document.getElementById('echoB');
+  let sel = null;
+
+  function effortColumn(menu, model) {
+    const old = menu.querySelector('.col-r');
+    if (old) old.remove();
+    const col = document.createElement('div');
+    col.className = 'col-r';
+    const gh = document.createElement('div');
+    gh.className = 'gh'; gh.textContent = '思考强度';
+    col.append(gh);
+    const efforts = model.efforts.length ? model.efforts : [null];
+    for (const ef of efforts) {
+      const opt = document.createElement('div');
+      opt.className = 'opt' + (ef ? '' : ' muted');
+      const on = sel && sel.model === model.label && sel.effort === ef;
+      opt.innerHTML = `<span class="ck">${on ? '✓' : ''}</span><span>${ef ?? '模型默认'}</span>`;
+      opt.addEventListener('click', () => {
+        sel = { model: model.label, effort: ef };
+        renderValue(val, sel); renderEcho(echo, sel);
+        closeAll();
+      });
+      col.append(opt);
+    }
+    menu.append(col);
+  }
+
+  trig.addEventListener('click', () => {
+    if (trig.classList.contains('open')) { closeAll(); return; }
+    closeAll();
+    trig.classList.add('open');
+    const menu = document.createElement('div');
+    menu.className = 'menu two';
+
+    const colL = document.createElement('div');
+    colL.className = 'col-l';
+    const groups = groupByProvider();
+    let current = MODELS.find(m => sel && m.label === sel.model) ?? MODELS[0];
+
+    for (const [provider, models] of groups) {
+      const gh = document.createElement('div');
+      gh.className = 'gh'; gh.textContent = provider;
+      colL.append(gh);
+      for (const m of models) {
+        const opt = document.createElement('div');
+        opt.className = 'opt' + (m === current ? ' sel' : '');
+        const on = sel && sel.model === m.label;
+        opt.innerHTML = `<span class="ck">${on ? '✓' : ''}</span><span>${m.label}</span>`;
+        const activate = () => {
+          current = m;
+          colL.querySelectorAll('.opt.sel').forEach(o => o.classList.remove('sel'));
+          opt.classList.add('sel');
+          effortColumn(menu, m);
+        };
+        opt.addEventListener('mouseenter', activate);
+        opt.addEventListener('click', activate);
+        colL.append(opt);
+      }
+    }
+    menu.append(colL);
+    effortColumn(menu, current);
+    trig.append(menu);
+  });
+})();
+</script>
+</body>
+</html>

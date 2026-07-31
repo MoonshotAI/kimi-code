@@ -25,6 +25,7 @@ import { useUpdateStatus, type UpdateCheckResult } from '../../composables/useUp
 import type { ColorScheme, FontScale } from '../../composables/useKimiWebClient';
 import type { AppConfig, AppModel, ManagedUserInfo, ManagedUsageResult } from '../../api/types';
 import PlanUsageCard from './PlanUsageCard.vue';
+import SecondaryModelPicker from './SecondaryModelPicker.vue';
 import PlanUpgradeCard from './PlanUpgradeCard.vue';
 import type { IconName } from '../../lib/icons';
 import { Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/web-ui';
@@ -84,6 +85,9 @@ const props = defineProps<{
   configSaving?: boolean;
   /** Server version reported by GET /api/v1/meta. */
   serverVersion?: string;
+  /** Effective experimental-flag state from GET /api/v1/meta (flag id →
+      enabled); gates the subagents settings section. Empty on older servers. */
+  experimentalFlags?: Record<string, boolean>;
   /** Tab to open on (default 'general'); deep links like the onboarding
       custom-provider entry land on 'providers'. Read once at mount. */
   initialTab?: SettingsTab;
@@ -176,7 +180,10 @@ useDialogFocus(dialogRef);
 const { isConfirmOpen } = useConfirmDialog();
 
 function handleKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Escape' && !isConfirmOpen.value) emit('close');
+  // defaultPrevented: an inner control (Select / SecondaryModelPicker menus)
+  // already consumed this Escape to close its own popup — don't close the
+  // dialog out from under it (same contract as the App shortcut dispatcher).
+  if (e.key === 'Escape' && !e.defaultPrevented && !isConfirmOpen.value) emit('close');
 }
 onMounted(() => document.addEventListener('keydown', handleKeydown));
 onUnmounted(() => {
@@ -382,6 +389,39 @@ function setDefaultModel(value: string): void {
 function setDefaultPermissionMode(mode: 'manual' | 'auto' | 'yolo'): void {
   if (mode === defaultPermissionMode.value) return;
   emit('updateConfig', { defaultPermissionMode: mode });
+}
+
+// --- Secondary model (subagents) — experimental. Gated by the server's
+// `secondary-model` flag: prefer the effective state from GET /meta
+// (covers env-enabled flags), falling back to the persisted [experimental]
+// config section on servers too old to report it. There is deliberately no
+// "clear" affordance — POST /config merges, so a recipe cannot be unset.
+
+const secondaryModelEnabled = computed(
+  () =>
+    (props.experimentalFlags?.['secondary-model'] ?? props.config?.experimental?.['secondary-model']) ===
+    true,
+);
+
+const secondaryModel = computed(() => props.config?.secondaryModel?.model ?? '');
+const secondaryModelEffort = computed(() => props.config?.secondaryModel?.defaultEffort ?? '');
+
+// Catalog thinking-capability info per model id — drives the picker's flyout
+// level options (off + declared levels / on / off / off alone). Config-only
+// models fall back to the boolean toggle inside the picker.
+const modelInfoById = computed(() =>
+  Object.fromEntries((props.models ?? []).map((model) => [model.id, model])),
+);
+
+function setSecondaryModel(value: { model: string; effort?: string }): void {
+  if (value.model === secondaryModel.value && (value.effort ?? '') === secondaryModelEffort.value) {
+    return;
+  }
+  // One atomic patch; omitting defaultEffort keeps merge semantics from
+  // touching a previously stored effort (which REST cannot clear anyway).
+  emit('updateConfig', {
+    secondaryModel: value.effort ? { model: value.model, defaultEffort: value.effort } : { model: value.model },
+  });
 }
 
 function toggleConfigBoolean(key: 'defaultPlanMode'): void {
@@ -774,6 +814,33 @@ function archiveTime(iso: string): string {
             <div v-else class="empty-config">
               {{ t('settings.configUnavailable') }}
             </div>
+            </div>
+          </section>
+
+          <!-- Subagents (secondary model) — experimental; only rendered while
+               the server reports the `secondary-model` flag as enabled. -->
+          <section v-if="config && secondaryModelEnabled" class="sec">
+            <div class="sec-head">
+              <h3 class="sec-title">{{ t('settings.secondaryModelSection') }}</h3>
+            </div>
+
+            <div class="settings-group">
+              <div class="row">
+                <span class="rlabel">
+                  {{ t('settings.secondaryModel') }}
+                  <span class="hint">{{ t('settings.secondaryModelHint') }}</span>
+                </span>
+                <div v-if="modelGroups.length > 0" class="select-wrap">
+                  <SecondaryModelPicker
+                    :model-value="secondaryModel"
+                    :effort="secondaryModelEffort"
+                    :groups="modelGroups"
+                    :model-info-by-id="modelInfoById"
+                    @select="setSecondaryModel"
+                  />
+                </div>
+                <span v-else class="rvalue mono">{{ secondaryModel || t('settings.noSecondaryModel') }}</span>
+              </div>
             </div>
           </section>
         </section>

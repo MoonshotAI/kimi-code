@@ -186,6 +186,10 @@ interface WireMeta {
   capabilities: Record<string, boolean>;
   open_in_apps?: string[];
   dangerous_bypass_auth?: boolean;
+  /** Effective experimental-flag state (flag id → enabled), resolved from every
+      flag source (env + config section). Newer v2 servers only; treat absence
+      as "no flags enabled". */
+  experimental_flags?: Record<string, boolean>;
   /** Engine generation serving the API; older (v1) servers omit the field. */
   backend?: 'v1' | 'v2';
 }
@@ -375,6 +379,9 @@ export class DaemonKimiWebApi implements KimiWebApi {
     capabilities: Record<string, boolean>;
     openInApps: string[];
     dangerousBypassAuth: boolean;
+    /** Effective experimental-flag state (flag id → enabled); `{}` when the
+        server does not report it (older servers). */
+    experimentalFlags: Record<string, boolean>;
     /** Engine generation: 'v2' = kap-server / agent-core-v2; absent ⇒ 'v1'. */
     backend: 'v1' | 'v2';
   }> {
@@ -386,6 +393,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       capabilities: data.capabilities,
       openInApps: Array.isArray(data.open_in_apps) ? data.open_in_apps : [],
       dangerousBypassAuth: data.dangerous_bypass_auth === true,
+      experimentalFlags: data.experimental_flags ?? {},
       backend: data.backend === 'v2' ? 'v2' : 'v1',
     };
   }
@@ -1482,6 +1490,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       providers: 'providers',
       defaultProvider: 'default_provider',
       defaultModel: 'default_model',
+      secondaryModel: 'secondary_model',
       models: 'models',
       thinking: 'thinking',
       planMode: 'plan_mode',

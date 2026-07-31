@@ -985,6 +985,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     rawState.serverVersion = m.serverVersion;
     rawState.availableOpenInApps = m.openInApps;
     rawState.dangerousBypassAuth = m.dangerousBypassAuth;
+    rawState.experimentalFlags = m.experimentalFlags;
     rawState.backend = m.backend;
   }
 

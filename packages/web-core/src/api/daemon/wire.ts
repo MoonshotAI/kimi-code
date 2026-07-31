@@ -528,6 +528,9 @@ export interface WireConfig {
   providers: Record<string, WireConfigProvider>;
   default_provider?: string;
   default_model?: string;
+  /** Passthrough (z.unknown() server-side); inner keys arrive camelCase
+      ({ model, defaultEffort }) since only top-level keys are snake_cased. */
+  secondary_model?: unknown;
   models?: Record<string, unknown>;
   thinking?: unknown;
   plan_mode?: boolean;

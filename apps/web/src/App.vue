@@ -1239,6 +1239,7 @@ function openPr(url: string): void {
       :config-saving="configSaving"
       :server-version="client.serverVersion.value"
       :backend="client.backend.value"
+      :experimental-flags="client.experimentalFlags.value"
       :initial-tab="settingsInitialTab"
       @set-color-scheme="client.setColorScheme($event)"
       @set-font-scale="client.setFontScale($event)"
