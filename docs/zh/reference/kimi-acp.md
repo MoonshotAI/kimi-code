@@ -53,7 +53,7 @@ kimi acp
 
 | 方法 | 状态 | 说明 |
 | --- | --- | --- |
-| `session/update` | 是 | 流式推送 `agent_message_chunk` / `tool_call*` / `plan` / `config_option_update` / `available_commands_update` |
+| `session/update` | 是 | 流式推送 `agent_message_chunk` / `tool_call*` / `plan` / `config_option_update` / `available_commands_update` / `usage_update` |
 | `session/request_permission` | 是 | 工具审批和问题 elicitation 共用此通道 |
 | `fs/read_text_file` | 是 | kaos 层文件读取路由到客户端（通过 `fsCapabilities` 公告） |
 | `fs/write_text_file` | 是 | kaos 层文件写入路由到客户端 |
@@ -67,6 +67,14 @@ kimi acp
 | 其余 18 个方法 | 否 | 包括 session 生命周期扩展、缓冲区同步、inline-edit 预测、provider 管理等 |
 
 上述未列出的方法一律返回 `methodNotFound`。
+
+## 用量与配额（`_meta.kimiCode.rateLimits`）
+
+每个轮次结束及会话打开时（new / load / resume）都会发出稳定的 `usage_update`
+更新（取自会话状态的 `used` / `size`）。当会话的 provider 为托管 Kimi 平台时，
+帧还会携带 `_meta.kimiCode.rateLimits`——来自 `/usages` 的账户配额（5 小时窗口、
+每周汇总、可选的 booster 余额），每分钟最多拉取一次。不读取 `_meta` 的客户端看到
+的仍是普通的用量帧。
 
 ## MCP 转发
 

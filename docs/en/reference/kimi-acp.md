@@ -53,7 +53,7 @@ The spec divides methods into a **stable** surface and an evolving **unstable** 
 
 | Method | Implemented | Description |
 | --- | --- | --- |
-| `session/update` | Yes | Streams `agent_message_chunk` / `tool_call*` / `plan` / `config_option_update` / `available_commands_update` |
+| `session/update` | Yes | Streams `agent_message_chunk` / `tool_call*` / `plan` / `config_option_update` / `available_commands_update` / `usage_update` |
 | `session/request_permission` | Yes | Shared channel for tool approval and question elicitation |
 | `fs/read_text_file` | Yes | File reads at the kaos layer are routed to the client (advertised via `fsCapabilities`) |
 | `fs/write_text_file` | Yes | File writes at the kaos layer are routed to the client |
@@ -67,6 +67,15 @@ The spec divides methods into a **stable** surface and an evolving **unstable** 
 | Remaining 18 methods | No | Includes session lifecycle extensions, buffer sync, inline-edit prediction, provider management, etc. |
 
 All methods not listed above return `methodNotFound`.
+
+## Usage and quota (`_meta.kimiCode.rateLimits`)
+
+A stable `usage_update` update (`used` / `size` from the session status) is
+emitted after every turn and on session open (new / load / resume). When the
+session's provider is the managed Kimi platform, the frame additionally
+carries `_meta.kimiCode.rateLimits` — the account quota from `/usages`
+(5-hour window, weekly summary, optional booster balance), fetched at most
+once a minute. Clients that do not read `_meta` see an ordinary usage frame.
 
 ## MCP Forwarding
 
