@@ -281,6 +281,12 @@ describe('IExternalHooksRunnerService integration', () => {
       ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
       ix.get(IAgentExternalHooksService);
       const eventBus = ix.get(IEventBus);
+      const finalAssistantMessage = 'release is ready';
+      context.append({
+        role: 'assistant',
+        content: [{ type: 'text', text: finalAssistantMessage }],
+        toolCalls: [],
+      });
 
       const signal = new AbortController().signal;
       const filtered: AfterStepContext = {
@@ -290,7 +296,7 @@ describe('IExternalHooksRunnerService integration', () => {
       await loop.hooks.onDidFinishStep.run(filtered);
       expect(loop.hasPendingRequests()).toBe(false);
       expect(stopInputs).toEqual([]);
-      expect(context.messages).toEqual([]);
+      expect(context.messages).toHaveLength(1);
 
       const first = makeAfterStep(signal);
       await loop.hooks.onDidFinishStep.run(first);
@@ -307,7 +313,12 @@ describe('IExternalHooksRunnerService integration', () => {
       const second = makeAfterStep(signal);
       await loop.hooks.onDidFinishStep.run(second);
       expect(loop.hasPendingRequests()).toBe(false);
-      expect(stopInputs).toEqual([{ stopHookActive: false }]);
+      expect(stopInputs).toEqual([
+        {
+          stopHookActive: false,
+          last_assistant_message: finalAssistantMessage,
+        },
+      ]);
 
       eventBus.publish({
         type: 'turn.ended',
@@ -327,7 +338,16 @@ describe('IExternalHooksRunnerService integration', () => {
         }),
       );
       expect(loop.drainNextBatch(context)).toBeDefined();
-      expect(stopInputs).toEqual([{ stopHookActive: false }, { stopHookActive: false }]);
+      expect(stopInputs).toEqual([
+        {
+          stopHookActive: false,
+          last_assistant_message: finalAssistantMessage,
+        },
+        {
+          stopHookActive: false,
+          last_assistant_message: finalAssistantMessage,
+        },
+      ]);
     } finally {
       ix?.dispose();
       disposables.dispose();
