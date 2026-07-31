@@ -90,7 +90,7 @@ interface V1TurnResult {
 type CreateRunTurnOverride = (
   providers: undefined,
   workspaceRoot: string | undefined,
-  options: { nativeTools: boolean },
+  options: { nativeTools: boolean; nativeLlm?: unknown },
 ) => ((input: V1RunTurnInput) => Promise<V1TurnResult>) | undefined;
 
 /** Map the v1 result onto v2's `LoopRunResult` union. */
@@ -164,8 +164,21 @@ function buildRustTurnOverride(
       return undefined;
     }
 
+    // Native-LLM transport: when a static provider is configured, the Rust
+    // engine talks to the provider directly and the v2 llmRequester steps out
+    // of the hot path (its system-prompt/profile/usage duties move to the
+    // engine). Falls back to the host proxy otherwise.
+    let nativeLlm: unknown;
+    try {
+      const { loadNativeLlmDef } = await import('../rust-engine');
+      nativeLlm = loadNativeLlmDef();
+    } catch {
+      nativeLlm = undefined;
+    }
+
     const override = createRunTurnOverride(undefined, process.cwd(), {
       nativeTools: agentConfig?.nativeTools !== false,
+      nativeLlm,
     });
     if (override === undefined) {
       console.warn(
@@ -223,6 +236,22 @@ function buildRustTurnOverride(
           const type = event['type'];
           if (typeof type === 'string' && RECORDED_EVENT_TYPES.has(type)) {
             context.appendLoopEvent(event as never);
+          } else if (type === 'text.delta') {
+            // Native-LLM mode: the v2 requester never runs, so its
+            // `assistant.delta` stream is missing — replay the engine's delta
+            // channel onto the turn-event bus (print mode / TUI / web render
+            // from it).
+            eventBus.publish({
+              type: 'assistant.delta',
+              turnId,
+              delta: event['delta'],
+            } as never);
+          } else if (type === 'thinking.delta') {
+            eventBus.publish({
+              type: 'thinking.delta',
+              turnId,
+              delta: event['delta'],
+            } as never);
           }
           // Live-only events (text.delta / thinking.delta / …) are not needed:
           // v2 surfaces project from the wire records appended above.
