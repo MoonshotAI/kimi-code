@@ -37,6 +37,28 @@ import {
   isRecoverableRequestStructureError,
 } from '@moonshot-ai/kosong';
 
+// ── Generated wire contract ────────────────────────────────────────────
+// Regenerate with `pnpm gen:wire`; the source of truth is
+// `src/rpc/types.rs` (serde shapes map 1:1 onto the JSON wire).
+import type {
+  AuthorizeToolRequest,
+  AuthorizeToolResponse,
+  ContentBlock,
+  FinalizeToolRequest,
+  FinalizeToolResponse,
+  LlmChatRequest,
+  LlmChatResponse,
+  LlmProviderDef,
+  Message,
+  NativeLlmConfig,
+  PrepareToolRequest,
+  PrepareToolResponse,
+  RunTurnParams,
+  RunTurnResult,
+  ToolExecuteRequest,
+  ToolExecuteResponse,
+} from './src/rpc/wire.gen';
+
 // Project root: packages/kimi-agent/rust-loop.ts → ../../ (project root)
 const projectRoot = resolve(import.meta.dirname, '..', '..');
 
@@ -55,200 +77,28 @@ const ZERO_USAGE: HostTokenUsage = {
   inputCacheCreation: 0,
 };
 
-// ── Types matching the Rust agent protocol ─────────────────────────────────
+// ── Tool lifecycle hooks (tool_call.rs) ──────────────────────────────────
 
-interface RpcMessage {
-  jsonrpc: '2.0';
+/**
+ * Routing envelope for incoming RPC lines. Loose by design: it only discriminates
+ * request/response/notification for routing. Payload shapes are the generated
+ * wire types (imported above) — see `JsonRpcRequest`/`JsonRpcResponse` &
+ * friends in `wire.gen.ts` when strict shapes are needed.
+ */
+type RpcMessage = {
+  jsonrpc?: string;
   id?: unknown;
   method?: string;
   params?: unknown;
   result?: unknown;
   error?: { code: number; message: string; data?: unknown };
-}
-
-interface RunTurnParams {
-  turn_id: string;
-  system_prompt: string;
-  model_name: string;
-  messages: { role: string; content: string }[];
-  tools: { name: string; description: string; input_schema: unknown }[];
-  max_steps?: number;
-  /** Multiple LLM providers for concurrent execution (MultiLLM). */
-  providers?: LlmProviderDef[];
-  /** Optional goal context for budget-aware execution. */
-  goal?: GoalContext;
-}
-
-/** Goal status matching the Rust GoalStatus enum. */
-type GoalStatus = 'active' | 'paused' | 'blocked' | 'complete' | 'budgetLimited' | 'usageLimited';
-
-/** Goal context passed to the Rust engine for budget-aware turns. */
-interface GoalContext {
-  goal_id: string;
-  objective: string;
-  status: GoalStatus;
-  token_budget?: number;
-  turn_budget?: number;
-  tokens_used: number;
-  turns_used: number;
-}
-
-interface LlmProviderDef {
-  name: string;
-  model: string;
-  system_prompt: string;
-}
-
-/** Native HTTP LLM transport config (snake_case matches the Rust wire). */
-export interface NativeLlmDef {
-  /** "openai" (Chat Completions), "anthropic" (Messages), or "google" (Gemini). */
-  protocol: 'openai' | 'anthropic' | 'google';
-  /** API base URL including the version segment (e.g. `.../v1`). */
-  base_url: string;
-  api_key: string;
-  model: string;
-  max_tokens?: number;
-}
-
-/** Options controlling the native (in-Rust) execution paths. */
-export interface RustEngineOptions {
-  /** When set, the Rust engine calls this provider directly over HTTP. */
-  nativeLlm?: NativeLlmDef;
-  /** When true, Read/Grep/Glob execute inside the Rust process. */
-  nativeTools?: boolean;
-}
-
-/** A content block on the Rust wire (see `ContentBlock` in rpc/types.rs). */
-type WireContentBlock =
-  | { type: 'text'; text: string }
-  | { type: 'image'; media_type: string; data: string }
-  | { type: 'image_url'; url: string };
+};
 
 /** Fire-and-forget engine event (Rust → host, `host/event`). */
 interface EngineEvent {
   type: string;
   [key: string]: unknown;
 }
-
-interface RunTurnResult {
-  stop_reason: string;
-  steps: number;
-  usage: { input_tokens: number; output_tokens: number; total_tokens: number };
-}
-
-/** A message on the Rust wire, with optional multimodal/tool-call payloads. */
-interface WireMessage {
-  role: string;
-  content: string;
-  blocks?: WireContentBlock[];
-  tool_calls?: { id: string; name: string; arguments: unknown }[];
-  tool_call_id?: string;
-}
-
-interface LlmChatRequest {
-  system_prompt: string;
-  model_name: string;
-  messages: { role: string; content: string }[];
-  tools: { name: string; description: string; input_schema: unknown }[];
-}
-
-interface LlmChatResponse {
-  tool_calls: { id: string; name: string; arguments: unknown }[];
-  finish_reason?: string;
-  usage: { input_tokens: number; output_tokens: number; total_tokens: number };
-}
-
-interface ToolExecuteRequest {
-  turn_id: string;
-  tool_call_id: string;
-  tool_name: string;
-  arguments: unknown;
-  /** When true, skip workspace index predictions and execute precisely. */
-  force_precise?: boolean;
-}
-
-interface ToolExecuteResponse {
-  content: string;
-  is_error: boolean;
-  /** When true, the result is a fast prediction from the workspace index. */
-  is_prediction?: boolean;
-}
-
-// ── Tool lifecycle hooks (tool_call.rs) ──────────────────────────────────
-
-interface PrepareToolRequest {
-  turn_id: string;
-  step_number: number;
-  tool_call_id: string;
-  tool_name: string;
-  arguments: unknown;
-  all_tool_calls: unknown[];
-  trace_id?: string;
-}
-
-interface PrepareToolResponse {
-  block: boolean;
-  reason?: string;
-  synthetic_result?: {
-    content: string;
-    is_error: boolean;
-    note?: string;
-    is_prediction: boolean;
-    stop_turn: boolean;
-  };
-  updated_args?: unknown;
-  execution_metadata?: unknown;
-  resolved: boolean;
-}
-
-interface AuthorizeToolRequest {
-  turn_id: string;
-  step_number: number;
-  tool_call_id: string;
-  tool_name: string;
-  arguments: unknown;
-  all_tool_calls: unknown[];
-  trace_id?: string;
-  approval_rule: string;
-}
-
-interface AuthorizeToolResponse {
-  block: boolean;
-  reason?: string;
-  synthetic_result?: {
-    content: string;
-    is_error: boolean;
-    note?: string;
-    is_prediction: boolean;
-    stop_turn: boolean;
-  };
-  execution_metadata?: unknown;
-  resolved: boolean;
-}
-
-interface FinalizeToolRequest {
-  turn_id: string;
-  step_number: number;
-  tool_call_id: string;
-  tool_name: string;
-  arguments: unknown;
-  result: {
-    content: string;
-    is_error: boolean;
-    note?: string;
-    is_prediction: boolean;
-    stop_turn: boolean;
-  };
-  trace_id?: string;
-}
-
-type FinalizeToolResponse = {
-  content: string;
-  is_error: boolean;
-  note?: string;
-  is_prediction: boolean;
-  stop_turn: boolean;
-} | null;
 
 /**
  * Classify an incoming RPC line. A JSON-RPC request always carries `method`; a
@@ -614,10 +464,9 @@ class AgentProcess {
         this.processBuffer();
       });
 
-      this.process.stderr!.on('data', (_data: Buffer) => {
-        // Suppress stderr output from the Rust binary to avoid corrupting
-        // the TUI's terminal rendering. The Rust binary's debug logs (eprintln!)
-        // would otherwise print directly to the terminal and cause duplicate lines.
+      this.process.stderr!.on('data', (data: Buffer) => {
+        // DEBUG-TEMP: surface engine stderr for diagnosis
+        console.error('[kimi-agent:stderr]', data.toString().trimEnd());
       });
 
       this.process.on('exit', (code) => {
@@ -935,6 +784,18 @@ export async function runTurnRust(
  *
  * Returns `undefined` when the Rust binary is not available (falls back to JS).
  */
+
+/** Native HTTP LLM transport config (generated from Rust `NativeLlmConfig`). */
+export type NativeLlmDef = NativeLlmConfig;
+
+/** Options controlling the native (in-Rust) execution paths. */
+export interface RustEngineOptions {
+  /** When set, the Rust engine calls this provider directly over HTTP. */
+  nativeLlm?: NativeLlmDef;
+  /** When true, Read/Grep/Glob execute inside the Rust process. */
+  nativeTools?: boolean;
+}
+
 export function createRunTurnOverride(
   providers?: LlmProviderDef[],
   workspaceRoot?: string,
@@ -1124,10 +985,10 @@ export function createRunTurnOverride(
       toolCalls?: { id: string; name: string; arguments: string | null }[];
       toolCallId?: string;
     }
-    const toWireMessage = (m: HostMessage): WireMessage => {
+    const toWireMessage = (m: HostMessage): Message => {
       let text = '';
       let hasMedia = false;
-      const blocks: WireContentBlock[] = [];
+      const blocks: ContentBlock[] = [];
       for (const part of m.content) {
         if (part.type === 'text' && typeof part.text === 'string') {
           text += part.text;
@@ -1151,7 +1012,7 @@ export function createRunTurnOverride(
         tool_call_id: m.toolCallId,
       };
     };
-    const buildWireMessages = async (): Promise<WireMessage[]> => {
+    const buildWireMessages = async (): Promise<Message[]> => {
       const messages = (await input.buildMessages()) as unknown as HostMessage[];
       return messages.map(toWireMessage);
     };
@@ -1721,7 +1582,8 @@ export function createRunTurnOverride(
       const wireMessages = nativeLlm === undefined ? [] : await buildWireMessages();
       const wireTools = nativeLlm === undefined ? [] : buildWireTools();
       if (mode === 'napi') {
-        const engine = getNapiEngine()!;
+        const engine = getNapiEngine();
+        if (engine === null) throw new Error('napi engine not initialized');
         // Napi callbacks use JSON-serialized payloads (string → string)
         const napiResult = await engine.runTurn(
           {
@@ -1794,7 +1656,8 @@ export function createRunTurnOverride(
         };
       }
       // stdio JSON-RPC path
-      const agent = getAgent()!;
+      const agent = getAgent();
+      if (agent === null) throw new Error('stdio agent process not initialized');
       agent.setLlmChatHandler(llmChatHandler);
       agent.setToolExecuteHandler(toolExecuteHandler);
       agent.setPrepareToolHandler(prepareToolHandler);
@@ -1851,9 +1714,9 @@ export function createRunTurnOverride(
         if (remaining <= 0) break;
         const rustResult = await runRustOnce(remaining);
         totalSteps += rustResult.steps;
-        usageTotal.input_tokens += rustResult.usage.input_tokens;
-        usageTotal.output_tokens += rustResult.usage.output_tokens;
-        usageTotal.total_tokens += rustResult.usage.total_tokens;
+        usageTotal.input_tokens += rustResult.usage.input_tokens ?? 0;
+        usageTotal.output_tokens += rustResult.usage.output_tokens ?? 0;
+        usageTotal.total_tokens += rustResult.usage.total_tokens ?? 0;
         stopReason = mapStopReason(rustResult.stop_reason);
         if (stopReason === 'aborted' && !input.signal.aborted && stopTurnRequested) {
           // The engine aborted because the host asked it to stop after a

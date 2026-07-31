@@ -1,5 +1,20 @@
 # Rust Agent 引擎 — 完整修复补全计划
 
+> **📌 本文档是 Rust 迁移进度的唯一权威（single source of truth）。**
+> - 模块映射明细 → `packages/kimi-agent/GAP_ANALYSIS.md`（滚动更新）
+> - 逐会话工作日志 → `RUST_WORK_LOG.md`（当前未入库，建议随下个 commit 一并提交）
+> - 根目录外的 `D:\kimi\plan.md` 是旧阶段快照，已废弃，仅作历史参考
+
+## 当前状态（2026-07-31 核对）
+
+- **Phase 0-5 全部完成**：v1 与 v2 引擎均已接通，`engine = "rust"` 为默认值
+- **测试**：`cargo test -p kimi-agent` = 1926 lib + 49 集成全绿、0 warnings（RUST_WORK_LOG 07-31 记录）；含 native-tools 的全工作区历史口径约 2260+（GAP_ANALYSIS 07-26 快照）
+- **unsafe 审计（2026-07-31 完成）**：`plan.md` 早前声称"0 unsafe"已过时——实测全工作区真实 unsafe 共 8 处：`user_tool/mod.rs` 6 处（`*mut ToolManager` raw pointer + `unsafe impl Send/Sync`）已重构为 `Arc<Mutex<ToolManager>>` 消除（13 测试全绿，与 `Agent::tool_manager` 所有权模式对齐）；`llm/http.rs` 2 处为测试内 `env::set_var/remove_var`（Edition 2024 标记，单测试独占该 env，已注释说明，风险可接受）。`kimi-native-tools` 唯一命中为 prompt 字符串字面量，非真实 unsafe。**当前 unsafe 数：2（仅测试，均在 `llm/http.rs`）**
+- **构建产物**：2026-07-31 清理 28.7GB（root target 18GB debug + per-crate 旧布局 target 10.8GB），per-crate target 布局已废除，`rust-loop.ts` 的"取最新 mtime"兼容逻辑随之可简化
+- **待办**：上游 0.31.1+ 同步、Bash 命令策略审批强化、goal/compaction/permission 双实现合并进 kimi-shared、RPC wire 类型生成化
+
+---
+
 ## 总览
 
 | 阶段 | 内容 | 预估工期 | 依赖 |

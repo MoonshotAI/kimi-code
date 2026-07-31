@@ -1,7 +1,9 @@
 # Rust Agent 引擎 — v1/v2 迁移 Gap Analysis
 
 生成日期: 2026-07-26（末次更新：全量补齐 — fullCompaction / toolSelect / questionTools / swarm / faultInjection / knowledge / plan / goal / mcp）
-数据来源: `packages/kimi-agent/src/` (50,113 行 Rust, 133 文件, 1,406 单元测试) vs `packages/agent-core/src/` (72,546 行 TS) vs `packages/agent-core-v2/src/` (96,735 行 TS)
+数据来源: `packages/kimi-agent/src/` (50,113 行 Rust, 133 文件, 1,406 单元测试，2026-07-26 快照) vs `packages/agent-core/src/` (72,546 行 TS) vs `packages/agent-core-v2/src/` (96,735 行 TS)
+
+> **📌 本文件为模块映射明细；进度权威见仓库根 `RUST_MIGRATION_PLAN.md`（当前状态 2026-07-31：1926 lib + 49 集成全绿）。**
 
 ---
 
