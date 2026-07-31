@@ -21,6 +21,7 @@ pub enum SwarmModeTrigger {
 }
 
 /// SwarmMode state machine.
+#[derive(Clone)]
 pub struct SwarmMode {
     active: Option<SwarmModeTrigger>,
 }

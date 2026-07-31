@@ -91,12 +91,98 @@ pub mod methods {
     pub const SESSION_CREATE: &str = "session/create";
     pub const SESSION_PROMPT: &str = "session/prompt";
     pub const SESSION_CANCEL: &str = "session/cancel";
+    /// Destroy a session's agent + side agent, firing SessionEnd hooks. The
+    /// persisted record (if any) is left intact for later `session/load`.
+    pub const SESSION_DESTROY: &str = "session/destroy";
     pub const SESSION_SAVE: &str = "session/save";
     pub const SESSION_LOAD: &str = "session/load";
     pub const SESSION_LIST: &str = "session/list";
+    pub const SESSION_SET_MODEL: &str = "session/set_model";
+    pub const SESSION_RUN_SHELL: &str = "session/run_shell";
+    /// Cancel a running `!` shell command by its commandId.
+    pub const SESSION_CANCEL_SHELL_COMMAND: &str = "session/cancel_shell_command";
+    pub const SESSION_SET_THINKING: &str = "session/set_thinking";
+    pub const SESSION_STEER: &str = "session/steer";
+    pub const SESSION_ADD_DIR: &str = "session/add_additional_dir";
+    pub const SESSION_REMOVE_DIR: &str = "session/remove_additional_dir";
+    pub const SESSION_UPDATE_METADATA: &str = "session/update_metadata";
+
+    /// Goal lifecycle (deterministic user/host control surface). Terminal
+    /// statuses stay model-owned (UpdateGoal tool / goal driver) — there is
+    /// deliberately no `goal_update`, matching the SDK `Session` surface.
+    pub const SESSION_GOAL_CREATE: &str = "session/goal_create";
+    pub const SESSION_GOAL_GET: &str = "session/goal_get";
+    pub const SESSION_GOAL_PAUSE: &str = "session/goal_pause";
+    pub const SESSION_GOAL_RESUME: &str = "session/goal_resume";
+    pub const SESSION_GOAL_CANCEL: &str = "session/goal_cancel";
+
+    /// Toggle swarm mode: enter/exit the native `SwarmMode` state machine,
+    /// applying the enter/exit reminders to the session context.
+    pub const SESSION_SET_SWARM_MODE: &str = "session/set_swarm_mode";
+    /// Toggle plan mode: set the permission gate's plan context + inject the
+    /// plan-mode reminder — the engine side of SDK `setPlanMode`.
+    pub const SESSION_SET_PLAN_MODE: &str = "session/set_plan_mode";
+
+    /// Live session status snapshot (model, permission, context tokens,
+    /// cumulative usage) — the engine side of the SDK `getStatus`.
+    pub const SESSION_GET_STATUS: &str = "session/get_status";
+    /// Per-server MCP views (name/transport/status/tool count/error) — the
+    /// engine side of the SDK `listMcpServers`.
+    pub const SESSION_LIST_MCP_SERVERS: &str = "session/list_mcp_servers";
+    /// Cumulative token usage snapshot — the engine side of SDK `getUsage`.
+    pub const SESSION_GET_USAGE: &str = "session/get_usage";
+    /// Registered skills for the session — the engine side of SDK `listSkills`.
+    pub const SESSION_LIST_SKILLS: &str = "session/list_skills";
+    /// Session warnings (e.g. failed MCP servers) — the engine side of SDK
+    /// `getSessionWarnings`.
+    pub const SESSION_GET_WARNINGS: &str = "session/get_warnings";
+    /// Manually compact the session context (requires a native-LLM summarizer)
+    /// — the engine side of SDK `compact`.
+    pub const SESSION_COMPACT: &str = "session/compact";
+    /// Full context snapshot (history + token count) — the engine side of SDK
+    /// `getContext`.
+    pub const SESSION_GET_CONTEXT: &str = "session/get_context";
+    /// Clear the session's model context — the engine side of SDK
+    /// `clearContext`.
+    pub const SESSION_CLEAR_CONTEXT: &str = "session/clear_context";
+    /// Append imported transcript text to the context — the engine side of SDK
+    /// `importContext`.
+    pub const SESSION_IMPORT_CONTEXT: &str = "session/import_context";
+    /// Undo the last N user turns — the engine side of SDK `undoHistory`.
+    pub const SESSION_UNDO_HISTORY: &str = "session/undo_history";
+    /// Active plan snapshot (id/content/path or null) — the engine side of SDK
+    /// `getPlan`.
+    pub const SESSION_GET_PLAN: &str = "session/get_plan";
+    /// Clear the active plan's file content — the engine side of SDK
+    /// `clearPlan`.
+    pub const SESSION_CLEAR_PLAN: &str = "session/clear_plan";
+    /// Activate a skill (render its prompt + run a turn) — the engine side of
+    /// SDK `activateSkill`.
+    pub const SESSION_ACTIVATE_SKILL: &str = "session/activate_skill";
+    /// Reconnect a single MCP server — the engine side of SDK
+    /// `reconnectMcpServer`.
+    pub const SESSION_RECONNECT_MCP_SERVER: &str = "session/reconnect_mcp_server";
+    /// MCP startup timing ({ duration_ms }) — the engine side of SDK
+    /// `getMcpStartupMetrics`.
+    pub const SESSION_GET_MCP_STARTUP_METRICS: &str = "session/get_mcp_startup_metrics";
+    /// Generate AGENTS.md via an init subagent — the engine side of SDK
+    /// `Session.init` (`generateAgentsMd`).
+    pub const SESSION_INIT: &str = "session/init";
+    /// Spawn a side-question ("between turns") subagent — the engine side of
+    /// SDK `Session.startBtw`. Returns the child agent id.
+    pub const SESSION_START_BTW: &str = "session/start_btw";
+    /// Destroy the active side-question subagent.
+    pub const SESSION_END_BTW: &str = "session/end_btw";
 
     /// Health check.
     pub const HEALTH: &str = "agent/health";
+
+    /// Working-tree git status ({ branch, ahead, behind, entries, ... }) —
+    /// the engine side of the v2 `IGitService.status`.
+    pub const GIT_STATUS: &str = "git/status";
+    /// Diff of one repo-relative path against HEAD — the engine side of the
+    /// v2 `IGitService.diff`.
+    pub const GIT_DIFF: &str = "git/diff";
 
     /// Shutdown the agent process.
     pub const SHUTDOWN: &str = "agent/shutdown";
@@ -125,6 +211,14 @@ pub mod methods {
     /// Finalize a tool result (Rust → JS host proxy).
     /// Analogous to TS `finalizeToolResult` hook.
     pub const HOST_FINALIZE_TOOL: &str = "host/finalize_tool_result";
+
+    // ── Permission methods (host → engine, configure the native gate) ─────────────
+    /// Get the current permission snapshot (`{ mode, rules }`).
+    pub const PERMISSION_GET: &str = "permission/get";
+    /// Set the permission mode (`manual` | `auto` | `yolo`).
+    pub const PERMISSION_SET_MODE: &str = "permission/set_mode";
+    /// Add a permission rule (allow/deny/ask; user or session scope).
+    pub const PERMISSION_ADD_RULE: &str = "permission/add_rule";
 
     // ── Cron methods ────────────────────────────────────────────────────────────
     /// Create a new cron task.
@@ -155,6 +249,22 @@ pub mod methods {
     pub const BG_SETTLE: &str = "bg/settle";
     /// Rust → JS: background task event.
     pub const BG_EVENT: &str = "bg/event";
+    /// Detach a task from its foreground tool call — the engine side of SDK
+    /// `detachBackgroundTask`.
+    pub const BG_DETACH: &str = "bg/detach";
+
+    // ── Plugin methods ──────────────────────────────────────────────────────────
+    /// List installed plugins (summary view) — the engine side of SDK
+    /// `listPlugins`.
+    pub const PLUGIN_LIST: &str = "plugin/list";
+    /// Get one installed plugin's detail — the engine side of SDK
+    /// `getPluginInfo`.
+    pub const PLUGIN_GET: &str = "plugin/get";
+
+    // ── Task domain methods ─────────────────────────────────────────────────────
+    /// List tracked tasks (live + restored ghosts) — the engine side of the
+    /// host's task registry surface.
+    pub const TASK_LIST: &str = "task/list";
 }
 
 // ── Message content blocks (multimodal) ─────────────────────────────────
@@ -180,11 +290,13 @@ pub enum ContentBlock {
 /// HTTP with SSE streaming instead of proxying `llm_chat` to the JS host.
 #[derive(Debug, Clone, Deserialize)]
 pub struct NativeLlmConfig {
-    /// Wire protocol: `"openai"` (Chat Completions) or `"anthropic"` (Messages).
+    /// Wire protocol: `"openai"` (Chat Completions), `"anthropic"` (Messages),
+    /// or `"google"` / `"google-genai"` (Gemini streamGenerateContent).
     pub protocol: String,
-    /// API base URL including the version segment (e.g. `https://api.example.com/v1`).
+    /// API base URL including the version segment (e.g. `https://api.example.com/v1`,
+    /// or `https://generativelanguage.googleapis.com/v1beta` for Gemini).
     pub base_url: String,
-    /// Bearer token (OpenAI) or x-api-key (Anthropic).
+    /// Bearer token (OpenAI), x-api-key (Anthropic), or x-goog-api-key (Gemini).
     pub api_key: String,
     /// Model name sent to the provider.
     pub model: String,
@@ -194,6 +306,12 @@ pub struct NativeLlmConfig {
     /// Extra headers sent with every request.
     #[serde(default)]
     pub custom_headers: std::collections::HashMap<String, String>,
+    /// Reasoning effort (`"low"|"medium"|"high"`). Mapped per protocol:
+    /// OpenAI → `reasoning_effort`; Anthropic → `thinking.budget_tokens`;
+    /// Google → `generationConfig.thinkingConfig.thinkingBudget`.
+    /// `None` omits it.
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 // ── RunTurn request/response types ─────────────────────────────────────────
@@ -270,6 +388,21 @@ pub struct SessionCreateParams {
     /// host via `host/execute_tool`.
     #[serde(default)]
     pub tools: Vec<ToolDef>,
+    /// MCP servers to register into the session's runtime (host-resolved
+    /// config + secrets). Each connects immediately unless disabled or from an
+    /// untrusted project root. Empty on the RUN_TURN path (TS owns MCP there).
+    #[serde(default)]
+    pub mcp_servers: Vec<crate::mcp::runtime::McpServerSpecInput>,
+    /// Skills to register into the session's skill registry (host-discovered).
+    /// Populates the model-facing `Skill` tool's native activation path.
+    #[serde(default)]
+    pub skills: Vec<crate::skill::SkillMetadataInput>,
+    /// External lifecycle hooks (host-resolved from config.toml `[[hooks]]` +
+    /// plugin contributions). Executed natively by the engine: PreToolUse /
+    /// PostToolUse on the tool interceptor chain, UserPromptSubmit / Stop at
+    /// the prompt boundary.
+    #[serde(default)]
+    pub hooks: Vec<crate::hooks::external::HookDef>,
 }
 
 /// Input for session/prompt.
@@ -278,12 +411,206 @@ pub struct SessionPromptParams {
     pub session_id: String,
     /// Content parts on the context wire shape: `[{"type":"text","text":…}]`.
     pub input: serde_json::Value,
+    /// When set to a side-question agent id (`btw-<session_id>`), drives that
+    /// child instead of the main agent.
+    #[serde(default)]
+    pub agent_id: Option<String>,
 }
 
 /// Input for session/cancel · session/save · session/load.
 #[derive(Debug, Deserialize)]
 pub struct SessionIdParams {
     pub session_id: String,
+}
+
+/// Input for session/set_model.
+#[derive(Debug, Deserialize)]
+pub struct SessionSetModelParams {
+    pub session_id: String,
+    pub model: String,
+}
+
+/// Input for session/goal_create.
+#[derive(Debug, Deserialize)]
+pub struct SessionGoalCreateParams {
+    pub session_id: String,
+    pub objective: String,
+    #[serde(default)]
+    pub completion_criterion: Option<String>,
+    #[serde(default)]
+    pub replace: bool,
+}
+
+/// Input for session/goal_get, goal_cancel (session id only).
+#[derive(Debug, Deserialize)]
+pub struct SessionGoalParams {
+    pub session_id: String,
+}
+
+/// Input for session/goal_pause and goal_resume (optional reason).
+#[derive(Debug, Deserialize)]
+pub struct SessionGoalReasonParams {
+    pub session_id: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// Input for session/set_swarm_mode.
+#[derive(Debug, Deserialize)]
+pub struct SessionSetSwarmModeParams {
+    pub session_id: String,
+    pub enabled: bool,
+    /// `manual` (persistent toggle) | `task` (one-shot prompt) | `tool`
+    /// (silent). Defaults to `manual` when omitted; ignored on disable.
+    #[serde(default)]
+    pub trigger: Option<String>,
+}
+
+/// Input for session/set_plan_mode.
+#[derive(Debug, Deserialize)]
+pub struct SessionSetPlanModeParams {
+    pub session_id: String,
+    pub enabled: bool,
+}
+
+/// Input for session/compact (optional custom summarizer instruction).
+#[derive(Debug, Deserialize)]
+pub struct SessionCompactParams {
+    pub session_id: String,
+    #[serde(default)]
+    pub instruction: Option<String>,
+}
+
+/// Input for session/import_context.
+#[derive(Debug, Deserialize)]
+pub struct SessionImportContextParams {
+    pub session_id: String,
+    pub content: String,
+    pub source: String,
+}
+
+/// Input for session/undo_history (defaults to 1 turn when omitted).
+#[derive(Debug, Deserialize)]
+pub struct SessionUndoHistoryParams {
+    pub session_id: String,
+    #[serde(default = "default_undo_count")]
+    pub count: usize,
+}
+
+fn default_undo_count() -> usize {
+    1
+}
+
+/// Input for session/activate_skill.
+#[derive(Debug, Deserialize)]
+pub struct SessionActivateSkillParams {
+    pub session_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub args: Option<String>,
+}
+
+/// Input for session/reconnect_mcp_server.
+#[derive(Debug, Deserialize)]
+pub struct SessionReconnectMcpParams {
+    pub session_id: String,
+    pub name: String,
+}
+
+/// Input for plugin/get.
+#[derive(Debug, Deserialize)]
+pub struct PluginGetParams {
+    pub id: String,
+}
+
+/// Input for session/init (generate AGENTS.md via an init subagent).
+#[derive(Debug, Deserialize)]
+pub struct SessionInitParams {
+    pub session_id: String,
+}
+
+/// Input for git/status.
+#[derive(Debug, Deserialize)]
+pub struct GitStatusParams {
+    pub cwd: String,
+}
+
+/// Input for git/diff.
+#[derive(Debug, Deserialize)]
+pub struct GitDiffParams {
+    pub cwd: String,
+    pub path: String,
+}
+
+/// Input for session/run_shell (user-initiated `!` command).
+#[derive(Debug, Deserialize)]
+pub struct SessionRunShellParams {
+    pub session_id: String,
+    pub command: String,
+    #[serde(default)]
+    pub timeout_s: Option<u64>,
+    /// When set, the command streams `shell.output` events tagged with this id
+    /// and can be cancelled via `session/cancel_shell_command`.
+    #[serde(default)]
+    pub command_id: Option<String>,
+}
+
+/// Input for session/cancel_shell_command.
+#[derive(Debug, Deserialize)]
+pub struct SessionCancelShellParams {
+    pub session_id: String,
+    pub command_id: String,
+}
+
+/// Input for session/set_thinking. `effort` = "low"|"medium"|"high"; null clears.
+#[derive(Debug, Deserialize)]
+pub struct SessionSetThinkingParams {
+    pub session_id: String,
+    #[serde(default)]
+    pub effort: Option<String>,
+}
+
+/// Input for session/steer. `input` = content parts on the context wire shape.
+#[derive(Debug, Deserialize)]
+pub struct SessionSteerParams {
+    pub session_id: String,
+    pub input: serde_json::Value,
+}
+
+/// Input for session/add_additional_dir.
+#[derive(Debug, Deserialize)]
+pub struct SessionAddDirParams {
+    pub session_id: String,
+    pub path: String,
+}
+
+/// Result of session/add_additional_dir.
+#[derive(Debug, Serialize)]
+pub struct SessionAddDirResult {
+    pub success: bool,
+    pub additional_dirs: Vec<String>,
+}
+
+/// Input for session/remove_additional_dir.
+#[derive(Debug, Deserialize)]
+pub struct SessionRemoveDirParams {
+    pub session_id: String,
+    pub path: String,
+}
+
+/// Result of session/remove_additional_dir.
+#[derive(Debug, Serialize)]
+pub struct SessionRemoveDirResult {
+    pub success: bool,
+    pub additional_dirs: Vec<String>,
+}
+
+/// Input for session/update_metadata. `metadata` is shallow-merged into the
+/// session's persisted custom metadata (must be a JSON object).
+#[derive(Debug, Deserialize)]
+pub struct SessionUpdateMetadataParams {
+    pub session_id: String,
+    pub metadata: serde_json::Value,
 }
 
 /// Input for session/list.
@@ -386,7 +713,7 @@ pub struct ToolExecuteRequest {
 }
 
 /// Response from the host/execute_tool RPC call.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct ToolExecuteResponse {
     pub content: String,
@@ -399,6 +726,11 @@ pub struct ToolExecuteResponse {
     /// When true, executing this tool should stop the turn immediately.
     #[serde(default)]
     pub stop_turn: bool,
+    /// Image parts produced by the tool (native ReadMediaFile / MCP images).
+    /// Absent on the host wire (host-returned tools stay text); the loop
+    /// delivers these as a follow-up `user` image message.
+    #[serde(default)]
+    pub media: Vec<ContentBlock>,
 }
 
 /// Token usage tracking.
@@ -909,6 +1241,7 @@ mod tests {
             is_error: false,
             is_prediction: false,
             stop_turn: false,
+            ..Default::default()
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["content"], "file content here");
@@ -926,6 +1259,7 @@ mod tests {
             is_error: true,
             is_prediction: false,
             stop_turn: false,
+            ..Default::default()
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert!(json["is_error"].as_bool().unwrap());

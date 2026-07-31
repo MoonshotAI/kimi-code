@@ -86,6 +86,14 @@ pub struct SessionRecord {
     /// Opaque to the session module itself.
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub agent_state: serde_json::Value,
+    /// Host-owned custom metadata (shallow-merged via `session/update_metadata`).
+    /// Always a JSON object; defaults to `{}`.
+    #[serde(default, skip_serializing_if = "is_empty_object")]
+    pub metadata: serde_json::Value,
+}
+
+fn is_empty_object(v: &serde_json::Value) -> bool {
+    v.as_object().map_or(true, |m| m.is_empty())
 }
 
 impl SessionRecord {
@@ -102,6 +110,7 @@ impl SessionRecord {
             messages: Vec::new(),
             state: SessionState::Active,
             agent_state: serde_json::Value::Null,
+            metadata: serde_json::json!({}),
         }
     }
 

@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod google_genai;
 pub mod http;
 pub mod multi;
 pub mod openai;

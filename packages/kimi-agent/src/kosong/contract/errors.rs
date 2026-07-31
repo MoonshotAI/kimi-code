@@ -1,0 +1,442 @@
+/// Provider error taxonomy.
+///
+/// Corresponds to `kosong/contract/errors.ts`.
+use std::fmt;
+
+/// Wire error code for invalid model/provider configuration.
+pub const CONFIG_INVALID_ERROR_CODE: &str = "config.invalid";
+
+/// Base error type for all chat provider errors.
+#[derive(Debug, Clone)]
+pub enum ChatProviderError {
+    ApiConnection(String),
+    ApiTimeout(String),
+    ApiStatus {
+        status_code: u16,
+        message: String,
+        request_id: Option<String>,
+        retry_after_ms: Option<u64>,
+        trace_id: Option<String>,
+    },
+    ApiContextOverflow(ApiStatusPayload),
+    ApiRequestTooLarge(ApiStatusPayload),
+    ApiRateLimit(ApiStatusPayload),
+    ApiProviderOverloaded(ApiStatusPayload),
+    ApiEmptyResponse {
+        message: String,
+        finish_reason: Option<String>,
+        raw_finish_reason: Option<String>,
+    },
+    VideoUploadUnsupported(String),
+    Provider(String),
+}
+
+impl fmt::Display for ChatProviderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ChatProviderError::ApiConnection(msg) => write!(f, "API connection error: {}", msg),
+            ChatProviderError::ApiTimeout(msg) => write!(f, "API timeout: {}", msg),
+            ChatProviderError::ApiStatus { status_code, message, .. } => {
+                write!(f, "API status error: {} {}", status_code, message)
+            }
+            ChatProviderError::ApiContextOverflow(p) => {
+                write!(f, "API context overflow: {}", p.message)
+            }
+            ChatProviderError::ApiRequestTooLarge(p) => {
+                write!(f, "API request too large: {}", p.message)
+            }
+            ChatProviderError::ApiRateLimit(p) => write!(f, "API rate limit (429): {}", p.message),
+            ChatProviderError::ApiProviderOverloaded(p) => {
+                write!(f, "API provider overloaded: {}", p.message)
+            }
+            ChatProviderError::ApiEmptyResponse { message, .. } => {
+                write!(f, "API empty response: {}", message)
+            }
+            ChatProviderError::VideoUploadUnsupported(msg) => {
+                write!(f, "Video upload unsupported: {}", msg)
+            }
+            ChatProviderError::Provider(msg) => write!(f, "Provider error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for ChatProviderError {}
+
+/// Payload for status-based errors.
+#[derive(Debug, Clone)]
+pub struct ApiStatusPayload {
+    pub status_code: u16,
+    pub message: String,
+    pub request_id: Option<String>,
+    pub retry_after_ms: Option<u64>,
+    pub trace_id: Option<String>,
+}
+
+impl ChatProviderError {
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            ChatProviderError::ApiConnection(_) | ChatProviderError::ApiTimeout(_) => true,
+            ChatProviderError::ApiEmptyResponse { .. } => true,
+            ChatProviderError::ApiStatus { status_code, .. } => {
+                matches!(status_code, 408 | 409 | 429 | 500 | 502 | 503 | 504 | 529)
+            }
+            ChatProviderError::ApiRateLimit(_) | ChatProviderError::ApiProviderOverloaded(_) => true,
+            ChatProviderError::ApiContextOverflow(_) => false,
+            ChatProviderError::ApiRequestTooLarge(_) => false,
+            ChatProviderError::VideoUploadUnsupported(_) => false,
+            ChatProviderError::Provider(msg) => {
+                let lower = msg.to_lowercase();
+                !(lower.contains("unsupported media type for base64 image")
+                    || lower.contains("invalid data url for image"))
+            }
+        }
+    }
+
+    pub fn status_code(&self) -> Option<u16> {
+        match self {
+            ChatProviderError::ApiStatus { status_code, .. }
+            | ChatProviderError::ApiContextOverflow(ApiStatusPayload { status_code, .. })
+            | ChatProviderError::ApiRequestTooLarge(ApiStatusPayload { status_code, .. })
+            | ChatProviderError::ApiRateLimit(ApiStatusPayload { status_code, .. })
+            | ChatProviderError::ApiProviderOverloaded(ApiStatusPayload { status_code, .. }) => {
+                Some(*status_code)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Classification of a failed generation for telemetry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApiErrorKind {
+    ContextOverflow,
+    Overloaded,
+    RateLimit,
+    Auth,
+    Server5xx,
+    Client4xx,
+    Network,
+    Timeout,
+    EmptyResponse,
+    Other,
+}
+
+/// Result of classifying an API error.
+#[derive(Debug, Clone)]
+pub struct ApiErrorClassification {
+    pub kind: ApiErrorKind,
+    pub status_code: Option<u16>,
+}
+
+/// Classify an API error for telemetry.
+pub fn classify_api_error(error: &ChatProviderError) -> ApiErrorClassification {
+    let status_code = error.status_code();
+    match error {
+        ChatProviderError::ApiContextOverflow(_) => {
+            ApiErrorClassification {
+                kind: ApiErrorKind::ContextOverflow,
+                status_code,
+            }
+        }
+        ChatProviderError::ApiProviderOverloaded(_) => ApiErrorClassification {
+            kind: ApiErrorKind::Overloaded,
+            status_code,
+        },
+        ChatProviderError::ApiRateLimit(_) => ApiErrorClassification {
+            kind: ApiErrorKind::RateLimit,
+            status_code,
+        },
+        ChatProviderError::ApiStatus { status_code: 401 | 403, .. } => ApiErrorClassification {
+            kind: ApiErrorKind::Auth,
+            status_code: Some(401),
+        },
+        ChatProviderError::ApiStatus { .. } if status_code.map_or(false, |c| c >= 500) => {
+            ApiErrorClassification {
+                kind: ApiErrorKind::Server5xx,
+                status_code,
+            }
+        }
+        ChatProviderError::ApiStatus { .. } if status_code.map_or(false, |c| c >= 400) => {
+            ApiErrorClassification {
+                kind: ApiErrorKind::Client4xx,
+                status_code,
+            }
+        }
+        ChatProviderError::ApiConnection(_) => ApiErrorClassification {
+            kind: ApiErrorKind::Network,
+            status_code: None,
+        },
+        ChatProviderError::ApiTimeout(_) => ApiErrorClassification {
+            kind: ApiErrorKind::Timeout,
+            status_code: None,
+        },
+        ChatProviderError::ApiEmptyResponse { .. } => ApiErrorClassification {
+            kind: ApiErrorKind::EmptyResponse,
+            status_code: None,
+        },
+        _ => ApiErrorClassification {
+            kind: ApiErrorKind::Other,
+            status_code: None,
+        },
+    }
+}
+
+/// Normalize an API status error into the appropriate error variant.
+pub fn normalize_api_status_error(
+    status_code: u16,
+    message: &str,
+    request_id: Option<String>,
+    retry_after_ms: Option<u64>,
+    trace_id: Option<String>,
+) -> ChatProviderError {
+    let msg = message.to_string();
+
+    match status_code {
+        429 => ChatProviderError::ApiRateLimit(ApiStatusPayload {
+            status_code,
+            message: msg,
+            request_id,
+            retry_after_ms,
+            trace_id,
+        }),
+        _ if is_context_overflow_status_error(status_code, message) => {
+            ChatProviderError::ApiContextOverflow(ApiStatusPayload {
+                status_code,
+                message: msg,
+                request_id,
+                retry_after_ms,
+                trace_id,
+            })
+        }
+        _ if is_request_too_large_status_error(status_code, message) => {
+            ChatProviderError::ApiRequestTooLarge(ApiStatusPayload {
+                status_code,
+                message: msg,
+                request_id,
+                retry_after_ms,
+                trace_id,
+            })
+        }
+        _ if is_provider_overload_status_error(status_code, message) => {
+            ChatProviderError::ApiProviderOverloaded(ApiStatusPayload {
+                status_code,
+                message: msg,
+                request_id,
+                retry_after_ms,
+                trace_id,
+            })
+        }
+        _ => ChatProviderError::ApiStatus {
+            status_code,
+            message: msg,
+            request_id,
+            retry_after_ms,
+            trace_id,
+        },
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Error classification helpers
+// ---------------------------------------------------------------------------
+
+fn message_contains_any(message: &str, patterns: &[&str]) -> bool {
+    let lower = message.to_lowercase();
+    patterns.iter().any(|p| lower.contains(p))
+}
+
+pub fn is_context_overflow_status_error(status_code: u16, message: &str) -> bool {
+    if !matches!(status_code, 400 | 413 | 422) {
+        return false;
+    }
+    let patterns = [
+        "context_length",
+        "context_length_exceeded",
+        "context window",
+        "maximum context",
+        "max tokens",
+        "too many tokens",
+        "prompt is too long",
+        "input token count",
+        "model token limit",
+    ];
+    message_contains_any(message, &patterns)
+}
+
+pub fn is_provider_overload_status_error(status_code: u16, message: &str) -> bool {
+    if status_code == 529 {
+        return true;
+    }
+    if !matches!(status_code, 500 | 503) {
+        return false;
+    }
+    message_contains_any(message, &["overload"])
+}
+
+pub fn is_request_too_large_status_error(status_code: u16, message: &str) -> bool {
+    if status_code != 413 {
+        return false;
+    }
+    let patterns = [
+        "request exceeds the maximum size",
+        "request entity too large",
+        "request_too_large",
+        "payload too large",
+        "content too large",
+        "request body too large",
+        "request too large",
+    ];
+    message_contains_any(message, &patterns)
+}
+
+pub fn is_image_format_error(error: &ChatProviderError) -> bool {
+    match error {
+        ChatProviderError::ApiContextOverflow(_) | ChatProviderError::ApiRequestTooLarge(_) => {
+            return false;
+        }
+        ChatProviderError::ApiStatus { status_code: 400, message, .. } => {
+            let lower = message.to_lowercase();
+            check_image_format_patterns(&lower)
+        }
+        ChatProviderError::Provider(msg) => {
+            let lower = msg.to_lowercase();
+            lower.contains("unsupported media type for base64 image")
+                || lower.contains("invalid data url for image")
+        }
+        _ => false,
+    }
+}
+
+fn check_image_format_patterns(lower: &str) -> bool {
+    let image_patterns = [
+        "unsupported image",
+        "invalid image",
+        "could not process image",
+        "could not decode image",
+        "unable to process image",
+        "failed to decode image",
+        "does not represent a valid image",
+    ];
+    let media_type_pattern = ["media_type", "mime_type", "mimetype"];
+    (image_patterns.iter().any(|p| lower.contains(p)))
+        || (media_type_pattern.iter().any(|p| lower.contains(p)) && lower.contains("image"))
+}
+
+pub fn is_tool_exchange_adjacency_error(error: &ChatProviderError) -> bool {
+    match error {
+        ChatProviderError::ApiContextOverflow(_) => return false,
+        ChatProviderError::ApiStatus { status_code, message, .. }
+            if *status_code == 400 || *status_code == 422 =>
+        {
+            has_tool_exchange_pattern(message)
+        }
+        _ => false,
+    }
+}
+
+fn has_tool_exchange_pattern(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    let patterns = [
+        "tool_use",
+        "tool_result",
+        "unexpected tool_result",
+        "tool_call_id not found",
+        "role 'tool' must be a response",
+        "tool_calls must be followed by",
+        "tool_call_ids did not have response",
+        "insufficient tool messages",
+    ];
+    patterns.iter().any(|p| lower.contains(p))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_retryable_status_codes() {
+        for code in &[408, 409, 429, 500, 502, 503, 504, 529] {
+            let err = ChatProviderError::ApiStatus {
+                status_code: *code,
+                message: "error".to_string(),
+                request_id: None,
+                retry_after_ms: None,
+                trace_id: None,
+            };
+            assert!(err.is_retryable(), "code {} should be retryable", code);
+        }
+    }
+
+    #[test]
+    fn test_non_retryable_4xx() {
+        let err = ChatProviderError::ApiStatus {
+            status_code: 400,
+            message: "bad request".to_string(),
+            request_id: None,
+            retry_after_ms: None,
+            trace_id: None,
+        };
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn test_context_overflow_detection() {
+        assert!(is_context_overflow_status_error(400, "context_length_exceeded"));
+        assert!(is_context_overflow_status_error(400, "max tokens exceeded"));
+        assert!(!is_context_overflow_status_error(400, "bad request"));
+    }
+
+    #[test]
+    fn test_rate_limit() {
+        let err = normalize_api_status_error(429, "too many requests", None, None, None);
+        assert!(matches!(err, ChatProviderError::ApiRateLimit(_)));
+    }
+
+    #[test]
+    fn test_image_format_error() {
+        let err = ChatProviderError::ApiStatus {
+            status_code: 400,
+            message: "unsupported image format".to_string(),
+            request_id: None,
+            retry_after_ms: None,
+            trace_id: None,
+        };
+        assert!(is_image_format_error(&err));
+    }
+
+    #[test]
+    fn test_classify_api_error() {
+        let err = ChatProviderError::ApiConnection("connection failed".to_string());
+        let classification = classify_api_error(&err);
+        assert_eq!(classification.kind, ApiErrorKind::Network);
+
+        let err = ChatProviderError::ApiTimeout("timed out".to_string());
+        let classification = classify_api_error(&err);
+        assert_eq!(classification.kind, ApiErrorKind::Timeout);
+    }
+
+    #[test]
+    fn test_api_rate_limit_classification() {
+        let err = ChatProviderError::ApiRateLimit(ApiStatusPayload {
+            status_code: 429,
+            message: "rate limited".to_string(),
+            request_id: None,
+            retry_after_ms: None,
+            trace_id: None,
+        });
+        let classification = classify_api_error(&err);
+        assert_eq!(classification.kind, ApiErrorKind::RateLimit);
+    }
+
+    #[test]
+    fn test_is_tool_exchange_adjacency() {
+        let err = ChatProviderError::ApiStatus {
+            status_code: 400,
+            message: "tool_use blocks must be followed by tool_result".to_string(),
+            request_id: None,
+            retry_after_ms: None,
+            trace_id: None,
+        };
+        assert!(is_tool_exchange_adjacency_error(&err));
+    }
+}

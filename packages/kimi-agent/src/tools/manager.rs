@@ -361,21 +361,21 @@ impl ToolManager {
             entries.push(ToolEntry {
                 name: tool.name.clone(),
                 active: self.enabled_tools.contains(&tool.name),
-                source: ToolSource::Builtin,
+                source: tool.source,
             });
         }
         for tool in self.user_tools.values() {
             entries.push(ToolEntry {
                 name: tool.name.clone(),
                 active: self.enabled_tools.contains(&tool.name),
-                source: ToolSource::User,
+                source: tool.source,
             });
         }
         for tool in self.mcp_tools.values() {
             entries.push(ToolEntry {
                 name: tool.name.clone(),
                 active: self.is_mcp_tool_enabled(&tool.name),
-                source: ToolSource::Mcp,
+                source: tool.source,
             });
         }
 

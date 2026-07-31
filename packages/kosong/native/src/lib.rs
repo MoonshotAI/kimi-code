@@ -14,8 +14,13 @@ pub mod merge_user_messages;
 pub mod message;
 pub mod openai;
 pub mod provider;
+pub mod streaming_providers;
+pub mod streaming_spike;
 pub mod tool;
 pub mod tool_call_id;
+pub mod tool_registry;
+pub mod turn_loop;
+pub mod turn_step;
 pub mod usage;
 
 use napi_derive::napi;

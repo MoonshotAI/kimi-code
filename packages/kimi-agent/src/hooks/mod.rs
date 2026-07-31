@@ -15,6 +15,14 @@
 //! These keep `run_turn` polymorphic over hook composition: goal-aware
 //! steering, telemetry, logging, and any future hook can be layered without
 //! touching the loop itself.
+//!
+//! The `external` submodule provides user-configured lifecycle hooks that
+//! execute shell commands at agent lifecycle events (PreToolUse, etc.);
+//! the `interceptor` submodule wires them into the agent's tool-execution
+//! callback chain.
+
+pub mod external;
+pub mod interceptor;
 
 use crate::turn_loop::types::{
     AfterStepContext, AfterStepResult, BeforeStepResult, LoopHooks, StepContext,

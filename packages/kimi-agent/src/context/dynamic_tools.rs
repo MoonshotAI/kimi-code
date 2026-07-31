@@ -2,7 +2,7 @@
 ///
 /// Corresponds to `packages/agent-core/src/agent/context/dynamic-tools.ts`.
 
-use crate::context::types::{ContextMessage, MessageOrigin, ToolDefinition};
+use crate::context::types::{ContextMessage, MessageOrigin};
 
 /// Origin variant of an injected dynamic tool schema message.
 pub const DYNAMIC_TOOL_SCHEMA_VARIANT: &str = "dynamic_tool_schema";
@@ -89,7 +89,7 @@ pub fn render_loadable_tools_announcement(added: &[String], removed: &[String]) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::types::ContentPart;
+    use crate::context::types::{ContentPart, ToolDefinition};
 
     fn make_msg(role: &str, text: &str) -> ContextMessage {
         ContextMessage {

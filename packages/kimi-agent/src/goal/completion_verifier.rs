@@ -208,7 +208,7 @@ pub fn parse_verdict(response: &str) -> VerificationResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::goal::{GoalActor, GoalBudgetLimits, GoalMode, GoalStatus};
+    use crate::goal::GoalStatus;
 
     fn make_snapshot() -> GoalSnapshot {
         GoalSnapshot {

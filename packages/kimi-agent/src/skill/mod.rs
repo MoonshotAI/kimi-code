@@ -6,6 +6,7 @@
 /// Skills provide reusable capabilities (prompts, commands, workflows).
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +19,10 @@ pub struct SkillMetadata {
     pub source: Option<String>,
     pub path: Option<String>,
     pub dir: Option<String>,
+    /// The full skill content, loaded from the skill file.
+    /// When present, activation uses this instead of description.
+    #[serde(default)]
+    pub content: Option<String>,
 }
 
 /// The skill registry — a collection of known skills.
@@ -42,6 +47,11 @@ impl SkillRegistry {
     /// Get a skill by name.
     pub fn get_skill(&self, name: &str) -> Option<&SkillMetadata> {
         self.skills.get(name)
+    }
+
+    /// Get a mutable reference to a skill by name.
+    pub fn get_skill_mut(&mut self, name: &str) -> Option<&mut SkillMetadata> {
+        self.skills.get_mut(name)
     }
 
     /// Check if a skill exists.
@@ -72,6 +82,44 @@ pub struct ActivateSkillPayload {
     pub args: Option<String>,
 }
 
+/// Host-supplied skill metadata on the `session/create` wire. The host
+/// discovers skills (dirs, plugin manifests) and hands the engine flat records;
+/// `into_metadata` maps to the registry's [`SkillMetadata`].
+#[derive(Debug, Clone, Deserialize)]
+pub struct SkillMetadataInput {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default = "default_skill_type")]
+    pub skill_type: String,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub dir: Option<String>,
+    #[serde(default)]
+    pub content: Option<String>,
+}
+
+fn default_skill_type() -> String {
+    "prompt".to_string()
+}
+
+impl SkillMetadataInput {
+    pub fn into_metadata(self) -> SkillMetadata {
+        SkillMetadata {
+            name: self.name,
+            description: self.description,
+            skill_type: self.skill_type,
+            source: self.source,
+            path: self.path,
+            dir: self.dir,
+            content: self.content,
+        }
+    }
+}
+
 /// Origin of a skill activation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillActivationOrigin {
@@ -99,7 +147,35 @@ impl SkillManager {
     ///
     /// Returns the activation origin and the rendered prompt text on success,
     /// or an error string if the skill is not found or not user-activatable.
-    pub fn activate(&self, input: ActivateSkillPayload) -> Result<(SkillActivationOrigin, String), String> {
+    pub fn activate(&mut self, input: ActivateSkillPayload) -> Result<(SkillActivationOrigin, String), String> {
+        let skill_path = self.registry.get_skill(&input.name)
+            .and_then(|s| s.path.clone());
+        let skill_dir = self.registry.get_skill(&input.name)
+            .and_then(|s| s.dir.clone());
+        
+        // Try to load skill content from file if not already loaded
+        let loaded_content = if let Some(ref path) = skill_path {
+            // Check if content is already cached
+            let needs_load = self.registry.get_skill(&input.name)
+                .map(|s| s.content.is_none())
+                .unwrap_or(false);
+            
+            if needs_load {
+                load_skill_content(path, skill_dir.as_deref()).ok()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
+        // Cache loaded content
+        if let Some(ref content) = loaded_content {
+            if let Some(skill) = self.registry.get_skill_mut(&input.name) {
+                skill.content = Some(content.clone());
+            }
+        }
+        
         let skill = self.registry.get_skill(&input.name).ok_or_else(|| {
             format!("Skill \"{}\" was not found", input.name)
         })?;
@@ -112,7 +188,8 @@ impl SkillManager {
         }
 
         let skill_args = input.args.unwrap_or_default();
-        let rendered_prompt = render_skill_prompt(&skill.name, &skill_args, &skill.description);
+        let content = skill.content.as_deref();
+        let rendered_prompt = render_skill_prompt(&skill.name, &skill_args, &skill.description, content);
 
         let origin = SkillActivationOrigin {
             activation_id: generate_activation_id(),
@@ -141,22 +218,61 @@ impl SkillManager {
     }
 }
 
+/// Load skill content from a file on disk.
+fn load_skill_content(path: &str, dir: Option<&str>) -> Result<String, String> {
+    // Try path as-is first
+    let file_path = Path::new(path);
+    if file_path.exists() {
+        return std::fs::read_to_string(file_path)
+            .map_err(|e| format!("Cannot read skill file {path}: {e}"));
+    }
+    
+    // Try relative to dir
+    if let Some(base_dir) = dir {
+        let joined = Path::new(base_dir).join(path);
+        if joined.exists() {
+            return std::fs::read_to_string(&joined)
+                .map_err(|e| format!("Cannot read skill file {}: {e}", joined.display()));
+        }
+    }
+    
+    // Try adding .skill.md extension
+    let with_ext = format!("{}.skill.md", path);
+    let ext_path = Path::new(&with_ext);
+    if ext_path.exists() {
+        return std::fs::read_to_string(ext_path)
+            .map_err(|e| format!("Cannot read skill file {with_ext}: {e}"));
+    }
+    
+    // Try with extension relative to dir
+    if let Some(base_dir) = dir {
+        let joined_ext = Path::new(base_dir).join(&with_ext);
+        if joined_ext.exists() {
+            return std::fs::read_to_string(&joined_ext)
+                .map_err(|e| format!("Cannot read skill file {}: {e}", joined_ext.display()));
+        }
+    }
+    
+    Err(format!("Skill file not found: {path}"))
+}
+
 /// Check if a skill type is user-activatable.
 fn is_user_activatable_skill_type(skill_type: &str) -> bool {
     matches!(skill_type, "prompt" | "workflow" | "command")
 }
 
-/// Render a skill prompt from the skill name, args, and content.
-fn render_skill_prompt(name: &str, args: &str, description: &str) -> String {
+/// Render a skill prompt from the skill name, args, description, and optional content.
+fn render_skill_prompt(name: &str, args: &str, description: &str, content: Option<&str>) -> String {
+    let body = content.unwrap_or(description);
     if args.is_empty() {
         format!(
             "[Skill: {}]\n{}\n[/Skill]",
-            name, description
+            name, body
         )
     } else {
         format!(
             "[Skill: {}]\n{}\nArgs: {}\n[/Skill]",
-            name, description, args
+            name, body, args
         )
     }
 }
@@ -186,6 +302,19 @@ mod tests {
             source: Some("builtin".to_string()),
             path: Some("/skills/read-file.md".to_string()),
             dir: Some("/skills".to_string()),
+            content: None,
+        }
+    }
+
+    fn make_skill_with_content() -> SkillMetadata {
+        SkillMetadata {
+            name: "with-content".to_string(),
+            description: "Description only".to_string(),
+            skill_type: "prompt".to_string(),
+            source: None,
+            path: None,
+            dir: None,
+            content: Some("Full skill file content here\nWith multiple lines".to_string()),
         }
     }
 
@@ -233,6 +362,7 @@ mod tests {
             source: None,
             path: None,
             dir: None,
+            content: None,
         });
         assert_eq!(registry.list_skills().len(), 2);
     }
@@ -241,7 +371,7 @@ mod tests {
     fn test_activate_skill() {
         let mut registry = SkillRegistry::new();
         registry.register(make_sample_skill());
-        let manager = SkillManager::new(registry);
+        let mut manager = SkillManager::new(registry);
 
         let result = manager.activate(ActivateSkillPayload {
             name: "read-file".to_string(),
@@ -256,8 +386,26 @@ mod tests {
     }
 
     #[test]
+    fn test_activate_skill_with_content() {
+        let mut registry = SkillRegistry::new();
+        registry.register(make_skill_with_content());
+        let mut manager = SkillManager::new(registry);
+
+        let result = manager.activate(ActivateSkillPayload {
+            name: "with-content".to_string(),
+            args: None,
+        });
+        assert!(result.is_ok());
+
+        let (_origin, prompt) = result.unwrap();
+        // Should use content, not description
+        assert!(prompt.contains("Full skill file content here"));
+        assert!(!prompt.contains("Description only"));
+    }
+
+    #[test]
     fn test_activate_nonexistent_fails() {
-        let manager = SkillManager::new(SkillRegistry::new());
+        let mut manager = SkillManager::new(SkillRegistry::new());
         let result = manager.activate(ActivateSkillPayload {
             name: "nonexistent".to_string(),
             args: None,
@@ -276,8 +424,9 @@ mod tests {
             source: None,
             path: None,
             dir: None,
+            content: None,
         });
-        let manager = SkillManager::new(registry);
+        let mut manager = SkillManager::new(registry);
         let result = manager.activate(ActivateSkillPayload {
             name: "internal".to_string(),
             args: None,
@@ -305,7 +454,7 @@ mod tests {
 
     #[test]
     fn test_render_skill_prompt_with_args() {
-        let prompt = render_skill_prompt("test", "arg1", "A test skill");
+        let prompt = render_skill_prompt("test", "arg1", "A test skill", None);
         assert!(prompt.contains("[Skill: test]"));
         assert!(prompt.contains("A test skill"));
         assert!(prompt.contains("Args: arg1"));
@@ -314,10 +463,17 @@ mod tests {
 
     #[test]
     fn test_render_skill_prompt_without_args() {
-        let prompt = render_skill_prompt("test", "", "A test skill");
+        let prompt = render_skill_prompt("test", "", "A test skill", None);
         assert!(prompt.contains("[Skill: test]"));
         assert!(prompt.contains("[/Skill]"));
         assert!(!prompt.contains("Args:"));
+    }
+
+    #[test]
+    fn test_render_skill_prompt_with_content_instead_of_description() {
+        let prompt = render_skill_prompt("test", "", "description only", Some("actual file content here"));
+        assert!(prompt.contains("actual file content here"));
+        assert!(!prompt.contains("description only"));
     }
 
     #[test]
@@ -327,5 +483,12 @@ mod tests {
         assert!(is_user_activatable_skill_type("command"));
         assert!(!is_user_activatable_skill_type("internal"));
         assert!(!is_user_activatable_skill_type(""));
+    }
+
+    #[test]
+    fn test_load_skill_content_file_not_found() {
+        let result = load_skill_content("/nonexistent/path/to/skill.md", None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
     }
 }

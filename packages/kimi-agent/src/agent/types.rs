@@ -43,6 +43,16 @@ pub struct AgentOptions {
     /// presented to the model in addition to the engine's own tools; calls
     /// to them settle at the host via `execute_tool`.
     pub host_tools: Vec<crate::turn_loop::types::ToolInfo>,
+    /// Shared permission gate. When set, the agent uses it (so a session-wide
+    /// gate configured over `permission/*` RPC governs every agent); when
+    /// `None`, the agent seeds one from `KIMI_PERMISSION_MODE`.
+    pub permission: Option<crate::permission::gate::PermissionGate>,
+    /// User-configured external lifecycle hooks (host-resolved from
+    /// config.toml `[[hooks]]` + plugin contributions). Empty = no hooks.
+    pub external_hooks: Vec<crate::hooks::external::HookDef>,
+    /// Shared task service. When set, the agent uses it (so a session-wide
+    /// service governs every agent); when `None`, the agent creates its own.
+    pub task: Option<std::sync::Arc<std::sync::Mutex<crate::task::TaskService>>>,
 }
 
 impl Default for AgentOptions {
@@ -58,6 +68,9 @@ impl Default for AgentOptions {
             max_steps_per_turn: 50,
             max_retries_per_step: 3,
             host_tools: Vec::new(),
+            permission: None,
+            external_hooks: Vec::new(),
+            task: None,
         }
     }
 }
@@ -120,12 +133,14 @@ pub enum HookResult {
 
 /// The hook system for the agent turn loop.
 /// Mirrors the TS `LoopHooks` interface with all tool-level hooks.
+/// Closures are `Arc` so `build_loop_hooks` can clone them into the
+/// per-turn `LoopHooks` without consuming the agent's set.
 #[derive(Default)]
 pub struct AgentHooks {
     /// before_step: runs before each LLM step.
-    pub before_step: Option<Box<dyn Fn(&HookContext) -> Result<HookResult, Box<dyn std::error::Error>> + Send + Sync>>,
+    pub before_step: Option<Arc<dyn Fn(&HookContext) -> Result<HookResult, Box<dyn std::error::Error>> + Send + Sync>>,
     /// after_step: runs after each LLM step.
-    pub after_step: Option<Box<dyn Fn(&HookContext) -> Result<HookResult, Box<dyn std::error::Error>> + Send + Sync>>,
+    pub after_step: Option<Arc<dyn Fn(&HookContext) -> Result<HookResult, Box<dyn std::error::Error>> + Send + Sync>>,
     /// should_continue_after_stop: decides whether to continue after a terminal stop.
-    pub should_continue_after_stop: Option<Box<dyn Fn(&HookContext) -> Result<bool, Box<dyn std::error::Error>> + Send + Sync>>,
+    pub should_continue_after_stop: Option<Arc<dyn Fn(&HookContext) -> Result<bool, Box<dyn std::error::Error>> + Send + Sync>>,
 }

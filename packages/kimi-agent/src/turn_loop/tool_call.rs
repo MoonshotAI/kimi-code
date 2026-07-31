@@ -10,13 +10,11 @@
 ///   5. Finalize — run `finalize_tool_result` hook (redaction, truncation)
 ///   6. Emit — return results in provider order (caller dispatches events)
 
-use crate::callbacks::HostCallbacks;
 use crate::rpc::types::{
-    AuthorizeToolRequest, AuthorizeToolResponse, ExecutableToolResultData,
-    FinalizeToolRequest, FinalizeToolResponse, PrepareToolRequest, PrepareToolResponse,
-    ToolExecuteRequest, ToolExecuteResponse,
+    AuthorizeToolRequest, ExecutableToolResultData,
+    FinalizeToolRequest, PrepareToolRequest,
 };
-use crate::turn_loop::tool_scheduler::{ScheduledToolCall, execute_scheduled};
+use crate::turn_loop::tool_scheduler::ScheduledToolCall;
 use crate::turn_loop::types::*;
 
 /// Result of a fully processed tool call batch.
@@ -55,8 +53,6 @@ enum PreflightedToolCall {
         args: serde_json::Value,
     },
     Rejected {
-        tool_call: ToolCall,
-        tool_name: String,
         args: serde_json::Value,
         output: String,
     },
@@ -76,11 +72,10 @@ enum PrepareDecision {
         args: serde_json::Value,
         output: String,
     },
+    /// The prepare hook itself failed (host callback error or local hook
+    /// panic/error). Distinct from `Blocked` — a hook crash is an engine
+    /// fault, not a policy decision.
     HookFailed {
-        args: serde_json::Value,
-        output: String,
-    },
-    Aborted {
         args: serde_json::Value,
         output: String,
     },
@@ -138,10 +133,11 @@ where
         let prepared = prepare_tool_call(step, &call, index, tool_calls, host_callbacks).await?;
 
         match prepared {
-            PrepareDecision::Aborted { .. } | PrepareDecision::Blocked { .. } | PrepareDecision::HookFailed { .. } => {
+            PrepareDecision::Blocked { .. } | PrepareDecision::HookFailed { .. } => {
                 // Error result, no execution needed.
                 let (tool_call, tool_name, args, output) = match &prepared {
-                    PrepareDecision::Aborted { args, output, .. } | PrepareDecision::Blocked { args, output, .. } | PrepareDecision::HookFailed { args, output, .. } => {
+                    PrepareDecision::Blocked { args, output, .. }
+                    | PrepareDecision::HookFailed { args, output, .. } => {
                         let tc = &tool_calls[index];
                         (tc.clone(), tc.name.clone(), args.clone(), output.clone())
                     }
@@ -155,6 +151,7 @@ where
                         content: output,
                         is_error: true,
                         is_prediction: false,
+                        ..Default::default()
                     },
                     stop_turn: false,
                 };
@@ -195,6 +192,7 @@ where
                                 content: output,
                                 is_error: true,
                                 is_prediction: false,
+                                ..Default::default()
                             },
                             stop_turn: false,
                         });
@@ -233,6 +231,7 @@ where
                                 content: output,
                                 is_error: true,
                                 is_prediction: false,
+                                ..Default::default()
                             },
                             stop_turn: false,
                         });
@@ -269,8 +268,6 @@ fn preflight_tool_call(
     let tool_exists = step.tools.iter().any(|t| t.name == *tool_name);
     if !tool_exists {
         return PreflightedToolCall::Rejected {
-            tool_call: tool_call.clone(),
-            tool_name: tool_name.clone(),
             args: args.clone(),
             output: format!("Tool \"{tool_name}\" not found"),
         };
@@ -292,7 +289,7 @@ async fn prepare_tool_call(
     host_callbacks: Option<&dyn crate::callbacks::HostCallbacks>,
 ) -> Result<PrepareDecision, Box<dyn std::error::Error>> {
     match call {
-        PreflightedToolCall::Rejected { tool_call, tool_name, args, output } => {
+        PreflightedToolCall::Rejected { args, output } => {
             return Ok(PrepareDecision::Blocked {
                 args: args.clone(),
                 output: output.clone(),
@@ -312,7 +309,15 @@ async fn prepare_tool_call(
                 };
                 match cb.prepare_tool_execution(req).await {
                     Ok(Some(decision)) => Some(decision),
-                    Ok(None) | Err(_) => None,
+                    Ok(None) => None,
+                    // The host hook itself failed — surface it as a distinct
+                    // decision rather than silently treating it as "no hook".
+                    Err(e) => {
+                        return Ok(PrepareDecision::HookFailed {
+                            args: args.clone(),
+                            output: format!("Prepare hook failed: {e}"),
+                        });
+                    }
                 }
             } else {
                 None
@@ -333,6 +338,7 @@ async fn prepare_tool_call(
                                 content: synthetic.content,
                                 is_error: synthetic.is_error,
                                 is_prediction: false,
+                                ..Default::default()
                             },
                         });
                     }
@@ -358,7 +364,15 @@ async fn prepare_tool_call(
                         args: args.clone(),
                         trace_id: step.trace_id.clone(),
                     };
-                    let result = prepare(&ctx)?;
+                    let result = match prepare(&ctx) {
+                        Ok(result) => result,
+                        Err(e) => {
+                            return Ok(PrepareDecision::HookFailed {
+                                args: args.clone(),
+                                output: format!("Prepare hook failed: {e}"),
+                            });
+                        }
+                    };
                     if let Some(local_decision) = result {
                         if local_decision.block {
                             return Ok(PrepareDecision::Blocked {
@@ -429,6 +443,7 @@ where
                     content: auth.reason.unwrap_or_else(|| format!("Tool call \"{}\" was blocked", tool_call.name)),
                     is_error: true,
                     is_prediction: false,
+                    ..Default::default()
                 });
             }
             if let Some(synthetic) = auth.synthetic_result {
@@ -436,6 +451,7 @@ where
                     content: synthetic.content,
                     is_error: synthetic.is_error,
                     is_prediction: false,
+                    ..Default::default()
                 });
             }
         }
@@ -467,6 +483,7 @@ where
                         content: auth.reason.unwrap_or_else(|| format!("Tool call \"{}\" was blocked", tool_call.name)),
                         is_error: true,
                         is_prediction: false,
+                        ..Default::default()
                     });
                 }
                 if let Some(synthetic) = auth.synthetic_result {
@@ -513,6 +530,7 @@ async fn finalize_pending_tool_result(
                     content: data.content,
                     is_error: data.is_error,
                     is_prediction: false,
+                    ..Default::default()
                 });
                 Some(())
             }
@@ -579,11 +597,13 @@ fn normalize_tool_result(r: ExecutableToolResult) -> ExecutableToolResult {
         content: output,
         is_error: r.is_error,
         is_prediction: r.is_prediction,
+        stop_turn: r.stop_turn,
+        media: r.media,
     }
 }
 
 /// Check if a tool result requests the turn to stop.
-fn tool_result_stops_turn(result: &ExecutableToolResult) -> bool {
+fn tool_result_stops_turn(_result: &ExecutableToolResult) -> bool {
     // In the TS version, this is driven by `result.stopTurn === true`.
     // The Rust `ExecutableToolResult` doesn't have a `stop_turn` field yet,
     // so this is a placeholder. Extend when needed.
@@ -594,7 +614,7 @@ fn tool_result_stops_turn(result: &ExecutableToolResult) -> bool {
 /// Each call is recorded with a synthetic error result so the exchange stays
 /// wire-valid and the model learns the calls never ran.
 pub async fn record_unexecuted_tool_calls<F, Fut>(
-    step: &ToolCallStepContext,
+    _step: &ToolCallStepContext,
     tool_calls: &[ToolCall],
     emit_fn: F,
 ) -> Result<(), Box<dyn std::error::Error>>
@@ -611,6 +631,7 @@ where
             content: output.to_string(),
             is_error: true,
             is_prediction: false,
+            ..Default::default()
         };
         emit_fn(tc, &result).await?;
     }
@@ -620,7 +641,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rpc::types::TokenUsage;
+    
 
     fn make_tool_call(id: &str, name: &str) -> ToolCall {
         ToolCall {
@@ -666,6 +687,7 @@ mod tests {
                     content: format!("result for {}", tc.name),
                     is_error: false,
                     is_prediction: false,
+                    ..Default::default()
                 })
             }
         }).await.unwrap();
@@ -709,6 +731,7 @@ mod tests {
                     content: format!("result for {}", tc.name),
                     is_error: false,
                     is_prediction: false,
+                    ..Default::default()
                 })
             }
         }).await.unwrap();
@@ -772,6 +795,7 @@ mod tests {
                             content: "synthetic result".to_string(),
                             is_error: false,
                             is_prediction: false,
+                            ..Default::default()
                         }),
                         updated_args: None,
                         execution_metadata: None,
@@ -841,6 +865,7 @@ mod tests {
                 content: "raw output".to_string(),
                 is_error: false,
                 is_prediction: false,
+                ..Default::default()
             })
         }).await.unwrap();
 
@@ -858,6 +883,7 @@ mod tests {
                 content: String::new(),
                 is_error: false,
                 is_prediction: false,
+                ..Default::default()
             })
         }).await.unwrap();
 

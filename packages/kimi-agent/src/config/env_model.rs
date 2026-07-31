@@ -8,12 +8,8 @@ use std::collections::HashMap;
 
 use crate::config::types::{KimiConfig, ProviderConfig};
 
-/// Prefix for all Kimi environment variables.
-const KIMI_ENV_PREFIX: &str = "KIMI_";
-
 /// Provider environment variable prefix.
 const KIMI_PROVIDER_PREFIX: &str = "KIMI_PROVIDER_";
-
 /// Suffixes for provider env vars.
 const API_KEY_SUFFIX: &str = "_API_KEY";
 const BASE_URL_SUFFIX: &str = "_BASE_URL";
@@ -51,6 +47,8 @@ pub fn apply_env_overrides(config: &mut KimiConfig) {
                 max_tokens: None,
                 oauth: None,
                 custom_headers: None,
+                env: None,
+                source: None,
             });
 
         match field {

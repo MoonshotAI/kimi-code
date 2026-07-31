@@ -17,21 +17,21 @@ name = "native_tools_bench"
 harness = false
 
 [dependencies]
-napi = { version = "2", features = ["async", "napi8", "serde"] }
+napi = { version = "2", features = ["async", "napi8", "serde", "serde-json"] }
 napi-derive = "2"
 regex = "1"
 globset = "0.4"
 ignore = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt", "io-util", "process", "time"] }
+tokio = { version = "1", features = ["rt", "io-util", "process", "time", "net", "sync", "macros"] }
 encoding_rs = "0.8"
 memchr = "2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 ureq = { version = "2", features = ["json"] }
 scraper = "0.22"
 url = "2"
-reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls", "gzip"] }
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls", "gzip", "json"] }
 futures-util = "0.3"
 eventsource-stream = "0.2"
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -39,6 +39,8 @@ ulid = "1"
 chrono = "0.4"
 once_cell = "1"
 sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
 
 [build-dependencies]
 napi-build = "2"

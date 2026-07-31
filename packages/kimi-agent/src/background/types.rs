@@ -235,19 +235,6 @@ pub trait BackgroundTaskSink: Send {
     fn settle(&mut self, settlement: BackgroundTaskSettlement);
 }
 
-/// A handle for a process that was spawned by the JS host.
-#[derive(Debug, Clone)]
-pub struct ProcessHandle {
-    pub pid: u32,
-    pub native_process_id: String,
-}
-
-/// A handle for a subagent that was spawned.
-#[derive(Debug, Clone)]
-pub struct AgentHandle {
-    pub agent_id: String,
-}
-
 const TERMINAL_STATUSES: [BackgroundTaskStatus; 5] = [
     BackgroundTaskStatus::Completed,
     BackgroundTaskStatus::Failed,

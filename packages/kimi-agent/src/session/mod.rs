@@ -3,6 +3,7 @@
 /// Provides session data types, a manager for create/resume/switch/delete
 /// operations, and CLI subcommands for interactive use.
 pub mod commands;
+pub mod export;
 pub mod manager;
 pub mod types;
 

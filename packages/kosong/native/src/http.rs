@@ -114,6 +114,54 @@ impl HttpClient {
 
         Ok(response)
     }
+
+    /// Stream a POST request with JSON body, where the auth header is
+    /// `Authorization: Bearer <token>`. Used by OpenAI and similar
+    /// `Authorization`-header providers.
+    ///
+    /// `extra_headers` is merged into the request as additional headers,
+    /// overriding any default with the same name.
+    pub async fn post_json_stream_bearer(
+        &self,
+        url: &str,
+        api_key: &str,
+        body: &str,
+        extra_headers: Option<&std::collections::HashMap<String, String>>,
+    ) -> Result<reqwest::Response, HttpError> {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "Authorization",
+            HeaderValue::from_str(&format!("Bearer {api_key}"))
+                .map_err(|e| HttpError::InvalidHeader(e.to_string()))?,
+        );
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+
+        if let Some(extra) = extra_headers {
+            for (key, value) in extra {
+                if let Ok(hv) = HeaderValue::from_str(value) {
+                    headers.insert(
+                        reqwest::header::HeaderName::from_bytes(key.as_bytes())
+                            .map_err(|e| HttpError::InvalidHeader(e.to_string()))?,
+                        hv,
+                    );
+                }
+            }
+        }
+
+        let response = self
+            .inner
+            .post(url)
+            .headers(headers)
+            .body(body.to_string())
+            .send()
+            .await
+            .map_err(|e| HttpError::RequestFailed(e.to_string()))?;
+
+        Ok(response)
+    }
 }
 
 /// HTTP-level errors.

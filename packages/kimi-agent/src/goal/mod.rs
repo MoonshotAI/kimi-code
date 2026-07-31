@@ -265,7 +265,7 @@ impl GoalMode {
     // ── User-owned lifecycle ──────────────────────────────────────────────
 
     /// Pause the current goal.
-    pub fn pause_goal(&mut self, reason: Option<String>, actor: GoalActor) -> Result<GoalSnapshot, String> {
+    pub fn pause_goal(&mut self, reason: Option<String>, _actor: GoalActor) -> Result<GoalSnapshot, String> {
         // Clone state to avoid borrow conflict with self
         let state_clone = self.clone_state()?;
         let mut state = state_clone;
@@ -284,7 +284,7 @@ impl GoalMode {
     }
 
     /// Pause the current goal if it is active (no-op if not active, no error).
-    pub fn pause_active_goal(&mut self, reason: Option<String>, actor: GoalActor) -> Option<GoalSnapshot> {
+    pub fn pause_active_goal(&mut self, reason: Option<String>, _actor: GoalActor) -> Option<GoalSnapshot> {
         let state = self.state.as_mut()?;
         if !matches!(state.status, GoalStatus::Active) {
             return None;
@@ -296,7 +296,7 @@ impl GoalMode {
     }
 
     /// Resume a paused or blocked goal.
-    pub fn resume_goal(&mut self, reason: Option<String>, actor: GoalActor) -> Result<GoalSnapshot, String> {
+    pub fn resume_goal(&mut self, reason: Option<String>, _actor: GoalActor) -> Result<GoalSnapshot, String> {
         let state_clone = self.clone_state()?;
         let mut state = state_clone;
         if matches!(state.status, GoalStatus::Active) {
@@ -314,7 +314,7 @@ impl GoalMode {
     }
 
     /// Cancel (discard) the current goal.
-    pub fn cancel_goal(&mut self, actor: GoalActor) -> Result<GoalSnapshot, String> {
+    pub fn cancel_goal(&mut self, _actor: GoalActor) -> Result<GoalSnapshot, String> {
         let state = self.state.take().ok_or_else(|| "No current goal".to_string())?;
         let snapshot = make_snapshot(&state);
         if let Some(ref delegate) = self.delegate {
@@ -343,7 +343,7 @@ impl GoalMode {
     // ── Terminal outcomes ─────────────────────────────────────────────────
 
     /// Mark the goal as blocked (system stopped, resumable).
-    pub fn mark_blocked(&mut self, reason: Option<String>, actor: GoalActor) -> Option<GoalSnapshot> {
+    pub fn mark_blocked(&mut self, reason: Option<String>, _actor: GoalActor) -> Option<GoalSnapshot> {
         let state = self.state.as_mut()?;
         if !matches!(state.status, GoalStatus::Active) {
             return None;
@@ -359,7 +359,7 @@ impl GoalMode {
     }
 
     /// Mark the goal as budget-limited (not resumable without new budget).
-    pub fn mark_budget_limited(&mut self, reason: Option<String>, actor: GoalActor) -> Option<GoalSnapshot> {
+    pub fn mark_budget_limited(&mut self, reason: Option<String>, _actor: GoalActor) -> Option<GoalSnapshot> {
         let state = self.state.as_mut()?;
         if !matches!(state.status, GoalStatus::Active) {
             return None;
@@ -381,7 +381,7 @@ impl GoalMode {
     /// goal is NOT marked complete and the method returns `None` (the
     /// caller should check `record_completion_rejection()` for the
     /// rejection count).
-    pub fn mark_complete(&mut self, reason: Option<String>, actor: GoalActor) -> Option<GoalSnapshot> {
+    pub fn mark_complete(&mut self, reason: Option<String>, _actor: GoalActor) -> Option<GoalSnapshot> {
         let state = self.state.as_mut()?;
         if !matches!(state.status, GoalStatus::Active) {
             return None;
@@ -400,7 +400,7 @@ impl GoalMode {
                     }
                     return None;
                 }
-                Err(e) => {
+                Err(_e) => {
                     // Verifier error — fail open so completion is not blocked.
                     if let Some(ref delegate) = self.delegate {
                         delegate.on_goal_telemetry(&snapshot_before, "verification_error");

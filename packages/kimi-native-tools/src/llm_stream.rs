@@ -7,6 +7,7 @@
 //! - OpenAI Responses API (`openai-responses`)
 //! - OpenAI Chat Completions / Legacy (`openai-legacy`)
 //! - Anthropic Messages API (`anthropic`)
+//! - Google Generative Language API (`google-genai`)
 
 use std::time::Duration;
 
@@ -41,6 +42,9 @@ pub struct StreamedPart {
     pub arguments: Option<String>,
     pub arguments_part: Option<String>,
     pub stream_index: Option<u32>,
+    /// Gemini thought signature attached to a function call (base64). Must be
+    /// echoed back on the next request for Gemini 3 models.
+    pub thought_signature: Option<String>,
 }
 
 /// Metadata collected after the stream completes.
@@ -52,6 +56,9 @@ pub struct StreamMetadata {
     pub output_tokens: u32,
     pub cached_tokens: u32,
     pub trace_id: Option<String>,
+    /// Internal counter for synthesizing Gemini tool-call stream indices
+    /// (Gemini events carry no tool-call index of their own).
+    pub tool_call_count: u32,
 }
 
 /// Events emitted by the stream processor.
@@ -80,11 +87,6 @@ pub async fn run_llm_stream(
 
     // Auth header
     if !config.api_key.is_empty() {
-        let auth_value = if config.provider == "anthropic" {
-            format!("{}", config.api_key) // Anthropic uses x-api-key, not Bearer
-        } else {
-            format!("Bearer {}", config.api_key)
-        };
         if config.provider == "anthropic" {
             headers.insert(
                 HeaderName::from_static("x-api-key"),
@@ -94,7 +96,14 @@ pub async fn run_llm_stream(
                 HeaderName::from_static("anthropic-version"),
                 HeaderValue::from_static("2023-06-01"),
             );
+        } else if config.provider == "google-genai" {
+            // The Generative Language API authenticates via x-goog-api-key.
+            headers.insert(
+                HeaderName::from_static("x-goog-api-key"),
+                HeaderValue::from_str(&config.api_key).map_err(|e| format!("Invalid API key header: {e}"))?,
+            );
         } else {
+            let auth_value = format!("Bearer {}", config.api_key);
             headers.insert(
                 AUTHORIZATION,
                 HeaderValue::from_str(&auth_value).map_err(|e| format!("Invalid auth header: {e}"))?,
@@ -174,6 +183,7 @@ pub async fn run_llm_stream(
                     "openai-responses" => decode_openai_responses_event(&parsed, &mut metadata),
                     "openai-legacy" => decode_openai_legacy_event(&parsed, &mut metadata),
                     "anthropic" => decode_anthropic_event(&parsed, &mut metadata),
+                    "google-genai" => decode_google_genai_event(&parsed, &mut metadata),
                     _ => vec![],
                 };
 
@@ -553,6 +563,115 @@ fn decode_anthropic_event(event: &Value, metadata: &mut StreamMetadata) -> Vec<S
 
         _ => vec![],
     }
+}
+
+// ── Google Generative Language API decoder ──────────────────────────────────
+
+/// Decode one `streamGenerateContent?alt=sse` chunk (a GenerateContentResponse).
+///
+/// Mirrors `GoogleGenAIStreamedMessage` in `kosong/src/providers/google-genai.ts`:
+/// thought parts become `think`, text becomes `text`, and `functionCall` parts
+/// become complete `function` parts (Gemini streams whole calls, not argument
+/// deltas). Tool-call ids are synthesized as `{name}_{id}_{entropy}` so they
+/// stay unique across the session, matching the TS SDK path.
+fn decode_google_genai_event(event: &Value, metadata: &mut StreamMetadata) -> Vec<StreamedPart> {
+    if let Some(id) = event.get("responseId").and_then(|v| v.as_str()) {
+        metadata.response_id = Some(id.to_string());
+    }
+
+    if let Some(usage) = event.get("usageMetadata") {
+        if let Some(n) = usage.get("promptTokenCount").and_then(|v| v.as_u64()) {
+            metadata.input_tokens = n as u32;
+        }
+        if let Some(n) = usage.get("candidatesTokenCount").and_then(|v| v.as_u64()) {
+            metadata.output_tokens = n as u32;
+        }
+        if let Some(n) = usage.get("cachedContentTokenCount").and_then(|v| v.as_u64()) {
+            metadata.cached_tokens = n as u32;
+        }
+    }
+
+    let mut parts = Vec::new();
+    let Some(candidates) = event.get("candidates").and_then(|v| v.as_array()) else {
+        return parts;
+    };
+
+    for candidate in candidates {
+        // Early chunks carry FINISH_REASON_UNSPECIFIED while the model is
+        // still generating; treat those as "not yet known".
+        if let Some(reason) = candidate.get("finishReason").and_then(|v| v.as_str()) {
+            if !reason.is_empty() && reason != "FINISH_REASON_UNSPECIFIED" {
+                metadata.finish_reason = Some(reason.to_string());
+            }
+        }
+
+        let Some(content_parts) = candidate.pointer("/content/parts").and_then(|v| v.as_array())
+        else {
+            continue;
+        };
+
+        for part in content_parts {
+            let thought_signature = part
+                .get("thoughtSignature")
+                .or_else(|| part.get("thought_signature"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            if part.get("thought").and_then(|v| v.as_bool()) == Some(true) {
+                let text = part.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                parts.push(StreamedPart {
+                    part_type: "think".into(),
+                    think: Some(text.to_string()),
+                    encrypted: thought_signature,
+                    ..Default::default()
+                });
+            } else if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                if !text.is_empty() {
+                    parts.push(StreamedPart {
+                        part_type: "text".into(),
+                        text: Some(text.to_string()),
+                        ..Default::default()
+                    });
+                }
+            } else if let Some(fc) = part
+                .get("functionCall")
+                .or_else(|| part.get("function_call"))
+                .and_then(|v| v.as_object())
+            {
+                let Some(name) = fc.get("name").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let index = metadata.tool_call_count;
+                metadata.tool_call_count += 1;
+                // Upstream ids are only unique within one response; append
+                // entropy so ids stay unique across the whole session (the TS
+                // path does the same — see google-genai.ts).
+                let base_id = fc
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| index.to_string());
+                let entropy: u32 = rand::random();
+                let args = fc
+                    .get("args")
+                    .map(|a| a.to_string())
+                    .unwrap_or_else(|| "{}".to_string());
+                parts.push(StreamedPart {
+                    part_type: "function".into(),
+                    id: Some(format!("{name}_{base_id}_{entropy:08x}")),
+                    name: Some(name.to_string()),
+                    arguments: Some(args),
+                    stream_index: Some(index),
+                    thought_signature,
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
+    parts
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -1194,5 +1313,128 @@ mod tests {
         assert!(parts2.is_empty());
         let parts3 = decode_openai_legacy_event(&event, &mut meta);
         assert!(parts3.is_empty());
+        let parts4 = decode_google_genai_event(&event, &mut meta);
+        assert!(parts4.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Google Generative Language API decoder tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_google_genai_text_part() {
+        let mut meta = StreamMetadata::default();
+        let event = json!({
+            "responseId": "resp-g1",
+            "candidates": [{ "content": { "parts": [{ "text": "Hello" }] } }]
+        });
+        let parts = decode_google_genai_event(&event, &mut meta);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].part_type, "text");
+        assert_eq!(parts[0].text.as_deref(), Some("Hello"));
+        assert_eq!(meta.response_id.as_deref(), Some("resp-g1"));
+    }
+
+    #[test]
+    fn test_google_genai_thought_part_with_signature() {
+        let mut meta = StreamMetadata::default();
+        let event = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{ "thought": true, "text": "pondering", "thoughtSignature": "c2ln" }]
+                }
+            }]
+        });
+        let parts = decode_google_genai_event(&event, &mut meta);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].part_type, "think");
+        assert_eq!(parts[0].think.as_deref(), Some("pondering"));
+        assert_eq!(parts[0].encrypted.as_deref(), Some("c2ln"));
+    }
+
+    #[test]
+    fn test_google_genai_function_call() {
+        let mut meta = StreamMetadata::default();
+        let event = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "functionCall": { "name": "Grep", "args": { "q": "foo" } },
+                        "thoughtSignature": "dHM="
+                    }]
+                }
+            }]
+        });
+        let parts = decode_google_genai_event(&event, &mut meta);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].part_type, "function");
+        assert_eq!(parts[0].name.as_deref(), Some("Grep"));
+        assert_eq!(parts[0].arguments.as_deref(), Some("{\"q\":\"foo\"}"));
+        assert_eq!(parts[0].stream_index, Some(0));
+        assert_eq!(parts[0].thought_signature.as_deref(), Some("dHM="));
+        // Id is synthesized: {name}_{base}_{entropy} — unique across the session.
+        let id = parts[0].id.as_deref().unwrap();
+        assert!(id.starts_with("Grep_0_"), "unexpected id: {id}");
+        assert_eq!(meta.tool_call_count, 1);
+    }
+
+    #[test]
+    fn test_google_genai_function_call_ids_are_unique() {
+        let mut meta = StreamMetadata::default();
+        let event = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        { "functionCall": { "name": "A", "args": {} } },
+                        { "functionCall": { "name": "A", "args": {} } }
+                    ]
+                }
+            }]
+        });
+        let parts = decode_google_genai_event(&event, &mut meta);
+        assert_eq!(parts.len(), 2);
+        assert_ne!(parts[0].id, parts[1].id);
+        assert_eq!(parts[0].stream_index, Some(0));
+        assert_eq!(parts[1].stream_index, Some(1));
+    }
+
+    #[test]
+    fn test_google_genai_usage_extraction() {
+        let mut meta = StreamMetadata::default();
+        let event = json!({
+            "usageMetadata": {
+                "promptTokenCount": 100,
+                "candidatesTokenCount": 40,
+                "cachedContentTokenCount": 25
+            }
+        });
+        decode_google_genai_event(&event, &mut meta);
+        assert_eq!(meta.input_tokens, 100);
+        assert_eq!(meta.output_tokens, 40);
+        assert_eq!(meta.cached_tokens, 25);
+    }
+
+    #[test]
+    fn test_google_genai_finish_reason_skips_unspecified() {
+        let mut meta = StreamMetadata::default();
+        let early = json!({
+            "candidates": [{ "finishReason": "FINISH_REASON_UNSPECIFIED" }]
+        });
+        decode_google_genai_event(&early, &mut meta);
+        assert_eq!(meta.finish_reason, None);
+
+        let done = json!({ "candidates": [{ "finishReason": "STOP" }] });
+        decode_google_genai_event(&done, &mut meta);
+        assert_eq!(meta.finish_reason.as_deref(), Some("STOP"));
+    }
+
+    #[test]
+    fn test_google_genai_empty_text_is_skipped() {
+        let mut meta = StreamMetadata::default();
+        let event = json!({
+            "candidates": [{ "content": { "parts": [{ "text": "" }] } }]
+        });
+        let parts = decode_google_genai_event(&event, &mut meta);
+        assert!(parts.is_empty());
     }
 }

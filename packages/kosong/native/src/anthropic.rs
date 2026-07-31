@@ -10,13 +10,56 @@ use std::collections::HashMap;
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com/v1";
 
-/// Build the Anthropic Messages API request body as a JSON string.
+/// Map a `ThinkingEffort` token to an Anthropic `budget_tokens` value.
+/// Used in `budget` mode for Opus 4.5 and earlier.
+/// Mirrors `budgetTokensForEffort` in `packages/kosong/src/providers/anthropic.ts`.
+fn budget_tokens_for_effort(effort: &str) -> Option<i32> {
+    match effort.to_lowercase().as_str() {
+        "low" => Some(1024),
+        "medium" => Some(4096),
+        "on" | "high" | "xhigh" | "max" => Some(32_000),
+        _ => None,
+    }
+}
+
+/// Determine the thinking mode for an Anthropic-protocol model by name.
+/// Mirrors `matchKnownAnthropicModelProfile` in
+/// `packages/kosong/src/providers/anthropic-profile.ts`.
+///
+/// Returns `Adaptive` for Opus 4.6+, Sonnet 5, Opus 5, Fable 5, Mythos 5.
+/// Returns `Budget` for Opus 4.5, Sonnet/Haiku <= 4.5, and unknown models
+/// (defaulting to the conservative budget mode for safety).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ThinkingMode {
+    Budget,
+    Adaptive,
+}
+
+fn resolve_thinking_mode(model: &str) -> ThinkingMode {
+    let normalized = model.to_lowercase();
+
+    // Adaptive-mode families. Order matters — more specific patterns first.
+    if normalized.contains("opus-5")
+        || normalized.contains("opus-4-8")
+        || normalized.contains("opus-4-7")
+        || normalized.contains("opus-4-6")
+        || normalized.contains("sonnet-5")
+        || normalized.contains("sonnet-4-6")
+        || normalized.contains("fable-5")
+        || normalized.contains("mythos-5")
+    {
+        return ThinkingMode::Adaptive;
+    }
+    ThinkingMode::Budget
+}
+
 fn build_anthropic_request(
     model: &str,
     messages: &[Message],
     system_prompt: Option<&str>,
     tools: Option<&[crate::tool::Tool]>,
     max_tokens: Option<i32>,
+    thinking_effort: Option<&str>,
 ) -> Result<String, ProviderError> {
     let mut body = serde_json::Map::new();
 
@@ -28,6 +71,69 @@ fn build_anthropic_request(
         "max_tokens".to_string(),
         serde_json::Value::Number(serde_json::Number::from(max_tokens.unwrap_or(4096) as i64)),
     );
+
+    // thinking — model-aware emission matching TS `withThinking` logic.
+    if let Some(effort_raw) = thinking_effort {
+        let effort = effort_raw.to_lowercase();
+        match resolve_thinking_mode(model) {
+            ThinkingMode::Adaptive => {
+                // Opus 5 / Sonnet 5 / Opus 4.6+ / Fable 5 / Mythos 5 use the
+                // adaptive API: `thinking: { type: 'adaptive', display: 'summarized' }`
+                // plus `output_config: { effort: ... }` for granular control.
+                if effort == "off" {
+                    body.insert(
+                        "thinking".to_string(),
+                        serde_json::json!({ "type": "disabled" }),
+                    );
+                } else {
+                    body.insert(
+                        "thinking".to_string(),
+                        serde_json::json!({ "type": "adaptive", "display": "summarized" }),
+                    );
+                    // 'on' (and 'adaptive') leaves output_config unset; everything
+                    // else threads the effort through.
+                    if effort != "on" && effort != "adaptive" {
+                        body.insert(
+                            "output_config".to_string(),
+                            serde_json::json!({ "effort": effort }),
+                        );
+                    }
+                }
+            }
+            ThinkingMode::Budget => {
+                // Opus 4.5 and earlier: `thinking: { type: 'enabled', budget_tokens: N }`
+                // optionally paired with `output_config: { effort }` when the
+                // model supports it. `off` disables thinking outright.
+                if effort == "off" {
+                    body.insert(
+                        "thinking".to_string(),
+                        serde_json::json!({ "type": "disabled" }),
+                    );
+                } else {
+                    let budget = budget_tokens_for_effort(&effort);
+                    let thinking = match budget {
+                        Some(n) => serde_json::json!({ "type": "enabled", "budget_tokens": n }),
+                        None => serde_json::json!({ "type": "enabled" }),
+                    };
+                    body.insert("thinking".to_string(), thinking);
+
+                    // Mirror TS: emit `output_config.effort` for the named efforts
+                    // when the model supports it (Opus 4.5+ does). 'on' / 'adaptive'
+                    // intentionally omit output_config.
+                    let named_effort = matches!(
+                        effort.as_str(),
+                        "low" | "medium" | "high" | "xhigh" | "max"
+                    );
+                    if named_effort {
+                        body.insert(
+                            "output_config".to_string(),
+                            serde_json::json!({ "effort": effort }),
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     // system prompt
     if let Some(sys) = system_prompt {
@@ -270,6 +376,7 @@ pub async fn anthropic_chat(
     system_prompt: Option<String>,
     tools: Option<Vec<crate::tool::Tool>>,
     max_tokens: Option<i32>,
+    thinking_effort: Option<String>,
     base_url: Option<String>,
 ) -> napi::Result<StreamedMessage> {
     let url = format!(
@@ -283,6 +390,7 @@ pub async fn anthropic_chat(
         system_prompt.as_deref(),
         tools.as_deref(),
         max_tokens,
+        thinking_effort.as_deref(),
     )
     .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
@@ -291,10 +399,14 @@ pub async fn anthropic_chat(
         "anthropic-version".to_string(),
         ANTHROPIC_VERSION.to_string(),
     );
-    extra_headers.insert(
-        "anthropic-beta".to_string(),
-        "interleaved-thinking-2025-05-14".to_string(),
-    );
+    // Adaptive-mode models (Opus 5 / Sonnet 5 / Opus 4.6+ / Fable 5 / Mythos 5)
+    // drop the interleaved-thinking beta header per TS `withThinking` logic.
+    if resolve_thinking_mode(&model) != ThinkingMode::Adaptive {
+        extra_headers.insert(
+            "anthropic-beta".to_string(),
+            "interleaved-thinking-2025-05-14".to_string(),
+        );
+    }
 
     // Use the shared HTTP client (connection pooling, HTTP/1.1)
     let client = HttpClient::shared();
@@ -576,5 +688,153 @@ data: {\"type\":\"message_stop\"}";
         assert!(msg_id.is_none());
         assert!(fr.is_none());
         assert_eq!(usage.input_other, 0);
+    }
+
+    #[test]
+    fn test_budget_tokens_for_effort() {
+        assert_eq!(budget_tokens_for_effort("low"), Some(1024));
+        assert_eq!(budget_tokens_for_effort("medium"), Some(4096));
+        assert_eq!(budget_tokens_for_effort("high"), Some(32_000));
+        assert_eq!(budget_tokens_for_effort("on"), Some(32_000));
+        assert_eq!(budget_tokens_for_effort("off"), None);
+        assert_eq!(budget_tokens_for_effort("unknown"), None);
+        // Case-insensitive
+        assert_eq!(budget_tokens_for_effort("LOW"), Some(1024));
+        assert_eq!(budget_tokens_for_effort("Medium"), Some(4096));
+    }
+
+    #[test]
+    fn test_resolve_thinking_mode() {
+        // Adaptive-mode families
+        for m in [
+            "claude-opus-5-20260101",
+            "claude-opus-4-6",
+            "claude-opus-4-7",
+            "claude-opus-4-8",
+            "claude-sonnet-5",
+            "claude-sonnet-4-6",
+            "claude-fable-5",
+            "claude-mythos-5",
+        ] {
+            assert_eq!(resolve_thinking_mode(m), ThinkingMode::Adaptive, "{}", m);
+        }
+        // Budget-mode families
+        for m in [
+            "claude-opus-4-5",
+            "claude-opus-4-20250514",
+            "claude-3-7-sonnet",
+            "claude-3-5-sonnet",
+            "claude-haiku-4-5",
+        ] {
+            assert_eq!(resolve_thinking_mode(m), ThinkingMode::Budget, "{}", m);
+        }
+    }
+
+    #[test]
+    fn test_build_request_opus5_adaptive_effort() {
+        // Opus 5 (adaptive mode) — emits `thinking.adaptive` + `output_config.effort`.
+        let body = build_anthropic_request(
+            "claude-opus-5-20260101",
+            &[],
+            None,
+            None,
+            None,
+            Some("high"),
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            parsed["thinking"],
+            serde_json::json!({ "type": "adaptive", "display": "summarized" })
+        );
+        assert_eq!(parsed["output_config"]["effort"], "high");
+    }
+
+    #[test]
+    fn test_build_request_opus5_adaptive_off() {
+        // 'off' on an adaptive-mode model disables thinking outright.
+        let body = build_anthropic_request(
+            "claude-opus-5-20260101",
+            &[],
+            None,
+            None,
+            None,
+            Some("off"),
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["thinking"]["type"], "disabled");
+        assert!(parsed.get("output_config").is_none());
+    }
+
+    #[test]
+    fn test_build_request_opus45_budget_tokens() {
+        // Opus 4.5 (budget mode) — emits `thinking.enabled` with budget_tokens.
+        let body = build_anthropic_request(
+            "claude-opus-4-5",
+            &[],
+            None,
+            None,
+            None,
+            Some("medium"),
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            parsed["thinking"],
+            serde_json::json!({ "type": "enabled", "budget_tokens": 4096 })
+        );
+        assert_eq!(parsed["output_config"]["effort"], "medium");
+    }
+
+    #[test]
+    fn test_build_request_opus45_budget_off() {
+        // 'off' on a budget-mode model also disables thinking.
+        let body = build_anthropic_request(
+            "claude-opus-4-5",
+            &[],
+            None,
+            None,
+            None,
+            Some("off"),
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["thinking"]["type"], "disabled");
+    }
+
+    #[test]
+    fn test_build_request_no_thinking_effort_omits_thinking() {
+        // When the caller doesn't pass thinking_effort, the request carries
+        // neither thinking nor output_config — preserves prior behavior.
+        let body = build_anthropic_request(
+            "claude-opus-5-20260101",
+            &[],
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(parsed.get("thinking").is_none());
+        assert!(parsed.get("output_config").is_none());
+    }
+
+    #[test]
+    fn test_build_request_sonnet5_adaptive_xhigh() {
+        // Sonnet 5 supports xhigh (new effort tier introduced for adaptive models).
+        let body = build_anthropic_request(
+            "claude-sonnet-5",
+            &[],
+            None,
+            None,
+            None,
+            Some("xhigh"),
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["thinking"]["type"], "adaptive");
+        assert_eq!(parsed["output_config"]["effort"], "xhigh");
     }
 }

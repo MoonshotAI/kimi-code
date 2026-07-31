@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
-use crate::context::types::{ContentPart, ContextMessage, MessageOrigin};
+use crate::context::types::{ContextMessage, MessageOrigin};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PromptState {
@@ -339,6 +339,7 @@ struct StartedTurn { turn_id: String, result_rx: tokio::sync::oneshot::Receiver<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::types::ContentPart;
     use std::sync::atomic::{AtomicU32, Ordering};
 
     struct MockDelegate {
@@ -372,13 +373,13 @@ mod tests {
     #[tokio::test] async fn test_new_service_empty() { let d: Arc<dyn PromptLoopDelegate> = Arc::new(MockDelegate::new()); let snap = PromptService::new(d).list(); assert!(snap.active.is_none() && snap.pending.is_empty()); }
 
     #[tokio::test] async fn test_enqueue_creates_active() {
-        let (d, svc_d) = mk_delegate(); let svc = PromptService::new(svc_d);
+        let (_d, svc_d) = mk_delegate(); let svc = PromptService::new(svc_d);
         let h = svc.enqueue(inp("p1", "hello")).await;
         assert_eq!(h.id, "p1"); assert_eq!(svc.list().active.unwrap().id, "p1");
     }
 
     #[tokio::test] async fn test_enqueue_second_stays_pending() {
-        let (d, svc_d) = mk_delegate(); let svc = PromptService::new(svc_d);
+        let (_d, svc_d) = mk_delegate(); let svc = PromptService::new(svc_d);
         svc.enqueue(inp("p1", "a")).await; svc.enqueue(inp("p2", "b")).await;
         let snap = svc.list(); assert_eq!(snap.active.unwrap().id, "p1"); assert_eq!(snap.pending.len(), 1); assert_eq!(snap.pending[0].id, "p2");
     }
@@ -390,14 +391,14 @@ mod tests {
     }
 
     #[tokio::test] async fn test_auto_ids_unique() {
-        let (d, svc_d) = mk_delegate(); let svc = PromptService::new(svc_d);
+        let (_d, svc_d) = mk_delegate(); let svc = PromptService::new(svc_d);
         let h1 = svc.enqueue(PromptInput { id: None, message: msg("a") }).await;
         let h2 = svc.enqueue(PromptInput { id: None, message: msg("b") }).await;
         assert_ne!(h1.id, h2.id);
     }
 
     #[tokio::test] async fn test_steer_merges() {
-        let (d, svc_d) = mk_delegate(); let svc = PromptService::new(svc_d);
+        let (_d, svc_d) = mk_delegate(); let svc = PromptService::new(svc_d);
         svc.enqueue(inp("p1", "main")).await; svc.enqueue(inp("s1", "steer1")).await; svc.enqueue(inp("s2", "steer2")).await;
         let handles = svc.steer(&["s1".into(), "s2".into()]).unwrap();
         assert_eq!(handles.len(), 2); assert_eq!(handles[0].state, PromptState::Steered);
@@ -520,7 +521,7 @@ mod tests {
     }
 
     #[tokio::test] async fn test_abort_fires_launched_none() {
-        let (d, svc_d) = mk_delegate(); let svc = PromptService::new(svc_d);
+        let (_d, svc_d) = mk_delegate(); let svc = PromptService::new(svc_d);
         svc.enqueue(inp("p1", "a")).await;
         let h2 = svc.enqueue(inp("p2", "b")).await;
         let mut launched_rx = h2.launched.clone();

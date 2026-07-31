@@ -5,8 +5,11 @@
 /// fallback-ask, deny-all, file-access-ask, git-cwd-write-approve,
 /// goal-start-review-ask.
 
+use crate::permission::matches_rule::{match_permission_rule, RuleMatchInput};
+use crate::permission::sensitive_path::is_sensitive_path;
+use crate::permission::state::PermissionState;
 use crate::permission::types::{
-    PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult,
+    PermissionMode, PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult,
 };
 
 /// PreToolUse hook returned a block → deny.
@@ -38,21 +41,38 @@ impl PermissionPolicy for DefaultToolApprovePermissionPolicy {
 }
 
 /// Session approval history — approve if a session-level approval exists.
-pub struct SessionApprovalHistoryPermissionPolicy;
+pub struct SessionApprovalHistoryPermissionPolicy {
+    state: PermissionState,
+}
+
+impl SessionApprovalHistoryPermissionPolicy {
+    pub fn new(state: PermissionState) -> Self {
+        Self { state }
+    }
+}
 
 impl PermissionPolicy for SessionApprovalHistoryPermissionPolicy {
     fn name(&self) -> &str {
         "session-approval-history"
     }
 
-    fn evaluate(&self, _context: &PermissionPolicyContext) -> Option<PermissionPolicyResult> {
-        // In production, this checks the session's approval history cache.
-        // For the Rust implementation, this is a placeholder.
+    fn evaluate(&self, context: &PermissionPolicyContext) -> Option<PermissionPolicyResult> {
+        for rule in self.state.session_approved() {
+            let input = RuleMatchInput {
+                rule,
+                tool_name: context.tool_name.clone(),
+                has_matches_rule: false,
+            };
+            if match_permission_rule(&input).is_some() {
+                return Some(PermissionPolicyResult::Approve);
+            }
+        }
         None
     }
 }
 
-/// Fallback ask — if nothing else matched, ask the user.
+/// Fallback ask — if nothing else matched, resolve from the permission mode:
+/// Manual asks the user interactively; Auto/Yolo approve.
 pub struct FallbackAskPermissionPolicy;
 
 impl PermissionPolicy for FallbackAskPermissionPolicy {
@@ -60,9 +80,11 @@ impl PermissionPolicy for FallbackAskPermissionPolicy {
         "fallback-ask"
     }
 
-    fn evaluate(&self, _context: &PermissionPolicyContext) -> Option<PermissionPolicyResult> {
-        // Let the manager handle the fallback based on permission mode.
-        None
+    fn evaluate(&self, context: &PermissionPolicyContext) -> Option<PermissionPolicyResult> {
+        match context.mode {
+            PermissionMode::Auto | PermissionMode::Yolo => Some(PermissionPolicyResult::Approve),
+            PermissionMode::Manual => Some(PermissionPolicyResult::Ask { resolve: None }),
+        }
     }
 }
 
@@ -84,14 +106,22 @@ impl PermissionPolicy for DenyAllPermissionPolicy {
 /// Sensitive file access — ask for approval when accessing sensitive paths.
 pub struct FileAccessAskPermissionPolicy;
 
+/// Argument keys that carry a file path across the built-in tool schemas.
+const PATH_ARG_KEYS: &[&str] = &["path", "file_path", "absolute_path", "filePath"];
+
 impl PermissionPolicy for FileAccessAskPermissionPolicy {
     fn name(&self) -> &str {
         "file-access-ask"
     }
 
-    fn evaluate(&self, _context: &PermissionPolicyContext) -> Option<PermissionPolicyResult> {
-        // In production, this checks if the file path matches sensitive patterns.
-        // kimi-native-tools has path_access.rs for this.
+    fn evaluate(&self, context: &PermissionPolicyContext) -> Option<PermissionPolicyResult> {
+        for key in PATH_ARG_KEYS {
+            if let Some(path) = context.args.get(*key).and_then(|v| v.as_str()) {
+                if is_sensitive_path(path) {
+                    return Some(PermissionPolicyResult::Ask { resolve: None });
+                }
+            }
+        }
         None
     }
 }

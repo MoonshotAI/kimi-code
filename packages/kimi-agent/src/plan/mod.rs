@@ -247,6 +247,33 @@ impl Kaos for InMemoryKaos {
     }
 }
 
+/// A `std::fs`-backed [`Kaos`] for real sessions. Reads of a missing file
+/// return an empty string (matching the trait contract), writes create parent
+/// directories on demand.
+pub struct FsKaos;
+
+impl Kaos for FsKaos {
+    fn read_text(&self, path: &str) -> Result<String, String> {
+        match std::fs::read_to_string(path) {
+            Ok(content) => Ok(content),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            Err(e) => Err(format!("read {path}: {e}")),
+        }
+    }
+
+    fn write_text(&self, path: &str, content: &str) -> Result<(), String> {
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+        }
+        std::fs::write(path, content).map_err(|e| format!("write {path}: {e}"))
+    }
+
+    fn mkdir(&self, path: &str) -> Result<(), String> {
+        std::fs::create_dir_all(path).map_err(|e| format!("mkdir {path}: {e}"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

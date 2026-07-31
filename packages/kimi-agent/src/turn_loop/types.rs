@@ -11,7 +11,7 @@ pub use crate::rpc::types::ContentBlock;
 // ── TurnResult ─────────────────────────────────────────────────────────────
 
 /// The final result of a completed turn.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TurnResult {
     /// Why the turn stopped.
     pub stop_reason: LoopTurnStopReason,
@@ -19,11 +19,21 @@ pub struct TurnResult {
     pub steps: u32,
     /// Token usage for the entire turn.
     pub usage: TokenUsage,
+    /// Messages the loop appended this turn (assistant replies, tool results,
+    /// and tool-media follow-ups) — everything after the synthetic system
+    /// message and the caller's input. The session-owned driver writes these
+    /// back into its `ContextMemory` so multi-turn history, persistence, and
+    /// compaction see the assistant side. Empty on the RUN_TURN override path
+    /// (the TS host owns that transcript) and serde-defaulted for wire
+    /// compatibility.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub new_messages: Vec<LLMMessage>,
 }
 
 /// Reasons a turn can stop.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum LoopTurnStopReason {
+    #[default]
     EndTurn,
     MaxTokens,
     Filtered,
@@ -127,14 +137,20 @@ pub struct ToolExecContext {
 }
 
 /// The result of a tool execution.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ExecutableToolResult {
     pub content: String,
     pub is_error: bool,
     /// When true, this result is a fast prediction that should be replaced
     /// by a precise result when the background execution completes.
-    #[allow(dead_code)]
     pub is_prediction: bool,
+    /// When true, executing this tool should stop the turn immediately.
+    pub stop_turn: bool,
+    /// Image parts the tool produced (e.g. ReadMediaFile, MCP image results).
+    /// Delivered to the model as a follow-up `user` message with these blocks
+    /// after the tool-result message, since tool-role image support is
+    /// provider-divergent while user-message images are uniform.
+    pub media: Vec<crate::rpc::types::ContentBlock>,
 }
 
 /// Error result from tool resolution.
@@ -818,6 +834,10 @@ pub struct RunTurnInput<'a> {
     /// Optional cancellation flag. When set to true, the loop aborts
     /// before the next step with `LoopTurnStopReason::Aborted`.
     pub cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Optional steer queue (shared with the session driver). Drained at the
+    /// start of every step and injected as a user message, so a steer issued
+    /// mid-turn redirects the NEXT step — not just the next turn.
+    pub steer_queue: Option<std::sync::Arc<std::sync::Mutex<Vec<crate::context::types::ContentPart>>>>,
 }
 
 // ── Step-level types ───────────────────────────────────────────────────────

@@ -11,7 +11,7 @@ use futures_util::StreamExt;
 use eventsource_stream::Eventsource;
 
 use crate::llm::wire::to_wire;
-use crate::llm::{anthropic, openai};
+use crate::llm::{anthropic, google_genai, openai};
 use crate::rpc::types::{BoxFuture, NativeLlmConfig};
 use crate::turn_loop::types::{LLMChatParams, LLMChatResponse, LLM};
 
@@ -28,13 +28,21 @@ const REQUEST_TIMEOUT_SECS: u64 = 600;
 /// JSON event object; the receiver forwards it to the JS host transcript.
 pub type EventSink = Arc<dyn Fn(serde_json::Value) + Send + Sync>;
 
-/// An [`LLM`] implementation that talks to an OpenAI-compatible or
-/// Anthropic endpoint over HTTPS with SSE streaming.
+/// An [`LLM`] implementation that talks to an OpenAI-compatible, Anthropic,
+/// or Google Gemini endpoint over HTTPS with SSE streaming.
 pub struct NativeHttpLlm {
     config: NativeLlmConfig,
     system_prompt: String,
     client: reqwest::Client,
     sink: Option<EventSink>,
+}
+
+/// Wire protocol family, derived from `NativeLlmConfig.protocol`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Protocol {
+    OpenAi,
+    Anthropic,
+    Google,
 }
 
 impl NativeHttpLlm {
@@ -59,11 +67,23 @@ impl NativeHttpLlm {
         self
     }
 
+    fn protocol(&self) -> Protocol {
+        match self.config.protocol.as_str() {
+            "anthropic" => Protocol::Anthropic,
+            "google" | "google-genai" | "gemini" => Protocol::Google,
+            _ => Protocol::OpenAi,
+        }
+    }
+
     fn endpoint(&self) -> String {
         let base = self.config.base_url.trim_end_matches('/');
-        match self.config.protocol.as_str() {
-            "anthropic" => format!("{base}/messages"),
-            _ => format!("{base}/chat/completions"),
+        match self.protocol() {
+            Protocol::Anthropic => format!("{base}/messages"),
+            Protocol::Google => format!(
+                "{base}/models/{}:streamGenerateContent?alt=sse",
+                self.config.model
+            ),
+            Protocol::OpenAi => format!("{base}/chat/completions"),
         }
     }
 
@@ -84,30 +104,56 @@ impl NativeHttpLlm {
 
     async fn chat_impl(&self, params: LLMChatParams) -> Result<LLMChatResponse, String> {
         let wire = to_wire(&params.messages);
-        let is_anthropic = self.config.protocol == "anthropic";
+        let protocol = self.protocol();
 
         // Step boundary: the host mirrors these into transcript step events.
         self.emit(serde_json::json!({ "type": "llm.step.begin", "model": self.config.model }));
 
-        let body = if is_anthropic {
-            anthropic::build_request_with_options(
+        let body = match protocol {
+            Protocol::Anthropic => anthropic::build_request_with_options(
                 &self.config.model,
                 self.config.max_tokens.unwrap_or(DEFAULT_ANTHROPIC_MAX_TOKENS),
                 &wire,
                 &params.tools,
                 true,
-            )
-        } else {
-            openai::build_request_with_options(&self.config.model, &wire, &params.tools, true)
+                self.config.reasoning_effort.as_deref(),
+            ),
+            Protocol::Google => {
+                // Streaming is selected by the endpoint; the model lives in
+                // the URL, not the body.
+                google_genai::build_request(
+                    &wire,
+                    &params.tools,
+                    self.config.max_tokens,
+                    self.config.reasoning_effort.as_deref(),
+                )
+            }
+            Protocol::OpenAi => {
+                let mut b =
+                    openai::build_request_with_options(&self.config.model, &wire, &params.tools, true);
+                // Reasoning models: emit `reasoning_effort` when configured
+                // (set at create or via `session/set_thinking`).
+                if let Some(effort) = self.config.reasoning_effort.as_deref() {
+                    b["reasoning_effort"] = serde_json::json!(effort);
+                }
+                b
+            }
         };
 
         let mut req = self.client.post(self.endpoint()).json(&body);
-        if is_anthropic {
-            req = req
-                .header("x-api-key", &self.config.api_key)
-                .header("anthropic-version", "2023-06-01");
-        } else {
-            req = req.header("authorization", format!("Bearer {}", self.config.api_key));
+        match protocol {
+            Protocol::Anthropic => {
+                req = req
+                    .header("x-api-key", &self.config.api_key)
+                    .header("anthropic-version", "2023-06-01");
+            }
+            Protocol::Google => {
+                // The Generative Language API authenticates via x-goog-api-key.
+                req = req.header("x-goog-api-key", &self.config.api_key);
+            }
+            Protocol::OpenAi => {
+                req = req.header("authorization", format!("Bearer {}", self.config.api_key));
+            }
         }
         for (k, v) in &self.config.custom_headers {
             req = req.header(k.as_str(), v.as_str());
@@ -125,10 +171,14 @@ impl NativeHttpLlm {
             return Err(format!("llm http status {status}: {brief}"));
         }
 
-        // Two accumulator shapes (different SSE grammars); drive whichever
+        // Three accumulator shapes (different SSE grammars); drive whichever
         // matches the protocol over the same event stream.
-        let mut openai_acc = (!is_anthropic).then(openai::StreamAccumulator::new);
-        let mut anthropic_acc = is_anthropic.then(anthropic::StreamAccumulator::new);
+        let mut openai_acc =
+            (protocol == Protocol::OpenAi).then(openai::StreamAccumulator::new);
+        let mut anthropic_acc =
+            (protocol == Protocol::Anthropic).then(anthropic::StreamAccumulator::new);
+        let mut google_acc =
+            (protocol == Protocol::Google).then(google_genai::StreamAccumulator::new);
 
         let mut stream = response.bytes_stream().eventsource();
         while let Some(event) = stream.next().await {
@@ -145,6 +195,8 @@ impl NativeHttpLlm {
                 acc.feed(&value)
             } else if let Some(acc) = anthropic_acc.as_mut() {
                 acc.feed(&value)
+            } else if let Some(acc) = google_acc.as_mut() {
+                acc.feed(&value)
             } else {
                 None
             };
@@ -153,9 +205,10 @@ impl NativeHttpLlm {
             }
         }
 
-        let response = match (openai_acc, anthropic_acc) {
-            (Some(acc), _) => acc.finish(),
-            (_, Some(acc)) => acc.finish(),
+        let response = match (openai_acc, anthropic_acc, google_acc) {
+            (Some(acc), _, _) => acc.finish(),
+            (_, Some(acc), _) => acc.finish(),
+            (_, _, Some(acc)) => acc.finish(),
             _ => unreachable!("one accumulator is always constructed"),
         };
 
@@ -238,6 +291,7 @@ mod tests {
             model: "test-model".into(),
             max_tokens: None,
             custom_headers: HashMap::new(),
+            reasoning_effort: None,
         }
     }
 
@@ -248,6 +302,20 @@ mod tests {
 
         let llm = NativeHttpLlm::new(config("anthropic", "https://api.example.com/v1"), String::new());
         assert_eq!(llm.endpoint(), "https://api.example.com/v1/messages");
+    }
+
+    #[test]
+    fn endpoint_builds_google_stream_url_with_model_in_path() {
+        for proto in ["google", "google-genai", "gemini"] {
+            let llm = NativeHttpLlm::new(
+                config(proto, "https://generativelanguage.googleapis.com/v1beta/"),
+                String::new(),
+            );
+            assert_eq!(
+                llm.endpoint(),
+                "https://generativelanguage.googleapis.com/v1beta/models/test-model:streamGenerateContent?alt=sse"
+            );
+        }
     }
 
     #[test]

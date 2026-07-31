@@ -150,6 +150,7 @@ export interface SessionSummary {
 
 export interface KimiConfig {
   readonly path: string;
+  readonly model?: string;
   readonly systemPrompt?: string;
   readonly experimentalFlags?: Record<string, boolean>;
 }

@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/kimi-native-tools",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Native Rust tools for Kimi Code — bash, grep, glob, read, write, edit",
   "main": "index.js",
   "types": "index.d.ts",

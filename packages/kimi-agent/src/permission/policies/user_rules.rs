@@ -5,6 +5,7 @@
 /// - user-configured-ask: User-configured ask rules.
 
 use crate::permission::matches_rule::{is_user_configured_scope, match_permission_rule, RuleMatchInput};
+use crate::permission::state::PermissionState;
 use crate::permission::types::{
     PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult, PermissionRule,
     PermissionRuleDecision, PermissionRuleScope,
@@ -45,7 +46,15 @@ impl UserConfiguredPermissionPolicy {
 }
 
 /// User-configured deny rules.
-pub struct UserConfiguredDenyPermissionPolicy;
+pub struct UserConfiguredDenyPermissionPolicy {
+    state: PermissionState,
+}
+
+impl UserConfiguredDenyPermissionPolicy {
+    pub fn new(state: PermissionState) -> Self {
+        Self { state }
+    }
+}
 
 impl PermissionPolicy for UserConfiguredDenyPermissionPolicy {
     fn name(&self) -> &str {
@@ -53,7 +62,7 @@ impl PermissionPolicy for UserConfiguredDenyPermissionPolicy {
     }
 
     fn evaluate(&self, context: &PermissionPolicyContext) -> Option<PermissionPolicyResult> {
-        let rules: Vec<PermissionRule> = vec![]; // In production, gets from manager
+        let rules = self.state.rules();
         if UserConfiguredPermissionPolicy::first_matching_rule(
             &rules,
             context,
@@ -71,7 +80,15 @@ impl PermissionPolicy for UserConfiguredDenyPermissionPolicy {
 }
 
 /// User-configured allow rules.
-pub struct UserConfiguredAllowPermissionPolicy;
+pub struct UserConfiguredAllowPermissionPolicy {
+    state: PermissionState,
+}
+
+impl UserConfiguredAllowPermissionPolicy {
+    pub fn new(state: PermissionState) -> Self {
+        Self { state }
+    }
+}
 
 impl PermissionPolicy for UserConfiguredAllowPermissionPolicy {
     fn name(&self) -> &str {
@@ -79,7 +96,7 @@ impl PermissionPolicy for UserConfiguredAllowPermissionPolicy {
     }
 
     fn evaluate(&self, context: &PermissionPolicyContext) -> Option<PermissionPolicyResult> {
-        let rules: Vec<PermissionRule> = vec![]; // In production, gets from manager
+        let rules = self.state.rules();
         if UserConfiguredPermissionPolicy::first_matching_rule(
             &rules,
             context,
@@ -95,7 +112,15 @@ impl PermissionPolicy for UserConfiguredAllowPermissionPolicy {
 }
 
 /// User-configured ask rules.
-pub struct UserConfiguredAskPermissionPolicy;
+pub struct UserConfiguredAskPermissionPolicy {
+    state: PermissionState,
+}
+
+impl UserConfiguredAskPermissionPolicy {
+    pub fn new(state: PermissionState) -> Self {
+        Self { state }
+    }
+}
 
 impl PermissionPolicy for UserConfiguredAskPermissionPolicy {
     fn name(&self) -> &str {
@@ -103,7 +128,7 @@ impl PermissionPolicy for UserConfiguredAskPermissionPolicy {
     }
 
     fn evaluate(&self, context: &PermissionPolicyContext) -> Option<PermissionPolicyResult> {
-        let rules: Vec<PermissionRule> = vec![]; // In production, gets from manager
+        let rules = self.state.rules();
         if UserConfiguredPermissionPolicy::first_matching_rule(
             &rules,
             context,

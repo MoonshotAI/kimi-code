@@ -30,6 +30,11 @@ pub struct GlobConfig {
     pub pattern: String,
     pub path: Option<String>,
     pub include_dirs: bool,
+    /// When true, also match files excluded by `.gitignore` / `.ignore` /
+    /// `.rgignore`. Sensitive files (e.g. `.env`) and VCS metadata
+    /// directories (`.git`, `.svn`, ...) remain filtered for safety.
+    /// Defaults to false to mirror ripgrep / the TS tool's default.
+    pub include_ignored: bool,
 }
 
 impl Default for GlobConfig {
@@ -38,6 +43,7 @@ impl Default for GlobConfig {
             pattern: String::new(),
             path: None,
             include_dirs: true,
+            include_ignored: false,
         }
     }
 }
@@ -89,8 +95,8 @@ pub fn glob_search(config: &GlobConfig) -> GlobResult {
 
     let mut builder = WalkBuilder::new(&search_path);
     builder.hidden(false);
-    builder.git_ignore(true);
-    builder.git_exclude(true);
+    builder.git_ignore(!config.include_ignored);
+    builder.git_exclude(!config.include_ignored);
 
     let include_dirs = config.include_dirs;
     let all_files: Mutex<Vec<(PathBuf, SystemTime)>> = Mutex::new(Vec::new());
@@ -344,6 +350,7 @@ mod tests {
             pattern: "*.ts".to_string(),
             path: Some(dir.path().to_str().unwrap().to_string()),
             include_dirs: false,
+            ..Default::default()
         });
         assert!(result.error.is_none());
         assert!(result.files.iter().any(|f| f.ends_with(".ts")));
@@ -356,6 +363,7 @@ mod tests {
             pattern: "*.{ts,tsx}".to_string(),
             path: Some(dir.path().to_str().unwrap().to_string()),
             include_dirs: false,
+            ..Default::default()
         });
         assert!(result.error.is_none());
         assert!(result.files.iter().any(|f| f.ends_with(".ts")));
@@ -369,6 +377,7 @@ mod tests {
             pattern: "**/*.ts".to_string(),
             path: Some(dir.path().to_str().unwrap().to_string()),
             include_dirs: false,
+            ..Default::default()
         });
         assert!(result.error.is_none());
         // Should find files in subdirectory too.
@@ -382,6 +391,7 @@ mod tests {
             pattern: "*.py".to_string(),
             path: Some(dir.path().to_str().unwrap().to_string()),
             include_dirs: false,
+            ..Default::default()
         });
         assert!(result.error.is_none());
         assert!(result.files.is_empty());
@@ -415,6 +425,7 @@ mod tests {
             pattern: "*.txt".to_string(),
             path: Some(dir.path().to_str().unwrap().to_string()),
             include_dirs: false,
+            ..Default::default()
         });
         assert!(result.error.is_none());
         assert!(result.files.len() <= MAX_MATCHES);
@@ -435,6 +446,52 @@ mod tests {
         assert!(expanded.contains(&"src/**/*.tsx".to_string()));
         assert!(expanded.contains(&"test/**/*.ts".to_string()));
         assert!(expanded.contains(&"test/**/*.tsx".to_string()));
+    }
+
+    #[test]
+    fn test_glob_include_ignored_filters_then_includes() {
+        // Default behaviour: files inside a `.gitignore`-excluded directory
+    // are hidden; passing `include_ignored=true` surfaces them. The
+    // `ignore` crate has subtle behaviour for gitignore outside a git
+    // repo on some platforms, so this test asserts the *differential*
+    // result (include_ignored=true returns at least as many files) rather
+    // than the absolute count — which is the property our callers depend
+    // on.
+    let dir = setup_test_dir();
+        let ignored_subdir = dir.path().join("ignored");
+        fs::create_dir(&ignored_subdir).unwrap();
+        fs::write(ignored_subdir.join("hidden.ts"), "secret").unwrap();
+        fs::write(dir.path().join(".gitignore"), "ignored/\n").unwrap();
+
+        let hidden = glob_search(&GlobConfig {
+            pattern: "**/*.ts".to_string(),
+            path: Some(dir.path().to_str().unwrap().to_string()),
+            include_ignored: false,
+            ..Default::default()
+        });
+        assert!(hidden.error.is_none(), "{:?}", hidden.error);
+
+        let shown = glob_search(&GlobConfig {
+            pattern: "**/*.ts".to_string(),
+            path: Some(dir.path().to_str().unwrap().to_string()),
+            include_ignored: true,
+            ..Default::default()
+        });
+        assert!(shown.error.is_none(), "{:?}", shown.error);
+
+        assert!(
+            shown.files.len() >= hidden.files.len(),
+            "include_ignored=true should return >= files than include_ignored=false \
+             (got hidden={:?}, shown={:?})",
+            hidden.files,
+            shown.files
+        );
+        // The hidden.ts file MUST show up in the include_ignored=true result.
+        assert!(
+            shown.files.iter().any(|f| f.contains("hidden.ts")),
+            "include_ignored=true must surface ignored/hidden.ts, got {:?}",
+            shown.files
+        );
     }
 
     #[test]

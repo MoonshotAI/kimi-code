@@ -47,26 +47,39 @@ pub enum OAuthStorage {
 /// Provider configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProviderConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Provider type key in config.toml is `type` (not `provider`), matching
+    /// the TS schema (`ProviderConfigSchema.type`).
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<ProviderType>,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "apiKey", default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "baseUrl", default, skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// TS `defaultModel` — the provider's default model id.
+    #[serde(rename = "defaultModel", default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "maxTokens", default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oauth: Option<OAuthRef>,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "customHeaders", default, skip_serializing_if = "Option::is_none")]
     pub custom_headers: Option<HashMap<String, String>>,
+
+    /// Provider-scoped environment variables (e.g. `KIMI_API_KEY`). The
+    /// presence of an `env` block means credentials/behavior are resolved at
+    /// request time by the host — the native transport cannot replicate it,
+    /// so auto-derivation must skip such providers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<HashMap<String, String>>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<HashMap<String, serde_json::Value>>,
 }
 
 // ── Model alias ───────────────────────────────────────────────────────────────
@@ -141,6 +154,11 @@ pub struct AgentConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine: Option<String>,
 
+    /// TS `agent.nativeLlmProvider` — provider name whose endpoint the Rust
+    /// engine should call directly (SSE streaming) instead of the host proxy.
+    #[serde(rename = "nativeLlmProvider", default, skip_serializing_if = "Option::is_none")]
+    pub native_llm_provider: Option<String>,
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
 
@@ -201,8 +219,13 @@ pub struct KimiConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub providers: Option<HashMap<String, ProviderConfig>>,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// TS `models` — model alias map keyed by alias id.
+    #[serde(rename = "models", default, skip_serializing_if = "Option::is_none")]
     pub model_aliases: Option<HashMap<String, ModelAlias>>,
+
+    /// TS `defaultModel` — the alias id that the session uses by default.
+    #[serde(rename = "defaultModel", default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_catalog: Option<ModelCatalogConfig>,
@@ -230,6 +253,7 @@ impl KimiConfig {
             agent: None,
             providers: None,
             model_aliases: None,
+            default_model: None,
             model_catalog: None,
             mcp: None,
             hooks: None,
@@ -261,10 +285,12 @@ mod tests {
             max_tokens: Some(4096),
             oauth: None,
             custom_headers: None,
+            env: None,
+            source: None,
         };
         let toml_str = toml::to_string(&config).unwrap();
-        assert!(toml_str.contains("provider = \"openai\""));
-        assert!(toml_str.contains("api_key = \"sk-test\""));
+        assert!(toml_str.contains("type = \"openai\""));
+        assert!(toml_str.contains("apiKey = \"sk-test\""));
 
         // Deserialize back
         let deserialized: ProviderConfig = toml::from_str(&toml_str).unwrap();
@@ -277,6 +303,7 @@ mod tests {
         let config = KimiConfig {
             agent: Some(AgentConfig {
                 engine: Some("rust".into()),
+                native_llm_provider: None,
                 max_turns: Some(100),
                 max_steps: Some(10),
                 max_tool_uses: None,
@@ -292,9 +319,12 @@ mod tests {
                     max_tokens: None,
                     oauth: None,
                     custom_headers: None,
+                    env: None,
+                    source: None,
                 },
             )])),
             model_aliases: None,
+            default_model: None,
             model_catalog: None,
             mcp: None,
             hooks: None,
@@ -328,7 +358,7 @@ mod tests {
             ("astron", ProviderType::Astron),
         ];
         for (name, expected) in variants {
-            let toml_str = format!("provider = \"{}\"", name);
+            let toml_str = format!("type = \"{name}\"");
             let config: ProviderConfig = toml::from_str(&toml_str).unwrap();
             assert_eq!(config.provider, Some(expected));
         }

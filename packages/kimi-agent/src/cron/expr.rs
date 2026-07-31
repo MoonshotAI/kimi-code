@@ -559,6 +559,9 @@ fn format_dows(set: &[u8]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    // The human-readable renderer is intentionally deprecated for UI use
+    // (English-only, i18n constraint); the tests pin its debug output.
+    #![allow(deprecated)]
     use super::*;
 
     #[test]

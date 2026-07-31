@@ -21,16 +21,33 @@ pub fn build_request(
     messages: &[WireMessage],
     tools: &[ToolInfo],
 ) -> Value {
-    build_request_with_options(model, max_tokens, messages, tools, false)
+    build_request_with_options(model, max_tokens, messages, tools, false, None)
+}
+
+/// Map a reasoning-effort level to an Anthropic `thinking.budget_tokens`.
+/// Returns `None` for unrecognized values (treated as "no thinking").
+fn budget_tokens_for_effort(effort: &str) -> Option<u32> {
+    match effort {
+        "low" => Some(1024),
+        "medium" => Some(4096),
+        "high" | "on" => Some(32_000),
+        _ => None,
+    }
 }
 
 /// Build an Anthropic Messages request body, optionally streaming.
+///
+/// When `reasoning_effort` is `Some("low"|"medium"|"high")`, the request
+/// includes `thinking: { type: "enabled", budget_tokens: N }` and
+/// `max_tokens` is raised above the budget if needed (Anthropic requires
+/// `max_tokens > budget_tokens`).
 pub fn build_request_with_options(
     model: &str,
     max_tokens: u32,
     messages: &[WireMessage],
     tools: &[ToolInfo],
     stream: bool,
+    reasoning_effort: Option<&str>,
 ) -> Value {
     let mut system = String::new();
     let mut msgs: Vec<Value> = Vec::new();
@@ -84,13 +101,24 @@ pub fn build_request_with_options(
         }
     }
 
+    // When thinking is enabled the effective max_tokens must exceed the
+    // thinking budget (Anthropic rejects max_tokens <= budget_tokens).
+    let thinking_budget = reasoning_effort.and_then(budget_tokens_for_effort);
+    let effective_max = match thinking_budget {
+        Some(budget) if max_tokens <= budget => budget + 4096,
+        _ => max_tokens,
+    };
+
     let mut req = json!({
         "model": model,
-        "max_tokens": max_tokens,
+        "max_tokens": effective_max,
         "messages": msgs,
     });
     if stream {
         req["stream"] = json!(true);
+    }
+    if let Some(budget) = thinking_budget {
+        req["thinking"] = json!({ "type": "enabled", "budget_tokens": budget });
     }
 
     if !system.is_empty() {
@@ -443,7 +471,7 @@ mod tests {
 
     #[test]
     fn build_request_streaming_sets_stream_flag() {
-        let req = build_request_with_options("m", 100, &[WireMessage::text("user", "x")], &[], true);
+        let req = build_request_with_options("m", 100, &[WireMessage::text("user", "x")], &[], true, None);
         assert_eq!(req["stream"], true);
     }
 
@@ -497,5 +525,57 @@ mod tests {
         assert_eq!(resp.usage.input_tokens, 25);
         assert_eq!(resp.usage.output_tokens, 9);
         assert_eq!(resp.usage.total_tokens, 34);
+    }
+
+    #[test]
+    fn reasoning_effort_emits_thinking_block() {
+        let req = build_request_with_options(
+            "claude-x",
+            64_000,
+            &[WireMessage::text("user", "think hard")],
+            &[],
+            true,
+            Some("high"),
+        );
+        assert_eq!(req["thinking"]["type"], "enabled");
+        assert_eq!(req["thinking"]["budget_tokens"], 32_000);
+        // max_tokens (64k) > budget (32k), so it stays unchanged.
+        assert_eq!(req["max_tokens"], 64_000);
+    }
+
+    #[test]
+    fn reasoning_effort_raises_max_tokens_when_below_budget() {
+        // max_tokens = 8192 is below the "high" budget of 32k → raised.
+        let req = build_request_with_options(
+            "claude-x",
+            8192,
+            &[WireMessage::text("user", "x")],
+            &[],
+            false,
+            Some("high"),
+        );
+        assert_eq!(req["thinking"]["budget_tokens"], 32_000);
+        assert_eq!(req["max_tokens"], 32_000 + 4096);
+    }
+
+    #[test]
+    fn reasoning_effort_low_and_medium_map_correctly() {
+        let low = build_request_with_options(
+            "m", 64_000, &[WireMessage::text("user", "x")], &[], false, Some("low"),
+        );
+        assert_eq!(low["thinking"]["budget_tokens"], 1024);
+
+        let med = build_request_with_options(
+            "m", 64_000, &[WireMessage::text("user", "x")], &[], false, Some("medium"),
+        );
+        assert_eq!(med["thinking"]["budget_tokens"], 4096);
+    }
+
+    #[test]
+    fn no_reasoning_effort_omits_thinking() {
+        let req = build_request_with_options(
+            "m", 4096, &[WireMessage::text("user", "x")], &[], false, None,
+        );
+        assert!(req.get("thinking").is_none());
     }
 }

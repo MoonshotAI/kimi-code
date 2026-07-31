@@ -13,16 +13,54 @@ use crate::message::*;
 use napi_derive::napi;
 use std::collections::HashMap;
 
-const DEFAULT_GEMINI_URL: &str =
+pub(crate) const DEFAULT_GEMINI_URL: &str =
     "https://generativelanguage.googleapis.com/v1beta/models";
 
+/// Detect whether a Gemini model uses the modern thinkingLevel API (Gemini 3+)
+/// or the older thinkingBudget API (Gemini 2.5 and earlier).
+/// Mirrors `this._model.includes('gemini-3')` in
+/// `packages/kosong/src/providers/google-genai.ts`.
+fn uses_thinking_level(model: &str) -> bool {
+    model.to_lowercase().contains("gemini-3")
+}
+
+/// Map a `ThinkingEffort` token to a Gemini 3+ `thinkingLevel` value.
+/// 'off' is encoded as MINIMAL with `includeThoughts: false` (the SDK has no
+/// true disabled level for Gemini 3).
+fn thinking_level_for_effort(effort: &str) -> Option<&'static str> {
+    match effort.to_lowercase().as_str() {
+        "off" => Some("MINIMAL"),
+        "low" => Some("LOW"),
+        "medium" => Some("MEDIUM"),
+        "high" | "xhigh" | "max" | "on" => Some("HIGH"),
+        _ => None,
+    }
+}
+
+/// Map a `ThinkingEffort` token to a Gemini `thinkingBudget` value (legacy
+/// Gemini 2.5 API).
+///   off   -> 0 (disabled signal)
+///   low   -> 1024
+///   medium-> 4096
+///   on/high/xhigh/max -> 32000
+fn thinking_budget_for_effort(effort: &str) -> Option<i32> {
+    match effort.to_lowercase().as_str() {
+        "off" => Some(0),
+        "low" => Some(1024),
+        "medium" => Some(4096),
+        "on" | "high" | "xhigh" | "max" => Some(32_000),
+        _ => None,
+    }
+}
+
 /// Build a Gemini API request body from the standardized Message format.
-fn build_gemini_request(
-    _model: &str,
+pub(crate) fn build_gemini_request(
+    model: &str,
     messages: &[Message],
     system_prompt: Option<&str>,
     tools: Option<&[crate::tool::Tool]>,
     max_tokens: Option<i32>,
+    thinking_effort: Option<&str>,
 ) -> Result<String, ProviderError> {
     let mut body = serde_json::Map::new();
 
@@ -70,7 +108,8 @@ fn build_gemini_request(
         }
     }
 
-    // Generation config
+    // Generation config — composed of `maxOutputTokens` and the model-aware
+    // `thinkingConfig` block.
     let mut config = serde_json::Map::new();
     if let Some(mt) = max_tokens {
         config.insert(
@@ -78,6 +117,36 @@ fn build_gemini_request(
             serde_json::Value::Number(serde_json::Number::from(mt as i64)),
         );
     }
+
+    // Model-aware thinking config.
+    if let Some(effort_raw) = thinking_effort {
+        let effort = effort_raw.to_lowercase();
+        if uses_thinking_level(model) {
+            // Gemini 3+ — emit `thinkingConfig.thinkingLevel` + `includeThoughts`.
+            if let Some(level) = thinking_level_for_effort(&effort) {
+                let include_thoughts = effort != "off";
+                config.insert(
+                    "thinkingConfig".to_string(),
+                    serde_json::json!({
+                        "thinkingLevel": level,
+                        "includeThoughts": include_thoughts,
+                    }),
+                );
+            }
+        } else if let Some(budget) = thinking_budget_for_effort(&effort) {
+            // Gemini 2.5 and earlier — emit `thinkingConfig.thinkingBudget` +
+            // `includeThoughts`. 'off' → 0 (API's disabled signal).
+            let include_thoughts = effort != "off";
+            config.insert(
+                "thinkingConfig".to_string(),
+                serde_json::json!({
+                    "thinkingBudget": budget,
+                    "includeThoughts": include_thoughts,
+                }),
+            );
+        }
+    }
+
     if !config.is_empty() {
         body.insert(
             "generationConfig".to_string(),
@@ -347,6 +416,7 @@ pub async fn google_genai_chat(
     system_prompt: Option<String>,
     tools: Option<Vec<crate::tool::Tool>>,
     max_tokens: Option<i32>,
+    thinking_effort: Option<String>,
     base_url: Option<String>,
 ) -> napi::Result<StreamedMessage> {
     let base = base_url.unwrap_or_else(|| DEFAULT_GEMINI_URL.to_string());
@@ -359,6 +429,7 @@ pub async fn google_genai_chat(
         system_prompt.as_deref(),
         tools.as_deref(),
         max_tokens,
+        thinking_effort.as_deref(),
     )
     .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
@@ -435,7 +506,7 @@ pub async fn google_genai_chat(
 
 #[cfg(test)]
 mod tests {
-    use crate::message::*;
+    use super::*;
 
     fn parse_ndjson(body: &str) -> (Vec<StreamedMessagePart>, TokenUsage, Option<String>, Option<String>) {
         let mut content_parts = vec![];
@@ -546,5 +617,167 @@ mod tests {
         assert!(msg_id.is_none());
         assert!(fr.is_none());
         assert_eq!(usage.input_other, 0);
+    }
+
+    #[test]
+    fn test_thinking_budget_for_effort() {
+        assert_eq!(thinking_budget_for_effort("off"), Some(0));
+        assert_eq!(thinking_budget_for_effort("low"), Some(1024));
+        assert_eq!(thinking_budget_for_effort("medium"), Some(4096));
+        assert_eq!(thinking_budget_for_effort("high"), Some(32_000));
+        assert_eq!(thinking_budget_for_effort("on"), Some(32_000));
+        assert_eq!(thinking_budget_for_effort("xhigh"), Some(32_000));
+        assert_eq!(thinking_budget_for_effort("unknown"), None);
+        // Case-insensitive
+        assert_eq!(thinking_budget_for_effort("OFF"), Some(0));
+        assert_eq!(thinking_budget_for_effort("Medium"), Some(4096));
+    }
+
+    #[test]
+    fn test_thinking_level_for_effort() {
+        assert_eq!(thinking_level_for_effort("off"), Some("MINIMAL"));
+        assert_eq!(thinking_level_for_effort("low"), Some("LOW"));
+        assert_eq!(thinking_level_for_effort("medium"), Some("MEDIUM"));
+        assert_eq!(thinking_level_for_effort("high"), Some("HIGH"));
+        assert_eq!(thinking_level_for_effort("xhigh"), Some("HIGH"));
+        assert_eq!(thinking_level_for_effort("max"), Some("HIGH"));
+        assert_eq!(thinking_level_for_effort("on"), Some("HIGH"));
+        assert_eq!(thinking_level_for_effort("bogus"), None);
+    }
+
+    #[test]
+    fn test_uses_thinking_level() {
+        // Gemini 3+ uses thinkingLevel.
+        assert!(uses_thinking_level("gemini-3-pro"));
+        assert!(uses_thinking_level("Gemini-3.5-Pro"));
+        // Gemini 2.5 and earlier use thinkingBudget.
+        assert!(!uses_thinking_level("gemini-2.5-pro"));
+        assert!(!uses_thinking_level("gemini-2.0-flash"));
+    }
+
+    #[test]
+    fn test_build_request_gemini3_thinking_level() {
+        // Gemini 3+ — emits `generationConfig.thinkingConfig.thinkingLevel`.
+        let body = build_gemini_request(
+            "gemini-3-pro",
+            &[],
+            None,
+            None,
+            None,
+            Some("medium"),
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            parsed["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "MEDIUM"
+        );
+        assert_eq!(
+            parsed["generationConfig"]["thinkingConfig"]["includeThoughts"],
+            true
+        );
+    }
+
+    #[test]
+    fn test_build_request_gemini3_off_uses_minimal_suppressed() {
+        // Gemini 3 has no true disabled level — 'off' maps to MINIMAL with
+        // `includeThoughts: false` (per TS `withThinking`).
+        let body = build_gemini_request(
+            "gemini-3-pro",
+            &[],
+            None,
+            None,
+            None,
+            Some("off"),
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            parsed["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "MINIMAL"
+        );
+        assert_eq!(
+            parsed["generationConfig"]["thinkingConfig"]["includeThoughts"],
+            false
+        );
+    }
+
+    #[test]
+    fn test_build_request_gemini25_thinking_budget() {
+        // Gemini 2.5 — emits `generationConfig.thinkingConfig.thinkingBudget`.
+        let body = build_gemini_request(
+            "gemini-2.5-pro",
+            &[],
+            None,
+            None,
+            None,
+            Some("medium"),
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            parsed["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            4096
+        );
+        assert_eq!(
+            parsed["generationConfig"]["thinkingConfig"]["includeThoughts"],
+            true
+        );
+    }
+
+    #[test]
+    fn test_build_request_gemini25_off_sets_zero_budget() {
+        let body = build_gemini_request(
+            "gemini-2.5-pro",
+            &[],
+            None,
+            None,
+            None,
+            Some("off"),
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            parsed["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            0
+        );
+        assert_eq!(
+            parsed["generationConfig"]["thinkingConfig"]["includeThoughts"],
+            false
+        );
+    }
+
+    #[test]
+    fn test_build_request_no_thinking_effort_omits_thinking_config() {
+        let body = build_gemini_request(
+            "gemini-3-pro",
+            &[],
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        if let Some(gc) = parsed.get("generationConfig") {
+            assert!(gc.get("thinkingConfig").is_none());
+        }
+    }
+
+    #[test]
+    fn test_build_request_unknown_effort_omits_thinking_config() {
+        let body = build_gemini_request(
+            "gemini-3-pro",
+            &[],
+            None,
+            None,
+            None,
+            Some("bogus"),
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        if let Some(gc) = parsed.get("generationConfig") {
+            assert!(gc.get("thinkingConfig").is_none());
+        }
     }
 }

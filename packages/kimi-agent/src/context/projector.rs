@@ -239,7 +239,7 @@ fn repair_tool_exchange_adjacency(
 
     let mut out: Vec<ContextMessage> = Vec::new();
     let mut consumed: Vec<bool> = vec![false; messages.len()];
-    let mut anomaly_fn = |anomaly: ProjectionAnomaly| {
+    let anomaly_fn = |anomaly: ProjectionAnomaly| {
         if let Some(ref on_anomaly) = options.on_anomaly {
             on_anomaly(anomaly);
         }

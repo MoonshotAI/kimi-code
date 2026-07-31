@@ -1,4 +1,8 @@
 #![deny(clippy::all)]
+// FFI crate: many `pub` items are cross-language API surface, test-only helpers,
+// or implemented-but-not-yet-wired features whose use Rust's dead_code analysis
+// cannot see from the JS side. Silence those reports without deleting the impls.
+#![allow(dead_code)]
 
 mod activity_view;
 mod bash;
@@ -28,11 +32,15 @@ mod llm_requester;
 mod llm_stream;
 mod loop_event_fold;
 mod mcp;
+mod mcp_http;
+mod mcp_registry;
+mod mcp_sse;
 mod napi_bindings;
 mod output_truncate;
 mod path_access;
 mod permission;
 mod permission_rules;
+pub mod pkce;
 mod prompt_metadata;
 mod read;
 mod render_prompt;

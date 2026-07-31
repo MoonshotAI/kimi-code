@@ -13,6 +13,7 @@
 /// dependencies on `SessionSubagentHost` (a TypeScript-only concept).
 
 use super::context::{DiscussionContext, DiscussionEntry};
+use crate::rpc::types::BoxFuture;
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -135,16 +136,19 @@ pub type DiscussionObserver = Box<dyn Fn(&DiscussionTurnEvent) + Send + Sync>;
 
 /// Delegate trait for host-side subagent operations.
 ///
-/// The Rust coordinator calls these methods; the host (TypeScript process)
-/// implements them to spawn/destroy subagents and execute turns.
-pub trait DiscussionHostDelegate {
+/// The Rust coordinator calls these methods; an implementation either bridges
+/// to the host (TypeScript process) or drives native child agents directly.
+/// `spawn_persistent` / `run_discussion_turn` / `get_persistent_usage` are
+/// async (child agents are spawned on a tokio runtime); `destroy_persistent`
+/// is best-effort fire-and-forget and stays sync.
+pub trait DiscussionHostDelegate: Send + Sync {
     /// Spawn a persistent subagent for a discussion participant.
     /// Returns an agent ID that will be used for subsequent turn calls.
     fn spawn_persistent(
         &self,
         profile_name: &str,
         description: &str,
-    ) -> Result<String, String>;
+    ) -> BoxFuture<'static, Result<String, String>>;
 
     /// Run a single discussion turn for a persistent subagent.
     /// The full prompt (role + topic + transcript) is provided.
@@ -152,10 +156,13 @@ pub trait DiscussionHostDelegate {
         &self,
         agent_id: &str,
         prompt: &str,
-    ) -> Result<String, String>;
+    ) -> BoxFuture<'static, Result<String, String>>;
 
     /// Get accumulated token usage for a persistent subagent.
-    fn get_persistent_usage(&self, agent_id: &str) -> Option<TokenUsage>;
+    fn get_persistent_usage(
+        &self,
+        agent_id: &str,
+    ) -> BoxFuture<'static, Option<TokenUsage>>;
 
     /// Destroy a persistent subagent (best-effort).
     fn destroy_persistent(&self, agent_id: &str);
@@ -191,27 +198,46 @@ impl SwarmDiscussionCoordinator {
     }
 
     /// Run a roundtable discussion. Returns the result.
-    pub fn discuss(
+    pub async fn discuss(
+        &mut self,
+        options: &DiscussionOptions,
+    ) -> Result<DiscussionResult, String> {
+        // 1. Spawn persistent subagents for each participant
+        for participant in &options.participants {
+            let agent_id = self
+                .host
+                .spawn_persistent(
+                    &participant.profile_name,
+                    &participant.role_description,
+                )
+                .await?;
+            self.agent_ids.push(agent_id);
+            self.usage_per_agent.push(None);
+        }
+
+        let result = self.discuss_rounds(options).await;
+
+        // Deterministic cleanup (no catch for errors)
+        for (idx, agent_id) in self.agent_ids.iter().enumerate() {
+            self.usage_per_agent[idx] = self.host.get_persistent_usage(agent_id).await;
+            self.host.destroy_persistent(agent_id);
+        }
+        self.agent_ids.clear();
+
+        result
+    }
+
+    /// The round-robin discussion loop (spawned agents only). Split out of
+    /// `discuss` so the async loop owns `&mut self` without closure borrow
+    /// conflicts.
+    async fn discuss_rounds(
         &mut self,
         options: &DiscussionOptions,
     ) -> Result<DiscussionResult, String> {
         let mut context = DiscussionContext::new();
         let mut ended_by = DiscussionEndReason::MaxRounds;
-
-        // 1. Spawn persistent subagents for each participant
-        for participant in &options.participants {
-            let agent_id = self.host.spawn_persistent(
-                &participant.profile_name,
-                &participant.role_description,
-            )?;
-            self.agent_ids.push(agent_id);
-            self.usage_per_agent.push(None);
-        }
-
-        // 2. Round-robin discussion loop
         let mut rounds_completed = 0u32;
 
-        let result = (|| -> Result<DiscussionResult, String> {
             for round in 1..=options.max_rounds {
                 for (index, participant) in options.participants.iter().enumerate() {
                     let agent_id = &self.agent_ids[index];
@@ -224,7 +250,7 @@ impl SwarmDiscussionCoordinator {
                             &context,
                         );
 
-                        match self.host.run_discussion_turn(agent_id, &prompt) {
+                        match self.host.run_discussion_turn(agent_id, &prompt).await {
                             Ok(content) => {
                                 context.add_entry(
                                     &participant.profile_name,
@@ -243,7 +269,7 @@ impl SwarmDiscussionCoordinator {
                             }
                             Err(e) => {
                                 ended_by = DiscussionEndReason::Failed;
-                                let result = self.collect_usage();
+                                let result = self.collect_usage().await;
                                 return Ok(DiscussionResult {
                                     transcript: context.all_entries(),
                                     summary: String::new(),
@@ -266,7 +292,7 @@ impl SwarmDiscussionCoordinator {
 
             if let Some(ref summary_prompt) = options.summary_prompt {
                 if !context.is_empty() && !self.agent_ids.is_empty() {
-                    match self.generate_summary(summary_prompt, &context) {
+                    match self.generate_summary(summary_prompt, &context).await {
                         Ok(text) => summary = text,
                         Err(e) => summary_error = Some(e),
                     }
@@ -274,7 +300,7 @@ impl SwarmDiscussionCoordinator {
             }
 
             // 4. Collect aggregate usage
-            let usage = self.collect_usage();
+            let usage = self.collect_usage().await;
 
             Ok(DiscussionResult {
                 transcript: context.all_entries(),
@@ -285,16 +311,6 @@ impl SwarmDiscussionCoordinator {
                 summary_error,
                 usage,
             })
-        })();
-
-        // Deterministic cleanup (no catch for errors)
-        for (idx, agent_id) in self.agent_ids.iter().enumerate() {
-            self.usage_per_agent[idx] = self.host.get_persistent_usage(agent_id);
-            self.host.destroy_persistent(agent_id);
-        }
-        self.agent_ids.clear();
-
-        result
     }
 
     /// Discard all agents (for cleanup after error/before abortion).
@@ -341,7 +357,7 @@ impl SwarmDiscussionCoordinator {
         parts.join("\n")
     }
 
-    fn generate_summary(
+    async fn generate_summary(
         &self,
         summary_prompt: &str,
         context: &DiscussionContext,
@@ -356,13 +372,13 @@ impl SwarmDiscussionCoordinator {
             "Please provide a concise summary of the discussion.",
         ].join("\n");
 
-        self.host.run_discussion_turn(first_id, &prompt)
+        self.host.run_discussion_turn(first_id, &prompt).await
     }
 
-    fn collect_usage(&self) -> TokenUsage {
+    async fn collect_usage(&self) -> TokenUsage {
         let mut total = TokenUsage::default();
         for agent_id in &self.agent_ids {
-            if let Some(u) = self.host.get_persistent_usage(agent_id) {
+            if let Some(u) = self.host.get_persistent_usage(agent_id).await {
                 total.add(&u);
             }
         }
@@ -378,40 +394,52 @@ mod tests {
     /// Mock host for testing — stores subagent state in memory.
     struct MockHost {
         counter: std::sync::atomic::AtomicU32,
-        agents: std::sync::Mutex<HashMap<String, String>>, // agent_id → profile name
-        usage: std::sync::Mutex<HashMap<String, TokenUsage>>,
+        agents: std::sync::Arc<std::sync::Mutex<HashMap<String, String>>>, // agent_id → profile name
+        usage: std::sync::Arc<std::sync::Mutex<HashMap<String, TokenUsage>>>,
     }
 
     impl MockHost {
         fn new() -> Self {
             Self {
                 counter: std::sync::atomic::AtomicU32::new(0),
-                agents: std::sync::Mutex::new(HashMap::new()),
-                usage: std::sync::Mutex::new(HashMap::new()),
+                agents: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
+                usage: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
             }
         }
     }
 
     impl DiscussionHostDelegate for MockHost {
-        fn spawn_persistent(&self, profile_name: &str, _desc: &str) -> Result<String, String> {
+        fn spawn_persistent(&self, profile_name: &str, _desc: &str) -> BoxFuture<'static, Result<String, String>> {
             let id = self.counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let agent_id = format!("agent-{}", id);
-            self.agents.lock().unwrap().insert(agent_id.clone(), profile_name.to_string());
-            self.usage.lock().unwrap().insert(agent_id.clone(), TokenUsage {
-                input_tokens: 100, output_tokens: 50, ..Default::default()
-            });
-            Ok(agent_id)
+            let profile = profile_name.to_string();
+            let agents = self.agents.clone();
+            let usage = self.usage.clone();
+            Box::pin(async move {
+                agents.lock().unwrap().insert(agent_id.clone(), profile);
+                usage.lock().unwrap().insert(agent_id.clone(), TokenUsage {
+                    input_tokens: 100, output_tokens: 50, ..Default::default()
+                });
+                Ok(agent_id)
+            })
         }
 
-        fn run_discussion_turn(&self, agent_id: &str, prompt: &str) -> Result<String, String> {
-            let agents = self.agents.lock().unwrap();
-            let name = agents.get(agent_id).unwrap_or(&"unknown".to_string()).clone();
-            Ok(format!("[{} response] topic in prompt: {}", name,
-                if prompt.len() > 50 { &prompt[..50] } else { prompt }))
+        fn run_discussion_turn(&self, agent_id: &str, prompt: &str) -> BoxFuture<'static, Result<String, String>> {
+            let agents = self.agents.clone();
+            let agent_id = agent_id.to_string();
+            let prompt = prompt.to_string();
+            Box::pin(async move {
+                let agents = agents.lock().unwrap();
+                let name = agents.get(&agent_id).unwrap_or(&"unknown".to_string()).clone();
+                Ok(format!("[{name} response] topic in prompt: {}",
+                    if prompt.len() > 50 { &prompt[..50] } else { &prompt }))
+            })
         }
 
-        fn get_persistent_usage(&self, agent_id: &str) -> Option<TokenUsage> {
-            self.usage.lock().unwrap().get(agent_id).cloned()
+        fn get_persistent_usage(&self, agent_id: &str) -> BoxFuture<'static, Option<TokenUsage>> {
+            let usage = self.usage.clone();
+            let agent_id = agent_id.to_string();
+            Box::pin(async move { usage.lock().unwrap().get(&agent_id).cloned() })
         }
 
         fn destroy_persistent(&self, agent_id: &str) {
@@ -432,7 +460,8 @@ mod tests {
             ],
         ).with_max_rounds(2);
 
-        let result = coord.discuss(&options).unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(coord.discuss(&options)).unwrap();
         assert!(!result.transcript.is_empty());
         assert!(result.rounds_completed == 2);
         assert_eq!(result.transcript.len(), 4); // 2 rounds × 2 participants
@@ -448,7 +477,8 @@ mod tests {
             vec![DiscussionParticipantConfig::new("architect", "You design systems.")],
         ).with_max_rounds(1).with_summary("Summarize the architecture discussion.");
 
-        let result = coord.discuss(&options).unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(coord.discuss(&options)).unwrap();
         // Summary should be generated (provided by mock)
         assert!(!result.summary.is_empty());
     }

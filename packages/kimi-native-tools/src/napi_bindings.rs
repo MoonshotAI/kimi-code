@@ -3,7 +3,7 @@
 /// This module defines the `#[napi]` functions that TypeScript calls.
 /// Each function wraps the corresponding Rust implementation.
 use crate::bash::{self, BashConfig, BashResult, DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S};
-use crate::compaction::{self, CompactionConfigMeta, CompactionMessageMeta, HandoffMessageMeta, CompactionUserSelection};
+use crate::compaction::{self, CompactionConfigMeta, CompactionMessageMeta};
 use crate::edit::{self, EditResult};
 use crate::escape;
 use crate::glob::{self, GlobConfig, GlobResult, MAX_MATCHES};
@@ -11,16 +11,21 @@ use crate::github;
 use crate::grep::{self, GrepConfig, GrepResult, GrepStructuredConfig, GrepStructuredResult, OutputMode, DEFAULT_HEAD_LIMIT};
 use crate::image_compress;
 use crate::list_directory::{self, ListDirectoryConfig, ListDirectoryResult};
+use crate::mcp_http;
+use crate::mcp_registry::{
+    self, ConnectionInfo, ConnectionStatus as RustConnectionStatus, RegistrySnapshot,
+    TransportKind as RustTransportKind,
+};
+use crate::mcp_sse::{self, SseEvent, SseMethod};
 use crate::output_truncate;
 use crate::permission;
+use crate::pkce::{self, CallbackParams, LoopbackServer};
 use crate::read::{self, ReadConfig, ReadResult, MAX_BYTES, MAX_LINE_LENGTH, MAX_LINES};
-use crate::render_prompt;
 use crate::tool_access::{self, ToolAccessMeta};
 use crate::tool_naming;
 use crate::translation::{self, CachedTranslator};
 use crate::write::{self, WriteMode, WriteResult};
 use napi::bindgen_prelude::Uint8Array;
-use crate::canonical_args;
 use crate::tool_dedup;
 use napi_derive::napi;
 use std::collections::HashMap;
@@ -450,17 +455,22 @@ pub async fn native_grep_structured(
 /// @param pattern - Glob pattern (supports brace expansion).
 /// @param path - Directory to search in. Defaults to current directory.
 /// @param include_dirs - Include directories in results. Default true.
+/// @param include_ignored - Also match files excluded by .gitignore and
+///   friends. Sensitive files (`.env` etc.) and VCS metadata directories
+///   (`.git` etc.) remain filtered. Default false.
 /// @returns GlobResult with files (sorted by mtime), error, and truncated flag.
 #[napi]
 pub fn native_glob(
     pattern: String,
     path: Option<String>,
     include_dirs: Option<bool>,
+    include_ignored: Option<bool>,
 ) -> GlobResult {
     glob::glob_search(&GlobConfig {
         pattern,
         path,
         include_dirs: include_dirs.unwrap_or(true),
+        include_ignored: include_ignored.unwrap_or(false),
     })
 }
 
@@ -1292,6 +1302,302 @@ pub fn native_sanitize_mcp_name_part(part: String) -> String {
 #[napi]
 pub fn native_is_mcp_tool_name(name: String) -> bool {
     tool_naming::is_mcp_tool_name(&name)
+}
+
+// ============================================================================
+// MCP HTTP transport (Phase 7.1) — non-streaming JSON-RPC over HTTP POST
+// ============================================================================
+
+/// Result of a single MCP HTTP request. `jsonBody` is `Some` when the
+/// server replied with parseable JSON (success or JSON-RPC error).
+#[napi(object)]
+pub struct NativeMcpHttpResult {
+    pub status: u32,
+    pub session_id: Option<String>,
+    pub content_type: Option<String>,
+    /// `Some` when the response body parses as a JSON object. The TS side
+    /// should treat `None` as a transport-level failure.
+    pub json_body: Option<serde_json::Value>,
+    pub raw_body: String,
+}
+
+/// Send a single MCP JSON-RPC request over HTTP POST.
+///
+/// @param url             MCP server endpoint (e.g. `https://mcp.example.com/mcp`).
+/// @param body            JSON-RPC 2.0 request envelope.
+/// @param sessionId       Optional `Mcp-Session-Id` from a previous response.
+/// @param extraHeaders    Optional object of additional request headers.
+/// @param timeoutMs       Total request timeout (default 30 000 ms).
+#[napi]
+pub async fn native_mcp_http_post(
+    url: String,
+    body: serde_json::Value,
+    session_id: Option<String>,
+    extra_headers: Option<serde_json::Value>,
+    timeout_ms: Option<u32>,
+) -> napi::Result<NativeMcpHttpResult> {
+    let timeout = timeout_ms.map(u64::from).unwrap_or(30_000);
+    let headers = extra_headers.unwrap_or_else(|| serde_json::json!({}));
+    let result = mcp_http::mcp_http_post(
+        &url,
+        &body,
+        session_id.as_deref(),
+        &headers,
+        timeout,
+    )
+    .await
+    .map_err(|e| napi::Error::from_reason(e))?;
+    Ok(NativeMcpHttpResult {
+        status: result.status as u32,
+        session_id: result.session_id,
+        content_type: result.content_type,
+        json_body: result.json_body,
+        raw_body: result.raw_body,
+    })
+}
+
+// ============================================================================
+// MCP SSE streaming (Phase 7.2) — Streamable HTTP transport `text/event-stream`
+// ============================================================================
+
+/// HTTP method selector for SSE. `get` opens a long-lived listener stream
+/// (spec §2.2); `post` sends a JSON-RPC request and receives the reply
+/// stream over SSE (spec §2.1).
+#[napi]
+pub enum NativeMcpSseMethod {
+    Get,
+    Post,
+}
+
+impl From<NativeMcpSseMethod> for SseMethod {
+    fn from(m: NativeMcpSseMethod) -> Self {
+        match m {
+            NativeMcpSseMethod::Get => SseMethod::Get,
+            NativeMcpSseMethod::Post => SseMethod::Post,
+        }
+    }
+}
+
+/// One Server-Sent Event from an MCP streamable-HTTP response.
+#[napi(object)]
+pub struct NativeMcpSseEvent {
+    pub event: String,
+    pub data: String,
+    pub id: Option<String>,
+}
+
+impl From<SseEvent> for NativeMcpSseEvent {
+    fn from(e: SseEvent) -> Self {
+        Self {
+            event: e.event,
+            data: e.data,
+            id: e.id,
+        }
+    }
+}
+
+/// Open an SSE stream against an MCP endpoint and collect every event
+/// until the server closes the connection, an event of type `close` is
+/// received, or the request times out.
+///
+/// @param url             MCP endpoint URL.
+/// @param method          GET (open listener stream) or POST (request + SSE reply).
+/// @param body            JSON-RPC request body (required for POST, ignored for GET).
+/// @param sessionId       Optional `Mcp-Session-Id` to echo back.
+/// @param extraHeaders    Optional object of additional request headers.
+/// @param timeoutMs       Total request timeout (default 30 000 ms).
+#[napi]
+pub async fn native_mcp_sse_collect(
+    url: String,
+    method: NativeMcpSseMethod,
+    body: Option<serde_json::Value>,
+    session_id: Option<String>,
+    extra_headers: Option<serde_json::Value>,
+    timeout_ms: Option<u32>,
+) -> napi::Result<Vec<NativeMcpSseEvent>> {
+    let timeout = timeout_ms.map(u64::from).unwrap_or(30_000);
+    let headers = extra_headers.unwrap_or_else(|| serde_json::json!({}));
+    let events = mcp_sse::mcp_sse_collect(
+        &url,
+        method.into(),
+        body.as_ref(),
+        session_id.as_deref(),
+        &headers,
+        timeout,
+    )
+    .await
+    .map_err(|e| napi::Error::from_reason(e))?;
+    Ok(events.into_iter().map(Into::into).collect())
+}
+
+// ============================================================================
+// MCP ConnectionManager (Phase 7.4) — central registry for active servers
+// ============================================================================
+
+/// Transport kind for a registered MCP connection.
+#[napi]
+pub enum NativeMcpTransportKind {
+    Stdio,
+    Http,
+    Sse,
+}
+
+impl From<NativeMcpTransportKind> for RustTransportKind {
+    fn from(k: NativeMcpTransportKind) -> Self {
+        match k {
+            NativeMcpTransportKind::Stdio => RustTransportKind::Stdio,
+            NativeMcpTransportKind::Http => RustTransportKind::Http,
+            NativeMcpTransportKind::Sse => RustTransportKind::Sse,
+        }
+    }
+}
+
+impl From<RustTransportKind> for NativeMcpTransportKind {
+    fn from(k: RustTransportKind) -> Self {
+        match k {
+            RustTransportKind::Stdio => NativeMcpTransportKind::Stdio,
+            RustTransportKind::Http => NativeMcpTransportKind::Http,
+            RustTransportKind::Sse => NativeMcpTransportKind::Sse,
+        }
+    }
+}
+
+/// Lifecycle status of a registered connection.
+#[napi]
+pub enum NativeMcpConnectionStatus {
+    Connecting,
+    Connected,
+    Disconnected,
+    Failed,
+}
+
+impl From<NativeMcpConnectionStatus> for RustConnectionStatus {
+    fn from(s: NativeMcpConnectionStatus) -> Self {
+        match s {
+            NativeMcpConnectionStatus::Connecting => RustConnectionStatus::Connecting,
+            NativeMcpConnectionStatus::Connected => RustConnectionStatus::Connected,
+            NativeMcpConnectionStatus::Disconnected => RustConnectionStatus::Disconnected,
+            NativeMcpConnectionStatus::Failed => RustConnectionStatus::Failed,
+        }
+    }
+}
+
+impl From<RustConnectionStatus> for NativeMcpConnectionStatus {
+    fn from(s: RustConnectionStatus) -> Self {
+        match s {
+            RustConnectionStatus::Connecting => NativeMcpConnectionStatus::Connecting,
+            RustConnectionStatus::Connected => NativeMcpConnectionStatus::Connected,
+            RustConnectionStatus::Disconnected => NativeMcpConnectionStatus::Disconnected,
+            RustConnectionStatus::Failed => NativeMcpConnectionStatus::Failed,
+        }
+    }
+}
+
+/// Public view of one registered connection — what the TS orchestrator
+/// sees in `list()` and `getByName()` results.
+#[napi(object)]
+pub struct NativeMcpConnectionInfo {
+    pub server_name: String,
+    pub transport: NativeMcpTransportKind,
+    pub status: NativeMcpConnectionStatus,
+    pub handle: u32,
+    pub last_error: Option<String>,
+    pub capabilities: Option<serde_json::Value>,
+}
+
+impl From<ConnectionInfo> for NativeMcpConnectionInfo {
+    fn from(i: ConnectionInfo) -> Self {
+        Self {
+            server_name: i.server_name,
+            transport: i.transport.into(),
+            status: i.status.into(),
+            handle: i.handle as u32,
+            last_error: i.last_error,
+            capabilities: i.capabilities,
+        }
+    }
+}
+
+/// Outcome of `add()`: the new handle plus the replaced handle (if the
+/// server name already existed, the old entry was evicted).
+#[napi(object)]
+pub struct NativeMcpAddResult {
+    pub handle: u32,
+    /// Handle of the connection that was replaced (if any). Pass it to
+    /// `remove()` to clean up if you don't already hold a reference.
+    pub replaced: Option<u32>,
+}
+
+/// Register a new connection. If `server_name` is already registered,
+/// the old entry is evicted and its handle returned in `replaced`.
+#[napi]
+pub fn native_mcp_registry_add(
+    server_name: String,
+    transport: NativeMcpTransportKind,
+) -> NativeMcpAddResult {
+    let (handle, replaced) =
+        mcp_registry::registry().add(server_name, transport.into());
+    NativeMcpAddResult {
+        handle: handle as u32,
+        replaced: replaced.map(|h| h as u32),
+    }
+}
+
+/// Update the status (and optionally the error message) of a registered
+/// connection. Returns `false` if the handle isn't registered.
+#[napi]
+pub fn native_mcp_registry_set_status(
+    handle: u32,
+    status: NativeMcpConnectionStatus,
+    error: Option<String>,
+) -> bool {
+    mcp_registry::registry()
+        .set_status(handle as u64, status.into(), error)
+}
+
+/// Attach the server-reported `capabilities` from the JSON-RPC
+/// `initialize` response. Returns `false` if the handle isn't registered.
+#[napi]
+pub fn native_mcp_registry_set_capabilities(
+    handle: u32,
+    capabilities: serde_json::Value,
+) -> bool {
+    mcp_registry::registry()
+        .set_capabilities(handle as u64, capabilities)
+}
+
+/// Remove a connection by handle. Returns the removed `server_name`, or
+/// `None` if the handle wasn't found.
+#[napi]
+pub fn native_mcp_registry_remove(handle: u32) -> Option<String> {
+    mcp_registry::registry().remove(handle as u64)
+}
+
+/// Look up a connection by server name.
+#[napi]
+pub fn native_mcp_registry_get_by_name(server_name: String) -> Option<NativeMcpConnectionInfo> {
+    mcp_registry::registry()
+        .get_by_name(&server_name)
+        .map(Into::into)
+}
+
+/// Look up a connection by numeric handle.
+#[napi]
+pub fn native_mcp_registry_get(handle: u32) -> Option<NativeMcpConnectionInfo> {
+    mcp_registry::registry().get(handle as u64).map(Into::into)
+}
+
+/// Snapshot every registered connection.
+#[napi]
+pub fn native_mcp_registry_list() -> Vec<NativeMcpConnectionInfo> {
+    let RegistrySnapshot { connections } = mcp_registry::registry().snapshot();
+    connections.into_iter().map(Into::into).collect()
+}
+
+/// Count of currently registered connections.
+#[napi]
+pub fn native_mcp_registry_len() -> u32 {
+    mcp_registry::registry().len() as u32
 }
 
 /// Produce the qualified MCP tool name: `mcp__<server>__<tool>`.
@@ -2498,6 +2804,97 @@ pub async fn native_github_request(
 }
 
 // ============================================================================
+// PKCE / OAuth primitives (Phase 7.3)
+// ============================================================================
+
+/// Generate a fresh PKCE code verifier (43-char base64url, no padding).
+#[napi]
+pub fn pkce_generate_verifier() -> String {
+    pkce::generate_verifier()
+}
+
+/// Derive the S256 code challenge for the given verifier.
+#[napi]
+pub fn pkce_derive_challenge(verifier: String) -> String {
+    pkce::derive_challenge(&verifier)
+}
+
+/// Bind a one-shot OAuth loopback callback server on `127.0.0.1:0`.
+///
+/// Returns a `LoopbackHandle` carrying the bound `port` and the
+/// `redirect_uri` the caller should embed in the authorization URL.
+#[napi]
+pub async fn pkce_start_loopback() -> napi::Result<LoopbackHandle> {
+    LoopbackServer::start()
+        .await
+        .map(|s| LoopbackHandle {
+            port: s.port as u32,
+            redirect_uri: s.redirect_uri.clone(),
+            server: Some(s),
+        })
+        .map_err(|e| napi::Error::from_reason(e))
+}
+
+/// Block until the loopback server captures an OAuth callback.
+///
+/// The TS side should typically run this behind a timeout so a user who
+/// abandons the flow doesn't wedge the agent.
+#[napi]
+pub async fn pkce_await_callback(handle: &LoopbackHandle) -> napi::Result<CallbackPayload> {
+    // The `#[napi]` macro hands us `&LoopbackHandle`; we need `&mut` to
+    // call `wait_for_callback`. Convert via raw pointer — safe because
+    // napi guarantees JS-side serialization keeps the handle pinned for
+    // the duration of this future.
+    let handle_ptr = handle as *const LoopbackHandle as *mut LoopbackHandle;
+    let server_ref = unsafe { &mut (*handle_ptr).server };
+    let server = server_ref
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason("loopback server already awaited"))?;
+    let params = server
+        .wait_for_callback()
+        .await
+        .map_err(|e| napi::Error::from_reason(e))?;
+    Ok(params.into())
+}
+
+/// Opaque handle returned by `pkce_start_loopback` and consumed by
+/// `pkce_await_callback`. The handle owns the spawned accept task and
+/// the bound TCP listener.
+///
+/// Only `port` and `redirect_uri` are exposed to JS; the live
+/// `LoopbackServer` is kept private (TS doesn't need to touch it).
+#[napi]
+pub struct LoopbackHandle {
+    pub port: u32,
+    pub redirect_uri: String,
+    // Internal — not exposed to JS via napi's auto-derive because the
+    // server is neither Clone nor Constructible from JS. Field ordering:
+    // public fields first (so napi can generate the constructor) then
+    // the private state below.
+    server: Option<LoopbackServer>,
+}
+
+/// Payload returned from `pkce_await_callback` once the IdP redirects.
+#[napi(object)]
+pub struct CallbackPayload {
+    pub code: String,
+    pub state: String,
+    pub error: Option<String>,
+    pub error_description: Option<String>,
+}
+
+impl From<CallbackParams> for CallbackPayload {
+    fn from(p: CallbackParams) -> Self {
+        Self {
+            code: p.code,
+            state: p.state,
+            error: p.error,
+            error_description: p.error_description,
+        }
+    }
+}
+
+// ============================================================================
 // Permission — DSL pattern parsing
 // ============================================================================
 
@@ -2613,6 +3010,8 @@ pub struct NativeLlmStreamPart {
     pub arguments: Option<String>,
     pub arguments_part: Option<String>,
     pub stream_index: Option<u32>,
+    /// Gemini thought signature attached to a function call (base64).
+    pub thought_signature: Option<String>,
 }
 
 /// Metadata returned when the stream completes.
@@ -2681,6 +3080,7 @@ pub async fn native_llm_stream(
                             arguments: p.arguments,
                             arguments_part: p.arguments_part,
                             stream_index: p.stream_index,
+                            thought_signature: p.thought_signature,
                         });
                     }
                     llm_stream::StreamEvent::Done(m) => {

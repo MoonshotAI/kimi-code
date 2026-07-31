@@ -186,6 +186,7 @@ impl StreamedMessagePart {
 
 /// Token usage statistics.
 #[napi(object)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TokenUsage {
     pub input_other: i64,
     pub output: i64,

@@ -13,8 +13,8 @@
 /// 4. Consensus (optional) — extract agreed/disagreed points
 
 use super::context::{
-    CrossReference, CrossRefStance, DebatePhase, DiscussionContext, DiscussionEntry,
-    PhaseBreakdownEntry, PositionRecord,
+    CrossRefStance, DebatePhase, DiscussionContext, DiscussionEntry,
+    PhaseBreakdownEntry,
 };
 use super::coordinator::{DiscussionHostDelegate, DiscussionObserver, DiscussionTurnEvent, TokenUsage};
 
@@ -116,30 +116,46 @@ impl StructuredDebateCoordinator {
     }
 
     /// Run a structured debate and return the result.
-    pub fn debate(
+    pub async fn debate(
         &mut self,
         options: &DebateOptions,
     ) -> Result<DebateResult, String> {
-        let context = DiscussionContext::new();
-        let mut initial_stances: Vec<(String, String)> = Vec::new();
-        let mut position_changes = 0usize;
+        let result = self.debate_inner(options).await;
 
-        // 1. Spawn subagents
-        for participant in &options.participants {
-            let agent_id = self.host.spawn_persistent(
-                &participant.profile_name,
-                &participant.role_description,
-            )?;
-            self.agent_ids.push(agent_id);
+        // Cleanup (deterministic, no catch for errors)
+        for agent_id in &self.agent_ids {
+            self.host.destroy_persistent(agent_id);
         }
+        self.agent_ids.clear();
 
-        let result = (|| -> Result<DebateResult, String> {
-            let mut context = DiscussionContext::new();
+        result
+    }
+
+    /// The full debate orchestration (spawned agents only). Split out of
+    /// `debate` so the async body owns `&mut self` without closure borrow
+    /// conflicts.
+    async fn debate_inner(
+        &mut self,
+        options: &DebateOptions,
+    ) -> Result<DebateResult, String> {
+        let mut initial_stances: Vec<(String, String)> = Vec::new();
+        let mut context = DiscussionContext::new();
+
+            // 1. Spawn subagents
+            for participant in &options.participants {
+                let agent_id = self.host
+                    .spawn_persistent(
+                        &participant.profile_name,
+                        &participant.role_description,
+                    )
+                    .await?;
+                self.agent_ids.push(agent_id);
+            }
 
             // 2. Phase 1: Opening Statements
             context.set_phase(DebatePhase::Opening);
             for (idx, participant) in options.participants.iter().enumerate() {
-                let content = self.run_opening_statement(idx, participant, &options.topic)?;
+                let content = self.run_opening_statement(idx, participant, &options.topic).await?;
                 let agent_id = &self.agent_ids[idx];
                 let name = &participant.profile_name;
                 context.add_entry(name, agent_id, &content, 1);
@@ -168,15 +184,10 @@ impl StructuredDebateCoordinator {
                         &context,
                         current_round,
                     );
-                    let content = self.host.run_discussion_turn(agent_id, &prompt)?;
+                    let content = self.host.run_discussion_turn(agent_id, &prompt).await?;
                     context.add_entry(name, agent_id, &content, current_round);
 
                     let new_stance = extract_first_sentence(&content);
-                    if let Some(pos) = context.get_position(name) {
-                        if new_stance != pos.stance {
-                            position_changes += 1;
-                        }
-                    }
                     context.record_position(
                         name,
                         &new_stance,
@@ -201,7 +212,7 @@ impl StructuredDebateCoordinator {
                     &context,
                     closing_round,
                 );
-                let content = self.host.run_discussion_turn(agent_id, &prompt)?;
+                let content = self.host.run_discussion_turn(agent_id, &prompt).await?;
                 context.add_entry(name, agent_id, &content, closing_round);
 
                 let final_stance = extract_first_sentence(&content);
@@ -223,7 +234,7 @@ impl StructuredDebateCoordinator {
             context.set_phase(DebatePhase::Consensus);
             let consensus = if let Some(ref prompt) = options.consensus_prompt {
                 if !context.is_empty() {
-                    self.generate_consensus(prompt, &context).unwrap_or_default()
+                    self.generate_consensus(prompt, &context).await.unwrap_or_default()
                 } else {
                     String::new()
                 }
@@ -233,12 +244,12 @@ impl StructuredDebateCoordinator {
 
             // 6. Voting (optional)
             let voting_result = if options.enable_voting && !context.is_empty() {
-                self.run_voting(&options.topic, &context).unwrap_or_default()
+                self.run_voting(&options.topic, &context).await.unwrap_or_default()
             } else {
                 String::new()
             };
 
-            let usage = self.collect_usage();
+            let usage = self.collect_usage().await;
             let phases = context.phase_breakdown();
 
             Ok(DebateResult {
@@ -251,15 +262,6 @@ impl StructuredDebateCoordinator {
                 cross_references_count: context.all_cross_references().len(),
                 position_changes,
             })
-        })();
-
-        // Cleanup
-        for agent_id in &self.agent_ids {
-            self.host.destroy_persistent(agent_id);
-        }
-        self.agent_ids.clear();
-
-        result
     }
 
     /// Destroy all subagents (for cleanup in error paths).
@@ -272,7 +274,7 @@ impl StructuredDebateCoordinator {
 
     // ── Private helpers ──
 
-    fn run_opening_statement(
+    async fn run_opening_statement(
         &self,
         index: usize,
         participant: &DebateParticipantConfig,
@@ -298,7 +300,7 @@ impl StructuredDebateCoordinator {
             "Be thorough and persuasive — this is your chance to frame the debate.".into(),
         ].join("\n");
 
-        self.host.run_discussion_turn(agent_id, &prompt)
+        self.host.run_discussion_turn(agent_id, &prompt).await
     }
 
     fn build_debate_round_prompt(
@@ -355,7 +357,7 @@ impl StructuredDebateCoordinator {
         topic: &str,
         _speaker_name: &str,
         context: &DiscussionContext,
-        round: u32,
+        _round: u32,
     ) -> String {
         let positions_text = context.positions_text();
         let cross_ref_text = context.cross_references_text();
@@ -388,7 +390,7 @@ impl StructuredDebateCoordinator {
         ].join("\n")
     }
 
-    fn generate_consensus(
+    async fn generate_consensus(
         &self,
         consensus_prompt: &str,
         context: &DiscussionContext,
@@ -430,10 +432,10 @@ impl StructuredDebateCoordinator {
             "4. Recommended next steps or action items",
         ].join("\n");
 
-        self.host.run_discussion_turn(first_id, &prompt)
+        self.host.run_discussion_turn(first_id, &prompt).await
     }
 
-    fn run_voting(
+    async fn run_voting(
         &self,
         topic: &str,
         context: &DiscussionContext,
@@ -480,7 +482,7 @@ impl StructuredDebateCoordinator {
                 "3. A suggested compromise or path forward",
             ].join("\n");
 
-            match self.host.run_discussion_turn(&self.agent_ids[idx], &prompt) {
+            match self.host.run_discussion_turn(&self.agent_ids[idx], &prompt).await {
                 Ok(vote) => votes.push(format!("[{}] {}", speaker, vote)),
                 Err(_) => votes.push(format!("[{}] <vote not cast>", speaker)),
             }
@@ -503,13 +505,13 @@ impl StructuredDebateCoordinator {
             "4. Final recommended decision",
         ].join("\n");
 
-        self.host.run_discussion_turn(first_id, &tally_prompt)
+        self.host.run_discussion_turn(first_id, &tally_prompt).await
     }
 
-    fn collect_usage(&self) -> TokenUsage {
+    async fn collect_usage(&self) -> TokenUsage {
         let mut total = TokenUsage::default();
         for agent_id in &self.agent_ids {
-            if let Some(u) = self.host.get_persistent_usage(agent_id) {
+            if let Some(u) = self.host.get_persistent_usage(agent_id).await {
                 total.add(&u);
             }
         }
@@ -580,39 +582,51 @@ fn extract_key_points(content: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rpc::types::BoxFuture;
     use std::collections::HashMap;
 
     struct MockHost {
         counter: std::sync::atomic::AtomicU32,
-        agents: std::sync::Mutex<HashMap<String, String>>,
-        usage: std::sync::Mutex<HashMap<String, TokenUsage>>,
+        agents: std::sync::Arc<std::sync::Mutex<HashMap<String, String>>>,
+        usage: std::sync::Arc<std::sync::Mutex<HashMap<String, TokenUsage>>>,
     }
 
     impl MockHost {
         fn new() -> Self {
             Self {
                 counter: std::sync::atomic::AtomicU32::new(0),
-                agents: std::sync::Mutex::new(HashMap::new()),
-                usage: std::sync::Mutex::new(HashMap::new()),
+                agents: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
+                usage: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
             }
         }
     }
 
     impl DiscussionHostDelegate for MockHost {
-        fn spawn_persistent(&self, name: &str, _desc: &str) -> Result<String, String> {
+        fn spawn_persistent(&self, name: &str, _desc: &str) -> BoxFuture<'static, Result<String, String>> {
             let id = self.counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let aid = format!("agent-{}", id);
-            self.agents.lock().unwrap().insert(aid.clone(), name.to_string());
-            self.usage.lock().unwrap().insert(aid.clone(), TokenUsage { input_tokens: 200, output_tokens: 100, ..Default::default() });
-            Ok(aid)
+            let name = name.to_string();
+            let agents = self.agents.clone();
+            let usage = self.usage.clone();
+            Box::pin(async move {
+                agents.lock().unwrap().insert(aid.clone(), name);
+                usage.lock().unwrap().insert(aid.clone(), TokenUsage { input_tokens: 200, output_tokens: 100, ..Default::default() });
+                Ok(aid)
+            })
         }
-        fn run_discussion_turn(&self, aid: &str, _prompt: &str) -> Result<String, String> {
-            let agents = self.agents.lock().unwrap();
-            let name = agents.get(aid).cloned().unwrap_or_default();
-            Ok(format!("{}'s argument: We should proceed with caution.", name))
+        fn run_discussion_turn(&self, aid: &str, _prompt: &str) -> BoxFuture<'static, Result<String, String>> {
+            let agents = self.agents.clone();
+            let aid = aid.to_string();
+            Box::pin(async move {
+                let agents = agents.lock().unwrap();
+                let name = agents.get(&aid).cloned().unwrap_or_default();
+                Ok(format!("{name}'s argument: We should proceed with caution."))
+            })
         }
-        fn get_persistent_usage(&self, aid: &str) -> Option<TokenUsage> {
-            self.usage.lock().unwrap().get(aid).cloned()
+        fn get_persistent_usage(&self, aid: &str) -> BoxFuture<'static, Option<TokenUsage>> {
+            let usage = self.usage.clone();
+            let aid = aid.to_string();
+            Box::pin(async move { usage.lock().unwrap().get(&aid).cloned() })
         }
         fn destroy_persistent(&self, aid: &str) {
             self.agents.lock().unwrap().remove(aid);
@@ -632,7 +646,8 @@ mod tests {
             ],
         ).with_max_rounds(1);
 
-        let result = coord.debate(&options).unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(coord.debate(&options)).unwrap();
 
         assert_eq!(result.ended_by, "completed");
         // 2 opening + 2 debate + 2 closing = 6 entries (with 2 participants, 1 debate round)
@@ -653,7 +668,8 @@ mod tests {
             ],
         ).with_max_rounds(1).with_voting().with_consensus("Find consensus.");
 
-        let result = coord.debate(&options).unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(coord.debate(&options)).unwrap();
         assert_eq!(result.ended_by, "completed");
         assert!(!result.voting_result.is_empty());
         assert!(!result.consensus.is_empty());

@@ -19,7 +19,7 @@ use std::collections::HashSet;
 
 use crate::context::dynamic_tools::{
     collect_loaded_dynamic_tool_names, render_loadable_tools_announcement,
-    strip_dynamic_tool_context, DYNAMIC_TOOL_SCHEMA_VARIANT, LOADABLE_TOOLS_TRIGGER,
+    strip_dynamic_tool_context, DYNAMIC_TOOL_SCHEMA_VARIANT,
 };
 use crate::context::types::{ContextMessage, ContentPart, MessageOrigin, ToolDefinition};
 

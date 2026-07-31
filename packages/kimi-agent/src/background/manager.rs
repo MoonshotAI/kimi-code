@@ -5,14 +5,14 @@
 /// Each task gets a unique ID, captures output to a ring buffer,
 /// and supports status query / output retrieval / stop operations.
 ///
-/// Rust side is responsible for state tracking only. Actual process
-/// management (spawn, kill, stream) is delegated to the JS host via
-/// callbacks.
+/// Process management is fully native: `spawn_on` drives a `BackgroundTask`
+/// to completion on tokio and mirrors metadata/output into the optional
+/// persistence store.
 
 use std::collections::HashMap;
 
-use crate::background::callbacks::BackgroundCallbacks;
 use crate::background::managed_task::{ManagedTask, ManagedTaskState};
+use crate::background::persist::BackgroundTaskPersistence;
 use crate::background::types::*;
 use crate::cron::clock::ClockSources;
 
@@ -46,8 +46,9 @@ pub struct BackgroundManager {
     tasks: HashMap<String, ManagedTask>,
     /// Ghosts: tasks loaded from disk that have no live process.
     ghosts: HashMap<String, BackgroundTaskInfo>,
-    /// Callbacks for process management (delegated to JS host).
-    callbacks: Option<Box<dyn BackgroundCallbacks + Send>>,
+    /// Optional persistence: when set, natively-spawned tasks mirror their
+    /// metadata and output here (durable across restarts).
+    persist: Option<std::sync::Arc<dyn BackgroundTaskPersistence>>,
     /// Clock source.
     clocks: ClockSources,
     /// Maximum running tasks (None = no cap).
@@ -65,15 +66,16 @@ impl BackgroundManager {
         Self {
             tasks: HashMap::new(),
             ghosts: HashMap::new(),
-            callbacks: None,
+            persist: None,
             clocks: clocks.unwrap_or_default(),
             max_running_tasks: max_running,
         }
     }
 
-    /// Set the callbacks for process management.
-    pub fn set_callbacks(&mut self, callbacks: Box<dyn BackgroundCallbacks + Send>) {
-        self.callbacks = Some(callbacks);
+    /// Attach a persistence store: natively-spawned tasks mirror their
+    /// metadata (on spawn and settle) and output (on each chunk) here.
+    pub fn set_persist(&mut self, persist: std::sync::Arc<dyn BackgroundTaskPersistence>) {
+        self.persist = Some(persist);
     }
 
     /// Register a new background task. Returns the assigned task ID.
@@ -182,6 +184,15 @@ impl BackgroundManager {
         Ok(())
     }
 
+    /// Detach a task from its foreground tool call (SDK `detachBackgroundTask`).
+    /// Marks it detached, releases the waiting foreground caller, and returns
+    /// the task's info — or `None` when the task id is unknown.
+    pub fn detach(&mut self, task_id: &str) -> Option<BackgroundTaskInfo> {
+        let task = self.tasks.get_mut(task_id)?;
+        task.detach();
+        Some(task.to_info())
+    }
+
     /// Get the output snapshot for a task.
     pub fn get_output_snapshot(&self, task_id: &str) -> Option<BackgroundTaskOutputSnapshot> {
         let task = self.tasks.get(task_id)?;
@@ -214,6 +225,100 @@ impl BackgroundManager {
     /// Clean up terminal tasks that have been settled for a while.
     pub fn clean_terminal_tasks(&mut self) {
         self.tasks.retain(|_, t| t.state != ManagedTaskState::Terminal);
+    }
+
+    /// Register AND drive a concrete [`BackgroundTask`]: registers a managed
+    /// entry, then spawns the task's future on tokio with a sink that appends
+    /// to the ring buffer and settles the managed state. This is the fully
+    /// native spawn path — no JS host involved in the process lifecycle.
+    ///
+    /// Returns the task id, or `None` when the concurrency cap is reached.
+    pub fn spawn_on(
+        manager: &std::sync::Arc<std::sync::Mutex<BackgroundManager>>,
+        prefix: &str,
+        task: Box<dyn BackgroundTask>,
+        options: Option<RegisterOptions>,
+    ) -> Option<String> {
+        let kind = task.kind();
+        let description = task.description().to_string();
+        let timeout_ms = options.as_ref().and_then(|o| o.timeout_ms).filter(|&ms| ms > 0);
+
+        let (task_id, cancel_rx) = {
+            let mut mgr = manager.lock().unwrap_or_else(|e| e.into_inner());
+            let task_id = mgr.register(prefix, kind, description, options)?;
+            let cancel_rx = mgr.get(&task_id)?.cancel_rx.clone();
+            // Mirror the initial (running) record to persistence so a restart
+            // can surface the task even before it settles.
+            if let Some(persist) = mgr.persist.clone() {
+                if let Some(info) = mgr.get(&task_id).map(|t| t.to_info()) {
+                    let _ = persist.write_info(&info);
+                }
+            }
+            (task_id, cancel_rx)
+        };
+
+        // Arm the deadline: request stop through the manager so the stop
+        // reason survives the task's generic cancellation settlement.
+        if let Some(ms) = timeout_ms {
+            let timer_manager = manager.clone();
+            let timer_task_id = task_id.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+                let mut mgr = timer_manager.lock().unwrap_or_else(|e| e.into_inner());
+                if mgr.get(&timer_task_id).map(|t| t.state) == Some(ManagedTaskState::Running) {
+                    let _ = mgr.stop(&timer_task_id, Some(format!("timed out after {ms}ms")));
+                }
+            });
+        }
+
+        let sink = Box::new(ManagerSink {
+            manager: manager.clone(),
+            task_id: task_id.clone(),
+        });
+        tokio::spawn(Box::into_pin(task.start(sink, cancel_rx)));
+        Some(task_id)
+    }
+}
+
+/// Routes a running task's output and settlement back into the shared
+/// manager. Handed to [`BackgroundTask::start`] by [`BackgroundManager::spawn_on`].
+struct ManagerSink {
+    manager: std::sync::Arc<std::sync::Mutex<BackgroundManager>>,
+    task_id: String,
+}
+
+impl BackgroundTaskSink for ManagerSink {
+    fn append_output(&mut self, chunk: &str) {
+        let persist = {
+            let mut mgr = self.manager.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = mgr.append_output(&self.task_id, chunk);
+            mgr.persist.clone()
+        };
+        // Mirror to persistence outside the lock: sqlite writes shouldn't
+        // block other tasks contending for the manager.
+        if let Some(persist) = persist {
+            let _ = persist.append_output(&self.task_id, chunk);
+        }
+    }
+
+    fn settle(&mut self, settlement: BackgroundTaskSettlement) {
+        let (persist, info) = {
+            let mut mgr = self.manager.lock().unwrap_or_else(|e| e.into_inner());
+            // A stop reason recorded by `stop()` (user request, deadline) is
+            // more specific than the task's generic cancellation settlement.
+            let existing_reason = mgr
+                .get(&self.task_id)
+                .and_then(|t| t.stop_reason.clone());
+            let settlement = BackgroundTaskSettlement {
+                status: settlement.status,
+                stop_reason: existing_reason.or(settlement.stop_reason),
+            };
+            let _ = mgr.settle(&self.task_id, settlement);
+            (mgr.persist.clone(), mgr.get(&self.task_id).map(|t| t.to_info()))
+        };
+        if let (Some(persist), Some(info)) = (persist, info) {
+            let _ = persist.write_info(&info);
+        }
     }
 }
 
@@ -344,6 +449,141 @@ mod tests {
         mgr.clean_terminal_tasks();
         assert_eq!(mgr.task_count(), 1);
         assert!(mgr.get(&id2).is_some());
+    }
+
+    // ── spawn_on: fully native task driving ───────────────────────────────────
+
+    /// A test task that emits output chunks then settles, or waits for the
+    /// cancellation signal when `hang` is set.
+    struct FakeTask {
+        chunks: Vec<&'static str>,
+        hang: bool,
+    }
+
+    impl BackgroundTask for FakeTask {
+        fn kind(&self) -> BackgroundTaskKind {
+            BackgroundTaskKind::Process
+        }
+        fn description(&self) -> &str {
+            "fake task"
+        }
+        fn start(
+            self: Box<Self>,
+            mut sink: Box<dyn BackgroundTaskSink + Send>,
+            mut signal: tokio::sync::watch::Receiver<bool>,
+        ) -> Box<dyn std::future::Future<Output = ()> + Send> {
+            Box::new(async move {
+                for chunk in &self.chunks {
+                    sink.append_output(chunk);
+                }
+                if self.hang {
+                    let _ = signal.changed().await;
+                    sink.settle(BackgroundTaskSettlement {
+                        status: BackgroundTaskSettlementStatus::Killed,
+                        stop_reason: None,
+                    });
+                    return;
+                }
+                sink.settle(BackgroundTaskSettlement {
+                    status: BackgroundTaskSettlementStatus::Completed,
+                    stop_reason: None,
+                });
+            })
+        }
+        fn force_stop(self: Box<Self>) -> Box<dyn std::future::Future<Output = ()> + Send> {
+            Box::new(async {})
+        }
+    }
+
+    async fn wait_terminal(
+        mgr: &std::sync::Arc<std::sync::Mutex<BackgroundManager>>,
+        task_id: &str,
+    ) -> BackgroundTaskStatus {
+        for _ in 0..200 {
+            {
+                let m = mgr.lock().unwrap();
+                let task = m.get(task_id).expect("task exists");
+                if task.state == ManagedTaskState::Terminal {
+                    return task.status;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("task {task_id} did not settle in time");
+    }
+
+    #[tokio::test]
+    async fn spawn_on_drives_a_task_to_completion_with_output() {
+        let mgr = std::sync::Arc::new(std::sync::Mutex::new(BackgroundManager::new(None)));
+        let task_id = BackgroundManager::spawn_on(
+            &mgr,
+            "bash",
+            Box::new(FakeTask { chunks: vec!["hello ", "world"], hang: false }),
+            None,
+        )
+        .expect("spawned");
+        assert!(task_id.starts_with("bash-"));
+
+        let status = wait_terminal(&mgr, &task_id).await;
+        assert_eq!(status, BackgroundTaskStatus::Completed);
+        let snapshot = mgr.lock().unwrap().get_output_snapshot(&task_id).unwrap();
+        assert_eq!(snapshot.preview, "hello world");
+    }
+
+    #[tokio::test]
+    async fn spawn_on_deadline_stops_a_hanging_task_and_keeps_the_reason() {
+        let mgr = std::sync::Arc::new(std::sync::Mutex::new(BackgroundManager::new(None)));
+        let task_id = BackgroundManager::spawn_on(
+            &mgr,
+            "bash",
+            Box::new(FakeTask { chunks: vec![], hang: true }),
+            Some(RegisterOptions { timeout_ms: Some(50), ..Default::default() }),
+        )
+        .expect("spawned");
+
+        let status = wait_terminal(&mgr, &task_id).await;
+        assert_eq!(status, BackgroundTaskStatus::Killed);
+        // The deadline's specific reason survives the task's generic
+        // cancellation settlement.
+        let reason = mgr.lock().unwrap().get(&task_id).unwrap().stop_reason.clone();
+        assert_eq!(reason.as_deref(), Some("timed out after 50ms"));
+    }
+
+    #[tokio::test]
+    async fn spawn_on_mirrors_metadata_and_output_to_persistence() {
+        use crate::background::persist::BackgroundTaskPersistence;
+        use crate::persistence::{SqliteBackgroundStore, SqliteStore};
+
+        let persist: std::sync::Arc<dyn BackgroundTaskPersistence> = std::sync::Arc::new(
+            SqliteBackgroundStore::new(std::sync::Arc::new(SqliteStore::in_memory().unwrap()))
+                .unwrap(),
+        );
+        let mgr = std::sync::Arc::new(std::sync::Mutex::new(BackgroundManager::new(None)));
+        mgr.lock().unwrap().set_persist(persist.clone());
+
+        let task_id = BackgroundManager::spawn_on(
+            &mgr,
+            "bash",
+            Box::new(FakeTask { chunks: vec!["out-a ", "out-b"], hang: false }),
+            None,
+        )
+        .expect("spawned");
+
+        // Initial (running) record is mirrored immediately on spawn.
+        assert!(persist.list().unwrap().iter().any(|i| i.task_id() == task_id));
+
+        let status = wait_terminal(&mgr, &task_id).await;
+        assert_eq!(status, BackgroundTaskStatus::Completed);
+
+        // Output chunks and the terminal status both reached persistence.
+        assert_eq!(persist.read_output(&task_id).unwrap(), "out-a out-b");
+        let stored = persist
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|i| i.task_id() == task_id)
+            .expect("record persisted");
+        assert_eq!(stored.status(), BackgroundTaskStatus::Completed);
     }
 
     // ── Direct-call RPC integration tests ─────────────────────────────────────

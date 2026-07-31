@@ -13,6 +13,22 @@ use crate::session::types::{ModelConfig, SessionRecord, SessionState};
 
 // ── Lifecycle events ───────────────────────────────────────────────────────
 
+/// Side-question channel reminder (mirrors the TS
+/// `SIDE_QUESTION_SYSTEM_REMINDER`): the child answers from what it already
+/// knows, never calls tools, and ignores the main agent's turn state.
+const SIDE_QUESTION_SYSTEM_REMINDER: &str = r#"
+This is a side-channel conversation with the user. You should answer user questions directly based on what you already know.
+
+IMPORTANT:
+- You are a separate, lightweight instance.
+- The main agent continues independently; do not reference being interrupted.
+- Do not call any tools. All tool calls are disabled and will be rejected.
+- Respond only with text based on what you already know from the conversation
+  and this side-channel conversation.
+- Follow-up turns may happen in this side-channel conversation.
+- If you do not know the answer, say so directly.
+"#;
+
 /// Events emitted by the session manager during session lifecycle transitions.
 #[derive(Debug, Clone)]
 pub enum SessionEvent {
@@ -49,6 +65,26 @@ pub struct SessionManager {
     on_event: Option<EventCallback>,
     /// Agents attached to sessions (Phase A: Rust-native agent lifecycle).
     agents: HashMap<String, Agent>,
+    /// Side-question ("between turns") subagents: session_id 鈫?child agent.
+    /// One active side agent per session; a new `start_btw` replaces it.
+    btw_agents: HashMap<String, Agent>,
+    /// Creation specs for session agents, kept across `destroy` so a later
+    /// `session/load` can rebuild the in-memory agent from its record.
+    agent_specs: HashMap<String, AgentSpec>,
+}
+
+/// The minimal creation config needed to rebuild a session agent after a
+/// destroy/load cycle. Captured at `create_agent` time.
+#[derive(Clone)]
+pub struct AgentSpec {
+    pub callbacks: Arc<dyn HostCallbacks>,
+    pub homedir: Option<String>,
+    pub native_llm: Option<crate::rpc::types::NativeLlmConfig>,
+    pub system_prompt: String,
+    pub model_alias: Option<String>,
+    pub max_steps_per_turn: u32,
+    pub max_retries_per_step: u32,
+    pub permission: crate::permission::gate::PermissionGate,
 }
 
 impl SessionManager {
@@ -60,6 +96,8 @@ impl SessionManager {
             active_id: None,
             on_event: None,
             agents: HashMap::new(),
+            btw_agents: HashMap::new(),
+            agent_specs: HashMap::new(),
         }
     }
 
@@ -88,9 +126,14 @@ impl SessionManager {
         let id = id.into();
         let record = SessionRecord::new(&id, model_config);
 
-        // Persist immediately.
-        if let Err(e) = self.save_to_store(&record) {
-            eprintln!("[session] failed to persist new session {}: {e}", id);
+        // Preserve an existing persisted record: a resume re-creates the
+        // session under its old id before `session/load`, and the store copy
+        // is the one carrying the durable agent state. Only fresh ids write.
+        let exists = self.store.load_session(&id).ok().flatten().is_some();
+        if !exists {
+            if let Err(e) = self.save_to_store(&record) {
+                eprintln!("[session] failed to persist new session {}: {e}", id);
+            }
         }
 
         // Deactivate the current session.
@@ -112,6 +155,21 @@ impl SessionManager {
         self.emit(SessionEvent::Activated { id: session_id });
 
         record
+    }
+
+    /// Record the session's working directory (set at creation so
+    /// `session/list` can filter by workspace). The first non-empty value
+    /// wins; later calls are ignored. Cache-only: the store copy keeps its
+    /// durable agent state until the next full save.
+    pub fn set_work_dir(&mut self, id: &str, work_dir: &str) {
+        if work_dir.is_empty() {
+            return;
+        }
+        if let Some(record) = self.sessions.get_mut(id) {
+            if record.work_dir.is_empty() {
+                record.work_dir = work_dir.to_string();
+            }
+        }
     }
 
     // ── Session activation / switching ────────────────────────────────────
@@ -243,6 +301,31 @@ impl SessionManager {
             anyhow::bail!("session not found: {session_id}");
         }
 
+        // Record the creation spec so a destroy/load cycle can rebuild the
+        // agent. `permission` defaults to a fresh env-seeded gate when the
+        // caller did not inject one.
+        let permission = options
+            .permission
+            .clone()
+            .unwrap_or_else(crate::permission::gate::PermissionGate::from_env);
+        self.agent_specs.insert(
+            session_id.to_string(),
+            AgentSpec {
+                callbacks: callbacks.clone(),
+                homedir: options.homedir.clone(),
+                native_llm: options.native_llm.clone(),
+                system_prompt: options
+                    .config
+                    .as_ref()
+                    .map(|c| c.system_prompt.clone())
+                    .unwrap_or_default(),
+                model_alias: options.config.as_ref().and_then(|c| c.model_alias.clone()),
+                max_steps_per_turn: options.max_steps_per_turn,
+                max_retries_per_step: options.max_retries_per_step,
+                permission,
+            },
+        );
+
         let agent = Agent::new(callbacks, options);
         self.agents.insert(session_id.to_string(), agent);
 
@@ -258,9 +341,68 @@ impl SessionManager {
         self.agents.get_mut(session_id)
     }
 
+    /// Spawn a side-question ("between turns") subagent for a session. The
+    /// child inherits the main agent's transport config and system prompt,
+    /// carries a projection of the main context plus the side-channel
+    /// reminder, and runs with NO tools (answers from what it already knows).
+    /// Returns the child agent id (`btw-<session_id>`). A previous side agent
+    /// for the same session is replaced.
+    pub fn start_btw(
+        &mut self,
+        session_id: &str,
+        callbacks: Arc<dyn HostCallbacks>,
+    ) -> Result<String, String> {
+        let main = self
+            .agents
+            .get_mut(session_id)
+            .ok_or_else(|| format!("no agent for session: {session_id}"))?;
+        let options = crate::agent::types::AgentOptions {
+            session_id: Some(format!("btw-{session_id}")),
+            homedir: main.homedir.clone(),
+            config: Some(crate::agent::types::AgentConfig {
+                cwd: main.config.cwd.clone(),
+                model_alias: main.config.model_alias.clone(),
+                system_prompt: format!(
+                    "{}\n\n{}",
+                    main.config.system_prompt,
+                    SIDE_QUESTION_SYSTEM_REMINDER.trim()
+                ),
+                has_provider: true,
+                has_model: true,
+            }),
+            goal_enabled: false,
+            native_llm: main.native_llm.clone(),
+            max_steps_per_turn: main.max_steps_per_turn,
+            max_retries_per_step: main.max_retries_per_step,
+            permission: Some(main.permission.clone()),
+            ..Default::default()
+        };
+        let mut child = Agent::new(callbacks, options);
+        // Project the main conversation into the child's context so it can
+        // answer "what were we doing" questions from context.
+        let projected = main.context.messages().to_vec();
+        for msg in projected {
+            child.context.append_message(msg);
+        }
+        let btw_id = format!("btw-{session_id}");
+        self.btw_agents.insert(session_id.to_string(), child);
+        Ok(btw_id)
+    }
+
+    /// Get the active side-question agent for a session.
+    pub fn get_btw_agent(&mut self, session_id: &str) -> Option<&mut Agent> {
+        self.btw_agents.get_mut(session_id)
+    }
+
+    /// Destroy the active side-question agent for a session.
+    pub fn end_btw(&mut self, session_id: &str) -> bool {
+        self.btw_agents.remove(session_id).is_some()
+    }
+
     /// Destroy an Agent and all its associated state.
     pub fn destroy_agent(&mut self, session_id: &str) -> anyhow::Result<()> {
         self.agents.remove(session_id);
+        self.btw_agents.remove(session_id);
         Ok(())
     }
 
@@ -358,8 +500,40 @@ impl SessionManager {
             });
         let agent_state = record.agent_state.clone();
         self.sessions.insert(session_id.to_string(), record);
-        if let Some(agent) = self.agents.get_mut(session_id) {
-            agent.restore_durable_state(&agent_state);
+        match self.agents.get_mut(session_id) {
+            Some(agent) => {
+                agent.restore_durable_state(&agent_state);
+            }
+            // The agent was destroyed (or the process restarted): rebuild it
+            // from the recorded creation spec, then restore state.
+            None => {
+                if let Some(spec) = self.agent_specs.get(session_id).cloned() {
+                    let homedir = spec.homedir.clone();
+                    let agent = Agent::new(
+                        spec.callbacks,
+                        crate::agent::types::AgentOptions {
+                            session_id: Some(session_id.to_string()),
+                            homedir: spec.homedir,
+                            config: Some(crate::agent::types::AgentConfig {
+                                cwd: homedir.unwrap_or_default(),
+                                model_alias: spec.model_alias,
+                                system_prompt: spec.system_prompt,
+                                has_provider: true,
+                                has_model: true,
+                            }),
+                            goal_enabled: false,
+                            native_llm: spec.native_llm,
+                            max_steps_per_turn: spec.max_steps_per_turn,
+                            max_retries_per_step: spec.max_retries_per_step,
+                            permission: Some(spec.permission),
+                            ..Default::default()
+                        },
+                    );
+                    let mut agent = agent;
+                    agent.restore_durable_state(&agent_state);
+                    self.agents.insert(session_id.to_string(), agent);
+                }
+            }
         }
         Ok(true)
     }
@@ -598,5 +772,45 @@ mod tests {
         assert_eq!(mgr.cached_count(), 0);
         mgr.create_session("sess-1", test_model());
         assert_eq!(mgr.cached_count(), 1);
+    }
+
+    #[test]
+    fn test_set_work_dir_records_first_value_and_persists() {
+        let mut mgr = SessionManager::new(test_store());
+        mgr.create_session("sess-1", test_model());
+        mgr.set_work_dir("sess-1", "/work/a");
+        // A later call with a different directory is ignored (first wins).
+        mgr.set_work_dir("sess-1", "/work/b");
+        assert_eq!(mgr.sessions.get("sess-1").unwrap().work_dir, "/work/a");
+
+        // The store picks the workdir up on the next full save (the TUI
+        // saves on close, so resumed listings see it).
+        mgr.persist_session("sess-1");
+        let listed = mgr.list_persisted(10, 0).unwrap();
+        let rich: SessionRecord =
+            serde_json::from_value(listed[0].state_json.clone()).unwrap();
+        assert_eq!(rich.work_dir, "/work/a");
+    }
+
+    #[test]
+    fn test_create_session_preserves_an_existing_persisted_record() {
+        let mut mgr = SessionManager::new(test_store());
+        mgr.create_session("sess-1", test_model());
+        mgr.set_work_dir("sess-1", "/work/a");
+        // Simulate a durable save (as `save_agent_session` does): the cached
+        // record carries work_dir + agent_state into the store.
+        {
+            let mut record = mgr.sessions.get_mut("sess-1").cloned().unwrap();
+            record.agent_state = serde_json::json!({ "context": [] });
+            mgr.save_to_store(&record).unwrap();
+        }
+        // Re-creating the same id (a resume does this before session/load)
+        // must not wipe the persisted agent state or work dir.
+        mgr.create_session("sess-1", test_model());
+        let listed = mgr.list_persisted(10, 0).unwrap();
+        let rich: SessionRecord =
+            serde_json::from_value(listed[0].state_json.clone()).unwrap();
+        assert_eq!(rich.work_dir, "/work/a");
+        assert_eq!(rich.agent_state, serde_json::json!({ "context": [] }));
     }
 }

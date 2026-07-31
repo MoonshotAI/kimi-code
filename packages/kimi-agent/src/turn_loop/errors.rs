@@ -31,9 +31,8 @@ pub fn is_max_steps_exceeded_error(err: &(dyn Error + 'static)) -> bool {
 
 /// Check if an error is an abort error (cancelled signal).
 pub fn is_abort_error(err: &dyn Error) -> bool {
-    // Check if the error message contains "abort" or "cancel"
     let msg = err.to_string().to_lowercase();
-    msg.contains("abort") || msg.contains("cancel") || msg.contains("task")
+    msg.contains("abort") || msg.contains("cancel")
 }
 
 /// Extract a human-readable error message from any error.

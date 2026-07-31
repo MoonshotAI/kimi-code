@@ -3,7 +3,7 @@
 /// Corresponds to `packages/agent-core/src/loop/events.ts`.
 
 use crate::rpc::types::TokenUsage;
-use crate::turn_loop::types::{ExecutableToolResult, LoopStepStopReason, ToolCall};
+use crate::turn_loop::types::{ExecutableToolResult, LoopStepStopReason};
 
 /// Reasons a loop can be interrupted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

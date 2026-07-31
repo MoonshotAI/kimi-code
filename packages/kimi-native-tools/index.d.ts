@@ -127,6 +127,10 @@ export interface GlobResult {
 export interface GlobOptions {
   path?: string;
   includeDirs?: boolean;
+  /** Also match files excluded by .gitignore / .ignore / .rgignore.
+   *  Sensitive files (e.g. `.env`) and VCS metadata directories
+   *  (e.g. `.git`) remain filtered. Default false. */
+  includeIgnored?: boolean;
 }
 
 export function nativeGlob(pattern: string, options?: GlobOptions): GlobResult;
@@ -413,6 +417,129 @@ export function nativeMcpStdioClose(handle: number): Promise<void>;
 export function nativeMcpStdioStderrSnapshot(handle: number): Promise<string>;
 
 export function nativeMcpStdioIsAlive(handle: number): Promise<boolean>;
+
+// ============================================================================
+// MCP — HTTP transport (Streamable HTTP)
+// ============================================================================
+
+export interface NativeMcpHttpResult {
+  status: number;
+  sessionId?: string;
+  contentType?: string;
+  /** Present when the response body parsed as JSON. Absent/null indicates a
+   *  transport-level failure the caller should treat as an error. */
+  jsonBody?: unknown;
+  rawBody: string;
+}
+
+export function nativeMcpHttpPost(
+  url: string,
+  body: unknown,
+  sessionId?: string | null,
+  extraHeaders?: Record<string, string> | null,
+  timeoutMs?: number | null,
+): Promise<NativeMcpHttpResult>;
+
+// ============================================================================
+// MCP — SSE transport
+// ============================================================================
+
+export const NativeMcpSseMethod: { readonly Get: number; readonly Post: number };
+export type NativeMcpSseMethod = number;
+
+export interface NativeMcpSseEvent {
+  /** SSE `event:` field (usually `"message"`). */
+  event: string;
+  /** SSE `data:` field — a JSON-RPC 2.0 payload for MCP. */
+  data: string;
+  /** Optional SSE `id:` field, for resumability. */
+  id?: string;
+}
+
+export function nativeMcpSseCollect(
+  url: string,
+  method: NativeMcpSseMethod,
+  body?: unknown,
+  sessionId?: string | null,
+  extraHeaders?: Record<string, string> | null,
+  timeoutMs?: number | null,
+): Promise<NativeMcpSseEvent[]>;
+
+// ============================================================================
+// MCP — Connection registry
+// ============================================================================
+
+export const NativeMcpTransportKind: {
+  readonly Stdio: number;
+  readonly Http: number;
+  readonly Sse: number;
+};
+export type NativeMcpTransportKind = number;
+
+export const NativeMcpConnectionStatus: {
+  readonly Connecting: number;
+  readonly Connected: number;
+  readonly Disconnected: number;
+  readonly Failed: number;
+};
+export type NativeMcpConnectionStatus = number;
+
+export interface NativeMcpConnectionInfo {
+  serverName: string;
+  transport: NativeMcpTransportKind;
+  status: NativeMcpConnectionStatus;
+  handle: number;
+  lastError?: string;
+  capabilities?: unknown;
+}
+
+export interface NativeMcpAddResult {
+  handle: number;
+  /** Handle of the same-named connection this one replaced, if any. */
+  replaced?: number;
+}
+
+export function nativeMcpRegistryAdd(
+  serverName: string,
+  transport: NativeMcpTransportKind,
+): NativeMcpAddResult;
+export function nativeMcpRegistrySetStatus(
+  handle: number,
+  status: NativeMcpConnectionStatus,
+  error?: string | null,
+): boolean;
+export function nativeMcpRegistrySetCapabilities(handle: number, capabilities: unknown): boolean;
+export function nativeMcpRegistryRemove(handle: number): string | null;
+export function nativeMcpRegistryGetByName(serverName: string): NativeMcpConnectionInfo | null;
+export function nativeMcpRegistryGet(handle: number): NativeMcpConnectionInfo | null;
+export function nativeMcpRegistryList(): NativeMcpConnectionInfo[];
+export function nativeMcpRegistryLen(): number;
+
+// ============================================================================
+// OAuth PKCE (S256) + loopback redirect server
+// ============================================================================
+
+/** Generate a high-entropy PKCE `code_verifier` (RFC 7636). */
+export function pkceGenerateVerifier(): string;
+/** Derive the S256 `code_challenge` for a given verifier. */
+export function pkceDeriveChallenge(verifier: string): string;
+
+/** One-shot loopback callback server bound on `127.0.0.1:0`. */
+export class LoopbackHandle {
+  readonly port: number;
+  readonly redirectUri: string;
+}
+
+export function pkceStartLoopback(): Promise<LoopbackHandle>;
+
+export interface CallbackPayload {
+  code: string;
+  state: string;
+  error?: string;
+  errorDescription?: string;
+}
+
+export function pkceAwaitCallback(handle: LoopbackHandle): Promise<CallbackPayload>;
 
 // ============================================================================
 // Constants

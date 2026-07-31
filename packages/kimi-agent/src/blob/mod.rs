@@ -350,7 +350,7 @@ impl BlobService {
         let hash_hex = format!("{:x}", hash);
         let blobref = format_blobref(mime_type, &hash_hex);
         let blob_key = format!("{}/{}", self.storage_scope, &hash_hex);
-        self.store.store(&blob_key, &binary);
+        let _ = self.store.store(&blob_key, &binary);
         let mut cache = self.cache.borrow_mut();
         cache.set(hash_hex.clone(), binary);
         Ok(blobref)

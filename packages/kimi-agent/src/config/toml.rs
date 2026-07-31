@@ -61,14 +61,14 @@ max_steps = 10
 mode = "yolo"
 
 [providers.openai]
-provider = "openai"
-api_key = "sk-test-123"
-model = "gpt-4"
+type = "openai"
+apiKey = "sk-test-123"
+defaultModel = "gpt-4"
 
 [providers.anthropic]
-provider = "anthropic"
-api_key = "sk-ant-test"
-model = "claude-3-opus"
+type = "anthropic"
+apiKey = "sk-ant-test"
+defaultModel = "claude-3-opus"
 
 [background]
 max_running_tasks = 5
@@ -120,7 +120,7 @@ max_turns = 50
     fn test_get_provider_config() {
         let toml_str = r#"
 [providers.openai]
-api_key = "sk-test"
+apiKey = "sk-test"
 "#;
         let config = parse_config(toml_str).unwrap();
         let provider = get_provider_config(&config, "openai");

@@ -45,6 +45,87 @@ pub struct McpServerSpec {
     pub bearer_token: Option<String>,
 }
 
+/// Host-supplied MCP server definition on the `session/create` wire. The host
+/// (TS) resolves config + secrets, then hands the engine a flat spec per
+/// server. `into_registration` maps it to the runtime's `register` inputs.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct McpServerSpecInput {
+    pub name: String,
+    /// "stdio" | "sse" | "http". Inferred from `command`/`url` when absent.
+    #[serde(default)]
+    pub transport: Option<String>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub enabled_tools: Option<Vec<String>>,
+    #[serde(default)]
+    pub disabled_tools: Option<Vec<String>>,
+    /// Remote: pre-resolved static bearer token (host reads the env var).
+    #[serde(default)]
+    pub bearer_token: Option<String>,
+    #[serde(default)]
+    pub bearer_token_env_var: Option<String>,
+    #[serde(default)]
+    pub startup_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub tool_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub has_headers: Option<bool>,
+    /// From an untrusted `<repoRoot>/.mcp.json` (held for approval) vs a
+    /// trusted host/user source (connects immediately).
+    #[serde(default)]
+    pub project_root: Option<bool>,
+}
+
+impl McpServerSpecInput {
+    /// Resolve the wire DTO into `(name, spec, source)` for `register`.
+    /// Transport falls back to inference: explicit → `command` → `url` → stdio.
+    pub fn into_registration(self) -> (String, McpServerSpec, McpConfigSource) {
+        let transport = match self.transport.as_deref() {
+            Some("http") => McpTransport::Http,
+            Some("sse") => McpTransport::Sse,
+            Some("stdio") => McpTransport::Stdio,
+            _ if self.url.is_some() && self.command.is_none() => McpTransport::Http,
+            _ => McpTransport::Stdio,
+        };
+        let config = McpServerConfig {
+            transport,
+            enabled: self.enabled.unwrap_or(true),
+            url: self.url.clone(),
+            startup_timeout_ms: self.startup_timeout_ms,
+            tool_timeout_ms: self.tool_timeout_ms,
+            enabled_tools: self.enabled_tools,
+            disabled_tools: self.disabled_tools,
+            bearer_token_env_var: self.bearer_token_env_var,
+            has_headers: self.has_headers.unwrap_or(false),
+        };
+        let spec = McpServerSpec {
+            config,
+            command: self.command,
+            args: self.args,
+            env: self.env,
+            cwd: self.cwd,
+            bearer_token: self.bearer_token,
+        };
+        let source = if self.project_root.unwrap_or(false) {
+            McpConfigSource::ProjectRoot
+        } else {
+            McpConfigSource::Other
+        };
+        (self.name, spec, source)
+    }
+}
+
 enum McpConnection {
     Stdio(MCPStdioTransport),
     Http(MCPHttpTransport),
@@ -351,6 +432,90 @@ mod tests {
     use super::*;
     use crate::mcp::connection_manager::McpServerStatus;
     use crate::mcp::types::mcp_content_to_text;
+
+    #[test]
+    fn spec_input_maps_stdio_and_remote_registrations() {
+        // Stdio: command present, no transport → inferred stdio; trusted source.
+        let stdio = McpServerSpecInput {
+            name: "fs".into(),
+            transport: None,
+            enabled: None,
+            command: Some("node".into()),
+            args: vec!["server.js".into()],
+            env: None,
+            cwd: Some("/repo".into()),
+            url: None,
+            enabled_tools: Some(vec!["read".into()]),
+            disabled_tools: None,
+            bearer_token: None,
+            bearer_token_env_var: None,
+            startup_timeout_ms: Some(5000),
+            tool_timeout_ms: None,
+            has_headers: None,
+            project_root: None,
+        };
+        let (name, spec, source) = stdio.into_registration();
+        assert_eq!(name, "fs");
+        assert_eq!(spec.config.transport, McpTransport::Stdio);
+        assert!(spec.config.enabled, "defaults to enabled");
+        assert_eq!(spec.command.as_deref(), Some("node"));
+        assert_eq!(spec.args, vec!["server.js".to_string()]);
+        assert_eq!(spec.cwd.as_deref(), Some("/repo"));
+        assert_eq!(spec.config.enabled_tools.as_deref(), Some(&["read".to_string()][..]));
+        assert_eq!(spec.config.startup_timeout_ms, Some(5000));
+        assert!(matches!(source, McpConfigSource::Other), "host source is trusted");
+
+        // Remote: url present, no command, from project root → http + untrusted.
+        let remote = McpServerSpecInput {
+            name: "gh".into(),
+            transport: None,
+            enabled: Some(false),
+            command: None,
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: Some("https://mcp.example.com".into()),
+            enabled_tools: None,
+            disabled_tools: None,
+            bearer_token: Some("tok".into()),
+            bearer_token_env_var: Some("GH_TOKEN".into()),
+            startup_timeout_ms: None,
+            tool_timeout_ms: None,
+            has_headers: Some(true),
+            project_root: Some(true),
+        };
+        let (name, spec, source) = remote.into_registration();
+        assert_eq!(name, "gh");
+        assert_eq!(spec.config.transport, McpTransport::Http);
+        assert!(!spec.config.enabled);
+        assert_eq!(spec.config.url.as_deref(), Some("https://mcp.example.com"));
+        assert_eq!(spec.bearer_token.as_deref(), Some("tok"));
+        assert!(spec.config.has_headers);
+        assert!(matches!(source, McpConfigSource::ProjectRoot), "project root is untrusted");
+    }
+
+    #[test]
+    fn spec_input_explicit_transport_wins_over_inference() {
+        let sse = McpServerSpecInput {
+            name: "s".into(),
+            transport: Some("sse".into()),
+            enabled: None,
+            command: Some("node".into()), // command present, but explicit sse wins
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: Some("https://x".into()),
+            enabled_tools: None,
+            disabled_tools: None,
+            bearer_token: None,
+            bearer_token_env_var: None,
+            startup_timeout_ms: None,
+            tool_timeout_ms: None,
+            has_headers: None,
+            project_root: None,
+        };
+        assert_eq!(sse.into_registration().1.config.transport, McpTransport::Sse);
+    }
 
     fn node_available() -> bool {
         std::process::Command::new("node")

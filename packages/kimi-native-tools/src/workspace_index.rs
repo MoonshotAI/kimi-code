@@ -191,7 +191,8 @@ fn read_line_count_and_preview(path: &Path, preview_lines: usize) -> (u32, Strin
         if preview_lines_vec.len() < preview_lines {
             // Truncate long lines in preview
             let truncated = if line.len() > 200 {
-                format!("{}...", &line[..200])
+                let end = line.floor_char_boundary(200);
+                format!("{}...", &line[..end])
             } else {
                 line
             };

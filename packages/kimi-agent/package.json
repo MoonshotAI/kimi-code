@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/kimi-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Rust agent engine for Kimi Code",
   "type": "module",
@@ -8,7 +8,20 @@
     "./rust-loop": {
       "types": "./rust-loop.ts",
       "default": "./rust-loop.ts"
+    },
+    "./runtime": {
+      "types": "./runtime.ts",
+      "default": "./runtime.ts"
+    },
+    "./contract": {
+      "types": "./contract.ts",
+      "default": "./contract.ts"
     }
+  },
+  "dependencies": {
+    "@moonshot-ai/kimi-i18n": "workspace:*",
+    "pathe": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@moonshot-ai/agent-core": "workspace:*",

@@ -42,7 +42,7 @@ function loadBinding() {
   // Try from release build directory (cargo build --release).
   const ext = process.platform === 'win32' ? 'dll' : process.platform === 'darwin' ? 'dylib' : 'so';
   // Rust crate name is kimi_native_tools (underscores), JS package is kimi-native-tools (hyphens).
-  const rustName = BINDING_NAME.replaceAll(/-/g, '_');
+  const rustName = BINDING_NAME.replaceAll('-', '_');
   const releasePath = path.join(__dirname, 'target', 'release', `${rustName}.${ext}`);
   try {
     if (fs.existsSync(releasePath)) {
@@ -147,7 +147,7 @@ async function nativeWebSearch(query, options = {}) {
  * in Rust. Returns all decoded parts + metadata after the stream completes.
  *
  * @param {object} config - Stream configuration.
- * @param {string} config.provider - Provider name ("openai-responses" | "openai-legacy" | "anthropic").
+ * @param {string} config.provider - Provider name ("openai-responses" | "openai-legacy" | "anthropic" | "google-genai").
  * @param {string} config.url - API endpoint URL.
  * @param {string} config.apiKey - API key / bearer token.
  * @param {string} config.model - Model name.
@@ -163,8 +163,10 @@ async function nativeLlmStream(config) {
     apiKey: config.apiKey,
     model: config.model,
     requestBody: config.requestBody,
-    timeoutMs: config.timeoutMs ?? null,
-    extraHeaders: config.extraHeaders ?? null,
+    // napi v3 rejects `null` for Option<Vec<...>> ("Given napi value is not
+    // an array"); absent optionals must be passed as `undefined`.
+    timeoutMs: config.timeoutMs ?? undefined,
+    extraHeaders: config.extraHeaders ?? undefined,
   });
 }
 
@@ -305,10 +307,18 @@ function nativeGrep(pattern, options = {}) {
  * @param {object} [options] - Glob options.
  * @param {string} [options.path] - Directory to search.
  * @param {boolean} [options.includeDirs] - Include directories. Default true.
+ * @param {boolean} [options.includeIgnored] - Also match files excluded by
+ *   .gitignore and friends. Sensitive files and VCS metadata directories
+ *   remain filtered. Default false.
  * @returns {{ files: string[], error?: string, truncated: boolean }}
  */
 function nativeGlob(pattern, options = {}) {
-  return binding.nativeGlob(pattern, options.path ?? null, options.includeDirs ?? null);
+  return binding.nativeGlob(
+    pattern,
+    options.path ?? null,
+    options.includeDirs ?? null,
+    options.includeIgnored ?? null,
+  );
 }
 
 /**
@@ -758,6 +768,100 @@ function nativeMcpStdioIsAlive(handle) {
 }
 
 // ============================================================================
+// MCP — HTTP transport (Streamable HTTP, Phase 7.1)
+// ============================================================================
+
+/**
+ * POST a JSON-RPC envelope to a Streamable-HTTP MCP endpoint.
+ *
+ * @param {string} url - MCP endpoint.
+ * @param {object} body - JSON-RPC 2.0 request envelope.
+ * @param {string} [sessionId] - Mcp-Session-Id from a prior response.
+ * @param {object} [extraHeaders] - Additional request headers.
+ * @param {number} [timeoutMs] - Total timeout (default 30000).
+ * @returns {Promise<{status: number, sessionId?: string, contentType?: string, jsonBody?: unknown, rawBody: string}>}
+ */
+function nativeMcpHttpPost(url, body, sessionId, extraHeaders, timeoutMs) {
+  return binding.nativeMcpHttpPost(
+    url,
+    body,
+    sessionId ?? null,
+    extraHeaders ?? null,
+    timeoutMs ?? null,
+  );
+}
+
+// ============================================================================
+// MCP — SSE transport (Phase 7.2)
+// ============================================================================
+
+/** HTTP method selector for SSE: `Get` (listener) or `Post` (request/reply). */
+const NativeMcpSseMethod = binding.NativeMcpSseMethod;
+
+/**
+ * Open an SSE stream against an MCP endpoint and collect every event.
+ *
+ * @param {string} url - MCP endpoint.
+ * @param {number} method - `NativeMcpSseMethod.Get` or `.Post`.
+ * @param {object} [body] - JSON-RPC envelope (POST only).
+ * @param {string} [sessionId] - Mcp-Session-Id.
+ * @param {object} [extraHeaders] - Additional request headers.
+ * @param {number} [timeoutMs] - Total timeout (default 30000).
+ * @returns {Promise<Array<{event: string, data: string, id?: string}>>}
+ */
+function nativeMcpSseCollect(url, method, body, sessionId, extraHeaders, timeoutMs) {
+  return binding.nativeMcpSseCollect(
+    url,
+    method,
+    body ?? null,
+    sessionId ?? null,
+    extraHeaders ?? null,
+    timeoutMs ?? null,
+  );
+}
+
+// ============================================================================
+// MCP — Connection registry (Phase 7.4)
+// ============================================================================
+
+/** Transport kind enum: `Stdio` | `Http` | `Sse`. */
+const NativeMcpTransportKind = binding.NativeMcpTransportKind;
+/** Connection status enum: `Connecting` | `Connected` | `Disconnected` | `Failed`. */
+const NativeMcpConnectionStatus = binding.NativeMcpConnectionStatus;
+
+const nativeMcpRegistryAdd = binding.nativeMcpRegistryAdd;
+const nativeMcpRegistryGet = binding.nativeMcpRegistryGet;
+const nativeMcpRegistryGetByName = binding.nativeMcpRegistryGetByName;
+const nativeMcpRegistryList = binding.nativeMcpRegistryList;
+const nativeMcpRegistryLen = binding.nativeMcpRegistryLen;
+const nativeMcpRegistryRemove = binding.nativeMcpRegistryRemove;
+const nativeMcpRegistrySetCapabilities = binding.nativeMcpRegistrySetCapabilities;
+
+/**
+ * Update a connection's status.
+ *
+ * @param {number} handle
+ * @param {number} status - `NativeMcpConnectionStatus` value.
+ * @param {string} [error] - Error detail (for the `Failed` status).
+ * @returns {boolean} true if the handle existed.
+ */
+function nativeMcpRegistrySetStatus(handle, status, error) {
+  return binding.nativeMcpRegistrySetStatus(handle, status, error ?? null);
+}
+
+// ============================================================================
+// OAuth PKCE (Phase 7.3) — S256 verifier/challenge + loopback redirect server
+// ============================================================================
+
+/** Loopback callback server handle returned by `pkceStartLoopback`. */
+const LoopbackHandle = binding.LoopbackHandle;
+
+const pkceGenerateVerifier = binding.pkceGenerateVerifier;
+const pkceDeriveChallenge = binding.pkceDeriveChallenge;
+const pkceStartLoopback = binding.pkceStartLoopback;
+const pkceAwaitCallback = binding.pkceAwaitCallback;
+
+// ============================================================================
 // XML / HTML escaping
 // ============================================================================
 
@@ -1205,6 +1309,26 @@ module.exports = {
   nativeMcpStdioClose,
   nativeMcpStdioStderrSnapshot,
   nativeMcpStdioIsAlive,
+  nativeMcpHttpPost,
+  NativeMcpSseMethod,
+  nativeMcpSseCollect,
+  NativeMcpTransportKind,
+  NativeMcpConnectionStatus,
+  nativeMcpRegistryAdd,
+  nativeMcpRegistrySetStatus,
+  nativeMcpRegistrySetCapabilities,
+  nativeMcpRegistryRemove,
+  nativeMcpRegistryGetByName,
+  nativeMcpRegistryGet,
+  nativeMcpRegistryList,
+  nativeMcpRegistryLen,
+
+  // OAuth PKCE
+  pkceGenerateVerifier,
+  pkceDeriveChallenge,
+  pkceStartLoopback,
+  pkceAwaitCallback,
+  LoopbackHandle,
 
   // XML / HTML escaping
   nativeEscapeXml,

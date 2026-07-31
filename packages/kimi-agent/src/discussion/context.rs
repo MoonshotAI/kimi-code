@@ -1,15 +1,3 @@
-/// DiscussionContext — shared discussion transcript and position tracking.
-///
-/// Corresponds to `packages/agent-core/src/agent/discussion/context.ts`.
-///
-/// Pure data struct for multi-agent roundtable discussions. Stores the ordered
-/// list of discussion entries (speaker, agent_id, content, round) and can render
-/// the full transcript as a text block. Also supports debate-specific features:
-/// position recording, cross-reference detection, and phase management.
-///
-/// Zero dependencies — no Agent, TurnFlow, or SubagentHost references.
-
-use regex::Regex;
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -29,6 +17,19 @@ pub enum DebatePhase {
     FreeDebate,
     Closing,
     Consensus,
+}
+
+impl DebatePhase {
+    /// Wire name matching the TS debate result (`'opening' | 'free_debate' |
+    /// 'closing' | 'consensus'`).
+    pub fn wire_name(&self) -> &'static str {
+        match self {
+            DebatePhase::Opening => "opening",
+            DebatePhase::FreeDebate => "free_debate",
+            DebatePhase::Closing => "closing",
+            DebatePhase::Consensus => "consensus",
+        }
+    }
 }
 
 /// A participant's recorded position on the topic.

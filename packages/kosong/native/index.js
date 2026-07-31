@@ -310,12 +310,16 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { anthropicChat, googleGenaiChat, MessageRole, openaiChat, ThinkingEffort, FinishReason, init, version } = nativeBinding
+const { anthropicChat, anthropicChatStreaming, googleGenaiChat, googleGenaiChatStreaming, MessageRole, openaiChat, openaiChatStreaming, ProviderStreamHandle, ThinkingEffort, FinishReason, init, version } = nativeBinding
 
 module.exports.anthropicChat = anthropicChat
+module.exports.anthropicChatStreaming = anthropicChatStreaming
 module.exports.googleGenaiChat = googleGenaiChat
+module.exports.googleGenaiChatStreaming = googleGenaiChatStreaming
 module.exports.MessageRole = MessageRole
 module.exports.openaiChat = openaiChat
+module.exports.openaiChatStreaming = openaiChatStreaming
+module.exports.ProviderStreamHandle = ProviderStreamHandle
 module.exports.ThinkingEffort = ThinkingEffort
 module.exports.FinishReason = FinishReason
 module.exports.init = init

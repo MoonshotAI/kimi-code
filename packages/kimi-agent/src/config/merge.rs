@@ -14,6 +14,7 @@ pub fn merge_configs(base: KimiConfig, overrides: KimiConfig) -> KimiConfig {
         agent: merge_agent(base.agent, overrides.agent),
         providers: merge_providers(base.providers, overrides.providers),
         model_aliases: merge_model_aliases(base.model_aliases, overrides.model_aliases),
+        default_model: overrides.default_model.or(base.default_model),
         model_catalog: overrides.model_catalog.or(base.model_catalog),
         mcp: overrides.mcp.or(base.mcp),
         hooks: overrides.hooks.or(base.hooks),
@@ -30,6 +31,7 @@ fn merge_agent(base: Option<AgentConfig>, overrides: Option<AgentConfig>) -> Opt
         (None, Some(o)) => Some(o),
         (Some(b), Some(o)) => Some(AgentConfig {
             engine: o.engine.or(b.engine),
+            native_llm_provider: o.native_llm_provider.or(b.native_llm_provider),
             max_turns: o.max_turns.or(b.max_turns),
             max_steps: o.max_steps.or(b.max_steps),
             max_tool_uses: o.max_tool_uses.or(b.max_tool_uses),
@@ -89,6 +91,7 @@ mod tests {
         let base = KimiConfig {
             agent: Some(AgentConfig {
                 engine: Some("js".into()),
+                native_llm_provider: None,
                 max_turns: Some(50),
                 max_steps: None,
                 max_tool_uses: None,
@@ -99,6 +102,7 @@ mod tests {
         let overrides = KimiConfig {
             agent: Some(AgentConfig {
                 engine: Some("rust".into()),
+                native_llm_provider: None,
                 max_turns: None,
                 max_steps: Some(20),
                 max_tool_uses: None,
@@ -126,6 +130,8 @@ mod tests {
                 max_tokens: None,
                 oauth: None,
                 custom_headers: None,
+                env: None,
+                source: None,
             },
         );
 
@@ -140,6 +146,8 @@ mod tests {
                 max_tokens: None,
                 oauth: None,
                 custom_headers: None,
+                env: None,
+                source: None,
             },
         );
         override_providers.insert(
@@ -152,6 +160,8 @@ mod tests {
                 max_tokens: None,
                 oauth: None,
                 custom_headers: None,
+                env: None,
+                source: None,
             },
         );
 

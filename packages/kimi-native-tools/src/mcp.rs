@@ -434,7 +434,6 @@ pub async fn stdio_spawn(config: &StdioSpawnConfig) -> Result<StdioSpawnResult, 
     // On Windows, hide the console window.
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }

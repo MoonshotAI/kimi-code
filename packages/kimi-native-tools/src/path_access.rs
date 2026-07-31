@@ -413,7 +413,6 @@ pub fn check_symlink_escape(path: &str, roots: &[String]) -> Result<(), String> 
     }
 
     let target = std::fs::read_link(path).map_err(|e| format!("Cannot read symlink: {}", e))?;
-    let target_str = target.to_string_lossy();
 
     // Check if the target is within any workspace root.
     let target_abs = if target.is_relative() {

@@ -8,7 +8,10 @@
 //! permission system. Write-capable tools are never handled here.
 
 pub mod bash;
+pub mod fetch_url;
 pub mod manager;
+pub mod todo;
+pub mod web_search;
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -139,11 +142,15 @@ fn is_sensitive_file(path: &Path) -> bool {
 #[derive(Debug, Clone)]
 pub struct NativeToolset {
     root: PathBuf,
+    /// Additional directories the toolset is allowed to access (beyond root).
+    additional_roots: Vec<PathBuf>,
     /// Native Bash execution (foreground only, gated by the host approval
     /// hooks). Off by default: on host-driven paths the JS Bash owns the
     /// tool (background tasks, detach, timeout-to-background live there).
     /// The standalone Rust agent path opts in via `with_shell`.
     shell: Option<bash::BashRunner>,
+    /// Per-session TodoList store (in-memory, interior-mutable via Arc<Mutex>).
+    todo: todo::TodoList,
 }
 
 impl NativeToolset {
@@ -155,7 +162,37 @@ impl NativeToolset {
         if !root.is_dir() {
             return None;
         }
-        Some(Self { root, shell: None })
+        Some(Self { root, additional_roots: Vec::new(), shell: None, todo: todo::TodoList::new() })
+    }
+
+    /// Add an additional directory to the sandbox allowlist. Returns `false`
+    /// if the path does not exist or is not a directory.
+    pub fn add_additional_dir(&mut self, dir: &str) -> bool {
+        let canonical = match std::fs::canonicalize(dir) {
+            Ok(p) if p.is_dir() => p,
+            _ => return false,
+        };
+        if !self.additional_roots.contains(&canonical) && canonical != self.root {
+            self.additional_roots.push(canonical);
+        }
+        true
+    }
+
+    /// Remove a previously added additional directory. Returns `false` if it
+    /// was not in the list.
+    pub fn remove_additional_dir(&mut self, dir: &str) -> bool {
+        let canonical = match std::fs::canonicalize(dir) {
+            Ok(p) => p,
+            Err(_) => return false,
+        };
+        let before = self.additional_roots.len();
+        self.additional_roots.retain(|r| *r != canonical);
+        self.additional_roots.len() < before
+    }
+
+    /// The list of additional directories.
+    pub fn additional_dirs(&self) -> &[PathBuf] {
+        &self.additional_roots
     }
 
     /// Enable native Bash execution (standalone agent path). A toolset
@@ -202,6 +239,26 @@ impl NativeToolset {
                 name: "Bash".into(), description: "Execute a shell command".into(),
                 input_schema: Some(serde_json::json!({"type":"object","properties":{"command":{"type":"string"},"description":{"type":"string"}},"required":["command","description"]})),
             },
+            crate::context::types::ToolDefinition {
+                name: todo::TODO_TOOL_NAME.into(),
+                description: todo::description().into(),
+                input_schema: Some(todo::input_schema()),
+            },
+            crate::context::types::ToolDefinition {
+                name: "WebSearch".into(),
+                description: "Search the web and return titles, URLs, and snippets".into(),
+                input_schema: Some(serde_json::json!({"type":"object","properties":{"query":{"type":"string"}},"required":["query"]})),
+            },
+            crate::context::types::ToolDefinition {
+                name: "FetchUrl".into(),
+                description: "Fetch a URL and return its text content".into(),
+                input_schema: Some(serde_json::json!({"type":"object","properties":{"url":{"type":"string"}},"required":["url"]})),
+            },
+            crate::context::types::ToolDefinition {
+                name: "ReadMediaFile".into(),
+                description: "Read an image file (png/jpeg/gif/webp) and return it to the model".into(),
+                input_schema: Some(serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"full_resolution":{"type":"boolean"}},"required":["path"]})),
+            },
         ]
     }
 
@@ -222,6 +279,12 @@ impl NativeToolset {
             // host's process-lifecycle domain, like approval itself.
             "write" => self.write(args),
             "edit" => self.edit(args),
+            // TodoList: pure in-memory session state (no filesystem, no
+            // network) — always safe to run natively.
+            "todolist" => Some(todo::execute_todo_list(&self.todo, args)),
+            // ReadMediaFile: read an image inside the sandbox and return it as
+            // an image media part (read-class, ungated like `read`).
+            "readmediafile" => self.read_media_file(args),
             _ => None,
         }
     }
@@ -305,10 +368,19 @@ impl NativeToolset {
             }
         }
         normalized.starts_with(&self.root) && !is_sensitive_file(&normalized)
+            || self.additional_roots.iter().any(|r| normalized.starts_with(r))
+                && !is_sensitive_file(&normalized)
+    }
+
+    /// Check whether a resolved path is within any allowed root (main or additional).
+    fn is_within_any_root(&self, resolved: &Path) -> bool {
+        resolved.starts_with(&self.root)
+            || self.additional_roots.iter().any(|r| resolved.starts_with(r))
     }
 
     /// Resolve a path argument inside the workspace. `None` when the path
-    /// escapes the sandbox, is a sensitive file, or does not exist.
+    /// escapes the sandbox (main root + additional dirs), is a sensitive file,
+    /// or does not exist.
     fn resolve(&self, path: &str) -> Option<PathBuf> {
         let candidate = if Path::new(path).is_absolute() {
             PathBuf::from(path)
@@ -316,8 +388,8 @@ impl NativeToolset {
             self.root.join(path)
         };
         let resolved = std::fs::canonicalize(&candidate).ok()?;
-        // Sandbox check: resolved path must be within the workspace root.
-        if !resolved.starts_with(&self.root) {
+        // Sandbox check: resolved path must be within any allowed root.
+        if !self.is_within_any_root(&resolved) {
             return None;
         }
         // Symlink escape check: verify the original path (before canonicalize)
@@ -332,7 +404,7 @@ impl NativeToolset {
                 } else {
                     link_target
                 };
-                if !target_abs.starts_with(&self.root) {
+                if !self.is_within_any_root(&target_abs) {
                     return None;
                 }
             }
@@ -395,6 +467,78 @@ impl NativeToolset {
             ));
         }
         Some(ok_result(out))
+    }
+
+    // ── ReadMediaFile ──────────────────────────────────────────────────
+    /// Read an image file inside the sandbox and return it as an image media
+    /// part. `None` (host fallback) when the path escapes the sandbox or does
+    /// not exist; an in-band error result when the file is not a supported
+    /// image. The bytes are base64-inlined; the loop delivers `media` to the
+    /// model as a follow-up user image message.
+    fn read_media_file(&self, args: &Value) -> Option<ExecutableToolResult> {
+        let path = args.get("path")?.as_str()?;
+        let resolved = self.resolve(path)?;
+        let meta = std::fs::metadata(&resolved).ok()?;
+        if !meta.is_file() {
+            return None;
+        }
+        let bytes = std::fs::read(&resolved).ok()?;
+
+        // Validate against the media budget/type core (shared with the host
+        // tool); reject non-images and oversize files with a text error.
+        let input = crate::media::read_media::MediaReadInput {
+            path: path.to_string(),
+            region: None,
+            full_resolution: args.get("full_resolution").and_then(|v| v.as_bool()).unwrap_or(false),
+        };
+        let header_len = bytes.len().min(64);
+        let validation = crate::media::read_media::validate_media(
+            path, &bytes[..header_len], meta.len(), &bytes, &input,
+        );
+        if let Some(err) = validation.error {
+            return Some(err_result(err));
+        }
+
+        // Detect the image mime from magic bytes (only model-accepted formats
+        // are inlined; anything else is not a deliverable image here).
+        let mime = match &bytes {
+            b if b.starts_with(&[0x89, 0x50, 0x4E, 0x47]) => "image/png",
+            b if b.starts_with(&[0xFF, 0xD8, 0xFF]) => "image/jpeg",
+            b if b.starts_with(b"GIF8") => "image/gif",
+            b if b.len() >= 12 && &b[0..4] == b"RIFF" && &b[8..12] == b"WEBP" => "image/webp",
+            _ => {
+                return Some(err_result(format!(
+                    "{path} is not a supported image (png/jpeg/gif/webp). Use the host media tool for other formats."
+                )));
+            }
+        };
+
+        // Downsample/re-encode toward the model byte budget unless the caller
+        // asked for full resolution. `compress_image_for_model` returns a data
+        // URL when it re-encoded (possibly changing the mime, e.g. PNG→JPEG);
+        // otherwise the original bytes are within budget and passed through.
+        let (media_type, b64) = if input.full_resolution {
+            (mime.to_string(), base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes))
+        } else {
+            let compressed = crate::media::image::compress_image_for_model(
+                &bytes,
+                mime,
+                crate::media::image::FALLBACK_EDGES_PX,
+                crate::media::image::JPEG_QUALITY_STEPS,
+            );
+            match (compressed.changed, compressed.data.as_deref().and_then(|u| u.split_once("base64,"))) {
+                (true, Some((_, raw))) => (compressed.mime, raw.to_string()),
+                _ => (mime.to_string(), base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes)),
+            }
+        };
+        let note = format!("Read image {path} ({} bytes, {media_type}).", meta.len());
+        Some(ExecutableToolResult {
+            content: note,
+            is_error: false,
+            is_prediction: false,
+            stop_turn: false,
+            media: vec![crate::rpc::types::ContentBlock::Image { media_type, data: b64 }],
+        })
     }
 
     // ── Grep ───────────────────────────────────────────────────────────
@@ -697,11 +841,11 @@ fn build_glob(pattern: &str) -> Option<globset::GlobSet> {
 }
 
 fn ok_result(content: String) -> ExecutableToolResult {
-    ExecutableToolResult { content, is_error: false, is_prediction: false }
+    ExecutableToolResult { content, is_error: false, is_prediction: false, stop_turn: false, media: Vec::new() }
 }
 
 fn err_result(content: String) -> ExecutableToolResult {
-    ExecutableToolResult { content, is_error: true, is_prediction: false }
+    ExecutableToolResult { content, is_error: true, is_prediction: false, stop_turn: false, media: Vec::new() }
 }
 
 #[cfg(test)]
@@ -716,6 +860,62 @@ mod tests {
         std::fs::write(dir.path().join("src/lib.rs"), "fn main() {}\n// beta marker\n").unwrap();
         let toolset = NativeToolset::new(dir.path().to_str().unwrap()).unwrap();
         (dir, toolset)
+    }
+
+    #[test]
+    fn todolist_writes_and_reads_natively_through_the_toolset() {
+        let (_dir, ts) = setup();
+        // TodoList is advertised in the native tool definitions.
+        assert!(ts.tool_definitions().iter().any(|d| d.name == "TodoList"));
+
+        // Write a list.
+        let write = ts
+            .execute(
+                "TodoList",
+                &json!({ "todos": [
+                    { "title": "first task", "status": "in_progress" },
+                    { "title": "second task", "status": "pending" }
+                ] }),
+            )
+            .expect("TodoList write handled natively");
+        assert!(!write.is_error, "{}", write.content);
+        assert!(write.content.contains("first task"), "{}", write.content);
+
+        // Query (no `todos`) returns the current list from session state.
+        let read = ts.execute("TodoList", &json!({})).expect("TodoList read handled natively");
+        assert!(read.content.contains("first task"));
+        assert!(read.content.contains("second task"));
+    }
+
+    #[test]
+    fn read_media_file_returns_an_image_media_part() {
+        let (dir, ts) = setup();
+        // A minimal 1x1 PNG.
+        let png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        let png = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, png_b64).unwrap();
+        std::fs::write(dir.path().join("pixel.png"), &png).unwrap();
+
+        assert!(ts.tool_definitions().iter().any(|d| d.name == "ReadMediaFile"));
+
+        let result = ts
+            .execute("ReadMediaFile", &json!({ "path": "pixel.png" }))
+            .expect("ReadMediaFile handled natively");
+        assert!(!result.is_error, "{}", result.content);
+        assert_eq!(result.media.len(), 1, "one image media part expected");
+        match &result.media[0] {
+            crate::rpc::types::ContentBlock::Image { media_type, data } => {
+                assert_eq!(media_type, "image/png");
+                assert!(!data.is_empty());
+            }
+            other => panic!("expected an Image block, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_media_file_missing_path_falls_back_to_host() {
+        let (_dir, ts) = setup();
+        // A path that does not resolve inside the sandbox → None (host handles it).
+        assert!(ts.execute("ReadMediaFile", &json!({ "path": "nope.png" })).is_none());
     }
 
     #[test]

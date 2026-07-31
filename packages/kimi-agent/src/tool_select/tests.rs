@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::sync::Mutex;
 
 use super::*;
+use crate::context::dynamic_tools::LOADABLE_TOOLS_TRIGGER;
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 

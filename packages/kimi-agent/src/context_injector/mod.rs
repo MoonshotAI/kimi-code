@@ -16,7 +16,6 @@ use std::collections::HashMap;
 
 use crate::context::context_memory::ContextMemory;
 use crate::context::types::{ContentPart, ContextMessage, MessageOrigin};
-use crate::injection::InjectionManager;
 
 // ── Types ──────────────────────────────────────────────────────────────────
 

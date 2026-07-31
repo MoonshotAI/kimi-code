@@ -101,8 +101,8 @@ interface LlmProviderDef {
 
 /** Native HTTP LLM transport config (snake_case matches the Rust wire). */
 export interface NativeLlmDef {
-  /** "openai" (Chat Completions) or "anthropic" (Messages). */
-  protocol: 'openai' | 'anthropic';
+  /** "openai" (Chat Completions), "anthropic" (Messages), or "google" (Gemini). */
+  protocol: 'openai' | 'anthropic' | 'google';
   /** API base URL including the version segment (e.g. `.../v1`). */
   base_url: string;
   api_key: string;
@@ -594,8 +594,19 @@ class AgentProcess {
     }
 
     try {
+      // Persist engine state (sessions, cron, background tasks) across
+      // restarts: default the engine home under the user's data dir unless
+      // the host already pinned one. Without it the engine's SQLite stores
+      // stay in-memory and native sessions cannot be resumed.
+      const env: Record<string, string | undefined> = { ...process.env };
+      if (env['KIMI_AGENT_HOME'] === undefined || env['KIMI_AGENT_HOME'] === '') {
+        const os = nodeRequire('node:os') as typeof import('node:os');
+        const path = nodeRequire('node:path') as typeof import('node:path');
+        env['KIMI_AGENT_HOME'] = path.join(os.homedir(), '.kimi-code', 'agent');
+      }
       this.process = spawn(binaryPath, [], {
         stdio: ['pipe', 'pipe', 'pipe'],
+        env,
       });
 
       this.process.stdout!.on('data', (data: Buffer) => {
@@ -603,8 +614,10 @@ class AgentProcess {
         this.processBuffer();
       });
 
-      this.process.stderr!.on('data', (data: Buffer) => {
-        console.error(`[kimi-agent] ${data.toString().trim()}`);
+      this.process.stderr!.on('data', (_data: Buffer) => {
+        // Suppress stderr output from the Rust binary to avoid corrupting
+        // the TUI's terminal rendering. The Rust binary's debug logs (eprintln!)
+        // would otherwise print directly to the terminal and cause duplicate lines.
       });
 
       this.process.on('exit', (code) => {
@@ -1219,6 +1232,16 @@ export function createRunTurnOverride(
           messages,
           tools: stepTools,
           signal: input.signal,
+          onTextDelta: (delta: string) => {
+            if (delta.length > 0) {
+              input.dispatchEvent({ type: 'text.delta', delta });
+            }
+          },
+          onThinkDelta: (delta: string) => {
+            if (delta.length > 0) {
+              input.dispatchEvent({ type: 'thinking.delta', delta });
+            }
+          },
           onTextPart: async (part) => {
             await input.dispatchEvent({
               type: 'content.part',
@@ -1984,6 +2007,110 @@ export function installSessionHostHandlers(handlers: SessionHostHandlers): boole
   return true;
 }
 
+/** A host-resolved MCP server definition for the session path. The host reads
+ *  config + secrets (e.g. the bearer token from its env var) and hands the
+ *  engine a flat spec; the engine connects it into the session's runtime. */
+export interface McpServerInput {
+  name: string;
+  /** 'stdio' | 'sse' | 'http'. Inferred from command/url when omitted. */
+  transport?: 'stdio' | 'sse' | 'http';
+  enabled?: boolean;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  url?: string;
+  enabledTools?: string[];
+  disabledTools?: string[];
+  /** Remote: pre-resolved static bearer token. */
+  bearerToken?: string;
+  bearerTokenEnvVar?: string;
+  startupTimeoutMs?: number;
+  toolTimeoutMs?: number;
+  hasHeaders?: boolean;
+  /** From an untrusted `<repoRoot>/.mcp.json` (held for approval). */
+  projectRoot?: boolean;
+}
+
+/** Map the camelCase host spec onto the engine's snake_case wire shape. */
+function toMcpServerWire(s: McpServerInput): Record<string, unknown> {
+  return {
+    name: s.name,
+    transport: s.transport,
+    enabled: s.enabled,
+    command: s.command,
+    args: s.args ?? [],
+    env: s.env,
+    cwd: s.cwd,
+    url: s.url,
+    enabled_tools: s.enabledTools,
+    disabled_tools: s.disabledTools,
+    bearer_token: s.bearerToken,
+    bearer_token_env_var: s.bearerTokenEnvVar,
+    startup_timeout_ms: s.startupTimeoutMs,
+    tool_timeout_ms: s.toolTimeoutMs,
+    has_headers: s.hasHeaders,
+    project_root: s.projectRoot,
+  };
+}
+
+/** A host-discovered skill for the session's registry (native `Skill` tool). */
+export interface SkillInput {
+  name: string;
+  description?: string;
+  /** 'prompt' | 'workflow' | 'command' | … (defaults to 'prompt' engine-side). */
+  skillType?: string;
+  source?: string;
+  path?: string;
+  dir?: string;
+  /** Inline skill body; when present, activation uses it instead of the path. */
+  content?: string;
+}
+
+/** Map the camelCase skill spec onto the engine's snake_case wire shape. */
+function toSkillWire(s: SkillInput): Record<string, unknown> {
+  return {
+    name: s.name,
+    description: s.description,
+    skill_type: s.skillType,
+    source: s.source,
+    path: s.path,
+    dir: s.dir,
+    content: s.content,
+  };
+}
+
+/**
+ * A host-resolved external lifecycle hook for the session (config.toml
+ * `[[hooks]]` + plugin contributions). The engine executes these natively:
+ * PreToolUse/PostToolUse on its tool chain, UserPromptSubmit/Stop at the
+ * prompt boundary.
+ */
+export interface HookDefInput {
+  /** Lifecycle event name, e.g. 'PreToolUse' (TS `HookEventType`). */
+  event: string;
+  /** Optional regex matched against the tool name / prompt text. */
+  matcher?: string;
+  /** Shell command; receives the snake_case JSON payload on stdin. */
+  command: string;
+  /** Timeout in seconds (engine default 30, cap 600). */
+  timeout?: number;
+  cwd?: string;
+  env?: Record<string, string>;
+}
+
+/** Hook wire shape — field names already match the engine's serde form. */
+function toHookWire(h: HookDefInput): Record<string, unknown> {
+  return {
+    event: h.event,
+    matcher: h.matcher,
+    command: h.command,
+    timeout: h.timeout,
+    cwd: h.cwd,
+    env: h.env,
+  };
+}
+
 export interface SessionCreateOptions {
   sessionId?: string;
   homedir?: string;
@@ -1994,6 +2121,12 @@ export interface SessionCreateOptions {
   nativeLlm?: NativeLlmDef;
   /** Host tool definitions presented to the model (executed at the host). */
   tools?: { name: string; description: string; inputSchema?: unknown }[];
+  /** MCP servers to register into the session's runtime (engine-native). */
+  mcpServers?: McpServerInput[];
+  /** Skills to register into the session's registry (native `Skill` tool). */
+  skills?: SkillInput[];
+  /** External lifecycle hooks the engine executes natively. */
+  hooks?: HookDefInput[];
 }
 
 /** Create a session-owned agent inside the engine. */
@@ -2013,6 +2146,9 @@ export async function sessionCreate(
       description: t.description,
       input_schema: t.inputSchema ?? { type: 'object' },
     })),
+    mcp_servers: (options.mcpServers ?? []).map(toMcpServerWire),
+    skills: (options.skills ?? []).map(toSkillWire),
+    hooks: (options.hooks ?? []).map(toHookWire),
   });
 }
 
@@ -2029,13 +2165,406 @@ export interface SessionPromptResult {
 export async function sessionPrompt(
   sessionId: string,
   input: { type: 'text'; text: string }[],
+  agentId?: string,
 ): Promise<SessionPromptResult | null> {
-  return agentCall('session/prompt', { session_id: sessionId, input });
+  return agentCall('session/prompt', {
+    session_id: sessionId,
+    input,
+    ...(agentId !== undefined ? { agent_id: agentId } : {}),
+  });
+}
+
+/** Spawn a side-question ("between turns") subagent (SDK `startBtw` parity). */
+export async function sessionStartBtw(
+  sessionId: string,
+): Promise<{ btw_id: string } | null> {
+  return agentCall('session/start_btw', { session_id: sessionId });
+}
+
+/** Destroy the active side-question subagent. */
+export async function sessionEndBtw(
+  sessionId: string,
+): Promise<{ ended: boolean } | null> {
+  return agentCall('session/end_btw', { session_id: sessionId });
 }
 
 /** Cancel a session's running turn (stops at the next step boundary). */
 export async function sessionCancel(sessionId: string): Promise<{ cancelled: boolean } | null> {
   return agentCall('session/cancel', { session_id: sessionId });
+}
+
+/** Switch the session's model from the next turn onward (native-LLM: updates
+ *  the transport model; also updates the config alias). */
+export async function sessionSetModel(
+  sessionId: string,
+  model: string,
+): Promise<{ ok: boolean } | null> {
+  return agentCall('session/set_model', { session_id: sessionId, model });
+}
+
+/** Run a user-initiated `!` shell command natively (silent). `unavailable`
+ *  true means no native shell — the host should run it instead. */
+export async function sessionRunShell(
+  sessionId: string,
+  command: string,
+  timeoutS?: number,
+  commandId?: string,
+): Promise<{ output: string | null; is_error: boolean; unavailable?: boolean } | null> {
+  return agentCall('session/run_shell', {
+    session_id: sessionId,
+    command,
+    timeout_s: timeoutS,
+    command_id: commandId,
+  });
+}
+
+/** Cancel a streaming `!` shell command by its commandId (SDK
+ *  `cancelShellCommand` parity). */
+export async function sessionCancelShellCommand(
+  sessionId: string,
+  commandId: string,
+): Promise<{ cancelled: boolean } | null> {
+  return agentCall('session/cancel_shell_command', {
+    session_id: sessionId,
+    command_id: commandId,
+  });
+}
+
+/** Set reasoning effort ("low"|"medium"|"high"; null clears) from the next
+ *  turn. Native-LLM OpenAI: becomes the request's `reasoning_effort`. */
+export async function sessionSetThinking(
+  sessionId: string,
+  effort: string | null,
+): Promise<{ ok: boolean } | null> {
+  return agentCall('session/set_thinking', { session_id: sessionId, effort });
+}
+
+/** Queue steer input for the session; drained at the start of the next turn
+ *  (including a goal-continuation turn). `queued` false = unknown session. */
+export async function sessionSteer(
+  sessionId: string,
+  input: { type: 'text'; text: string }[],
+): Promise<{ queued: boolean } | null> {
+  return agentCall('session/steer', { session_id: sessionId, input });
+}
+
+/** Add an additional directory to the session's workspace allowlist.
+ *  Returns the updated list of additional dirs. */
+export async function sessionAddAdditionalDir(
+  sessionId: string,
+  path: string,
+): Promise<{ success: boolean; additional_dirs: string[] } | null> {
+  return agentCall('session/add_additional_dir', { session_id: sessionId, path });
+}
+
+/** Remove an additional directory from the session's workspace allowlist.
+ *  Returns the updated list of additional dirs. */
+export async function sessionRemoveAdditionalDir(
+  sessionId: string,
+  path: string,
+): Promise<{ success: boolean; additional_dirs: string[] } | null> {
+  return agentCall('session/remove_additional_dir', { session_id: sessionId, path });
+}
+
+/** Shallow-merge a JSON object into the session's custom metadata. */
+export async function sessionUpdateMetadata(
+  sessionId: string,
+  metadata: Record<string, unknown>,
+): Promise<{ ok: boolean; metadata: Record<string, unknown> } | null> {
+  return agentCall('session/update_metadata', { session_id: sessionId, metadata });
+}
+
+/** Engine goal snapshot (serde form of the Rust `GoalSnapshot`). */
+export interface EngineGoalSnapshot {
+  goal_id: string;
+  objective: string;
+  status: string;
+  [key: string]: unknown;
+}
+
+/** Create (or with `replace` swap) the session goal as the user. */
+export async function sessionGoalCreate(
+  sessionId: string,
+  input: { objective: string; completionCriterion?: string; replace?: boolean },
+): Promise<EngineGoalSnapshot | null> {
+  return agentCall('session/goal_create', {
+    session_id: sessionId,
+    objective: input.objective,
+    completion_criterion: input.completionCriterion,
+    replace: input.replace ?? false,
+  });
+}
+
+/** The current goal record (`{ goal: null }` when none). */
+export async function sessionGoalGet(
+  sessionId: string,
+): Promise<{ goal: EngineGoalSnapshot | null } | null> {
+  return agentCall('session/goal_get', { session_id: sessionId });
+}
+
+/** Pause the active goal as the user. */
+export async function sessionGoalPause(
+  sessionId: string,
+  reason?: string,
+): Promise<EngineGoalSnapshot | null> {
+  return agentCall('session/goal_pause', { session_id: sessionId, reason });
+}
+
+/** Resume a paused goal as the user. */
+export async function sessionGoalResume(
+  sessionId: string,
+  reason?: string,
+): Promise<EngineGoalSnapshot | null> {
+  return agentCall('session/goal_resume', { session_id: sessionId, reason });
+}
+
+/** Cancel the goal as the user. */
+export async function sessionGoalCancel(
+  sessionId: string,
+): Promise<EngineGoalSnapshot | null> {
+  return agentCall('session/goal_cancel', { session_id: sessionId });
+}
+
+/**
+ * Toggle swarm mode. Entering applies the enter reminder to the session
+ * context (except the silent `tool` trigger); one-shot triggers auto-exit
+ * after the next prompt. Returns whether the mode is active afterwards.
+ */
+export async function sessionSetSwarmMode(
+  sessionId: string,
+  enabled: boolean,
+  trigger?: 'manual' | 'task' | 'tool',
+): Promise<{ active: boolean } | null> {
+  return agentCall('session/set_swarm_mode', {
+    session_id: sessionId,
+    enabled,
+    trigger,
+  });
+}
+
+/**
+ * Toggle plan mode. Entering sets the permission gate's plan context (which
+ * activates the plan-guard policies) and injects the plan-mode reminder;
+ * re-entering an active plan mode rejects (RPC error). Returns the plan-mode
+ * state afterwards.
+ */
+export async function sessionSetPlanMode(
+  sessionId: string,
+  enabled: boolean,
+): Promise<{ plan_mode: boolean } | null> {
+  return agentCall('session/set_plan_mode', { session_id: sessionId, enabled });
+}
+
+/** Engine-side context snapshot (serde snake_case wire form). Message fields
+ *  stay snake_case; the app layer maps them onto the SDK `AgentContextData`. */
+export interface EngineContextData {
+  history: Array<Record<string, unknown>>;
+  token_count: number;
+}
+
+/** Full context snapshot (SDK `getContext` parity). */
+export async function sessionGetContext(
+  sessionId: string,
+): Promise<EngineContextData | null> {
+  return agentCall('session/get_context', { session_id: sessionId });
+}
+
+/** Clear the session's model context (SDK `clearContext` parity). */
+export async function sessionClearContext(
+  sessionId: string,
+): Promise<{ cleared: boolean } | null> {
+  return agentCall('session/clear_context', { session_id: sessionId });
+}
+
+/** Append imported transcript text to the context (SDK `importContext`). */
+export async function sessionImportContext(
+  sessionId: string,
+  content: string,
+  source: string,
+): Promise<{ imported: boolean } | null> {
+  return agentCall('session/import_context', {
+    session_id: sessionId,
+    content,
+    source,
+  });
+}
+
+/**
+ * Undo the last `count` user turns (SDK `undoHistory` parity). Rejects (RPC
+ * error) when the requested count is not fully available, matching the SDK's
+ * throwing contract; the engine leaves the history untouched in that case.
+ */
+export async function sessionUndoHistory(
+  sessionId: string,
+  count: number,
+): Promise<{ undone_turns: number; cut_index: number | null } | null> {
+  return agentCall('session/undo_history', { session_id: sessionId, count });
+}
+
+/** Engine-side plan info (serde form of `PlanData`; SDK `PlanInfo` parity). */
+export interface EnginePlanInfo {
+  id: string;
+  content: string;
+  path: string;
+}
+
+/** Active plan snapshot (SDK `getPlan` parity); null when no plan is active. */
+export async function sessionGetPlan(
+  sessionId: string,
+): Promise<EnginePlanInfo | null> {
+  return agentCall('session/get_plan', { session_id: sessionId });
+}
+
+/** Clear the active plan's file content (SDK `clearPlan` parity). */
+export async function sessionClearPlan(
+  sessionId: string,
+): Promise<{ cleared: boolean } | null> {
+  return agentCall('session/clear_plan', { session_id: sessionId });
+}
+
+/**
+ * Activate a skill (SDK `activateSkill` parity): the engine renders the skill
+ * prompt and runs a turn. Resolves with the turn summary; callers observe the
+ * work via `skill.activated` + `turn.*` events on the session stream.
+ */
+export async function sessionActivateSkill(
+  sessionId: string,
+  name: string,
+  args?: string,
+): Promise<{ stop_reason: string; steps: number } | null> {
+  return agentCall('session/activate_skill', {
+    session_id: sessionId,
+    name,
+    args,
+  });
+}
+
+/** Reconnect a single MCP server (SDK `reconnectMcpServer` parity). */
+export async function sessionReconnectMcpServer(
+  sessionId: string,
+  name: string,
+): Promise<{ name: string; status: string; tool_count: number } | null> {
+  return agentCall('session/reconnect_mcp_server', {
+    session_id: sessionId,
+    name,
+  });
+}
+
+/** MCP startup timing (SDK `getMcpStartupMetrics` parity). */
+export async function sessionGetMcpStartupMetrics(
+  sessionId: string,
+): Promise<{ duration_ms: number } | null> {
+  return agentCall('session/get_mcp_startup_metrics', { session_id: sessionId });
+}
+
+/** Generate AGENTS.md via an init subagent (SDK `Session.init` parity). */
+export async function sessionInit(sessionId: string): Promise<{ ok: boolean } | null> {
+  return agentCall('session/init', { session_id: sessionId });
+}
+
+/** Engine-side persisted session record (serde snake_case; SDK `SessionSummary` parity subset). */
+export interface EngineSessionRecord {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  title?: string;
+  work_dir?: string;
+}
+
+/** Engine-side session status snapshot (serde snake_case wire form). */
+export interface EngineSessionStatus {
+  model?: string | null;
+  thinking_effort: string;
+  permission: 'manual' | 'auto' | 'yolo';
+  plan_mode: boolean;
+  swarm_mode: boolean;
+  goal_enabled: boolean;
+  context_tokens: number;
+  max_context_tokens: number;
+  context_usage: number;
+  usage?: {
+    by_model?: Record<string, { input_tokens: number; output_tokens: number; total_tokens: number }>;
+    total?: { input_tokens: number; output_tokens: number; total_tokens: number };
+    current_turn?: { input_tokens: number; output_tokens: number; total_tokens: number };
+  } | null;
+}
+
+/** Live status snapshot (SDK `getStatus` parity). */
+export async function sessionGetStatus(
+  sessionId: string,
+): Promise<EngineSessionStatus | null> {
+  return agentCall('session/get_status', { session_id: sessionId });
+}
+
+/** Engine-side per-server MCP view (SDK `McpServerInfo` parity). */
+export interface EngineMcpServerInfo {
+  name: string;
+  transport: 'stdio' | 'http' | 'sse';
+  status: 'pending' | 'pending-approval' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
+  tool_count: number;
+  error?: string | null;
+}
+
+/** Per-server MCP views (SDK `listMcpServers` parity). */
+export async function sessionListMcpServers(
+  sessionId: string,
+): Promise<{ servers: EngineMcpServerInfo[] } | null> {
+  return agentCall('session/list_mcp_servers', { session_id: sessionId });
+}
+
+/** Engine-side registered skill (serde snake_case). */
+export interface EngineSkillSummary {
+  name: string;
+  description: string;
+  skill_type: string;
+  source?: string | null;
+  path?: string | null;
+  dir?: string | null;
+}
+
+/** Registered skills for the session (SDK `listSkills` parity). */
+export async function sessionListSkills(
+  sessionId: string,
+): Promise<{ skills: EngineSkillSummary[] } | null> {
+  return agentCall('session/list_skills', { session_id: sessionId });
+}
+
+/** Engine-side session warning (SDK `SessionWarning` parity). */
+export interface EngineSessionWarning {
+  code: string;
+  message: string;
+  severity: 'info' | 'warning' | 'error';
+}
+
+/** Session warnings, e.g. failed MCP servers (SDK `getSessionWarnings` parity). */
+export async function sessionGetWarnings(
+  sessionId: string,
+): Promise<{ warnings: EngineSessionWarning[] } | null> {
+  return agentCall('session/get_warnings', { session_id: sessionId });
+}
+
+/** Engine-side cumulative usage (serde snake_case; TokenUsage is input_tokens/
+ *  output_tokens/total_tokens). Empty object when nothing has accrued. */
+export interface EngineSessionUsage {
+  by_model?: Record<string, { input_tokens: number; output_tokens: number; total_tokens: number }>;
+  total?: { input_tokens: number; output_tokens: number; total_tokens: number };
+  current_turn?: { input_tokens: number; output_tokens: number; total_tokens: number };
+}
+
+/** Cumulative usage snapshot (SDK `getUsage` parity). */
+export async function sessionGetUsage(
+  sessionId: string,
+): Promise<EngineSessionUsage | null> {
+  return agentCall('session/get_usage', { session_id: sessionId });
+}
+
+/** Manually compact the session context (SDK `compact` parity). Requires a
+ *  native-LLM summarizer; rejects (RPC error) without one. */
+export async function sessionCompact(
+  sessionId: string,
+  instruction?: string,
+): Promise<{ compacted: boolean; summary?: string; tokens_before?: number; tokens_after?: number } | null> {
+  return agentCall('session/compact', { session_id: sessionId, instruction });
 }
 
 /** Persist a session's full state (context history + goal). */
@@ -2052,7 +2581,7 @@ export async function sessionLoad(sessionId: string): Promise<{ found: boolean }
 export async function sessionList(
   limit?: number,
   offset?: number,
-): Promise<{ sessions: unknown[] } | null> {
+): Promise<{ sessions: EngineSessionRecord[] } | null> {
   return agentCall('session/list', { limit, offset });
 }
 
@@ -2074,6 +2603,19 @@ export interface SessionClientOptions {
   goalEnabled?: boolean;
   homedir?: string;
   nativeLlm?: NativeLlmDef;
+  /**
+   * Configure the engine's native permission gate for this session. `auto` /
+   * `yolo` let the engine approve gated tool calls locally (no host authorize
+   * round-trip); `manual` keeps interactive approval on the host. When unset,
+   * the gate keeps its startup mode (`KIMI_PERMISSION_MODE`, default manual).
+   */
+  permissionMode?: NativePermissionMode;
+  /** MCP servers to register into the session's runtime (host-resolved). */
+  mcpServers?: McpServerInput[];
+  /** Skills to register into the session's registry (native `Skill` tool). */
+  skills?: SkillInput[];
+  /** External lifecycle hooks the engine executes natively. */
+  hooks?: HookDefInput[];
   /**
    * Answer one model step (host-proxy mode): given the engine's wire-shaped
    * request, return the model reply. Unused when `nativeLlm` is set — the
@@ -2108,13 +2650,17 @@ export interface SessionClientOptions {
 export interface SessionClient {
   readonly sessionId: string;
   /** Run one prompt; goal continuations run inside the engine. */
-  prompt(text: string): Promise<SessionPromptResult | null>;
+  prompt(text: string, agentId?: string): Promise<SessionPromptResult | null>;
   /** Stop the running prompt at the next step boundary. */
   cancel(): Promise<boolean>;
   /** Persist context + goal under this session id. */
   save(): Promise<boolean>;
   /** Restore persisted state; an active goal comes back paused. */
   load(): Promise<boolean>;
+  /** Spawn a side-question ("between turns") subagent; returns its id. */
+  startBtw?(): Promise<string | null>;
+  /** Destroy the active side-question subagent. */
+  endBtw?(): Promise<boolean>;
 }
 
 /**
@@ -2141,9 +2687,19 @@ export async function createSessionClient(
       description: t.description,
       inputSchema: t.inputSchema,
     })),
+    mcpServers: options.mcpServers,
+    skills: options.skills,
+    hooks: options.hooks,
   });
   if (created === null) return null;
   const sessionId = created.session_id;
+
+  // Configure the process-wide native gate for this session so gated tool
+  // approval matches the host's intent (e.g. print mode → auto, no host
+  // authorize round-trip). Best-effort: a failure leaves the startup mode.
+  if (options.permissionMode !== undefined) {
+    await permissionSetMode(options.permissionMode);
+  }
 
   const toolMap = new Map((options.tools ?? []).map((tool) => [tool.name, tool]));
   installSessionHostHandlers({
@@ -2176,10 +2732,13 @@ export async function createSessionClient(
 
   return {
     sessionId,
-    prompt: (text) => sessionPrompt(sessionId, [{ type: 'text', text }]),
+    prompt: (text, agentId) =>
+      sessionPrompt(sessionId, [{ type: 'text', text }], agentId),
     cancel: async () => (await sessionCancel(sessionId))?.cancelled ?? false,
     save: async () => (await sessionSave(sessionId))?.ok ?? false,
     load: async () => (await sessionLoad(sessionId))?.found ?? false,
+    startBtw: async () => (await sessionStartBtw(sessionId))?.btw_id ?? null,
+    endBtw: async () => (await sessionEndBtw(sessionId))?.ended ?? false,
   };
 }
 
@@ -2278,6 +2837,48 @@ export interface BgOutputResult {
   error?: string;
 }
 
+/** Engine plugin summary wire shape (SDK `PluginSummary`; serde snake_case). */
+export interface EnginePluginSummary {
+  id: string;
+  display_name: string;
+  version?: string;
+  enabled: boolean;
+  state: string;
+  skill_count: number;
+  mcp_server_count: number;
+  enabled_mcp_server_count: number;
+  hook_count: number;
+  command_count: number;
+  has_errors: boolean;
+  source: string;
+}
+
+/** Engine plugin detail wire shape (SDK `PluginInfo`; extends the summary). */
+export interface EnginePluginInfo extends EnginePluginSummary {
+  root: string;
+  installed_at: string;
+  mcp_servers: Array<{
+    name: string;
+    runtime_name: string;
+    enabled: boolean;
+    transport: string;
+    command?: string | null;
+    url?: string | null;
+  }>;
+  diagnostics: Array<{ severity: string; message: string }>;
+}
+
+/** List installed plugins (SDK `listPlugins` parity). */
+export async function pluginList(): Promise<{ plugins: EnginePluginSummary[] } | null> {
+  return agentCall('plugin/list', {});
+}
+
+/** Get one installed plugin's detail (SDK `getPluginInfo` parity); null when
+ *  the plugin is unknown. */
+export async function pluginGet(id: string): Promise<EnginePluginInfo | null> {
+  return agentCall('plugin/get', { id });
+}
+
 /** Register a background task. Returns null if the Rust engine is not available. */
 export async function bgRegister(params: {
   prefix: string;
@@ -2304,6 +2905,13 @@ export async function bgStop(taskId: string, reason?: string): Promise<{ ok: boo
   return agentCall<{ ok: boolean }>('bg/stop', { task_id: taskId, reason });
 }
 
+/** Detach a background task from its foreground tool call (SDK
+ *  `detachBackgroundTask` parity). Returns the task's wire info, or null when
+ *  the task id is unknown. */
+export async function bgDetach(taskId: string): Promise<Record<string, unknown> | null> {
+  return agentCall('bg/detach', { task_id: taskId });
+}
+
 /** Get output snapshot for a background task. Returns null if the Rust engine is not available. */
 export async function bgOutput(taskId: string): Promise<BgOutputResult | null> {
   return agentCall<BgOutputResult>('bg/output', { task_id: taskId });
@@ -2328,6 +2936,51 @@ export async function bgSettle(
     status,
     stop_reason: stopReason,
   });
+}
+
+// ── Permission gate (native) ───────────────────────────────────────────────
+//
+// Configure the engine's process-wide permission gate at runtime. RUN_TURN and
+// every session agent share one gate, so these calls govern the whole engine.
+// `null` means the Rust engine is not available (caller keeps the JS gate).
+
+/** Permission mode understood by the native gate. */
+export type NativePermissionMode = 'manual' | 'auto' | 'yolo';
+
+/** A native permission rule (snake_case matches the Rust wire). */
+export interface NativePermissionRule {
+  decision: 'allow' | 'deny' | 'ask';
+  scope: 'turn-override' | 'session-runtime' | 'project' | 'user';
+  pattern: string;
+  reason?: string;
+}
+
+/** Snapshot returned by `permission/get`. */
+export interface NativePermissionData {
+  mode: NativePermissionMode;
+  rules: NativePermissionRule[];
+}
+
+/** Read the current permission snapshot ({ mode, rules }). */
+export async function permissionGet(): Promise<NativePermissionData | null> {
+  return agentCall<NativePermissionData>('permission/get', {});
+}
+
+/** Set the permission mode. Returns null if the Rust engine is not available. */
+export async function permissionSetMode(
+  mode: NativePermissionMode,
+): Promise<{ ok: boolean; mode: NativePermissionMode } | null> {
+  return agentCall<{ ok: boolean; mode: NativePermissionMode }>('permission/set_mode', { mode });
+}
+
+/**
+ * Add a permission rule (e.g. record a `session-runtime`-scoped approval so a
+ * repeated tool call is auto-approved for the rest of the session).
+ */
+export async function permissionAddRule(
+  rule: NativePermissionRule,
+): Promise<{ ok: boolean } | null> {
+  return agentCall<{ ok: boolean }>('permission/add_rule', rule);
 }
 
 // ── Workspace prediction ──────────────────────────────────────────────────

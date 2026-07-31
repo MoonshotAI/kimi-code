@@ -133,6 +133,16 @@ impl ManagedTask {
         self.request_stop();
     }
 
+    /// Detach from the foreground tool call: mark the task detached and release
+    /// the waiting foreground caller (if any) so the current tool call returns
+    /// while the task keeps running under background management.
+    pub fn detach(&mut self) {
+        self.options.detached = true;
+        if let Some(tx) = self.foreground_release_tx.take() {
+            let _ = tx.send(ForegroundTaskReleaseReason::Detached);
+        }
+    }
+
     /// Build the base info for this task.
     pub fn to_info_base(&self) -> BackgroundTaskInfoBase {
         BackgroundTaskInfoBase {
