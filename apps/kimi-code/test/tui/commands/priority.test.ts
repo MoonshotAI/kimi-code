@@ -63,7 +63,9 @@ describe('/priority command (provider service-tier toggle)', () => {
 
     dispatchInput(host, '/priority');
 
-    await vi.waitFor(() => expect(host.mountEditorReplacement).toHaveBeenCalledOnce());
+    await vi.waitFor(() => {
+      expect(host.mountEditorReplacement).toHaveBeenCalledOnce();
+    });
     expect(mountedPicker(host).currentValue).toBe('off');
   });
 
@@ -72,7 +74,9 @@ describe('/priority command (provider service-tier toggle)', () => {
 
     dispatchInput(host, '/priority');
 
-    await vi.waitFor(() => expect(host.mountEditorReplacement).toHaveBeenCalledOnce());
+    await vi.waitFor(() => {
+      expect(host.mountEditorReplacement).toHaveBeenCalledOnce();
+    });
     expect(mountedPicker(host).currentValue).toBe('main');
   });
 
@@ -80,7 +84,9 @@ describe('/priority command (provider service-tier toggle)', () => {
     const { host, session } = makeHost(false);
 
     dispatchInput(host, '/priority');
-    await vi.waitFor(() => expect(host.mountEditorReplacement).toHaveBeenCalledOnce());
+    await vi.waitFor(() => {
+      expect(host.mountEditorReplacement).toHaveBeenCalledOnce();
+    });
     mountedPicker(host).onSelect('subagents');
 
     await vi.waitFor(() => {
@@ -96,7 +102,9 @@ describe('/priority command (provider service-tier toggle)', () => {
     const { host, session, state } = makeHost(false, { priority: true });
 
     dispatchInput(host, '/priority');
-    await vi.waitFor(() => expect(host.mountEditorReplacement).toHaveBeenCalledOnce());
+    await vi.waitFor(() => {
+      expect(host.mountEditorReplacement).toHaveBeenCalledOnce();
+    });
     expect(mountedPicker(host).currentValue).toBe('subagents');
     mountedPicker(host).onSelect('main');
 
