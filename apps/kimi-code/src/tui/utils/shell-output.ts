@@ -1,4 +1,5 @@
 import { currentTheme } from '#/tui/theme';
+import { linkifyTerminalUrls } from '#/tui/utils/linkify';
 
 // Captured command output can contain terminal control sequences — colours,
 // cursor moves, alternate-screen switches, hyperlinks, `\r` spinners, bells, …
@@ -53,9 +54,11 @@ export function formatBashOutputForDisplay(stdout: string, stderr: string, isErr
   try {
     const dim = (s: string): string => currentTheme.fg('textDim', s);
     const parts: string[] = [];
-    const cleanStdout = sanitizeShellOutput(stdout).trimEnd();
+    // Sanitized output is plain text again, so bare URLs are safe to
+    // re-linkify here (no-op on terminals without OSC 8 support).
+    const cleanStdout = linkifyTerminalUrls(sanitizeShellOutput(stdout).trimEnd());
     if (cleanStdout.length > 0) parts.push(dim(cleanStdout));
-    const cleanStderr = sanitizeShellOutput(stderr).trimEnd();
+    const cleanStderr = linkifyTerminalUrls(sanitizeShellOutput(stderr).trimEnd());
     if (cleanStderr.length > 0) {
       // Dim grey normally; red only on actual failure (so warnings on a
       // successful command are not mistaken for errors).

@@ -10,6 +10,7 @@ import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
+import { linkifyTerminalUrls } from '#/tui/utils/linkify';
 
 export interface DeviceCodeBoxParams {
   readonly title: string;
@@ -41,7 +42,8 @@ export class DeviceCodeBoxComponent implements Component {
       innerWidth,
       '…',
     );
-    const urlLine = truncateToWidth(currentTheme.fg('primary', url), innerWidth, '…');
+    // The one URL the user must open: make it clickable where possible.
+    const urlLine = truncateToWidth(currentTheme.fg('primary', linkifyTerminalUrls(url)), innerWidth, '…');
 
     const codeLabel = currentTheme.boldFg('textDim', 'Verification code:  ');
     const codeValue = currentTheme.boldFg('accent', code);

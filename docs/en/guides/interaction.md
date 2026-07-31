@@ -89,6 +89,10 @@ Press `Ctrl-G` to send the current input content to an external editor. When you
 
 Editor priority: `/editor` config → `$VISUAL` environment variable → `$EDITOR` environment variable. If none are set, run `/editor` first to choose a default.
 
+## Clickable links
+
+On terminals that support OSC 8 hyperlinks (iTerm2, kitty, Ghostty, WezTerm, Warp, VS Code, Windows Terminal, Alacritty), URLs in the conversation — assistant messages, tool and shell output, your own messages, and the login prompt — are clickable: `Cmd`-click (macOS) or `Ctrl`-click (Linux/Windows) opens them in your browser, and the terminal's context menu offers "Copy Link". On terminals without hyperlink support (such as Terminal.app), URLs stay plain text.
+
 ## Next steps
 
 - [Keyboard shortcuts](../reference/keyboard.md) — full quick-reference table of all shortcuts

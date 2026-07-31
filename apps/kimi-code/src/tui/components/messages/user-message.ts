@@ -8,6 +8,7 @@ import { ImageThumbnail } from '#/tui/components/media/image-thumbnail';
 import { USER_MESSAGE_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import type { ImageAttachment } from '#/tui/utils/image-attachment-store';
+import { linkifyTerminalUrls } from '#/tui/utils/linkify';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 export class UserMessageComponent implements Component {
@@ -62,7 +63,8 @@ export class UserMessageComponent implements Component {
 
     // Text is re-dyed from the current theme; invalidate() (theme change) clears
     // the render cache so the new colours are picked up on the next render.
-    const coloredText = currentTheme.boldFg('roleUser', this.text);
+    // Bare URLs become OSC 8 links on hyperlink-capable terminals.
+    const coloredText = currentTheme.boldFg('roleUser', linkifyTerminalUrls(this.text));
     const textLines = new Text(coloredText, 0, 0).render(contentWidth);
     for (let i = 0; i < textLines.length; i++) {
       const prefix = i === 0 ? bullet : ' '.repeat(bulletWidth);

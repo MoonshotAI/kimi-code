@@ -90,6 +90,18 @@ describe('UserMessageComponent', () => {
     expect(imageLine).toContain('\u001B\\'); // intact Kitty terminator
   });
 
+  it('linkifies bare URLs on hyperlink-capable terminals', () => {
+    setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+
+    const out = new UserMessageComponent('review https://example.com/pull/1 please', [])
+      .render(80)
+      .join('\n');
+
+    expect(out).toContain('\u001B]8;;https://example.com/pull/1\u0007');
+    const noLinks = out.replaceAll(/\u001B\]8;;[^\u0007]*\u0007/g, '');
+    expect(stripAnsi(noLinks)).toContain('review https://example.com/pull/1 please');
+  });
+
   it('omits the sparkles bullet when an empty bullet is provided', () => {
     setCapabilities({ images: null, trueColor: true, hyperlinks: true });
 

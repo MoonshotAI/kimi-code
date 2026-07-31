@@ -89,6 +89,10 @@ Agent 思考或调用工具时，输入框仍然可用，支持以下额外操�
 
 编辑器优先级：`/editor` 配置 > `$VISUAL` 环境变量 > `$EDITOR` 环境变量。未配置时可先运行 `/editor` 选择默认编辑器。
 
+## 可点击链接
+
+在支持 OSC 8 超链接的终端中（iTerm2、kitty、Ghostty、WezTerm、Warp、VS Code、Windows Terminal、Alacritty），对话中的 URL——助手消息、工具与 shell 输出、你自己发送的消息以及登录提示——都可以点击：macOS 用 `Cmd`-点击，Linux/Windows 用 `Ctrl`-点击即可在浏览器中打开，终端右键菜单也提供「复制链接」。在不支持超链接的终端（如 Terminal.app）中，URL 保持纯文本显示。
+
 ## 下一步
 
 - [键盘快捷键](../reference/keyboard.md) — 全部快捷键的完整速查表

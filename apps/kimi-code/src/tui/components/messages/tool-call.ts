@@ -26,6 +26,7 @@ import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
+import { linkifyTerminalUrls } from '#/tui/utils/linkify';
 import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 import { formatTokenCount } from '#/utils/usage/usage-format';
@@ -45,7 +46,6 @@ const MAX_SUBAGENT_DESCRIPTION_LENGTH = 60;
 const APPROVED_PLAN_MARKER = '## Approved Plan:';
 const AUTO_APPROVED_PLAN_MARKER = '## Plan (auto-approved, not user-reviewed):';
 const STREAMING_PROGRESS_INTERVAL_MS = 1000;
-const PROGRESS_URL_RE = /https?:\/\/\S+/g;
 const ABORTED_MARK = '⊘';
 const MAX_LIVE_OUTPUT_CHARS = 50_000;
 
@@ -1549,9 +1549,9 @@ export class ToolCallComponent extends Container {
 
   /**
    * Render the accumulated `progressLines` between the call preview and
-   * the result body. URLs inside a line are wrapped in an OSC 8 hyperlink
-   * sequence so terminals that support it (iTerm2, Ghostty, kitty, modern
-   * Terminal.app, VS Code) make the URL Cmd-clickable and expose
+   * the result body. URLs inside a line go through the shared,
+   * capability-gated linkifier so terminals that support OSC 8 (iTerm2,
+   * Ghostty, kitty, VS Code) make the URL Cmd-clickable and expose
    * "Copy Link" via the context menu — even when pi-tui soft-wraps the
    * URL across multiple rows (pi-tui's wrapTextWithAnsi re-opens the
    * active OSC 8 link on each continuation line). Each embedded URL is
@@ -1565,14 +1565,8 @@ export class ToolCallComponent extends Container {
         this.addChild(new Text('', 2, 0));
         continue;
       }
-      PROGRESS_URL_RE.lastIndex = 0;
-      const styled = PROGRESS_URL_RE.test(raw)
-        ? raw.replace(PROGRESS_URL_RE, (url) => {
-          const visible = currentTheme.underlineFg('warning', url);
-          return `\u001B]8;;${url}\u001B\\${visible}\u001B]8;;\u001B\\`;
-        })
-        : currentTheme.dim(raw);
-      PROGRESS_URL_RE.lastIndex = 0;
+      const linkified = linkifyTerminalUrls(raw, (s) => currentTheme.underlineFg('warning', s));
+      const styled = linkified === raw ? currentTheme.dim(raw) : linkified;
       this.addChild(new Text(styled, 2, 0));
     }
   }

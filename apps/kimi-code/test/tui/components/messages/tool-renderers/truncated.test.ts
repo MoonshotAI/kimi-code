@@ -1,5 +1,5 @@
-import { visibleWidth } from '@moonshot-ai/pi-tui';
-import { describe, expect, it } from 'vitest';
+import { resetCapabilitiesCache, setCapabilities, visibleWidth } from '@moonshot-ai/pi-tui';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { TruncatedOutputComponent } from '#/tui/components/messages/tool-renderers/truncated';
 
@@ -86,5 +86,34 @@ describe('TruncatedOutputComponent', () => {
     const out = strip(component.render(80).join('\n'));
     expect(out).toContain('<system>literal text from a user file</system>');
     expect(out).toContain('<image path="/tmp/x.png">');
+  });
+});
+
+describe('TruncatedOutputComponent URL linkification', () => {
+  afterEach(() => {
+    resetCapabilitiesCache();
+  });
+
+  it('linkifies bare URLs in output on hyperlink-capable terminals', () => {
+    setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+    const component = new TruncatedOutputComponent('pr: https://example.com/pull/1', {
+      expanded: false,
+      isError: false,
+    });
+
+    const out = component.render(80).join('\n');
+    expect(out).toContain("\u001B]8;;https://example.com/pull/1\u0007");
+  });
+
+  it('leaves URLs as plain text when hyperlinks are unsupported', () => {
+    setCapabilities({ images: null, trueColor: true, hyperlinks: false });
+    const component = new TruncatedOutputComponent('pr: https://example.com/pull/1', {
+      expanded: false,
+      isError: false,
+    });
+
+    const out = component.render(80).join('\n');
+    expect(out).not.toContain("\u001B]8;");
+    expect(strip(out)).toContain('pr: https://example.com/pull/1');
   });
 });

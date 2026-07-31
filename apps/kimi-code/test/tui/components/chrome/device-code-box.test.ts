@@ -1,5 +1,5 @@
-import { visibleWidth } from '@moonshot-ai/pi-tui';
-import { describe, expect, it } from 'vitest';
+import { resetCapabilitiesCache, setCapabilities, visibleWidth } from '@moonshot-ai/pi-tui';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { DeviceCodeBoxComponent } from '#/tui/components/chrome/device-code-box';
 import { darkColors } from '#/tui/theme/colors';
@@ -14,6 +14,10 @@ const title = 'Sign in to Kimi Code';
 const hint = 'Press Ctrl-C to cancel';
 
 describe('DeviceCodeBoxComponent', () => {
+  afterEach(() => {
+    resetCapabilitiesCache();
+  });
+
   it('renders a rounded border that frames the title, url and code', () => {
     const component = new DeviceCodeBoxComponent({
       title,
@@ -35,6 +39,23 @@ describe('DeviceCodeBoxComponent', () => {
     expect(joined).toContain(code);
     expect(joined).toContain(hint);
     expect(joined).toContain('Verification code');
+  });
+
+  it('makes the verification URL clickable on hyperlink-capable terminals', () => {
+    setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+    const component = new DeviceCodeBoxComponent({ title, url, code });
+
+    const out = component.render(100).join('\n');
+    expect(out).toContain('\u001B]8;;' + url + '\u0007');
+  });
+
+  it('keeps the verification URL literal when hyperlinks are unsupported', () => {
+    setCapabilities({ images: null, trueColor: true, hyperlinks: false });
+    const component = new DeviceCodeBoxComponent({ title, url, code });
+
+    const out = component.render(100).join('\n');
+    expect(out).not.toContain('\u001B]8;');
+    expect(strip(out)).toContain(url);
   });
 
   it('truncates long urls when the terminal is narrow', () => {

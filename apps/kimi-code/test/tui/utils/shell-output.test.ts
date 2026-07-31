@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { resetCapabilitiesCache, setCapabilities } from '@moonshot-ai/pi-tui';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { formatBashOutputForDisplay, sanitizeShellOutput } from '#/tui/utils/shell-output';
+
+afterEach(() => {
+  resetCapabilitiesCache();
+});
 
 const ESC = '\u001B';
 const BEL = '\u0007';
@@ -104,5 +109,18 @@ describe('formatBashOutputForDisplay', () => {
     expect(() =>
       formatBashOutputForDisplay(undefined as unknown as string, null as unknown as string),
     ).not.toThrow();
+  });
+
+  it('re-linkifies bare URLs on hyperlink-capable terminals', () => {
+    setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+    const result = formatBashOutputForDisplay('PR: https://example.com/pull/2491', '');
+    expect(result).toContain(`${ESC}]8;;https://example.com/pull/2491${BEL}`);
+  });
+
+  it('keeps URLs literal when hyperlinks are unsupported', () => {
+    setCapabilities({ images: null, trueColor: true, hyperlinks: false });
+    const result = formatBashOutputForDisplay('PR: https://example.com/pull/2491', '');
+    expect(result).not.toContain(`${ESC}]8;`);
+    expect(stripTheme(result)).toContain('PR: https://example.com/pull/2491');
   });
 });
