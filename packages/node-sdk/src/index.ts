@@ -136,3 +136,23 @@ export type {
 
 export * from '#/events';
 export type * from '#/types';
+
+// ── Rust-engine session assembly (host-side, forwarded from agent-core) ──
+// The session engine (print-mode pilot + TUI native sessions) assembles MCP
+// servers, hooks, and the system prompt on the host. These entry points are
+// forwarded so apps never import @moonshot-ai/agent-core directly.
+export { loadMcpServers } from '@moonshot-ai/agent-core/mcp/config-loader';
+// The schema entry type (mcp.json server entries) — aliased to avoid
+// clashing with the SDK's `McpServerConfig` (= GlobalMcpServerConfig, name-keyed).
+export type { McpServerConfig as McpServerConfigEntry } from '@moonshot-ai/agent-core/config/schema';
+export { PluginManager } from '@moonshot-ai/agent-core/plugin/manager';
+export { prepareSystemPromptContext } from '@moonshot-ai/agent-core/profile/context';
+export { DEFAULT_AGENT_PROFILES } from '@moonshot-ai/agent-core/profile/default';
+export type {
+  AgentContextData,
+  AgentReplayRecord,
+  ContextMessage,
+  PromptOrigin,
+  ResumedAgentState,
+  SwarmModeTrigger,
+} from '@moonshot-ai/agent-core';

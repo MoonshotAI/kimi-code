@@ -17,11 +17,13 @@ import {
   resolveKimiHome,
   type RunTurnOverride,
 } from '@moonshot-ai/kimi-code-sdk';
-import { loadMcpServers } from '@moonshot-ai/agent-core/mcp/config-loader';
-import type { McpServerConfig } from '@moonshot-ai/agent-core/config/schema';
-import { PluginManager } from '@moonshot-ai/agent-core/plugin/manager';
-import { prepareSystemPromptContext } from '@moonshot-ai/agent-core/profile/context';
-import { DEFAULT_AGENT_PROFILES } from '@moonshot-ai/agent-core/profile/default';
+import {
+  DEFAULT_AGENT_PROFILES,
+  loadMcpServers,
+  PluginManager,
+  prepareSystemPromptContext,
+} from '@moonshot-ai/kimi-code-sdk';
+import type { McpServerConfigEntry } from '@moonshot-ai/kimi-code-sdk';
 import { LocalKaos } from '@moonshot-ai/kaos';
 import type { HookDefInput, McpServerInput } from '@moonshot-ai/kimi-agent/rust-loop';
 
@@ -155,7 +157,7 @@ export function loadNativeLlmDef(
  */
 export function mapMcpServerConfig(
   name: string,
-  config: McpServerConfig,
+  config: McpServerConfigEntry,
   env: Record<string, string | undefined> = process.env,
 ): McpServerInput {
   const common = {

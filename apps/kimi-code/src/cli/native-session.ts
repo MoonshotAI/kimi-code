@@ -30,7 +30,7 @@ import type {
   PromptOrigin,
   ResumedAgentState,
   SwarmModeTrigger,
-} from '@moonshot-ai/agent-core';
+} from '@moonshot-ai/kimi-code-sdk';
 import type {
   AddAdditionalDirOptions,
   AddAdditionalDirResult,
