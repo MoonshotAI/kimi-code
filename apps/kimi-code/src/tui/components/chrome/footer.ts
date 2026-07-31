@@ -400,8 +400,7 @@ export class FooterComponent implements Component {
             ? ` thinking: ${effort}`
             : ' thinking'
           : '';
-      const priorityLabel = state.priority === true ? ' priority' : '';
-      const modelLabel = `${model}${thinkingLabel}${priorityLabel}`;
+      const modelLabel = state.priority === true ? `${model} priority` : `${model}${thinkingLabel}`;
       let renderedModelLabel = chalk.hex(colors.text)(modelLabel);
       if (isRainbowDancing()) {
         renderedModelLabel = renderDanceFooterModel(modelLabel);
