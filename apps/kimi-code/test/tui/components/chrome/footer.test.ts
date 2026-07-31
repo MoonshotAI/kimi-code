@@ -150,7 +150,7 @@ describe('FooterComponent', () => {
     expect(footer.render(120).join('\n')).toContain('kimi-k2 priority');
   });
 
-  it('shows concise priority status when an effort is active', () => {
+  it('shows priority after the effort when both are active', () => {
     const effortModel: ModelAlias = {
       provider: 'managed:kimi-code',
       model: 'kimi-k2',
@@ -166,9 +166,7 @@ describe('FooterComponent', () => {
     };
     const footer = new FooterComponent(state);
 
-    const rendered = footer.render(120).join('\n');
-    expect(rendered).toContain('kimi-k2 priority');
-    expect(rendered).not.toContain('thinking: high');
+    expect(footer.render(120).join('\n')).toContain('kimi-k2 thinking: high · priority');
   });
 });
 
