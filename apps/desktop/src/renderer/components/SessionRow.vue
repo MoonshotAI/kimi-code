@@ -413,22 +413,26 @@ defineExpose({ closeMenu });
       <span class="act">
         <span class="ts">{{ session.time }}</span>
         <span v-if="!renaming" class="ha">
-          <IconButton
-            class="pin-btn"
-            size="sm"
-            :label="session.pinned ? t('sidebar.unpin') : t('sidebar.pin')"
-            @click.stop="togglePinRow"
-          >
-            <Icon :name="session.pinned ? 'unpin' : 'pin'" />
-          </IconButton>
-          <IconButton
-            class="archive-btn"
-            size="sm"
-            :label="t('sidebar.archive')"
-            @click.stop="startArchive"
-          >
-            <Icon name="archive" />
-          </IconButton>
+          <Tooltip :text="session.pinned ? t('sidebar.unpin') : t('sidebar.pin')">
+            <IconButton
+              class="pin-btn"
+              size="sm"
+              :label="session.pinned ? t('sidebar.unpin') : t('sidebar.pin')"
+              @click.stop="togglePinRow"
+            >
+              <Icon :name="session.pinned ? 'unpin' : 'pin'" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip :text="t('sidebar.archive')">
+            <IconButton
+              class="archive-btn"
+              size="sm"
+              :label="t('sidebar.archive')"
+              @click.stop="startArchive"
+            >
+              <Icon name="archive" />
+            </IconButton>
+          </Tooltip>
         </span>
       </span>
     </div>
