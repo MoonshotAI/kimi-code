@@ -1,5 +1,5 @@
 /**
- * `workspaceInfo` domain (L1) — seeded workspace-directory data contract.
+ * `workspaceInfo` domain — seeded workspace-directory data contract.
  *
  * Defines `ISessionWorkspaceInfo`, the pure-data injection contract for the
  * workspace's additional directory set: a live read view plus its change

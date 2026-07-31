@@ -1,5 +1,5 @@
 /**
- * `workspaceGit` domain (L2) — `IWorkspaceGitService` implementation.
+ * `workspaceGit` domain — `IWorkspaceGitService` implementation.
  *
  * Delegates every call to the App-scope `IGitService` with `cwd` pinned to
  * the handler's workspace root (`IWorkspaceContext.cwd`). Owns no state.

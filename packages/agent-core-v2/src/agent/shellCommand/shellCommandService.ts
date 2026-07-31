@@ -1,5 +1,5 @@
 /**
- * `shellCommand` domain (L4) — `IAgentShellCommandService` implementation.
+ * `shellCommand` domain — `IAgentShellCommandService` implementation.
  *
  * Runs user-initiated `!` commands through the builtin `Bash` tool from
  * `toolRegistry`, records the command and output as `shell_command`-origin

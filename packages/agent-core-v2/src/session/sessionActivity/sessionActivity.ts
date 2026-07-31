@@ -1,5 +1,5 @@
 /**
- * `sessionActivity` domain (L6) — the session's aggregated work projection.
+ * `sessionActivity` domain — the session's aggregated work projection.
  *
  * Defines `ISessionActivityView`: a Session-scoped, read-only, event-folded
  * aggregate of "what this session is doing" — `busy` (any agent with an

@@ -1,5 +1,5 @@
 /**
- * `permissionMode` domain (L3) — wire Model (`PermissionModeModel`) and the
+ * `permissionMode` domain — wire Model (`PermissionModeModel`) and the
  * `permission.set_mode` Op (`setMode`) for the agent's permission mode.
  *
  * Declares the mode as a scalar `wire` Model (initial `manual`) plus a replay

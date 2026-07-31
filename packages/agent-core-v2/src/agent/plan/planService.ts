@@ -1,5 +1,5 @@
 /**
- * `plan` domain (L3) — `IAgentPlanService` implementation.
+ * `plan` domain — `IAgentPlanService` implementation.
  *
  * Manages plan-mode state through `wire`, injects plan-mode context through
  * `contextInjector`, writes optional plan files through `hostFileSystem`,

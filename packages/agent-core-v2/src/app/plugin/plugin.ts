@@ -1,5 +1,5 @@
 /**
- * `plugin` domain (L3) — App-scoped plugin management and consumption contract.
+ * `plugin` domain — App-scoped plugin management and consumption contract.
  *
  * Defines `IPluginService`, which manages installed plugins and exposes their
  * enabled commands, skills, session-start content, system-prompt sections,

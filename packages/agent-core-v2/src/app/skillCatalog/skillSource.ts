@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — skill-source contract.
+ * `skillCatalog` domain — skill-source contract.
  *
  * `ISkillSource` is the producer half of the skill subsystem: each source loads
  * a `SkillContribution` and advertises a `priority` so the Session sink can

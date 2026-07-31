@@ -1,5 +1,5 @@
 /**
- * `subagent` domain (L6) — `ISessionSubagentService` contract: driving turns
+ * `subagent` domain — `ISessionSubagentService` contract: driving turns
  * on other agents, plus the hook / event surface those runs announce.
  *
  * Owns *runs* — one agent driving a turn on another and the requester-side

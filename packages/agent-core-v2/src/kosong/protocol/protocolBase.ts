@@ -1,5 +1,5 @@
 /**
- * `kosong/protocol` domain (L1) — protocol base identity, definition, and
+ * `kosong/protocol` domain — protocol base identity, definition, and
  * the module-level base registry.
  *
  * A protocol base is the component that actually understands one wire

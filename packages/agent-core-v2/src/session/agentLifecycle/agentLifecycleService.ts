@@ -1,5 +1,5 @@
 /**
- * `agentLifecycle` domain (L6) — `IAgentLifecycleService` implementation.
+ * `agentLifecycle` domain — `IAgentLifecycleService` implementation.
  *
  * Creates and tracks the session's agents as child scopes in a flat registry,
  * serializing same-id bootstrap and dropping incomplete handles after startup

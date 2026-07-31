@@ -1,5 +1,5 @@
 /**
- * `projectLocalConfig` domain (L2) — project-local config access.
+ * `projectLocalConfig` domain — project-local config access.
  *
  * Defines the App-scoped `IProjectLocalConfigService` contract for
  * project-local `.kimi-code/local.toml` access. The service works purely by

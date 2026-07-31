@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ReadTool` implementation.
+ * `tools` domain — `ReadTool` implementation.
  *
  * Streams the file through `IHostFileSystem.readLines`, enforces the
  * line/byte budgets from the contract, normalizes line endings for display

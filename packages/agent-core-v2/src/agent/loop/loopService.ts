@@ -1,5 +1,5 @@
 /**
- * `loop` domain (L4) — `IAgentLoopService` implementation.
+ * `loop` domain — `IAgentLoopService` implementation.
  *
  * Owns a FIFO of Turn jobs, each with its own `StepRequestQueue`. Admission
  * reserves a stable Turn handle immediately; the head job alone books the

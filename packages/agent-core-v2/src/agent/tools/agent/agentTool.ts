@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `SubagentTool` implementation (the `Agent` tool).
+ * `tools` domain — `SubagentTool` implementation (the `Agent` tool).
  *
  * The LLM-facing wrapper over the `subagent` domain: translates the tool args
  * into a Profile + Model binding, creates (or resumes) an agent through

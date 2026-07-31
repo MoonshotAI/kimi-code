@@ -1,5 +1,5 @@
 /**
- * `mcpConfig` domain (L5) — registers MCP timeout preferences into `config`.
+ * `mcpConfig` domain — registers MCP timeout preferences into `config`.
  *
  * Owns the global MCP startup and tool-call timeout preferences, including
  * their environment bindings and persistence guard. Registered into `config`

@@ -1,5 +1,5 @@
 /**
- * `mcpCore` domain (L2) — `McpOAuthClientProvider`, the `OAuthClientProvider`
+ * `mcpCore` domain — `McpOAuthClientProvider`, the `OAuthClientProvider`
  * backed by the MCP OAuth credential store (`McpOAuthStore` over
  * `IAtomicDocumentStore`).
  *

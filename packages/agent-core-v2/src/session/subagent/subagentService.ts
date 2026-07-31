@@ -1,5 +1,5 @@
 /**
- * `subagent` domain (L6) — `ISessionSubagentService` implementation.
+ * `subagent` domain — `ISessionSubagentService` implementation.
  *
  * Owns the "drive a turn on another agent" operation (`run`) and the
  * requester-side announcement surface those runs share: the

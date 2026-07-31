@@ -6,7 +6,7 @@ Run the guards and re-scan the red lines before submitting.
 
 Run from the package (or with `--filter @moonshot-ai/agent-core-v2`):
 
-- `pnpm --filter @moonshot-ai/agent-core-v2 lint:domain` — domain-layer / dependency-direction guard (`scripts/check-domain-layers.mjs`). Catches a domain importing a layer it must not.
+- `pnpm --filter @moonshot-ai/agent-core-v2 lint:imports` — import-boundary guard (`scripts/check-import-boundaries.mjs`). Catches v1 imports (`@moonshot-ai/agent-core`) and kosong subtree violations.
 - `pnpm --filter @moonshot-ai/agent-core-v2 typecheck` — `tsc -p tsconfig.json --noEmit`.
 - `pnpm --filter @moonshot-ai/agent-core-v2 test` — `vitest run`.
 
@@ -27,6 +27,6 @@ Then re-read the [global red lines](SKILL.md#global-red-lines) once — they cat
 
 ## Red lines (this stage)
 
-- Do not skip `lint:domain` — it is the only automated check for the dependency-direction rules.
+- Do not skip `lint:imports` — it is the only automated check for the v1-import ban and the kosong subtree rules.
 - Do not list internal packages in a changeset when the change enters the CLI bundle — list `@moonshot-ai/kimi-code` and describe the real change.
 - Never write a `major` changeset without explicit user confirmation.

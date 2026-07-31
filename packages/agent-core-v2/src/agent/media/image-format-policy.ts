@@ -1,5 +1,5 @@
 /**
- * `media` domain (L4) — provider-accepted image formats, the single source
+ * `media` domain — provider-accepted image formats, the single source
  * of truth.
  *
  * Model providers accept only PNG, JPEG, GIF, and WebP image blocks. An

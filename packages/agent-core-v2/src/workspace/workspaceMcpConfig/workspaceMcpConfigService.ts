@@ -1,5 +1,5 @@
 /**
- * `workspaceMcpConfig` domain (L5) — `IWorkspaceMcpConfigService`
+ * `workspaceMcpConfig` domain — `IWorkspaceMcpConfigService`
  * implementation.
  *
  * Resolves the handler's effective MCP server set from exactly two sources —

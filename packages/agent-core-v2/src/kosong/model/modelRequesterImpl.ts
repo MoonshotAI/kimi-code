@@ -1,5 +1,5 @@
 /**
- * `kosong/model` domain (L2) — `ModelRequesterImpl`, the request executor.
+ * `kosong/model` domain — `ModelRequesterImpl`, the request executor.
  *
  * This is the ONLY production code that calls
  * `IProtocolAdapterRegistry.createChatProvider`: it lazily composes exactly

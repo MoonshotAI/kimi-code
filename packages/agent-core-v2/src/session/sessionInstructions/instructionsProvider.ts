@@ -1,5 +1,5 @@
 /**
- * `sessionInstructions` domain (L1) — seeded AGENTS.md provider contract.
+ * `sessionInstructions` domain — seeded AGENTS.md provider contract.
  *
  * Defines `ISessionInstructionsProvider`, the pure-data injection contract
  * carrying the workspace's current AGENTS.md snapshot (combined content plus

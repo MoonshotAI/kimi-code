@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — agent-root resolution primitives.
+ * `workspaceAgentProfileLoader` domain — agent-root resolution primitives.
  *
  * Resolves user, project, and configured discovery roots through the `hostFs`
  * filesystem boundary. Pure path probes; no scoped state.

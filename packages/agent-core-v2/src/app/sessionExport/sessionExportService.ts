@@ -1,5 +1,5 @@
 /**
- * `sessionExport` domain (L6) — `ISessionExportService` implementation.
+ * `sessionExport` domain — `ISessionExportService` implementation.
  *
  * Coordinates live session flushing through the live workspace handler
  * registry, derives session paths from the handler-chain addressing, reads

@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `GrepTool` implementation, content search via ripgrep.
+ * `tools` domain — `GrepTool` implementation, content search via ripgrep.
  *
  * Shells out to `rg` through the host process service. The ripgrep binary
  * resolution and subprocess plumbing are shared with the Glob tool.

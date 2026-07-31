@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — the provider configuration contract.
+ * `kosong/provider` domain — the provider configuration contract.
  *
  * A Provider is the "endpoint + model-enumeration mechanism" boundary: it
  * carries the concrete `baseUrl`, any custom HTTP headers, and — through

@@ -1,5 +1,5 @@
 /**
- * `mcp` domain (L5) — `IAgentMcpService` implementation.
+ * `mcp` domain — `IAgentMcpService` implementation.
  *
  * Mirrors the workspace-level shared MCP connection manager's server set
  * into the agent's tool registry (the manager arrives through the seeded

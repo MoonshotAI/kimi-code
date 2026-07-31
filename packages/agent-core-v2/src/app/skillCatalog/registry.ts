@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — concrete in-memory skill catalog.
+ * `skillCatalog` domain — concrete in-memory skill catalog.
  *
  * Owns registered skill lookup, plugin-scoped skill lookup, prompt rendering,
  * and model-facing skill listings for `skill`, plus the skipped-skill /

@@ -1,5 +1,5 @@
 /**
- * `profile` domain (L4) — `IAgentProfileService` implementation.
+ * `profile` domain — `IAgentProfileService` implementation.
  *
  * Owns the active agent's model alias, thinking level, system prompt, and
  * active-tool set; reads the bound model's pure data through the App-scope

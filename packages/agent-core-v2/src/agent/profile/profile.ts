@@ -1,5 +1,5 @@
 /**
- * `profile` domain (L4) — `IAgentProfileService` contract.
+ * `profile` domain — `IAgentProfileService` contract.
  *
  * Owns the active agent's identity: bound profile, model alias, thinking
  * level, system prompt, and active-tool set. `bind()` takes an optional

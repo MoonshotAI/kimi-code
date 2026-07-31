@@ -1,5 +1,5 @@
 /**
- * `toolExecutor` domain (L3) — Agent-scope tool execution contract.
+ * `toolExecutor` domain — Agent-scope tool execution contract.
  *
  * Defines the public execution surface for provider tool calls, the
  * before/will execution-interception events, the did execution hook,

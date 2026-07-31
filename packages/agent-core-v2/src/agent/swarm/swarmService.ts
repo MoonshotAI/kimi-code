@@ -1,5 +1,5 @@
 /**
- * `swarm` domain (L4) — `IAgentSwarmService` implementation.
+ * `swarm` domain — `IAgentSwarmService` implementation.
  *
  * Tracks swarm-mode enter/exit in the `wire` `SwarmModel` (mutated only through
  * the `swarm_mode.enter` / `swarm_mode.exit` Ops, read through `wire.getModel`),

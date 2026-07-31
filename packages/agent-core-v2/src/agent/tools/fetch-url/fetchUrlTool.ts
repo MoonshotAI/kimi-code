@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `FetchURLTool` implementation.
+ * `tools` domain — `FetchURLTool` implementation.
  *
  * Receives the App-scope `IWebFetchService` via DI and fetches through its
  * host-injected `UrlFetcher`. The default service falls back to the

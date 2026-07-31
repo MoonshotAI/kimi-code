@@ -1,5 +1,5 @@
 /**
- * `mcpCore` domain (L2) — one-shot localhost OAuth callback listener.
+ * `mcpCore` domain — one-shot localhost OAuth callback listener.
  *
  * `startCallbackServer()` binds 127.0.0.1 on a random free port and returns a
  * handle exposing the resulting `redirect_uri` and an awaitable

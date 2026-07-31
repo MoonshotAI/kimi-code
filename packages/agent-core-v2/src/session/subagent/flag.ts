@@ -1,5 +1,5 @@
 /**
- * `subagent` domain (L6) — registers the `secondary-model` experimental flag
+ * `subagent` domain — registers the `secondary-model` experimental flag
  * into `flag`.
  *
  * Gates secondary-model selection for newly spawned subagents, including the

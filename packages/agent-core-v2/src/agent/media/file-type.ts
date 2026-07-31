@@ -1,5 +1,5 @@
 /**
- * `media` domain (L4) — magic-byte + extension file-type detection.
+ * `media` domain — magic-byte + extension file-type detection.
  *
  * Classifies a file as text / image / video from its first bytes and
  * extension, and resolves a MIME type, with no npm dependency. Pure helper;

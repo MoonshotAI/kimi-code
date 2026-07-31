@@ -1,5 +1,5 @@
 /**
- * `kosongConfig` domain (L3) — `[secondary_model]` derived-entry overlay.
+ * `kosongConfig` domain — `[secondary_model]` derived-entry overlay.
  *
  * When the secondary-model recipe carries patch fields, synthesizes the
  * derived registry entry (`SECONDARY_DERIVED_MODEL_ID`) into the effective

@@ -1,5 +1,5 @@
 /**
- * `wire` domain (L2) — error codes, the `WireError` base class, and the domain
+ * `wire` domain — error codes, the `WireError` base class, and the domain
  * registration.
  *
  * Aggregates the wire domain's coded errors: `DuplicateOpError` and

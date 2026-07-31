@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IGetGoalTool` implementation.
+ * `tools` domain — `IGetGoalTool` implementation.
  *
  * Reads the current goal snapshot from the goal service (`goal`) and returns
  * it serialized for the model, so the model can decide whether to continue,

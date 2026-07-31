@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — `AgentFileDefinition` → `AgentProfile` factory.
+ * `workspaceAgentProfileLoader` domain — `AgentFileDefinition` → `AgentProfile` factory.
  *
  * The file body is a prompt template rendered against the shared variable
  * table: `${var}` placeholders substitute live context,

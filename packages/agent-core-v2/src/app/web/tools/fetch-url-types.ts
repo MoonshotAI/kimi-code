@@ -1,5 +1,5 @@
 /**
- * `web` domain (L4) — host-injected `UrlFetcher` contract.
+ * `web` domain — host-injected `UrlFetcher` contract.
  */
 
 /**

@@ -1,5 +1,5 @@
 /**
- * `kosongConfig` domain (L3) — `IKosongConfigService` implementation.
+ * `kosongConfig` domain — `IKosongConfigService` implementation.
  *
  * The two-way persistence bridge between `IConfigService` and kosong's
  * in-memory provider/model registries.

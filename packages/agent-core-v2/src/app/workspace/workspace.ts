@@ -1,5 +1,5 @@
 /**
- * `workspace` domain (L2) — process-wide catalog of known workspaces.
+ * `workspace` domain — process-wide catalog of known workspaces.
  *
  * Defines the `IWorkspaceService` used by the program side to remember the
  * folders the user has opened (backed by the app's own persistence). This is

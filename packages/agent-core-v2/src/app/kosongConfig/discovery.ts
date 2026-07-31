@@ -1,5 +1,5 @@
 /**
- * `kosongConfig` domain (L3) — `IProviderDiscoveryService`: remote model
+ * `kosongConfig` domain — `IProviderDiscoveryService`: remote model
  * discovery and config sync.
  *
  * Refreshes the `[models.*]` / `[providers.*]` configuration from what each

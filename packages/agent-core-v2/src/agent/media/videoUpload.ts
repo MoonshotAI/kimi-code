@@ -1,5 +1,5 @@
 /**
- * `media` domain (L4) — shared video-upload fallback helpers.
+ * `media` domain — shared video-upload fallback helpers.
  *
  * The provider video-upload attempt and its graceful fallbacks must agree on
  * which failures are auth failures (surfaced, never masked into a fallback)

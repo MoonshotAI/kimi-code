@@ -1,5 +1,5 @@
 /**
- * `edit` domain (L4) — `IFileEditService` contract.
+ * `edit` domain — `IFileEditService` contract.
  *
  * App-scope general edit capability: reads a file through the os `hostFs`
  * domain (`IHostFileSystem`), applies the exact-string edit rules, and writes

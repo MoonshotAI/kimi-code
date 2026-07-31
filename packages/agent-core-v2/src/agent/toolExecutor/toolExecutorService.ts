@@ -1,5 +1,5 @@
 /**
- * `toolExecutor` domain (L3) — `IAgentToolExecutorService` implementation.
+ * `toolExecutor` domain — `IAgentToolExecutorService` implementation.
  *
  * Resolves executable tools through `toolRegistry`, adjudicates tool calls
  * through the `onBeforeExecuteTool` veto event, awaits readiness work

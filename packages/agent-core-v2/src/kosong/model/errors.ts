@@ -1,5 +1,5 @@
 /**
- * `kosong/model` domain (L2) — catalog error codes.
+ * `kosong/model` domain — catalog error codes.
  *
  * The codes are intentionally identical to the deleted legacy
  * `app/modelCatalog` domain's (the wire contract branches on them). The

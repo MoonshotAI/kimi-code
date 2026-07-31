@@ -1,5 +1,5 @@
 /**
- * `workspaceLifecycle` domain (L6) — workspace handler lifecycle contract.
+ * `workspaceLifecycle` domain — workspace handler lifecycle contract.
  *
  * Defines the `IWorkspaceLifecycleService`, the App-scope owner of the live
  * workspace handler registry: one `IWorkspaceScopeHandle` per workspaceId,

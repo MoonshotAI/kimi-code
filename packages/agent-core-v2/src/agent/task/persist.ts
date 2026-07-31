@@ -1,5 +1,5 @@
 /**
- * `task` domain (L5) — `AgentTaskPersistence`, the per-agent task
+ * `task` domain — `AgentTaskPersistence`, the per-agent task
  * persistence helper.
  *
  * Persists task state (`<taskId>.json`) and raw task output (`output.log`)

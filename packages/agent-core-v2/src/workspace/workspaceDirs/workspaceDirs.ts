@@ -1,5 +1,5 @@
 /**
- * `workspaceDirs` domain (L3) — Workspace-scoped additional-directory set
+ * `workspaceDirs` domain — Workspace-scoped additional-directory set
  * contract.
  *
  * Defines `IWorkspaceDirs`, the handler-level owner of the workspace's

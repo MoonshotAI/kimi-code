@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ITaskOutputTool` contract (the `TaskOutput` tool).
+ * `tools` domain — `ITaskOutputTool` contract (the `TaskOutput` tool).
  *
  * Public contract of the `TaskOutput` tool (read output from a managed
  * task): the input zod schema the model-facing parameters are derived from

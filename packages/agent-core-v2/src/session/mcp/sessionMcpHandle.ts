@@ -1,5 +1,5 @@
 /**
- * `mcp` domain (L5) — seeded MCP shared-handle contract.
+ * `mcp` domain — seeded MCP shared-handle contract.
  *
  * Defines `ISessionMcpHandle`, the pure-data injection contract carrying the
  * workspace handler's one shared `McpConnectionManager` (all sessions of the

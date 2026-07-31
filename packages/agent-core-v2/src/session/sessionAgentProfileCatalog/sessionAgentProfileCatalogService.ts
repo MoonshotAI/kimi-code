@@ -1,5 +1,5 @@
 /**
- * `sessionAgentProfileCatalog` domain (L3) — `ISessionAgentProfileCatalog`
+ * `sessionAgentProfileCatalog` domain — `ISessionAgentProfileCatalog`
  * implementation.
  *
  * Projects the App-scope `IAgentProfileRegistry` into this session's merged

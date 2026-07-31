@@ -1,5 +1,5 @@
 /**
- * `workspaceAliases` domain (L2) — workspace id-spelling resolution contract.
+ * `workspaceAliases` domain — workspace id-spelling resolution contract.
  *
  * Defines the App-scoped `IWorkspaceAliases`: the read-side counterpart to the
  * workspace write-path folding. One physical folder may be addressable by

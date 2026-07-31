@@ -1,5 +1,5 @@
 /**
- * `toolRegistry` domain (L3) — module-level agent-tool contribution registry.
+ * `toolRegistry` domain — module-level agent-tool contribution registry.
  *
  * Tools contribute themselves at module load via
  * `registerAgentToolService(identifier, ctor, options?)` — a double registration:

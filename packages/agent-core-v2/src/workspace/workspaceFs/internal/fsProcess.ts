@@ -1,5 +1,5 @@
 /**
- * `workspaceFs` domain (L3) — `runCommand` helper over `ISessionProcessRunner`.
+ * `workspaceFs` domain — `runCommand` helper over `ISessionProcessRunner`.
  *
  * Collects a child process's full stdout/stderr and exit code through the
  * Agent's backend-pluggable `ISessionProcessRunner`, with optional `AbortSignal`

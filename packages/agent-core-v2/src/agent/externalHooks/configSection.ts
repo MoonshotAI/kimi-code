@@ -1,5 +1,5 @@
 /**
- * `externalHooks` domain (L5) — `hooks` config-section schema and TOML
+ * `externalHooks` domain — `hooks` config-section schema and TOML
  * transforms.
  *
  * Owns the `[[hooks]]` configuration section (external hook definitions),

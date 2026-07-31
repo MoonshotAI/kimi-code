@@ -1,5 +1,5 @@
 /**
- * `activityView` domain (L4) — `IAgentActivityView` implementation.
+ * `activityView` domain — `IAgentActivityView` implementation.
  *
  * A pure fold of the agent's own event bus: turn boundaries drive the turn
  * slice (active → detail updates → ended → `lastTurn`), step/delta/tool/retry

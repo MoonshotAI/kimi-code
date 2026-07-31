@@ -1,5 +1,5 @@
 /**
- * `subagent` domain (L6) — `ISessionSecondaryModelWarningService` contract:
+ * `subagent` domain — `ISessionSecondaryModelWarningService` contract:
  * early validation of the configured secondary model.
  *
  * The secondary-model pointer (`[secondary_model]` / `KIMI_SECONDARY_MODEL`)

@@ -1,5 +1,5 @@
 /**
- * `task` domain (L1) — managed concurrent execution primitive.
+ * `task` domain — managed concurrent execution primitive.
  *
  * Two creation modes:
  *

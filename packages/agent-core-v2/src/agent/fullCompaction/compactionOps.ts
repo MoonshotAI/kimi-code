@@ -1,5 +1,5 @@
 /**
- * `fullCompaction` domain (L4) — wire Model (`CompactionModel`) and the
+ * `fullCompaction` domain — wire Model (`CompactionModel`) and the
  * `full_compaction.begin` (`fullCompactionBegin`) / `full_compaction.cancel`
  * (`fullCompactionCancel`) / `full_compaction.complete`
  * (`fullCompactionComplete`) Ops that mirror the full-compaction lifecycle into

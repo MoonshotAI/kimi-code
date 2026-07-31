@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `AgentSwarmTool` implementation (the `AgentSwarm`
+ * `tools` domain — `AgentSwarmTool` implementation (the `AgentSwarm`
  * tool).
  *
  * Launches a batch of child agents (an ordinary Agent scope each) through the

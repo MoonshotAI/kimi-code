@@ -1,5 +1,5 @@
 /**
- * `sessionContext` domain (L6) — seeded per-session facts.
+ * `sessionContext` domain — seeded per-session facts.
  *
  * Defines the `ISessionContext` carrying the session's identity, storage
  * addressing (`sessionId`, `workspaceId`, `sessionDir`, `metaScope`), the

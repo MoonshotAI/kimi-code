@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — the ONLY composition point from resolved
+ * `kosong/provider` domain — the ONLY composition point from resolved
  * traits to the Anthropic hook set.
  *
  * The Anthropic base has two hooks. `withThinking` takes the LAST declarer

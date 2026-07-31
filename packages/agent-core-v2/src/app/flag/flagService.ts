@@ -1,5 +1,5 @@
 /**
- * `flag` domain (L3) — `IFlagService` implementation.
+ * `flag` domain — `IFlagService` implementation.
  *
  * Resolves experimental flags from the environment, the `[experimental]`
  * config section, and defaults; reads flag definitions from the registry, and

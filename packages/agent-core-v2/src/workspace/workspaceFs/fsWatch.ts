@@ -1,5 +1,5 @@
 /**
- * `workspaceFs` domain (L3) — workspace-confined filesystem change feed.
+ * `workspaceFs` domain — workspace-confined filesystem change feed.
  *
  * Defines the `IWorkspaceFsWatchService` that turns the os
  * `IHostFsWatchService` raw events into a workspace-relative, debounced,

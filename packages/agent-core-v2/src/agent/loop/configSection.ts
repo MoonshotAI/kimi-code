@@ -1,5 +1,5 @@
 /**
- * `loop` domain (L4) — `loopControl` config-section schema, env bindings, and
+ * `loop` domain — `loopControl` config-section schema, env bindings, and
  * TOML transforms.
  *
  * Owns the `[loop_control]` configuration section (step / retry / context-size

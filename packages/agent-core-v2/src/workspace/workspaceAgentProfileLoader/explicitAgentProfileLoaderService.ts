@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — `IExplicitAgentProfileLoader` implementation.
+ * `workspaceAgentProfileLoader` domain — `IExplicitAgentProfileLoader` implementation.
  *
  * Loads the runtime-selected agent files through `hostFs`, resolving paths
  * against the workspace root (`workspaceContext`) and `bootstrap`.

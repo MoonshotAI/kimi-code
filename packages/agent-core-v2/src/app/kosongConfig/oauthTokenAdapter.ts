@@ -1,5 +1,5 @@
 /**
- * `kosongConfig` domain (L3) — `IModelOAuthTokens` implementation.
+ * `kosongConfig` domain — `IModelOAuthTokens` implementation.
  *
  * Delegates kosong's OAuth token port to `IOAuthService` and owns the
  * `auth.login_required` error contract: kosong's model catalog only sees

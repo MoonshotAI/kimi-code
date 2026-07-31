@@ -1,5 +1,5 @@
 /**
- * `externalHooks` domain (L6) — Session-scope adapter for external hook
+ * `externalHooks` domain — Session-scope adapter for external hook
  * commands.
  *
  * Registers with the per-session `sessionLifecycleHooks` slots (seeded by

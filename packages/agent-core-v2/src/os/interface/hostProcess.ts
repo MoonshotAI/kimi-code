@@ -1,5 +1,5 @@
 /**
- * `hostProcess` domain (L1) — the OS process-spawning contract.
+ * `hostProcess` domain — the OS process-spawning contract.
  *
  * Defines `IHostProcessService`, the App-scope primitive used by any domain that
  * needs to spawn a child process on the host, plus the `IHostProcess` handle it

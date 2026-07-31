@@ -1,5 +1,5 @@
 /**
- * `workspaceFs` domain (L3) — `IWorkspaceFsWatchService` implementation.
+ * `workspaceFs` domain — `IWorkspaceFsWatchService` implementation.
  *
  * Keeps ONE os `IHostFsWatchService` subscription on the handler root and
  * fans its raw events out to every `IWorkspaceFsWatchSubscription`: the

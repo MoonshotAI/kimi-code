@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — side-effect module: registers the Google
+ * `kosong/provider` domain — side-effect module: registers the Google
  * GenAI base (`id: 'google-genai'`).
  *
  * The Gemini base carries no hook surface, so the factory only aggregates the

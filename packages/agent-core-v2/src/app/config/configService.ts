@@ -1,5 +1,5 @@
 /**
- * `config` domain (L2) — `IConfigRegistry` and `IConfigService` implementations.
+ * `config` domain — `IConfigRegistry` and `IConfigService` implementations.
  *
  * Owns the section registry and the layered global config state: resolves a
  * value by precedence across defaults, the user config file, and per-run memory

@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — Anthropic Messages wire base.
+ * `kosong/provider` domain — Anthropic Messages wire base.
  *
  * Speaks the Anthropic Messages wire format: system blocks with ephemeral
  * cache control, tool-result user blocks, consecutive-user merging, beta

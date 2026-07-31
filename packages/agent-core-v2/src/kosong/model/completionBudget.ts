@@ -1,5 +1,5 @@
 /**
- * `kosong/model` domain (L2) — the completion-token budget, as pure functions.
+ * `kosong/model` domain — the completion-token budget, as pure functions.
  *
  * The budget no longer morphs a Model (there is no `applyCompletionBudget`):
  * the caller resolves a `CompletionBudgetConfig`, folds it into a per-turn cap

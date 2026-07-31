@@ -1,5 +1,5 @@
 /**
- * `kosong/model` domain (L2) — the `ModelRequester` contract: per-turn input,
+ * `kosong/model` domain — the `ModelRequester` contract: per-turn input,
  * streamed events, and the per-turn intent carrier `ModelRequestParams`.
  *
  * `ModelRequestParams` is how every per-turn intent reaches the wire: prompt-cache

@@ -1,5 +1,5 @@
 /**
- * `sessionSkillCatalog` domain (L3) — seeded skill-catalog data contract.
+ * `sessionSkillCatalog` domain — seeded skill-catalog data contract.
  *
  * Defines `ISessionSkillCatalogData`, the pure-data injection contract
  * carrying the workspace's merged skill catalog as a live read view plus the

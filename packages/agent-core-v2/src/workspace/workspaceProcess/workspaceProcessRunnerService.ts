@@ -1,5 +1,5 @@
 /**
- * `workspaceProcess` domain (L2) — `ISessionProcessRunner` implementation.
+ * `workspaceProcess` domain — `ISessionProcessRunner` implementation.
  *
  * Resolves the default cwd from the handler's `IWorkspaceContext` (chdir is
  * gone, so the workspace root is the one fixed default) and delegates the

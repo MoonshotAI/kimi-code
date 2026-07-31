@@ -1,5 +1,5 @@
 /**
- * `workspace` domain (L2) — `IWorkspaceService` implementation.
+ * `workspace` domain — `IWorkspaceService` implementation.
  *
  * Process-wide catalog of known workspaces, durable in
  * `<homeDir>/workspaces.json` (the v1-compatible file). The service keeps NO

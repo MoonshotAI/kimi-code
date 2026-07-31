@@ -1,5 +1,5 @@
 /**
- * `permissionRules` domain (L3) — wire Model (`PermissionRulesModel`) and the
+ * `permissionRules` domain — wire Model (`PermissionRulesModel`) and the
  * `permission.rules.add` (`addPermissionRules`) / `permission.record_approval_result`
  * (`recordApprovalResult`) Ops for the agent's permission rules and session-scoped
  * approval patterns.

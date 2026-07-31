@@ -1,5 +1,5 @@
 /**
- * `terminal` domain (L6) — interactive terminal (PTY) contract.
+ * `terminal` domain — interactive terminal (PTY) contract.
  *
  * Defines the App-scoped `IHostTerminalService` that owns the actual OS terminal
  * processes and the low-level process/stream primitives (`TerminalProcess`,

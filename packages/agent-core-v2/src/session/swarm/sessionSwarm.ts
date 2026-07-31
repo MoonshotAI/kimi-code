@@ -1,5 +1,5 @@
 /**
- * `sessionSwarm` domain (L4) — batch scheduler for swarm agent runs.
+ * `sessionSwarm` domain — batch scheduler for swarm agent runs.
  *
  * Defines `ISessionSwarmService`, the Session-scoped service that runs a batch
  * of agents on behalf of a caller agent. Owns the in-flight batch state so

@@ -1,5 +1,5 @@
 /**
- * `workspaceDirs` domain (L3) — `IWorkspaceDirs` implementation.
+ * `workspaceDirs` domain — `IWorkspaceDirs` implementation.
  *
  * Holds the handler-shared additional-directory set as
  * `fileDirs ∪ ephemeralDirs`: `fileDirs` is the project-local

@@ -1,5 +1,5 @@
 /**
- * `workspaceLifecycle` domain (L6) — pure session-lookup helpers over the handler chain.
+ * `workspaceLifecycle` domain — pure session-lookup helpers over the handler chain.
  *
  * The explicit `sessionIndex` → `IWorkspaceLifecycleService.handlerFor` →
  * handler `ISessionLifecycleService` composition, shared by every caller

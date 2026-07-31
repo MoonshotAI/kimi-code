@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — skill-root resolution primitives.
+ * `skillCatalog` domain — skill-root resolution primitives.
  *
  * Resolves the ordered `SkillRoot` list a discovery backend should scan for the
  * user (home) and project (workspace) skill locations. Brand directories are

@@ -1,5 +1,5 @@
 /**
- * `kosong/contract` domain (L0) — the provider error taxonomy.
+ * `kosong/contract` domain — the provider error taxonomy.
  *
  * The single authority on error classification for the LLM wire layer:
  * the `API*Error` class family, the retry verdict (`isRetryableGenerateError`),

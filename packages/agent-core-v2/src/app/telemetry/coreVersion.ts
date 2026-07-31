@@ -1,5 +1,5 @@
 /**
- * `telemetry` domain (L1) — agent-core-v2 package version resolution.
+ * `telemetry` domain — agent-core-v2 package version resolution.
  *
  * Resolves the engine's own package version at runtime by walking up from
  * this module's location to the nearest `package.json` named

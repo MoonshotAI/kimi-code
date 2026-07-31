@@ -1,5 +1,5 @@
 /**
- * `plugin` domain (L3) — `IPluginService` implementation.
+ * `plugin` domain — `IPluginService` implementation.
  *
  * Manages the App-wide plugin catalog through a filesystem-backed manager,
  * roots plugin storage at the bootstrap paths, counts plugin skills through

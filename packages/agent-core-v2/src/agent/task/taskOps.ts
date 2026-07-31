@@ -1,5 +1,5 @@
 /**
- * `task` domain (L5) — wire Model (`TaskModel`) and the persisted
+ * `task` domain — wire Model (`TaskModel`) and the persisted
  * `task.started` (`taskStarted`) / `task.terminated` (`taskTerminated`) Ops
  * that record the durable task-info registry, plus the `task.started` /
  * `task.terminated` edge events declared on `DomainEventMap` and derived from

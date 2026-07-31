@@ -1,5 +1,5 @@
 /**
- * `agentLifecycle` domain (L6) — builtin agent profile contributions.
+ * `agentLifecycle` domain — builtin agent profile contributions.
  *
  * Registers the default `agent` profile plus the `coder` / `explore` task-agent
  * profiles. Each profile is self-contained: its `systemPrompt` renderer merges

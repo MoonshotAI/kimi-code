@@ -1,5 +1,5 @@
 /**
- * `contextMemory` domain (L4) — `IAgentContextMemoryService` implementation.
+ * `contextMemory` domain — `IAgentContextMemoryService` implementation.
  *
  * Owns per-agent conversation history through `wire`, maintains measurements
  * with `contextSize`, and broadcasts live mutations through `event`. Every

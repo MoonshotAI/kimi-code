@@ -1,5 +1,5 @@
 /**
- * `plan` domain (L3) — `defaultPlanMode` config section.
+ * `plan` domain — `defaultPlanMode` config section.
  *
  * Top-level boolean preference (`default_plan_mode` on disk, v1-compatible):
  * when `true`, every freshly created session starts in plan mode. Resumed /

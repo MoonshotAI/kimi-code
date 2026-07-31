@@ -1,5 +1,5 @@
 /**
- * `kosongConfig` domain (L3) — the third-party models.dev directory: its
+ * `kosongConfig` domain — the third-party models.dev directory: its
  * api.json schema mirrored as types, plus the normalization that turns a
  * directory entry into an import decision.
  *

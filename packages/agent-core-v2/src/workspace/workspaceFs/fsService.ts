@@ -1,5 +1,5 @@
 /**
- * `workspaceFs` domain (L3) — `IWorkspaceFsService` implementation.
+ * `workspaceFs` domain — `IWorkspaceFsService` implementation.
  *
  * Implements the fs operations (search / grep / git status / git diff) by
  * orchestrating the os `IHostFileSystem` (file IO, resolved against the

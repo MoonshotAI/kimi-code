@@ -1,5 +1,5 @@
 /**
- * `workspaceAliases` domain (L2) — `IWorkspaceAliases` implementation.
+ * `workspaceAliases` domain — `IWorkspaceAliases` implementation.
  *
  * Resolves every id spelling of one physical directory by folding the
  * registered catalog (by `workspaceRootKey`) together with `workDir`

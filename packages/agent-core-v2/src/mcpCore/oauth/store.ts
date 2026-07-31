@@ -1,5 +1,5 @@
 /**
- * `mcpCore` domain (L2) — MCP OAuth credential store port and key addressing.
+ * `mcpCore` domain — MCP OAuth credential store port and key addressing.
  *
  * Defines the {@link McpOAuthStore} port for reading and writing OAuth
  * credentials, plus the store-key scheme: one logical record per

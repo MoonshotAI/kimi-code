@@ -1,5 +1,5 @@
 /**
- * `kosong/protocol` domain (L1) — wire protocol identity and the adapter
+ * `kosong/protocol` domain — wire protocol identity and the adapter
  * registry contract.
  *
  * A Protocol names a real wire encoding. There are exactly four: every

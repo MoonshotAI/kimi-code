@@ -1,5 +1,5 @@
 /**
- * `workspaceMcp` domain (L5) — Workspace-scoped MCP subsystem contract.
+ * `workspaceMcp` domain — Workspace-scoped MCP subsystem contract.
  *
  * Defines `IWorkspaceMcpService`, the handler-level owner of the workspace's
  * ONE shared `McpConnectionManager`: connected at handler materialization

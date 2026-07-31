@@ -1,5 +1,5 @@
 /**
- * `_base/execEnv` (L0) — `BufferedReadable` stream helper.
+ * `_base/execEnv` — `BufferedReadable` stream helper.
  *
  * A `Readable` wrapper that preserves source backpressure while still allowing
  * consumers to read buffered output after the source has ended. Used by process

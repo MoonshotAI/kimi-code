@@ -1,5 +1,5 @@
 /**
- * `loop` domain (L4) — persists and restores monotonically increasing turn
+ * `loop` domain — persists and restores monotonically increasing turn
  * identity.
  *
  * Owns the next available turn id, including cancelled queued reservations and

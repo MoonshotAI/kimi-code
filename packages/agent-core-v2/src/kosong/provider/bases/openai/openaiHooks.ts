@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — the ONLY composition point from resolved
+ * `kosong/provider` domain — the ONLY composition point from resolved
  * traits to the OpenAI Chat Completions hook set, plus the construction-time
  * declaration aggregators.
  *

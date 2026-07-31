@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ICronCreateTool` implementation.
+ * `tools` domain — `ICronCreateTool` implementation.
  *
  * CronCreateTool — schedule a prompt to be re-injected into this session
  * at a future wall-clock time, either once (`recurring: false`) or on a

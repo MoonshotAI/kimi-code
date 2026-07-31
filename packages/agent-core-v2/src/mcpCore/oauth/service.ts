@@ -1,5 +1,5 @@
 /**
- * `mcpCore` domain (L2) — `McpOAuthService`, the per-process OAuth orchestrator
+ * `mcpCore` domain — `McpOAuthService`, the per-process OAuth orchestrator
  * for MCP HTTP servers.
  *
  * Owns one {@link McpOAuthClientProvider} per server/resource and mediates the

@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IBashTool` contract.
+ * `tools` domain — `IBashTool` contract.
  *
  * Public contract of Bash, the model's shell command runner: the command runs
  * as `cd <cwd> && <command>` inside the session's working directory, with a

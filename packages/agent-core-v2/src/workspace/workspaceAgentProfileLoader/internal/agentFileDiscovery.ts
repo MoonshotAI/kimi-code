@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — filesystem agent-file discovery.
+ * `workspaceAgentProfileLoader` domain — filesystem agent-file discovery.
  *
  * Discovers and parses agent files through the `hostFs` filesystem boundary.
  * Invalid files are isolated from the rest of the discovery pass. Failure

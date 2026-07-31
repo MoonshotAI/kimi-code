@@ -1,5 +1,5 @@
 /**
- * `kosongConfig` domain (L3) — `IModelsDevImportService`: import providers
+ * `kosongConfig` domain — `IModelsDevImportService`: import providers
  * from the third-party models.dev directory and models.dev-shaped private
  * registries.
  *

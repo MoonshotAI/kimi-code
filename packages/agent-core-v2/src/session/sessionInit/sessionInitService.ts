@@ -1,5 +1,5 @@
 /**
- * `sessionInit` domain (L6) — `ISessionInitService` implementation.
+ * `sessionInit` domain — `ISessionInitService` implementation.
  *
  * Runs `/init` against the session's main agent: resolves `main` through
  * `agentLifecycle`, spawns a `coder` subagent bound to the main agent's own

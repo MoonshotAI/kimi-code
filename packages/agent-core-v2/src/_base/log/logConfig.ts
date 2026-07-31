@@ -1,5 +1,5 @@
 /**
- * `log` domain (L1) — runtime logging configuration.
+ * `log` domain — runtime logging configuration.
  *
  * Builds the `LoggingConfig` from `KIMI_LOG_*` environment variables plus
  * defaults, resolves the global and per-session log paths, and exposes the

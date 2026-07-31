@@ -1,5 +1,5 @@
 /**
- * `wire` domain (L2) — Model definition primitive (`ModelDef` / `defineModel`),
+ * `wire` domain — Model definition primitive (`ModelDef` / `defineModel`),
  * `DeepReadonly<T>` (the compile-time half of immutability), and the
  * `ModelBlobCodec` / `PartsTransformer` types that let a model declare how to
  * dehydrate large inline media before persistence and rehydrate blob references

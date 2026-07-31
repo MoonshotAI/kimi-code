@@ -1,5 +1,5 @@
 /**
- * `media` domain (L4) — media-tools registrar contract.
+ * `media` domain — media-tools registrar contract.
  *
  * Identifier-only module, so consumers that need the service identifier do
  * not pull the implementation's scoped registration into their module graph.

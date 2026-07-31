@@ -1,5 +1,5 @@
 /**
- * `toolApproval` domain (L3) — `IAgentToolApprovalService` contract.
+ * `toolApproval` domain — `IAgentToolApprovalService` contract.
  *
  * Shared approval round-trip for tool executions: builds the approval request,
  * drives the session approval broker, emits the `permission.approval.*`

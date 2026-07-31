@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — side-effect module: registers the OpenAI
+ * `kosong/provider` domain — side-effect module: registers the OpenAI
  * Responses base (`id: 'openai_responses'`).
  *
  * The factory aggregates the endpoint, applies `provides` under explicit

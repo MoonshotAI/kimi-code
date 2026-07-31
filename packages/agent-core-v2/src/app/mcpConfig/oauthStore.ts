@@ -1,5 +1,5 @@
 /**
- * `mcpConfig` domain (L5) — `IMcpOAuthStore`, the App-scope persistence
+ * `mcpConfig` domain — `IMcpOAuthStore`, the App-scope persistence
  * adapter for MCP OAuth credentials.
  *
  * Implements the `mcp` domain's `McpOAuthStore` port over the `persistence`

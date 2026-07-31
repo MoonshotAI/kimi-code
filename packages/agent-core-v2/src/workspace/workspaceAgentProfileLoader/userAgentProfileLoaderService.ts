@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — `IUserAgentProfileLoader` implementation.
+ * `workspaceAgentProfileLoader` domain — `IUserAgentProfileLoader` implementation.
  *
  * Discovers user agent profiles through `bootstrap` home paths and `hostFs`,
  * reports skipped files through `log`, and appends the `<home>/SYSTEM.md`

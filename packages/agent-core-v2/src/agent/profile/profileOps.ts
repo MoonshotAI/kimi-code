@@ -1,5 +1,5 @@
 /**
- * `profile` domain (L3) — wire Model (`ProfileModel`) and the `config.update`
+ * `profile` domain — wire Model (`ProfileModel`) and the `config.update`
  * Op (`configUpdate`) for the agent's persistent configuration slice.
  *
  * Declares the persistent profile config — `modelAlias`, `profileName`,

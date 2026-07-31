@@ -1,5 +1,5 @@
 /**
- * `state` domain (L0) — scope-agnostic keyed state container primitives.
+ * `state` domain — scope-agnostic keyed state container primitives.
  *
  * Owns the typed `StateKey<T>` / `defineState(name, initial)` descriptor, the
  * `IStateRegistry` base interface shared by the per-scope state services, and

@@ -1,5 +1,5 @@
 /**
- * `kosong/model` domain (L2) — host-provided default headers for outbound
+ * `kosong/model` domain — host-provided default headers for outbound
  * provider requests.
  *
  * The host (CLI / server) builds the full Kimi identity headers (`User-Agent`

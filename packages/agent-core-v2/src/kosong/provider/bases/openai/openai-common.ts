@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — shared OpenAI-family wire mechanics.
+ * `kosong/provider` domain — shared OpenAI-family wire mechanics.
  *
  * The shared pieces: content-part and tool conversion, usage extraction,
  * finish-reason normalization, the capability constants, and the error

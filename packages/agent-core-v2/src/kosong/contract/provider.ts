@@ -1,5 +1,5 @@
 /**
- * `kosong/contract` domain (L0) — the ChatProvider wire contract.
+ * `kosong/contract` domain — the ChatProvider wire contract.
  *
  * ⚠ Named `provider` but this is the L0 contract, not an implementation:
  * the slimmed `ChatProvider` interface plus everything a single generation

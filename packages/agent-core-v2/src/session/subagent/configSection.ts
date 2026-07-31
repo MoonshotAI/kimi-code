@@ -1,5 +1,5 @@
 /**
- * `subagent` domain (L6) — subagent config-section schema, env binding, and
+ * `subagent` domain — subagent config-section schema, env binding, and
  * timeout / model resolution.
  *
  * Owns the `[subagent]` configuration section (`timeout_ms` on disk) together

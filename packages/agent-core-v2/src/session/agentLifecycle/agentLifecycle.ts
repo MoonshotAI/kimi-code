@@ -1,5 +1,5 @@
 /**
- * `agentLifecycle` domain (L6) — flat registry of the session's agents.
+ * `agentLifecycle` domain — flat registry of the session's agents.
  *
  * Owns agent *existence* — the creation pipeline (`create` / `fork`), the
  * registry (`get` / `list` / `remove`), and the lifecycle events — plus the

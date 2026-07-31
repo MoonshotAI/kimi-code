@@ -1,5 +1,5 @@
 /**
- * `kosong/model` domain (L2) — the OAuth token port.
+ * `kosong/model` domain — the OAuth token port.
  *
  * Kosong needs OAuth tokens at model-assembly time: probing the cached
  * credential state (catalog listings) and building the refreshable request

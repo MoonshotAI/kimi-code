@@ -1,5 +1,5 @@
 /**
- * `_base/execEnv` (L0) — OS / shell probe.
+ * `_base/execEnv` — OS / shell probe.
  *
  * Detects the host operating system, architecture, kernel release, and a
  * usable POSIX shell path. The result is a pure function of injected probes

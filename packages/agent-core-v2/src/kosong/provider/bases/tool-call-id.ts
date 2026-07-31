@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — tool-call id rewrite machinery.
+ * `kosong/provider` domain — tool-call id rewrite machinery.
  *
  * The shared `ToolCallIdPolicy` implementation: id sanitization plus
  * history-wide id normalization that rewrites every `toolCalls[].id` /

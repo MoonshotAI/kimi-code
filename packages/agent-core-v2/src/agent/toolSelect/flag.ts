@@ -1,5 +1,5 @@
 /**
- * `toolSelect` domain (L4) — registers the `tool-select` experimental flag into
+ * `toolSelect` domain — registers the `tool-select` experimental flag into
  * `flag`.
  *
  * Gates progressive tool disclosure: MCP tool schemas stay out of the

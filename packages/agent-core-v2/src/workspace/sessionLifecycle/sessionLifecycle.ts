@@ -1,5 +1,5 @@
 /**
- * `sessionLifecycle` domain (L6) — per-handler session lifecycle contract.
+ * `sessionLifecycle` domain — per-handler session lifecycle contract.
  *
  * Defines the public contract of one workspace handler: the
  * `CreateSessionOptions`, `ForkSessionOptions`, `CreateChildSessionOptions`,

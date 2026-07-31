@@ -1,5 +1,5 @@
 /**
- * `media` domain (L4) — the `kimi-file://` internal video reference.
+ * `media` domain — the `kimi-file://` internal video reference.
  *
  * A prompt video uploaded to `/files` enters context memory as a `video_url`
  * part carrying `kimi-file://<fileId>?path=<encoded absolute path>`: `fileId`

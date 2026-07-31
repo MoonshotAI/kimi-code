@@ -1,5 +1,5 @@
 /**
- * `telemetry` domain (L1) — `IAgentTelemetryContextService` contract.
+ * `telemetry` domain — `IAgentTelemetryContextService` contract.
  *
  * Agent-scoped mutable request context holding `mode`, `provider_type` /
  * `protocol`, `turn_id`, and `trace_id`, snapshotted by turn telemetry at

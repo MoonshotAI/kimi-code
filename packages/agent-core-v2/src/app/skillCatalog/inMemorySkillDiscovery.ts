@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — in-memory `ISkillDiscovery` backend.
+ * `skillCatalog` domain — in-memory `ISkillDiscovery` backend.
  *
  * Returns preset skill lists for discovery without any IO, so tests and scopes
  * work without a filesystem. A call seeded with project roots returns the

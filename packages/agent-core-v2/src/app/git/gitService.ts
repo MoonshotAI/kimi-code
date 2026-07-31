@@ -1,5 +1,5 @@
 /**
- * `git` domain (L1) — `IGitService` implementation.
+ * `git` domain — `IGitService` implementation.
  *
  * Runs `git status` / `git diff` (and `gh pr view`) against a repository on
  * the local disk, and discovers the enclosing git work tree of a directory

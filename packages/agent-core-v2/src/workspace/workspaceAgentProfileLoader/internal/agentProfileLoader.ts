@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — `AgentProfileLoaderBase`, the shared
+ * `workspaceAgentProfileLoader` domain — `AgentProfileLoaderBase`, the shared
  * loader skeleton of the agent-profile extension point.
  *
  * A loader owns one source id: it loads an `AgentProfileContribution` and

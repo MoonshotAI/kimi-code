@@ -1,5 +1,5 @@
 /**
- * `state` domain (L1) — `ISessionStateService` implementation.
+ * `state` domain — `ISessionStateService` implementation.
  *
  * Thin per-scope binding over the `_base` `StateRegistry`; the container owns
  * construction and disposal, so registered state dies with the scope. Injects

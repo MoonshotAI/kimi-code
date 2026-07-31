@@ -1,5 +1,5 @@
 /**
- * `config` domain (L2) — TOML read/write transforms.
+ * `config` domain — TOML read/write transforms.
  *
  * Generic snake_case ↔ camelCase machinery plus the registry-aware entry points
  * (`transformTomlData` / `applySectionToToml`) that dispatch to a section's

@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — shared path primitives for agent-file
+ * `workspaceAgentProfileLoader` domain — shared path primitives for agent-file
  * discovery.
  *
  * `~` expansion, base-relative resolution, and `hostFs` type probes. Callers

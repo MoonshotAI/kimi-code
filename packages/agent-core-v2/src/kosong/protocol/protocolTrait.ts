@@ -1,5 +1,5 @@
 /**
- * `kosong/protocol` domain (L1) — the declarative trait surface.
+ * `kosong/protocol` domain — the declarative trait surface.
  *
  * A `ProtocolTrait` is a stateless declaration of how one vendor deviates
  * from a wire base: seventeen fully optional hooks plus rare metadata markers

@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — builtin skill registration.
+ * `skillCatalog` domain — builtin skill registration.
  *
  * Code-defined builtin skills are constants (not discovered from storage), so
  * they bypass `ISkillDiscovery`: `BUILTIN_SKILLS` feeds the builtin

@@ -1,5 +1,5 @@
 /**
- * `loop` domain (L4) — `StepRequest` contracts for the loop's step queue.
+ * `loop` domain — `StepRequest` contracts for the loop's step queue.
  *
  * A `StepRequest` is one queued unit of step work. Senders create plain
  * request objects and hand them to `IAgentLoopService.enqueue`; requests

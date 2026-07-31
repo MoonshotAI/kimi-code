@@ -1,5 +1,5 @@
 /**
- * `kosong/model` domain (L2) — `IModelService` implementation.
+ * `kosong/model` domain — `IModelService` implementation.
  *
  * The in-memory model registry plus the default-model pointer. Holds no
  * config dependency: the persistence bridge hydrates it via `loadAll` and

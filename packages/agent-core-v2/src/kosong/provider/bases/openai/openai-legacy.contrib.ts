@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — side-effect module: registers the OpenAI
+ * `kosong/provider` domain — side-effect module: registers the OpenAI
  * Chat Completions base (`id: 'openai'`).
  *
  * The factory is the base side's only contact with the registry world: it

@@ -1,5 +1,5 @@
 /**
- * `media` domain (L4) — bridge from the `image` config section into the
+ * `media` domain — bridge from the `image` config section into the
  * compression support module's resolver seam.
  *
  * The compression module is deliberately config-agnostic so foundational

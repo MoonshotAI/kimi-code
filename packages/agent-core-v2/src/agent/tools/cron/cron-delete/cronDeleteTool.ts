@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ICronDeleteTool` implementation.
+ * `tools` domain — `ICronDeleteTool` implementation.
  *
  * CronDeleteTool — cancel a scheduled cron job by id.
  *

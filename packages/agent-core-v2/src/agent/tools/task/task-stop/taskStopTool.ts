@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `TaskStopTool` implementation (the `TaskStop` tool).
+ * `tools` domain — `TaskStopTool` implementation (the `TaskStop` tool).
  *
  * Stops a running background task through `IAgentTaskService`
  * (`agentTask` domain): terminal tasks report their recorded stop reason

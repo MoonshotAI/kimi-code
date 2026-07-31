@@ -1,5 +1,5 @@
 /**
- * `kosongConfig` domain (L3) — config-section declarations for kosong.
+ * `kosongConfig` domain — config-section declarations for kosong.
  *
  * The persistence wrapper for kosong's provider/model registries and the
  * thinking / model-catalog / secondary-model preferences: declares every

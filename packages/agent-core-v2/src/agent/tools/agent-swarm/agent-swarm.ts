@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IAgentSwarmTool` contract (the `AgentSwarm` tool).
+ * `tools` domain — `IAgentSwarmTool` contract (the `AgentSwarm` tool).
  *
  * Public contract of the `AgentSwarm` collaboration tool: the input zod
  * schema the model-facing parameters are derived from, the tool-owned

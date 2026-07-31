@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — builtin `ISkillSource` producer.
+ * `skillCatalog` domain — builtin `ISkillSource` producer.
  *
  * Yields the code-defined `BUILTIN_SKILLS` as the lowest-priority contribution
  * (`builtin`, priority 0) so extra / user / workspace / plugin skills override it on

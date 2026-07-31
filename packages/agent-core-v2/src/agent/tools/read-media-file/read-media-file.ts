@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ReadMediaFileTool` contract.
+ * `tools` domain — `ReadMediaFileTool` contract.
  *
  * Public contract of the `ReadMediaFile` tool: the input zod schema the
  * model-facing parameters are derived from, the tool-owned size constants,

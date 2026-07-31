@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — `IWorkspaceAgentProfileLoader` implementation.
+ * `workspaceAgentProfileLoader` domain — `IWorkspaceAgentProfileLoader` implementation.
  *
  * Discovers the workspace's agent files (`.kimi-code/agents`, `.agents/agents`
  * under the project root, resolved through `workspaceContext` and `hostFs`)

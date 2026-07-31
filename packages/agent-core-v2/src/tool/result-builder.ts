@@ -1,5 +1,5 @@
 /**
- * `tool` domain (L3) — buffered tool-result builder.
+ * `tool` domain — buffered tool-result builder.
  *
  * Shared helper for tools that stream text into a bounded output buffer with
  * optional per-line and total-char truncation. Pure helper; no scoped

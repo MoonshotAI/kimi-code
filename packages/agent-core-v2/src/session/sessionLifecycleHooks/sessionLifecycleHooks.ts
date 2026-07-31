@@ -1,5 +1,5 @@
 /**
- * `sessionLifecycleHooks` domain (L1) — per-session lifecycle hook slots.
+ * `sessionLifecycleHooks` domain — per-session lifecycle hook slots.
  *
  * Defines the `ISessionLifecycleHooks` seed: one ordered hook-slots instance
  * per session, with slots around the session's create (`onDidCreateSession`)

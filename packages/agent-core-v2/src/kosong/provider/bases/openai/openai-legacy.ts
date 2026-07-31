@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — OpenAI Chat Completions wire base.
+ * `kosong/provider` domain — OpenAI Chat Completions wire base.
  *
  * The base that actually speaks the Chat Completions wire format — and the
  * vendor host with the widest hook surface. It knows NOTHING about vendors:

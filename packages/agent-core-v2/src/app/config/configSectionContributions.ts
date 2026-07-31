@@ -1,5 +1,5 @@
 /**
- * `config` domain (L2) — module-level config-section contribution collector.
+ * `config` domain — module-level config-section contribution collector.
  *
  * Lets each owning domain self-register its config section at module load time
  * ("import = register"). An owner domain calls `registerConfigSection(...)`

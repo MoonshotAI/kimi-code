@@ -1,5 +1,5 @@
 /**
- * `event` domain (L1) — augmentable `DomainEventMap`, the `DomainEvent`
+ * `event` domain — augmentable `DomainEventMap`, the `DomainEvent`
  * discriminated union, and the `IEventBus` contract (the per-agent "what
  * happened" channel) plus its DI token.
  *

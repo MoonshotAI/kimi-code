@@ -1,5 +1,5 @@
 /**
- * `kosong/model` domain (L2) — the single authority on thinking semantics.
+ * `kosong/model` domain — the single authority on thinking semantics.
  *
  * Three kinds of knowledge live here, and nowhere else:
  *

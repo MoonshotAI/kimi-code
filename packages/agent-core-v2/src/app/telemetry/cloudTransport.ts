@@ -1,5 +1,5 @@
 /**
- * `telemetry` domain (L1) — `CloudTransport`, the HTTP transport for cloud
+ * `telemetry` domain — `CloudTransport`, the HTTP transport for cloud
  * telemetry. Posts enriched events to the telemetry endpoint with Bearer
  * auth, retry, and a byte-store fallback for failed events, persisted through
  * the `storage` byte layer (`IFileSystemStorageService`) under the `telemetry` scope.

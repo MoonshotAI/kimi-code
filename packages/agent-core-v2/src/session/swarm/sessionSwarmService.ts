@@ -1,5 +1,5 @@
 /**
- * `sessionSwarm` domain (L4) — `ISessionSwarmService` implementation.
+ * `sessionSwarm` domain — `ISessionSwarmService` implementation.
  *
  * Runs a batch of agents on behalf of a caller agent: builds an
  * `AgentRunBatchLauncher` on top of the `agentLifecycle` primitives

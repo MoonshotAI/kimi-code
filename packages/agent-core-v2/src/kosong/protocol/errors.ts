@@ -1,5 +1,5 @@
 /**
- * `kosong/protocol` domain (L1) — wire API failure codes and the boundary
+ * `kosong/protocol` domain — wire API failure codes and the boundary
  * translation from raw contract errors to coded `Error2`s.
  *
  * `translateProviderError` converts the L0 `API*Error` family into coded

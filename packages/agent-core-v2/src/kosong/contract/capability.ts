@@ -1,5 +1,5 @@
 /**
- * `kosong/contract` domain (L0) — declared model capabilities.
+ * `kosong/contract` domain — declared model capabilities.
  *
  * `ModelCapability` describes the modalities and limits of a specific model
  * so callers can gate requests against what the model accepts without

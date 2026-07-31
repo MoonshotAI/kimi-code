@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — `SYSTEM.md` global main-agent prompt override.
+ * `workspaceAgentProfileLoader` domain — `SYSTEM.md` global main-agent prompt override.
  *
  * `<brandHome>/SYSTEM.md` (default `~/.kimi-code/SYSTEM.md`, moves with
  * `KIMI_CODE_HOME`) permanently replaces the builtin default profile's system

@@ -1,5 +1,5 @@
 /**
- * `permissionMode` domain (L3) — registers the `defaultPermissionMode` config
+ * `permissionMode` domain — registers the `defaultPermissionMode` config
  * section into `config`.
  *
  * Owns the schema for the user's default permission posture — the mode a fresh

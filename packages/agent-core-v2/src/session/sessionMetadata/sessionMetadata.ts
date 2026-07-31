@@ -1,5 +1,5 @@
 /**
- * `sessionMetadata` domain (L6) — typed session metadata.
+ * `sessionMetadata` domain — typed session metadata.
  *
  * Defines the `SessionMeta` model and the `ISessionMetadata` used by upper
  * layers to read and update the session's durable metadata (title, timestamps,

@@ -1,5 +1,5 @@
 /**
- * `permissionGate` domain (L3) — `IAgentPermissionGate` implementation.
+ * `permissionGate` domain — `IAgentPermissionGate` implementation.
  *
  * Runs the `permissionPolicy` chain for every tool execution as an
  * `onBeforeExecuteTool` veto listener: `deny` / `result` resolutions veto,

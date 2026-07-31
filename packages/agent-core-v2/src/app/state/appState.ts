@@ -1,5 +1,5 @@
 /**
- * `state` domain (L1) — App-scope keyed state container contract.
+ * `state` domain — App-scope keyed state container contract.
  *
  * Defines `IAppStateService`, the App-scope state service: App-tier services
  * declare their plain-data state as typed keys (via `defineState`)

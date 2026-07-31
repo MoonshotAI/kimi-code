@@ -1,5 +1,5 @@
 /**
- * `subagent` domain (L6) — caller-side mirroring of an agent run.
+ * `subagent` domain — caller-side mirroring of an agent run.
  *
  * When one agent drives another through `ISessionSubagentService.run`, the
  * *requesting* agent surfaces that run

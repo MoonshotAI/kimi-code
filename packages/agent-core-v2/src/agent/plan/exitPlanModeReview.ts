@@ -1,5 +1,5 @@
 /**
- * `plan` domain (L3) — ExitPlanMode plan review.
+ * `plan` domain — ExitPlanMode plan review.
  *
  * Owns the user-facing review that intercepts an `ExitPlanMode` call carrying
  * a non-empty `plan_review` display: emits `plan_submitted` / `plan_resolved`

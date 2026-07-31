@@ -1,5 +1,5 @@
 /**
- * `sessionSkillCatalog` domain (L3) — `ISessionSkillCatalog` sink
+ * `sessionSkillCatalog` domain — `ISessionSkillCatalog` sink
  * implementation.
  *
  * The Session-scope business view over the workspace's merged skill catalog:

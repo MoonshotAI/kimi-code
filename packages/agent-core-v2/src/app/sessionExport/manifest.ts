@@ -1,5 +1,5 @@
 /**
- * `sessionExport` domain (L6) — export manifest builder.
+ * `sessionExport` domain — export manifest builder.
  *
  * Produces the diagnostic `manifest.json` included in every exported session
  * archive. The manifest combines persisted session metadata, host/runtime

@@ -1,5 +1,5 @@
 /**
- * `hostFsWatch` domain (L1) — local real-filesystem change notifications.
+ * `hostFsWatch` domain — local real-filesystem change notifications.
  *
  * Defines the `IHostFsWatchService`, a thin primitive over the host OS file
  * watcher. It reports raw create/modify/delete events under an absolute path

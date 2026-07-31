@@ -1,5 +1,5 @@
 /**
- * `kosong/model` domain (L2) — shared auth-material resolution.
+ * `kosong/model` domain — shared auth-material resolution.
  *
  * Resolves Model / Provider credential precedence for runtime model
  * resolution and auth-readiness probes. Pure computation, outside the

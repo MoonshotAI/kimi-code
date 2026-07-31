@@ -1,5 +1,5 @@
 /**
- * `skill` domain (L3) — wire Model (`SkillModel`) and the `skill.activate` Op
+ * `skill` domain — wire Model (`SkillModel`) and the `skill.activate` Op
  * (`skillActivate`) for the agent's skill-activation fact log.
  *
  * Skill carries no state: the Model is a `null` placeholder and the Op's

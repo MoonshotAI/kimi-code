@@ -1,5 +1,5 @@
 /**
- * `activityView` domain (L4) — the agent's one-way activity projection.
+ * `activityView` domain — the agent's one-way activity projection.
  *
  * Defines `IAgentActivityView`: a per-agent, read-only, event-folded read
  * model of "what this agent is doing" — the current turn with its live

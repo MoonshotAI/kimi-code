@@ -1,5 +1,5 @@
 /**
- * `tool` domain (L3) — foundational tool model contract.
+ * `tool` domain — foundational tool model contract.
  *
  * Owns the tool model shared by every tool domain: the static metadata
  * (`ToolSource` / `ToolDefinition` / `ToolInfo`), the `ExecutableTool`

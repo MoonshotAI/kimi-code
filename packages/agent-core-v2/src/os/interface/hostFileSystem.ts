@@ -1,5 +1,5 @@
 /**
- * `hostFs` domain (L1) — local real-filesystem primitives.
+ * `hostFs` domain — local real-filesystem primitives.
  *
  * Defines the `IHostFileSystem` used to read and write files on
  * the real local disk, plus the stat/entry models. `realpath` canonicalizes a

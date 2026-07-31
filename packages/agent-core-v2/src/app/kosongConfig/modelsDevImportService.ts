@@ -1,5 +1,5 @@
 /**
- * `kosongConfig` domain (L3) — `IModelsDevImportService` implementation.
+ * `kosongConfig` domain — `IModelsDevImportService` implementation.
  *
  * Owns the models.dev directory import and the custom-registry (api.json)
  * import. Both are multi-step config writes (inspect → build → replace × N),

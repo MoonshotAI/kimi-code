@@ -1,5 +1,5 @@
 /**
- * `git` domain (L1) — git integration for a repository on the local disk.
+ * `git` domain — git integration for a repository on the local disk.
  *
  * Defines the `IGitService` that runs `git status` / `git diff` (plus `gh pr
  * view`) against a repository identified by an absolute `cwd`, and discovers

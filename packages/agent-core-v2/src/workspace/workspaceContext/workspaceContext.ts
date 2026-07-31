@@ -1,5 +1,5 @@
 /**
- * `workspaceContext` domain (L1) — seeded per-handler workspace facts.
+ * `workspaceContext` domain — seeded per-handler workspace facts.
  *
  * Defines the `IWorkspaceContext` carrying the workspace handler's identity
  * and storage addressing (`workspaceId`, `persistenceScope` — the handler's

@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — `IExplicitAgentProfileLoader` contract.
+ * `workspaceAgentProfileLoader` domain — `IExplicitAgentProfileLoader` contract.
  *
  * The explicit loader of the agent-profile extension point: owns the
  * `explicit` contribution in the App-scope `IAgentProfileRegistry` — the

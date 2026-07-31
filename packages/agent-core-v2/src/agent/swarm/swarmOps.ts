@@ -1,5 +1,5 @@
 /**
- * `swarm` domain (L4) — wire Model (`SwarmModel`) and the `swarm_mode.enter` /
+ * `swarm` domain — wire Model (`SwarmModel`) and the `swarm_mode.enter` /
  * `swarm_mode.exit` Ops (`swarmEnter` / `swarmExit`) for the agent's swarm mode.
  *
  * Declares swarm mode as a `SwarmModeTrigger | null` wire Model (the trigger is

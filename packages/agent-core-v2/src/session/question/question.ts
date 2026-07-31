@@ -1,5 +1,5 @@
 /**
- * `question` domain (L7) — ask-user request broker.
+ * `question` domain — ask-user request broker.
  *
  * Defines the public contract of asking the user: the rich in-process
  * `QuestionRequest` model (mirrors the `agent-core` SDK shape — a batch of

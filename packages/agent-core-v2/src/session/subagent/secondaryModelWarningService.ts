@@ -1,5 +1,5 @@
 /**
- * `subagent` domain (L6) — `ISessionSecondaryModelWarningService` implementation.
+ * `subagent` domain — `ISessionSecondaryModelWarningService` implementation.
  *
  * When enabled through `flag`, runs the secondary-model check once per session
  * when the main agent appears (`agentLifecycle` onDidCreate, or an

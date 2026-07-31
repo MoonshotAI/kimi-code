@@ -1,5 +1,5 @@
 /**
- * `state` domain (L1) — `IWorkspaceStateService` implementation.
+ * `state` domain — `IWorkspaceStateService` implementation.
  *
  * Thin per-scope binding over the shared `StateRegistry`; the container owns
  * construction and disposal, so registered state dies with the scope. Injects

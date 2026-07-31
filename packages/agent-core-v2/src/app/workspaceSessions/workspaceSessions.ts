@@ -1,5 +1,5 @@
 /**
- * `workspaceSessions` domain (L2) — workspace ↔ session query contract.
+ * `workspaceSessions` domain — workspace ↔ session query contract.
  *
  * Defines `IWorkspaceSessions`, an App-scope read facade answering
  * workspace-centric queries over the session index: the most recent sessions

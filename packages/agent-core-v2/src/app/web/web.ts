@@ -1,5 +1,5 @@
 /**
- * `web` domain (L4) — URL fetching with an optional OAuth-backed backend.
+ * `web` domain — URL fetching with an optional OAuth-backed backend.
  *
  * Declares the `IWebFetchService` seam that yields the `UrlFetcher` behind
  * the built-in `FetchURL` tool, so `FetchURL` works both with and without

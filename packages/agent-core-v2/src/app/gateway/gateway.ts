@@ -1,5 +1,5 @@
 /**
- * `gateway` domain (L7) — REST/WS gateways.
+ * `gateway` domain — REST/WS gateways.
  *
  * Defines the public contracts of the gateway layer: the `IRestGateway` /
  * `IWSGateway` entry points. App-scoped — shared across the application.

@@ -1,5 +1,5 @@
 /**
- * `interaction` domain (L6) — `ISessionInteractionService` implementation.
+ * `interaction` domain — `ISessionInteractionService` implementation.
  *
  * Owns the pending interaction set and resolves requests when a response
  * arrives; announces add/remove through a typed `onDidChangePending`. Every

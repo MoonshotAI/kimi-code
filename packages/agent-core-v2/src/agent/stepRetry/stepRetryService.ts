@@ -1,5 +1,5 @@
 /**
- * `stepRetry` domain (L4) — `IAgentStepRetryService` implementation.
+ * `stepRetry` domain — `IAgentStepRetryService` implementation.
  *
  * Loop error-recovery plugin: claims retryable provider failures (HTTP 429 /
  * 5xx, connection, timeout, empty response — `isRetryableGenerateError`) from

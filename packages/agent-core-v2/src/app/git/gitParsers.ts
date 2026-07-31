@@ -1,5 +1,5 @@
 /**
- * `git` domain (L1) — pure git-output parsers.
+ * `git` domain — pure git-output parsers.
  *
  * Parses `git status --porcelain=v1 --branch`, `git diff --numstat`, and
  * `gh pr view --json` output into the protocol `FsGitStatusResponse` shape.

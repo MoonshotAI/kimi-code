@@ -1,5 +1,5 @@
 /**
- * `undo` domain (L6) — `IAgentConversationUndoService` implementation.
+ * `undo` domain — `IAgentConversationUndoService` implementation.
  *
  * Owns idle conversation undo coordination and restored observable state.
  * Coordinates `contextMemory`, undo participants, `fullCompaction`,

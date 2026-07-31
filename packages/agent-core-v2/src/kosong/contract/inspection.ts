@@ -1,5 +1,5 @@
 /**
- * `kosong/contract` domain (L0) — resolution-provenance annotations.
+ * `kosong/contract` domain — resolution-provenance annotations.
  *
  * Every settled field of a resolved `Model` has an origin: an explicit config
  * entry, a model `overrides` block, a built-in registry (provider definition,

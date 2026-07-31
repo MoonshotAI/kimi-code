@@ -1,5 +1,5 @@
 /**
- * `bootstrap` domain (L1) — `IBootstrapService` implementation.
+ * `bootstrap` domain — `IBootstrapService` implementation.
  *
  * Holds the resolved startup snapshot from the seeded `IBootstrapOptions` and
  * exposes the host facts, app path layout, and top-level scope mapping. All

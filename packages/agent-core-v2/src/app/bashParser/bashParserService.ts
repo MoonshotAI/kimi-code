@@ -1,5 +1,5 @@
 /**
- * `bashParser` domain (L1) — `IBashParserService` implementation.
+ * `bashParser` domain — `IBashParserService` implementation.
  *
  * Thin adapter over the pure `@moonshot-ai/tree-sitter-bash` package: runs
  * its budgeted `parse` and snapshots the returned tree into the wire-safe

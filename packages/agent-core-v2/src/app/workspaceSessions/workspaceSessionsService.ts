@@ -1,5 +1,5 @@
 /**
- * `workspaceSessions` domain (L2) — `IWorkspaceSessions` implementation.
+ * `workspaceSessions` domain — `IWorkspaceSessions` implementation.
  *
  * Answers workspace-centric read queries by composing the alias resolver
  * (`workspaceAliases`) with the persisted session index (`sessionIndex`):

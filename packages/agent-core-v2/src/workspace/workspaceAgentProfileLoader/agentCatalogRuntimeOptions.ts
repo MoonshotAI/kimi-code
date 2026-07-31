@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — runtime options for agent-file discovery.
+ * `workspaceAgentProfileLoader` domain — runtime options for agent-file discovery.
  *
  * Holds process-level runtime overrides: `explicitFiles` mirrors the CLI's
  * `--agent-file` — individual agent Markdown files loaded as the highest-

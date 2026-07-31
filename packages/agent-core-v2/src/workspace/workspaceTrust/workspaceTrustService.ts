@@ -1,5 +1,5 @@
 /**
- * `workspaceTrust` domain (L2) — `IWorkspaceTrust` implementation.
+ * `workspaceTrust` domain — `IWorkspaceTrust` implementation.
  *
  * Persists the trust marker through the `persistence` domain's
  * `IAtomicDocumentStore` under the `workspace-trust` scope, one document per

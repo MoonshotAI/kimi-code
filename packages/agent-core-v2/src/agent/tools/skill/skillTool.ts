@@ -1,11 +1,11 @@
 /**
- * `tools` domain (L7) — `SkillTool` implementation (the `Skill` tool).
+ * `tools` domain — `SkillTool` implementation (the `Skill` tool).
  *
  * The model-facing wrapping lives here on purpose: resolving the skill from
  * the catalog, the inline-only / `disableModelInvocation` gates, the `isError`
  * tool result, and the declared `delivery: 'steer'` into the *current* turn all
  * assume the caller is already inside a turn — which is exactly the edge a
- * tool runs at. The tool only declares the `delivery`; the agent (L4) layer
+ * tool runs at. The tool only declares the `delivery`; the agent layer
  * performs the actual steer, so the tool never reaches into
  * `IAgentPromptService`. `IAgentSkillService` keeps only the user-slash
  * `activate` primitive (it opens a fresh turn) and the shared activation

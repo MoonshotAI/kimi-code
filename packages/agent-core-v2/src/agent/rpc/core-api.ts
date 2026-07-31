@@ -1,5 +1,5 @@
 /**
- * `rpc` domain (L7) — v2 native RPC contract.
+ * `rpc` domain — v2 native RPC contract.
  *
  * Request/response payloads and event types for the engine's native RPC
  * surface. `PromptPayload.disabledTools` is the client-managed session

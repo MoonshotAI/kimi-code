@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `GlobTool` implementation, file pattern matching via
+ * `tools` domain — `GlobTool` implementation, file pattern matching via
  * ripgrep.
  *
  * Finds files matching a glob pattern, returned sorted by modification time

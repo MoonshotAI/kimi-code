@@ -1,5 +1,5 @@
 /**
- * `sessionLifecycle` domain (L6) — `ISessionLifecycleService` implementation.
+ * `sessionLifecycle` domain — `ISessionLifecycleService` implementation.
  *
  * Owns the registry of THIS handler's open Session child scopes, creating
  * them through the DI scope tree (children of the handler's Workspace

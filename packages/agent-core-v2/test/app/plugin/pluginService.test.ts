@@ -1,5 +1,5 @@
 /**
- * `plugin` domain (L3) — App-scope `PluginService` boundary scenarios.
+ * `plugin` domain — App-scope `PluginService` boundary scenarios.
  *
  * Covers load-failure degradation and recovery, serialized catalog changes,
  * coded management errors, and managed endpoint injection. Resolves the real

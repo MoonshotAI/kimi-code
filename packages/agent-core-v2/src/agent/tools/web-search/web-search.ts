@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IWebSearchTool` contract (the `WebSearch` tool).
+ * `tools` domain — `IWebSearchTool` contract (the `WebSearch` tool).
  *
  * Public contract of the `WebSearch` builtin tool: the model-facing
  * `WebSearchInputSchema` / `WebSearchInput`, the host-injected

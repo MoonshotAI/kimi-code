@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ITodoListTool` contract (the `TodoList` tool).
+ * `tools` domain — `ITodoListTool` contract (the `TodoList` tool).
  *
  * Public contract of the structured TODO list tool. A single input schema
  * serves both reads and writes:

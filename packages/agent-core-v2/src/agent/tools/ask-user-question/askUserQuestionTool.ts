@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `AskUserQuestionTool` implementation (the
+ * `tools` domain — `AskUserQuestionTool` implementation (the
  * `AskUserQuestion` tool).
  *
  * The LLM calls this tool when it needs structured input from the user

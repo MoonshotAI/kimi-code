@@ -1,5 +1,5 @@
 /**
- * `hostEnvironment` domain (L1) — the OS / shell / path-style facts of the
+ * `hostEnvironment` domain — the OS / shell / path-style facts of the
  * host the Agent runs on.
  *
  * Defines `IHostEnvironment`, an immutable snapshot of the host OS

@@ -1,5 +1,5 @@
 /**
- * `toolRegistry` domain (L3) — `IAgentToolRegistryService` contract.
+ * `toolRegistry` domain — `IAgentToolRegistryService` contract.
  *
  * Per-agent registry of the tools an agent can resolve and run: `register` /
  * `unregister` / `list` / `resolve`, plus `onRegistered` / `onUnregistered`

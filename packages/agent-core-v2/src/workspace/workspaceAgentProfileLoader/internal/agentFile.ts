@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — agent-file parsing primitives.
+ * `workspaceAgentProfileLoader` domain — agent-file parsing primitives.
  *
  * Parses a single agent Markdown file (frontmatter + body) into an
  * `AgentFileDefinition`. Pure functions with no IO: callers read bytes however

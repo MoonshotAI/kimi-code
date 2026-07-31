@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — Kimi vendor error classification.
+ * `kosong/provider` domain — Kimi vendor error classification.
  *
  * This module owns the vendor-specific knowledge of how the Moonshot backend
  * signals quota/balance exhaustion on a 429: the structured body

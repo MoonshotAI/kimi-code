@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `TodoListTool` implementation (the `TodoList` tool).
+ * `tools` domain — `TodoListTool` implementation (the `TodoList` tool).
  *
  * The list is session-shared: the tool reads/writes `ISessionTodoService`
  * (`todo` domain), which persists every change as a `tools.update_store`

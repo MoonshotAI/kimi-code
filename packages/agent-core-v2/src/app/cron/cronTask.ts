@@ -1,5 +1,5 @@
 /**
- * `cron` domain (L5) — shared `CronTask` data record.
+ * `cron` domain — shared `CronTask` data record.
  *
  * The authoritative definition of a cron task's persistent shape. The `tags`
  * map carries arbitrary metadata (e.g. `sessionId`) so tasks can be filtered

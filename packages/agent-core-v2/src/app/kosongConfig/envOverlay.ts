@@ -1,5 +1,5 @@
 /**
- * `kosongConfig` domain (L3) — `KIMI_MODEL_*` effective-config overlay.
+ * `kosongConfig` domain — `KIMI_MODEL_*` effective-config overlay.
  *
  * When `KIMI_MODEL_NAME` is set, synthesizes one model id (bound to the
  * reserved `__kimi_env__` provider whose schema kosong owns) from the

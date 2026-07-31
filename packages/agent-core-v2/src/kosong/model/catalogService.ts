@@ -1,5 +1,5 @@
 /**
- * `kosong/model` domain (L2) — `ModelCatalog`, the single place that builds
+ * `kosong/model` domain — `ModelCatalog`, the single place that builds
  * Models.
  *
  * Reads Model / Provider config, resolves the auth closure (provider-level

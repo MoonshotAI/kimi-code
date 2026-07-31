@@ -1,5 +1,5 @@
 /**
- * `mcpCore` domain (L2) — shared MCP client helpers — request options, liveness probes, result conversion.
+ * `mcpCore` domain — shared MCP client helpers — request options, liveness probes, result conversion.
  */
 
 import { getCoreVersion } from '#/_base/version';

@@ -1,5 +1,5 @@
 /**
- * `plan` domain (L4) — wire Model (`PlanModel`) and the `plan_mode.enter`
+ * `plan` domain — wire Model (`PlanModel`) and the `plan_mode.enter`
  * (`planModeEnter`) / `plan_mode.cancel` (`planModeCancel`) / `plan_mode.exit`
  * (`planModeExit`) Ops that mirror the plan-mode lifecycle into a persisted,
  * replayable `{ active, id }` state, plus the `plan.revision`

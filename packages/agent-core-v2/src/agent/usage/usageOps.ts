@@ -1,5 +1,5 @@
 /**
- * `usage` domain (L3) — wire Model (`UsageModel`) and the `usage.record` Op
+ * `usage` domain — wire Model (`UsageModel`) and the `usage.record` Op
  * (`recordUsage`) for the agent's accumulated token usage.
  *
  * Declares usage as a wire Model (`byModel` totals) plus the single Op that

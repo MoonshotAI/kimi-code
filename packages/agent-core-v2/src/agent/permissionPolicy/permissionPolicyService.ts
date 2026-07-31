@@ -1,5 +1,5 @@
 /**
- * `permissionPolicy` domain (L3) — `IAgentPermissionPolicyService` implementation.
+ * `permissionPolicy` domain — `IAgentPermissionPolicyService` implementation.
  *
  * Runs the static, ordered permission chain: every node adjudicates the *risk*
  * of a tool call (mode posture, user rules, session approval memory, sensitive

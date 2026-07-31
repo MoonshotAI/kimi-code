@@ -1,5 +1,5 @@
 /**
- * `bootstrap` domain (L1) — frozen startup snapshot and composition root.
+ * `bootstrap` domain — frozen startup snapshot and composition root.
  *
  * Defines the `IBootstrapService`, the snapshot of the world the process runs
  * in, resolved once at startup and frozen for the process: observed host facts

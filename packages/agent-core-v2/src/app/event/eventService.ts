@@ -1,5 +1,5 @@
 /**
- * `event` domain (L0) — `IEventService` implementation.
+ * `event` domain — `IEventService` implementation.
  *
  * Delivers published events to subscribers through the `Emitter` primitive.
  * Bound at App scope.

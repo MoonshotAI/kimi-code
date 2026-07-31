@@ -1,5 +1,5 @@
 /**
- * `media` domain (L4) — image compression for model ingestion.
+ * `media` domain — image compression for model ingestion.
  *
  * Shrink oversized images before they reach the model.
  *

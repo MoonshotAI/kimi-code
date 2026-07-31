@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IFetchURLTool` contract.
+ * `tools` domain — `IFetchURLTool` contract.
  *
  * Public contract of FetchURL, the model's URL content fetcher. Only
  * fully-formed public `http`/`https` URLs are supported. The tool receives

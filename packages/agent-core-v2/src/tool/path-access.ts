@@ -1,5 +1,5 @@
 /**
- * `tool` domain (L3) — workspace path access policy for file tools.
+ * `tool` domain — workspace path access policy for file tools.
  *
  * Owns `WorkspaceConfig` (the roots tools are allowed to access, injected
  * through each tool's constructor), the lexical path guards used by

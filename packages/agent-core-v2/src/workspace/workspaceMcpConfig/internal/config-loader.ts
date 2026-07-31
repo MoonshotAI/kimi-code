@@ -1,5 +1,5 @@
 /**
- * `workspaceMcpConfig` domain (L5) — MCP JSON config discovery and loading.
+ * `workspaceMcpConfig` domain — MCP JSON config discovery and loading.
  *
  * Resolves the three MCP config files for a cwd (user `mcp.json` under the
  * kimi home, project-root `.mcp.json` — the root discovered through the

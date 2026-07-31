@@ -1,5 +1,5 @@
 /**
- * `kosongConfig` domain (L3) — `IProviderDiscoveryService` implementation.
+ * `kosongConfig` domain — `IProviderDiscoveryService` implementation.
  *
  * Owns the all-provider model refresh: delegates to the shared OAuth
  * orchestrator (managed OAuth + open platforms + custom registries), writes

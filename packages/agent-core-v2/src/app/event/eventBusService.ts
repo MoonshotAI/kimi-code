@@ -1,5 +1,5 @@
 /**
- * `event` domain (L1) — `IEventBus` implementation.
+ * `event` domain — `IEventBus` implementation.
  *
  * Delivers published events through the `Emitter` primitive: one
  * full-stream emitter for `subscribe(handler)` and a lazily-created per-type

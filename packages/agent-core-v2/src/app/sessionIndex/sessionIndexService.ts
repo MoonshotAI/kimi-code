@@ -1,5 +1,5 @@
 /**
- * `sessionIndex` domain (L2) — `FileSessionIndex` implementation.
+ * `sessionIndex` domain — `FileSessionIndex` implementation.
  *
  * Reads the persisted session set through the `storage` access-pattern
  * stores, rooted at the `sessionsDir` path layout fact. The directory tree

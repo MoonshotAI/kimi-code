@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — side-effect module: the Kimi vendor
+ * `kosong/provider` domain — side-effect module: the Kimi vendor
  * registration, one definition per transport Kimi runs over, each driven by
  * a single trait object.
  *

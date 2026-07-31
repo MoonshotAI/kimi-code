@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — user/brand `ISkillSource` producer.
+ * `skillCatalog` domain — user/brand `ISkillSource` producer.
  *
  * Discovers user skills from the bootstrap home directories through
  * `ISkillDiscovery`, contributing them at priority 20 (above extra / plugin /

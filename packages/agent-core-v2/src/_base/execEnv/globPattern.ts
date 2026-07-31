@@ -1,5 +1,5 @@
 /**
- * `_base/execEnv` (L0) — glob-pattern-to-regex conversion.
+ * `_base/execEnv` — glob-pattern-to-regex conversion.
  *
  * Pure function. Mirrors Python pathlib semantics: includes dotfiles,
  * case-sensitive by default.

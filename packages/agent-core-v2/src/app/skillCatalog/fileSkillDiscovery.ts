@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — filesystem `ISkillDiscovery` backend.
+ * `skillCatalog` domain — filesystem `ISkillDiscovery` backend.
  *
  * Discovers skill bundles by walking caller-supplied roots and parsing each
  * SKILL.md. Exposes both the App-scoped `ISkillDiscovery` service and a

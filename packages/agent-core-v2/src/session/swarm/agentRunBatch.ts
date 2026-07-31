@@ -1,5 +1,5 @@
 /**
- * `sessionSwarm` domain (L4) — internal concurrency / rate-limit scheduler.
+ * `sessionSwarm` domain — internal concurrency / rate-limit scheduler.
  *
  * Owns the burst-then-throttle launch ramp and the provider-rate-limit recovery
  * loop for swarm agent runs; drives each attempt through a

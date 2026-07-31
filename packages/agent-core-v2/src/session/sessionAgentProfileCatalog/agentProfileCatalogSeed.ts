@@ -1,5 +1,5 @@
 /**
- * `sessionAgentProfileCatalog` domain (L3) — seeded workspace-key contract.
+ * `sessionAgentProfileCatalog` domain — seeded workspace-key contract.
  *
  * Defines `ISessionAgentProfileCatalogSeed`, the pure-data injection contract
  * carrying ONLY the workspace handler's `workspaceId`. The key travels as a

@@ -1,5 +1,5 @@
 /**
- * `kosongConfig` domain (L3) — models.dev import error codes.
+ * `kosongConfig` domain — models.dev import error codes.
  *
  * The edge server branches on these codes to map them onto its numeric
  * protocol envelope, so the code strings are part of the wire contract.

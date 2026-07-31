@@ -1,5 +1,5 @@
 /**
- * `kosongConfig` domain (L3) — models.dev upstream: fetch the third-party
+ * `kosongConfig` domain — models.dev upstream: fetch the third-party
  * directory, in-memory cache, built-in snapshot fallback, and the pruned
  * item mapping behind the import service's browse methods.
  */

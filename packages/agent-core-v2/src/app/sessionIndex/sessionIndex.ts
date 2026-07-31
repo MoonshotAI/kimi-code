@@ -1,5 +1,5 @@
 /**
- * `sessionIndex` domain (L2) — session index contract.
+ * `sessionIndex` domain — session index contract.
  *
  * `ISessionIndex` is a domain-specific persistence Store: a backend-neutral
  * query facade over the set of persisted sessions (open or closed). It

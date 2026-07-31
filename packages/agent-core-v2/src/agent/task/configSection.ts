@@ -1,5 +1,5 @@
 /**
- * `task` domain (L5) — task config-section schema and env bindings.
+ * `task` domain — task config-section schema and env bindings.
  *
  * Owns the `[task]` configuration section (task limits and lifecycle tuning).
  * The legacy `[background]` section is registered with the same schema so old

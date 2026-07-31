@@ -1,5 +1,5 @@
 /**
- * `toolApproval` domain (L3) — `IAgentToolApprovalService` implementation.
+ * `toolApproval` domain — `IAgentToolApprovalService` implementation.
  *
  * Owns the approval round-trip: publishes
  * `permission.approval.requested/resolved` through `eventBus`, awaits the

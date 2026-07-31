@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `TaskListTool` implementation (the `TaskList` tool).
+ * `tools` domain — `TaskListTool` implementation (the `TaskList` tool).
  *
  * Reads the agent's background tasks from `IAgentTaskService` (`agentTask`
  * domain) and renders them as a plain `key: value` list.

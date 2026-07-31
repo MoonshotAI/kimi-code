@@ -1,5 +1,5 @@
 /**
- * `contextSize` domain (L4) — wire Model (`ContextSizeModel`) and the
+ * `contextSize` domain — wire Model (`ContextSizeModel`) and the
  * `context_size.measured` (`contextSizeMeasured`) Op for the last measured
  * context token count.
  *

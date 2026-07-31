@@ -1,5 +1,5 @@
 /**
- * `toolActivation` domain (L4) — `IAgentToolActivationService` contract.
+ * `toolActivation` domain — `IAgentToolActivationService` contract.
  *
  * Owns the activation pass that turns the module-level `registerAgentToolService`
  * contributions (`toolRegistry`, L3) into entries of the per-agent runtime

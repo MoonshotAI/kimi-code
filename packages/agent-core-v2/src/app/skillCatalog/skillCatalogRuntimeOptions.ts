@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — runtime options for skill discovery.
+ * `skillCatalog` domain — runtime options for skill discovery.
  *
  * Holds process-level runtime overrides that affect how skill roots are
  * resolved. `explicitDirs` mirrors v1's SDK `skillDirs`: when present, default

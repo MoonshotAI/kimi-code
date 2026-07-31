@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ReadMediaFileTool` implementation.
+ * `tools` domain — `ReadMediaFileTool` implementation.
  *
  * Reads image/video files as multi-modal content.
  *

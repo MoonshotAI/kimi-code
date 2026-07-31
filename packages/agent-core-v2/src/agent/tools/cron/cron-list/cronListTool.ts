@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ICronListTool` implementation.
+ * `tools` domain — `ICronListTool` implementation.
  *
  * CronListTool — enumerate the cron tasks currently scheduled in this
  * session.

@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — Google GenAI (Gemini) wire base.
+ * `kosong/provider` domain — Google GenAI (Gemini) wire base.
  *
  * Speaks the Gemini generateContent wire format (and Vertex AI through the
  * same SDK options). This base carries no hook surface today — per-turn

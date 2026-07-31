@@ -1,5 +1,5 @@
 /**
- * `goal` domain (L4) — `IAgentGoalService` implementation.
+ * `goal` domain — `IAgentGoalService` implementation.
  *
  * Owns the main-agent goal lifecycle; persists the goal in the `wire`
  * `GoalModel` (`GoalState | null`) through the `goal.create` / `goal.update` /

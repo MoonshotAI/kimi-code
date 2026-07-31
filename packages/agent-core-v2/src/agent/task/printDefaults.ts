@@ -1,5 +1,5 @@
 /**
- * `task` domain (L5) — print-mode (`kimi -p`) config-section defaults.
+ * `task` domain — print-mode (`kimi -p`) config-section defaults.
  *
  * A headless run should not be cut short by limits meant for interactive use, so every filled value
  * is "effectively unbounded". Fills land in the config memory layer via

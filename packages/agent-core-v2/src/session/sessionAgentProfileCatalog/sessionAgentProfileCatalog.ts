@@ -1,5 +1,5 @@
 /**
- * `sessionAgentProfileCatalog` domain (L3) — Session-scoped merged agent-profile
+ * `sessionAgentProfileCatalog` domain — Session-scoped merged agent-profile
  * catalog contract.
  *
  * The Catalog of the agent-profile extension point: a read-only projection

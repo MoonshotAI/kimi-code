@@ -1,5 +1,5 @@
 /**
- * `sessionInit` domain (L6) — `/init` command contract.
+ * `sessionInit` domain — `/init` command contract.
  *
  * Drives the `/init` slash command: spawn a `coder` subagent that analyzes the
  * codebase and writes `AGENTS.md`, then surface the freshly generated content

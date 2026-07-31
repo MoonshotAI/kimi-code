@@ -1,5 +1,5 @@
 /**
- * `subagent` domain (L6) — helper that runs one prompt (or retry) turn on
+ * `subagent` domain — helper that runs one prompt (or retry) turn on
  * an agent and distills a summary from its context once the turn ends.
  *
  * Not a Service: `runAgentTurn` is a pure function that borrows

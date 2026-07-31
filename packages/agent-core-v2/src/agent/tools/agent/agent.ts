@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ISubagentTool` contract (the `Agent` tool).
+ * `tools` domain — `ISubagentTool` contract (the `Agent` tool).
  *
  * Public contract of the `Agent` collaboration tool: the input/output zod
  * schemas the model-facing parameters are derived from, the tool-owned

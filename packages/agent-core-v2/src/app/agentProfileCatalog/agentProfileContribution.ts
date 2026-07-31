@@ -1,5 +1,5 @@
 /**
- * `agentProfileCatalog` domain (L3) — the agent-profile Contribution shape and
+ * `agentProfileCatalog` domain — the agent-profile Contribution shape and
  * source priorities.
  *
  * `AgentProfileContribution` is the Contribution of the agent-profile

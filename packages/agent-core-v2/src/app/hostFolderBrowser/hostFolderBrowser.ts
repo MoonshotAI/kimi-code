@@ -1,5 +1,5 @@
 /**
- * `hostFolderBrowser` domain (L2) — host-side folder picker.
+ * `hostFolderBrowser` domain — host-side folder picker.
  *
  * Defines the `IHostFolderBrowser` used by the program side (TUI / server) to
  * let the user browse the real local filesystem when choosing a workspace

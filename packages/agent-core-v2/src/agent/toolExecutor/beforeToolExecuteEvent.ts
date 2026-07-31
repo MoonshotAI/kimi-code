@@ -1,5 +1,5 @@
 /**
- * `toolExecutor` domain (L3) — `onBeforeExecuteTool` veto-event machinery.
+ * `toolExecutor` domain — `onBeforeExecuteTool` veto-event machinery.
  *
  * `BeforeToolExecuteEventImpl` is the per-fire event object listeners
  * adjudicate through; `BeforeToolExecuteEmitter` owns the listener registry

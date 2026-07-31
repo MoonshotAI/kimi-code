@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ITaskListTool` contract (the `TaskList` tool).
+ * `tools` domain — `ITaskListTool` contract (the `TaskList` tool).
  *
  * Public contract of the `TaskList` tool (list background tasks): the input
  * zod schema the model-facing parameters are derived from and the

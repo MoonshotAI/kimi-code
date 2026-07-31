@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `WriteTool` implementation.
+ * `tools` domain — `WriteTool` implementation.
  *
  * Resolves path access policy before any filesystem I/O, creates missing
  * parent directories (`mkdir(recursive)`), and writes through

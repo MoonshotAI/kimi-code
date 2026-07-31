@@ -1,5 +1,5 @@
 /**
- * `workspaceContext` domain (L1) — session workspace root and path access.
+ * `workspaceContext` domain — session workspace root and path access.
  *
  * Defines the `ISessionWorkspaceContext` used by the Agent side to resolve relative
  * paths against the session work directory and to enforce that file/process

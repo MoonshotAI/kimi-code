@@ -1,5 +1,5 @@
 /**
- * `agentProfileCatalog` domain (L3) — `IBuiltinAgentProfileLoader` contract.
+ * `agentProfileCatalog` domain — `IBuiltinAgentProfileLoader` contract.
  *
  * The builtin loader of the agent-profile extension point: owns the global
  * `builtin` contribution (priority 0) in the App-scope `IAgentProfileRegistry`

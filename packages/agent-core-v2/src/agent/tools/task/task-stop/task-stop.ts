@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ITaskStopTool` contract (the `TaskStop` tool).
+ * `tools` domain — `ITaskStopTool` contract (the `TaskStop` tool).
  *
  * Public contract of the `TaskStop` tool (stop a running task): the input
  * zod schema the model-facing parameters are derived from and the

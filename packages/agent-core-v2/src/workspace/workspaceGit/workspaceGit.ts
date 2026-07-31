@@ -1,5 +1,5 @@
 /**
- * `workspaceGit` domain (L2) — handler-root-bound git facade contract.
+ * `workspaceGit` domain — handler-root-bound git facade contract.
  *
  * Defines the `IWorkspaceGitService`, a thin facade over the App-scope
  * `IGitService` pinned to this handler's workspace root: callers pass

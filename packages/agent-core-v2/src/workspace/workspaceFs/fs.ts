@@ -1,5 +1,5 @@
 /**
- * `workspaceFs` domain (L3) — wire-shaped filesystem operations.
+ * `workspaceFs` domain — wire-shaped filesystem operations.
  *
  * Defines the `IWorkspaceFsService` contract — content search, content
  * grep, and git status/diff — together with the zod DTO schemas the wire

@@ -1,5 +1,5 @@
 /**
- * `contextSize` domain (L4) — `IAgentContextSizeService` implementation.
+ * `contextSize` domain — `IAgentContextSizeService` implementation.
  *
  * Owns the last measured context token count in the wire `ContextSizeModel`
  * (`{ length, tokens }`): reads it through `wire.getModel`, writes it through

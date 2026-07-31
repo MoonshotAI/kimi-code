@@ -1,5 +1,5 @@
 /**
- * `toolExecutor` domain (L3) — tool-execution event and hook contexts.
+ * `toolExecutor` domain — tool-execution event and hook contexts.
  *
  * Defines the event objects and context records carried by
  * `IAgentToolExecutorService`'s execution-interception surface:

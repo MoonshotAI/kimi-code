@@ -1,5 +1,5 @@
 /**
- * `gateway` domain (L7) — `IRestGateway` / `IWSGateway` implementations.
+ * `gateway` domain — `IRestGateway` / `IWSGateway` implementations.
  *
  * Owns the REST/WS entry points; resolves sessions through the live workspace
  * handler registry and agents through the agent lifecycle, drives turns, and

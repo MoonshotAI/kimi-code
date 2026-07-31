@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `EditTool` implementation, the Agent entry for exact
+ * `tools` domain — `EditTool` implementation, the Agent entry for exact
  * string replacement in a text file.
  *
  * Agent-scope adapter over the App-scope {@link IFileEditService} capability.

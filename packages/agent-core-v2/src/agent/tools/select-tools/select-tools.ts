@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ISelectToolsTool` contract (the `select_tools` tool).
+ * `tools` domain — `ISelectToolsTool` contract (the `select_tools` tool).
  *
  * Public contract of `select_tools`, the load-by-exact-name primitive of
  * progressive tool disclosure: the model-facing `SelectToolsInputSchema` /

@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — the single production implementation of
+ * `kosong/provider` domain — the single production implementation of
  * `IProtocolAdapterRegistry`.
  *
  * This is the one resolution point for "(protocol, providerType) → which base

@@ -1,5 +1,5 @@
 /**
- * `git` domain (L1) — git work-tree discovery.
+ * `git` domain — git work-tree discovery.
  *
  * Walks up from a directory to find the enclosing git work tree: the nearest
  * ancestor containing a `.git` entry, either a directory (plain repository)

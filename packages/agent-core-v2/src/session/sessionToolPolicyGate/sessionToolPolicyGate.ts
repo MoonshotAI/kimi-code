@@ -1,5 +1,5 @@
 /**
- * `sessionToolPolicyGate` domain (L1) — seeded workspace tool-veto contract.
+ * `sessionToolPolicyGate` domain — seeded workspace tool-veto contract.
  *
  * Defines `ISessionToolPolicyGate`, the pure-data injection contract carrying
  * the workspace's os-level disabled-tool set as a live read view plus its

@@ -1,5 +1,5 @@
 /**
- * `agentProfileCatalog` domain (L3) — shared prompt helpers for builtin profiles.
+ * `agentProfileCatalog` domain — shared prompt helpers for builtin profiles.
  *
  * Keeps the base system-prompt template and the task-agent role prefix in the
  * registry domain.

@@ -1,5 +1,5 @@
 /**
- * `kosong/model` domain (L2) — the pure-data `Model`, the auth-provider
+ * `kosong/model` domain — the pure-data `Model`, the auth-provider
  * contract, and the `IModelCatalog` interface.
  *
  * A `Model` is exactly the configuration-derived data the rest of v2 needs to

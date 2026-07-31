@@ -1,5 +1,5 @@
 /**
- * `contextMemory` domain (L4) — wire Model (`ContextModel`) and the wire-protocol
+ * `contextMemory` domain — wire Model (`ContextModel`) and the wire-protocol
  * 1.4 Ops `context.append_message` (`contextAppendMessage`) / `context.clear`
  * (`contextClear`) / `context.apply_compaction` (`contextApplyCompaction`) /
  * `context.undo` (`contextUndo`) / `context.append_loop_event`

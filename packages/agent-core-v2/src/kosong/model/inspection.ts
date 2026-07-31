@@ -1,5 +1,5 @@
 /**
- * `kosong/model` domain (L2) — the `IModelCatalog.inspect` payload and its
+ * `kosong/model` domain — the `IModelCatalog.inspect` payload and its
  * assembly.
  *
  * The inspection is a *god object* for one configured model: the raw config

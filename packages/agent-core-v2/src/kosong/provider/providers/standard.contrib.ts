@@ -1,7 +1,7 @@
 /**
  * ⚠ PHASE 4 GAP PATCH — additive lower-layer fill-in, clearly marked.
  *
- * `kosong/provider` domain (L2) — side-effect module: endpoint-only provider
+ * `kosong/provider` domain — side-effect module: endpoint-only provider
  * definitions for the four canonical vendors.
  *
  * Only the Kimi vendor definition existed before, so endpoint resolution

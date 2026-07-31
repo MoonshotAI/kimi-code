@@ -1,5 +1,5 @@
 /**
- * `agentLifecycle` domain (L6) — main-agent bootstrap helper.
+ * `agentLifecycle` domain — main-agent bootstrap helper.
  *
  * The main agent is an ordinary agent whose only distinction is
  * `agentId === 'main'`; `IAgentLifecycleService` itself knows nothing about

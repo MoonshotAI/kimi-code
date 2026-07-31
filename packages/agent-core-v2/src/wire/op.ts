@@ -1,5 +1,5 @@
 /**
- * `wire` domain (L2) — Op definition primitive (`Op`, `OpDescriptor`,
+ * `wire` domain — Op definition primitive (`Op`, `OpDescriptor`,
  * `defineOp`, the global `OP_REGISTRY`) and the `DuplicateOpError` fail-fast
  * guard.
  *

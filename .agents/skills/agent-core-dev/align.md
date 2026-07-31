@@ -143,7 +143,7 @@ Re-wire the dependencies you inventoried in step 1, now across the new v2 Servic
 - **Domain direction** — foundational layers must not know upstream ones. A cycle means a v1 relative import is now pointing the wrong way; extract a third Service or invert the notification into an event.
 - **Durable facts** — state changes that must be recorded / replayed / projected across agents go on the wire (`wireRecord`), not a direct call alone.
 
-Run `lint:domain` (verify.md) as soon as the dependencies compile — it catches direction violations early.
+Run `lint:imports` (verify.md) as soon as the dependencies compile — it catches v1 imports and kosong boundary violations early.
 
 ### 7. Port the business logic
 
@@ -188,7 +188,7 @@ import { KimiError, type ErrorCode } from '#/_base/errors';
 Red lines:
 
 - Do not copy a v1 file and "fix imports". Re-split first (steps 2–6); a straight copy carries v1's implicit-singleton assumptions into v2 and creates the `Map<sessionId, …>`-at-`App` anti-pattern.
-- Do not leave v1 relative imports (`from '../x/...'`) in v2 — use the `#/...` alias and respect the domain layers.
+- Do not leave v1 relative imports (`from '../x/...'`) in v2 — use the `#/...` alias.
 - Do not preserve a v1 behavior just because it exists; if the split reveals it was a workaround for the missing scope tree, drop it.
 
 ### 8. Port the tests
@@ -218,7 +218,7 @@ const svc = ix.get(IXxxService);
 Before submitting a port:
 
 - [ ] Every piece of v1 state landed in a v2 Service whose scope matches its identity (no `Map<sessionId, …>` at `App`).
-- [ ] Each v1 dependency now points in the right scope and domain direction; `lint:domain` passes.
+- [ ] Each v1 dependency now points in the right scope direction; `lint:imports` passes.
 - [ ] Registrations use `registerScopedService` with an explicit scope and domain name; no `registerSingleton` remains.
 - [ ] Imports use the `#/...` alias; no v1 relative (`../../di`, `../../errors`) imports remain.
 - [ ] Errors are co-located coded errors; flags go through `IFlagService`.

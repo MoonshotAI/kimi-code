@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — `IExtraAgentProfileLoader` implementation.
+ * `workspaceAgentProfileLoader` domain — `IExtraAgentProfileLoader` implementation.
  *
  * Resolves the configured `extraAgentDirs` through `config`, `workspaceContext`,
  * `bootstrap`, and `hostFs`, reporting skipped files through `log`.

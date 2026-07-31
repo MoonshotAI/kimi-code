@@ -1,5 +1,5 @@
 /**
- * `workspaceContext` domain (L1) — `ISessionWorkspaceContext` implementation.
+ * `workspaceContext` domain — `ISessionWorkspaceContext` implementation.
  *
  * Holds the session work directory and additional dirs, resolves relative
  * paths, and checks whether a path falls within the workspace. `workDir` is

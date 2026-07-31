@@ -1,5 +1,5 @@
 /**
- * `file` domain (L2) — `IFileService` implementation.
+ * `file` domain — `IFileService` implementation.
  *
  * Streams uploads into the `IBlobStore` under the `files` scope and keeps a
  * JSON `FileMeta` index in the same store under the `file` scope. Uploads are

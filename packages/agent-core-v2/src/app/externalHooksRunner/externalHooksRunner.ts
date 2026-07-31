@@ -1,5 +1,5 @@
 /**
- * `externalHooksRunner` domain (L6) — App-scope contract for executing
+ * `externalHooksRunner` domain — App-scope contract for executing
  * configured external hooks.
  *
  * A single App-scope executor owns the configured-hook lifecycle (load from

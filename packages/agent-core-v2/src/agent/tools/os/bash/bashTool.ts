@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `BashTool` implementation, the model's shell command
+ * `tools` domain — `BashTool` implementation, the model's shell command
  * runner.
  *
  * Invokes the execution-environment shell (POSIX bash; Git Bash on Windows)

@@ -1,5 +1,5 @@
 /**
- * `sessionSkillCatalog` domain (L3) — Session-scoped skill catalog contract.
+ * `sessionSkillCatalog` domain — Session-scoped skill catalog contract.
  *
  * Defines the merged session read view, source-specific change events, and the
  * sink used by ad-hoc skill contributors. Bound at Session scope.

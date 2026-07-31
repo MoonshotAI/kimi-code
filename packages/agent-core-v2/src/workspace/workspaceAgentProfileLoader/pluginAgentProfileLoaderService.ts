@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — `IPluginAgentProfileLoader` implementation.
+ * `workspaceAgentProfileLoader` domain — `IPluginAgentProfileLoader` implementation.
  *
  * Discovers agent profiles contributed by enabled plugins (roots from the
  * App-scope `plugins.pluginAgentRoots()`) and registers them via the shared

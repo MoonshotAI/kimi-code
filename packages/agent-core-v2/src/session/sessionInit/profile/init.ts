@@ -1,5 +1,5 @@
 /**
- * `sessionInit` domain (L6) — `/init` brief and completion reminder.
+ * `sessionInit` domain — `/init` brief and completion reminder.
  *
  * Verbatim brief handed to the `coder` subagent that generates `AGENTS.md`
  * (`DEFAULT_INIT_PROMPT`), and the system reminder appended to the main agent

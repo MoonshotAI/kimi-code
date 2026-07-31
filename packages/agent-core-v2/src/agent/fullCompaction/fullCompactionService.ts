@@ -1,5 +1,5 @@
 /**
- * `fullCompaction` domain (L4) — `IAgentFullCompactionService` implementation.
+ * `fullCompaction` domain — `IAgentFullCompactionService` implementation.
  *
  * Runs full-history compaction: reserves the per-turn compaction slot, drives
  * the compaction LLM round (with overflow / truncation shrink retries),

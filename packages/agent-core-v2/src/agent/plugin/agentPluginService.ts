@@ -1,5 +1,5 @@
 /**
- * `agentPlugin` domain (L4) — `IAgentPluginService` implementation.
+ * `agentPlugin` domain — `IAgentPluginService` implementation.
  *
  * Renders session-start skills from `plugin` and `sessionSkillCatalog`, injects
  * them through `contextInjector` and `systemReminder`, and uses `contextMemory`

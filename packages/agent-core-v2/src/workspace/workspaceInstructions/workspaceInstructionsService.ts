@@ -1,5 +1,5 @@
 /**
- * `workspaceInstructions` domain (L4) — `IWorkspaceInstructionsService`
+ * `workspaceInstructions` domain — `IWorkspaceInstructionsService`
  * implementation.
  *
  * Loads the workspace root's AGENTS.md hierarchy at construction through the

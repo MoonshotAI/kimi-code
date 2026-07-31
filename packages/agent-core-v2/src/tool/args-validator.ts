@@ -1,5 +1,5 @@
 /**
- * `tool` domain (L3) — runtime tool-args validation.
+ * `tool` domain — runtime tool-args validation.
  *
  * Compiles tool-parameter JSON Schemas into AJV validators (draft-07 /
  * 2019-09 / 2020-12 detected per schema) and formats validation failures

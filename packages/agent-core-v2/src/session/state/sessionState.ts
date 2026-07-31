@@ -1,5 +1,5 @@
 /**
- * `state` domain (L1) — Session-scope keyed state container contract.
+ * `state` domain — Session-scope keyed state container contract.
  *
  * Defines `ISessionStateService`, the Session-scope state service:
  * Session-tier services declare their plain-data state as typed keys

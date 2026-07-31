@@ -1,5 +1,5 @@
 /**
- * `sessionLifecycle` domain (L6) — persistence addressing along the handler chain.
+ * `sessionLifecycle` domain — persistence addressing along the handler chain.
  *
  * Pure functions deriving the persistence scope strings and on-disk
  * directories from the handler's `persistenceScope` (`sessions/{wd_id}`):

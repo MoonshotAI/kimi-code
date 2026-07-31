@@ -1,5 +1,5 @@
 /**
- * `prompt` domain (L4) — the `StepRequest` types for prompt, steer, and retry
+ * `prompt` domain — the `StepRequest` types for prompt, steer, and retry
  * steps.
  *
  * `PromptStepRequest` / `SteerStepRequest` carry an already-built user

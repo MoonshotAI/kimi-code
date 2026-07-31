@@ -1,5 +1,5 @@
 /**
- * `mcpCore` domain (L2) — stdio transport MCP client.
+ * `mcpCore` domain — stdio transport MCP client.
  */
 
 import { ErrorCodes, Error2 } from '#/errors';

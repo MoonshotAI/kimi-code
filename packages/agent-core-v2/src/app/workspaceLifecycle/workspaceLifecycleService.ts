@@ -1,5 +1,5 @@
 /**
- * `workspaceLifecycle` domain (L6) — `IWorkspaceLifecycleService` implementation.
+ * `workspaceLifecycle` domain — `IWorkspaceLifecycleService` implementation.
  *
  * Holds the live handler registry (`Map<workspaceId, IWorkspaceScopeHandle>`)
  * and materializes handlers through the DI scope tree, seeding each

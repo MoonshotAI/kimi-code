@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — registration barrel of the OpenAI wire
+ * `kosong/provider` domain — registration barrel of the OpenAI wire
  * bases. Importing this module registers both OpenAI transports — `openai`
  * (Chat Completions) and `openai_responses`.
  */

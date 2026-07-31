@@ -1,5 +1,5 @@
 /**
- * `web` domain (L4) — `IWebFetchService` implementation.
+ * `web` domain — `IWebFetchService` implementation.
  *
  * Yields the `UrlFetcher` the `FetchURL` tool uses, resolving the backend in
  * precedence order: (1) an explicit `[services.moonshot_fetch]` config

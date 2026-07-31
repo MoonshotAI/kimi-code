@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `SelectToolsTool` implementation (the `select_tools`
+ * `tools` domain — `SelectToolsTool` implementation (the `select_tools`
  * tool).
  *
  * The built-in tool that lets the model load dynamic schemas named in

@@ -1,5 +1,5 @@
 /**
- * `config` domain (L2) — record-level config-section diffing.
+ * `config` domain — record-level config-section diffing.
  *
  * `diffRecords` computes the added/removed/changed keys between two snapshots
  * of a record-shaped config section, `deepEqual` is the value comparison it

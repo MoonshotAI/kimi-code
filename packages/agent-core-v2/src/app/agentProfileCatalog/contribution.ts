@@ -1,5 +1,5 @@
 /**
- * `agentProfileCatalog` domain (L3) — module-level profile contribution registry.
+ * `agentProfileCatalog` domain — module-level profile contribution registry.
  *
  * Profiles contribute themselves at module load via `registerAgentProfile(def)`,
  * the same "import = register" pattern used by `registerAgentToolService` for tools

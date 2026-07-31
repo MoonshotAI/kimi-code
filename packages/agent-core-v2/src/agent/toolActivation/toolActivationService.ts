@@ -1,5 +1,5 @@
 /**
- * `toolActivation` domain (L4) — `IAgentToolActivationService` implementation.
+ * `toolActivation` domain — `IAgentToolActivationService` implementation.
  *
  * Iterates the `toolRegistry` contribution table and, for each entry allowed
  * by the workspace os-level veto (the seeded `sessionToolPolicyGate`) AND

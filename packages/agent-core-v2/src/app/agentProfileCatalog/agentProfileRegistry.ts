@@ -1,5 +1,5 @@
 /**
- * `agentProfileCatalog` domain (L3) — `IAgentProfileRegistry` contract.
+ * `agentProfileCatalog` domain — `IAgentProfileRegistry` contract.
  *
  * The Registry of the Contribution / Registry / Catalog extension-point
  * pattern for agent profiles. A contribution is a plain data structure

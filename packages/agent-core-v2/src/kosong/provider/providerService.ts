@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — `IProviderService` implementation.
+ * `kosong/provider` domain — `IProviderService` implementation.
  *
  * The in-memory provider registry plus the default-provider pointer. Holds no
  * config dependency: the persistence bridge hydrates it via `loadAll` and

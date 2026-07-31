@@ -1,5 +1,5 @@
 /**
- * `workspaceSkillCatalog` domain (L3) — `IWorkspaceSkillCatalog`
+ * `workspaceSkillCatalog` domain — `IWorkspaceSkillCatalog`
  * implementation.
  *
  * Merges builtin, user, explicit, extra, workspace-root, and plugin skill

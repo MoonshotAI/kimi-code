@@ -1,5 +1,5 @@
 /**
- * `process` domain (L2) — the default `ISessionProcessRunner` implementation.
+ * `process` domain — the default `ISessionProcessRunner` implementation.
  *
  * Resolves the default cwd from the session's `ISessionContext` and delegates
  * the actual host spawn to the App-scope `IHostProcessService`. A per-call

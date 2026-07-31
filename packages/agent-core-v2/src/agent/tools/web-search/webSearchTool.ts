@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `WebSearchTool` implementation (the `WebSearch` tool).
+ * `tools` domain — `WebSearchTool` implementation (the `WebSearch` tool).
  *
  * Resolves the host-injected `WebSearchProvider` from the App-scope
  * `IWebSearchProviderService` (`auth` domain) at construction — the tool only

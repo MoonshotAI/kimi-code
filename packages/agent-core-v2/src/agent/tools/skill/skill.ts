@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ISkillTool` contract (the `Skill` tool).
+ * `tools` domain — `ISkillTool` contract (the `Skill` tool).
  *
  * Public contract of the `Skill` collaboration tool that lets the LLM
  * proactively invoke an inline registered skill: the model-facing

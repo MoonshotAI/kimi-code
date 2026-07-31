@@ -1,5 +1,5 @@
 /**
- * `toolPolicy` domain (L4) — pure tool-activation policy evaluation.
+ * `toolPolicy` domain — pure tool-activation policy evaluation.
  *
  * Applies allowlists and denylists with builtin/MCP matching semantics shared
  * by Agent authorization, profile prompt construction, and child-agent setup.

@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IAskUserQuestionTool` contract (the
+ * `tools` domain — `IAskUserQuestionTool` contract (the
  * `AskUserQuestion` tool).
  *
  * Public contract of the `AskUserQuestion` structured user question tool:

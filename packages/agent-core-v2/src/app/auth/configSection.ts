@@ -1,5 +1,5 @@
 /**
- * `auth` domain (L2) — `services` config-section schema, TOML transforms, and
+ * `auth` domain — `services` config-section schema, TOML transforms, and
  * env bindings.
  *
  * Owns the `[services]` configuration section (`moonshot_search` /

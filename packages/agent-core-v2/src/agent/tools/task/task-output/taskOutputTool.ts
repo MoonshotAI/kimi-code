@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `TaskOutputTool` implementation (the `TaskOutput`
+ * `tools` domain — `TaskOutputTool` implementation (the `TaskOutput`
  * tool).
  *
  * Returns structured task metadata plus a fixed-size tail preview of the

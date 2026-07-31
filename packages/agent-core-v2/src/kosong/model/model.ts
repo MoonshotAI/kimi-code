@@ -1,5 +1,5 @@
 /**
- * `kosong/model` domain (L2) — model configuration registry contract.
+ * `kosong/model` domain — model configuration registry contract.
  *
  * Owns the `ModelRecord` config record type (id → resolution recipe) and the
  * in-memory model registry contract. App-scoped — model configuration is

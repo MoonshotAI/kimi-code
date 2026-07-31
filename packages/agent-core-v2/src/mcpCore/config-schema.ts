@@ -1,5 +1,5 @@
 /**
- * `mcpCore` domain (L2) — MCP server configuration schemas.
+ * `mcpCore` domain — MCP server configuration schemas.
  *
  * Owns the `McpServerConfig` schema and its transport variants. These describe
  * the shape of MCP server entries as they appear in configuration (whether in

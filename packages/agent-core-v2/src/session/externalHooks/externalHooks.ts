@@ -1,5 +1,5 @@
 /**
- * `externalHooks` domain (L6) — Session-scope external hook observer contract.
+ * `externalHooks` domain — Session-scope external hook observer contract.
  *
  * The implementation registers session lifecycle callbacks from its
  * constructor (for `SessionStart` / `SessionEnd`) and observes the

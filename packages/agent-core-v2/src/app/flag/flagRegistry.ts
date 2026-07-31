@@ -1,5 +1,5 @@
 /**
- * `flag` domain (L3) — flag-definition registry contract.
+ * `flag` domain — flag-definition registry contract.
  *
  * `IFlagRegistry` is the writable catalog that `IFlagService` reads flag
  * definitions from. Definitions are contributed **decentrally**: each domain

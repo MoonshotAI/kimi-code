@@ -1,5 +1,5 @@
 /**
- * `telemetry` domain (L1) — `IAgentTelemetryContextService` implementation.
+ * `telemetry` domain — `IAgentTelemetryContextService` implementation.
  *
  * Holds mutable request context (defaulting to `mode: 'agent'`) that turn
  * telemetry snapshots at launch. Bound at Agent scope; has no cross-domain

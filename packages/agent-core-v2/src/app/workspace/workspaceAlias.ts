@@ -1,5 +1,5 @@
 /**
- * `workspace` domain (L2) — alias-folding pure helpers.
+ * `workspace` domain — alias-folding pure helpers.
  *
  * One physical folder can arrive under several id spellings (Windows
  * drive-letter casing, slash direction, typed-vs-realpath variants, legacy

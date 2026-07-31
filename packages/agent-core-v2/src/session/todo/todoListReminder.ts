@@ -1,5 +1,5 @@
 /**
- * `todo` domain (L4) — pure stale-todo reminder logic.
+ * `todo` domain — pure stale-todo reminder logic.
  *
  * Computes the `todo_list_reminder` context injection from the agent's context
  * history (turns since the last `TodoList` write / last reminder) and the

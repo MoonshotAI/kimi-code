@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — the provider-definition registry.
+ * `kosong/provider` domain — the provider-definition registry.
  *
  * A `ProviderDefinition` is the declarative answer to "who is this vendor and
  * where do its key/url come from": the protocol base this registration

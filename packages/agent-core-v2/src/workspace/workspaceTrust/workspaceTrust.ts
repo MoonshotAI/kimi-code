@@ -1,5 +1,5 @@
 /**
- * `workspaceTrust` domain (L2) — per-workspace trust-state contract.
+ * `workspaceTrust` domain — per-workspace trust-state contract.
  *
  * Defines `IWorkspaceTrust`, the Workspace-scope owner of one yes/no fact:
  * has the user trusted this workspace. Trust gates everything the

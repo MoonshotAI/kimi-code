@@ -1,5 +1,5 @@
 /**
- * `workspaceMcp` domain (L5) — `IWorkspaceMcpService` implementation.
+ * `workspaceMcp` domain — `IWorkspaceMcpService` implementation.
  *
  * Owns the handler-wide `McpConnectionManager` (built at construction,
  * shared by every session of the workspace). This service drives the

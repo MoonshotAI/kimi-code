@@ -1,5 +1,5 @@
 /**
- * `edit` domain (L4) — `IFileEditService` implementation.
+ * `edit` domain — `IFileEditService` implementation.
  *
  * Reads the file through the os `hostFs` domain (`IHostFileSystem`), runs the
  * pure edit logic (`TextModel` + `EditService`), and writes the re-materialized

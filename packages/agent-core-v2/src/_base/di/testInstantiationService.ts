@@ -1,5 +1,5 @@
 /**
- * `di` domain (L0) — `TestInstantiationService` and scoped test-container helpers.
+ * `di` domain — `TestInstantiationService` and scoped test-container helpers.
  */
 
 import * as sinon from 'sinon';

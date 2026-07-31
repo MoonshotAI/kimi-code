@@ -1,5 +1,5 @@
 /**
- * `toolPolicy` domain (L4) — Agent-scope tool authorization service.
+ * `toolPolicy` domain — Agent-scope tool authorization service.
  *
  * Intersects the workspace os-level veto (the seeded `sessionToolPolicyGate`,
  * which outranks everything below it), the bound profile policy, global

@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — OpenAI Responses API wire base.
+ * `kosong/provider` domain — OpenAI Responses API wire base.
  *
  * Speaks the Responses wire format: `input` items, `instructions`,
  * `reasoning` blocks with encrypted content, and the native

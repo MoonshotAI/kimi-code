@@ -1,5 +1,5 @@
 /**
- * `config` domain (L2) — module-level config-overlay contribution collector.
+ * `config` domain — module-level config-overlay contribution collector.
  *
  * An owner domain calls `registerConfigOverlay(...)` at the top level of the
  * module that defines the overlay; `ConfigRegistry` drains the collected

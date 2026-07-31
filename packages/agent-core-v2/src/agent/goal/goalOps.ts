@@ -1,5 +1,5 @@
 /**
- * `goal` domain (L4) — wire Model (`GoalModel`) and the `goal.create`
+ * `goal` domain — wire Model (`GoalModel`) and the `goal.create`
  * (`createGoal`) / `goal.update` (`updateGoal`) / `goal.clear` (`clearGoal`)
  * Ops for the per-agent goal lifecycle.
  *

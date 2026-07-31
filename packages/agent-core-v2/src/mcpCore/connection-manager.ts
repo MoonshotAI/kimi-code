@@ -1,5 +1,5 @@
 /**
- * `mcpCore` domain (L2) — `McpConnectionManager`, the workspace-shared MCP
+ * `mcpCore` domain — `McpConnectionManager`, the workspace-shared MCP
  * server connection orchestrator.
  *
  * Owns the configured MCP servers and their runtime clients: connects

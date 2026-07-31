@@ -1,5 +1,5 @@
 /**
- * `di` domain (L0) — service identifiers, `createDecorator`, and the `IInstantiationService` contract.
+ * `di` domain — service identifiers, `createDecorator`, and the `IInstantiationService` contract.
  */
 
 import type { SyncDescriptor0 } from './descriptors';

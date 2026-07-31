@@ -1,5 +1,5 @@
 /**
- * `goal` domain (L4) — wall-clock deadline scheduling contract.
+ * `goal` domain — wall-clock deadline scheduling contract.
  *
  * Defines the App-scoped `IGoalDeadlineScheduler` for measuring active time
  * and arming hard wall-clock budget deadlines.

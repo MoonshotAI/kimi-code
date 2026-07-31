@@ -1,5 +1,5 @@
 /**
- * `toolSelect` domain (L4) — predicates and shaping helpers for the
+ * `toolSelect` domain — predicates and shaping helpers for the
  * select_tools progressive-disclosure protocol context.
  *
  * Exposes pure helpers for recognizing injected tool-schema messages,

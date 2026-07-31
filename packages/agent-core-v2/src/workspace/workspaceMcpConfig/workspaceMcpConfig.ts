@@ -1,5 +1,5 @@
 /**
- * `workspaceMcpConfig` domain (L5) — Workspace-scoped MCP server-config owner
+ * `workspaceMcpConfig` domain — Workspace-scoped MCP server-config owner
  * contract.
  *
  * Defines `IWorkspaceMcpConfigService`, the single source of truth for "which

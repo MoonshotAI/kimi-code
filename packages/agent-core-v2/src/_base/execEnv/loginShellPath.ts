@@ -1,5 +1,5 @@
 /**
- * `_base/execEnv` (L0) — login-shell PATH probe.
+ * `_base/execEnv` — login-shell PATH probe.
  *
  * Enriches `process.env.PATH` with entries from the user's login shell. When
  * kimi-code is launched from a context that skipped the user's shell profile

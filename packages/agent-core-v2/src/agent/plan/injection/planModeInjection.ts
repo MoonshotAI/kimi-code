@@ -1,5 +1,5 @@
 /**
- * `plan` domain (L4) — plan-mode context injection.
+ * `plan` domain — plan-mode context injection.
  *
  * Owns the `plan_mode` context-injection provider: while plan mode is active it
  * emits the full / sparse / re-entry reminders (deduped against recent history),

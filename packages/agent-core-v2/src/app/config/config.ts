@@ -1,5 +1,5 @@
 /**
- * `config` domain (L2) — configuration registry and layered global config service.
+ * `config` domain — configuration registry and layered global config service.
  *
  * Defines the config service identifiers and section models: the
  * `IConfigRegistry` for section schemas, and the App-scoped `IConfigService`

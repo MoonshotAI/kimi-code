@@ -1,5 +1,5 @@
 /**
- * `hostFolderBrowser` domain (L2) — `IHostFolderBrowser` implementation.
+ * `hostFolderBrowser` domain — `IHostFolderBrowser` implementation.
  *
  * Browses the real local filesystem through `node:fs/promises` and derives
  * `recent_roots` from the process-wide `IWorkspaceService`. Bound at App

@@ -1,5 +1,5 @@
 /**
- * `cron` domain (L5) — `ICronTaskPersistence` contract.
+ * `cron` domain — `ICronTaskPersistence` contract.
  *
  * Project-level persistence for cron tasks. Persists tasks under
  * `bootstrap.scope('cron')` as atomic documents keyed by

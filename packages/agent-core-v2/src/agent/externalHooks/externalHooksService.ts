@@ -1,5 +1,5 @@
 /**
- * `externalHooks` domain (L6) — Agent-scope adapter for external
+ * `externalHooks` domain — Agent-scope adapter for external
  * hook commands.
  *
  * Listens to hook slots and agent events owned by the agent behavior/lifecycle

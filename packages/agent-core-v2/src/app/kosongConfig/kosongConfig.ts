@@ -1,5 +1,5 @@
 /**
- * `kosongConfig` domain (L3) — the kosong persistence bridge contract.
+ * `kosongConfig` domain — the kosong persistence bridge contract.
  *
  * `IKosongConfigService` is the two-way sync between the config service
  * (persistence) and kosong's in-memory provider/model registries:

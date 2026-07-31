@@ -1,5 +1,5 @@
 /**
- * `plan` domain (L4) — builtin `plan` profile contribution.
+ * `plan` domain — builtin `plan` profile contribution.
  *
  * Registers the read-only planning task-agent profile. The profile is
  * self-contained: its `systemPrompt` renderer merges the shared base template

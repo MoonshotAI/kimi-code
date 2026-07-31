@@ -1,5 +1,5 @@
 /**
- * `media` domain (L4) — WebP decoding for the image-compression pipeline.
+ * `media` domain — WebP decoding for the image-compression pipeline.
  *
  * The default jimp build ships no WebP codec, so WebP is decoded with
  * `@jsquash/webp`'s wasm decoder instead. The decoder wasm is compiled from a

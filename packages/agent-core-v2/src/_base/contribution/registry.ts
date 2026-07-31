@@ -1,5 +1,5 @@
 /**
- * `_base/contribution` domain (L1) — generic source-keyed contribution
+ * `_base/contribution` domain — generic source-keyed contribution
  * registry.
  *
  * The storage half of the Contribution / Registry / Catalog extension-point

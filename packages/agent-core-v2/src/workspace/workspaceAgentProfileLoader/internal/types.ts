@@ -1,5 +1,5 @@
 /**
- * `workspaceAgentProfileLoader` domain (L3) — agent-file model types.
+ * `workspaceAgentProfileLoader` domain — agent-file model types.
  *
  * Shared types for the agent-file primitives: the parsed single-file
  * definition (`AgentFileDefinition`), scan roots (`AgentFileRoot`) tagged with

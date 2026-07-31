@@ -1,5 +1,5 @@
 /**
- * `mcpCore` domain (L2) — MCP protocol types and the minimal client contract.
+ * `mcpCore` domain — MCP protocol types and the minimal client contract.
  *
  * The wire-level surface: tool definitions returned by `tools/list`, the
  * `tools/call` result shape, and the small interface that lets tests inject a

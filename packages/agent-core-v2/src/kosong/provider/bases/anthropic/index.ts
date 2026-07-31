@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — registration barrel of the Anthropic wire
+ * `kosong/provider` domain — registration barrel of the Anthropic wire
  * base. Importing this module registers the `anthropic` transport.
  */
 

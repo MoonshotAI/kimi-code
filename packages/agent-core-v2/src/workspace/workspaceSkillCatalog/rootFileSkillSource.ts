@@ -1,5 +1,5 @@
 /**
- * `workspaceSkillCatalog` domain (L3) — workspace-root `ISkillSource`
+ * `workspaceSkillCatalog` domain — workspace-root `ISkillSource`
  * producer.
  *
  * Discovers project skills from the handler's workspace root

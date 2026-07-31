@@ -1,5 +1,5 @@
 /**
- * `interaction` domain (L6) — wire Model (`InteractionModel`) and the
+ * `interaction` domain — wire Model (`InteractionModel`) and the
  * persisted `interaction.request` (`interactionRequest`) /
  * `interaction.resolved` (`interactionResolved`) Ops that journal the
  * session's human-in-the-loop lifecycle onto the owning agent's wire.

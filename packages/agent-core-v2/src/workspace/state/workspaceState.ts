@@ -1,5 +1,5 @@
 /**
- * `state` domain (L1) — Workspace-scope keyed state container contract.
+ * `state` domain — Workspace-scope keyed state container contract.
  *
  * Defines `IWorkspaceStateService`, the Workspace-scope state service:
  * Workspace-tier services declare their plain-data state as typed keys

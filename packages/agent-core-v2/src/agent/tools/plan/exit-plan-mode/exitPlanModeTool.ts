@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IExitPlanModeTool` implementation.
+ * `tools` domain — `IExitPlanModeTool` implementation.
  *
  * Reads the plan file tracked by the plan service (`plan`) and flips plan
  * mode off. Every submission — the moment the final content is read for the

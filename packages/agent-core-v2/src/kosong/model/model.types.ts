@@ -1,5 +1,5 @@
 /**
- * `kosong/model` domain (L2) — shared pure-data types no single contract owns.
+ * `kosong/model` domain — shared pure-data types no single contract owns.
  *
  * One home for the small data interfaces that would otherwise each sit in a
  * near-empty file:

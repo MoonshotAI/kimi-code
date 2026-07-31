@@ -1,5 +1,5 @@
 /**
- * `workspaceToolPolicy` domain (L2) — `IWorkspaceToolPolicy` implementation.
+ * `workspaceToolPolicy` domain — `IWorkspaceToolPolicy` implementation.
  *
  * Computes the os-level disabled-tool set from the runtime capabilities the
  * handler binds (`IWorkspaceContext.osBackendId`). The local runtime carries

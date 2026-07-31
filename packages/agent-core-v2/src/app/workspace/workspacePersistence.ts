@@ -1,5 +1,5 @@
 /**
- * `workspace` domain (L2) — `IWorkspacePersistence` contract.
+ * `workspace` domain — `IWorkspacePersistence` contract.
  *
  * Domain-specific persistence Store for the known-workspaces catalog. It hides
  * the on-disk document layout (`<homeDir>/workspaces.json`, the v1-compatible

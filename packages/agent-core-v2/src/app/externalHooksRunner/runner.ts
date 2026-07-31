@@ -1,5 +1,5 @@
 /**
- * `externalHooksRunner` domain (L6) — pure hook matching/dispatch logic.
+ * `externalHooksRunner` domain — pure hook matching/dispatch logic.
  *
  * Owns deciding *which* hooks run for an event and executing them: building
  * the event→hooks index,

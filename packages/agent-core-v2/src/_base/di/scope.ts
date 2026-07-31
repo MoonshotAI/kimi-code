@@ -1,5 +1,5 @@
 /**
- * `di` domain (L0) — DI Scope tree (`Scope`, `LifecycleScope`) and scoped service registry.
+ * `di` domain — DI Scope tree (`Scope`, `LifecycleScope`) and scoped service registry.
  *
  * Scoped services are resolved when their scope is created by default;
  * registrations that defer construction until first resolution use `OnDemand`.

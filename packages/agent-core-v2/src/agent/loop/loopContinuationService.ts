@@ -1,5 +1,5 @@
 /**
- * `loop` domain (L4) — tool-step continuation aspect.
+ * `loop` domain — tool-step continuation aspect.
  *
  * A step that executed tools must drive one more step so the model consumes
  * the tool results: this service watches the loop's `onDidFinishStep` and enqueues

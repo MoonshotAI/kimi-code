@@ -1,5 +1,5 @@
 /**
- * `media` domain (L4) — `image` config-section schema and env bindings.
+ * `media` domain — `image` config-section schema and env bindings.
  *
  * Owns the `[image]` section: the longest-edge ceiling (`max_edge_px`) applied
  * when compressing images for the model, and the raw-byte budget

@@ -1,5 +1,5 @@
 /**
- * `plugin` domain (L3) — manages installed plugin state and consumption metadata.
+ * `plugin` domain — manages installed plugin state and consumption metadata.
  *
  * Installs, reloads, persists, and summarizes plugins, counting loadable
  * plugin skills through skill discovery.

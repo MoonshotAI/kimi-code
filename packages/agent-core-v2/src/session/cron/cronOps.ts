@@ -1,5 +1,5 @@
 /**
- * `cron` domain (L5) — wire Model (`CronModel`) and the `cron.add`
+ * `cron` domain — wire Model (`CronModel`) and the `cron.add`
  * (`cronAdd`) / `cron.delete` (`cronDelete`) / `cron.cursor` (`cronCursor`)
  * Ops for the session-level scheduling engine, plus the `cron.fired` edge
  * event declared on `DomainEventMap`.
