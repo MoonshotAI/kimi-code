@@ -12,7 +12,6 @@ import {
   clearMermaidWorker,
 } from 'markstream-vue';
 import type { MarkdownIt } from 'markstream-vue';
-import { useAppearance } from '../../composables/client/useAppearance';
 import { useIsDark } from '../../composables/useIsDark';
 import type { FilePreviewRequest } from '../../types';
 import { collectFilePathAliases, findFilePathLinks } from '../../lib/filePathLinks';
@@ -75,7 +74,6 @@ function disableInlineMath(md: MarkdownIt): MarkdownIt {
 }
 
 const { t } = useI18n();
-const { uiFontSize } = useAppearance();
 
 const resolveImage = inject<(src: string) => Promise<string>>('resolveImage');
 const mdRef = ref<HTMLElement | null>(null);
@@ -340,10 +338,12 @@ const CODE_DARK_THEME = 'github-dark';
 //
 // fontSize / fontFamily matter as much as the gutter: since 1.0.9 the shiki
 // renderer (stream-diffs) applies these options as inline styles on the code
-// container (`applyEditorStyles`), so CSS overrides cannot beat them. Keep the
-// numeric font size tied to the shared Appearance setting; recomputing the
-// props also lets markstream update already-mounted blocks when it changes.
-const codeBlockProps = computed(() => ({
+// container (`applyEditorStyles`), so CSS overrides cannot beat them — the
+// values must be passed here. fontSize mirrors --text-sm (13px). `padding`
+// is ignored by the settled renderer (it draws inside a shadow root; its
+// vertical padding comes from `--diffs-gap-block` below) but sets the loading
+// fallback's inline padding, keeping the fallback → settled swap stable.
+const codeBlockProps = {
   showHeader: true,
   showCopyButton: true,
   showExpandButton: false,
@@ -353,10 +353,11 @@ const codeBlockProps = computed(() => ({
   loading: false,
   monacoOptions: {
     lineNumbers: false,
-    fontSize: uiFontSize.value,
+    fontSize: 13,
     fontFamily: 'var(--font-mono)',
+    padding: { top: 12, bottom: 12 },
   },
-}));
+};
 
 // Root cause for the "large session turns into code skeletons" failure:
 // markstream mounts every code block in the loaded transcript, then shiki has
@@ -671,10 +672,10 @@ function copyDiff(code: string, idx: number) {
   background: var(--color-surface-sunken);
 }
 /* Pierre renders the highlighted code inside a shadow root. Its native gap
-   variable inherits through that boundary; the old Monaco `padding` option
-   does not. Keep both layers on the same product spacing token. Line height
-   stays relative so it follows the reactive font size without relying on
-   markstream to re-apply a second numeric editor option. */
+   variable inherits through that boundary; the Monaco `padding` option above
+   does not, but it sets the loading fallback's inline padding — both layers
+   end up at 12px. Line height stays relative (1.65) so every rendering path
+   shares the token ratio without pinning a px value into inline styles. */
 .md :deep(.code-editor-container) {
   line-height: 1.65;
   --diffs-gap-block: var(--space-3);
@@ -685,16 +686,16 @@ function copyDiff(code: string, idx: number) {
 /* Loading/streaming fallback <pre>: upstream hardcodes show-line-numbers on
    it while the settled stream-diffs block honors lineNumbers:false — the
    gutter (and its reserved padding) popping in and out on every load is a
-   visible flash. Hide the fallback gutter and pin its left inset to the
-   settled per-line padding (1ch) so the fallback → highlighted swap is
-   layout-stable. */
+   visible flash. Hide the fallback gutter, pin its left inset to the settled
+   per-line padding (1ch), and force the shared 1.65 line height over the
+   inline 1.5×-font-size default upstream stamps on the pre, so the
+   fallback → highlighted swap is layout-stable. */
 .md :deep(.code-pre-fallback > .markstream-pre__line-numbers) {
   display: none;
 }
 .md :deep(.code-block-container .code-pre-fallback) {
-  padding-block: var(--space-3);
   padding-left: 1ch;
-  line-height: 1.65;
+  line-height: 1.65 !important;
 }
 .md :deep(.code-block-container pre:not(.code-pre-fallback):not(.markstream-pre--line-numbers)),
 .md :deep(.markstream-pre:not(.code-pre-fallback):not(.markstream-pre--line-numbers)) {
