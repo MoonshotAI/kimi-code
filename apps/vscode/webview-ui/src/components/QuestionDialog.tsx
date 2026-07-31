@@ -37,8 +37,9 @@ export function QuestionDialog() {
   };
 
   const handleCustomSubmit = () => {
-    if (!customInput.trim()) return;
-    setFlow((current) => answerQuestionWithCustom(current, question, customInput.trim()));
+    const normalizedInput = customInput.trim();
+    if (!normalizedInput && !flow.customAnswers[question.question]) return;
+    setFlow((current) => answerQuestionWithCustom(current, question, normalizedInput));
     setShowCustom(false);
   };
 
@@ -137,7 +138,7 @@ export function QuestionDialog() {
                 onClick={() => {
                   handleCustomSubmit();
                 }}
-                disabled={!customInput.trim()}
+                disabled={!customInput.trim() && !flow.customAnswers[question.question]}
                 className="px-2 py-1 rounded-md text-xs bg-blue-500 text-white disabled:opacity-50 cursor-pointer"
               >
                 Send

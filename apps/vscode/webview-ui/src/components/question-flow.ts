@@ -33,7 +33,10 @@ export function answerQuestionWithCustom(
   question: QuestionLike,
   answer: string,
 ): QuestionFlow {
-  const customAnswers = { ...flow.customAnswers, [question.question]: answer };
+  const normalizedAnswer = answer.trim();
+  const customAnswers = normalizedAnswer
+    ? { ...flow.customAnswers, [question.question]: normalizedAnswer }
+    : withoutKey(flow.customAnswers, question.question);
   const selections = question.multi_select ? flow.selections : withoutKey(flow.selections, question.question);
   return withAnswer({ ...flow, selections, customAnswers }, question);
 }

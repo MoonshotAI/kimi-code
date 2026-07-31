@@ -103,4 +103,38 @@ describe("QuestionDialog", () => {
       "Editor?": "Neovim",
     });
   });
+
+  it("lets users remove a custom multi-select answer before submitting", async () => {
+    await click(button(container, "Go"));
+    await click(button(container, "Custom response"));
+    const input = container.querySelector("input");
+    if (!input) throw new Error("custom response input not found");
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "Rust");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(button(container, "Send"));
+
+    await click(button(container, "Rust"));
+    const reopenedInput = container.querySelector("input");
+    if (!reopenedInput) throw new Error("reopened custom response input not found");
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(reopenedInput, "");
+      reopenedInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const save = button(container, "Send");
+    expect(save.disabled).toBe(false);
+    await click(save);
+
+    await click(button(container, "Next"));
+    await click(button(container, "VS Code"));
+    await click(button(container, "Submit answers"));
+
+    expect(store.respondQuestion).toHaveBeenCalledWith({
+      "Languages?": "Go",
+      "Editor?": "VS Code",
+    });
+  });
 });
