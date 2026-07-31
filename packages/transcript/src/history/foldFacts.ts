@@ -17,8 +17,10 @@
  *    accurate `at` (record time). Entity state is complete.
  *  - turn end facts (terminal state / durationMs / error message) are
  *    rebuilt from the persisted `turn.ended` records when the journal
- *    carries them; journals written before those records existed keep the
- *    grouping default (`completed`).
+ *    carries them, with engine turn ids mapped to grouping ordinals
+ *    through the replayed turn clock (hidden retry turns and cancelled
+ *    queued reservations shift the ordinals); journals written before
+ *    those records existed keep the grouping default (`completed`).
  *  - live-only detail is never backfilled: step usage / finishReason /
  *    timing / retry, tool inputText / progress, and task resultSummary /
  *    error / stateReason / usage exist only on live engine events — the
@@ -108,6 +110,37 @@ interface TurnEndedPayload {
   readonly reason?: unknown;
   readonly error?: unknown;
   readonly durationMs?: unknown;
+}
+
+/** `turn.prompt` / `turn.cancel` payloads (the loop's turn-clock records). */
+interface TurnPromptPayload {
+  readonly origin?: unknown;
+}
+interface TurnCancelPayload {
+  readonly turnId?: unknown;
+  readonly target?: unknown;
+}
+
+/**
+ * Mirror of groupTurns' turn-opening rules, applied to `turn.prompt`
+ * origins: whether the turn opens a visible transcript item. The engine
+ * opens a real turn a transcript never shows for retry turns
+ * (`RetryStepRequest` — origin `retry`, no context messages); hidden
+ * mid-turn origins never produce `turn.prompt` records at all, but are
+ * classified here anyway for completeness.
+ */
+function isVisibleTurnOrigin(origin: unknown): boolean {
+  const kind = (origin as { kind?: unknown } | undefined)?.kind;
+  if (kind === 'system_trigger') {
+    const name = (origin as { name?: unknown } | undefined)?.name;
+    return name === 'goal_continuation' || name === 'subagent';
+  }
+  if (kind === 'skill_activation' || kind === 'plugin_command') {
+    return (origin as { trigger?: unknown } | undefined)?.trigger === 'user-slash';
+  }
+  if (kind === 'injection' || kind === 'retry' || kind === 'compaction_summary') return false;
+  // user / cron / task / hook / shell_command / unknown kinds open visible turns.
+  return true;
 }
 
 /** Engine task kinds (`AgentTaskInfoByKind`: process / agent / question) → transcript kinds. */
@@ -210,6 +243,22 @@ export function foldWireRecordFacts(
   const interactions = new Map<string, TranscriptInteraction>();
   /** Latest `turn.ended` record per engine turn id (last-wins). */
   const endedTurns = new Map<number, HistoryWireRecord>();
+  /**
+   * Turn-clock replay (mirrors the loop's TurnModel): engine turn ids are
+   * assigned to `turn.prompt` records in order, skipping queued-then-
+   * cancelled reservations. Turns whose origin opens no visible transcript
+   * item (retry turns) make engine ids drift from the grouping ordinals.
+   */
+  let nextTurnId = 0;
+  const cancelledTurnIds = new Set<number>();
+  const hiddenTurnIds = new Set<number>();
+  const skipCancelledTurnIds = (): void => {
+    // A skipped reservation never starts: no prompt, no messages, no item.
+    while (cancelledTurnIds.delete(nextTurnId)) {
+      hiddenTurnIds.add(nextTurnId);
+      nextTurnId += 1;
+    }
+  };
   let todo: TranscriptTodo | undefined;
   let goal: GoalMeta | undefined;
   let goalTouched = false;
@@ -421,6 +470,25 @@ export function foldWireRecordFacts(
         if (typeof payload.turnId === 'number') endedTurns.set(payload.turnId, record);
         break;
       }
+      case 'turn.prompt': {
+        skipCancelledTurnIds();
+        const turnId = nextTurnId;
+        nextTurnId += 1;
+        if (!isVisibleTurnOrigin((record as TurnPromptPayload).origin)) hiddenTurnIds.add(turnId);
+        break;
+      }
+      case 'turn.cancel': {
+        const payload = record as TurnCancelPayload;
+        if (
+          payload.target === 'queued' &&
+          typeof payload.turnId === 'number' &&
+          payload.turnId >= nextTurnId
+        ) {
+          cancelledTurnIds.add(payload.turnId);
+          skipCancelledTurnIds();
+        }
+        break;
+      }
       default:
         break;
     }
@@ -434,15 +502,27 @@ export function foldWireRecordFacts(
     }
   }
 
-  // `turn.ended` records rewrite the matching base turn items (the engine's
-  // 0-based turn id aligns with the grouping ordinal — see groupTurns).
-  // Unmatched ids are ignored: grouping can drift when hidden origins consume
-  // engine turns the fold cannot see.
+  // `turn.ended` records rewrite the matching base turn items. An engine
+  // turn id maps to the grouping ordinal `id - (hidden ids below it)`:
+  // hidden turns (retry turns, queued-then-cancelled reservations) consume
+  // an engine id without opening a visible item. Their own end records map
+  // nowhere and are dropped; ids with no matching item are ignored (e.g.
+  // turns compacted out of the message history). One residual gap,
+  // accepted: a turn that ends between `turn.prompt` and its first context
+  // message leaves no message trace and still shifts the ordinals behind it.
+  const endedByOrdinal = new Map<number, HistoryWireRecord>();
+  for (const [turnId, record] of endedTurns) {
+    if (hiddenTurnIds.has(turnId)) continue;
+    let hidden = 0;
+    for (const id of hiddenTurnIds) if (id < turnId) hidden += 1;
+    endedByOrdinal.set(turnId - hidden, record);
+  }
+
   const items =
-    endedTurns.size > 0
+    endedByOrdinal.size > 0
       ? base.items.map((item) => {
           if (item.kind !== 'turn') return item;
-          const record = endedTurns.get(item.ordinal);
+          const record = endedByOrdinal.get(item.ordinal);
           if (record === undefined) return item;
           const payload = record as TurnEndedPayload;
           return {

@@ -1107,4 +1107,63 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(turn.endedAt).toBe(new Date(3000).toISOString());
     expect(folded.items).toHaveLength(base.items.length);
   });
+
+  it('maps turn.ended around hidden retry turns replayed from the turn-clock records', () => {
+    // Engine turns: 0 = user "one", 1 = retry (hidden — a real newTurn with
+    // no context messages), 2 = user "two". The base grouping sees only the
+    // two user turns, ordinals 0 and 1.
+    const base = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'one' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'a1' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'two' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'a2' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'one' }], origin: { kind: 'user' }, time: 1 },
+        { type: 'turn.ended', turnId: 0, reason: 'completed', time: 2 },
+        { type: 'turn.prompt', input: [], origin: { kind: 'retry' }, time: 3 },
+        { type: 'turn.ended', turnId: 1, reason: 'failed', error: { message: 'retry boom' }, time: 4 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'two' }], origin: { kind: 'user' }, time: 5 },
+        { type: 'turn.ended', turnId: 2, reason: 'cancelled', durationMs: 20, time: 6 },
+      ],
+      base,
+    );
+    const first = folded.items[0];
+    if (first?.kind !== 'turn') throw new Error('expected turn');
+    expect(first.state).toBe('completed');
+    const second = folded.items[1];
+    if (second?.kind !== 'turn') throw new Error('expected turn');
+    // The retry's failed/error must NOT bleed into the later user turn —
+    // it gets its own record (turnId 2 → ordinal 1).
+    expect(second.state).toBe('cancelled');
+    expect(second.error).toBeUndefined();
+    expect(second.durationMs).toBe(20);
+  });
+
+  it('maps turn.ended across queued-then-cancelled turn reservations', () => {
+    // Engine turns: 0 = user "one", 1 = reserved then cancelled while queued
+    // (never started, no prompt, no messages), 2 = user "two".
+    const base = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'one' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'a1' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'two' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'a2' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'one' }], origin: { kind: 'user' }, time: 1 },
+        { type: 'turn.ended', turnId: 0, reason: 'completed', time: 2 },
+        { type: 'turn.cancel', turnId: 1, target: 'queued', time: 3 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'two' }], origin: { kind: 'user' }, time: 4 },
+        { type: 'turn.ended', turnId: 2, reason: 'failed', error: { message: 'boom' }, time: 5 },
+      ],
+      base,
+    );
+    const second = folded.items[1];
+    if (second?.kind !== 'turn') throw new Error('expected turn');
+    // turnId 2 maps past the cancelled reservation onto ordinal 1.
+    expect(second.state).toBe('failed');
+    expect(second.error).toBe('boom');
+  });
 });
