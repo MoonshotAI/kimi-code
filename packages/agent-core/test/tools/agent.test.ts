@@ -124,12 +124,14 @@ describe('AgentTool', () => {
     expect(properties).not.toHaveProperty('timeout');
   });
 
-  it('explains the fixed background subagent timeout', () => {
+  it('explains the configurable subagent timeout with a 2-hour default', () => {
     const host = mockSubagentHost({ spawn: vi.fn() });
     const tool = agentTool(host);
 
-    expect(tool.description).toContain('fixed 30-minute timeout');
-    expect(tool.description).not.toContain('operator-configured background timeout');
+    expect(tool.description).toContain('configurable timeout');
+    expect(tool.description).toContain('defaults to 2 hours');
+    expect(tool.description).toContain('KIMI_SUBAGENT_TIMEOUT_MS');
+    expect(tool.description).not.toContain('fixed 30-minute timeout');
     expect(tool.description).not.toContain('no time limit');
     // Background guidance must steer foreground-by-default, so the model doesn't
     // background-launch a result it needs and then block waiting on it.
