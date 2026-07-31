@@ -8,7 +8,7 @@
  * workspace config live on the workspace side; the Agent-scope `toolPolicy`
  * and `toolActivation` read this seed and apply the veto (it outranks every
  * Agent-side policy layer). Seeded into the Session scope by
- * `workspaceHandler` when the session is materialized; a no-op default
+ * `sessionLifecycle` when the session is materialized; a no-op default
  * registration keeps scopes built without a handler (tests) resolvable.
  * Session-scoped.
  */

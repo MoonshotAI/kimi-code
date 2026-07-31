@@ -11,7 +11,7 @@
  * This Session-scope registration is the DEFAULT for scopes built without a
  * workspace handler (test hosts, harness agents). Real sessions get the
  * handler-shared Workspace-scope runner (`workspaceProcess`) as a scope seed
- * from `workspaceHandler`, which shadows this registration — same pattern as
+ * from `sessionLifecycle`, which shadows this registration — same pattern as
  * the other workspace-capability injection contracts.
  */
 

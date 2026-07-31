@@ -46,8 +46,8 @@ import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
 import { WorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycleService';
 import { resumeSessionById } from '#/app/workspaceLifecycle/sessionLookup';
-import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
-import { WorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandlerService';
+import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceToolPolicy';
 import { WorkspaceToolPolicyService } from '#/workspace/workspaceToolPolicy/workspaceToolPolicyService';
 import { IAgentActivityView } from '#/agent/activityView/activityView';
@@ -67,6 +67,10 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import { SessionWorkspaceContextService } from '#/session/workspaceContext/workspaceContextService';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
+import { IAppStateService } from '#/app/state/appState';
+import { AppStateService } from '#/app/state/appStateService';
+import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
+import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -473,7 +477,7 @@ class RecordingSessionExternalHooksService
   }
 }
 
-describe('WorkspaceHandlerService', () => {
+describe('SessionLifecycleService', () => {
   let host: ScopedTestHost | undefined;
   let telemetryRecords: TelemetryRecord[];
   let tmpRoots: string[];
@@ -491,11 +495,25 @@ describe('WorkspaceHandlerService', () => {
       'workspaceLifecycle',
     );
     registerScopedService(
-      LifecycleScope.Workspace,
-      IWorkspaceHandlerService,
-      WorkspaceHandlerService,
+      LifecycleScope.App,
+      IAppStateService,
+      AppStateService,
       ScopeActivation.OnScopeCreated,
-      'workspaceHandler',
+      'state',
+    );
+    registerScopedService(
+      LifecycleScope.Workspace,
+      IWorkspaceStateService,
+      WorkspaceStateService,
+      ScopeActivation.OnScopeCreated,
+      'state',
+    );
+    registerScopedService(
+      LifecycleScope.Workspace,
+      ISessionLifecycleService,
+      SessionLifecycleService,
+      ScopeActivation.OnScopeCreated,
+      'sessionLifecycle',
     );
     registerScopedService(
       LifecycleScope.Workspace,
@@ -540,7 +558,7 @@ describe('WorkspaceHandlerService', () => {
    */
   async function build(
     extra: ReturnType<typeof stubPair>[] = [],
-  ): Promise<IWorkspaceHandlerService> {
+  ): Promise<ISessionLifecycleService> {
     host = createScopedTestHost([
       stubPair(IBootstrapService, bootstrapStub()),
       stubPair(ISessionMetadata, metadataStub()),
@@ -578,7 +596,7 @@ describe('WorkspaceHandlerService', () => {
     ]);
     const lifecycle = host.app.accessor.get(IWorkspaceLifecycleService);
     const handler = await lifecycle.handlerFor({ root: '/tmp/proj' });
-    return handler.accessor.get(IWorkspaceHandlerService);
+    return handler.accessor.get(ISessionLifecycleService);
   }
 
   async function makeTmpRoot(): Promise<string> {

@@ -2,7 +2,7 @@
  * `sessionLifecycleHooks` domain (L1) — per-session lifecycle hook slots.
  *
  * Defines the `ISessionLifecycleHooks` seed: one ordered hook-slots instance
- * per session, created by the Workspace-scope `workspaceHandler` when it
+ * per session, created by the Workspace-scope `sessionLifecycle` when it
  * materializes the session, seeded into the Session scope, and run by the
  * handler around the session's create (`onDidCreateSession`) and close
  * (`onWillCloseSession`). Session-scope consumers (e.g. `externalHooks`)

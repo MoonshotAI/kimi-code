@@ -4,13 +4,13 @@
  * Stateless App-scope dispatcher: each method resolves the target session (and
  * its main agent) per call through the shared `sessionLookup` composition
  * (`sessionIndex` → `workspaceLifecycle.handlerFor` → the handler's
- * `IWorkspaceHandlerService`), delegates to the native v2 services, and projects
+ * `ISessionLifecycleService`), delegates to the native v2 services, and projects
  * the result into the v1 wire shape. Only `updateProfile` (the cross-domain
  * `agent_config` patch), `status` (the best-effort status rollup), and `goal`
  * (the current-goal read) live here;
  * the `:undo`, `fork`-as-child, and child-listing actions were pushed down into
  * the native services (`IAgentPromptService.undo`,
- * `IWorkspaceHandlerService.createChild`, `ISessionIndex.list({ childOf })`) and
+ * `ISessionLifecycleService.createChild`, `ISessionIndex.list({ childOf })`) and
  * are called by the edge route directly. No business logic is duplicated here;
  * the real work stays in the native services.
  */
@@ -204,7 +204,11 @@ export class SessionLegacyService implements ISessionLegacyService {
     return {
       busy: this.readBusy(sessionId),
       model: model === '' ? undefined : model,
-      thinking_level: profile.getEffectiveThinkingLevel(),
+      // An unbound agent has no thinking level to report: the effective value
+      // would be the wire model's zero value ('off'), which clients fold in as
+      // the session's real pick. Report '' instead — same "nothing to report"
+      // convention as `model` above — so they fall back to the catalog default.
+      thinking_level: model === '' ? '' : profile.getEffectiveThinkingLevel(),
       permission: permission.mode,
       plan_mode: planData !== null,
       swarm_mode: swarm.isActive,

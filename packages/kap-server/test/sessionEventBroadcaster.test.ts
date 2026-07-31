@@ -30,7 +30,7 @@ import {
   ISessionInteractionService,
   IWireService,
   ISessionMetadata,
-  IWorkspaceHandlerService,
+  ISessionLifecycleService,
   IWorkspaceLifecycleService,
   MAIN_AGENT_ID,
   SECONDARY_DERIVED_MODEL_ID,
@@ -367,7 +367,7 @@ function makeCore(
     };
     return { id: sid, kind: LifecycleScope.Session, accessor: sessionAccessor, dispose: () => {} };
   };
-  const handlerService = {
+  const sessionLifecycle = {
     // Inert lifecycle events (TranscriptService subscribes on construction).
     onDidCloseSession: () => ({ dispose: () => {} }),
     onDidArchiveSession: () => ({ dispose: () => {} }),
@@ -377,7 +377,7 @@ function makeCore(
     id: 'wd',
     kind: LifecycleScope.Workspace,
     accessor: {
-      get: (t: unknown) => (t === IWorkspaceHandlerService ? handlerService : undefined),
+      get: (t: unknown) => (t === ISessionLifecycleService ? sessionLifecycle : undefined),
     },
     dispose: () => {},
   };

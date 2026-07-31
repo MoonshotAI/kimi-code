@@ -12,14 +12,18 @@
  * goes through this service, so the view is in-process: another process
  * flipping the same record is picked up only on restart (a `docs.watch`
  * sync can join when a second writer exists). A read failure resolves to
- * untrusted. Bound at Workspace scope.
+ * untrusted. The plain-data state (`trusted`) is registered into
+ * `workspaceState` (`IWorkspaceStateService`) and read/written through it.
+ * Bound at Workspace scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
+import { defineState } from '#/_base/state/stateRegistry';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 import { IWorkspaceTrust, type WorkspaceTrustChange } from './workspaceTrust';
@@ -31,24 +35,38 @@ interface TrustRecord {
   readonly trustedAt: number;
 }
 
+export const workspaceTrustTrustedKey = defineState<boolean>(
+  'workspaceTrust.trusted',
+  () => false,
+);
+
 export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust {
   declare readonly _serviceBrand: undefined;
 
   readonly ready: Promise<void>;
   private readonly root: string;
   private readonly storeKey: string;
-  private trusted = false;
   private readonly changeEmitter = this._register(new Emitter<WorkspaceTrustChange>());
   readonly onDidChange = this.changeEmitter.event;
 
   constructor(
     @IWorkspaceContext workspace: IWorkspaceContext,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
+    @IWorkspaceStateService private readonly states: IWorkspaceStateService,
   ) {
     super();
+    this.states.register(workspaceTrustTrustedKey);
     this.root = workspace.cwd;
     this.storeKey = encodeWorkDirKey(workspace.cwd);
     this.ready = this.initialize();
+  }
+
+  private get trusted(): boolean {
+    return this.states.get(workspaceTrustTrustedKey);
+  }
+
+  private set trusted(value: boolean) {
+    this.states.set(workspaceTrustTrustedKey, value);
   }
 
   isTrusted(): boolean {

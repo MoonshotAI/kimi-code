@@ -1,5 +1,5 @@
 /**
- * `workspaceHandler` domain (L6) — `IWorkspaceHandlerService` implementation.
+ * `sessionLifecycle` domain (L6) — `ISessionLifecycleService` implementation.
  *
  * Owns the registry of THIS handler's open Session child scopes, creating
  * them through the DI scope tree (children of the handler's Workspace
@@ -146,14 +146,14 @@ import {
   type SessionCreatedEvent,
   type SessionForkedEvent,
   type SessionWillCloseEvent,
-  IWorkspaceHandlerService,
-} from './workspaceHandler';
+  ISessionLifecycleService,
+} from './sessionLifecycle';
 
 type MaterializeSessionOptions = Omit<CreateSessionOptions, 'sessionId'> & {
   readonly sessionId: string;
 };
 
-export class WorkspaceHandlerService extends Disposable implements IWorkspaceHandlerService {
+export class SessionLifecycleService extends Disposable implements ISessionLifecycleService {
   declare readonly _serviceBrand: undefined;
   private readonly sessions = new Map<string, ISessionScopeHandle>();
   private readonly _onDidCreateSession = this._register(new Emitter<SessionCreatedEvent>());
@@ -682,10 +682,10 @@ export class WorkspaceHandlerService extends Disposable implements IWorkspaceHan
 
 registerScopedService(
   LifecycleScope.Workspace,
-  IWorkspaceHandlerService,
-  WorkspaceHandlerService,
+  ISessionLifecycleService,
+  SessionLifecycleService,
   ScopeActivation.OnScopeCreated,
-  'workspaceHandler',
+  'sessionLifecycle',
 );
 
 async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {

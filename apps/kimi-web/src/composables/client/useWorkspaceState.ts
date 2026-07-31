@@ -2733,15 +2733,20 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   /**
-   * Search files in the active session using the daemon searchFiles endpoint.
-   * Returns {path, name}[] — defensive, returns [] on error or no active session.
+   * Search files in the active workspace via the daemon's workspace fs:search
+   * endpoint — no session id involved, so `@` works unchanged before the first
+   * prompt. The workspace ref mirrors what selectSession syncs: the active
+   * session's workspace, else the draft's active workspace (a registered id or
+   * an absolute root — the daemon resolves both). Returns {path, name}[] —
+   * defensive, returns [] on error or when no workspace is active.
    */
   async function searchFiles(query: string): Promise<Array<{ path: string; name: string }>> {
-    const sid = rawState.activeSessionId;
-    if (!sid) return [];
+    const session = rawState.sessions.find((s) => s.id === rawState.activeSessionId);
+    const ref = session === undefined ? rawState.activeWorkspaceId : workspaceIdForSession(session);
+    if (!ref) return [];
     try {
       const api = getKimiWebApi();
-      const result = await api.searchFiles(sid, { query, limit: 20 });
+      const result = await api.searchFiles(ref, { query, limit: 20 });
       return result.items.map((item) => ({ path: item.path, name: item.name }));
     } catch {
       return [];

@@ -25,7 +25,9 @@
  * rather than inheriting the caller's level. Both tools resolve spawn
  * bindings through `resolveSubagentBinding`, advertise the pair via
  * `buildSubagentModelDescriptions`, and wrap spawn failures with
- * `wrapSubagentModelError`. Self-registered at module load via
+ * `wrapSubagentModelError`; while the experiment is off they also strip the
+ * no-op `model` parameter from their advertised schemas via
+ * `stripSubagentModelParameter`. Self-registered at module load via
  * `registerConfigSection`, so the `config` domain never imports this
  * domain's types.
  */
@@ -34,6 +36,7 @@ import { z } from 'zod';
 
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import type { AgentModelPreference } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { isPlainObject } from '#/app/config/toml';
 import type { IFlagService } from '#/app/flag/flag';
 import {
   SECONDARY_MODEL_ENV,
@@ -141,6 +144,32 @@ export function buildSubagentModelDescriptions(
     `- secondary: ${secondaryModel} (default) — the configured secondary model; prefer it for routine subagent tasks`,
     `- primary: ${callerModelAlias} — the main model you are running on; use it for hard, quality-sensitive subagent tasks`,
   ].join('\n');
+}
+
+/**
+ * Strip the `model` property from a subagent collaboration tool's advertised
+ * JSON schema. While the `secondary-model` experiment is off the parameter is
+ * a silent no-op, so the schema the model sees (and the args validator
+ * compiled from the same advertised schema) drops it entirely — the
+ * secondary-model concept never enters the prompt, and a stray `model`
+ * argument is rejected instead of silently inheriting the caller's model.
+ * Returns the input unchanged when there is no `model` property; otherwise a
+ * shallow copy — the input is never mutated, so callers can keep both
+ * variants as shared constants.
+ */
+export function stripSubagentModelParameter(
+  parameters: Record<string, unknown>,
+): Record<string, unknown> {
+  const properties = parameters['properties'];
+  if (!isPlainObject(properties) || !('model' in properties)) return parameters;
+  const nextProperties = { ...properties };
+  delete nextProperties['model'];
+  const next: Record<string, unknown> = { ...parameters, properties: nextProperties };
+  const required = parameters['required'];
+  if (Array.isArray(required) && required.includes('model')) {
+    next['required'] = required.filter((entry) => entry !== 'model');
+  }
+  return next;
 }
 
 export function wrapSubagentModelError(

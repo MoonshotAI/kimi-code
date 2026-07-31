@@ -277,7 +277,7 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
         const handler = (await scoped({}, 'workspaceLifecycleService', 'handlerFor', [
           { root: workDir },
         ])) as { id: string };
-        const handle = (await scoped({ workspaceId: handler.id }, 'workspaceHandlerService', 'create', [
+        const handle = (await scoped({ workspaceId: handler.id }, 'sessionLifecycleService', 'create', [
           { workDir, additionalDirs },
         ])) as { id: string };
         const scope = { sessionId: handle.id };

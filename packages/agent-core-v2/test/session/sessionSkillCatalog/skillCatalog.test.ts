@@ -24,6 +24,8 @@ import { ISessionSkillCatalogData } from '#/session/sessionSkillCatalog/skillCat
 import { SessionSkillCatalogService } from '#/session/sessionSkillCatalog/skillCatalogService';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
+import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
+import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 
 import { stubSkill } from '../../app/skillCatalog/stubs';
 
@@ -71,6 +73,7 @@ describe('SessionSkillCatalogService (seed view)', () => {
     const host = createScopedTestHost([]);
     const session = host.child(LifecycleScope.Session, 's1', [
       stubPair(ISessionSkillCatalogData, data),
+      stubPair(IWorkspaceStateService, new WorkspaceStateService()),
     ]);
     return { host, catalog: session.accessor.get(ISessionSkillCatalog) };
   }

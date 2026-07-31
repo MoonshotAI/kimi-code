@@ -14,7 +14,7 @@
  * `onDidMaterializeHandler` for App-scope observers that must follow every
  * handler's per-handler services. There is deliberately NO App-scope
  * session lifecycle entry point — session create/resume/fork lives on the
- * handler's `IWorkspaceHandlerService`; callers compose `sessionIndex` →
+ * handler's `ISessionLifecycleService`; callers compose `sessionIndex` →
  * `handlerFor` → handler (see `sessionLookup`).
  */
 

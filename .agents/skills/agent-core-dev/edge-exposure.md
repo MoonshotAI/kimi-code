@@ -85,7 +85,7 @@ Read = `GET`, write = `POST`. `sid` = `session_id`, `aid` = `agent_id`.
 | `session` | `setArchived` | ISessionMetadata.setArchived | POST |
 | `session` | `status` | ISessionActivity.status | GET |
 | `session` | `isIdle` | ISessionActivity.isIdle | GET |
-| `session` | `archive` | IWorkspaceHandlerService.archive | POST |
+| `session` | `archive` | ISessionLifecycleService.archive | POST |
 | `approvals` | `listPending` | IApprovalService.listPending | GET |
 | `approvals` | `decide` | IApprovalService.decide | POST |
 | `questions` | `listPending` | IQuestionService.listPending | GET |
@@ -128,7 +128,7 @@ These fail §2 and must be wrapped in a facade that takes ids and returns data:
 
 | Service | Why not direct | Facade shape |
 |---|---|---|
-| IWorkspaceHandlerService | returns `IScopeHandle` | `sessions.create` / `fork` / `close` / `archive` → wire Session |
+| ISessionLifecycleService | returns `IScopeHandle` | `sessions.create` / `fork` / `close` / `archive` → wire Session |
 | IAgentPromptService / IAgentTurnService | returns `Turn` handle | `prompts.submit` / `steer` / `abort` / `undo` |
 | ILLMRequester | `AsyncIterable` stream | stream over WS, not RPC |
 | ISubagentHost | `SubagentHandle` | `subagents.spawn` / `resume` → info |

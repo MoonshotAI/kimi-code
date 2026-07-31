@@ -2,7 +2,7 @@
  * `sessionExport` domain (L6) — `ISessionExportService` implementation.
  *
  * Coordinates live session flushing through the live handler registry
- * (`workspaceLifecycle` → the handler's `IWorkspaceHandlerService`), derives
+ * (`workspaceLifecycle` → the handler's `ISessionLifecycleService`), derives
  * session paths from the handler-chain addressing, reads persisted summaries
  * through `sessionIndex`, and packages diagnostic files through the local
  * zip writer. Bound at App scope.
@@ -22,8 +22,8 @@ import { IWorkspaceService } from '#/app/workspace/workspace';
 import {
   sessionDirOf,
   workspacePersistenceScope,
-} from '#/workspace/workspaceHandler/addressing';
-import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
+} from '#/workspace/sessionLifecycle/addressing';
+import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -151,7 +151,7 @@ export class SessionExportService implements ISessionExportService {
 
   private liveSession(sessionId: string): ISessionScopeHandle | undefined {
     for (const handler of this.workspaceLifecycle.handlers.list()) {
-      const handle = handler.accessor.get(IWorkspaceHandlerService).get(sessionId);
+      const handle = handler.accessor.get(ISessionLifecycleService).get(sessionId);
       if (handle !== undefined) return handle;
     }
     return undefined;

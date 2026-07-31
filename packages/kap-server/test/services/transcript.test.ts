@@ -17,7 +17,7 @@ import {
   ISessionIndex,
   ISessionInteractionService,
   ISessionMetadata,
-  IWorkspaceHandlerService,
+  ISessionLifecycleService,
   IWorkspaceLifecycleService,
   LifecycleScope,
   SessionInteractionService,
@@ -1909,7 +1909,7 @@ describe('bindSessionTranscript', () => {
   }
 
   function fakeCoreWithAgents(interactions: SessionInteractionService, agents: FakeAgents): Scope {
-    const handlerService = {
+    const sessionLifecycle = {
       onDidCloseSession: () => ({ dispose: () => undefined }),
       onDidArchiveSession: () => ({ dispose: () => undefined }),
       get: (sid: string) => (sid === 's1' ? fakeSession(interactions, agents) : undefined),
@@ -1918,7 +1918,7 @@ describe('bindSessionTranscript', () => {
       id: 'ws',
       kind: LifecycleScope.Workspace,
       accessor: {
-        get: (t: unknown) => (t === IWorkspaceHandlerService ? handlerService : undefined),
+        get: (t: unknown) => (t === ISessionLifecycleService ? sessionLifecycle : undefined),
       },
       dispose: () => undefined,
     };

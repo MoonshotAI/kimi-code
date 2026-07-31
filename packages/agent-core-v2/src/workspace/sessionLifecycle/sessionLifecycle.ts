@@ -1,9 +1,9 @@
 /**
- * `workspaceHandler` domain (L6) — per-handler session lifecycle contract.
+ * `sessionLifecycle` domain (L6) — per-handler session lifecycle contract.
  *
  * Defines the public contract of one workspace handler: the
  * `CreateSessionOptions`, `ForkSessionOptions`, `CreateChildSessionOptions`,
- * `ResumeSessionOptions`, and the `IWorkspaceHandlerService` used to create
+ * `ResumeSessionOptions`, and the `ISessionLifecycleService` used to create
  * sessions (`create`), look up the live ones (`get` / `list`), close them
  * (`close`), archive/restore them, fork them (`fork`), and fork-then-tag
  * them as direct children (`createChild`) — always as child scopes of THIS
@@ -89,7 +89,7 @@ export interface SessionForkedEvent {
   readonly handle: ISessionScopeHandle;
 }
 
-export interface IWorkspaceHandlerService {
+export interface ISessionLifecycleService {
   readonly _serviceBrand: undefined;
 
   readonly onDidCreateSession: Event<SessionCreatedEvent>;
@@ -107,5 +107,5 @@ export interface IWorkspaceHandlerService {
   createChild(opts: CreateChildSessionOptions): Promise<ISessionScopeHandle>;
 }
 
-export const IWorkspaceHandlerService: ServiceIdentifier<IWorkspaceHandlerService> =
-  createDecorator<IWorkspaceHandlerService>('workspaceHandlerService');
+export const ISessionLifecycleService: ServiceIdentifier<ISessionLifecycleService> =
+  createDecorator<ISessionLifecycleService>('sessionLifecycleService');

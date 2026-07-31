@@ -31,7 +31,7 @@ import { workspacesContract } from './global/workspaces.js';
 import { sessionApprovalContract } from './session/approval.js';
 import { sessionInteractionContract } from './session/interaction.js';
 import {
-  workspaceHandlerContract,
+  sessionLifecycleContract,
   workspaceLifecycleContract,
 } from './session/lifecycle.js';
 import { sessionMetadataContract } from './session/metadata.js';
@@ -54,7 +54,7 @@ export const globalContract: KlientContract = {
   bootstrapService: envContract,
   // workspace scope (+ the app-registered handler registry)
   workspaceLifecycleService: workspaceLifecycleContract,
-  workspaceHandlerService: workspaceHandlerContract,
+  sessionLifecycleService: sessionLifecycleContract,
   // session scope
   sessionMetadata: sessionMetadataContract,
   sessionInteractionService: sessionInteractionContract,

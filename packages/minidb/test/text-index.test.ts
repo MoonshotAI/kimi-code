@@ -69,7 +69,7 @@ test('PostingsFile: rebuild + positioned read', async () => {
   const dir = await tmpDir();
   try {
     const p = path.join(dir, 'x.postings');
-    const dict = PostingsFile.rebuildSync(p, [
+    const dict = await PostingsFile.rebuild(p, [
       {
         term: 'hello',
         entries: [
@@ -103,7 +103,7 @@ test('PostingsFile: rebuild + positioned read', async () => {
     pf.close();
 
     // rebuild is atomic: a second rebuild replaces the file and dict.
-    const dict2 = PostingsFile.rebuildSync(p, [{ term: 'only', entries: [[7, 1]] }]);
+    const dict2 = await PostingsFile.rebuild(p, [{ term: 'only', entries: [[7, 1]] }]);
     assert.equal(dict2.size, 1);
     const pf2 = PostingsFile.open(p);
     assert.deepEqual(pf2.read(dict2.get('only')!), [[7, 1]]);
@@ -117,7 +117,7 @@ test('PostingsFile: corrupt record throws on read', async () => {
   const dir = await tmpDir();
   try {
     const p = path.join(dir, 'x.postings');
-    const dict = PostingsFile.rebuildSync(p, [{ term: 'a', entries: [[1, 1]] }]);
+    const dict = await PostingsFile.rebuild(p, [{ term: 'a', entries: [[1, 1]] }]);
     // flip a byte in the file payload
     const e = dict.get('a')!;
     const fd = fssync.openSync(p, 'r+');
@@ -190,7 +190,7 @@ test('TextIndex: build persists to disk + merges delta after build', async () =>
   try {
     const p = path.join(dir, 't.postings');
     const ti = new TextIndex({ postingsPath: p });
-    ti.build([
+    await ti.build([
       { key: 'a', value: { bio: 'hello world' } },
       { key: 'b', value: { bio: '我住在北京' } },
     ]);
@@ -206,12 +206,48 @@ test('TextIndex: build persists to disk + merges delta after build', async () =>
     // (delta is volatile by design; the db rebuilds from the Store on open).
     const ti2 = new TextIndex({ postingsPath: p });
     // rebuild base from the file's perspective by re-reading the same entries
-    ti2.build([
+    await ti2.build([
       { key: 'a', value: { bio: 'hello world' } },
       { key: 'b', value: { bio: '我住在北京' } },
     ]);
     assert.deepEqual(ti2.search('hello').map((h) => h.key), ['a']);
     ti2.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('TextIndex: writes landing mid-build are replayed onto the new base', async () => {
+  const dir = await tmpDir();
+  try {
+    const p = path.join(dir, 't.postings');
+    const ti = new TextIndex({ postingsPath: p });
+    // More docs than BUILD_YIELD_DOCS (2048), so the build is guaranteed to
+    // yield at least once before its swap — the setImmediate below then lands
+    // strictly inside the build window.
+    const docs = Array.from({ length: 3000 }, (_, i) => ({
+      key: `d${i}`,
+      value: { bio: `hello doc${i}` },
+    }));
+    const buildP = ti.build(docs);
+    let landedMidBuild = false;
+    setImmediate(() => {
+      landedMidBuild = ti.building;
+      ti.add('extra', { bio: 'hello extra' }); // new key
+      ti.add('d0', { bio: 'goodbye replaced' }); // overwrite a staged key
+      ti.remove('d1'); // delete a staged key
+    });
+    await buildP;
+    assert.ok(landedMidBuild, 'writes landed while the build was in flight');
+
+    // Live view during the build stayed correct, and the queue replay made
+    // the new base exact: 3000 staged + extra − replaced-d0 − removed-d1.
+    assert.equal(ti.N, 3000);
+    assert.deepEqual(ti.search('extra').map((h) => h.key), ['extra']);
+    assert.deepEqual(ti.search('goodbye').map((h) => h.key), ['d0']);
+    assert.deepEqual(ti.search('doc1').map((h) => h.key), []);
+    assert.equal(ti.search('hello', { limit: 10_000 }).length, 2999);
+    ti.close();
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
@@ -272,6 +308,64 @@ test('MiniDb: compaction rebuilds postings (file reclaimed)', async () => {
     assert.equal(db.search('bio', 'hello').length, 30); // k50..k79
     assert.equal(db.search('bio', 'goodbye').length, 50); // k0..k49
     await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('MiniDb: compaction skips the postings rebuild when the index is clean', async () => {
+  const dir = await tmpDir();
+  // Count TextIndex.build calls to prove which compactions rebuilt postings.
+  const orig = TextIndex.prototype.build;
+  let builds = 0;
+  TextIndex.prototype.build = async function (this: TextIndex, ...args) {
+    builds++;
+    return orig.apply(this, args);
+  } as typeof orig;
+  try {
+    const db = await MiniDb.open({ dir, valueCodec: 'json', autoCompact: false });
+    await db.createTextIndex('bio', { fields: ['bio'] }); // build #1
+    await db.set('a', { bio: 'hello world' });
+    await db.compact(); // delta dirty -> rebuild #2
+    await db.compact(); // clean now -> rebuild skipped
+    assert.equal(builds, 2);
+    assert.deepEqual(db.search('bio', 'hello').map((h) => h.key), ['a']);
+    await db.close();
+  } finally {
+    TextIndex.prototype.build = orig;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('MiniDb: writes during a compaction postings rebuild stay consistent', async () => {
+  const dir = await tmpDir();
+  try {
+    const db = await MiniDb.open({ dir, valueCodec: 'json', autoCompact: false });
+    await db.createTextIndex('bio', { fields: ['bio'] });
+    // More docs than the snapshot yield cadence, so the compaction is still
+    // running when the setImmediate writes below land.
+    for (let i = 0; i < 3000; i++) await db.set(`d${i}`, { bio: `hello doc${i}` });
+
+    const compactP = db.compact();
+    setImmediate(() => {
+      void db.set('extra', { bio: 'hello extra' });
+      void db.set('d0', { bio: 'goodbye replaced' });
+      void db.del('d1');
+    });
+    await compactP;
+    assert.equal(db.stats.compactions, 1);
+
+    assert.equal(db.search('bio', 'hello', { limit: 10_000 }).length, 2999);
+    assert.deepEqual(db.search('bio', 'extra').map((h) => h.key), ['extra']);
+    assert.deepEqual(db.search('bio', 'goodbye').map((h) => h.key), ['d0']);
+    assert.deepEqual(db.search('bio', 'doc1').map((h) => h.key), []);
+    await db.close();
+
+    // The mid-compaction writes are durable and consistent across a reopen.
+    const db2 = await MiniDb.open({ dir, valueCodec: 'json' });
+    assert.equal(db2.search('bio', 'hello', { limit: 10_000 }).length, 2999);
+    assert.deepEqual(db2.search('bio', 'extra').map((h) => h.key), ['extra']);
+    await db2.close();
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
@@ -379,7 +473,7 @@ test('TextIndex: n-gram tokenizer delta add/remove/overwrite', async () => {
       tokenizer: createNgramTokenizer(),
       queryTokenizer: createNgramTokenizer({ forQuery: true }),
     });
-    ti.build([{ key: 'a', value: { text: 'C++ guide' } }]);
+    await ti.build([{ key: 'a', value: { text: 'C++ guide' } }]);
     assert.deepEqual(ti.search('c++').map((h) => h.key), ['a']);
 
     // writes after build land in the delta and stay searchable

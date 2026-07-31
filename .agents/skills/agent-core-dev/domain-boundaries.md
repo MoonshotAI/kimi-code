@@ -82,7 +82,7 @@ The `session` domain owns only Session-level identity, metadata, lifecycle comma
 |---|---|---|
 | `sessionId`, `workspaceId`, `sessionDir`, `metaScope` | `sessionContext` | Seeded facts; no IO |
 | `SessionMeta` | `sessionMetadata` | Durable atomic document; entity-like |
-| Open session scope registry | `workspaceHandler` | Workspace-scope live handles, one registry per workspace handler (the process-wide handler registry is `workspaceLifecycle`); not the persisted entity table |
+| Open session scope registry | `sessionLifecycle` | Workspace-scope live handles, one registry per workspace handler (the process-wide handler registry is `workspaceLifecycle`); not the persisted entity table |
 | Session commands such as `archive()` | `session` | Orchestrates metadata, agent teardown, and events |
 | Persisted session list / get / count | `sessionIndex` | Backend-neutral read model |
 | Running / idle / awaiting status | `sessionActivity` | Derived from interactions and active turns; owns no state |

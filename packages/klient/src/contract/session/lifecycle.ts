@@ -1,11 +1,11 @@
 /**
- * `workspaceHandlerService` / `workspaceLifecycleService` — session
+ * `sessionLifecycleService` / `workspaceLifecycleService` — session
  * lifecycle after the Workspace-domain split. The App-scope
  * `workspaceLifecycleService` materializes one handler per workspace
- * (`handlerFor`); the Workspace-scope `workspaceHandlerService` owns that
+ * (`handlerFor`); the Workspace-scope `sessionLifecycleService` owns that
  * workspace's sessions (create/resume/close/archive/restore/fork/
  * createChild). Mirrors `agent-core-v2/app/workspaceLifecycle/*` and
- * `agent-core-v2/workspace/workspaceHandler/*`. The engine returns scope
+ * `agent-core-v2/workspace/sessionLifecycle/*`. The engine returns scope
  * handles; over JSON only the plain data fields survive, so the wire keeps
  * `{ id, kind }` (loose — extra fields may appear in-process).
  */
@@ -47,7 +47,7 @@ export const workspaceLifecycleContract = {
   handlerFor: { input: z.tuple([workspaceRefSchema]), output: handleWireSchema },
 } satisfies ServiceContract;
 
-export const workspaceHandlerContract = {
+export const sessionLifecycleContract = {
   create: { input: z.tuple([createSessionOptionsSchema]), output: handleWireSchema },
   resume: { input: z.tuple([z.string()]), output: maybe(handleWireSchema) },
   close: { input: z.tuple([z.string()]), output: noResult },

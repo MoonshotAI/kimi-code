@@ -17,7 +17,7 @@
  */
 
 import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
-import { IWorkspaceHandlerService } from '@moonshot-ai/agent-core-v2/workspace/workspaceHandler/workspaceHandler';
+import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/sessionLifecycle';
 import { useEffect, useState } from 'react';
 
 import type { AuditTrail } from './audit/trail';
@@ -62,7 +62,7 @@ export function App() {
       .get(sessionId)
       .then((summary) => {
         if (summary === undefined) throw new Error(`session ${sessionId} does not exist`);
-        return klient.workspace(summary.workspaceId).service(IWorkspaceHandlerService).resume(sessionId);
+        return klient.workspace(summary.workspaceId).service(ISessionLifecycleService).resume(sessionId);
       })
       .then(() => {
         if (!cancelled) setReady(true);

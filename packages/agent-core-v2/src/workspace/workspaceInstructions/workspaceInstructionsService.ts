@@ -11,7 +11,9 @@
  * through `hostFsWatch` and reloads debounced; the change event fires only
  * when the combined content or warning actually changed. The snapshot is shared by every session of
  * the handler through the `ISessionInstructionsProvider` seed
- * (`sessionProvider()`), a live read view over this service. Bound at
+ * (`sessionProvider()`), a live read view over this service. The plain-data
+ * state (`current`) is registered into `workspaceState`
+ * (`IWorkspaceStateService`) and read/written through it. Bound at
  * Workspace scope.
  */
 
@@ -19,6 +21,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
+import { defineState } from '#/_base/state/stateRegistry';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
 import { agentsMdWatchRoots, loadAgentsMdForRoots } from '#/agent/profile/context';
@@ -27,6 +30,7 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import type { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
+import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 import {
@@ -36,16 +40,17 @@ import {
 
 const WATCH_DEBOUNCE_MS = 200;
 
+export const workspaceInstructionsCurrentKey = defineState<WorkspaceInstructionsSnapshot>(
+  'workspaceInstructions.current',
+  () => ({ agentsMd: undefined, agentsMdWarning: undefined }),
+);
+
 export class WorkspaceInstructionsService
   extends Disposable
   implements IWorkspaceInstructionsService
 {
   declare readonly _serviceBrand: undefined;
 
-  private current: WorkspaceInstructionsSnapshot = {
-    agentsMd: undefined,
-    agentsMdWarning: undefined,
-  };
   readonly ready: Promise<void>;
   private readonly onDidChangeEmitter = this._register(new Emitter<void>());
   readonly onDidChange: Event<void> = this.onDidChangeEmitter.event;
@@ -59,10 +64,20 @@ export class WorkspaceInstructionsService
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IHostFsWatchService private readonly fsWatch: IHostFsWatchService,
     @ILogService private readonly log: ILogService,
+    @IWorkspaceStateService private readonly states: IWorkspaceStateService,
   ) {
     super();
+    this.states.register(workspaceInstructionsCurrentKey);
     this.ready = this.reload();
     void this.watchCandidateFiles();
+  }
+
+  private get current(): WorkspaceInstructionsSnapshot {
+    return this.states.get(workspaceInstructionsCurrentKey);
+  }
+
+  private set current(value: WorkspaceInstructionsSnapshot) {
+    this.states.set(workspaceInstructionsCurrentKey, value);
   }
 
   get snapshot(): WorkspaceInstructionsSnapshot {

@@ -1,6 +1,7 @@
 /**
- * Scenario: workspace AGENTS.md instructions — build-time snapshot and
- * watch-driven refresh.
+ * Scenario: workspace AGENTS.md instructions — build-time snapshot,
+ * watch-driven refresh, and the `workspaceInstructions.current` state
+ * registration.
  *
  * Exercises the real `WorkspaceInstructionsService` against real temp
  * instruction files with a manually-fired fs-watch stub. Run:
@@ -28,11 +29,16 @@ import {
   type HostFsChange,
   type IHostFsWatchHandle,
 } from '#/os/interface/hostFsWatch';
+import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
-import { WorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructionsService';
+import {
+  WorkspaceInstructionsService,
+  workspaceInstructionsCurrentKey,
+} from '#/workspace/workspaceInstructions/workspaceInstructionsService';
 
 import { stubLog } from '../../_base/log/stubs';
+import { registerStateServices } from '../../state/stubs';
 
 describe('WorkspaceInstructionsService', () => {
   let workDir: string;
@@ -82,10 +88,14 @@ describe('WorkspaceInstructionsService', () => {
     }
   }
 
-  function createService(): IWorkspaceInstructionsService {
+  function createService(): {
+    service: IWorkspaceInstructionsService;
+    states: IWorkspaceStateService;
+  } {
     const ix = createServices(disposables, {
       strict: true,
       additionalServices: (reg) => {
+        registerStateServices(reg);
         reg.definePartialInstance(IWorkspaceContext, { cwd: workDir });
         reg.defineInstance(IHostFileSystem, new HostFileSystem());
         reg.definePartialInstance(IHostEnvironment, { homeDir: osHomeDir });
@@ -95,14 +105,14 @@ describe('WorkspaceInstructionsService', () => {
         reg.define(IWorkspaceInstructionsService, WorkspaceInstructionsService);
       },
     });
-    return ix.get(IWorkspaceInstructionsService);
+    return { service: ix.get(IWorkspaceInstructionsService), states: ix.get(IWorkspaceStateService) };
   }
 
   it('loads the AGENTS.md snapshot at build and projects it through the session provider', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf8');
     await writeFile(join(brandHomeDir, 'AGENTS.md'), 'brand instructions', 'utf8');
 
-    const service = createService();
+    const { service } = createService();
     await service.ready;
 
     expect(service.snapshot.agentsMd).toContain('brand instructions');
@@ -115,7 +125,7 @@ describe('WorkspaceInstructionsService', () => {
   it('refreshes the snapshot and fires onDidChange when a watched file changes', async () => {
     const file = join(workDir, 'AGENTS.md');
     await writeFile(file, 'old instructions', 'utf8');
-    const service = createService();
+    const { service } = createService();
     await service.ready;
     expect(service.snapshot.agentsMd).toContain('old instructions');
 
@@ -134,7 +144,7 @@ describe('WorkspaceInstructionsService', () => {
   });
 
   it('picks up a newly created AGENTS.md through the watch', async () => {
-    const service = createService();
+    const { service } = createService();
     await service.ready;
     expect(service.snapshot.agentsMd).toBe('');
 
@@ -155,7 +165,7 @@ describe('WorkspaceInstructionsService', () => {
   it('does not fire when a reload produces identical content', async () => {
     const file = join(workDir, 'AGENTS.md');
     await writeFile(file, 'stable', 'utf8');
-    const service = createService();
+    const { service } = createService();
     await service.ready;
 
     let fired = 0;
@@ -166,5 +176,26 @@ describe('WorkspaceInstructionsService', () => {
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
 
     expect(fired).toBe(0);
+  });
+
+  it('registers the snapshot into the workspace state container and tracks reloads', async () => {
+    const file = join(workDir, 'AGENTS.md');
+    await writeFile(file, 'state instructions', 'utf8');
+    const { service, states } = createService();
+    await service.ready;
+
+    expect(states.get(workspaceInstructionsCurrentKey).agentsMd).toContain('state instructions');
+
+    const changed = new Promise<void>((resolvePromise) => {
+      const d = service.onDidChange(() => {
+        d.dispose();
+        resolvePromise();
+      });
+    });
+    await writeFile(file, 'updated instructions', 'utf8');
+    fireWatch(file);
+    await changed;
+
+    expect(states.get(workspaceInstructionsCurrentKey).agentsMd).toContain('updated instructions');
   });
 });

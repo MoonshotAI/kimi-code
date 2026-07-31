@@ -197,7 +197,7 @@ import {
   IWorkspaceAliases,
   hostRequestHeadersSeed,
   IWorkspaceDirs,
-  IWorkspaceHandlerService,
+  ISessionLifecycleService,
   IWorkspaceLifecycleService,
   closeSessionById,
   followWorkspaceHandlers,
@@ -932,7 +932,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /**
    * v1 semantics: register the workDir as a workspace and create the session
-   * (the handler's `IWorkspaceHandlerService.create` does both; the klient facade
+   * (the handler's `ISessionLifecycleService.create` does both; the klient facade
    * wrapper is bypassed because it takes neither an explicit session id nor
    * caller metadata). The `model` / `thinking` / `permission` options are the
    * main-agent configuration v1 applies eagerly at creation: supplying any of
@@ -960,7 +960,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const handler = await this.engineAccessor
       .get(IWorkspaceLifecycleService)
       .handlerFor({ root: workDir });
-    const handle = await handler.accessor.get(IWorkspaceHandlerService).create({
+    const handle = await handler.accessor.get(ISessionLifecycleService).create({
       sessionId: input.id,
       workDir,
       additionalDirs: input.additionalDirs,
@@ -1016,7 +1016,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through `engineAccessor` (the handler chain's `IWorkspaceHandlerService.fork`) because the
+   * Through `engineAccessor` (the handler chain's `ISessionLifecycleService.fork`) because the
    * klient facade fork takes no explicit target id. Known gaps vs v1: the
    * engine's fork is unconditional — it never rejects an in-flight source
    * turn (v1's SESSION_FORK_ACTIVE_TURN) — and `turnIndex` truncation has no
@@ -1033,7 +1033,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     }
     const forkHandler = await handlerForSession(this.engineAccessor, input.id);
     if (forkHandler === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
-    const handle = await forkHandler.accessor.get(IWorkspaceHandlerService).fork({
+    const handle = await forkHandler.accessor.get(ISessionLifecycleService).fork({
       sourceSessionId: input.id,
       newSessionId: input.forkId,
       title: input.title,
