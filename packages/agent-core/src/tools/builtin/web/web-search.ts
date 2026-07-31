@@ -27,7 +27,10 @@ export interface WebSearchResult {
 }
 
 export interface WebSearchProvider {
-  search(query: string, options?: { toolCallId?: string }): Promise<WebSearchResult[]>;
+  search(
+    query: string,
+    options?: { toolCallId?: string; signal?: AbortSignal },
+  ): Promise<WebSearchResult[]>;
 }
 
 // ── Input schema ─────────────────────────────────────────────────────
@@ -62,10 +65,11 @@ export class WebSearchTool implements BuiltinTool<WebSearchInput> {
     args: WebSearchInput,
     {
     toolCallId,
+    signal,
     }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     try {
-      const opts: { toolCallId?: string } = { toolCallId };
+      const opts: { toolCallId?: string; signal?: AbortSignal } = { toolCallId, signal };
       const results = await this.provider.search(args.query, opts);
       const builder = new ToolResultBuilder({ maxLineLength: null });
 
