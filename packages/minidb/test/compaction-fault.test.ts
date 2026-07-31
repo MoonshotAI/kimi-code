@@ -344,9 +344,9 @@ test('a compaction whose onCompacted hook throws counts as a compactError, not a
 
     const hook = db.onCompacted;
     let failHook = true;
-    db.onCompacted = () => {
+    db.onCompacted = async () => {
       if (failHook) throw new Error('injected hook failure');
-      hook();
+      await hook();
     };
     await assert.rejects(db.compact(), /injected hook failure/);
     // The hook is part of the compaction: compactions counts only fully

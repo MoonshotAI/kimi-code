@@ -286,9 +286,10 @@ export class MiniDb<V = unknown> {
 
   /** Hook called by compaction after the store snapshot + WAL are rotated, so
    *  derived on-disk state (text postings) can be rewritten against the new
-   *  live set. Structural part of the CompactionTarget interface. */
-  onCompacted = (): void => {
-    this.rebuildTextPostings();
+   *  live set. Structural part of the CompactionTarget interface; the
+   *  compaction awaits it, so it may be sync or async. */
+  onCompacted: () => void | Promise<void> = async (): Promise<void> => {
+    await this.rebuildTextPostings();
   };
 
   static async open<V = unknown>(opts: OpenOptions): Promise<MiniDb<V>> {
@@ -395,12 +396,20 @@ export class MiniDb<V = unknown> {
       await db.loadIndexDefinitions();
       await db.loadCompoundIndexDefinitions();
       await db.loadTextIndexDefinitions();
-      db.rebuildAllIndexes();
+      await db.rebuildAllIndexes();
 
       // A read-only instance never compacts: rotation would rename the live
       // writer's snapshot/WAL out from under it and lose its acknowledged data.
-      if (!db.readOnly && db.autoCompact && shouldCompact(db)) await compact(db);
+      // The writer's open-time compaction is fire-and-forget (same as
+      // maybeAutoCompact): recovery already applied the full WAL, so the db is
+      // complete and consistent the moment open() returns. Awaiting the
+      // compaction here blocked open() on the whole snapshot rewrite + text
+      // postings rebuild — tens of seconds of stalled startup on a large db.
+      if (!db.readOnly && db.autoCompact && shouldCompact(db)) compact(db).catch(() => {});
     } catch (err) {
+      // A background open-time compaction may still be in flight: settle it
+      // before tearing down the WAL/store/handles it touches.
+      if (db.compacting && db._compactDone) await db._compactDone.catch(() => {});
       // Release every resource acquired so far: an open that fails after the
       // WAL/store are set up must not leak a file handle or keep the everysec /
       // active-expire timers running.
@@ -490,19 +499,24 @@ export class MiniDb<V = unknown> {
     return path.join(this.dir, `db.text-${safe}.postings`);
   }
 
-  /** Rebuild every text index's on-disk postings from the live Store. Drops
-   *  the in-memory delta + tombstones and reclaims orphaned postings records.
-   *  Invoked after compaction (postings are pure derived state, so this is
-   *  only for space/latency, never for correctness). */
-  private rebuildTextPostings(): void {
-    for (const ti of this.text.values()) ti.build(this.textRecords());
+  /** Rebuild every dirty text index's on-disk postings from the live Store.
+   *  Drops the in-memory delta + tombstones and reclaims orphaned postings
+   *  records. Invoked after compaction (postings are pure derived state, so
+   *  this is only for space/latency, never for correctness). Indexes with an
+   *  empty write buffer are skipped: the open-time build just produced a
+   *  fresh base, so a compaction landing right after open must not redo the
+   *  exact same (expensive) pass. */
+  private async rebuildTextPostings(): Promise<void> {
+    for (const ti of this.text.values()) {
+      if (ti.needsRebuild()) await ti.build(this.textRecords());
+    }
   }
 
-  private rebuildAllIndexes(): void {
+  private async rebuildAllIndexes(): Promise<void> {
     this.indexes.rebuild(this._liveRecordsRaw());
     this.dt.rebuild([...this.liveRecords()].map(({ key, dt }) => ({ key: this.pk(key), dt })));
     this.compound.rebuild(this.liveRecords());
-    for (const [, ti] of this.text) ti.build(this.textRecords());
+    for (const [, ti] of this.text) await ti.build(this.textRecords());
   }
 
   private *_liveRecordsRaw(): Generator<{ key: Buffer; value: unknown }> {
@@ -1246,11 +1260,20 @@ export class MiniDb<V = unknown> {
     if (this.text.has(name)) throw new Error(`text index "${name}" already exists`);
     const ti = new TextIndex({ fields, ...textIndexTokenizers(tokenizer), postingsPath: this.textPostingsPath(name) });
     const def: TextIndexDef = { name, fields: fields ?? null, tokenizer };
-    // Build BEFORE registering: a failed build must leave no phantom index
-    // behind — a registered-but-unbuilt index would both poison every write
-    // path that walks this.text and make a retry fail with "already exists".
-    ti.build(this.textRecords());
+    // Register BEFORE building: the build yields to the event loop, and
+    // registering makes concurrent writes feed the index's build queue, which
+    // the build replays onto the new base — so the finished index reflects
+    // every write whenever it landed. Until the build completes, searches on
+    // the index see only its post-registration delta. A failed build unwinds
+    // the registration, so a retry cannot hit a phantom "already exists".
     this.text.set(name, ti);
+    try {
+      await ti.build(this.textRecords());
+    } catch (e) {
+      this.text.delete(name);
+      ti.close();
+      throw e;
+    }
     this.textDefs.push(def);
     try {
       await this.persistTextIndexDefinitions();
@@ -1269,6 +1292,9 @@ export class MiniDb<V = unknown> {
     this.ensureOpen();
     this.ensureWritable();
     const ti = this.text.get(name);
+    // Dropping mid-build would orphan the in-flight postings write (the file
+    // is removed while the build is still producing it).
+    if (ti?.building) throw new Error(`text index "${name}" is still building`);
     const ok = this.text.delete(name);
     if (ti) {
       ti.close();
