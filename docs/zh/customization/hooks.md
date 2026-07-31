@@ -62,9 +62,13 @@ Hook 命令的工作目录是当前会话的项目目录。非 Windows 平台上
 {
   "hook_event_name": "PreToolUse",
   "session_id": "session_abc",
-  "cwd": "/path/to/project"
+  "cwd": "/path/to/project",
+  "session_dir": "/path/to/kimi-code/home/sessions/..."
 }
 ```
+
+- `hook_event_name`、`session_id` 和 `cwd` 始终存在。
+- `session_dir` 是会话在 `KIMI_CODE_HOME` 下的持久化目录；所有事件都会带上它，需要读取会话产物的集成可以用它（例如主 agent 的 wire 日志 `<session_dir>/agents/main/wire.jsonl`）。
 
 具体事件还会附带额外字段（如工具名称、命令内容），见下方事件一览。所有字段名使用下划线命名（snake_case）。
 
@@ -105,7 +109,7 @@ Hook 命令的工作目录是当前会话的项目目录。非 Windows 平台上
 | `PostToolUseFailure` | 工具名 | — | 工具失败或被阻断后触发（观察用） |
 | `PermissionRequest` | 工具名 | — | 即将等待用户审批前触发（观察用） |
 | `PermissionResult` | 工具名 | — | 审批结束后触发（观察用） |
-| `SessionStart` | `startup` 或 `resume` | — | 新会话启动或历史会话恢复后触发 |
+| `SessionStart` | `startup` 或 `resume` | — | 新会话启动或历史会话恢复后触发；非空 stdout 或 `message` 会追加到主 Agent 上下文（自 v0.14.0），无法阻断启动 |
 | `SessionEnd` | `exit` | — | 会话关闭后触发 |
 | `SubagentStart` | 子 Agent 名称 | — | 子 Agent 开始运行前触发 |
 | `SubagentStop` | 子 Agent 名称 | — | 子 Agent 成功完成后触发（观察用） |

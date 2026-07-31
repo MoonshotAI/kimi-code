@@ -62,9 +62,13 @@ Each time a hook triggers, the CLI passes the following base information to the 
 {
   "hook_event_name": "PreToolUse",
   "session_id": "session_abc",
-  "cwd": "/path/to/project"
+  "cwd": "/path/to/project",
+  "session_dir": "/path/to/kimi-code/home/sessions/..."
 }
 ```
+
+- `hook_event_name`, `session_id`, and `cwd` are always present.
+- `session_dir` is the session's persistent directory under `KIMI_CODE_HOME`; it is present for all events and can be used by integrations that need to read session artifacts (for example, the active agent's wire log at `<session_dir>/agents/main/wire.jsonl`).
 
 Specific events will also include additional fields (such as tool name and command content); see the event reference below. All field names use snake_case.
 
@@ -105,7 +109,7 @@ Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return
 | `PostToolUseFailure` | Tool name | — | Triggered after a tool fails or is blocked (observation only) |
 | `PermissionRequest` | Tool name | — | Triggered just before waiting for user approval (observation only) |
 | `PermissionResult` | Tool name | — | Triggered after approval completes (observation only) |
-| `SessionStart` | `startup` or `resume` | — | Triggered after a new session starts or a previous session resumes |
+| `SessionStart` | `startup` or `resume` | — | Triggered after a new session starts or a previous session resumes; non-empty stdout or `message` is appended to the main agent context (since v0.14.0). It cannot block startup |
 | `SessionEnd` | `exit` | — | Triggered after a session closes |
 | `SubagentStart` | Sub-agent name | — | Triggered before a sub-agent starts running |
 | `SubagentStop` | Sub-agent name | — | Triggered after a sub-agent completes successfully (observation only) |
