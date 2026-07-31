@@ -161,6 +161,26 @@ describe('applyEnvModelConfig', () => {
     );
   });
 
+  it('maps KIMI_MODEL_EFFORT_PARAM onto the alias', () => {
+    expect(
+      apply({ ...MIN, KIMI_MODEL_EFFORT_PARAM: 'true' })
+        .models?.[ENV_MODEL_ALIAS_KEY]?.effortParam,
+    ).toBe(true);
+    expect(
+      apply({ ...MIN, KIMI_MODEL_EFFORT_PARAM: 'false' })
+        .models?.[ENV_MODEL_ALIAS_KEY]?.effortParam,
+    ).toBe(false);
+    expect(
+      apply({ ...MIN }).models?.[ENV_MODEL_ALIAS_KEY]?.effortParam,
+    ).toBeUndefined();
+  });
+
+  it('rejects an invalid KIMI_MODEL_EFFORT_PARAM', () => {
+    expectConfigInvalid(() =>
+      apply({ ...MIN, KIMI_MODEL_EFFORT_PARAM: 'maybe' }),
+    );
+  });
+
   it('preserves unrelated config fields', () => {
     const base = getDefaultConfig();
     base.defaultPermissionMode = 'auto';
