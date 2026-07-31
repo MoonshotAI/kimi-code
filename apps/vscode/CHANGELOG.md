@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.8
+
+### Patch Changes
+
+- [#2466](https://github.com/MoonshotAI/kimi-code/pull/2466) [`7abe7b2`](https://github.com/MoonshotAI/kimi-code/commit/7abe7b2c33e128ee5bd7876104e4e6ad1c0c60fb) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Show all agent questions in a single form with multi-select support, and allow skipping questions or dismissing the prompt.
+
 ## 0.6.7
 
 ### Patch Changes
