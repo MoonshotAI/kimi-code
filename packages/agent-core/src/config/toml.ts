@@ -470,7 +470,7 @@ export async function writeConfigFile(filePath: string, config: KimiConfig): Pro
   // stripSecondaryModelConfig / the getConfig -> setConfig round-trip).
   const validated = validateConfig(stripSecondaryModelConfig(stripEnvModelConfig(config)));
   await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
-  await atomicWrite(filePath, `${stringifyToml(configToTomlData(validated))}\n`);
+  await atomicWrite(filePath, `${stringifyToml(configToTomlData(validated))}\n`, { followSymlinks: true });
 }
 
 export function configToTomlData(config: KimiConfig): Record<string, unknown> {

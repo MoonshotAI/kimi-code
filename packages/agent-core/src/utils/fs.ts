@@ -17,7 +17,7 @@
 import { randomBytes } from 'node:crypto';
 import { closeSync, fsyncSync, openSync } from 'node:fs';
 import * as nodeFs from 'node:fs';
-import { open, rename, unlink } from 'node:fs/promises';
+import { open, rename, unlink, lstat, realpath } from 'node:fs/promises';
 import { dirname } from 'pathe';
 
 /**
@@ -62,12 +62,30 @@ export function syncDirSync(dirPath: string): void {
  * failure *after* the rename (i.e. in the parent-directory fsync) is
  * surfaced to the caller — the content is already in place, but
  * durability is not guaranteed.
+ *
+ * @param options.followSymlinks — if true and `filePath` is a symlink,
+ *   resolve to the real path before rename, preserving the symlink.
+ *   Default false (replaces the symlink itself). Opt-in because following
+ *   symlinks can break path-traversal boundaries in guarded stores.
  */
 export async function writeFileAtomicDurable(
   filePath: string,
   content: string | Uint8Array,
+  options?: { followSymlinks?: boolean },
 ): Promise<void> {
-  const tmpPath = filePath + '.tmp';
+  let writeTarget = filePath;
+  if (options?.followSymlinks) {
+    try {
+      const stat = await lstat(filePath);
+      if (stat.isSymbolicLink()) {
+        writeTarget = await realpath(filePath);
+      }
+    } catch {
+      // lstat/realpath failure — fall back to original path.
+    }
+  }
+
+  const tmpPath = writeTarget + '.tmp';
   let renamed = false;
   try {
     const fh = await open(tmpPath, 'w');
@@ -80,15 +98,15 @@ export async function writeFileAtomicDurable(
     // Windows pre-unlink for MoveFileEx parity.
     if (process.platform === 'win32') {
       try {
-        await unlink(filePath);
+        await unlink(writeTarget);
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
         if (code !== 'ENOENT') throw error;
       }
     }
-    await rename(tmpPath, filePath);
+    await rename(tmpPath, writeTarget);
     renamed = true;
-    await syncDir(dirname(filePath));
+    await syncDir(dirname(writeTarget));
   } finally {
     if (!renamed) {
       // Best-effort cleanup of the `.tmp` file if we never got to the
@@ -143,16 +161,33 @@ function syncFd(fd: number): Promise<void> {
  *
  * @param filePath — absolute or relative path to the target file.
  * @param content  — string or binary payload to write.
+ * @param options.followSymlinks — if true and `filePath` is a symlink,
+ *   resolve to the real path before rename, preserving the symlink.
+ *   Default false (replaces the symlink itself). Opt-in because following
+ *   symlinks can break path-traversal boundaries in guarded stores.
  * @param _syncOverride — test seam: override the fsync implementation for
  *   fault injection. Production callers must never supply this.
  */
 export async function atomicWrite(
   filePath: string,
   content: string | Uint8Array,
+  options?: { followSymlinks?: boolean },
   _syncOverride?: (fd: number) => Promise<void>,
 ): Promise<void> {
+  let writeTarget = filePath;
+  if (options?.followSymlinks) {
+    try {
+      const stat = await lstat(filePath);
+      if (stat.isSymbolicLink()) {
+        writeTarget = await realpath(filePath);
+      }
+    } catch {
+      // lstat/realpath failure — fall back to original path.
+    }
+  }
+
   const hex = randomBytes(4).toString('hex');
-  const tmpPath = `${filePath}.tmp.${process.pid}.${hex}`;
+  const tmpPath = `${writeTarget}.tmp.${process.pid}.${hex}`;
   let renamed = false;
   try {
     const fh = await open(tmpPath, 'w');
@@ -167,13 +202,13 @@ export async function atomicWrite(
     // before the rename turns this into the POSIX-style "replace" case.
     if (process.platform === 'win32') {
       try {
-        await unlink(filePath);
+        await unlink(writeTarget);
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
         if (code !== 'ENOENT') throw error;
       }
     }
-    await rename(tmpPath, filePath);
+    await rename(tmpPath, writeTarget);
     renamed = true;
   } finally {
     if (!renamed) {
