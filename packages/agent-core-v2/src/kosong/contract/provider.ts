@@ -72,6 +72,7 @@ export interface VideoUploadInput {
 
 export interface GenerateOptions {
   signal?: AbortSignal;
+  streamIdleTimeoutMs?: number;
   auth?: ProviderRequestAuth;
   responseFormat?: ResponseFormat;
   cacheKey?: string;

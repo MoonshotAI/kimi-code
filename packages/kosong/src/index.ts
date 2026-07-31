@@ -86,6 +86,7 @@ export {
   isRequestTooLargeStatusError,
   isRetryableGenerateError,
   isToolExchangeAdjacencyError,
+  StreamIdleTimeoutError,
   throwIfAbortError,
 } from './errors';
 
