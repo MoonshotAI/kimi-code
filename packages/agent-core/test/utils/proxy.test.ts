@@ -320,6 +320,66 @@ describe('installGlobalProxyDispatcher', () => {
     expect(setGlobalDispatcher).toHaveBeenCalledWith(dispatcher);
   });
 
+  it('sets process.env.NODE_USE_ENV_PROXY when proxy is set and env is process.env', () => {
+    const originalNodeUseEnvProxy = process.env['NODE_USE_ENV_PROXY'];
+    delete process.env['NODE_USE_ENV_PROXY'];
+    const originalHttpProxy = process.env['HTTP_PROXY'];
+    process.env['HTTP_PROXY'] = 'http://p:3128';
+
+    try {
+      const dispatcher = { id: 'dispatcher' } as never;
+      const setGlobalDispatcher = vi.fn();
+      const createDispatcher = vi.fn().mockReturnValue(dispatcher);
+      const installed = installGlobalProxyDispatcher(
+        process.env,
+        { setGlobalDispatcher, createProxyDispatcher: createDispatcher },
+      );
+      expect(installed).toBe(true);
+      expect(process.env['NODE_USE_ENV_PROXY']).toBe('1');
+    } finally {
+      if (originalNodeUseEnvProxy !== undefined) {
+        process.env['NODE_USE_ENV_PROXY'] = originalNodeUseEnvProxy;
+      } else {
+        delete process.env['NODE_USE_ENV_PROXY'];
+      }
+      if (originalHttpProxy !== undefined) {
+        process.env['HTTP_PROXY'] = originalHttpProxy;
+      } else {
+        delete process.env['HTTP_PROXY'];
+      }
+    }
+  });
+
+  it('does not set process.env.NODE_USE_ENV_PROXY when only SOCKS proxy is configured', () => {
+    const proxyKeys = ['http_proxy', 'HTTP_PROXY', 'https_proxy', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY', 'no_proxy', 'NO_PROXY', 'NODE_USE_ENV_PROXY'] as const;
+    const savedEnv: Record<string, string | undefined> = {};
+    for (const key of proxyKeys) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+    process.env['ALL_PROXY'] = 'socks5://127.0.0.1:1080';
+
+    try {
+      const dispatcher = { id: 'dispatcher' } as never;
+      const setGlobalDispatcher = vi.fn();
+      const createDispatcher = vi.fn().mockReturnValue(dispatcher);
+      const installed = installGlobalProxyDispatcher(
+        process.env,
+        { setGlobalDispatcher, createProxyDispatcher: createDispatcher },
+      );
+      expect(installed).toBe(true);
+      expect(process.env['NODE_USE_ENV_PROXY']).toBeUndefined();
+    } finally {
+      for (const key of proxyKeys) {
+        if (savedEnv[key] !== undefined) {
+          process.env[key] = savedEnv[key];
+        } else {
+          delete process.env[key];
+        }
+      }
+    }
+  });
+
   it('installs nothing and returns false when no proxy is set', () => {
     const setGlobalDispatcher = vi.fn();
     const createDispatcher = vi.fn().mockReturnValue(undefined);
