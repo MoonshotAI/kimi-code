@@ -135,7 +135,7 @@ import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
 import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceToolPolicy';
 
-import { agentScopeOf, sessionDirOf, sessionScopeOf } from './addressing';
+import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
 import {
   type CreateChildSessionOptions,
   type CreateSessionOptions,

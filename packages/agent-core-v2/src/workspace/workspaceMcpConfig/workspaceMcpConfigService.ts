@@ -41,7 +41,7 @@ import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 
-import { loadMcpServers, resolveMcpJsonPaths } from './config-loader';
+import { loadMcpServers, resolveMcpJsonPaths } from './internal/config-loader';
 import {
   IWorkspaceMcpConfigService,
   type McpServersChange,

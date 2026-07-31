@@ -22,7 +22,7 @@ import { IWorkspaceService } from '#/app/workspace/workspace';
 import {
   sessionDirOf,
   workspacePersistenceScope,
-} from '#/workspace/sessionLifecycle/addressing';
+} from '#/workspace/sessionLifecycle/internal/addressing';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';

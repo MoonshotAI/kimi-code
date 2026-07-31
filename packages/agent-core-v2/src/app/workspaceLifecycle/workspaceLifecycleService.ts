@@ -37,7 +37,7 @@ import {
   type IWorkspaceContext,
 } from '#/workspace/workspaceContext/workspaceContext';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
-import { workspacePersistenceScope } from '#/workspace/sessionLifecycle/addressing';
+import { workspacePersistenceScope } from '#/workspace/sessionLifecycle/internal/addressing';
 
 import {
   IWorkspaceLifecycleService,

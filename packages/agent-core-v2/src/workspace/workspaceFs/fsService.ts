@@ -82,8 +82,8 @@ import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 
 import { type FsDownloadResolved, type FsPathResolved, IWorkspaceFsService } from './fs';
-import { readStream, runCommand } from './fsProcess';
-import { ensureRgPath, type RgProbe, type RgResolution } from './rgLocator';
+import { readStream, runCommand } from './internal/fsProcess';
+import { ensureRgPath, type RgProbe, type RgResolution } from './internal/rgLocator';
 import {
   compileGrepPattern,
   computeFuzzyScore,
@@ -93,7 +93,7 @@ import {
   rgPath,
   rgText,
   stripTrailingNewline,
-} from './fsSearch';
+} from './internal/fsSearch';
 
 const SEARCH_HARD_CAP = 500;
 const GREP_TIMEOUT_MS = 30_000;
