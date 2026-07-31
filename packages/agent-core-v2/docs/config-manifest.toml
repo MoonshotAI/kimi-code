@@ -227,6 +227,7 @@ merge_all_available_skills = true
   # display_name: string
   # reasoning_key: string
   # adaptive_thinking: boolean
+  # effort_param: boolean
   # beta_api: boolean
   # support_efforts: string[]
   # default_effort: string
@@ -239,6 +240,7 @@ merge_all_available_skills = true
     # display_name: string
     # reasoning_key: string
     # adaptive_thinking: boolean
+    # effort_param: boolean
     # support_efforts: string[]
     # default_effort: string
     # off_effort: string
@@ -303,6 +305,7 @@ merge_all_available_skills = true
 # display_name: string
 # reasoning_key: string
 # adaptive_thinking: boolean
+# effort_param: boolean
 # support_efforts: string[]
 # default_effort: string
 # off_effort: string
