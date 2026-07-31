@@ -56,7 +56,7 @@ Optional fields:
 | `toolTimeoutMs` | `number` | All | Timeout from `1` to `2147483647` milliseconds for a single tool call |
 | `enabledTools` | `string[]` | All | Tool allowlist |
 | `disabledTools` | `string[]` | All | Tool blocklist |
-| `models` | `string[]` | All | Restrict this server to specific model aliases; entries are exact aliases or `prefix*` wildcards. The server loads only for sessions whose model matches, and is excluded when the model is unknown; evaluated at session start |
+| `models` | `string[]` | All | Restrict this server to specific model aliases; entries are exact aliases or `prefix*` wildcards. The server loads only for sessions whose model matches, and is excluded when the model is unknown; evaluated at session start. Currently honored by the v1 engine only |
 
 You do not have to set the connection timeout or the single tool-call timeout per server: `[mcp] startup_timeout_ms` / `[mcp] tool_timeout_ms` in `config.toml` or the `KIMI_MCP_STARTUP_TIMEOUT_MS` / `KIMI_MCP_TOOL_TIMEOUT_MS` environment variables change the global defaults. Precedence is: per-server field > environment variable > `config.toml` > built-in default. See [Configuration files](../configuration/config-files.md#mcp).
 
