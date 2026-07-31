@@ -309,11 +309,8 @@ interface QueuedPrompt {
   id?: string;
 }
 
-/** Membership of the signed-in managed account, derived from the
-    /oauth/userinfo probe fired by checkAuth: 'member' when the profile loads,
-    'free' when the upstream rejects it with 402 (non-member accounts cannot
-    call userinfo), null while unknown — signed out, fetch in flight, or a
-    transient failure that must not be mislabeled as free. */
+/** Membership of the signed-in managed account: 'member' or 'free' once
+    known, null while unknown. */
 export type ManagedMembership = 'member' | 'free' | null;
 
 export interface ExtendedState extends KimiClientState {

@@ -1511,6 +1511,17 @@ describe('useWorkspaceState — managed account profile', () => {
     expect(state.managedMembership).toBe('member');
   });
 
+  it('derives free when the loaded profile reports the free user level', async () => {
+    const state = createState();
+    apiMock.getUserInfo.mockResolvedValue({ kind: 'ok', userInfo: { ...profile, userLevel: 10 } });
+    const ws = useWorkspaceState(state, createAuthDeps(ref(null)));
+
+    await ws.checkAuth();
+    await flushUserInfo();
+
+    expect(state.managedMembership).toBe('free');
+  });
+
   it('derives free when userinfo is rejected with 402 (the non-member signal)', async () => {
     const state = createState();
     apiMock.getUserInfo.mockResolvedValue({ kind: 'error', message: 'payment required', status: 402 });

@@ -259,6 +259,18 @@ describe('checkAuth — managed membership', () => {
     expect(rawState.managedMembership).toBe('member');
   });
 
+  it('derives free when the loaded profile reports the free user level', async () => {
+    const getUserInfo = vi
+      .fn()
+      .mockResolvedValue({ kind: 'ok', userInfo: { ...profile, userLevel: 10 } });
+    const { rawState, ws } = createWorkspaceState(getUserInfo);
+
+    await ws.checkAuth();
+    await flushUserInfo();
+
+    expect(rawState.managedMembership).toBe('free');
+  });
+
   it('derives free when userinfo is rejected with 402 (the non-member signal)', async () => {
     const getUserInfo = vi
       .fn()

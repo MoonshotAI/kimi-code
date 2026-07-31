@@ -72,6 +72,7 @@ const FS_PATH_NOT_FOUND_CODE = 40409;
 const ALREADY_RESOLVED_CODE = 40902;
 // First load polls /auth until it gives a definitive answer (see load()).
 const FIRST_LOAD_AUTH_RETRY_MS = 2000;
+const FREE_USER_LEVEL = 10;
 
 type AuthCheckResult = 'proceed' | 'retry' | 'server-auth-required';
 
@@ -533,12 +534,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (generation !== userInfoFetchGeneration) return;
       if (rawState.managedProviderStatus !== 'authenticated') return;
       rawState.managedUserInfo = infoResult.kind === 'ok' ? infoResult.userInfo : null;
-      // 402 is the hard "free account" signal: the upstream rejects
-      // non-member accounts on userinfo. Any other failure (network,
-      // 5xx, an older daemon without the endpoint) stays unknown
-      // rather than being mislabeled as free.
-      rawState.managedMembership =
-        infoResult.kind === 'ok' ? 'member' : infoResult.status === 402 ? 'free' : null;
+      // user_level 10 = free; 402 stays as the fallback signal. Any other
+      // failure stays unknown rather than being mislabeled as free.
+      if (infoResult.kind === 'ok') {
+        rawState.managedMembership =
+          infoResult.userInfo.userLevel === FREE_USER_LEVEL ? 'free' : 'member';
+      } else {
+        rawState.managedMembership = infoResult.status === 402 ? 'free' : null;
+      }
     } catch {
       // Older daemon without the endpoint or a transient failure — the
       // account row keeps its anonymous fallback.
