@@ -20,7 +20,6 @@ import type { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInf
 
 export interface WorkspaceAddDirInput {
   readonly path: string;
-  /** Persist to `.kimi-code/local.toml` (default true); false keeps the dir in handler memory only. */
   readonly persist?: boolean;
 }
 
@@ -38,10 +37,6 @@ export interface IWorkspaceDirs {
   readonly additionalDirs: readonly string[];
   readonly onDidChange: Event<void>;
   addDir(input: WorkspaceAddDirInput): Promise<WorkspaceAdditionalDirsResult>;
-  /**
-   * Union caller-provided dirs (session create/resume options, resolved
-   * against `baseDir`) into the shared in-memory set — never persisted.
-   */
   mergeAdditionalDirs(baseDir: string, dirs: readonly string[]): Promise<void>;
   sessionInfo(): ISessionWorkspaceInfo;
 }

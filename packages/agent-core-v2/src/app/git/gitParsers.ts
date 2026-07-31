@@ -4,7 +4,6 @@
  * Parses `git status --porcelain=v1 --branch`, `git diff --numstat`, and
  * `gh pr view --json` output into the protocol `FsGitStatusResponse` shape.
  * No IO, no DI — plain functions so they can be unit-tested directly.
- * Originally ported from v1 `services/fs/fsGit.ts`.
  */
 
 import type { FsGitStatus, FsGitStatusResponse, FsPullRequest } from './git';

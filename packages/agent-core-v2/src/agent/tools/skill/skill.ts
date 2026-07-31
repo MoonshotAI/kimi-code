@@ -7,8 +7,7 @@
  * constants — `MAX_SKILL_QUERY_DEPTH` caps Skill→Skill recursion so a skill
  * that re-invokes itself (or chains into another) cannot recurse without
  * bound, and `NestedSkillTooDeepError` is raised when a chain exceeds it —
- * and the `ISkillTool` DI decorator that the implementation (`skillTool.ts`)
- * registers against via `registerAgentToolService`. Bound at Agent scope.
+ * and the `ISkillTool` DI decorator. Bound at Agent scope.
  */
 
 import { z } from 'zod';

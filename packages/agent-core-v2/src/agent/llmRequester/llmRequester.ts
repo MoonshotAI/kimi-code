@@ -31,7 +31,6 @@ export interface AgentLLMRequestFinish {
   rawFinishReason?: string;
   providerMessageId?: string;
   timing?: ModelRequestTiming;
-  /** Trace id of the request that produced this finish (Kimi `x-trace-id`). */
   traceId?: string;
 }
 

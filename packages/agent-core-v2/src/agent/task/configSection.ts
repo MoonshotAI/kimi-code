@@ -12,10 +12,8 @@
  * `stripEnvBoundFields` restores its env-free raw value before persistence, so
  * env values never leak into `config.toml`). Also owns the
  * `kimi -p` print-mode background policy (`printBackgroundMode` /
- * `printWaitCeilingS` / `printMaxTurns`), resolved with v1 semantics by
- * `resolvePrintBackgroundMode`. Self-registered
- * at module load via `registerConfigSection`, so the `config` domain never
- * imports this domain's types.
+ * `printWaitCeilingS` / `printMaxTurns`), resolved with v1 semantics.
+ * Self-registered at module load via `registerConfigSection`.
  */
 
 import { z } from 'zod';

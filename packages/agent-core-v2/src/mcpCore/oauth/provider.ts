@@ -6,14 +6,13 @@
  * One provider instance per server/resource identity. It persists OAuth
  * tokens, the registered DCR client info, and discovery state under
  * `<homeDir>/credentials/mcp/<key>-*.json` via the store; captures the
- * authorization URL when the SDK calls `redirectToAuthorization` (the
- * orchestrator reads it after `auth()` returns `'REDIRECT'`); and keeps the
- * PKCE verifier and OAuth `state` in-memory. Persisted values are mirrored
- * into in-memory caches loaded eagerly on construction (`ready`) so the
- * SDK's synchronous `redirectUrl` / `clientMetadata` getters read without
+ * authorization URL when the SDK calls `redirectToAuthorization`; and keeps
+ * the PKCE verifier and OAuth `state` in-memory. Persisted values are
+ * mirrored into in-memory caches loaded eagerly on construction (`ready`) so
+ * the SDK's synchronous `redirectUrl` / `clientMetadata` getters read without
  * blocking, while the data methods `await ready` before reading or writing.
- * The provider does not open browsers or run servers — the service
- * orchestrates, the provider is the persistence + flow-state shim.
+ * The provider does not open browsers or run servers — it is the
+ * persistence + flow-state shim.
  */
 
 import { randomBytes } from 'node:crypto';

@@ -11,10 +11,7 @@
  * `wallClockResumedAt` anchor is
  * persisted at create/resume boundaries so recovery can settle crash-spanning
  * elapsed time without periodic writes. A `forked` wire Op clears the Model
- * at a fork boundary; the `goal.*` payload shapes are registered in
- * `PersistedOpMap` (`#/wire/types`) inside `goalOps` because they still ride
- * the Agent wire journal restored into the Model.
- * Injects reminders through
+ * at a fork boundary. Injects reminders through
  * `contextInjector`, drives continuation turns by enqueueing `newTurn`
  * `StepRequest`s onto `loop` (the continuation message materializes when the
  * loop pops it), accounts live

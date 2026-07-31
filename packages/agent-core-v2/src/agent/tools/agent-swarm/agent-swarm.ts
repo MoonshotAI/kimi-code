@@ -5,8 +5,8 @@
  * schema the model-facing parameters are derived from, the tool-owned
  * constants the schema is built around (prompt template placeholder, maximum
  * subagent count), and the `IAgentSwarmTool` DI decorator that the
- * implementation (`agentSwarmTool.ts`) registers against via
- * `registerAgentToolService`. Bound at Agent scope.
+ * implementation registers against via `registerAgentToolService`. Bound at
+ * Agent scope.
  */
 
 import { z } from 'zod';

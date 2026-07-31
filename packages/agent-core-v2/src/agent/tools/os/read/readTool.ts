@@ -13,7 +13,7 @@
  * the `hostEnvironment` domain; the workspace and skill roots come from
  * `ISessionWorkspaceContext` / `ISessionSkillCatalog`.
  *
- * Ported from v1 (`packages/agent-core/src/tools/builtin/file/read.ts`). The
+ * Ported from v1. The
  * optional `scanTextFile` / `readLineRange` / `readTailLines` fast-paths are
  * intentionally dropped: `IHostFileSystem` streams through `readLines` only.
  * Bound at Agent scope; self-registers via `registerAgentToolService(...)` at module

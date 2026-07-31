@@ -7,9 +7,7 @@
  * is rejected by the API — and because prompts and tool results persist in
  * the session history, that one part makes every subsequent request fail
  * too ("session poisoning"). Every ingestion point therefore refuses
- * unsupported formats instead of passing the bytes through: ReadMediaFile
- * refuses with a conversion command the model can run, and prompt/MCP
- * ingestion replaces the image with a text notice.
+ * unsupported formats instead of passing the bytes through.
  *
  * The policy is deliberately a closed set, not a denylist: a format is only
  * ever sent when it is known to be accepted. Supporting a new format means

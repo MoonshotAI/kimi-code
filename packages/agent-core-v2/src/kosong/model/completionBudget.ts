@@ -13,9 +13,6 @@
  * its messages — with explicit messages the budget is not tightened against
  * the current context. `completionBudgetParams` is the single fold point that
  * keeps this honest.
- *
- * The `CompletionBudgetConfig` / `CompletionBudgetParams` types live in
- * `model.types.ts` with the domain's other shared data types.
  */
 
 import type { ModelCapability } from '#/kosong/contract/capability';
@@ -54,12 +51,6 @@ export function computeCompletionBudgetCap(args: {
   return Math.max(MIN_FLOOR, cap);
 }
 
-/**
- * Fold a resolved budget into the `ModelRequestParams` slice the requester sends.
- * `usedContextTokens` must be the measured in-context tokens, and must be
- * passed ONLY when the caller did not explicitly override the request
- * messages (see the module header); it is forwarded verbatim.
- */
 export function completionBudgetParams(args: {
   readonly budget: CompletionBudgetConfig | undefined;
   readonly capability: ModelCapability | undefined;

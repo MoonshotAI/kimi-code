@@ -10,8 +10,7 @@
  * `IAgentPromptService`. `IAgentSkillService` keeps only the user-slash
  * `activate` primitive (it opens a fresh turn) and the shared activation
  * recording. `executeModelSkill` is the exported execution body behind
- * `SkillTool.execution`; the public contract (schemas, anti-loop constants,
- * `ISkillTool`) lives in `./skill`.
+ * `SkillTool.execution`.
  *
  * Registered via the module-level `registerAgentToolService(ISkillTool, SkillTool)`
  * at the bottom of this file — the same "import = register" pattern used by

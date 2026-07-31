@@ -3,9 +3,7 @@
  *
  * Defines the `IWorkspaceGitService`, a thin facade over the App-scope
  * `IGitService` pinned to this handler's workspace root: callers pass
- * repo-relative paths only, never a `cwd`. The PR-status cache stays in the
- * App-scope `IGitService`, keyed by `cwd` with a 60 s TTL — one entry per
- * workspace root, which is exactly per-handler ownership. Workspace-scoped.
+ * repo-relative paths only, never a `cwd`. Workspace-scoped.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

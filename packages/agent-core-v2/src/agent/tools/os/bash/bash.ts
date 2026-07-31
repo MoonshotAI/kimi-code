@@ -9,8 +9,8 @@
  *
  * Owns the `BashInput` / `BashOutput` zod schemas, the foreground/background
  * timeout constants the schema descriptions and validation share with the
- * implementation (`./bashTool`), and the Agent-scope service identifier.
- * Bound at Agent scope.
+ * implementation, and the Agent-scope service identifier. Bound at Agent
+ * scope.
  */
 
 import { z } from 'zod';

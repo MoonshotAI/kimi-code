@@ -2,17 +2,10 @@
  * `sessionLegacy` domain — `ISessionLegacyService` implementation.
  *
  * Stateless App-scope dispatcher: each method resolves the target session (and
- * its main agent) per call through the shared `sessionLookup` composition
- * (`sessionIndex` → `workspaceLifecycle.handlerFor` → the handler's
- * `ISessionLifecycleService`), delegates to the native v2 services, and projects
+ * its main agent) per call, delegates to the native v2 services, and projects
  * the result into the v1 wire shape. Only `updateProfile` (the cross-domain
  * `agent_config` patch), `status` (the best-effort status rollup), and `goal`
- * (the current-goal read) live here;
- * the `:undo`, `fork`-as-child, and child-listing actions were pushed down into
- * the native services (`IAgentPromptService.undo`,
- * `ISessionLifecycleService.createChild`, `ISessionIndex.list({ childOf })`) and
- * are called by the edge route directly. No business logic is duplicated here;
- * the real work stays in the native services.
+ * (the current-goal read) live here. No business logic is duplicated here.
  */
 
 import type { GoalSnapshot } from '#/agent/goal/types';
@@ -55,11 +48,6 @@ import { ISessionLegacyService, type SessionWireFields } from './sessionLegacy';
 export class SessionLegacyService implements ISessionLegacyService {
   declare readonly _serviceBrand: undefined;
 
-  /**
-   * Stable accessor over the App container (same wrapper `Scope.accessor`
-   * uses — one `invokeFunction` per resolution, never a stashed transient
-   * accessor), feeding the `sessionLookup` composition helpers.
-   */
   private readonly services: ServicesAccessor;
 
   constructor(@IInstantiationService instantiation: IInstantiationService) {
@@ -68,7 +56,6 @@ export class SessionLegacyService implements ISessionLegacyService {
     };
   }
 
-  /** The shared index → handler → session-lifecycle composition (no App facade). */
   private resume(sessionId: string): Promise<ISessionScopeHandle | undefined> {
     return resumeSessionById(this.services, sessionId);
   }
@@ -204,10 +191,6 @@ export class SessionLegacyService implements ISessionLegacyService {
     return {
       busy: this.readBusy(sessionId),
       model: model === '' ? undefined : model,
-      // An unbound agent has no thinking level to report: the effective value
-      // would be the wire model's zero value ('off'), which clients fold in as
-      // the session's real pick. Report '' instead — same "nothing to report"
-      // convention as `model` above — so they fall back to the catalog default.
       thinking_level: model === '' ? '' : profile.getEffectiveThinkingLevel(),
       permission: permission.mode,
       plan_mode: planData !== null,
@@ -218,11 +201,6 @@ export class SessionLegacyService implements ISessionLegacyService {
     };
   }
 
-  /**
-   * The session's busy fact, derived on demand from the agents' activity
-   * views (any active turn or background task). Nothing is booked at session
-   * level — a cold session is simply not busy.
-   */
   private readBusy(sessionId: string): boolean {
     const handle = getLiveSessionById(this.services, sessionId);
     if (handle === undefined) return false;

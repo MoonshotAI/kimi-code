@@ -3,7 +3,6 @@
  *
  * Loads the runtime-selected agent files through `hostFs`, resolving paths
  * against the workspace root (`workspaceContext`) and `bootstrap`.
- * `${base_prompt}` is backed by the user loader's effective default profile.
  * Bound at Workspace scope.
  */
 

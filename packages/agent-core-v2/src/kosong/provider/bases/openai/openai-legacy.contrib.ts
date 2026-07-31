@@ -39,9 +39,6 @@ registerProtocolBase({
         apiKey:
           config.apiKey ??
           firstProcessEnv(endpoint?.apiKeyEnv) ??
-          // `''` suppresses the base's own OPENAI_API_KEY env fallback once a
-          // trait took over the endpoint declaration; `undefined` (no endpoint
-          // declared) keeps the base default.
           (endpoint === undefined ? undefined : ''),
         baseUrl:
           config.baseUrl ?? firstProcessEnv(endpoint?.baseUrlEnv) ?? endpoint?.defaultBaseUrl,

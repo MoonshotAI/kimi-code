@@ -5,8 +5,7 @@
  * `app/modelCatalog` domain's (the wire contract branches on them). The
  * error registry keys on the contributing `codes` OBJECT, so the legacy
  * module could never be loaded together with this one — this domain is the
- * sole owner of the codes. `provider.not_found` is shared with the
- * `kosong/provider` discovery service.
+ * sole owner of the codes.
  */
 
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';

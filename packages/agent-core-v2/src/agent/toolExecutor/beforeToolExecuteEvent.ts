@@ -39,7 +39,6 @@ import type {
 
 type PendingVetoFactory = () => Promise<BeforeExecuteDecision | undefined>;
 
-/** Convenience for the common veto shape: a denial carrying only a message. */
 export function denyToolExecution(reason: string): ExecutableToolResult {
   return { output: reason, isError: true };
 }

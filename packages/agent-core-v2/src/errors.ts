@@ -1,10 +1,7 @@
 /**
  * Error facade — aggregates every domain's error contribution into the unified
- * `ErrorCodes` const and re-exports the error primitives.
- *
- * Importing this module registers every domain's codes (each domain self-
- * registers on import). Throw sites and cross-domain consumers should import
- * from here: `import { ErrorCodes, Error2 } from '#/errors'`.
+ * `ErrorCodes` const and re-exports the error primitives. Importing this
+ * module registers every domain's codes.
  */
 
 import { CoreErrors } from '#/_base/errors/codes';
@@ -100,10 +97,4 @@ export const ErrorCodes = {
   ...WorkspaceErrors.codes,
 } as const;
 
-/**
- * The closed union of every error code a Kimi domain may throw — derived from
- * the `ErrorCodes` aggregate rather than declared centrally, so each domain's
- * `errors.ts` is the single source of truth: adding or renaming a code is a
- * domain-local change with no central list to keep in sync.
- */
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];

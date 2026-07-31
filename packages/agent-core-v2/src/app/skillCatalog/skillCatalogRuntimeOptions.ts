@@ -7,7 +7,6 @@
  * the user source. Bound at App scope.
  *
  * Composition roots set it through {@link skillCatalogRuntimeOptionsSeed}
- * (kap-server's `startServer({ skillDirs })`, the v2 print CLI's `--skillsDir`)
  * — the registered default carries no explicit dirs.
  */
 

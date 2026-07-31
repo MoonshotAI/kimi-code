@@ -6,8 +6,7 @@
  * — the code-defined profiles accumulated at module load via
  * `registerAgentProfile(...)`. Also exposes the static `get` / `getDefault` /
  * `list` read view for loader-time consumers that need the builtin default
- * before any session catalog exists (`UserAgentProfileLoader`'s `SYSTEM.md`
- * synthesis). App-scoped.
+ * before any session catalog exists. App-scoped.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

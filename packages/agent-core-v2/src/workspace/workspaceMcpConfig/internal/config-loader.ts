@@ -54,7 +54,6 @@ export interface LoadMcpServersInput {
   readonly fs: IHostFileSystem;
   readonly cwd: string;
   readonly homeDir?: string;
-  /** Defaults to true; false loads the user file only (untrusted workspace). */
   readonly includeProject?: boolean;
 }
 

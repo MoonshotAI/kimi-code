@@ -12,8 +12,7 @@
  * or a new turn starts. The mutable retry state (`lastFailedDriverId`,
  * `failedAttempts`) is registered into `agentState` (`IAgentStateService`) and
  * read/written through it. Bound at Agent scope and constructed with the scope
- * so the handler registers before the first turn runs (same rationale as
- * `fullCompaction`).
+ * so the handler registers before the first turn runs.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';

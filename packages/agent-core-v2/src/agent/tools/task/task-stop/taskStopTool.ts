@@ -4,8 +4,7 @@
  * Stops a running background task through `IAgentTaskService`
  * (`agentTask` domain): terminal tasks report their recorded stop reason
  * untouched; live tasks are stopped after suppressing the terminal
- * notification, so the tool result is the only answer the agent sees. The
- * public contract (input schema, `ITaskStopTool`) lives in `./task-stop`.
+ * notification, so the tool result is the only answer the agent sees.
  *
  * Registered via the module-level `registerAgentToolService(ITaskStopTool,
  * TaskStopTool)` at the bottom of this file — the same "import = register"

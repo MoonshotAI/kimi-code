@@ -6,8 +6,7 @@
  * and wraps it with a defensive kwargs copy — so a hook can never mutate base
  * state, and a synthetic construction-headers trait (which never declares
  * `withThinking`) can never shadow a real dialect hook. `convertError` is the
- * shared single-value binding from `traitConvertError` (last declarer wins),
- * consulted by the base's error converter after the abort guard.
+ * shared single-value binding from `traitConvertError` (last declarer wins).
  */
 
 import { traitConvertError, type ResolvedTrait } from '#/kosong/protocol/protocolTrait';

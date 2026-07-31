@@ -5,10 +5,6 @@
  * self-contained: its `systemPrompt` renderer merges the shared base template
  * with the planning role text at call time, so a child agent no longer inherits
  * the parent's prompt through a runtime overlay.
- *
- * Import-triggered registration: this module is side-effect-imported by
- * `./profile` so loading the `plan` barrel populates the contribution list
- * before `AgentProfileCatalogService` constructs.
  */
 
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';

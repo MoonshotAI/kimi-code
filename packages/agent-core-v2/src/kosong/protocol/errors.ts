@@ -78,9 +78,6 @@ export const ProtocolErrors = {
 registerErrorDomain(ProtocolErrors);
 
 export function translateProviderError(error: unknown): Error2 {
-  // Abort guard FIRST: throws the standard abort DOMException for any abort
-  // shape — a cancellation is never converted into (or returned as) a
-  // retryable provider error.
   throwIfAbortError(error);
   if (isError2(error)) {
     return error;
@@ -143,11 +140,6 @@ export function translateProviderError(error: unknown): Error2 {
   return new Error2(CoreErrors.codes.INTERNAL, String(error), { cause: error });
 }
 
-/**
- * Normalize a provider status-error message for display: when the body is an
- * HTML error page, keep only its `<title>` text; always strip carriage
- * returns so multi-line wire bodies render sanely in logs and UI.
- */
 export function sanitizeStatusErrorMessage(message: string): string {
   const titleMatch = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(message);
   const extracted = titleMatch?.[1]?.trim();

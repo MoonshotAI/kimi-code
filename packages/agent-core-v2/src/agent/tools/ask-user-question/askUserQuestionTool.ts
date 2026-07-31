@@ -11,10 +11,8 @@
  * agent's surfaces instead of falling back to 'main' (a subagent's question
  * must not land there). Answers and dismissals are tracked through
  * `ITelemetryService`; `background: true` registers a
- * `QuestionBackgroundTask` (`./question-background-task`) on
- * `IAgentTaskService` so the call returns immediately with a `task_id`. The
- * public contract (input schemas, uniqueness validation,
- * `IAskUserQuestionTool`) lives in `./ask-user-question`.
+ * `QuestionBackgroundTask` on
+ * `IAgentTaskService` so the call returns immediately with a `task_id`.
  *
  * Registered via the module-level `registerAgentToolService(IAskUserQuestionTool,
  * AskUserQuestionTool)` at the bottom of this file — the same "import =

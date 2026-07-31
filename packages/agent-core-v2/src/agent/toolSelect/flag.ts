@@ -7,8 +7,6 @@
  * `select_tools` tool. Off by default; enable via
  * `KIMI_CODE_EXPERIMENTAL_TOOL_SELECT`, the master
  * `KIMI_CODE_EXPERIMENTAL_FLAG`, or the `[experimental]` config section.
- * Imported for its side effect (registers the definition) from the package
- * barrel.
  */
 
 import { type FlagDefinitionInput, registerFlagDefinition } from '#/app/flag/flagRegistry';

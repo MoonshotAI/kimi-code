@@ -3,9 +3,8 @@
  *
  * `diffRecords` computes the added/removed/changed keys between two snapshots
  * of a record-shaped registry state, `deepEqual` is the value comparison it
- * uses. Pure functions; the registries use them to keep change events quiet
- * when a write lands an equal value (which is also what makes the
- * persistence bridge's two-way sync terminate).
+ * uses. Pure functions, used to keep change events quiet when a write lands
+ * an equal value.
  */
 
 export interface RecordDiff {

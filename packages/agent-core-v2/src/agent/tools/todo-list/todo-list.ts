@@ -9,10 +9,7 @@
  *   - `{}`               — query the current list
  *
  * Exports the model-facing `TodoListInputSchema` / `TodoListInput` and the
- * `ITodoListTool` DI decorator that the implementation (`todoListTool.ts`)
- * registers against via `registerAgentToolService`. The tool name and item types
- * stay with the `todo` domain (`TODO_LIST_TOOL_NAME`, `TodoItem`,
- * `TodoStatus`). Bound at Agent scope.
+ * `ITodoListTool` DI decorator. Bound at Agent scope.
  */
 
 import { z } from 'zod';

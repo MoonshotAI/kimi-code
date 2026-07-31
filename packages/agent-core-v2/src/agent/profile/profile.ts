@@ -131,11 +131,6 @@ export interface IAgentProfileService {
   data(): ProfileData;
   getEffectiveThinkingLevel(): ThinkingEffort;
   resolveModelContext(): ProfileModelContext;
-  /**
-   * The dialect-free per-turn intent for the bound model: prompt-cache key,
-   * sampling overrides, thinking effort/keep. Wire encoding is each dialect's
-   * own business — the profile never branches on protocol or vendor.
-   */
   resolveRequestParams(): ModelRequestParams;
   getModelCapabilities(): ModelCapability;
   getMaxOutputSize(): number | undefined;

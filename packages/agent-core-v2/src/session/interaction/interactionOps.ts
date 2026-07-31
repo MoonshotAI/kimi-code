@@ -13,9 +13,9 @@
  * request, and the terminal response) straight from the journal; the kernel
  * itself does NOT restore pending promises from them — a request left without
  * a resolution means the process died with it pending and folds as cancelled
- * downstream. The Session-scope `interactionService` dispatches these Ops to
- * the ORIGIN agent's wire (`origin.agentId ?? 'main'`), so each record lives
- * in the journal of the agent the interaction belongs to.
+ * downstream. These Ops are dispatched to the ORIGIN agent's wire
+ * (`origin.agentId ?? 'main'`), so each record lives in the journal of the
+ * agent the interaction belongs to.
  */
 
 import { z } from 'zod';

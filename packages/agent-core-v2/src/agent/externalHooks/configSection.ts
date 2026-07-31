@@ -4,8 +4,7 @@
  *
  * Owns the `[[hooks]]` configuration section (external hook definitions),
  * including the snake_case ↔ camelCase TOML transforms for each hook entry.
- * Registered at module load via `registerConfigSection`, so the `config` domain
- * never imports this domain's types.
+ * Registered at module load via `registerConfigSection`.
  */
 
 import { z } from 'zod';

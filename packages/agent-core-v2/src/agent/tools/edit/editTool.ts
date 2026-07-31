@@ -14,7 +14,7 @@
  * `hostEnvironment` domain; the workspace and skill roots come from
  * `ISessionWorkspaceContext` / `ISessionSkillCatalog`.
  *
- * Ported from v1 (`packages/agent-core/src/tools/builtin/file/edit.ts`).
+ * Ported from v1.
  * Bound at Agent scope; self-registers via `registerAgentToolService(...)` at module
  * load.
  */

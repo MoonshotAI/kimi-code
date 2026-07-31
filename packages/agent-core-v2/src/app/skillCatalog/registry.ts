@@ -3,10 +3,8 @@
  *
  * Owns registered skill lookup, plugin-scoped skill lookup, prompt rendering,
  * and model-facing skill listings for `skill`, plus the skipped-skill /
- * scanned-root diagnostics accumulated from discovery results. Held internally
- * by the Session skill-catalog sink (`ISessionSkillCatalog`) and composed
- * directly by the edge to resolve a workspace's skills without a Session; it is
- * not a scoped service.
+ * scanned-root diagnostics accumulated from discovery results. It is not a
+ * scoped service.
  */
 
 import { escapeXmlAttr, escapeXmlTags } from '#/_base/utils/xml-escape';

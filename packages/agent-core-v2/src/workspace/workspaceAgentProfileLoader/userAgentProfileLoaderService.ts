@@ -7,8 +7,7 @@
  * App builtin loader) after the scanned profiles so it wins same-name
  * collisions within this contribution. The user roots are global os
  * directories, but per-workspace registration keeps every contribution
- * flowing through the same workspace-tagged lane, so the Session catalog
- * projection needs no special case. Bound at Workspace scope.
+ * flowing through the same workspace-tagged lane. Bound at Workspace scope.
  */
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';

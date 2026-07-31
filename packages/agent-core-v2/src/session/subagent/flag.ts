@@ -6,7 +6,6 @@
  * agent-facing model choices and startup validation warning. Off by default;
  * enable via `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL`, the master
  * `KIMI_CODE_EXPERIMENTAL_FLAG`, or the `[experimental]` config section.
- * Imported for its side effect from the package barrel.
  */
 
 import { type FlagDefinitionInput, registerFlagDefinition } from '#/app/flag/flagRegistry';

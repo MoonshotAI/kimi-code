@@ -12,7 +12,6 @@
 
 import { join } from 'pathe';
 
-/** The handler's persistence scope: `sessions/{wd_id}`. */
 export function workspacePersistenceScope(sessionsScope: string, workspaceId: string): string {
   return join(sessionsScope, workspaceId);
 }

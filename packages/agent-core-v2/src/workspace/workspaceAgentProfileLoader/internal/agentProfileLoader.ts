@@ -43,7 +43,6 @@ export abstract class AgentProfileLoaderBase extends Disposable {
     return this.readyPromise;
   }
 
-  /** Starts the first load; subclass constructors call this after their own fields are set. */
   protected start(): void {
     this.readyPromise = this.enqueue();
     void this.readyPromise.catch(() => undefined);
@@ -57,7 +56,6 @@ export abstract class AgentProfileLoaderBase extends Disposable {
 
   protected abstract load(): Promise<AgentProfileContribution>;
 
-  /** Workspace-local loaders override to tag their registration. */
   protected get workspaceKey(): string | undefined {
     return undefined;
   }

@@ -16,7 +16,6 @@
  * are re-derived from the rebuilt Model by `wire.hooks.onDidRestore` after
  * restore, so a resumed agent re-registers exactly the tools the persisted ops
  * describe.
- * Consumed by the Agent-scope `userToolService`.
  */
 
 import { z } from 'zod';

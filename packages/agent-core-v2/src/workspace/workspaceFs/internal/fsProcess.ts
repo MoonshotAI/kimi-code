@@ -3,9 +3,8 @@
  *
  * Collects a child process's full stdout/stderr and exit code through the
  * Agent's backend-pluggable `ISessionProcessRunner`, with optional `AbortSignal`
- * support (the caller decides timeout semantics — git has none, `gh pr view`
- * uses 5s, `rg` grep uses 30s). Kept separate from `fsService` so it can be
- * unit-tested with a fake runner.
+ * support (the caller decides timeout semantics). Kept as a standalone
+ * helper so it can be unit-tested with a fake runner.
  */
 
 import { type Readable } from 'node:stream';

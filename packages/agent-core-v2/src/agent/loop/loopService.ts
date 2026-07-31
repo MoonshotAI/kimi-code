@@ -13,17 +13,11 @@
  * (plus any mergeable requests folded into it) materializes its context
  * messages, then one LLM step runs (`onWillBeginStep` → streamed request → content
  * parts → tool execution → `step.end` → `onDidFinishStep`). The loop itself never
- * enqueues — it only runs requests and dispatches errors. What drives the
- * next step lives entirely in the aspects: the `loopContinuation` aspect
- * enqueues a `ContinuationStepRequest` when a step executed tools (a plain
- * assistant message enqueues nothing, so the queue empties and the turn
- * completes), and orchestrators (`prompt`, `goal`, `externalHooks`, `task`)
- * steer the turn by enqueueing further requests. A failed step is dispatched
- * to the registered error handlers (first match wins); a handler that claims
- * and catches the error has already enqueued the turn's continuation itself —
- * `stepRetry` re-enqueues the failed driver after backoff, `fullCompaction`
- * compacts and re-enqueues it — so the loop only learns caught-or-not, while
- * an unclaimed or uncaught error fails the turn. Emits `turn.*` / delta
+ * enqueues — it only runs requests and dispatches errors. A failed step is
+ * dispatched to the registered error handlers (first match wins); a handler
+ * that claims and catches the error has already enqueued the turn's
+ * continuation itself, so the loop only learns caught-or-not, while an
+ * unclaimed or uncaught error fails the turn. Emits `turn.*` / delta
  * events through `event`, persists loop events through `contextMemory`, and
  * reads the step budget from `config`. The plain-data loop state
  * (`nextReservedTurnId`, `lastRequestTraceId`, `disposing`) is registered
@@ -32,10 +26,7 @@
  * holds resources (`AbortController`, controlled promises, a
  * `StepRequestQueue`) that must not be snapshotted, alongside the mechanism
  * resources (`standaloneStepQueue`, `pendingAssignments`, `errorHandlers`,
- * `settleWaiters`, `activeRequestTrace`). Bound at Agent
- * scope. The `turnEvents` import is load-bearing beyond the prompt-text
- * helper: it loads the `DomainEventMap` augmentation for the `turn.*` / delta
- * events published here, which lives with the event definitions.
+ * `settleWaiters`, `activeRequestTrace`). Bound at Agent scope.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -453,8 +444,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private startTurn(job: TurnJob): void {
     const origin = job.seed.origin;
-    // The loop owns the turn's abort channel outright (job.controller) and
-    // reports to no one — busy is derived from its events, never registered.
     this.wire.dispatch(promptTurn({ input: job.seed.input, origin }));
     job.turn.state = 'running';
     this.activeTurnJob = job;

@@ -3,7 +3,7 @@
  * identity.
  *
  * Owns the next available turn id, including cancelled queued reservations and
- * legacy loop-event observations. Consumed by the Agent-scope `loopService`.
+ * legacy loop-event observations.
  */
 
 import { z } from 'zod';

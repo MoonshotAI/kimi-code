@@ -6,8 +6,7 @@
  * of a workspace and its total session count. Every query first folds the
  * workspace id through `IWorkspaceAliases` so legacy split buckets (one
  * directory, several id spellings) answer as one workspace. Read-only and
- * JSON-in/JSON-out so it is directly exposable on the `/api/v2` transport.
- * App-scoped.
+ * JSON-in/JSON-out so it is directly exposable over the wire. App-scoped.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

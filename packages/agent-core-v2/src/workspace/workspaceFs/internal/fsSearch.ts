@@ -3,7 +3,7 @@
  *
  * Fuzzy filename scoring, glob matching, grep-pattern compilation, and
  * ripgrep `--json` record parsing. No IO, no DI — plain functions so they can
- * be unit-tested directly. Ported from v1 `services/fs/fsSearchService.ts`.
+ * be unit-tested directly. Ported from v1.
  */
 
 import type { FsGrepRequest } from '../fs';

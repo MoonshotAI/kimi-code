@@ -4,9 +4,7 @@
  * Holds the resolved startup snapshot from the seeded `IBootstrapOptions` and
  * exposes the host facts, app path layout, and top-level scope mapping. All
  * `scope(name)` values and `configKey` are computed once at construction so
- * business code can read them synchronously. Session/agent persistence
- * addressing is NOT here — it derives from the workspace handler's
- * persistence scope (`sessionLifecycle` addressing).
+ * business code can read them synchronously.
  *
  * Bound at App scope.
  */

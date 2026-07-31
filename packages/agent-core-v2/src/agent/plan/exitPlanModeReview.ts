@@ -8,9 +8,7 @@
  * policy's telemetry), and folds every approval outcome (approve with or
  * without a selected option, Revise with feedback, Reject and Exit, dismiss)
  * into a synthetic tool result, exiting plan mode through `plan` when the
- * outcome deactivates it. Consumed by `planService`'s plan-guard veto
- * listener through a cold `waitUntil` factory; the mode / plan-active gating
- * stays in the listener.
+ * outcome deactivates it.
  */
 
 import type {

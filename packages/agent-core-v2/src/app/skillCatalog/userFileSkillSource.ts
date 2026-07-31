@@ -3,7 +3,7 @@
  *
  * Discovers user skills from the bootstrap home directories through
  * `ISkillDiscovery`, contributing them at priority 20 (above extra / plugin /
- * builtin, below workspace). Reads home paths from `bootstrap`. Bound at App scope.
+ * builtin, below workspace). Bound at App scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

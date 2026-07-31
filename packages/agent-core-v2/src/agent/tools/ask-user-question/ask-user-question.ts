@@ -6,9 +6,8 @@
  * the input zod schemas the model-facing parameters are derived from
  * (including the background-asking variant and the uniqueness validation
  * shared by both the schema refinement and the runtime re-check) and the
- * `IAskUserQuestionTool` DI decorator that the implementation
- * (`askUserQuestionTool.ts`) registers against via `registerAgentToolService`.
- * Bound at Agent scope.
+ * `IAskUserQuestionTool` DI decorator that the implementation registers
+ * against via `registerAgentToolService`. Bound at Agent scope.
  */
 
 import { z } from 'zod';

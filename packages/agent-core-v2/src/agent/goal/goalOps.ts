@@ -23,8 +23,7 @@
  * published live to `IEventBus` by the service (declared here via
  * interface-merge); `wire.restore` rebuilds the Model silently and the
  * service's `wire.hooks.onDidRestore`
- * forces a replayed `active` goal back to `paused`. Consumed by the Agent-scope
- * `goalService`.
+ * forces a replayed `active` goal back to `paused`.
  */
 
 import { z } from 'zod';

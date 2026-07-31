@@ -4,8 +4,7 @@
  *
  * Declares the mode as a scalar `wire` Model (initial `manual`) plus a replay
  * marker that distinguishes an explicit persisted mode from the default. The
- * single Op replaces the mode and sets that marker. Consumed by the Agent-scope
- * `permissionModeService` and session bootstrap.
+ * single Op replaces the mode and sets that marker.
  */
 
 import { z } from 'zod';

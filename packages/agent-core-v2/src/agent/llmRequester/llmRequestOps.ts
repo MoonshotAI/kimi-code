@@ -2,8 +2,7 @@
  * `llmRequester` domain (L4) — durable request-trace wire Model and Ops.
  *
  * Defines `llm.tools_snapshot` snapshots and `llm.request` outbound request
- * traces, with replay restoring only the snapshot de-dup cursor. Consumed by
- * the Agent-scope `llmRequester` implementation.
+ * traces, with replay restoring only the snapshot de-dup cursor.
  */
 
 import { z } from 'zod';

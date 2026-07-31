@@ -15,8 +15,7 @@
  * because v1 does not persist permission rules; hosts re-supply them on resume,
  * while only `permission.record_approval_result` rides the wire log. The
  * legacy `toReplay: approval_result` projection is dropped — only `message`
- * records feed the transcript. Consumed by the Agent-scope
- * `permissionRulesService`.
+ * records feed the transcript.
  */
 
 import { z } from 'zod';

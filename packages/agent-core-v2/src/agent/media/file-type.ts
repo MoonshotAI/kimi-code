@@ -178,7 +178,6 @@ function sniffFtypBrand(header: Buffer): string | null {
   if (header.length < 12) return null;
   if (header.subarray(4, 8).toString('latin1') !== 'ftyp') return null;
   const raw = header.subarray(8, 12).toString('latin1').toLowerCase();
-  // oxlint-disable-next-line no-control-regex
   return raw.replaceAll(/[\s\u0000]+$/g, '').trim();
 }
 

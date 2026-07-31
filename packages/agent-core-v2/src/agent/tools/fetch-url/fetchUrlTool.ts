@@ -2,8 +2,7 @@
  * `tools` domain (L7) — `FetchURLTool` implementation.
  *
  * Receives the App-scope `IWebFetchService` via DI and fetches through its
- * host-injected `UrlFetcher` (contract in
- * `#/app/web/tools/fetch-url-types`). The default service falls back to the
+ * host-injected `UrlFetcher`. The default service falls back to the
  * built-in `LocalFetchURLProvider`, so `FetchURL` is always available without
  * OAuth. Bound at Agent scope; self-registers via `registerAgentToolService(...)` at
  * module load.

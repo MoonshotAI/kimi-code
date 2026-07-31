@@ -4,8 +4,7 @@
  * A `Readable` wrapper that preserves source backpressure while still allowing
  * consumers to read buffered output after the source has ended. Used by process
  * spawners so `wait()`-then-read on small/medium outputs works without draining
- * unboundedly. Vendored from `@moonshot-ai/kaos` `internal.ts`; kept as a pure
- * helper with no DI dependencies.
+ * unboundedly. Kept as a pure helper with no DI dependencies.
  */
 
 import { Readable } from 'node:stream';

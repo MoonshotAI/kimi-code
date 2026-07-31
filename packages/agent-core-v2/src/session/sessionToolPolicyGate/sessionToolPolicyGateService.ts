@@ -4,8 +4,8 @@
  * An empty gate (nothing vetoed, never changes) registered at Session scope
  * so Session/Agent scopes materialized WITHOUT a workspace handler — test
  * hosts, harness agents — still resolve the contract. The handler's seed
- * (`sessionToolPolicyGateSeed`) shadows this registration for real sessions,
- * the same way every other workspace-resource injection contract works.
+ * shadows this registration for real sessions, the same way every other
+ * workspace-resource injection contract works.
  */
 
 import { Event } from '#/_base/event';

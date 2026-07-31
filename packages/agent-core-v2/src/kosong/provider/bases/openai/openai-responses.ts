@@ -1092,7 +1092,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
 
     let kwargs: Record<string, unknown> = { ...this._generationKwargs };
 
-    // Per-turn intent overlays in the fixed contract order.
     if (options?.cacheKey !== undefined) {
       kwargs = { ...kwargs, prompt_cache_key: options.cacheKey };
     }
@@ -1213,10 +1212,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Base capability catalog — the final fallback of capability resolution.
-// `undefined` means the base knows nothing about the model.
-// ---------------------------------------------------------------------------
 
 export function getOpenAIResponsesModelCapability(modelName: string) {
   const normalized = modelName.toLowerCase();

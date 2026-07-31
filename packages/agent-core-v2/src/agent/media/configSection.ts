@@ -12,12 +12,6 @@
  * While a field's env var is set, `stripEnvBoundFields` restores its env-free
  * raw value before `set`/`replace` persists, so an env override echoed
  * back through a config write can never leak into `config.toml`.
- *
- * The compression support module (`#/agent/media/image-compress`) stays
- * config-agnostic: `ImageConfigBridge` reads this env-resolved section and
- * pushes the two values into that module's resolver seam, so callers that rely
- * on the implicit default (MCP results, prompt ingestion in the apps) honor
- * config/env without each wiring it up.
  */
 
 import { z } from 'zod';

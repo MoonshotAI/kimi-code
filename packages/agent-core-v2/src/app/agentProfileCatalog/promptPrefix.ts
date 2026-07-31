@@ -3,9 +3,7 @@
  *
  * Applies a profile's optional per-invocation `promptPrefix` (e.g. `explore`'s
  * `<git-context>` block) to a caller-supplied prompt. Best-effort: a thrown
- * error or empty prefix leaves the prompt unchanged. Shared by every launcher
- * that instantiates an agent from a profile (the `Agent` tool, the swarm
- * scheduler).
+ * error or empty prefix leaves the prompt unchanged.
  */
 
 import type {

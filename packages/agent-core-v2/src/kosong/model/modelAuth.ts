@@ -36,12 +36,6 @@ import type { ModelRecord } from './model';
 import type { ResolvedModelAuthMaterial } from './model.types';
 import { drivesThinkingThroughTraits } from './thinking';
 
-/**
- * The Model → Provider credential precedence chain. When `trace` is given,
- * the winning layer (and any env-bag hit, by env-var name) is recorded at
- * `resolved.auth`; without a trace the function is the pure chain it always
- * was.
- */
 export function resolveModelAuthMaterial(
   args: {
     readonly modelId: string;

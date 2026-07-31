@@ -3,9 +3,7 @@
  *
  * Per-agent registry of the tools an agent can resolve and run: `register` /
  * `unregister` / `list` / `resolve`, plus `onRegistered` / `onUnregistered`
- * hooks. The tool model types it references (`ExecutableTool`, `ToolInfo`,
- * `ToolSource`) live in the foundational `tool` contract. Bound at Agent
- * scope.
+ * hooks. Bound at Agent scope.
  */
 
 import { createDecorator } from '#/_base/di/instantiation';

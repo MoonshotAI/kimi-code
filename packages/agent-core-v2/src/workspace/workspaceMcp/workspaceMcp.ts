@@ -18,18 +18,8 @@ import type { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 export interface IWorkspaceMcpService {
   readonly _serviceBrand: undefined;
 
-  /**
-   * The handler's initial connect (the config domain's effective snapshot).
-   * Settles once the initial connection attempt finishes; per-server failures
-   * are reflected in MCP status entries rather than rejecting this promise.
-   */
   readonly ready: Promise<void>;
 
-  /**
-   * The handler's shared connection manager. Always available, independent
-   * of the initial connect's progress; global timeout defaults come from the
-   * config domain's tunables at each (re)connect.
-   */
   connectionManager(): McpConnectionManager;
 
   sessionHandle(): ISessionMcpHandle;

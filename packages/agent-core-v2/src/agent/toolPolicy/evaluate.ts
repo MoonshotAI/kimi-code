@@ -59,11 +59,6 @@ export interface GlobalToolsPolicy {
 }
 
 export interface ToolPolicyLayers {
-  /**
-   * The workspace (os-level) veto: tools the runtime / workspace disables.
-   * Evaluated FIRST — it outranks every other layer, so a workspace-disabled
-   * tool is inactive no matter what profile, config, or session layers say.
-   */
   readonly workspaceDisabledTools?: readonly string[];
   readonly profile: ToolActivationPolicy;
   readonly global?: GlobalToolsPolicy;

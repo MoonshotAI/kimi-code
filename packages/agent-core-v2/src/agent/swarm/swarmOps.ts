@@ -6,9 +6,7 @@
  * retained, not collapsed to a boolean, so `shouldAutoExit` can still
  * distinguish `task` / `tool`) plus the two Ops that set and clear it; the
  * `apply` functions are the pure extraction of the former live `applyEnter` /
- * `applyExit` and `resume` facets. The `swarmMode` slice of
- * `agent.status.updated` is declared centrally in `usageOps`. Consumed by the
- * Agent-scope `swarmService`.
+ * `applyExit` and `resume` facets.
  */
 
 import { z } from 'zod';

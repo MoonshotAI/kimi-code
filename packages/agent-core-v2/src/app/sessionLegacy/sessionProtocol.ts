@@ -3,10 +3,8 @@
  *
  * These zod schemas define the request/response shapes of the v1 session
  * endpoints this adapter backs (`POST /sessions/{id}/profile`,
- * `GET /sessions/{id}/status`, session warnings); the transports validate
- * against them and the adapter's contract consumes the inferred types.
- * Field-level changes here are wire breaks — see the schema-fidelity rule in
- * `server-align.md`.
+ * `GET /sessions/{id}/status`, session warnings). Field-level changes here
+ * are wire breaks.
  */
 
 import { z } from 'zod';
@@ -82,9 +80,6 @@ export type UpdateSessionProfileRequest = z.infer<typeof updateSessionProfileReq
 export const sessionStatusResponseSchema = z.object({
   busy: z.boolean(),
   model: z.string().optional(),
-  // '' when the main agent is not bound yet — there is no level to report, and
-  // clients should fall back to their catalog default rather than treat the
-  // wire model's zero value as a real pick.
   thinking_level: z.string(),
   permission: z.string(),
   plan_mode: z.boolean(),
