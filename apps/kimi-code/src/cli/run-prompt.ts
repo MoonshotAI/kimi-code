@@ -36,7 +36,6 @@ import type { PromptHarness, PromptSession } from './prompt-session';
 import { maybeLoadRustEngine } from './rust-engine';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
-import { preheatWorkspaceIndex } from './workspace-preheat';
 
 /**
  * Await `promise`, but stop waiting after `timeoutMs`.
@@ -215,10 +214,8 @@ export async function runPrompt(
     });
     setCrashPhase('runtime');
 
-    // Preheat the workspace file index off the hot path so the first Read
-    // tool call can return an instant prediction. Runs in the background;
-    // a missing/broken native module degrades silently to precise reads.
-    preheatWorkspaceIndex(workDir);
+    // NOTE: the workspace index preheat was removed — the Rust engine's
+    // turn loop carries its own prediction support. See workspace-preheat.ts.
 
     // Headless goal mode: `kimi -p "/goal <objective>"`. The goal driver keeps
     // the turn-run alive across continuation turns, so the normal prompt-turn

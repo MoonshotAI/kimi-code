@@ -28,10 +28,6 @@ import { resolve } from 'node:path';
 const nodeRequire = createRequire(import.meta.url);
 
 import {
-  tryNativeWorkspaceIndexPredictRead,
-  type NativeReadPrediction,
-} from '@moonshot-ai/agent-core-v2';
-import {
   APIRequestTooLargeError,
   isImageFormatError,
   isRecoverableRequestStructureError,
@@ -464,9 +460,10 @@ class AgentProcess {
         this.processBuffer();
       });
 
-      this.process.stderr!.on('data', (data: Buffer) => {
-        // DEBUG-TEMP: surface engine stderr for diagnosis
-        console.error('[kimi-agent:stderr]', data.toString().trimEnd());
+      this.process.stderr!.on('data', (_data: Buffer) => {
+        // Suppress stderr output from the Rust binary to avoid corrupting
+        // the TUI's terminal rendering. The Rust binary's debug logs (eprintln!)
+        // would otherwise print directly to the terminal and cause duplicate lines.
       });
 
       this.process.on('exit', (code) => {
@@ -2879,11 +2876,8 @@ export class WorkspacePredictor {
   }
 
   /**
-   * Generate a Read prediction for the given path.
-   *
-   * Tries the preheated Rust workspace index first (instant, no I/O on
-   * the JS side). On miss, falls back to an on-demand stat + read of the
-   * first N lines.
+   * Generate a Read prediction for the given path: an on-demand stat + read
+   * of the first N lines.
    *
    * Returns null when:
    *   - The file doesn't exist or is not a regular file
@@ -2892,29 +2886,7 @@ export class WorkspacePredictor {
    *   - fs/stat is not available (sandboxed environment)
    */
   predictRead(path: string): string | null {
-    // 1) Try the preheated native workspace index first.
-    const nativePrediction = tryNativeWorkspaceIndexPredictRead(path);
-    if (nativePrediction !== undefined && nativePrediction !== null) {
-      return this.formatNativePrediction(path, nativePrediction);
-    }
-
-    // 2) Fall back to on-demand JS stat + read.
     return this.predictReadViaFs(path);
-  }
-
-  /**
-   * Format a native index prediction into the same shape as the JS path.
-   */
-  private formatNativePrediction(path: string, p: NativeReadPrediction): string {
-    const previewLines = p.preview.split('\n').slice(0, PREDICTION_PREVIEW_LINES);
-    const numbered = previewLines
-      .map((line, i) => `${String(i + 1).padStart(6)}→${line}`)
-      .join('\n');
-    return (
-      `cat ${path}  (prediction: ${p.lineCount} lines, ${p.size} bytes)\n` +
-      `${numbered}\n` +
-      `\n[... prediction — precise result loading ...]`
-    );
   }
 
   /**
