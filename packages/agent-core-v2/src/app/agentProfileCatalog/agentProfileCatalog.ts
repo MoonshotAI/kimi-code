@@ -10,11 +10,11 @@
  *
  * Every profile is self-contained: `systemPrompt(context)` returns the complete
  * prompt (base + role overlay are merged at definition time, not at spawn
- * time). Profiles stay independent of concrete model aliases, but may declare
- * a symbolic primary/secondary preference used as the default when spawned as
- * a subagent. The builtin {@link DEFAULT_AGENT_PROFILE_NAME} (`agent`) is the
- * default profile used when an Agent is bound to a Model without naming a
- * profile.
+ * time). Profiles stay independent of concrete model wiring, but may declare
+ * a model preference — symbolic (`primary` / `secondary`) or a concrete
+ * `[models]` id — used as the default when spawned as a subagent. The
+ * builtin {@link DEFAULT_AGENT_PROFILE_NAME} (`agent`) is the default
+ * profile used when an Agent is bound to a Model without naming a profile.
  *
  * `tools` is an allowlist of exact builtin names plus `mcp__` globs
  * (`undefined` = every tool active); `disallowedTools` denies with the same
@@ -38,7 +38,15 @@ import type { ISessionProcessRunner } from '#/session/process/processRunner';
 
 export const DEFAULT_AGENT_PROFILE_NAME = 'agent';
 
-export type AgentModelPreference = 'primary' | 'secondary';
+/**
+ * Model preference a profile declares for subagent spawning: the symbolic
+ * `primary` / `secondary` choices or a concrete `[models]` id. A concrete id
+ * is validated at binding-resolution time, not at profile-load time (profiles
+ * can load before the config is final). The `Agent` / `AgentSwarm` tools use
+ * it as the default for their `model` parameter when the call does not pass
+ * one explicitly.
+ */
+export type AgentModelPreference = 'primary' | 'secondary' | (string & {});
 
 export interface AgentProfilePromptPrefixContext {
   readonly cwd: string;

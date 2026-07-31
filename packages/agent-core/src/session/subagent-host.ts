@@ -127,9 +127,11 @@ export interface SpawnSubagentOptions extends RunSubagentOptions {
   readonly profileName: string;
   readonly swarmItem?: string;
   /**
-   * Explicit per-spawn model choice from the tool call. The profile's own
-   * `modelPreference` applies when this is omitted; both only take effect
-   * with the `secondary-model` experiment enabled.
+   * Explicit per-spawn model choice from the tool call: `primary`,
+   * `secondary`, or a concrete `[models]` alias. The profile's own
+   * `modelPreference` applies when this is omitted. The symbolic `secondary`
+   * choice only takes effect with the `secondary-model` experiment enabled;
+   * a concrete alias is honored (and validated) regardless.
    */
   readonly modelChoice?: SubagentModelChoice;
 }
@@ -168,6 +170,11 @@ export class SessionSubagentHost {
 
     const parent = await this.session.ensureAgentResumed(this.ownerAgentId);
     const profile = this.resolveProfile(parent, options.profileName);
+    // Resolve (and validate) the model binding before creating the child so
+    // an invalid choice — an unknown model alias, a dangling [secondary_model]
+    // pointer — rejects the spawn call itself with a tool-visible error
+    // instead of surfacing mid-run.
+    const binding = this.resolveSpawnBinding(parent, profile, options.modelChoice);
     const { id, agent } = await this.session.createAgent(
       { type: 'sub', generate: parent.rawGenerate },
       { parentAgentId: this.ownerAgentId, swarmItem: options.swarmItem },
@@ -175,7 +182,7 @@ export class SessionSubagentHost {
     const completion = this.runWithActiveChild(id, options, async (runOptions) => {
       this.emitSubagentSpawned(parent, id, profile.name, runOptions);
       try {
-        await this.configureChild(parent, agent, profile, options.modelChoice);
+        await this.configureChild(parent, agent, profile, binding);
         return await this.runPromptTurn(parent, id, agent, profile.name, runOptions);
       } catch (error) {
         this.emitSubagentFailed(parent, id, runOptions, error);
@@ -440,9 +447,8 @@ export class SessionSubagentHost {
     parent: Agent,
     child: Agent,
     profile: ResolvedAgentProfile,
-    modelChoice?: SubagentModelChoice,
+    binding: SubagentModelBinding,
   ): Promise<void> {
-    const binding = this.resolveSpawnBinding(parent, profile, modelChoice);
     child.config.update({
       cwd: parent.config.cwd,
       modelAlias: binding.modelAlias,
@@ -462,11 +468,13 @@ export class SessionSubagentHost {
   }
 
   /**
-   * The model a newly spawned subagent binds to: the configured secondary
-   * model by default (when the experiment is on), otherwise the parent's
-   * model and effort, inherited as before. The bound alias is validated up
-   * front so a dangling `[secondary_model]` pointer fails the spawn with a
-   * wrapped, actionable error instead of a mid-turn provider failure.
+   * The model a newly spawned subagent binds to: an explicit alias choice,
+   * the configured secondary model by default (when the experiment is on),
+   * otherwise the parent's model and effort, inherited as before. The bound
+   * alias is validated up front so an unknown alias or a dangling
+   * `[secondary_model]` pointer fails the spawn with a clear, actionable
+   * error instead of a silent parent-model fallback or a mid-turn provider
+   * failure.
    */
   private resolveSpawnBinding(
     parent: Agent,

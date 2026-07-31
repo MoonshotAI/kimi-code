@@ -67,10 +67,10 @@ export const AgentToolInputSchema = z.preprocess(
         'One of the available agent types (see "Available agent types" in this tool description). Defaults to "coder" when omitted.',
       ),
     model: z
-      .enum(['primary', 'secondary'])
+      .string()
       .optional()
       .describe(
-        'Model for the new subagent: "secondary" uses the configured secondary model (the default when one is set), "primary" uses the model you are running on. Only applies when spawning a new agent — a resumed agent keeps its bound model.',
+        'Model for the new subagent: "secondary" uses the configured secondary model (the default when one is set), "primary" uses the model you are running on, or pass any configured model alias from your [models] config to run the subagent on that model. Only applies when spawning a new agent — a resumed agent keeps its bound model.',
       ),
     resume: z
       .string()

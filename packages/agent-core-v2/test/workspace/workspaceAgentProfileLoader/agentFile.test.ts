@@ -73,10 +73,20 @@ describe('parseAgentFileText', () => {
     expect(def.modelPreference).toBe('primary');
   });
 
-  it('rejects an unsupported model preference', () => {
+  it('parses a concrete model id preference', () => {
+    // Concrete ids are validated at binding-resolution time, not at parse
+    // time, so any non-empty string is accepted here.
+    const def = parse(
+      '---\nname: solo\ndescription: d\nmodel_preference: provider/model\n---\n\nbody\n',
+    );
+
+    expect(def.modelPreference).toBe('provider/model');
+  });
+
+  it('rejects a non-string model preference', () => {
     expect(() =>
       parse(
-        '---\nname: solo\ndescription: d\nmodel_preference: provider/model\n---\n\nbody\n',
+        '---\nname: solo\ndescription: d\nmodel_preference: 42\n---\n\nbody\n',
       ),
     ).toThrow(/"model_preference"/);
   });

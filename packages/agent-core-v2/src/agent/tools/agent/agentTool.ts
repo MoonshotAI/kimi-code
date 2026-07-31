@@ -12,7 +12,7 @@
  * constants, `ISubagentTool`) lives in `./agent`.
  *
  * Spawn bindings use an explicit tool choice first, then the target profile's
- * symbolic model preference, before `resolveSubagentBinding` falls back to the
+ * model preference, before `resolveSubagentBinding` falls back to the
  * configured secondary model or the caller's model. The selected alias is
  * resolved through the model catalog before lifecycle allocation. A resumed
  * agent keeps the model recorded in its own wire journal — with per-subagent

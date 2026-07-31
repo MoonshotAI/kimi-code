@@ -406,7 +406,8 @@ describe('Agent tools', () => {
     } as unknown as SessionSubagentHost;
     const ctx = testAgent({
       subagentHost,
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS),
+      // The flag defaults on; opt out through the [experimental] override.
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'secondary-model': false }),
     });
     ctx.configure({ tools: ['Agent'] });
 

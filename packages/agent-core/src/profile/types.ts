@@ -10,11 +10,14 @@ export const RawSubagentProfileSchema = z.object({
 export type RawSubagentProfile = z.infer<typeof RawSubagentProfileSchema>;
 
 /**
- * Symbolic model preference a profile declares for subagent spawning: the
+ * Model preference a profile declares for subagent spawning: the symbolic
+ * `primary` / `secondary` choices or a concrete `[models]` alias. The
  * `Agent` / `AgentSwarm` tools use it as the default for their `model`
- * parameter when the call does not pass one explicitly.
+ * parameter when the call does not pass one explicitly. A concrete alias is
+ * validated at binding-resolution time, not at profile-parse time (profiles
+ * can load before the config is final).
  */
-export const AgentModelPreferenceSchema = z.enum(['primary', 'secondary']);
+export const AgentModelPreferenceSchema = z.string().min(1);
 
 export type AgentModelPreference = z.infer<typeof AgentModelPreferenceSchema>;
 

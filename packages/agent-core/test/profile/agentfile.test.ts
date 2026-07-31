@@ -144,8 +144,17 @@ describe('parseAgentFileText', () => {
     });
   });
 
-  it('rejects an invalid model_preference', () => {
-    expect(() => parse(agentFileText({ description: 'd', model_preference: 'cheapest' }))).toThrow(
+  it('accepts a concrete model alias in model_preference', () => {
+    // Aliases are validated at binding-resolution time, not at parse time, so
+    // any non-empty string is accepted here.
+    const definition = parse(
+      agentFileText({ description: 'd', model_preference: 'cheap-fast-model' }),
+    );
+    expect(definition.modelPreference).toBe('cheap-fast-model');
+  });
+
+  it('rejects a non-string model_preference', () => {
+    expect(() => parse(agentFileText({ description: 'd', model_preference: 42 }))).toThrow(
       /model_preference/,
     );
   });

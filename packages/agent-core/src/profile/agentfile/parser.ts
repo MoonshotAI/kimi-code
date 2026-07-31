@@ -121,10 +121,16 @@ function parseModelPreference(
   filePath: string,
 ): AgentFileDefinition['modelPreference'] {
   if (value === undefined || value === null) return undefined;
-  if (value === 'primary' || value === 'secondary') return value;
-  throw new AgentFileParseError(
-    `Frontmatter field "model_preference" in ${filePath} must be "primary" or "secondary"`,
-  );
+  // "primary" / "secondary" or a concrete [models] alias. The alias is
+  // validated at binding-resolution time, not here (profiles can load before
+  // the config is final).
+  const parsed = nonEmptyString(value);
+  if (parsed === undefined) {
+    throw new AgentFileParseError(
+      `Frontmatter field "model_preference" in ${filePath} must be "primary", "secondary", or a configured model alias`,
+    );
+  }
+  return parsed;
 }
 
 function parseBoolean(value: unknown, field: string, filePath: string): boolean {

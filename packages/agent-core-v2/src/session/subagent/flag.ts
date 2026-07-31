@@ -3,10 +3,10 @@
  * into `flag`.
  *
  * Gates secondary-model selection for newly spawned subagents, including the
- * agent-facing model choices and startup validation warning. Off by default;
- * enable via `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL`, the master
- * `KIMI_CODE_EXPERIMENTAL_FLAG`, or the `[experimental]` config section.
- * Imported for its side effect from the package barrel.
+ * agent-facing model choices and startup validation warning. On by default;
+ * disable via `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL` or the
+ * `[experimental]` config section to restore legacy inherit-the-parent-model
+ * behavior. Imported for its side effect from the package barrel.
  */
 
 import { type FlagDefinitionInput, registerFlagDefinition } from '#/app/flag/flagRegistry';
@@ -18,9 +18,9 @@ export const secondaryModelFlag: FlagDefinitionInput = {
   id: SECONDARY_MODEL_FLAG_ID,
   title: 'Secondary model for subagents',
   description:
-    'Let newly spawned subagents use a separately configured secondary model by default, with an explicit primary-model override for quality-sensitive tasks.',
+    'Let newly spawned subagents use a separately configured secondary model by default, with an explicit per-spawn model override (primary or any configured [models] alias) for quality-sensitive tasks. Enabled by default; disable to restore legacy inherit-the-parent-model behavior.',
   env: SECONDARY_MODEL_FLAG_ENV,
-  default: false,
+  default: true,
   surface: 'core',
 };
 

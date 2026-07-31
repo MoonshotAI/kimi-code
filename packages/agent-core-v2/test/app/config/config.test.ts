@@ -1496,6 +1496,62 @@ describe('subagent config section', () => {
     disposables.dispose();
   });
 
+  it('resolves the spawn binding for a concrete [models] id, flag-independent', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const withModels = await createConfig(
+      {},
+      '[models."provider/fast"]\nmodel = "fast-chat"\n\n[secondary_model]\nmodel = "provider/secondary"\n',
+    );
+    try {
+      // The record declares no default effort: the caller's level is inherited.
+      expect(
+        resolveSubagentBinding(withModels.config, secondaryModelFlags(), own, 'provider/fast'),
+      ).toEqual({ model: 'provider/fast', thinking: 'medium' });
+      // An explicit id choice is honored even with the experiment off.
+      expect(
+        resolveSubagentBinding(withModels.config, secondaryModelFlags(false), own, 'provider/fast'),
+      ).toEqual({ model: 'provider/fast', thinking: 'medium' });
+    } finally {
+      withModels.disposables.dispose();
+    }
+
+    const withEffort = await createConfig(
+      {},
+      '[models."provider/fast"]\nmodel = "fast-chat"\ndefault_effort = "low"\n',
+    );
+    try {
+      expect(
+        resolveSubagentBinding(withEffort.config, secondaryModelFlags(), own, 'provider/fast'),
+      ).toEqual({ model: 'provider/fast', thinking: 'low' });
+    } finally {
+      withEffort.disposables.dispose();
+    }
+  });
+
+  it('rejects an unknown concrete model id with the valid choices instead of falling back', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[models."provider/fast"]\nmodel = "fast-chat"\n\n[secondary_model]\nmodel = "provider/secondary"\nmax_output_size = 8192\n',
+    );
+    try {
+      expect(() =>
+        resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/typo'),
+      ).toThrow(
+        'Unknown subagent model "provider/typo". Pass one of: "primary", "secondary", "provider/fast".',
+      );
+      // The synthesized derived id (materialized by the patch recipe above) is
+      // not a valid explicit choice and stays out of the listed choices.
+      expect(() =>
+        resolveSubagentBinding(config, secondaryModelFlags(), own, SECONDARY_DERIVED_MODEL_ID),
+      ).toThrow(
+        'Unknown subagent model "__secondary__". Pass one of: "primary", "secondary", "provider/fast".',
+      );
+    } finally {
+      disposables.dispose();
+    }
+  });
+
   it('preserves the coded error contract when adding secondary-model guidance', () => {
     const cause = new Error2(
       ErrorCodes.CONFIG_INVALID,

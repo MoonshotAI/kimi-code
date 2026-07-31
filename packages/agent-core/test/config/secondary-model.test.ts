@@ -12,6 +12,11 @@ import {
 } from '../../src/config/secondary-model';
 import { parseConfigString } from '../../src/config/toml';
 import type { KimiConfig, ModelAlias } from '../../src/config/schema';
+import { FlagResolver } from '../../src/flags';
+import {
+  buildSubagentModelDescriptions,
+  resolveSubagentBinding,
+} from '../../src/session/subagent-binding';
 
 const baseAlias: ModelAlias = {
   provider: 'p1',
@@ -243,5 +248,105 @@ describe('[secondary_model] TOML wiring', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('resolveSubagentBinding explicit aliases', () => {
+  const flagsOn = () => new FlagResolver({ KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL: '1' });
+  const flagsOff = () => new FlagResolver({ KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL: '0' });
+  const own = { modelAlias: 'main', thinkingEffort: 'high' };
+
+  it('binds a concrete [models] alias directly, using its configured default effort', () => {
+    expect(resolveSubagentBinding(configWithSecondary(), flagsOn(), own, 'cheap')).toEqual({
+      modelAlias: 'cheap',
+      thinkingEffort: 'low',
+    });
+  });
+
+  it('inherits the caller thinking effort when the alias declares no default', () => {
+    expect(resolveSubagentBinding(configWithSecondary(), flagsOn(), own, 'main')).toEqual({
+      modelAlias: 'main',
+      thinkingEffort: 'high',
+    });
+  });
+
+  it('honors a concrete alias even when the experiment is off', () => {
+    expect(resolveSubagentBinding(configWithSecondary(), flagsOff(), own, 'cheap')).toEqual({
+      modelAlias: 'cheap',
+      thinkingEffort: 'low',
+    });
+  });
+
+  it('rejects an unknown alias with the valid choices instead of falling back', () => {
+    expect(() => resolveSubagentBinding(configWithSecondary(), flagsOn(), own, 'typo')).toThrow(
+      'Unknown subagent model "typo". Pass one of: "primary", "secondary", "main", "cheap".',
+    );
+  });
+
+  it('rejects the synthesized derived alias and keeps it out of the choices', () => {
+    const config = applySecondaryModelConfig(configWithSecondary(), {});
+    expect(config.models?.[SECONDARY_DERIVED_MODEL_ALIAS]).toBeDefined();
+    expect(() =>
+      resolveSubagentBinding(config, flagsOn(), own, SECONDARY_DERIVED_MODEL_ALIAS),
+    ).toThrow(
+      'Unknown subagent model "__secondary__". Pass one of: "primary", "secondary", "main", "cheap".',
+    );
+  });
+});
+
+describe('buildSubagentModelDescriptions', () => {
+  const flagsOn = () => new FlagResolver({ KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL: '1' });
+  const flagsOff = () => new FlagResolver({ KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL: '0' });
+
+  function configWithExtraAlias(): KimiConfig {
+    const config = configWithSecondary();
+    config.models = {
+      ...config.models,
+      fast: { provider: 'p1', model: 'fast-chat', maxContextSize: 65536 },
+    };
+    return config;
+  }
+
+  it('lists secondary, primary, and the remaining configured aliases', () => {
+    const text = buildSubagentModelDescriptions(configWithExtraAlias(), flagsOn(), 'main');
+    expect(text).toContain('Available models (pass via model):');
+    expect(text).toContain('- secondary: cheap (default)');
+    expect(text).toContain('- primary: main');
+    expect(text).toContain('- fast — configured [models] aliases');
+    // The caller's own model and the secondary target are not repeated as aliases.
+    expect(text).not.toContain('- main,');
+    expect(text).not.toContain('cheap,');
+  });
+
+  it('lists configured aliases even without a secondary model', () => {
+    const config = configWithExtraAlias();
+    delete config.secondaryModel;
+    const text = buildSubagentModelDescriptions(config, flagsOn(), 'main');
+    expect(text).toContain('- primary: main');
+    expect(text).toContain('- cheap, fast — configured [models] aliases');
+    expect(text).not.toContain('secondary:');
+  });
+
+  it('hides the secondary choice but keeps aliases when the experiment is off', () => {
+    const text = buildSubagentModelDescriptions(configWithExtraAlias(), flagsOff(), 'main');
+    expect(text).not.toContain('secondary:');
+    expect(text).toContain('- primary: main');
+    expect(text).toContain('- cheap, fast — configured [models] aliases');
+  });
+
+  it('returns undefined when nothing beyond the caller model is configured', () => {
+    const config: KimiConfig = {
+      providers: {},
+      models: { main: { provider: 'p1', model: 'flagship', maxContextSize: 262144 } },
+    };
+    expect(buildSubagentModelDescriptions(config, flagsOn(), 'main')).toBeUndefined();
+    expect(buildSubagentModelDescriptions(config, flagsOn(), undefined)).toBeUndefined();
+  });
+
+  it('excludes the synthesized derived entry from the alias list', () => {
+    const config = applySecondaryModelConfig(configWithExtraAlias(), {});
+    expect(config.models?.[SECONDARY_DERIVED_MODEL_ALIAS]).toBeDefined();
+    const text = buildSubagentModelDescriptions(config, flagsOn(), 'main');
+    expect(text).not.toContain(SECONDARY_DERIVED_MODEL_ALIAS);
   });
 });

@@ -11,7 +11,7 @@ import { AGENT_WIRE_PROTOCOL_VERSION } from '../../src/agent/records';
 import type { KimiConfig } from '../../src/config';
 import { ErrorCodes, KimiError } from '../../src/errors';
 import { FlagResolver } from '../../src/flags';
-import { SessionAgentProfileCatalog, type ResolvedAgentProfile } from '../../src/profile';
+import { SessionAgentProfileCatalog, type AgentModelPreference, type ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
 import { collectGitContext } from '../../src/session/git-context';
@@ -1159,6 +1159,10 @@ describe('SessionSubagentHost', () => {
         type: 'sub',
         parentAgentId: 'main',
       },
+    }, {
+      // Legacy resume realignment only happens with the experiment off (it
+      // defaults on): the child keeps its bound model when it is enabled.
+      experimentalFlags: new FlagResolver({ KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL: '0' }),
     });
     const host = new SessionSubagentHost(session, 'main');
 
@@ -1201,6 +1205,14 @@ describe('SessionSubagentHost', () => {
           model: 'cheap-model',
           maxContextSize: 65536,
         },
+        // Resolvable target for explicit-alias spawn choices.
+        'fast-model': {
+          provider: 'test-provider',
+          model: 'fast-model',
+          maxContextSize: 1_000_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'high'],
+        },
       },
     });
 
@@ -1208,8 +1220,8 @@ describe('SessionSubagentHost', () => {
       config?: KimiConfig;
       experimentalFlags?: FlagResolver;
       providerManager?: Session['options']['providerManager'];
-      modelChoice?: 'primary' | 'secondary';
-      profilePreference?: 'primary' | 'secondary';
+      modelChoice?: AgentModelPreference;
+      profilePreference?: AgentModelPreference;
     }) {
       const parent = testAgent();
       parent.configure();
@@ -1278,6 +1290,7 @@ describe('SessionSubagentHost', () => {
 
     it('inherits the parent model when the experiment is off', async () => {
       const { parent, child } = await spawnChild({
+        experimentalFlags: new FlagResolver({ KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL: '0' }),
         config: { providers: {}, secondaryModel: { model: 'cheap-model' } },
       });
       expect(child.agent.config.modelAlias).toBe(parent.agent.config.modelAlias);
@@ -1299,6 +1312,81 @@ describe('SessionSubagentHost', () => {
         profilePreference: 'primary',
       });
       expect(child.agent.config.modelAlias).toBe(parent.agent.config.modelAlias);
+    });
+
+    const withAliasConfig = (alias = 'fast-model'): KimiConfig => ({
+      providers: {},
+      models: {
+        [alias]: {
+          provider: 'test-provider',
+          model: 'fast-model',
+          maxContextSize: 1_000_000,
+        },
+      },
+      secondaryModel: { model: 'cheap-model' },
+    });
+
+    it('binds a concrete model alias passed as the model choice', async () => {
+      const { child } = await spawnChild({
+        experimentalFlags: secondaryFlags(),
+        config: withAliasConfig(),
+        modelChoice: 'fast-model',
+      });
+      expect(child.agent.config.modelAlias).toBe('fast-model');
+    });
+
+    it('uses the alias default effort when the configured alias declares one', async () => {
+      const config = withAliasConfig();
+      config.models!['fast-model']!.defaultEffort = 'low';
+      const { child } = await spawnChild({
+        experimentalFlags: secondaryFlags(),
+        config,
+        modelChoice: 'fast-model',
+      });
+      expect(child.agent.config.modelAlias).toBe('fast-model');
+      expect(child.agent.config.thinkingEffort).toBe('low');
+    });
+
+    it('binds a concrete alias even when the experiment is off', async () => {
+      const { child } = await spawnChild({
+        experimentalFlags: new FlagResolver({ KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL: '0' }),
+        config: withAliasConfig(),
+        modelChoice: 'fast-model',
+      });
+      // An explicit alias choice is honored flag-independently: opting out of
+      // the secondary-model default must not silently drop an explicit pick.
+      expect(child.agent.config.modelAlias).toBe('fast-model');
+    });
+
+    it('binds a concrete alias from the profile model_preference', async () => {
+      const { child } = await spawnChild({
+        experimentalFlags: secondaryFlags(),
+        config: withAliasConfig(),
+        profilePreference: 'fast-model',
+      });
+      expect(child.agent.config.modelAlias).toBe('fast-model');
+    });
+
+    it('rejects an unknown model alias with the valid choices instead of falling back', async () => {
+      await expect(
+        spawnChild({
+          experimentalFlags: secondaryFlags(),
+          config: withAliasConfig(),
+          modelChoice: 'typo-model',
+        }),
+      ).rejects.toThrow(
+        'Unknown subagent model "typo-model". Pass one of: "primary", "secondary", "fast-model".',
+      );
+    });
+
+    it('rejects an unknown model alias from the profile model_preference', async () => {
+      await expect(
+        spawnChild({
+          experimentalFlags: secondaryFlags(),
+          config: withAliasConfig(),
+          profilePreference: 'typo-model',
+        }),
+      ).rejects.toThrow(/Unknown subagent model "typo-model"/);
     });
 
     it('fails the spawn with a wrapped error when the secondary model does not resolve', async () => {
@@ -1924,7 +2012,7 @@ function profile(input: {
   readonly systemPrompt: string;
   readonly description?: string | undefined;
   readonly subagents?: Record<string, ResolvedAgentProfile> | undefined;
-  readonly modelPreference?: 'primary' | 'secondary';
+  readonly modelPreference?: AgentModelPreference;
 }): ResolvedAgentProfile {
   return {
     name: input.name,

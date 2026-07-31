@@ -349,11 +349,11 @@ describe('KimiHarness config API', () => {
         id: 'secondary-model',
         title: 'Secondary model for subagents',
         description:
-          'Let newly spawned subagents use a separately configured secondary model by default, with an explicit primary-model override for quality-sensitive tasks.',
+          'Let newly spawned subagents use a separately configured secondary model by default, with an explicit per-spawn model override (primary or any configured [models] alias) for quality-sensitive tasks. Enabled by default; disable to restore legacy inherit-the-parent-model behavior.',
         surface: 'core',
         env: 'KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL',
-        defaultEnabled: false,
-        enabled: false,
+        defaultEnabled: true,
+        enabled: true,
         source: 'default',
       },
     ]);

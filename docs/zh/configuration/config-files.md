@@ -190,9 +190,9 @@ display_name = "Kimi for Coding (custom)"
 
 ## `secondary_model`
 
-次主力模型是主模型 `default_model` 之外的第二个模型指针——通常是一个更便宜的模型，供不需要主模型的功能绑定使用。目前的消费者是子 Agent 派生：设置后，新派生的子 Agent（`Agent` / `AgentSwarm`）默认绑定该模型，而不再继承主 Agent 的模型；主 Agent 会被告知每次派生可在 `"secondary"`（该模型）与 `"primary"`（主模型）之间选择。未设置时，子 Agent 继承主 Agent 的模型。
+次主力模型是主模型 `default_model` 之外的第二个模型指针——通常是一个更便宜的模型，供不需要主模型的功能绑定使用。目前的消费者是子 Agent 派生：设置后，新派生的子 Agent（`Agent` / `AgentSwarm`）默认绑定该模型，而不再继承主 Agent 的模型；主 Agent 会被告知每次派生可在 `"secondary"`（该模型）、`"primary"`（主模型）或任意已配置的 `[models]` 别名之间选择。未设置时，子 Agent 继承主 Agent 的模型。
 
-该功能目前是实验功能，默认关闭。通过 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1` 启用，或使用 master `KIMI_CODE_EXPERIMENTAL_FLAG=1`。它在包括交互式 TUI 在内的所有启动方式下生效。
+该功能默认启用。如需恢复子 Agent 始终继承主 Agent 模型的旧行为，可通过 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=0`（或 `config.toml` 中的 `[experimental] secondary-model = false`）关闭；显式指定模型别名的派生选择仍然生效。它在包括交互式 TUI 在内的所有启动方式下生效。
 
 在交互式 TUI 中，可以使用 [`/secondary_model`](../reference/slash-commands.md) 命令打开模型选择器来设置该配置：选择后会写入本小节配置，并在当前会话立即生效——之后派生的子 Agent 会直接绑定新的第二模型。
 
@@ -213,7 +213,7 @@ max_output_size = 8192
 
 `model` / `default_effort` 可被环境变量 `KIMI_SECONDARY_MODEL` / `KIMI_SECONDARY_EFFORT` 覆盖，优先级均高于配置文件。
 
-实验功能启用后，会话启动时会校验该配置：`model` 无法解析，或 `default_effort` 不在（应用补丁后的）模型 effort 列表中时，会在启动时显示警告（并通过会话警告 API 返回）。该检查仅为提示——配置有误的次主力模型仍会在派生子 Agent 时失败，派生错误中同样附带配置来源提示。
+功能启用后，会话启动时会校验该配置：`model` 无法解析，或 `default_effort` 不在（应用补丁后的）模型 effort 列表中时，会在启动时显示警告（并通过会话警告 API 返回）。该检查仅为提示——配置有误的次主力模型仍会在派生子 Agent 时失败，派生错误中同样附带配置来源提示。
 
 ## `thinking`
 

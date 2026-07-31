@@ -11,10 +11,15 @@
  * domain — resolve their per-run timeout through `resolveSubagentTimeoutMs`,
  * and render the timeout message with `formatSubagentTimeoutDescription`.
  *
- * The model half of the spawn binding is the secondary model (the section
- * and type in `app/kosongConfig` — `[secondary_model]` on disk): when its
- * experiment is enabled and the model is set, newly spawned subagents bind to
- * it by default instead of inheriting the caller's model, and the
+ * The model half of the spawn binding covers three request shapes: the
+ * symbolic `primary` (the caller's own model, inherited as before) and
+ * `secondary` (the `[secondary_model]` recipe — the section and type in
+ * `app/kosongConfig`), plus any other string, which is treated as a concrete
+ * `[models]` id and validated up front — an unknown id fails the spawn with
+ * an error listing the valid choices rather than silently falling back to
+ * the caller's model. When the secondary-model experiment is enabled (the
+ * default) and the recipe's model is set, newly spawned subagents bind to it
+ * by default instead of inheriting the caller's model, and the
  * `Agent`/`AgentSwarm` tools let the parent model pick per spawn via their
  * `model` parameter. When unset, spawning behavior is unchanged (subagents
  * inherit the caller's model). A recipe with patch fields binds the
@@ -23,7 +28,7 @@
  * explicit subagent thinking; without it the subagent resolves thinking
  * naturally (global thinking config → the bound model's default effort)
  * rather than inheriting the caller's level. Both tools resolve spawn
- * bindings through `resolveSubagentBinding`, advertise the pair via
+ * bindings through `resolveSubagentBinding`, advertise the choices via
  * `buildSubagentModelDescriptions`, and wrap spawn failures with
  * `wrapSubagentModelError`. Self-registered at module load via
  * `registerConfigSection`, so the `config` domain never imports this
@@ -36,6 +41,7 @@ import { Error2, ErrorCodes, isError2 } from '#/errors';
 import type { AgentModelPreference } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { IFlagService } from '#/app/flag/flag';
 import {
+  MODELS_SECTION,
   SECONDARY_MODEL_ENV,
   SECONDARY_MODEL_SECTION,
 } from '#/app/kosongConfig/configSection';
@@ -44,6 +50,7 @@ import {
   secondaryModelPatch,
 } from '#/app/kosongConfig/secondaryModelOverlay';
 import { type SecondaryModelConfig } from '#/app/kosongConfig/configSection';
+import type { ModelsSection } from '#/kosong/model/model';
 import {
   type EnvBindings,
   envBindings,
@@ -110,12 +117,37 @@ export function resolveSecondaryModel(
   return config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
 }
 
+/**
+ * The concrete model ids a subagent may be bound to explicitly: every
+ * configured `[models]` entry except the synthesized secondary derived entry
+ * (an internal runtime artifact bound through the `secondary` choice).
+ */
+function explicitModelIds(config: IConfigService): string[] {
+  const models = config.get<ModelsSection>(MODELS_SECTION) ?? {};
+  return Object.keys(models).filter((id) => id !== SECONDARY_DERIVED_MODEL_ID);
+}
+
+function unknownSubagentModelMessage(requested: string, modelIds: readonly string[]): string {
+  const choices = ['primary', 'secondary', ...modelIds].map((choice) => `"${choice}"`).join(', ');
+  return `Unknown subagent model "${requested}". Pass one of: ${choices}.`;
+}
+
 export function resolveSubagentBinding(
   config: IConfigService,
   flags: IFlagService,
   own: { modelAlias: string; thinkingLevel: string },
   requested?: SubagentModelChoice,
 ): { model: string; thinking?: string } {
+  if (requested !== undefined && requested !== 'primary' && requested !== 'secondary') {
+    // A concrete [models] id: honor it directly (flag-independent — an
+    // explicit choice is never silently ignored) and fail loudly on typos.
+    const modelIds = explicitModelIds(config);
+    if (!modelIds.includes(requested)) {
+      throw new Error(unknownSubagentModelMessage(requested, modelIds));
+    }
+    const record = config.get<ModelsSection>(MODELS_SECTION)?.[requested];
+    return { model: requested, thinking: record?.defaultEffort ?? own.thinkingLevel };
+  }
   const secondary = resolveSecondaryModel(config, flags);
   if (requested !== 'primary' && secondary?.model !== undefined) {
     return {
@@ -134,13 +166,27 @@ export function buildSubagentModelDescriptions(
   flags: IFlagService,
   callerModelAlias: string | undefined,
 ): string | undefined {
+  if (callerModelAlias === undefined) return undefined;
   const secondaryModel = resolveSecondaryModel(config, flags)?.model;
-  if (secondaryModel === undefined || callerModelAlias === undefined) return undefined;
-  return [
-    'Available models (pass via model):',
-    `- secondary: ${secondaryModel} (default) — the configured secondary model; prefer it for routine subagent tasks`,
+  const modelIds = explicitModelIds(config).filter(
+    (id) => id !== callerModelAlias && id !== secondaryModel,
+  );
+  if (secondaryModel === undefined && modelIds.length === 0) return undefined;
+  const lines = ['Available models (pass via model):'];
+  if (secondaryModel !== undefined) {
+    lines.push(
+      `- secondary: ${secondaryModel} (default) — the configured secondary model; prefer it for routine subagent tasks`,
+    );
+  }
+  lines.push(
     `- primary: ${callerModelAlias} — the main model you are running on; use it for hard, quality-sensitive subagent tasks`,
-  ].join('\n');
+  );
+  if (modelIds.length > 0) {
+    lines.push(
+      `- ${modelIds.join(', ')} — configured [models] aliases; pass one to run the subagent on that specific model`,
+    );
+  }
+  return lines.join('\n');
 }
 
 export function wrapSubagentModelError(

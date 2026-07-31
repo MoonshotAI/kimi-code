@@ -136,17 +136,23 @@ describe('AgentTool', () => {
     expect(tool.description).toContain('Default to a foreground subagent');
   });
 
-  it('exposes a primary/secondary model parameter in the JSON schema', () => {
+  it('exposes a free-form model parameter in the JSON schema', () => {
     const host = mockSubagentHost({ spawn: vi.fn() });
     const tool = agentTool(host);
     const properties = (
       tool.parameters as {
-        properties: Record<string, { description?: string; enum?: string[] }>;
+        properties: Record<string, { description?: string; enum?: string[]; type?: string }>;
       }
     ).properties;
 
-    expect(properties['model']?.enum).toEqual(['primary', 'secondary']);
+    // Any configured [models] alias is accepted, so the schema is a plain
+    // string — validation happens at binding resolution, where the error can
+    // list the concrete valid choices.
+    expect(properties['model']?.type).toBe('string');
+    expect(properties['model']?.enum).toBeUndefined();
     expect(properties['model']?.description).toContain('secondary');
+    expect(properties['model']?.description).toContain('primary');
+    expect(properties['model']?.description).toContain('[models]');
   });
 
   it('appends the subagent model description only when provided', () => {
@@ -322,6 +328,18 @@ describe('AgentTool', () => {
     );
     expect(host.spawn).toHaveBeenCalledWith(
       expect.objectContaining({ modelChoice: 'primary' }),
+    );
+
+    // A concrete [models] alias passes through unchanged.
+    await executeTool(tool,
+      context({
+        prompt: 'Investigate',
+        description: 'Find cause',
+        model: 'cheap-fast-model',
+      }),
+    );
+    expect(host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ modelChoice: 'cheap-fast-model' }),
     );
 
     await executeTool(tool,
