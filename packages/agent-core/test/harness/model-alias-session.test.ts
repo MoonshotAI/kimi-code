@@ -305,6 +305,52 @@ max_context_size = 200000
     expect(await rpc.getModel({ sessionId: created.id, agentId: 'main' })).toBe('');
   });
 
+  it('scopes caller MCP servers to the session model at creation', async () => {
+    await writeFile(
+      configPath,
+      `${CONFIG}
+
+[providers.other]
+type = "openai"
+api_key = "sk-other"
+base_url = "https://other.example/v1"
+
+[models."other/model"]
+provider = "other"
+model = "other-model"
+max_context_size = 200000
+`,
+    );
+    const rpc = await createTestRpc();
+
+    // Bogus commands never connect, but every configured server still shows
+    // up in listMcpServers — so the list proves which servers the session
+    // was wired with.
+    const mcpServers = {
+      fs: { transport: 'stdio' as const, command: 'missing-mcp-fs' },
+      codingOnly: {
+        transport: 'stdio' as const,
+        command: 'missing-mcp-coding',
+        models: ['kimi-code/kimi-for-coding'],
+      },
+      otherOnly: {
+        transport: 'stdio' as const,
+        command: 'missing-mcp-other',
+        models: ['other/*'],
+      },
+    };
+    const names = async (sessionId: string) =>
+      (await rpc.listMcpServers({ sessionId })).map((server) => server.name).sort();
+
+    // No explicit model → config.defaultModel drives the filter.
+    const byDefault = await rpc.createSession({ workDir, mcpServers });
+    expect(await names(byDefault.id)).toEqual(['codingOnly', 'fs']);
+
+    // Explicit model → options.model drives the filter, including wildcards.
+    const byOption = await rpc.createSession({ workDir, model: 'other/model', mcpServers });
+    expect(await names(byOption.id)).toEqual(['fs', 'otherOnly']);
+  });
+
   it('loads configured permission rules into created and resumed sessions', async () => {
     await writeFile(
       configPath,
