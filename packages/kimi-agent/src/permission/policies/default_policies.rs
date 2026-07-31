@@ -5,7 +5,7 @@
 /// fallback-ask, deny-all, file-access-ask, git-cwd-write-approve,
 /// goal-start-review-ask.
 
-use crate::permission::matches_rule::{match_permission_rule, RuleMatchInput};
+use crate::permission::matches_rule::{match_permission_rule, rule_match_input};
 use crate::permission::sensitive_path::is_sensitive_path;
 use crate::permission::state::PermissionState;
 use crate::permission::types::{
@@ -58,12 +58,9 @@ impl PermissionPolicy for SessionApprovalHistoryPermissionPolicy {
 
     fn evaluate(&self, context: &PermissionPolicyContext) -> Option<PermissionPolicyResult> {
         for rule in self.state.session_approved() {
-            let input = RuleMatchInput {
-                rule,
-                tool_name: context.tool_name.clone(),
-                has_matches_rule: false,
-            };
-            if match_permission_rule(&input).is_some() {
+            // Session approvals match at command level for Bash: approving
+            // `rm -f file.txt` must not unlock `ls` or every other Bash call.
+            if match_permission_rule(&rule_match_input(rule, context)).is_some() {
                 return Some(PermissionPolicyResult::Approve);
             }
         }
@@ -160,7 +157,17 @@ impl PermissionPolicy for GoalStartReviewAskPermissionPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::permission::types::PermissionMode;
+    use crate::permission::types::{PermissionMode, PermissionRule, PermissionRuleDecision, PermissionRuleScope};
+
+    fn bash_ctx(command: &str) -> PermissionPolicyContext {
+        PermissionPolicyContext {
+            tool_name: "Bash".into(),
+            tool_call_id: "1".into(),
+            args: serde_json::json!({ "command": command }),
+            mode: PermissionMode::Manual,
+            r#type: None,
+        }
+    }
 
     #[test]
     fn test_deny_all() {
@@ -196,5 +203,48 @@ mod tests {
             PermissionPolicyResult::Ask { .. } => {}
             _ => panic!("expected Ask"),
         }
+    }
+
+    #[test]
+    fn test_session_approval_matches_at_command_level() {
+        // A session approval is recorded with the approval rule built from
+        // the escaped literal command (e.g. `Bash(rm -f file.txt)`): it must
+        // approve exactly that command, never every Bash call.
+        let state = PermissionState::new();
+        state.record_session_approval(PermissionRule {
+            decision: PermissionRuleDecision::Allow,
+            scope: PermissionRuleScope::SessionRuntime,
+            pattern: "Bash(rm -f file.txt)".into(),
+            reason: None,
+        });
+        let policy = SessionApprovalHistoryPermissionPolicy::new(state);
+
+        assert!(matches!(
+            policy.evaluate(&bash_ctx("rm -f file.txt")),
+            Some(PermissionPolicyResult::Approve)
+        ));
+        // Other commands are NOT unlocked by the session grant.
+        assert!(policy.evaluate(&bash_ctx("ls -la")).is_none());
+        assert!(policy.evaluate(&bash_ctx("rm -f other.txt")).is_none());
+        assert!(policy.evaluate(&bash_ctx("rm -rf /")).is_none());
+    }
+
+    #[test]
+    fn test_session_approval_dangerous_marker_never_blanket_approves() {
+        // Dangerous commands use the `Bash(__dangerous__)` approval rule,
+        // which cannot glob any real command — one approval must never
+        // unlock a whole session of shell access (or of dangerous commands).
+        let state = PermissionState::new();
+        state.record_session_approval(PermissionRule {
+            decision: PermissionRuleDecision::Allow,
+            scope: PermissionRuleScope::SessionRuntime,
+            pattern: "Bash(__dangerous__)".into(),
+            reason: None,
+        });
+        let policy = SessionApprovalHistoryPermissionPolicy::new(state);
+
+        assert!(policy.evaluate(&bash_ctx("rm -rf /")).is_none());
+        assert!(policy.evaluate(&bash_ctx("ls -la")).is_none());
+        assert!(policy.evaluate(&bash_ctx("sudo echo hi")).is_none());
     }
 }

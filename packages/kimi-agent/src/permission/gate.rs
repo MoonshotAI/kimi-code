@@ -101,14 +101,37 @@ impl PermissionGate {
         tool_call_id: &str,
         args: &serde_json::Value,
     ) -> PermissionPolicyResult {
-        let ctx = PermissionPolicyContext {
+        let ctx = self.build_context(tool_name, tool_call_id, args);
+        self.manager.evaluate(&ctx)
+    }
+
+    /// True when a user-configured allow rule matches the call (command-level
+    /// for Bash). Consulted by the Bash gating path to decide whether an
+    /// explicit allow exempts a dangerous command from host approval — a
+    /// session approval or auto/yolo mode approval deliberately does not count.
+    pub fn user_allow_matches(
+        &self,
+        tool_name: &str,
+        tool_call_id: &str,
+        args: &serde_json::Value,
+    ) -> bool {
+        let ctx = self.build_context(tool_name, tool_call_id, args);
+        self.manager.has_user_allow(&ctx)
+    }
+
+    fn build_context(
+        &self,
+        tool_name: &str,
+        tool_call_id: &str,
+        args: &serde_json::Value,
+    ) -> PermissionPolicyContext {
+        PermissionPolicyContext {
             tool_name: tool_name.to_string(),
             tool_call_id: tool_call_id.to_string(),
             args: args.clone(),
             mode: self.manager.mode(),
             r#type: self.manager.context_type(),
-        };
-        self.manager.evaluate(&ctx)
+        }
     }
 }
 
@@ -192,6 +215,125 @@ mod tests {
         assert!(matches!(
             turn_side.evaluate("Bash", "c1", &serde_json::json!({ "command": "ls" })),
             PermissionPolicyResult::Approve
+        ));
+    }
+
+    #[test]
+    fn test_gate_bash_allow_rule_matches_at_command_level() {
+        // `Bash(ls *)` allow: only commands that glob `ls *` are approved;
+        // anything else falls through to the manual-mode Ask.
+        let mgr = PermissionManager::new(); // Manual
+        mgr.add_rule(PermissionRule {
+            decision: PermissionRuleDecision::Allow,
+            scope: PermissionRuleScope::User,
+            pattern: "Bash(ls *)".into(),
+            reason: None,
+        });
+        let gate = PermissionGate::new(mgr);
+        assert!(matches!(
+            gate.evaluate("Bash", "c1", &serde_json::json!({ "command": "ls -la" })),
+            PermissionPolicyResult::Approve
+        ));
+        // The tool-name-only hole is closed: `rm` is not approved by `Bash(ls *)`.
+        assert!(matches!(
+            gate.evaluate("Bash", "c2", &serde_json::json!({ "command": "rm -rf /" })),
+            PermissionPolicyResult::Ask { .. }
+        ));
+    }
+
+    #[test]
+    fn test_gate_bash_deny_rule_matches_at_command_level() {
+        // `Bash(rm *)` deny: only `rm *` commands are denied; other Bash
+        // commands are untouched (manual mode → Ask).
+        let mgr = PermissionManager::new();
+        mgr.add_rule(PermissionRule {
+            decision: PermissionRuleDecision::Deny,
+            scope: PermissionRuleScope::User,
+            pattern: "Bash(rm *)".into(),
+            reason: None,
+        });
+        let gate = PermissionGate::new(mgr);
+        assert!(matches!(
+            gate.evaluate("Bash", "c1", &serde_json::json!({ "command": "rm -f file.txt" })),
+            PermissionPolicyResult::Deny { .. }
+        ));
+        assert!(matches!(
+            gate.evaluate("Bash", "c2", &serde_json::json!({ "command": "ls -la" })),
+            PermissionPolicyResult::Ask { .. }
+        ));
+        // `*` does not cross `/`; only `/**` does — so `Bash(rm -rf /**)`
+        // catches the recursive form the single-star rule misses.
+        let mgr = PermissionManager::new();
+        mgr.add_rule(PermissionRule {
+            decision: PermissionRuleDecision::Deny,
+            scope: PermissionRuleScope::User,
+            pattern: "Bash(rm -rf /**)".into(),
+            reason: None,
+        });
+        let gate = PermissionGate::new(mgr);
+        assert!(matches!(
+            gate.evaluate("Bash", "c1", &serde_json::json!({ "command": "rm -rf /" })),
+            PermissionPolicyResult::Deny { .. }
+        ));
+    }
+
+    #[test]
+    fn test_gate_bash_negated_allow_rule_excludes_matched_commands() {
+        // `Bash(!rm *)` allows every Bash command except `rm *` globs.
+        let mgr = PermissionManager::new();
+        mgr.add_rule(PermissionRule {
+            decision: PermissionRuleDecision::Allow,
+            scope: PermissionRuleScope::User,
+            pattern: "Bash(!rm *)".into(),
+            reason: None,
+        });
+        let gate = PermissionGate::new(mgr);
+        assert!(matches!(
+            gate.evaluate("Bash", "c1", &serde_json::json!({ "command": "ls -la" })),
+            PermissionPolicyResult::Approve
+        ));
+        assert!(matches!(
+            gate.evaluate("Bash", "c2", &serde_json::json!({ "command": "rm -f file.txt" })),
+            PermissionPolicyResult::Ask { .. }
+        ));
+    }
+
+    #[test]
+    fn test_gate_user_allow_matches_only_explicit_user_allow() {
+        // Only an explicit user-configured allow rule counts — a session
+        // approval or yolo mode must not exempt a dangerous command.
+        let mgr = PermissionManager::new();
+        mgr.state().record_session_approval(PermissionRule {
+            decision: PermissionRuleDecision::Allow,
+            scope: PermissionRuleScope::SessionRuntime,
+            pattern: "Bash(rm -f file.txt)".into(),
+            reason: None,
+        });
+        let gate = PermissionGate::new(mgr);
+        assert!(!gate.user_allow_matches(
+            "Bash",
+            "c1",
+            &serde_json::json!({ "command": "rm -f file.txt" })
+        ));
+
+        // An explicit allow rule matching the command does count.
+        let mgr = PermissionManager::new();
+        mgr.add_rule(PermissionRule {
+            decision: PermissionRuleDecision::Allow,
+            scope: PermissionRuleScope::User,
+            pattern: "Bash(ls *)".into(),
+            reason: None,
+        });
+        let gate = PermissionGate::new(mgr);
+        assert!(gate.user_allow_matches(
+            "Bash",
+            "c1",
+            &serde_json::json!({ "command": "ls -la" })
+        ));
+        assert!(!gate.user_allow_matches(
+            "Bash",
+            "c2",
+            &serde_json::json!({ "command": "rm -rf /" })
         ));
     }
 }

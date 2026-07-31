@@ -410,10 +410,122 @@ fn rewrite_windows_null_redirect(command: &str) -> String {
  re.replace_all(command, "$1/dev/null$2").into_owned()
 }
 
+/// Extract the `command` argument from Bash tool args, if present.
+pub fn command_from_args(args: &Value) -> Option<&str> {
+ args.get("command").and_then(Value::as_str)
+}
+
+/// Match a Bash rule's argPattern against a command, mirroring the TS
+/// `matchesGlobRuleSubject` (rule-match.ts): a leading `!` negates the glob
+/// result; an empty argPattern matches everything.
+///
+/// Command-level semantics: the pattern is split on unescaped whitespace;
+/// the first token is the command itself (matched as an exact command or a
+/// command prefix boundary — `ls *` matches `ls` and `ls -la`), and the
+/// remaining tokens form the argument glob matched against the command's
+/// arguments. The glob uses the native globset semantics of
+/// `nativeGlobMatchesAny` (`literal_separator(true)`, case-sensitive — `*`
+/// does not cross `/`, only `**` does). Backslash escaping is forced on so
+/// `escapeRuleSubjectLiteral`-escaped patterns (e.g. session-approval rules)
+/// match literally on every platform.
+pub fn matches_command_rule(rule_args: &str, command: &str) -> bool {
+    if rule_args.is_empty() {
+        return true;
+    }
+    // A leading unescaped `!` negates; an escaped `\!` is a literal command.
+    let negated = rule_args.starts_with('!') && !rule_args.starts_with("\\!");
+    let positive = if negated { &rule_args[1..] } else { rule_args };
+
+    let tokens = split_rule_tokens(positive);
+    let Some(command_token) = tokens.first() else {
+        // Whitespace-only rule: matches no command.
+        return if negated { true } else { false };
+    };
+    // Backslash escapes are preserved in the tokens; the command comparison
+    // uses the unescaped form (`\ ` → literal space, `\*` → literal `*`).
+    let command_pattern = unescape_rule_literal(command_token);
+
+    // The command must be exactly the pattern, or start with it at a
+    // word boundary (`ls` matches `ls -la`, but not `lsx`).
+    let command_matches = command == command_pattern
+        || command.strip_prefix(command_pattern.as_str()).map_or(false, |rest| {
+            rest.chars().next().is_some_and(|c| c.is_whitespace())
+        });
+    if !command_matches {
+        return negated;
+    }
+
+    // Match the argument glob against the command's arguments (everything
+    // after the command pattern, with leading whitespace stripped). The
+    // glob keeps its backslash escapes (`\*` matches a literal `*`), so
+    // `escapeRuleSubjectLiteral`-escaped patterns match literally.
+    let arg_subject = command[command_pattern.len()..].trim_start_matches(char::is_whitespace);
+    let hit = if tokens.len() <= 1 {
+        // Command-only rule: no argument constraint.
+        true
+    } else {
+        let arg_pattern = tokens[1..].join(" ");
+        globset::GlobBuilder::new(&arg_pattern)
+            .literal_separator(true)
+            .backslash_escape(true)
+            .build()
+            .map(|g| g.compile_matcher().is_match(arg_subject))
+            .unwrap_or(false)
+    };
+    if negated { !hit } else { hit }
+}
+
+/// Remove backslash escapes from a rule token (`\ ` → ` `, `\*` → `*`).
+fn unescape_rule_literal(token: &str) -> String {
+    let mut out = String::with_capacity(token.len());
+    let mut chars = token.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(next) = chars.next() {
+                out.push(next);
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Split a rule pattern into tokens on unescaped whitespace, preserving
+/// backslash escapes inside each token (`rm\ -f\ file.txt` is one token;
+/// `\*` stays a literal-star escape for the glob matcher).
+fn split_rule_tokens(pattern: &str) -> Vec<String> {
+    let mut tokens: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut chars = pattern.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            // Keep the escape; skip the next char so it cannot end a token
+            // via whitespace (`\ ` is a literal space inside the token).
+            current.push(c);
+            if let Some(next) = chars.next() {
+                current.push(next);
+            }
+            continue;
+        }
+        if c.is_whitespace() {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        current.push(c);
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
 /// Side-effect-free admission check: a claimed Bash call must be a plain
 /// foreground command. Background runs and malformed args go to the host.
 pub fn claims_bash(args: &Value) -> bool {
- let Some(command) = args.get("command").and_then(Value::as_str) else {
+ let Some(command) = command_from_args(args) else {
  return false;
  };
  if command.trim().is_empty() {
@@ -429,7 +541,7 @@ pub fn claims_bash(args: &Value) -> bool {
 /// well-formed command that explicitly asked for `run_in_background`. Only
 /// claimed when the callback layer has a `BackgroundManager` to drive it.
 pub fn claims_background_bash(args: &Value) -> bool {
- let Some(command) = args.get("command").and_then(Value::as_str) else {
+ let Some(command) = command_from_args(args) else {
  return false;
  };
  if command.trim().is_empty() {
@@ -450,6 +562,45 @@ mod tests {
  assert!(is_dangerous_command("git push origin main --force"));
  assert!(!is_dangerous_command("cargo test -p kimi-agent"));
  assert!(!is_dangerous_command("ls -la"));
+ }
+
+ #[test]
+ fn matches_command_rule_mirrors_ts_rule_subject_glob() {
+ // Positive glob: `ls *` matches ls commands but not other tools.
+ assert!(matches_command_rule("ls *", "ls -la"));
+ assert!(!matches_command_rule("ls *", "rm -rf /tmp"));
+ // Case-sensitive, matching the native globset semantics.
+ assert!(!matches_command_rule("ls *", "LS -la"));
+ // `*` does not cross `/` (literal_separator(true)); only `/**` does.
+ assert!(!matches_command_rule("rm *", "rm -rf /"));
+ assert!(matches_command_rule("rm -rf /**", "rm -rf /"));
+ assert!(matches_command_rule("rm -rf /**", "rm -rf /tmp/x"));
+ // A literal command (the unescaped session-approval form) only matches
+ // itself: approving `rm -f file.txt` approves exactly that command.
+ assert!(matches_command_rule("rm -f file.txt", "rm -f file.txt"));
+ assert!(!matches_command_rule("rm -f file.txt", "rm -f other.txt"));
+ assert!(!matches_command_rule("rm -f file.txt", "ls -la"));
+ // Escaped glob metacharacters in literals (`escape_rule_subject_literal`)
+ // match literally — backslash escaping works on every platform.
+ assert!(matches_command_rule(r"rm -f \*.tmp", "rm -f *.tmp"));
+ assert!(!matches_command_rule(r"rm -f \*.tmp", "rm -f other.tmp"));
+ assert!(matches_command_rule(r"\!foo", "!foo"));
+ }
+
+ #[test]
+ fn matches_command_rule_negation_inverts_the_glob() {
+ // `!` prefix negates the glob result (TS matchesGlobRuleSubject).
+ assert!(!matches_command_rule("!rm *", "rm -f file.txt"));
+ assert!(matches_command_rule("!rm *", "ls -la"));
+ assert!(matches_command_rule("!rm *", "echo hi"));
+ // A literal that begins with an escaped `!` is not a negation.
+ assert!(matches_command_rule(r"\!foo", "!foo"));
+ assert!(!matches_command_rule(r"\!foo", "!bar"));
+ }
+
+ #[test]
+ fn matches_command_rule_empty_args_match_everything() {
+ assert!(matches_command_rule("", "anything at all"));
  }
 
  #[test]

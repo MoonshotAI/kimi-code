@@ -171,6 +171,17 @@ impl PermissionManager {
         }
     }
 
+    /// True when a user-configured allow rule matches the call (command-level
+    /// for Bash). Consulted by the Bash gating path to decide whether an
+    /// explicit allow exempts a dangerous command from host approval —
+    /// session approvals and mode-based approvals deliberately do not count.
+    pub fn has_user_allow(&self, context: &PermissionPolicyContext) -> bool {
+        matches!(
+            UserConfiguredAllowPermissionPolicy::new(self.state.clone()).evaluate(context),
+            Some(PermissionPolicyResult::Approve)
+        )
+    }
+
     /// Get the list of policy names for debugging.
     pub fn policy_names(&self) -> Vec<&str> {
         self.policies.iter().map(|p| p.name()).collect()

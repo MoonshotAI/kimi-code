@@ -4,7 +4,9 @@
 /// - user-configured-allow: User-configured allow rules.
 /// - user-configured-ask: User-configured ask rules.
 
-use crate::permission::matches_rule::{is_user_configured_scope, match_permission_rule, RuleMatchInput};
+use crate::permission::matches_rule::{
+    is_user_configured_scope, match_permission_rule, rule_match_input,
+};
 use crate::permission::state::PermissionState;
 use crate::permission::types::{
     PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult, PermissionRule,
@@ -32,12 +34,7 @@ impl UserConfiguredPermissionPolicy {
             if rule.decision != decision {
                 continue;
             }
-            let input = RuleMatchInput {
-                rule: rule.clone(),
-                tool_name: context.tool_name.clone(),
-                has_matches_rule: false,
-            };
-            if match_permission_rule(&input).is_some() {
+            if match_permission_rule(&rule_match_input(rule.clone(), context)).is_some() {
                 return Some(rule.clone());
             }
         }

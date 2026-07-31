@@ -8,7 +8,8 @@
 ///   argPattern := any string interpreted only by a tool-provided matcher
 
 use crate::permission::types::{
-    GlobPattern, ParsedPattern, PermissionRule, RuleMatch, RuleMatchStrategy,
+    GlobPattern, ParsedPattern, PermissionPolicyContext, PermissionRule, RuleMatch,
+    RuleMatchStrategy,
 };
 
 /// Parse a DSL pattern. Returns an error on malformed input.
@@ -64,6 +65,43 @@ pub struct RuleMatchInput {
     pub tool_name: String,
     /// Whether the tool has a `matches_rule` callback that can match arg patterns.
     pub has_matches_rule: bool,
+    /// Subject for arg-pattern matching (for Bash: the command string).
+    pub subject: Option<String>,
+}
+
+impl RuleMatchInput {
+    /// Build a name-only match input (no command-level subject).
+    pub fn new(rule: PermissionRule, tool_name: String) -> Self {
+        Self {
+            rule,
+            tool_name,
+            has_matches_rule: false,
+            subject: None,
+        }
+    }
+}
+
+/// Build the rule-match input for a tool call from a policy context.
+///
+/// Bash rules carrying an argPattern get command-level matching (the tool's
+/// `matchesRule` in TS terms): `Bash(ls *)` only matches commands that glob
+/// `ls *`. Other tools have no native arg matcher and keep the name-only +
+/// host-verification behavior.
+pub fn rule_match_input(
+    rule: PermissionRule,
+    context: &PermissionPolicyContext,
+) -> RuleMatchInput {
+    let subject = bash_command_from_args(&context.args);
+    RuleMatchInput {
+        rule,
+        tool_name: context.tool_name.clone(),
+        has_matches_rule: context.tool_name == "Bash" && subject.is_some(),
+        subject: subject.map(String::from),
+    }
+}
+
+fn bash_command_from_args(args: &serde_json::Value) -> Option<&str> {
+    crate::tools::bash::command_from_args(args)
 }
 
 /// Match a permission rule against a tool call.
@@ -89,24 +127,36 @@ pub fn match_permission_rule(input: &RuleMatchInput) -> Option<RuleMatch> {
     }
 
     // If the rule has args, we need the tool's matches_rule callback to match.
-    // Since we can't call a JS callback from Rust, we check if the tool
-    // provides a matches_rule. If not, we match by name only.
     if input.has_matches_rule {
-        // For now, we match by name+arg presence. The actual arg matching
-        // is delegated to the JS host via the permission callback.
-        Some(RuleMatch {
+        // Command-level matching (Bash): the argPattern must actually match
+        // the subject command; a miss means the rule does not apply.
+        if let Some(subject) = input.subject.as_deref() {
+            let arg_pattern = parsed.arg_pattern.as_deref().unwrap_or("");
+            if crate::tools::bash::matches_command_rule(arg_pattern, subject) {
+                return Some(RuleMatch {
+                    rule: input.rule.clone(),
+                    strategy: RuleMatchStrategy::MatchesRule,
+                    has_rule_args: true,
+                });
+            }
+            return None;
+        }
+        // No subject available — match by name, deferring arg-level
+        // verification to the host (same contract as the no-matches_rule case).
+        return Some(RuleMatch {
             rule: input.rule.clone(),
             strategy: RuleMatchStrategy::MatchesRule,
             has_rule_args: true,
-        })
-    } else {
-        // No matches_rule available — match by name only
-        Some(RuleMatch {
-            rule: input.rule.clone(),
-            strategy: RuleMatchStrategy::ToolNameOnly,
-            has_rule_args: true,
-        })
+        });
     }
+
+    // No matches_rule available — match by name only; the host re-verifies
+    // the args via the permission callback.
+    Some(RuleMatch {
+        rule: input.rule.clone(),
+        strategy: RuleMatchStrategy::ToolNameOnly,
+        has_rule_args: true,
+    })
 }
 
 /// Check if a scope is a user-configured scope.
@@ -177,11 +227,7 @@ mod tests {
             pattern: "Read".into(),
             reason: None,
         };
-        let input = RuleMatchInput {
-            rule,
-            tool_name: "Read".into(),
-            has_matches_rule: false,
-        };
+        let input = RuleMatchInput::new(rule, "Read".into());
         let result = match_permission_rule(&input);
         assert!(result.is_some());
         let m = result.unwrap();
@@ -196,11 +242,7 @@ mod tests {
             pattern: "mcp__*".into(),
             reason: None,
         };
-        let input = RuleMatchInput {
-            rule,
-            tool_name: "mcp__github__list".into(),
-            has_matches_rule: false,
-        };
+        let input = RuleMatchInput::new(rule, "mcp__github__list".into());
         let result = match_permission_rule(&input);
         assert!(result.is_some());
     }
@@ -213,11 +255,7 @@ mod tests {
             pattern: "Write".into(),
             reason: None,
         };
-        let input = RuleMatchInput {
-            rule,
-            tool_name: "Read".into(),
-            has_matches_rule: false,
-        };
+        let input = RuleMatchInput::new(rule, "Read".into());
         let result = match_permission_rule(&input);
         assert!(result.is_none());
     }
@@ -230,13 +268,104 @@ mod tests {
             pattern: "*".into(),
             reason: None,
         };
-        let input = RuleMatchInput {
-            rule,
-            tool_name: "Anything".into(),
-            has_matches_rule: false,
-        };
+        let input = RuleMatchInput::new(rule, "Anything".into());
         let result = match_permission_rule(&input);
         assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_match_bash_rule_at_command_level() {
+        let rule = PermissionRule {
+            decision: PermissionRuleDecision::Allow,
+            scope: PermissionRuleScope::User,
+            pattern: "Bash(ls *)".into(),
+            reason: None,
+        };
+        // `ls -la` globs `ls *` → matches (MatchesRule strategy).
+        let input = RuleMatchInput {
+            rule: rule.clone(),
+            tool_name: "Bash".into(),
+            has_matches_rule: true,
+            subject: Some("ls -la".into()),
+        };
+        let m = match_permission_rule(&input).expect("ls -la must match Bash(ls *)");
+        assert_eq!(m.strategy, RuleMatchStrategy::MatchesRule);
+        assert!(m.has_rule_args);
+        // `rm -rf /` does not glob `ls *` → the rule does not apply, so a
+        // tool-name-only match can no longer slip a non-ls command through.
+        let input = RuleMatchInput {
+            rule,
+            tool_name: "Bash".into(),
+            has_matches_rule: true,
+            subject: Some("rm -rf /".into()),
+        };
+        assert!(match_permission_rule(&input).is_none());
+    }
+
+    #[test]
+    fn test_match_bash_negated_rule() {
+        let rule = PermissionRule {
+            decision: PermissionRuleDecision::Allow,
+            scope: PermissionRuleScope::User,
+            pattern: "Bash(!rm *)".into(),
+            reason: None,
+        };
+        // `!rm *` matches everything except `rm *` commands.
+        let input = RuleMatchInput {
+            rule: rule.clone(),
+            tool_name: "Bash".into(),
+            has_matches_rule: true,
+            subject: Some("ls -la".into()),
+        };
+        assert!(match_permission_rule(&input).is_some());
+        let input = RuleMatchInput {
+            rule,
+            tool_name: "Bash".into(),
+            has_matches_rule: true,
+            subject: Some("rm -f file.txt".into()),
+        };
+        assert!(match_permission_rule(&input).is_none());
+    }
+
+    #[test]
+    fn test_rule_match_input_wires_bash_subject() {
+        use crate::permission::types::{PermissionMode, PermissionPolicyContext};
+        let rule = PermissionRule {
+            decision: PermissionRuleDecision::Allow,
+            scope: PermissionRuleScope::User,
+            pattern: "Bash(ls *)".into(),
+            reason: None,
+        };
+        let ctx = PermissionPolicyContext {
+            tool_name: "Bash".into(),
+            tool_call_id: "1".into(),
+            args: serde_json::json!({ "command": "ls -la" }),
+            mode: PermissionMode::Manual,
+            r#type: None,
+        };
+        let input = rule_match_input(rule, &ctx);
+        assert!(input.has_matches_rule);
+        assert_eq!(input.subject.as_deref(), Some("ls -la"));
+        assert!(match_permission_rule(&input).is_some());
+
+        // A Bash call without a command keeps no command-level matcher.
+        let ctx = PermissionPolicyContext {
+            tool_name: "Bash".into(),
+            tool_call_id: "2".into(),
+            args: serde_json::json!({}),
+            mode: PermissionMode::Manual,
+            r#type: None,
+        };
+        let input = rule_match_input(
+            PermissionRule {
+                decision: PermissionRuleDecision::Allow,
+                scope: PermissionRuleScope::User,
+                pattern: "Bash(ls *)".into(),
+                reason: None,
+            },
+            &ctx,
+        );
+        assert!(!input.has_matches_rule);
     }
 
     #[test]
