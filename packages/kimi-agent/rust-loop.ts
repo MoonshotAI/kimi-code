@@ -18,7 +18,7 @@ import type { ChildProcess } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 
 // A bare `require` only exists under CJS interop (vitest); in the ESM
 // runtimes that actually ship — tsx dev mode and the tsdown bundle — it is a
@@ -57,6 +57,32 @@ import type {
 
 // Project root: packages/kimi-agent/rust-loop.ts → ../../ (project root)
 const projectRoot = resolve(import.meta.dirname, '..', '..');
+
+/**
+ * Walk up from `start` at most `maxDepth` levels, returning the first
+ * ancestor that contains `relative` (file or dir), or null. Resolves both
+ * layouts: dev runs rust-loop.ts from `packages/kimi-agent` (repo root one
+ * level up) and bundled builds run from `dist/chunks` (repo root several
+ * levels up); production SEA deployments find `dist-native/bin` instead via
+ * the explicit candidate list in `AgentProcess.findBinary`.
+ */
+function findUpward(start: string, relative: string, maxDepth = 8): string | null {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const fs = nodeRequire('node:fs') as typeof import('node:fs');
+  let current = start;
+  for (let i = 0; i < maxDepth; i++) {
+    const candidate = resolve(current, relative);
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {
+      // ignore
+    }
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return null;
+}
 
 /** Token usage carried on step.end (structurally matches kosong's TokenUsage). */
 interface HostTokenUsage {
@@ -148,9 +174,10 @@ class NapiEngine {
     const candidates = [
       // Development: alongside rust-loop.ts in the package directory
       resolve(import.meta.dirname, 'kimi_agent.node'),
-      // Production: may be bundled elsewhere
-      resolve(projectRoot, 'packages/kimi-agent/kimi_agent.node'),
-    ];
+      // Production: may be bundled elsewhere — walk up to the repo root
+      findUpward(import.meta.dirname, 'kimi_agent.node'),
+      findUpward(import.meta.dirname, 'packages/kimi-agent/kimi_agent.node'),
+    ].filter((c): c is string => c !== null);
     for (const candidate of candidates) {
       try {
         if (fs.existsSync(candidate)) return candidate;
@@ -405,7 +432,13 @@ class AgentProcess {
       resolve(projectRoot, 'target/debug/kimi-agent-cli' + ext),
       resolve(projectRoot, 'packages/kimi-agent/target/release/kimi-agent-cli' + ext),
       resolve(projectRoot, 'packages/kimi-agent/target/debug/kimi-agent-cli' + ext),
-    ];
+      // Bundled layout: dist/chunks walks up to the repo root, so the same
+      // target dirs resolve here too (findUpward probes every ancestor).
+      findUpward(import.meta.dirname, 'target/release/kimi-agent-cli' + ext),
+      findUpward(import.meta.dirname, 'target/debug/kimi-agent-cli' + ext),
+      findUpward(import.meta.dirname, 'packages/kimi-agent/target/release/kimi-agent-cli' + ext),
+      findUpward(import.meta.dirname, 'packages/kimi-agent/target/debug/kimi-agent-cli' + ext),
+    ].filter((c): c is string => c !== null);
     try {
       const fs = nodeRequire('node:fs') as typeof import('node:fs');
       // Pick the most recently built dev binary rather than the first hit:
