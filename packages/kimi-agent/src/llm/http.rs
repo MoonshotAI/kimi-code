@@ -441,6 +441,7 @@ mod tests {
         use std::io::{Read, Write};
 
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
         let handle = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             // Read until the end of the request head.
@@ -471,6 +472,13 @@ mod tests {
             let _ = stream.write_all(resp.as_bytes());
             headers
         });
+
+        // Point the client at the listener's ACTUAL port — the passed-in
+        // base_url uses a literal `:0` which the OS would never route to the
+        // bound listener (it is not a valid connect target), leaving
+        // `handle.join()` below waiting forever.
+        let mut cfg = cfg;
+        cfg.base_url = format!("http://127.0.0.1:{port}/v1");
 
         let llm = NativeHttpLlm::new(cfg, String::new());
         let _ = llm
