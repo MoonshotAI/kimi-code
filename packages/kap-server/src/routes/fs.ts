@@ -18,6 +18,12 @@
  * mention must work before the session exists): the route resolves the
  * workspace's handler directly and uses the same Workspace-scope fs service a
  * real session would resolve to. URL and wire schema are unchanged.
+ *
+ * First-class workspace search: `POST /workspace/fs:search` carries the same
+ * workspace reference in the body (`workspace`), so a session-less client
+ * searches without borrowing the `{session_id}` slot. kimi-web's `@` mention
+ * uses this route; the session-route fallback above predates it and stays for
+ * wire compatibility.
  */
 
 import { createReadStream } from 'node:fs';
@@ -43,6 +49,7 @@ import {
   fsMkdirRequestSchema,
   fsReadRequestSchema,
   fsSearchRequestSchema,
+  fsSearchResponseSchema,
   fsStatManyRequestSchema,
   fsStatRequestSchema,
 } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
@@ -95,6 +102,17 @@ const sessionIdAndTailParamSchema = z.object({
   session_id: z.string().min(1),
   tail: z.string().min(1),
 });
+
+/**
+ * Body for `POST /workspace/fs:search`: the engine's fs-search request plus
+ * the workspace reference (registered workspace id or absolute root) the
+ * session route would otherwise carry in its `{session_id}` slot.
+ */
+const workspaceFsSearchBodySchema = fsSearchRequestSchema.extend({
+  workspace: z.string().min(1),
+});
+
+const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
 const FS_ACTIONS = [
   'list',
@@ -262,6 +280,54 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     fsActionRoute.path,
     fsActionRoute.options,
     fsActionRoute.handler as unknown as Parameters<FsRouteHost['post']>[2],
+  );
+
+  // Session-less workspace file search (file header): the `@` file mention of
+  // a not-yet-created session addresses the workspace directly instead of
+  // borrowing the session route's `{session_id}` slot. Declared with a double
+  // colon so find-my-way serves it on the wire as `/workspace/fs:search`
+  // (same convention as `/fs::browse` in `workspaceFs.ts`).
+  const workspaceSearchRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/workspace/fs::search',
+      body: workspaceFsSearchBodySchema,
+      success: { data: fsSearchResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+        [ErrorCode.FS_TOO_MANY_RESULTS]: {},
+      },
+      description:
+        'Search files in a workspace without a session. `workspace` accepts a registered workspace id or an absolute root (registered on the spot).',
+      tags: ['fs'],
+      operationId: 'workspaceFsSearch',
+    },
+    async (req, reply) => {
+      const { workspace, ...searchRequest } = req.body;
+      const fs = await resolveWorkspaceFs(core, workspace);
+      if (fs === undefined) {
+        reply.send(
+          errEnvelope(
+            ErrorCode.WORKSPACE_NOT_FOUND,
+            `workspace ${workspace} does not exist`,
+            req.id,
+          ),
+        );
+        return;
+      }
+      try {
+        const data = await fs.search(searchRequest);
+        reply.send(okEnvelope(data, req.id));
+      } catch (err) {
+        sendMappedError(reply, req, err);
+      }
+    },
+  );
+  app.post(
+    workspaceSearchRoute.path,
+    workspaceSearchRoute.options,
+    workspaceSearchRoute.handler as unknown as Parameters<FsRouteHost['post']>[2],
   );
 
   const downloadRoute = defineRoute(
