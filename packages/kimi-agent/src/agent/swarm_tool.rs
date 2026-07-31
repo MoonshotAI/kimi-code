@@ -5,15 +5,19 @@
 //!
 //! The tool validates its input (description required, ≥2 items or a resume
 //! map, `{{item}}` prompt template, ≤128 subagents, distinct prompts), enters
-//! swarm mode, spawns one child [`Agent`] per item **in parallel**, and
+//! swarm mode, spawns one child [`Agent`] per entry **in parallel**, and
 //! renders the results in the same `<agent_swarm_result>` XML shape the TS
-//! tool produces. `resume_agent_ids` is rejected with a clear error — native
-//! children are single-shot and not resumable yet.
+//! tool produces. `resume_agent_ids` maps a previously spawned child's
+//! `agent_id` to its continuation prompt: the child's persisted context is
+//! restored and extended by one more turn (native children persist via
+//! `subagent::run_child_agent_persistent` / `resume_child_agent`).
 
 use std::sync::{Arc, Mutex};
 
 use crate::agent::agent::MAX_SUBAGENT_DEPTH;
-use crate::agent::subagent::run_child_agent;
+use crate::agent::subagent::{
+    generate_agent_id, resume_child_agent, run_child_agent_persistent,
+};
 use crate::callbacks::HostCallbacks;
 use crate::permission::gate::PermissionGate;
 use crate::rpc::types::{
@@ -36,6 +40,9 @@ struct SwarmItemSpec {
     item: String,
     /// The per-subagent prompt (template with the item substituted).
     prompt: String,
+    /// Persisted agent id when this entry resumes an existing child
+    /// (`resume_agent_ids`); `None` for fresh item spawns.
+    agent_id: Option<String>,
 }
 
 /// Intercepts the `AgentSwarm` tool and runs the swarm natively.
@@ -110,20 +117,9 @@ impl HostCallbacks for SwarmToolInterceptor {
                 ))
             });
         }
-        // Resume is not supported for native single-shot children yet.
-        if req
-            .arguments
-            .get("resume_agent_ids")
-            .is_some_and(|v| !v.is_null())
-        {
-            return Box::pin(async move {
-                Ok(Self::error(
-                    "AgentSwarm `resume_agent_ids` is not supported by the native engine yet; \
-                     spawn fresh subagents via `items` instead."
-                        .into(),
-                ))
-            });
-        }
+        // Resume is supported: `resume_agent_ids` maps a previously spawned
+        // child's agent_id to its continuation prompt (mirrors TS
+        // `createAgentSwarmSpecs`).
         let items: Vec<String> = req
             .arguments
             .get("items")
@@ -137,7 +133,30 @@ impl HostCallbacks for SwarmToolInterceptor {
                     .collect()
             })
             .unwrap_or_default();
-        if items.len() < 2 {
+        let resume_agent_ids: Vec<(String, String)> = req
+            .arguments
+            .get("resume_agent_ids")
+            .and_then(|v| v.as_object())
+            .map(|obj| {
+                obj.iter()
+                    .filter_map(|(agent_id, prompt)| {
+                        let agent_id = agent_id.trim();
+                        let prompt = prompt.as_str().map(str::trim).unwrap_or("");
+                        if agent_id.is_empty() || prompt.is_empty() {
+                            None
+                        } else {
+                            Some((agent_id.to_string(), prompt.to_string()))
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let item_count = items.len();
+        let resume_count = resume_agent_ids.len();
+        // Mirrors TS `hasMinimumAgentSwarmInputs` + `createAgentSwarmSpecs`:
+        // resume entries alone satisfy the minimum; a prompt template is only
+        // required for item-based spawns.
+        if resume_count == 0 && item_count < 2 {
             return Box::pin(async move {
                 Ok(Self::error(
                     "AgentSwarm requires at least 2 items unless resume_agent_ids is provided."
@@ -145,7 +164,7 @@ impl HostCallbacks for SwarmToolInterceptor {
                 ))
             });
         }
-        if items.len() > MAX_AGENT_SWARM_SUBAGENTS {
+        if resume_count + item_count > MAX_AGENT_SWARM_SUBAGENTS {
             return Box::pin(async move {
                 Ok(Self::error(format!(
                     "AgentSwarm supports at most {MAX_AGENT_SWARM_SUBAGENTS} subagents."
@@ -167,7 +186,14 @@ impl HostCallbacks for SwarmToolInterceptor {
             .map(str::trim)
             .unwrap_or_default()
             .to_string();
-        if !prompt_template.contains(PROMPT_TEMPLATE_PLACEHOLDER) {
+        if item_count > 0 && prompt_template.is_empty() {
+            return Box::pin(async move {
+                Ok(Self::error(
+                    "AgentSwarm requires prompt_template when items is provided.".into(),
+                ))
+            });
+        }
+        if !prompt_template.is_empty() && !prompt_template.contains(PROMPT_TEMPLATE_PLACEHOLDER) {
             return Box::pin(async move {
                 Ok(Self::error(format!(
                     "prompt_template must include the {PROMPT_TEMPLATE_PLACEHOLDER} placeholder."
@@ -175,9 +201,19 @@ impl HostCallbacks for SwarmToolInterceptor {
             });
         }
 
-        // Distinct prompts only (mirrors TS `createAgentSwarmSpecs`).
+        // Mirrors TS `createAgentSwarmSpecs` ordering: resume entries first
+        // (they keep their own prompts), then item spawns with the template
+        // applied. Duplicate-prompt detection covers item spawns only.
+        let mut specs: Vec<SwarmItemSpec> = Vec::with_capacity(resume_count + item_count);
+        for (agent_id, prompt) in resume_agent_ids {
+            specs.push(SwarmItemSpec {
+                index: specs.len() + 1,
+                item: String::new(),
+                prompt,
+                agent_id: Some(agent_id),
+            });
+        }
         let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        let mut specs: Vec<SwarmItemSpec> = Vec::with_capacity(items.len());
         for (i, item) in items.into_iter().enumerate() {
             let prompt = prompt_template.replace(PROMPT_TEMPLATE_PLACEHOLDER, &item);
             if let Some(prev) = seen.get(&prompt).copied() {
@@ -190,9 +226,10 @@ impl HostCallbacks for SwarmToolInterceptor {
             }
             seen.insert(prompt.clone(), i + 1);
             specs.push(SwarmItemSpec {
-                index: i + 1,
+                index: specs.len() + 1,
                 item,
                 prompt,
+                agent_id: None,
             });
         }
 
@@ -224,37 +261,63 @@ impl HostCallbacks for SwarmToolInterceptor {
                 let subagent_type = subagent_type.clone();
                 let prompt = spec.prompt.clone();
                 let hooks = hooks.clone();
+                // Resume entries reuse their persisted agent id; fresh item
+                // spawns get a new stable id so the model can resume them
+                // from a later call.
+                let agent_id = spec.agent_id.clone().unwrap_or_else(generate_agent_id);
                 handles.push(tokio::spawn(async move {
-                    (
-                        spec.index,
-                        spec.item.clone(),
-                        run_child_agent(
-                            host,
-                            homedir,
-                            native_llm,
-                            permission,
-                            &parent_prompt,
-                            max_steps,
-                            child_depth,
-                            &subagent_type,
-                            &prompt,
-                            hooks.clone(),
-                        )
-                        .await,
-                    )
+                    let result = match spec.agent_id {
+                        Some(id) => {
+                            resume_child_agent(
+                                host,
+                                homedir,
+                                native_llm,
+                                permission,
+                                &parent_prompt,
+                                max_steps,
+                                child_depth,
+                                &subagent_type,
+                                &prompt,
+                                hooks.clone(),
+                                &id,
+                            )
+                            .await
+                            .map(|(_, text)| text)
+                        }
+                        None => {
+                            run_child_agent_persistent(
+                                host,
+                                homedir,
+                                native_llm,
+                                permission,
+                                &parent_prompt,
+                                max_steps,
+                                child_depth,
+                                &subagent_type,
+                                &prompt,
+                                hooks.clone(),
+                                &agent_id,
+                            )
+                            .await
+                            .map(|(_, text)| text)
+                        }
+                    };
+                    (spec.index, spec.item.clone(), agent_id, result)
                 }));
             }
 
-            let mut results: Vec<(usize, String, Result<String, String>)> =
+            let mut results: Vec<(usize, String, String, Result<String, String>)> =
                 Vec::with_capacity(handles.len());
             for handle in handles {
                 match handle.await {
                     Ok(joined) => results.push(joined),
-                    Err(e) => results.push((0, String::new(), Err(format!("join: {e}")))),
+                    Err(e) => {
+                        results.push((0, String::new(), String::new(), Err(format!("join: {e}"))))
+                    }
                 }
             }
             // Stable order by index, then render.
-            results.sort_by_key(|(idx, _, _)| *idx);
+            results.sort_by_key(|(idx, _, _, _)| *idx);
             Ok(ToolExecuteResponse {
                 content: render_swarm_results(&results),
                 is_error: false,
@@ -289,20 +352,23 @@ impl HostCallbacks for SwarmToolInterceptor {
 
 /// Render the swarm results in the same `<agent_swarm_result>` XML shape the
 /// TS tool produces: a summary line plus one `<item>` block per subagent.
-fn render_swarm_results(results: &[(usize, String, Result<String, String>)]) -> String {
-    let completed = results.iter().filter(|(_, _, r)| r.is_ok()).count();
-    let failed = results.iter().filter(|(_, _, r)| r.is_err()).count();
+/// Each block carries `<agent_id>` so the model can fill `resume_agent_ids`
+/// on a follow-up call to continue unfinished children.
+fn render_swarm_results(results: &[(usize, String, String, Result<String, String>)]) -> String {
+    let completed = results.iter().filter(|(_, _, _, r)| r.is_ok()).count();
+    let failed = results.iter().filter(|(_, _, _, r)| r.is_err()).count();
     let mut lines = vec![
         "<agent_swarm_result>".to_string(),
         format!("<summary>{completed} completed, {failed} failed</summary>"),
     ];
-    for (index, item, result) in results {
+    for (index, item, agent_id, result) in results {
         let label = match result {
             Ok(text) => text.trim(),
             Err(e) => e.trim(),
         };
         lines.push(format!(
-            "<item><index>{index}</index><swarm_item>{}</swarm_item><result>{}</result></item>",
+            "<item><index>{index}</index><agent_id>{}</agent_id><swarm_item>{}</swarm_item><result>{}</result></item>",
+            xml_escape(agent_id),
             xml_escape(item),
             xml_escape(label),
         ));
@@ -357,11 +423,11 @@ mod tests {
         }
     }
 
-    fn interceptor(inner: Arc<dyn HostCallbacks>) -> SwarmToolInterceptor {
+    fn interceptor_with(inner: Arc<dyn HostCallbacks>, homedir: Option<String>) -> SwarmToolInterceptor {
         SwarmToolInterceptor {
             host: inner.clone(),
             inner,
-            homedir: None,
+            homedir,
             native_llm: None,
             permission: crate::permission::gate::PermissionGate::from_env(),
             system_prompt: "parent".into(),
@@ -370,6 +436,76 @@ mod tests {
             swarm: Arc::new(Mutex::new(SwarmMode::new())),
             hooks: None,
         }
+    }
+
+    fn interceptor(inner: Arc<dyn HostCallbacks>) -> SwarmToolInterceptor {
+        interceptor_with(inner, None)
+    }
+
+    /// A unique temp dir per test, so persisted swarm sessions never collide
+    /// across parallel tests.
+    fn temp_test_homedir() -> String {
+        let dir = std::env::temp_dir().join(format!("kimi-agent-swarm-test-{}", fastrand::u64(..)));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.to_string_lossy().into_owned()
+    }
+
+    /// Host whose `llm_chat` records every request and returns a canned
+    /// completed response, so child turns finish in one step.
+    struct CompletingHost {
+        calls: Arc<Mutex<Vec<crate::rpc::types::LlmChatRequest>>>,
+    }
+
+    impl HostCallbacks for CompletingHost {
+        fn supports_tool_lifecycle(&self) -> bool { true }
+        fn llm_chat(&self, r: crate::rpc::types::LlmChatRequest) -> BoxFuture<'static, Result<crate::rpc::types::LlmChatResponse, String>> {
+            let calls = self.calls.clone();
+            Box::pin(async move {
+                calls.lock().unwrap().push(r);
+                Ok(crate::rpc::types::LlmChatResponse {
+                    content: "final answer".into(),
+                    tool_calls: Vec::new(),
+                    finish_reason: Some("stop".into()),
+                    usage: crate::rpc::types::TokenUsage {
+                        input_tokens: 1,
+                        output_tokens: 1,
+                        total_tokens: 2,
+                    },
+                })
+            })
+        }
+        fn execute_tool(&self, _req: ToolExecuteRequest) -> BoxFuture<'static, Result<ToolExecuteResponse, String>> {
+            Box::pin(async move {
+                Ok(ToolExecuteResponse {
+                    content: "inner".into(),
+                    is_error: false,
+                    is_prediction: false,
+                    stop_turn: false,
+                    media: Vec::new(),
+                })
+            })
+        }
+        fn emit_event(&self, _e: serde_json::Value) {}
+        fn prepare_tool_execution(&self, _r: crate::rpc::types::PrepareToolRequest) -> BoxFuture<'static, Result<Option<crate::rpc::types::PrepareToolResponse>, String>> {
+            Box::pin(async { Ok(None) })
+        }
+        fn authorize_tool_execution(&self, _r: crate::rpc::types::AuthorizeToolRequest) -> BoxFuture<'static, Result<Option<crate::rpc::types::AuthorizeToolResponse>, String>> {
+            Box::pin(async { Ok(None) })
+        }
+        fn finalize_tool_result(&self, _r: crate::rpc::types::FinalizeToolRequest) -> BoxFuture<'static, Result<crate::rpc::types::FinalizeToolResponse, String>> {
+            Box::pin(async { Ok(None) })
+        }
+    }
+
+    /// Extract the first rendered `<agent_id>` value from a swarm result.
+    fn extract_agent_id(content: &str) -> String {
+        let marker = "<agent_id>";
+        let start = content.find(marker).expect("agent_id in render") + marker.len();
+        let end = content[start..]
+            .find("</agent_id>")
+            .expect("closing agent_id tag")
+            + start;
+        content[start..end].to_string()
     }
 
     fn run_tool(
@@ -471,7 +607,7 @@ mod tests {
     }
 
     #[test]
-    fn resume_agent_ids_is_rejected() {
+    fn resume_agent_ids_is_accepted_and_renders_agent_ids() {
         let inner: Arc<dyn HostCallbacks> = Arc::new(MockHost { calls: Default::default() });
         let i = interceptor(inner);
         let resp = run_tool(
@@ -480,11 +616,84 @@ mod tests {
                 "description": "d",
                 "prompt_template": "{{item}}",
                 "items": ["a", "b"],
-                "resume_agent_ids": { "x": "continue" },
+                "resume_agent_ids": { "swarm-1-1": "continue" },
             }),
         );
-        assert!(resp.is_error);
-        assert!(resp.content.contains("resume_agent_ids"));
+        // No longer rejected: the tool executes and renders one result per
+        // child (children fail against the mock host, but per-child, not as
+        // a tool error).
+        assert!(!resp.is_error, "{}", resp.content);
+        assert!(resp.content.contains("<agent_swarm_result>"));
+        // Resume entries run first (index 1) and keep their agent id.
+        assert!(resp
+            .content
+            .contains("<item><index>1</index><agent_id>swarm-1-1</agent_id>"));
+        // Item spawns render their generated swarm ids too.
+        assert!(resp.content.contains("<agent_id>swarm-"));
+        // Summary counts vary with how the mock's failed llm_chat settles in
+        // each child turn; only the render shape is asserted here.
+        assert!(resp.content.contains("<summary>"));
+    }
+
+    #[test]
+    fn resume_only_call_without_prompt_template_is_accepted() {
+        // Mirrors TS: a resume-only call has no `items`, so `prompt_template`
+        // is not required.
+        let inner: Arc<dyn HostCallbacks> = Arc::new(MockHost { calls: Default::default() });
+        let i = interceptor(inner);
+        let resp = run_tool(
+            &i,
+            serde_json::json!({
+                "description": "d",
+                "resume_agent_ids": { "swarm-1-1": "continue", "swarm-1-2": "go on" },
+            }),
+        );
+        assert!(!resp.is_error, "{}", resp.content);
+        assert!(resp.content.contains("<agent_swarm_result>"));
+    }
+
+    #[test]
+    fn swarm_children_persist_and_resume_restores_context() {
+        // Spawn completes and persists the conversation under a generated
+        // agent_id; a second call resuming that id restores the prior turn's
+        // history before running the continuation prompt.
+        let calls: Arc<Mutex<Vec<crate::rpc::types::LlmChatRequest>>> = Default::default();
+        let inner: Arc<dyn HostCallbacks> = Arc::new(CompletingHost { calls: calls.clone() });
+        let homedir = temp_test_homedir();
+        let i = interceptor_with(inner, Some(homedir));
+
+        let resp = run_tool(&i, swarm_args(vec!["alpha", "beta"]));
+        assert!(!resp.is_error, "{}", resp.content);
+        assert!(resp.content.contains("<agent_id>swarm-"));
+        let agent_id = extract_agent_id(&resp.content);
+
+        let resp2 = run_tool(
+            &i,
+            serde_json::json!({
+                "description": "resume",
+                "prompt_template": "{{item}}",
+                "items": ["gamma"],
+                "resume_agent_ids": { agent_id.clone(): "continue" },
+            }),
+        );
+        assert!(!resp2.is_error, "{}", resp2.content);
+        // The resumed child renders under its persisted agent id.
+        assert!(resp2
+            .content
+            .contains(&format!("<agent_id>{agent_id}</agent_id>")));
+
+        // The resumed child's LLM request carried the first turn's prompt AND
+        // the continuation prompt — i.e. the persisted context was restored.
+        let reqs = calls.lock().unwrap();
+        let resumed = reqs.iter().find(|r| {
+            let texts: Vec<&str> = r.messages.iter().map(|m| m.content.as_str()).collect();
+            texts.iter().any(|t| t.contains("Work on alpha"))
+                && texts.iter().any(|t| t.contains("continue"))
+        });
+        assert!(
+            resumed.is_some(),
+            "resumed child did not see the prior conversation: {reqs:?}"
+        );
     }
 
     #[test]
@@ -500,8 +709,8 @@ mod tests {
     #[test]
     fn render_escapes_xml_and_reports_failures() {
         let results = vec![
-            (1, "a<b".to_string(), Ok("ok & done".to_string())),
-            (2, "c".to_string(), Err("boom".to_string())),
+            (1, "a<b".to_string(), "swarm-1".to_string(), Ok("ok & done".to_string())),
+            (2, "c".to_string(), "".to_string(), Err("boom".to_string())),
         ];
         let rendered = render_swarm_results(&results);
         assert!(rendered.contains("<agent_swarm_result>"));
@@ -509,5 +718,7 @@ mod tests {
         assert!(rendered.contains("a&lt;b"));
         assert!(rendered.contains("ok &amp; done"));
         assert!(rendered.contains("boom"));
+        // Every result carries its agent_id for the model to resume from.
+        assert!(rendered.contains("<agent_id>swarm-1</agent_id>"));
     }
 }
