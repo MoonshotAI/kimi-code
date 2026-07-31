@@ -970,18 +970,27 @@ export class AcpSession {
         // only registered in runTurnBody(). Push a one-shot usage_update
         // so the client reflects the compacted context size immediately
         // rather than waiting for the next normal prompt.
-        const status = await this.session.getStatus();
-        const update = contextUsageToUsageUpdate(
-          this.id,
-          status.contextTokens,
-          status.maxContextTokens,
-        );
-        if (update !== null) {
-          this.conn.sessionUpdate(update).catch((err) => {
-            log.warn('acp: failed to push usage_update after compaction', {
-              sessionId: this.id,
-              error: err instanceof Error ? err.message : String(err),
+        // Best-effort only — a failed status refresh must not turn a
+        // successful compaction into a failure.
+        try {
+          const status = await this.session.getStatus();
+          const update = contextUsageToUsageUpdate(
+            this.id,
+            status.contextTokens,
+            status.maxContextTokens,
+          );
+          if (update !== null) {
+            this.conn.sessionUpdate(update).catch((err) => {
+              log.warn('acp: failed to push usage_update after compaction', {
+                sessionId: this.id,
+                error: err instanceof Error ? err.message : String(err),
+              });
             });
+          }
+        } catch (err) {
+          log.warn('acp: failed to refresh usage after compaction', {
+            sessionId: this.id,
+            error: err instanceof Error ? err.message : String(err),
           });
         }
       } else {
