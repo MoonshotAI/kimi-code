@@ -1,15 +1,14 @@
 /**
- * `config` domain (L2) — TOML read/write transforms.
+ * `config` domain — TOML read/write transforms.
  *
  * Generic snake_case ↔ camelCase machinery plus the registry-aware entry points
  * (`transformTomlData` / `applySectionToToml`) that dispatch to a section's
- * registered `fromToml` / `toToml` hook. Per-domain normalization lives with
- * the section owner (see each domain's `configSection.ts`); this module stays
- * free of any other domain's semantics.
+ * registered `fromToml` / `toToml` hook; this module stays free of any
+ * per-domain semantics.
  *
  * Files store keys in snake_case; in-memory values are camelCase. Unknown
- * top-level keys are preserved by the caller (`ConfigService` keeps a raw
- * snake_case clone for round-trip).
+ * top-level keys are preserved by the caller (which keeps a raw snake_case
+ * clone for round-trip).
  */
 
 import { TomlError } from 'smol-toml';

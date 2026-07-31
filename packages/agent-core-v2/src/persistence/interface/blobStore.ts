@@ -5,7 +5,7 @@
  * objects. Sits alongside `IAppendLogStore` and `IAtomicDocumentStore` as the
  * third generic access-pattern Store in the three-layer persistence model.
  *
- * Business services that need blob storage (`IFileService`, `IAgentBlobService`)
+ * Business services that need blob storage
  * depend on this interface rather than on the raw `IFileSystemStorageService`.
  */
 
@@ -15,6 +15,7 @@ export interface IBlobStore {
   readonly _serviceBrand: undefined;
 
   put(scope: string, key: string, data: Uint8Array): Promise<void>;
+  putStream(scope: string, key: string, source: AsyncIterable<Uint8Array>): Promise<void>;
   get(scope: string, key: string): Promise<Uint8Array | undefined>;
   getStream(scope: string, key: string, range?: BlobReadRange): AsyncIterable<Uint8Array>;
   has(scope: string, key: string): Promise<boolean>;

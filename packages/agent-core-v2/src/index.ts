@@ -65,8 +65,11 @@ import '#/app/event/eventService';
 export { IEventBus, type DomainEvent } from '#/app/event/eventBus';
 export { IEventService, type DomainEvent as GlobalEvent } from '#/app/event/event';
 export * from '#/_base/state/stateRegistry';
-export * from '#/app/state/state';
-import '#/app/state/stateService';
+export * from '#/_base/contribution/registry';
+export * from '#/app/state/appState';
+import '#/app/state/appStateService';
+export * from '#/workspace/state/workspaceState';
+import '#/workspace/state/workspaceStateService';
 export * from '#/session/state/sessionState';
 import '#/session/state/sessionStateService';
 export * from '#/agent/state/agentState';
@@ -119,18 +122,12 @@ export * from '#/kosong/model/catalog';
 export * from '#/kosong/model/catalogService';
 export * from '#/kosong/model/modelRequester';
 import '#/kosong/model/errors';
-// `ModelCatalogConfig` / `MODEL_CATALOG_SECTION` live in the configSection
-// side-effect module but the edge (kap-server's refresh scheduler) consumes
-// them from the package root — re-export here.
 export {
   MODEL_CATALOG_SECTION,
   ModelCatalogConfigSchema,
   type ModelCatalogConfig,
 } from '#/app/kosongConfig/configSection';
 export type { SecondaryModelConfig } from '#/app/kosongConfig/configSection';
-// The secondary-model derived-entry overlay: the edge (kap-server's
-// `GET /models` route) hides the reserved id from pickers, and tests drive
-// the overlay directly — re-export from the package root.
 export {
   SECONDARY_DERIVED_MODEL_ID,
   secondaryModelOverlay,
@@ -140,6 +137,7 @@ export * from '#/app/kosongConfig/kosongConfig';
 export * from '#/app/kosongConfig/kosongConfigService';
 export * from '#/kosong/model/modelOAuth';
 export * from '#/app/kosongConfig/oauthTokenAdapter';
+export * from '#/app/kosongConfig/hostRequestHeadersAdapter';
 export * from '#/app/kosongConfig/discovery';
 export * from '#/app/kosongConfig/discoveryService';
 export * from '#/app/kosongConfig/errors';
@@ -147,16 +145,17 @@ export * from '#/app/kosongConfig/modelsDevImport';
 export * from '#/app/kosongConfig/modelsDevImportService';
 export * from '#/app/kosongConfig/modelsDevUpstream';
 export * from '#/app/kosongConfig/modelsDev';
-// kosong wire composition roots — importing these modules registers the four
-// protocol bases and every provider definition (kimi + the canonical vendor
-// endpoints); without them the adapter registry stays empty.
 import '#/kosong/provider/bases/anthropic/index';
 import '#/kosong/provider/bases/google-genai/index';
 import '#/kosong/provider/bases/openai/index';
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 import '#/kosong/provider/providers/standard.contrib';
 export * from '#/app/agentProfileCatalog/agentProfileCatalog';
-export * from '#/app/agentProfileCatalog/agentProfileCatalogService';
+export * from '#/app/agentProfileCatalog/agentProfileContribution';
+export * from '#/app/agentProfileCatalog/agentProfileRegistry';
+export * from '#/app/agentProfileCatalog/agentProfileRegistryService';
+export * from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
+export * from '#/app/agentProfileCatalog/builtinAgentProfileLoaderService';
 export * from '#/app/agentProfileCatalog/profile-shared';
 export * from '#/app/agentProfileCatalog/promptPrefix';
 export {
@@ -164,17 +163,11 @@ export {
   getAgentProfileContributions,
   _clearAgentProfileContributionsForTests,
 } from '#/app/agentProfileCatalog/contribution';
-export * from '#/app/agentFileCatalog/types';
-export * from '#/app/agentFileCatalog/paths';
-export * from '#/app/agentFileCatalog/agentRoots';
-export * from '#/app/agentFileCatalog/agentFile';
-export * from '#/app/agentFileCatalog/agentFileDiscovery';
-export * from '#/app/agentFileCatalog/agentProfileFromFile';
-export * from '#/app/agentFileCatalog/configSection';
-export * from '#/app/agentFileCatalog/agentProfileSource';
-export * from '#/app/agentFileCatalog/agentCatalogRuntimeOptions';
-export * from '#/app/agentFileCatalog/userFileAgentSource';
-export * from '#/app/hostIdentity/hostIdentity';
+export * from '#/workspace/workspaceAgentProfileLoader/configSection';
+export { parseAgentFileText } from '#/workspace/workspaceAgentProfileLoader/internal/agentFile';
+export { resolveAgentPath } from '#/workspace/workspaceAgentProfileLoader/internal/paths';
+export * from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
+export * from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoaderService';
 export * from '#/app/plugin/types';
 export * from '#/app/plugin/commands';
 export * from '#/app/plugin/manifest';
@@ -185,6 +178,8 @@ export * from '#/app/plugin/archive';
 export * from '#/app/plugin/manager';
 export * from '#/app/plugin/plugin';
 export * from '#/app/plugin/pluginService';
+export * from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
+export * from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoaderService';
 
 export type { SkillSource } from '#/app/skillCatalog/types';
 export * from '#/agent/tools/skill/skill';
@@ -193,7 +188,6 @@ export * from '#/agent/skill/skill';
 export * from '#/agent/skill/skillService';
 export * from '#/app/skillCatalog/types';
 export * from '#/app/skillCatalog/configSection';
-export * from '#/app/skillCatalog/skillCatalogRuntimeOptions';
 export * from '#/app/skillCatalog/parser';
 export * from '#/app/skillCatalog/registry';
 export * from '#/app/skillCatalog/errors';
@@ -205,16 +199,29 @@ export * from '#/app/skillCatalog/builtin/builtin';
 export * from '#/app/skillCatalog/builtinSkillSource';
 export * from '#/app/skillCatalog/userFileSkillSource';
 export * from '#/session/sessionSkillCatalog/skillCatalog';
+export * from '#/session/sessionSkillCatalog/skillCatalogData';
 export * from '#/session/sessionSkillCatalog/skillCatalogService';
-export * from '#/session/sessionSkillCatalog/extraFileSkillSource';
-export * from '#/session/sessionSkillCatalog/explicitFileSkillSource';
-export * from '#/session/sessionSkillCatalog/workspaceFileSkillSource';
-export * from '#/session/sessionSkillCatalog/pluginSkillSource';
 export * from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+export * from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 export * from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalogService';
-export * from '#/session/sessionAgentProfileCatalog/projectFileAgentSource';
-export * from '#/session/sessionAgentProfileCatalog/extraFileAgentSource';
-export * from '#/session/sessionAgentProfileCatalog/explicitFileAgentSource';
+export * from '#/session/sessionInstructions/instructionsProvider';
+export * from '#/session/workspaceInfo/workspaceInfo';
+export * from '#/workspace/workspaceDirs/workspaceDirs';
+export * from '#/workspace/workspaceDirs/workspaceDirsService';
+export * from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
+export * from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalogService';
+export * from '#/workspace/workspaceSkillCatalog/extraFileSkillSource';
+export * from '#/workspace/workspaceSkillCatalog/explicitFileSkillSource';
+export * from '#/workspace/workspaceSkillCatalog/rootFileSkillSource';
+export * from '#/workspace/workspaceSkillCatalog/pluginSkillSource';
+export * from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
+export * from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoaderService';
+export * from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoader';
+export * from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoaderService';
+export * from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
+export * from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoaderService';
+export * from '#/workspace/workspaceInstructions/workspaceInstructions';
+export * from '#/workspace/workspaceInstructions/workspaceInstructionsService';
 export * from '#/agent/permissionGate/permissionGate';
 export * from '#/agent/permissionGate/permissionGateService';
 export * from '#/agent/toolApproval/toolApproval';
@@ -261,7 +268,6 @@ export * from '#/agent/usage/usageService';
 export * from '#/agent/toolDedupe/toolDedupe';
 export * from '#/agent/toolDedupe/toolDedupeService';
 import '#/agent/toolSelect/flag';
-import '#/agent/faultInjection/flag';
 export * from '#/agent/tools/select-tools/select-tools';
 import '#/agent/tools/select-tools/selectToolsTool';
 export * from '#/agent/toolSelect/dynamicTools';
@@ -314,8 +320,18 @@ import '#/session/agentLifecycle/profile/profiles';
 export * from '#/session/agentLifecycle/agentLifecycle';
 export * from '#/session/agentLifecycle/agentLifecycleService';
 export * from '#/session/agentLifecycle/mainAgent';
-export * from '#/session/mcp/sessionMcp';
-export * from '#/session/mcp/sessionMcpService';
+export * from '#/session/mcp/sessionMcpHandle';
+import '#/app/mcpConfig/configSection';
+export {
+  MCP_SECTION,
+  McpSectionSchema,
+  type McpSection,
+} from '#/app/mcpConfig/configSection';
+export * from '#/app/mcpConfig/oauthStore';
+export * from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
+export * from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
+export * from '#/workspace/workspaceMcp/workspaceMcp';
+export * from '#/workspace/workspaceMcp/workspaceMcpService';
 export * from '#/session/subagent/subagent';
 export * from '#/session/subagent/subagentService';
 import '#/session/subagent/flag';
@@ -327,8 +343,14 @@ export * from '#/session/subagent/mirrorAgentRun';
 import '#/session/subagent/configSection';
 export * from '#/agent/tools/agent/agent';
 import '#/agent/tools/agent/agentTool';
-export * from '#/app/sessionLifecycle/sessionLifecycle';
-export * from '#/app/sessionLifecycle/sessionLifecycleService';
+export * from '#/app/workspaceLifecycle/workspaceLifecycle';
+export * from '#/app/workspaceLifecycle/workspaceLifecycleService';
+export * from '#/app/workspaceLifecycle/sessionLookup';
+export * from '#/workspace/workspaceContext/workspaceContext';
+export * from '#/workspace/sessionLifecycle/sessionLifecycle';
+export * from '#/workspace/sessionLifecycle/sessionLifecycleService';
+export * from '#/workspace/sessionLifecycle/internal/addressing';
+export * from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 export * from '#/session/externalHooks/externalHooks';
 export * from '#/session/externalHooks/externalHooksService';
 import '#/app/sessionExport/errors';
@@ -356,8 +378,6 @@ export * from '#/app/gateway/gatewayService';
 
 export * from '#/session/workspaceContext/workspaceContext';
 export * from '#/session/workspaceContext/workspaceContextService';
-export * from '#/session/workspaceCommand/workspaceCommand';
-export * from '#/session/workspaceCommand/workspaceCommandService';
 export * from '#/app/projectLocalConfig/projectLocalConfig';
 export * from '#/app/workspace/workspace';
 export * from '#/app/workspace/workspaceService';
@@ -369,16 +389,27 @@ import '#/app/workspaceAliases/workspaceAliasesService';
 export * from '#/app/workspaceSessions/workspaceSessions';
 import '#/app/workspaceSessions/workspaceSessionsService';
 import '#/app/git/gitService';
+export * from '#/app/bashParser/bashParser';
+import '#/app/bashParser/bashParserService';
 export * from '#/session/process/processRunner';
 export * from '#/session/process/processRunnerService';
-export * from '#/session/sessionFs/errors';
-export * from '#/session/sessionFs/fs';
-export * from '#/session/sessionFs/fsService';
-export * from '#/session/sessionFs/fsWatch';
-export * from '#/session/sessionFs/fsWatchService';
-export * from '#/session/sessionFs/gitContext';
-export * from '#/session/sessionFs/rgLocator';
-export * from '#/session/sessionFs/runRg';
+export * from '#/workspace/workspaceProcess/workspaceProcessRunnerService';
+export * from '#/workspace/workspaceFs/internal/errors';
+export * from '#/workspace/workspaceFs/fs';
+export * from '#/workspace/workspaceFs/fsService';
+export * from '#/workspace/workspaceFs/fsWatch';
+export * from '#/workspace/workspaceFs/fsWatchService';
+export * from '#/session/agentLifecycle/profile/gitContext';
+export * from '#/workspace/workspaceFs/internal/rgLocator';
+export * from '#/workspace/workspaceFs/internal/runRg';
+export * from '#/workspace/workspaceGit/workspaceGit';
+export * from '#/workspace/workspaceGit/workspaceGitService';
+export * from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
+export * from '#/session/sessionToolPolicyGate/sessionToolPolicyGateService';
+export * from '#/workspace/workspaceToolPolicy/workspaceToolPolicy';
+export * from '#/workspace/workspaceToolPolicy/workspaceToolPolicyService';
+export * from '#/workspace/workspaceTrust/workspaceTrust';
+export * from '#/workspace/workspaceTrust/workspaceTrustService';
 export * from '#/app/hostFolderBrowser/hostFolderBrowser';
 export * from '#/app/hostFolderBrowser/hostFolderBrowserService';
 export * from '#/persistence/interface/storage';
@@ -482,8 +513,6 @@ export * from '#/agent/fullCompaction/compactionOps';
 export * from '#/agent/fullCompaction/types';
 export * from '#/agent/llmRequester/llmRequester';
 export * from '#/agent/llmRequester/llmRequesterService';
-export * from '#/agent/faultInjection/faultInjection';
-export * from '#/agent/faultInjection/faultInjectionService';
 export * from '#/agent/llmRequester/llmRequestOps';
 export * from '#/_base/utils/retry';
 import '#/agent/loop/configSection';
@@ -491,10 +520,13 @@ export * from '#/agent/loop/loop';
 export * from '#/agent/loop/loopService';
 export * from '#/agent/loop/loopContinuation';
 export * from '#/agent/loop/loopContinuationService';
+export * from '#/agent/interruptionReminder/interruptionReminder';
+export * from '#/agent/interruptionReminder/interruptionReminderService';
+export * from '#/agent/interruptionReminder/interruptionReminderOps';
 export * from '#/agent/mcp/mcp';
 export * from '#/agent/mcp/mcpService';
 export * from '#/agent/mcp/mcpDiscoveryOps';
-export * from '#/agent/mcp/config-schema';
+export * from '#/mcpCore/config-schema';
 export * from '#/agent/media/mediaTools';
 export * from '#/agent/media/mediaToolsRegistrar';
 export * from '#/agent/media/registerMediaTools';

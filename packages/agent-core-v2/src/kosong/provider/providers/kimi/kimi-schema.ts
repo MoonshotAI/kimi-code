@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — Kimi tool-schema dialect normalization.
+ * `kosong/provider` domain — Kimi tool-schema dialect normalization.
  *
  * Pure functions: dereference local `$ref` pointers by inlining definitions,
  * then complete missing `type` fields from enum/const values or structural

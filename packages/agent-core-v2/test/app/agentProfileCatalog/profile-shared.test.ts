@@ -85,6 +85,14 @@ describe('systemPromptVars', () => {
     expect(systemPromptVars({ osKind: 'macOS' }, { skillActive: true })['windows_notes']).toBe('');
   });
 
+  it('composes the plugin instructions section only when sections exist', () => {
+    const vars = systemPromptVars({ pluginSections: 'PLUGIN_A' }, { skillActive: true });
+
+    expect(vars['plugin_sections']).toContain('# Plugin Instructions');
+    expect(vars['plugin_sections']).toContain('PLUGIN_A');
+    expect(systemPromptVars({}, { skillActive: true })['plugin_sections']).toBe('');
+  });
+
   it('defaults host-identity variables to the CLI text', () => {
     const vars = systemPromptVars({}, { skillActive: true });
 
@@ -176,6 +184,16 @@ describe('renderSystemPrompt', () => {
     ).toContain('## Additional Directories');
     expect(renderSystemPrompt('', {}, { skillActive: true })).not.toContain(
       '## Additional Directories',
+    );
+  });
+
+  it('shows the plugin instructions section only when plugin sections exist', () => {
+    const prompt = renderSystemPrompt('', { pluginSections: 'PLUGIN_A' }, { skillActive: true });
+
+    expect(prompt).toContain('# Plugin Instructions');
+    expect(prompt).toContain('PLUGIN_A');
+    expect(renderSystemPrompt('', {}, { skillActive: true })).not.toContain(
+      '# Plugin Instructions',
     );
   });
 

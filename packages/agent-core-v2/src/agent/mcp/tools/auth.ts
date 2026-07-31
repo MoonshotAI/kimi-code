@@ -17,7 +17,7 @@
  *     persisted, which flips the entry to `connected` and lets
  *     `ToolManager` swap the synthetic tool out for the real MCP tools.
  *
- * The blocking shape (option 1 in the plan) keeps the implementation
+ * The blocking shape keeps the implementation
  * simple at the cost of holding one tool call open for the duration of
  * the human's browser flow. If the model ends up re-invoking the tool
  * mid-flow we just start a fresh flow; the new callback server supersedes
@@ -32,13 +32,9 @@ import {
   type ExecutableToolResult,
 } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { AlreadyAuthorizedError, type McpOAuthService } from '#/agent/mcp/oauth/service';
-import { qualifyMcpToolName } from '#/agent/mcp/tool-naming';
+import { AlreadyAuthorizedError, type McpOAuthService } from '#/mcpCore/oauth/service';
+import { qualifyMcpToolName } from '#/mcpCore/tool-naming';
 
-/**
- * `ToolUpdate.customKind` emitted by the MCP auth tool when the OAuth
- * authorization URL is ready; clients render it as an actionable login link.
- */
 export const MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE = 'mcp.oauth.authorization_url';
 
 export interface McpOAuthAuthorizationUrlUpdateData {

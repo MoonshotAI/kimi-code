@@ -1,5 +1,5 @@
 /**
- * `permissionRules` domain (L3) — `permission` config-section schema and TOML
+ * `permissionRules` domain — `permission` config-section schema and TOML
  * transforms.
  *
  * Owns the `[permission]` configuration section (the persisted permission

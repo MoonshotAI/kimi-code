@@ -1,9 +1,8 @@
 /**
  * `storage` domain — the filesystem persistence backend.
  *
- * `IFileSystemStorageService` is the filesystem-specific byte store that the
- * `node-fs` Store implementations are built on. It exposes two irreducible
- * durable primitives side by side:
+ * `IFileSystemStorageService` is the filesystem-specific byte store. It
+ * exposes two irreducible durable primitives side by side:
  *
  *   - `write`  — atomic whole-value replacement (the `Config` access pattern).
  *   - `append` — ordered, durable byte extension   (the `Record` access pattern).
@@ -13,10 +12,14 @@
  * the last value" semantics. Keeping both as first-class primitives lets each
  * implementation implement them optimally (file: `open('a')` vs tmp+rename).
  *
+ * `writeStream` is the streamed form of `write` for values too large to hold
+ * in memory: same whole-value replacement semantics (tmp + rename on the file
+ * backend), but the bytes arrive as an `AsyncIterable`.
+ *
  * The service is byte-oriented and scope/key-addressed: `scope` maps to a
  * directory, `key` maps to a filename. It knows nothing about JSON, records,
  * configs, versions or framing. Those concerns live in the typed Store facades
- * above it (`IAppendLogStore`, `IAtomicDocumentStore`, `IBlobStore`).
+ * above it.
  *
  * Non-filesystem backends (Postgres, S3, Redis) do not implement this
  * interface — they implement the Store interfaces directly via their own
@@ -124,6 +127,12 @@ export interface IFileSystemStorageService {
   read(scope: string, key: string): Promise<Uint8Array | undefined>;
   readStream(scope: string, key: string, range?: StorageReadRange): AsyncIterable<Uint8Array>;
   write(scope: string, key: string, data: Uint8Array, options?: StorageWriteOptions): Promise<void>;
+  writeStream(
+    scope: string,
+    key: string,
+    source: AsyncIterable<Uint8Array>,
+    options?: StorageWriteOptions,
+  ): Promise<void>;
   append(scope: string, key: string, data: Uint8Array, options?: StorageAppendOptions): Promise<void>;
   list(scope: string, prefix?: string): Promise<readonly string[]>;
   delete(scope: string, key: string): Promise<void>;

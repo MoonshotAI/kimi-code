@@ -610,4 +610,54 @@ describe('ToolManager MCP integration', () => {
 
     expect(tm.loopTools.map((t) => t.name)).toEqual(['mcp__s__echo']);
   });
+
+  it('a server-scoped MCP deny glob hides that server under a broad allow', async () => {
+    const tm = new ToolManager(fakeAgent());
+    const githubClient = fakeClient();
+    const slackClient = fakeClient();
+    tm.registerMcpServer('github', githubClient, await discoverTools(githubClient));
+    tm.registerMcpServer('slack', slackClient, await discoverTools(slackClient));
+    tm.setActiveTools(['mcp__*'], ['mcp__github__*']);
+
+    expect(tm.loopTools.map((t) => t.name).toSorted()).toEqual([
+      'mcp__slack__echo',
+      'mcp__slack__noop',
+    ]);
+    expect([...tm.toolInfos()].filter((i) => i.source === 'mcp')).toEqual([
+      { name: 'mcp__github__echo', description: 'Echoes back', active: false, source: 'mcp' },
+      { name: 'mcp__github__noop', description: 'Does nothing', active: false, source: 'mcp' },
+      { name: 'mcp__slack__echo', description: 'Echoes back', active: true, source: 'mcp' },
+      { name: 'mcp__slack__noop', description: 'Does nothing', active: true, source: 'mcp' },
+    ]);
+  });
+
+  it('an exact MCP deny hides one tool while the server glob allows the rest', async () => {
+    const tm = new ToolManager(fakeAgent());
+    const client = fakeClient();
+    tm.registerMcpServer('s', client, await discoverTools(client));
+    tm.setActiveTools(['mcp__s__*'], ['mcp__s__echo']);
+
+    expect(tm.loopTools.map((t) => t.name)).toEqual(['mcp__s__noop']);
+  });
+
+  it('a full mcp__* deny hides every MCP tool', async () => {
+    const tm = new ToolManager(fakeAgent());
+    const client = fakeClient();
+    tm.registerMcpServer('s', client, await discoverTools(client));
+    tm.setActiveTools(['mcp__*'], ['mcp__*']);
+
+    expect(tm.loopTools.some((t) => t.name.startsWith('mcp__'))).toBe(false);
+  });
+
+  it('records the deny list alongside the active tools', async () => {
+    const calls: unknown[] = [];
+    const tm = new ToolManager(fakeAgent(calls));
+    tm.setActiveTools(['Read', 'Bash', 'Grep'], ['Bash']);
+
+    expect(calls[0]).toMatchObject({
+      type: 'tools.set_active_tools',
+      names: ['Read', 'Bash', 'Grep'],
+      disallowedNames: ['Bash'],
+    });
+  });
 });

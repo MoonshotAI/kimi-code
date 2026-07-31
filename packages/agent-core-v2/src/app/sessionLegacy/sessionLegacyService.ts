@@ -5,12 +5,7 @@
  * its main agent) per call, delegates to the native v2 services, and projects
  * the result into the v1 wire shape. Only `updateProfile` (the cross-domain
  * `agent_config` patch), `status` (the best-effort status rollup), and `goal`
- * (the current-goal read) live here;
- * the `:undo`, `fork`-as-child, and child-listing actions were pushed down into
- * the native services (`IAgentPromptService.undo`,
- * `ISessionLifecycleService.createChild`, `ISessionIndex.list({ childOf })`) and
- * are called by the edge route directly. No business logic is duplicated here;
- * the real work stays in the native services.
+ * (the current-goal read) live here. No business logic is duplicated here.
  */
 
 import type { GoalSnapshot } from '#/agent/goal/types';
@@ -19,10 +14,15 @@ import type { SessionStatusResponse, UpdateSessionProfileRequest } from './sessi
 
 import {
   type IAgentScopeHandle,
+  type ISessionScopeHandle,
   LifecycleScope,
   ScopeActivation,
   registerScopedService,
 } from '#/_base/di/scope';
+import {
+  IInstantiationService,
+  type ServicesAccessor,
+} from '#/_base/di/instantiation';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -31,8 +31,11 @@ import { IAgentPlanService } from '#/agent/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { IConfigService } from '#/app/config/config';
+import {
+  getLiveSessionById,
+  resumeSessionById,
+} from '#/app/workspaceLifecycle/sessionLookup';
 import { IModelCatalog } from '#/kosong/model/catalog';
-import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -45,13 +48,23 @@ import { ISessionLegacyService, type SessionWireFields } from './sessionLegacy';
 export class SessionLegacyService implements ISessionLegacyService {
   declare readonly _serviceBrand: undefined;
 
-  constructor(@ISessionLifecycleService private readonly lifecycle: ISessionLifecycleService) {}
+  private readonly services: ServicesAccessor;
+
+  constructor(@IInstantiationService instantiation: IInstantiationService) {
+    this.services = {
+      get: (id) => instantiation.invokeFunction((accessor) => accessor.get(id)),
+    };
+  }
+
+  private resume(sessionId: string): Promise<ISessionScopeHandle | undefined> {
+    return resumeSessionById(this.services, sessionId);
+  }
 
   async updateProfile(
     sessionId: string,
     body: UpdateSessionProfileRequest,
   ): Promise<SessionWireFields> {
-    const session = await this.lifecycle.resume(sessionId);
+    const session = await this.resume(sessionId);
     if (session === undefined) {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     }
@@ -141,7 +154,7 @@ export class SessionLegacyService implements ISessionLegacyService {
   }
 
   private async resolveMainAgent(sessionId: string): Promise<IAgentScopeHandle> {
-    const session = await this.lifecycle.resume(sessionId);
+    const session = await this.resume(sessionId);
     if (session === undefined) {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     }
@@ -178,7 +191,7 @@ export class SessionLegacyService implements ISessionLegacyService {
     return {
       busy: this.readBusy(sessionId),
       model: model === '' ? undefined : model,
-      thinking_level: profile.getEffectiveThinkingLevel(),
+      thinking_level: model === '' ? '' : profile.getEffectiveThinkingLevel(),
       permission: permission.mode,
       plan_mode: planData !== null,
       swarm_mode: swarm.isActive,
@@ -188,13 +201,8 @@ export class SessionLegacyService implements ISessionLegacyService {
     };
   }
 
-  /**
-   * The session's busy fact, derived on demand from the agents' activity
-   * views (any active turn or background task). Nothing is booked at session
-   * level — a cold session is simply not busy.
-   */
   private readBusy(sessionId: string): boolean {
-    const handle = this.lifecycle.get(sessionId);
+    const handle = getLiveSessionById(this.services, sessionId);
     if (handle === undefined) return false;
     for (const agent of handle.accessor.get(IAgentLifecycleService).list()) {
       const state = agent.accessor.get(IAgentActivityView).state();

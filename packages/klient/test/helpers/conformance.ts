@@ -72,6 +72,28 @@ export function defineKlientConformance(
       expect(typeof count).toBe('number');
     });
 
+    it('creates a titled session through implicit workspace materialization', async () => {
+      const created = await target.klient.global.sessions.create({
+        workDir: process.cwd(),
+        title: 'conformance session',
+      });
+
+      try {
+        expect(created).toMatchObject({
+          title: 'conformance session',
+          cwd: process.cwd(),
+          archived: false,
+        });
+        expect(created.id.length).toBeGreaterThan(0);
+        expect(await target.klient.global.sessions.get(created.id)).toMatchObject({
+          id: created.id,
+          title: 'conformance session',
+        });
+      } finally {
+        await target.klient.session(created.id).close();
+      }
+    });
+
     it('providers.set/get/delete works and emits kosong.providers.changed', async () => {
       const events: Array<{
         added: readonly string[];
@@ -115,6 +137,39 @@ export function defineKlientConformance(
       const all = await target.klient.global.config.getAll();
       expect(typeof all).toBe('object');
       expect(Array.isArray(await target.klient.global.config.diagnostics())).toBe(true);
+    });
+
+    it('config replaceSections writes several domains and clears undefined ones', async () => {
+      const config = target.klient.global.config;
+      const beforeProviders = await config.inspect<Record<string, unknown>>('providers');
+      const beforeModels = await config.inspect<Record<string, unknown>>('models');
+      try {
+        await config.replaceSections({
+          sections: {
+            providers: {
+              ...beforeProviders.userValue,
+              'conf-provider': { type: 'openai', baseUrl: 'http://127.0.0.1:1', apiKey: 'k' },
+            },
+            models: {
+              ...beforeModels.userValue,
+              'conf-provider/m1': { provider: 'conf-provider', model: 'm1', maxContextSize: 100 },
+            },
+            defaultModel: 'conf-provider/m1',
+          },
+        });
+        expect((await config.inspect<string>('defaultModel')).userValue).toBe('conf-provider/m1');
+
+        // A domain mapped to `undefined` is cleared; domains absent from the
+        // sections record are left untouched.
+        await config.replaceSections({ sections: { defaultModel: undefined } });
+        expect((await config.inspect<string>('defaultModel')).userValue).toBeUndefined();
+        const providers = await config.inspect<Record<string, unknown>>('providers');
+        expect(providers.userValue?.['conf-provider']).toBeDefined();
+      } finally {
+        await config.replaceSections({
+          sections: { providers: beforeProviders.userValue, models: beforeModels.userValue },
+        });
+      }
     });
 
     it('hostFs.home() returns the host home and recent roots', async () => {

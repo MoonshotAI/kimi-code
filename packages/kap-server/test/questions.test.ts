@@ -4,13 +4,14 @@ import { join } from 'node:path';
 
 import {
   ISessionQuestionService,
-  ISessionLifecycleService,
+  getLiveSessionById,
   type QuestionRequest,
   type QuestionResult,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -70,6 +71,7 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-questions-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -121,7 +123,7 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
   }
 
   function questionService(sessionId: string): ISessionQuestionService {
-    const handle = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const handle = getLiveSessionById(server!.core.accessor, sessionId);
     expect(handle).toBeDefined();
     return handle!.accessor.get(ISessionQuestionService);
   }

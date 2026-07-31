@@ -1,10 +1,10 @@
 /**
- * `contextSize` domain (L4) — `IAgentContextSizeService` implementation.
+ * `contextSize` domain — `IAgentContextSizeService` implementation.
  *
  * Owns the last measured context token count in the wire `ContextSizeModel`
  * (`{ length, tokens }`): reads it through `wire.getModel`, writes it through
- * `wire.dispatch(contextSizeMeasured(...))` (called by `llmRequester` after each
- * measured exchange), and derives the `contextTokens` slice of
+ * `wire.dispatch(contextSizeMeasured(...))` (invoked after each measured LLM
+ * exchange), and derives the `contextTokens` slice of
  * `agent.status.updated` from the Op's `toEvent` (published to `IEventBus` on
  * dispatch) when the measured value changes. `get(start?, end?)` returns `{ size, measured, estimated }` for the
  * context-message range `[start, end)`, resolved like `Array.prototype.slice`
@@ -15,7 +15,7 @@
  * sub-ranges fall back to a per-message estimate), `estimated` is the live token
  * estimate of the not-yet-measured portion, and `size = measured + estimated`.
  * The sparse `measuredPrefixTokens` / per-message `estimates` are deliberately
- * not persisted (see `contextSizeOps`). The mutable emission watermark
+ * not persisted. The mutable emission watermark
  * (`lastEmittedTokens`) is registered into `agentState` (`IAgentStateService`)
  * and read/written through it. Bound at Agent scope.
  */
@@ -62,10 +62,6 @@ export class AgentContextSizeService extends Disposable implements IAgentContext
   get(start?: number, end?: number): ContextSize {
     const context = this.context.get();
     const model = this.wire.getModel(ContextSizeModel);
-    // Defensive clamp: the measured prefix can never be longer than the live
-    // context. An op written against a mutated message array once inflated
-    // `model.length` past `context.length`, silently knocking every read off
-    // the measured path onto the per-message estimate branch.
     const measuredLength = Math.min(model.length, context.length);
     const from = normalizeSliceIndex(start ?? 0, context.length);
     const to = normalizeSliceIndex(end ?? context.length, context.length);
@@ -82,12 +78,6 @@ export class AgentContextSizeService extends Disposable implements IAgentContext
   measured(input: readonly Message[], output: readonly Message[], usage: TokenUsage): void {
     const context = this.context.get();
     if (!matchesContext(input, context)) return;
-    // The fold of the step's loop events creates the assistant message in the
-    // context BEFORE the exchange finishes (a skeleton at `step.begin`, filled
-    // by `content.part` folds during streaming), and `input` is that same live
-    // array — so it already includes `output` here. The measured prefix is the
-    // whole current context; `input.length + output.length` would count the
-    // folded output twice.
     const length = context.length;
     const tokens = tokenUsageTotal(usage);
     this.wire.dispatch(contextSizeMeasured({ length, tokens }));

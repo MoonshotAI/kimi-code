@@ -33,7 +33,7 @@ A value belongs in Config **iff** it satisfies all of:
 If it fails any rule, it is not Config:
 
 - **Fact** (CI, platform, proxy, `HOME`) → a structured fact on
-  `IBootstrapService` (the L1 startup snapshot), not Config.
+  `IBootstrapService` (the startup snapshot), not Config.
 - **Derived convention** (`configPath`, `logsDir`) → `IBootstrapService` / code.
 - **Session runtime state** (active model, plan mode) → a Session-scoped
   service in the owning domain (e.g. `IProfileService`), not `config`.
@@ -42,9 +42,16 @@ If it fails any rule, it is not Config:
 
 **`IBootstrapService` is domain-agnostic.** It holds only generic facts shared by
 all domains — the env bag, resolved paths, and host facts (`platform`, `arch`,
-`cwd`, `osHomeDir`, `isCI`, …). It must **never** hold state tied to a specific
-upper domain (no `cron`, no `flags`, no feature-specific fields): that couples
-the foundational layer to an upstream one.
+`cwd`, `osHomeDir`, `isCI`, …) — plus the host's process-level invocation
+arguments in `args` (explicit `agentFiles` / `skillDirs`, `requestHeaders`,
+prompt identity). `args` mirrors VS Code's `NativeParsedArgs` on the
+environment service: the host states them once via `BootstrapInput.args` at
+the composition root, and downstream services read them from
+`IBootstrapService.args` instead of through per-domain runtime-options
+services (do not add new `IXxxRuntimeOptions` services or seed functions for
+host parameters). What must **never** land on `IBootstrapService` is state
+tied to a specific upper domain (no `cron`, no `flags`, no feature-specific
+fields): that couples the foundational layer to an upstream one.
 
 Any value that belongs to a specific domain — including env-only operational
 toggles (`KIMI_CRON_*`, `KIMI_CODE_EXPERIMENTAL_*`), model parameters, or feature
@@ -113,7 +120,7 @@ A config section is identified by a camelCase domain key (`'providers'`, `'think
 Ownership rules:
 
 - **One owner per section.** `registerSection` throws if a domain is registered twice.
-- **The domain that consumes a config owns its schema.** This is what keeps `config` (L2) from importing higher domains: `config` must not import `externalHooks` / `permissionRules` / `provider` / `kosong` / etc. for a section's schema. If a schema needs a domain's types, the schema lives in that domain.
+- **The domain that consumes a config owns its schema.** This is what keeps `config` from depending on its consumers: `config` must not import `externalHooks` / `permissionRules` / `provider` / `kosong` / etc. for a section's schema. If a schema needs a domain's types, the schema lives in that domain.
 - **Demand-driven.** Do not register sections for config that no domain reads yet; a section appears (with its schema in the owning domain) only when a consumer appears.
 
 ## Env bindings
@@ -251,20 +258,20 @@ The authoritative, always-current list of registered sections — rendered in th
 
 `config` must not import from any of these owner domains; that is the whole reason the schemas, TOML normalization, and env overlays live with their owners.
 
-## Layering & scope
+## Scope & dependencies
 
-- `config` is **L2**. Domains that own sections import `config` (for `IConfigRegistry` / `IConfigService`) and must be at L2 or higher; lower layers need an entry in `ALLOWED_EXCEPTIONS` (e.g. `kosong>config`, `kosong>provider`).
-- Cross-domain type sharing for a config type may need an exception too (e.g. `plugin>mcp` for `McpServerConfig`). Prefer importing the type from the owning domain over re-declaring it.
+- `config` is a low-level capability: domains that own sections import `config` (for `IConfigRegistry` / `IConfigService`), never the reverse — section schemas live in the owning domain.
+- Cross-domain type sharing for a config type: prefer importing the type from the owning domain over re-declaring it (e.g. `plugin` imports `McpServerConfig` from the MCP config schema).
 - `IConfigRegistry` / `IConfigService` are **App**. Agent scope services may inject App services via ancestor lookup.
 - `config` never imports a higher domain and holds no section schemas of its own; if a section needs a type from another domain, that schema lives in that domain.
 
 ## Red lines (this topic)
 
 - One owner per section; `registerSection` throws on duplicate domains.
-- `config` (L2) never imports a higher domain — keep section schemas in the owning domain.
+- `config` never imports the domains that consume it — keep section schemas in the owning domain.
 - Config is the **preference registry**: register only values that are preferences, persistable, schema'd, and user/operator-facing. Facts → `IBootstrapService`; session state → Session scope; constants → code.
 - Business domains read `config.get(...)` or structured `IBootstrapService` facts; never call `IBootstrapService.getEnv()` directly — only `config` reads the raw env bag to build overlays.
-- Keep `IBootstrapService` domain-agnostic: never add state tied to a specific upper domain (cron, flags, model params, …). Domain-specific config goes through `registerSection` + `envBindings`, read via `config.get(...)`.
+- Keep `IBootstrapService` domain-agnostic: host invocation arguments (CLI flags, host identity headers, prompt identity) go into `BootstrapInput.args` / `IBootstrapService.args` — never into new per-domain runtime-options services; domain runtime state (cron, flags, model params, …) never goes onto `IBootstrapService` at all. Domain-specific config goes through `registerSection` + `envBindings`, read via `config.get(...)`.
 - Do not pass a whole config bag via options; read each section through `IConfigService`. There is no `KimiConfig` object — config is a registry of owner-owned sections.
 - `config.toml` is snake_case on disk, camelCase in memory — never write camelCase keys to disk, and never write to `config.toml` except through `IConfigService.set/replace`.
 - Reading config / calling `configure(...)` / switching model at runtime must not rewrite `config.toml`; runtime state lives in memory and the session wireRecord, not the file.

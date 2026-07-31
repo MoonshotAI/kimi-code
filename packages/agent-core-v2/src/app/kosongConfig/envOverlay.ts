@@ -1,5 +1,5 @@
 /**
- * `kosongConfig` domain (L3) — `KIMI_MODEL_*` effective-config overlay.
+ * `kosongConfig` domain — `KIMI_MODEL_*` effective-config overlay.
  *
  * When `KIMI_MODEL_NAME` is set, synthesizes one model id (bound to the
  * reserved `__kimi_env__` provider whose schema kosong owns) from the
@@ -8,15 +8,13 @@
  * `modelOverrides`. The overlay is applied ONLY to the in-memory `effective`
  * view; its `strip` removes the synthesized values on the write path so they
  * never reach `config.toml`. Self-registered into `IConfigRegistry` at module
- * load (see `configOverlayContributions.ts`), so the `config` domain never
- * imports kosong semantics, and so the overlay takes effect even when the
- * kosong registry services are never instantiated.
+ * load, so the overlay takes effect even when the kosong registry services
+ * are never instantiated.
  *
  * The env provider's default `baseUrl` is resolved through kosong's
- * provider-definition registry (`resolveProviderEndpoint` against the same
- * env the overlay reads), not from a hardcoded vendor table — for Kimi that
- * is the `KIMI_BASE_URL` → `https://api.moonshot.ai/v1` chain declared by the
- * vendor's traits.
+ * provider-definition registry, not from a hardcoded vendor table — for Kimi
+ * that is the `KIMI_BASE_URL` → `https://api.moonshot.ai/v1` chain declared
+ * by the vendor's traits.
  */
 
 import { parseBooleanEnv } from '#/_base/utils/env';
@@ -176,9 +174,7 @@ export const kimiModelEnvOverlay: ConfigEffectiveOverlay = {
     const providerBaseUrl =
       typeof envProvider['baseUrl'] === 'string' && envProvider['baseUrl'].length > 0
         ? envProvider['baseUrl']
-        : // The registry is the single endpoint authority: the vendor's
-          // `baseUrlEnv` → `defaultBaseUrl` chain, read from the same env the
-          // overlay reads (no hardcoded vendor table).
+        :
           resolveProviderEndpoint(providerType, envBagOf(getEnv)).baseUrl;
     const providerPatch: Record<string, unknown> = {};
     if (envProvider['type'] === undefined) providerPatch['type'] = 'kimi';
@@ -225,10 +221,6 @@ export const kimiModelEnvOverlay: ConfigEffectiveOverlay = {
   },
 };
 
-/**
- * Adapt the overlay's `getEnv` to the env-bag shape `resolveProviderEndpoint`
- * reads, so the endpoint chain honors exactly the env the overlay sees.
- */
 function envBagOf(
   getEnv: (name: string) => string | undefined,
 ): Readonly<Record<string, string | undefined>> {

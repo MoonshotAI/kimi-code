@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ICreateGoalTool` contract.
+ * `tools` domain — `ICreateGoalTool` contract.
  *
  * Public contract of the CreateGoal tool: the input schema the model calls
  * with and the Agent-scope identifier used to resolve the implementation

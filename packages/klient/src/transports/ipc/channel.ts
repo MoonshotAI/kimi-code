@@ -45,9 +45,10 @@ interface PendingStream {
   error(err: Error): void;
 }
 
-function scopeKindOf(scope: ScopeRef): 'core' | 'session' | 'agent' {
+function scopeKindOf(scope: ScopeRef): 'core' | 'workspace' | 'session' | 'agent' {
   if (scope.agentId !== undefined) return 'agent';
   if (scope.sessionId !== undefined) return 'session';
+  if (scope.workspaceId !== undefined) return 'workspace';
   return 'core';
 }
 
@@ -122,6 +123,7 @@ export class IpcChannel implements KlientChannel {
       // NDJSON is JSON: trailing optional args would cross as `null` and
       // defeat the host's default parameters — trim them.
       arg: trimTrailingUndefined(args),
+      workspaceId: scope.workspaceId,
       sessionId: scope.sessionId,
       agentId: scope.agentId,
     });
@@ -207,6 +209,7 @@ export class IpcChannel implements KlientChannel {
               service,
               method,
               arg: trimTrailingUndefined(args),
+              workspaceId: scope.workspaceId,
               sessionId: scope.sessionId,
               agentId: scope.agentId,
             });
@@ -261,6 +264,7 @@ export class IpcChannel implements KlientChannel {
       type: 'listen',
       id,
       scope: scopeKindOf(scope),
+      workspaceId: scope.workspaceId,
       sessionId: scope.sessionId,
       agentId: scope.agentId,
     };

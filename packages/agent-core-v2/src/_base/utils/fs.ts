@@ -112,3 +112,43 @@ export async function atomicWrite(
     }
   }
 }
+
+export async function atomicWriteStream(
+  filePath: string,
+  source: AsyncIterable<Uint8Array>,
+  mode?: number,
+): Promise<void> {
+  const hex = randomBytes(4).toString('hex');
+  const tmpPath = `${filePath}.tmp.${process.pid}.${hex}`;
+  let renamed = false;
+  try {
+    const fh = await open(tmpPath, 'w', mode);
+    try {
+      for await (const chunk of source) {
+        if (chunk.byteLength > 0) {
+          await fh.writeFile(chunk);
+        }
+      }
+      await fh.sync();
+    } finally {
+      await fh.close();
+    }
+    if (process.platform === 'win32') {
+      try {
+        await unlink(filePath);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT') throw error;
+      }
+    }
+    await rename(tmpPath, filePath);
+    renamed = true;
+  } finally {
+    if (!renamed) {
+      try {
+        await unlink(tmpPath);
+      } catch {
+      }
+    }
+  }
+}

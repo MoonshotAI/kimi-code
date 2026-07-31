@@ -1,14 +1,11 @@
 /**
- * `subagent` domain (L6) — helper that runs one prompt (or retry) turn on
+ * `subagent` domain — helper that runs one prompt (or retry) turn on
  * an agent and distills a summary from its context once the turn ends.
  *
  * Not a Service: `runAgentTurn` is a pure function that borrows
  * `IAgentPromptService`, `IAgentContextMemoryService`, `IAgentUsageService`,
  * and `IEventBus` from the target agent's scope. It has no notion of a caller:
- * it emits no record signals, runs no hooks, and tracks no telemetry. Callers
- * that want to surface the run on their own record stream (the `Agent` tool,
- * the swarm scheduler) compose this with `mirrorAgentRun` from the `agentTool`
- * domain.
+ * it emits no record signals, runs no hooks, and tracks no telemetry.
  *
  * The lifecycle is imperative — the caller awaits the returned `completion`
  * promise. Turn hooks are not used because there is exactly one observer (the
@@ -79,8 +76,6 @@ async function awaitRun(
   const controller = new AbortController();
   const unlink = linkAbortSignal(options.signal, controller);
   const loop = target.accessor.get(IAgentLoopService);
-  // Cancel by turn id: `loop.cancel(undefined, …)` only reaches the active
-  // turn, but this run's turn may still be queued when the abort lands.
   const cancelTurn = (turnToCancel: Turn, reason: unknown): void => {
     loop.cancel(turnToCancel.id, reason);
   };
@@ -107,17 +102,6 @@ async function awaitRun(
   }
 }
 
-/**
- * Await a turn's terminal result, cancelling it first when the run aborts.
- *
- * This deliberately does NOT race `turn.result` against the abort signal:
- * the loop only goes idle once `runTurn` unwinds (`releaseActiveTurn`), and
- * downstream consumers — task settlement, the `task.killed` notification,
- * and the resume guard reading `loop.status()` — must not observe the run
- * as finished before that. A turn that never responds to the cancel is
- * still bounded by the task layer's SIGTERM grace, not by an early
- * rejection here.
- */
 async function awaitTurn(
   turn: Turn,
   controller: AbortController,
@@ -132,9 +116,6 @@ async function awaitTurn(
       cancelOnAbort();
     }
     const result = await turn.result;
-    // Rethrow the original abort reason instead of returning the cancelled
-    // result: consumers match the reason by identity (`isAbortError` /
-    // `error === sink.signal.reason`) to tell a kill apart from a failure.
     controller.signal.throwIfAborted();
     return result;
   } finally {

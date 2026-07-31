@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IUpdateGoalTool` implementation.
+ * `tools` domain — `IUpdateGoalTool` implementation.
  *
  * Updates the current goal's status through the goal service (`goal`); the
  * turn driver reads the status at each turn boundary and stops (`complete` /

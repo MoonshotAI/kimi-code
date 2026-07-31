@@ -1,5 +1,5 @@
 /**
- * `kosong/contract` domain (L0) — token usage wire shape and aggregations.
+ * `kosong/contract` domain — token usage wire shape and aggregations.
  *
  * `TokenUsage` is the common usage breakdown for a single LLM generation.
  * Providers map their native usage counters into this shape so callers can

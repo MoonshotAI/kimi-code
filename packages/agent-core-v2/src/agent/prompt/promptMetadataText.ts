@@ -1,5 +1,5 @@
 /**
- * `prompt` domain (L4) — safe, displayable metadata text derived from prompts.
+ * `prompt` domain — safe, displayable metadata text derived from prompts.
  *
  * Shared by prompt submission and undo projection so `lastPrompt` uses one
  * normalization, redaction, and length limit, with image captions supplied by

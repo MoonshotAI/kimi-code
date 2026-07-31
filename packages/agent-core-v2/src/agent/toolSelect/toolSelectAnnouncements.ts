@@ -1,5 +1,5 @@
 /**
- * `toolSelect` domain (L4) — `IAgentToolSelectAnnouncementsService` contract.
+ * `toolSelect` domain — `IAgentToolSelectAnnouncementsService` contract.
  *
  * Defines the Agent-scope marker service that appends v1-compatible
  * loadable-tools announcements through `systemReminder` at loop boundaries.

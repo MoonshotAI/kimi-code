@@ -1,10 +1,10 @@
 /**
- * `workspaceAliases` domain (L2) — `IWorkspaceAliases` implementation.
+ * `workspaceAliases` domain — `IWorkspaceAliases` implementation.
  *
  * Resolves every id spelling of one physical directory by folding the
  * registered catalog (by `workspaceRootKey`) together with `workDir`
- * spellings recorded only in the legacy `session_index.jsonl`, through the
- * shared `workspaceAlias` helpers. The catalog is reached through
+ * spellings recorded only in the legacy `session_index.jsonl`. The catalog
+ * is reached through
  * `IWorkspaceService.get` first — its once-per-process session-index sync
  * (`ensureMerged`) must have run before the raw catalog is read from
  * `IWorkspacePersistence` — and the raw (un-deduped) catalog is required
@@ -34,10 +34,7 @@ export class WorkspaceAliasesService implements IWorkspaceAliases {
   ) {}
 
   async resolveAliasIds(id: string): Promise<readonly string[]> {
-    // Goes through the workspace service so the once-per-process session-index
-    // sync has run before the raw catalog is read below.
     const entry = await this.workspaces.get(id);
-    // Unknown ids stay singletons so callers keep their not-found semantics.
     if (entry === undefined) return [id];
     const catalog = (await this.store.load()) ?? { workspaces: [], deletedIds: [] };
     return collectAliasIds(

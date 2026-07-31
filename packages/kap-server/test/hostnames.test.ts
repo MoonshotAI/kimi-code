@@ -14,6 +14,7 @@ import {
   stripPort,
 } from '../src/middleware/hostnames';
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
 describe('stripPort', () => {
   it('strips the port from a hostname', () => {
@@ -187,6 +188,7 @@ describe('startServer allowedHosts — env + option merge', () => {
     process.env[ENV_KEY] = 'env-only.example.com';
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-host-merge-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,

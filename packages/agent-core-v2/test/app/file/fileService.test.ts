@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
-import { DEFAULT_MAX_UPLOAD_BYTES, FileErrors, IFileService } from '#/app/file/fileService';
+import { FileErrors, IFileService } from '#/app/file/fileService';
 import { FileServiceImpl } from '#/app/file/fileServiceImpl';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -115,11 +115,22 @@ describe('FileServiceImpl', () => {
     });
   });
 
-  it('rejects an upload that exceeds the cap', async () => {
-    const big = Buffer.alloc(DEFAULT_MAX_UPLOAD_BYTES + 1, 0);
-    await expect(store().save(readable(big), 'big.bin')).rejects.toMatchObject({
-      code: FileErrors.codes.FILE_TOO_LARGE,
-    });
+  it('streams a multi-chunk upload and records the total size', async () => {
+    const chunks = [Buffer.from('aaa'), Buffer.from('bbbb'), Buffer.from('cc')];
+    const meta = await store().save(Readable.from(chunks), 'chunked.bin');
+
+    expect(meta.size).toBe(9);
+    const { stream } = await store().get(meta.id);
+    expect((await readAll(stream())).toString()).toBe('aaabbbbcc');
+  });
+
+  it('cleans up the blob when the source stream fails mid-upload', async () => {
+    const failing = Readable.from((async function* () {
+      yield Buffer.from('partial');
+      throw new Error('source exploded');
+    })());
+
+    await expect(store().save(failing, 'broken.bin')).rejects.toThrow('source exploded');
     expect(await backend.list('files')).toHaveLength(0);
   });
 

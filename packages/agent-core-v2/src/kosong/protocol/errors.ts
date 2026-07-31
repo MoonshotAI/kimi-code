@@ -1,5 +1,5 @@
 /**
- * `kosong/protocol` domain (L1) — wire API failure codes and the boundary
+ * `kosong/protocol` domain — wire API failure codes and the boundary
  * translation from raw contract errors to coded `Error2`s.
  *
  * `translateProviderError` converts the L0 `API*Error` family into coded
@@ -18,6 +18,7 @@ import {
   APIContextOverflowError,
   APIEmptyResponseError,
   APIProviderOverloadedError,
+  APIProviderQuotaExhaustedError,
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
@@ -77,9 +78,6 @@ export const ProtocolErrors = {
 registerErrorDomain(ProtocolErrors);
 
 export function translateProviderError(error: unknown): Error2 {
-  // Abort guard FIRST: throws the standard abort DOMException for any abort
-  // shape — a cancellation is never converted into (or returned as) a
-  // retryable provider error.
   throwIfAbortError(error);
   if (isError2(error)) {
     return error;
@@ -90,11 +88,13 @@ export function translateProviderError(error: unknown): Error2 {
         ? ProtocolErrors.codes.CONTEXT_OVERFLOW
         : error instanceof APIProviderOverloadedError || error.statusCode === 529
           ? ProtocolErrors.codes.PROVIDER_OVERLOADED
-          : error.statusCode === 429
-            ? ProtocolErrors.codes.PROVIDER_RATE_LIMIT
-            : error.statusCode === 401 || error.statusCode === 403
-              ? ProtocolErrors.codes.PROVIDER_AUTH_ERROR
-              : ProtocolErrors.codes.PROVIDER_API_ERROR;
+          : error instanceof APIProviderQuotaExhaustedError
+            ? ProtocolErrors.codes.PROVIDER_API_ERROR
+            : error.statusCode === 429
+              ? ProtocolErrors.codes.PROVIDER_RATE_LIMIT
+              : error.statusCode === 401 || error.statusCode === 403
+                ? ProtocolErrors.codes.PROVIDER_AUTH_ERROR
+                : ProtocolErrors.codes.PROVIDER_API_ERROR;
     return new Error2(code, sanitizeStatusErrorMessage(error.message), {
       name: error.name,
       cause: error,
@@ -140,11 +140,6 @@ export function translateProviderError(error: unknown): Error2 {
   return new Error2(CoreErrors.codes.INTERNAL, String(error), { cause: error });
 }
 
-/**
- * Normalize a provider status-error message for display: when the body is an
- * HTML error page, keep only its `<title>` text; always strip carriage
- * returns so multi-line wire bodies render sanely in logs and UI.
- */
 export function sanitizeStatusErrorMessage(message: string): string {
   const titleMatch = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(message);
   const extracted = titleMatch?.[1]?.trim();

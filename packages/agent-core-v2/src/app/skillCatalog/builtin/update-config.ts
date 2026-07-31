@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — builtin `update-config` skill definition.
+ * `skillCatalog` domain — builtin `update-config` skill definition.
  */
 
 import type { SkillDefinition } from '#/app/skillCatalog/types';

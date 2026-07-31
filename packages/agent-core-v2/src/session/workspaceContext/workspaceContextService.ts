@@ -1,19 +1,23 @@
 /**
- * `workspaceContext` domain (L1) — `ISessionWorkspaceContext` implementation.
+ * `workspaceContext` domain — `ISessionWorkspaceContext` implementation.
  *
  * Holds the session work directory and additional dirs, resolves relative
- * paths, and checks whether a path falls within the workspace. The plain-data
- * state (`workDir`, `additionalDirs`) is registered into `sessionState`
- * (`ISessionStateService`) and read/written through it. Bound at Session
- * scope.
+ * paths, and checks whether a path falls within the workspace. `workDir` is
+ * frozen at construction (`cwd`); the
+ * additional dirs are a live read view over the handler-shared set, refreshed
+ * through the seed's change event. The plain-data state (`workDir`,
+ * `additionalDirs`) is registered into the session-state container and read
+ * through it. Bound at Session scope.
  */
 
 import { isAbsolute, relative, resolve } from 'node:path';
 
+import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
+import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 
 import { ISessionWorkspaceContext, type PathAccessOperation } from './workspaceContext';
 
@@ -23,32 +27,36 @@ export const workspaceContextAdditionalDirsKey = defineState<string[]>(
   () => [],
 );
 
-export class SessionWorkspaceContextService implements ISessionWorkspaceContext {
+export class SessionWorkspaceContextService extends Disposable implements ISessionWorkspaceContext {
   declare readonly _serviceBrand: undefined;
 
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
     @ISessionContext ctx: ISessionContext,
+    @ISessionWorkspaceInfo workspaceInfo: ISessionWorkspaceInfo,
   ) {
+    super();
     this.states.register(workspaceContextWorkDirKey);
     this.states.register(workspaceContextAdditionalDirsKey);
-    this.setWorkDir(ctx.cwd);
+    this.states.set(workspaceContextWorkDirKey, resolve(ctx.cwd));
+    this.states.set(workspaceContextAdditionalDirsKey, [
+      ...new Set(workspaceInfo.additionalDirs.map((d) => resolve(d))),
+    ]);
+    this._register(
+      workspaceInfo.onDidChange(() => {
+        this.states.set(workspaceContextAdditionalDirsKey, [
+          ...new Set(workspaceInfo.additionalDirs.map((d) => resolve(d))),
+        ]);
+      }),
+    );
   }
 
   private get _workDir(): string {
     return this.states.get(workspaceContextWorkDirKey);
   }
 
-  private set _workDir(value: string) {
-    this.states.set(workspaceContextWorkDirKey, value);
-  }
-
   private get _additionalDirs(): string[] {
     return this.states.get(workspaceContextAdditionalDirsKey);
-  }
-
-  private set _additionalDirs(value: string[]) {
-    this.states.set(workspaceContextAdditionalDirsKey, value);
   }
 
   get workDir(): string {
@@ -57,14 +65,6 @@ export class SessionWorkspaceContextService implements ISessionWorkspaceContext 
 
   get additionalDirs(): readonly string[] {
     return this._additionalDirs;
-  }
-
-  setWorkDir(workDir: string): void {
-    this._workDir = resolve(workDir);
-  }
-
-  setAdditionalDirs(dirs: readonly string[]): void {
-    this._additionalDirs = [...new Set(dirs.map((d) => resolve(d)))];
   }
 
   resolve(rel: string): string {
@@ -88,16 +88,6 @@ export class SessionWorkspaceContextService implements ISessionWorkspaceContext 
       throw new Error(`Path outside workspace (${op}): ${target}`);
     }
     return target;
-  }
-
-  addAdditionalDir(dir: string): void {
-    const d = resolve(dir);
-    if (!this._additionalDirs.includes(d)) this._additionalDirs.push(d);
-  }
-
-  removeAdditionalDir(dir: string): void {
-    const d = resolve(dir);
-    this._additionalDirs = this._additionalDirs.filter((x) => x !== d);
   }
 }
 

@@ -25,11 +25,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import {
-  fetchChannelDescriptors,
-  type ChannelDescriptor,
-  type ChannelScope,
-} from '../channel';
+import { fetchChannelDescriptors, type ChannelDescriptor, type ChannelScope } from '../channel';
 import { useConnection } from '../connection';
 import {
   AGENT_PANELS,
@@ -123,18 +119,11 @@ export function ScopePanels({
       ) : null}
       {entries.map(({ name, channel, def }) => {
         if (def !== undefined) {
-          return (
-            <ServiceCard key={name} def={def} svc={proxyFor(name)} onError={onError} />
-          );
+          return <ServiceCard key={name} def={def} svc={proxyFor(name)} onError={onError} />;
         }
         if (channel === undefined) return null;
         return (
-          <DynamicServiceCard
-            key={name}
-            channel={channel}
-            svc={proxyFor(name)}
-            onError={onError}
-          />
+          <DynamicServiceCard key={name} channel={channel} svc={proxyFor(name)} onError={onError} />
         );
       })}
     </>
@@ -280,7 +269,11 @@ export function ScopePanelsScrollspy({
           </button>
         ))}
       </nav>
-      <div ref={scrollRef} onScroll={syncActive} className="min-w-0 flex-1 overflow-y-auto px-4 py-3">
+      <div
+        ref={scrollRef}
+        onScroll={syncActive}
+        className="min-w-0 flex-1 overflow-y-auto px-4 py-3"
+      >
         {channels.isError ? (
           <div className="mb-2">
             <ErrorLine error={channels.error} />
@@ -359,7 +352,15 @@ function makeRecordingProxy(
         const at = Date.now();
         return Promise.resolve(member(...args)).then(
           (result) => {
-            record({ service, method: String(prop), args, at, durationMs: Date.now() - at, ok: true, result });
+            record({
+              service,
+              method: String(prop),
+              args,
+              at,
+              durationMs: Date.now() - at,
+              ok: true,
+              result,
+            });
             return result;
           },
           (error: unknown) => {
@@ -413,7 +414,9 @@ function HistoryPane({
                 className="flex cursor-pointer items-center gap-2 px-2 py-1.5 select-none"
                 onClick={() => onToggle(r.id)}
               >
-                <span className={`shrink-0 text-[9px] ${r.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+                <span
+                  className={`shrink-0 text-[9px] ${r.ok ? 'text-emerald-400' : 'text-red-400'}`}
+                >
                   ●
                 </span>
                 <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-neutral-200">
@@ -517,12 +520,18 @@ function ServiceCard({
         ) : null}
       </div>
       <div className="px-3 py-2">
-        {error !== null ? <div className="mb-2"><ErrorLine error={error} /></div> : null}
+        {error !== null ? (
+          <div className="mb-2">
+            <ErrorLine error={error} />
+          </div>
+        ) : null}
         {def.fetch !== undefined ? (
           loaded ? (
             <JsonView data={data} />
           ) : (
-            <div className="text-[11px] text-neutral-600 italic">click Load to read this Service</div>
+            <div className="text-[11px] text-neutral-600 italic">
+              click Load to read this Service
+            </div>
           )
         ) : null}
         {def.actions !== undefined && def.actions.length > 0 ? (
@@ -560,7 +569,9 @@ function ServiceCard({
           </div>
         ) : null}
         {def.fetch === undefined && data !== undefined ? (
-          <div className="mt-2"><JsonView data={data} /></div>
+          <div className="mt-2">
+            <JsonView data={data} />
+          </div>
         ) : null}
       </div>
     </div>
@@ -738,7 +749,9 @@ function MethodArgInputs({
               <ArgLabel label={f.name} />
               <ArgInput
                 placeholder={
-                  f.defaultValue !== undefined ? `default: ${f.defaultValue}` : 'JSON or plain string'
+                  f.defaultValue !== undefined
+                    ? `default: ${f.defaultValue}`
+                    : 'JSON or plain string'
                 }
                 value={values[fieldKey(i)] ?? ''}
                 onChange={(v) => onChange(fieldKey(i), v)}

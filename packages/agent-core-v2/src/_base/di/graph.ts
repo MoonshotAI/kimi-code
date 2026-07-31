@@ -1,5 +1,5 @@
 /**
- * `di` domain (L0) — directed `Graph` with cycle detection for DI instantiation.
+ * `di` domain — directed `Graph` with cycle detection for DI instantiation.
  */
 
 export class Node<T> {

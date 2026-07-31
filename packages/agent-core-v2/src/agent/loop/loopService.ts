@@ -1,5 +1,5 @@
 /**
- * `loop` domain (L4) — `IAgentLoopService` implementation.
+ * `loop` domain — `IAgentLoopService` implementation.
  *
  * Owns a FIFO of Turn jobs, each with its own `StepRequestQueue`. Admission
  * reserves a stable Turn handle immediately; the head job alone books the
@@ -13,17 +13,11 @@
  * (plus any mergeable requests folded into it) materializes its context
  * messages, then one LLM step runs (`onWillBeginStep` → streamed request → content
  * parts → tool execution → `step.end` → `onDidFinishStep`). The loop itself never
- * enqueues — it only runs requests and dispatches errors. What drives the
- * next step lives entirely in the aspects: the `loopContinuation` aspect
- * enqueues a `ContinuationStepRequest` when a step executed tools (a plain
- * assistant message enqueues nothing, so the queue empties and the turn
- * completes), and orchestrators (`prompt`, `goal`, `externalHooks`, `task`)
- * steer the turn by enqueueing further requests. A failed step is dispatched
- * to the registered error handlers (first match wins); a handler that claims
- * and catches the error has already enqueued the turn's continuation itself —
- * `stepRetry` re-enqueues the failed driver after backoff, `fullCompaction`
- * compacts and re-enqueues it — so the loop only learns caught-or-not, while
- * an unclaimed or uncaught error fails the turn. Emits `turn.*` / delta
+ * enqueues — it only runs requests and dispatches errors. A failed step is
+ * dispatched to the registered error handlers (first match wins); a handler
+ * that claims and catches the error has already enqueued the turn's
+ * continuation itself, so the loop only learns caught-or-not, while an
+ * unclaimed or uncaught error fails the turn. Emits `turn.*` / delta
  * events through `event`, persists loop events through `contextMemory`, and
  * reads the step budget from `config`. The plain-data loop state
  * (`nextReservedTurnId`, `lastRequestTraceId`, `disposing`) is registered
@@ -32,10 +26,7 @@
  * holds resources (`AbortController`, controlled promises, a
  * `StepRequestQueue`) that must not be snapshotted, alongside the mechanism
  * resources (`standaloneStepQueue`, `pendingAssignments`, `errorHandlers`,
- * `settleWaiters`, `activeRequestTrace`). Bound at Agent
- * scope. The `turnEvents` import is load-bearing beyond the prompt-text
- * helper: it loads the `DomainEventMap` augmentation for the `turn.*` / delta
- * events published here, which lives with the event definitions.
+ * `settleWaiters`, `activeRequestTrace`). Bound at Agent scope.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -53,12 +44,13 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { type FinishReason } from '#/kosong/contract/provider';
-import { type StreamedMessagePart } from '#/kosong/contract/message';
+import { mergeInPlace, type ContentPart, type StreamedMessagePart } from '#/kosong/contract/message';
 import { type TokenUsage } from '#/kosong/contract/usage';
 import { BugIndicatingError, ErrorCodes, Error2, isError2, toKimiErrorPayload } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import type {
@@ -92,8 +84,8 @@ import {
   type TurnSeed,
 } from './stepRequest';
 import { StepRequestQueue, type StepRequestBatch } from './stepRequestQueue';
-import { isDisplayablePromptOrigin, turnPromptText } from './turnEvents';
-import { cancelTurn, promptTurn, TurnModel } from './turnOps';
+import { isDisplayablePromptOrigin, turnPromptText, type TurnInterruptReason } from './turnEvents';
+import { cancelTurn, endTurn, promptTurn, TurnModel } from './turnOps';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
 
@@ -283,7 +275,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private cancelActiveTurn(turnId: number | undefined, cancellation: unknown): boolean {
     const job = this.activeTurnJob;
     if (job === undefined || (turnId !== undefined && job.turn.id !== turnId)) return false;
-    this.wire.dispatch(cancelTurn({ turnId: job.turn.id, target: 'active' }));
+    if (job.controller.signal.aborted) return true;
+    this.wire.dispatch(
+      cancelTurn({ turnId: job.turn.id, target: 'active', reason: cancelReasonFor(cancellation) }),
+    );
     job.controller.abort(cancellation);
     return true;
   }
@@ -293,7 +288,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (index < 0) return false;
     const [job] = this.pendingTurns.splice(index, 1);
     if (job === undefined || job.turn.state !== 'queued') return false;
-    this.wire.dispatch(cancelTurn({ turnId, target: 'queued' }));
+    this.wire.dispatch(cancelTurn({ turnId, target: 'queued', reason: cancelReasonFor(cancellation) }));
     for (const step of job.steps.values()) step.cancel(cancellation);
     job.controller.abort(cancellation);
     job.turn.state = 'cancelled';
@@ -453,8 +448,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private startTurn(job: TurnJob): void {
     const origin = job.seed.origin;
-    // The loop owns the turn's abort channel outright (job.controller) and
-    // reports to no one — busy is derived from its events, never registered.
     this.wire.dispatch(promptTurn({ input: job.seed.input, origin }));
     job.turn.state = 'running';
     this.activeTurnJob = job;
@@ -506,20 +499,25 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           : this.activeRequestTrace?.traceId;
       if (result !== undefined) {
         const error = result.type === 'failed' ? toKimiErrorPayload(result.error) : undefined;
+        const interruptReason =
+          result.type === 'completed' ? undefined : interruptReasonFor(result);
+        const durationMs = Date.now() - startedAt;
+        this.wire.dispatch(endTurn({ turnId: turn.id, reason: result.type, error, durationMs }));
         this.eventBus.publish({
           type: 'turn.ended',
           turnId: turn.id,
           reason: result.type,
           error,
-          durationMs: Date.now() - startedAt,
+          durationMs,
+          interruptReason,
         });
         if (error !== undefined) this.eventBus.publish({ type: 'error', ...error });
-        if (result.type !== 'completed') {
+        if (interruptReason !== undefined) {
           const interrupted: TurnInterruptedEvent = {
             turn_id: turn.id,
             at_step: result.steps,
             mode,
-            interrupt_reason: interruptReasonFor(result),
+            interrupt_reason: interruptReason,
             provider_type,
             protocol,
             thinking_effort: thinkingEffort,
@@ -618,6 +616,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           const result = await this.executeLoopStep(
             runtime.turnId,
             begun.step.signal,
+            runtime.turnSignal,
             begun.step.number,
             begun.step.uuid,
             options.onStarted,
@@ -801,6 +800,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private async executeLoopStep(
     turnId: number,
     signal: AbortSignal,
+    turnSignal: AbortSignal,
     currentStep: number,
     stepUuid: string,
     onStarted: ((step: number) => void) | undefined,
@@ -808,13 +808,20 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.activeRequestTrace = undefined;
     await this.hooks.onWillBeginStep.run({ turnId, step: currentStep, signal });
     const markStepStarted = this.beginStep(turnId, signal, currentStep, stepUuid, onStarted);
+    const streamParts = this.createStreamPartHandler(turnId, markStepStarted);
     const request = this.llmRequester.start(
       { source: { type: 'turn', turnId, step: currentStep } },
-      this.createStreamPartHandler(turnId, markStepStarted),
+      streamParts.handle,
       signal,
     );
     this.activeRequestTrace = request.trace;
-    const response = await request.result;
+    let response: AgentLLMRequestFinish;
+    try {
+      response = await request.result;
+    } catch (error) {
+      this.appendInterruptedStreamContent(turnId, currentStep, stepUuid, streamParts, turnSignal);
+      throw error;
+    }
     this.lastRequestTraceId = request.trace.traceId;
     this.appendResponseContent(turnId, currentStep, stepUuid, response);
     const finishReason = await this.executeStepTools(
@@ -866,6 +873,26 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     response: AgentLLMRequestFinish,
   ): void {
     for (const part of response.message.content) {
+      this.context.appendLoopEvent({
+        type: 'content.part',
+        uuid: randomUUID(),
+        turnId: String(turnId),
+        step: currentStep,
+        stepUuid,
+        part,
+      });
+    }
+  }
+
+  private appendInterruptedStreamContent(
+    turnId: number,
+    currentStep: number,
+    stepUuid: string,
+    streamParts: StreamPartCollector,
+    turnSignal: AbortSignal,
+  ): void {
+    if (!turnSignal.aborted) return;
+    for (const part of streamParts.drainInterruptedContent()) {
       this.context.appendLoopEvent({
         type: 'content.part',
         uuid: randomUUID(),
@@ -1031,54 +1058,69 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private createStreamPartHandler(
     turnId: number,
     onResponseEvent: () => void,
-  ): (part: StreamedMessagePart) => void {
+  ): StreamPartCollector {
     const callsByIndex = new Map<number | string | undefined, { id: string; name: string }>();
+    const partialContent: ContentPart[] = [];
+    let forceContentPartBoundary = false;
+    const accumulate = (part: ContentPart): void => {
+      const last = partialContent.at(-1);
+      if (!forceContentPartBoundary && last !== undefined && mergeInPlace(last, part)) return;
+      forceContentPartBoundary = false;
+      partialContent.push({ ...part });
+    };
 
-    return (part) => {
-      switch (part.type) {
-        case 'text':
-          onResponseEvent();
-          this.eventBus.publish({ type: 'assistant.delta', turnId, delta: part.text });
-          return;
-        case 'think':
-          onResponseEvent();
-          this.eventBus.publish({ type: 'thinking.delta', turnId, delta: part.think });
-          return;
-        case 'image_url':
-        case 'audio_url':
-        case 'video_url':
-          return;
-        case 'function': {
-          onResponseEvent();
-          callsByIndex.set(part._streamIndex, { id: part.id, name: part.name });
-          this.eventBus.publish({
-            type: 'tool.call.delta',
-            turnId,
-            toolCallId: part.id,
-            name: part.name,
-            argumentsPart: part.arguments ?? undefined,
-          });
-          return;
+    return {
+      handle: (part) => {
+        switch (part.type) {
+          case 'text':
+            onResponseEvent();
+            accumulate(part);
+            this.eventBus.publish({ type: 'assistant.delta', turnId, delta: part.text });
+            return;
+          case 'think':
+            onResponseEvent();
+            accumulate(part);
+            this.eventBus.publish({ type: 'thinking.delta', turnId, delta: part.think });
+            return;
+          case 'image_url':
+          case 'audio_url':
+          case 'video_url':
+            return;
+          case 'function': {
+            onResponseEvent();
+            forceContentPartBoundary = true;
+            callsByIndex.set(part._streamIndex, { id: part.id, name: part.name });
+            this.eventBus.publish({
+              type: 'tool.call.delta',
+              turnId,
+              toolCallId: part.id,
+              name: part.name,
+              argumentsPart: part.arguments ?? undefined,
+            });
+            return;
+          }
+          case 'tool_call_part': {
+            if (part.argumentsPart === null) return;
+            const toolCall = callsByIndex.get(part.index);
+            if (toolCall === undefined) return;
+            onResponseEvent();
+            this.eventBus.publish({
+              type: 'tool.call.delta',
+              turnId,
+              toolCallId: toolCall.id,
+              name: toolCall.name,
+              argumentsPart: part.argumentsPart,
+            });
+            return;
+          }
+          default: {
+            const _exhaustive: never = part;
+            return _exhaustive;
+          }
         }
-        case 'tool_call_part': {
-          if (part.argumentsPart === null) return;
-          const toolCall = callsByIndex.get(part.index);
-          if (toolCall === undefined) return;
-          onResponseEvent();
-          this.eventBus.publish({
-            type: 'tool.call.delta',
-            turnId,
-            toolCallId: toolCall.id,
-            name: toolCall.name,
-            argumentsPart: part.argumentsPart,
-          });
-          return;
-        }
-        default: {
-          const _exhaustive: never = part;
-          return _exhaustive;
-        }
-      }
+      },
+      drainInterruptedContent: () =>
+        partialContent.splice(0).filter((part) => !isVacuousContentPart(part)),
     };
   }
 }
@@ -1137,9 +1179,18 @@ interface StepRuntime {
 
 type BeginStepResult = { readonly step: StepRuntime } | { readonly result: LoopRunResult };
 
+interface StreamPartCollector {
+  readonly handle: (part: StreamedMessagePart) => void;
+  drainInterruptedContent(): ContentPart[];
+}
+
+function cancelReasonFor(cancellation: unknown): 'user_cancelled' | 'aborted' {
+  return isUserCancellation(cancellation) ? 'user_cancelled' : 'aborted';
+}
+
 function interruptReasonFor(
   result: Extract<TurnResult, { readonly type: 'cancelled' | 'failed' }>,
-): TurnInterruptedEvent['interrupt_reason'] {
+): TurnInterruptReason {
   if (result.type === 'cancelled') {
     return isUserCancellation(result.reason) ? 'user_cancelled' : 'aborted';
   }

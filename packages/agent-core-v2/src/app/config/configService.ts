@@ -1,5 +1,5 @@
 /**
- * `config` domain (L2) — `IConfigRegistry` and `IConfigService` implementations.
+ * `config` domain — `IConfigRegistry` and `IConfigService` implementations.
  *
  * Owns the section registry and the layered global config state: resolves a
  * value by precedence across defaults, the user config file, and per-run memory
@@ -247,8 +247,6 @@ export class ConfigService extends Disposable implements IConfigService {
     this.configKey = this.bootstrap.configKey;
     this._register(this.registry.onDidRegisterSection((e) => this.revalidateDomain(e.domain)));
     this._register(this.registry.onDidRegisterOverlay(() => this.reapplyOverlays()));
-    // One-shot config migrations run before the first load (best-effort, never
-    // throws): rewrites a persisted thinking.effort "max" to "high" once.
     const { configKey } = this;
     const { homeDir } = this.bootstrap;
     this.ready = (async () => {
@@ -333,17 +331,20 @@ export class ConfigService extends Disposable implements IConfigService {
     target: ConfigTarget = ConfigTarget.User,
   ): Promise<void> {
     await this.ready;
+    // `null` is the wire encoding of "clear this domain": JSON transports
+    // (klient memory/ipc, kap-server REST/WS) cannot carry `undefined`.
+    const effectiveValue = value === null ? undefined : value;
     if (target === ConfigTarget.Memory) {
-      if (value === undefined) {
+      if (effectiveValue === undefined) {
         delete this.memory[domain];
       } else {
-        this.memory[domain] = this.registry.validate(domain, value);
+        this.memory[domain] = this.registry.validate(domain, effectiveValue);
       }
       this.commit('set', [domain]);
       return;
     }
     await this.enqueueStateTransition(async () => {
-      const stripped = this.stripEnv(domain, value);
+      const stripped = this.stripEnv(domain, effectiveValue);
       if (stripped === undefined) {
         delete this.raw[domain];
       } else {
@@ -351,6 +352,45 @@ export class ConfigService extends Disposable implements IConfigService {
       }
       await this.persist(domain);
       this.rebuildEffective('set', [domain]);
+    });
+  }
+
+  async replaceSections(
+    sections: Readonly<Record<string, unknown>>,
+    target: ConfigTarget = ConfigTarget.User,
+  ): Promise<void> {
+    await this.ready;
+    const domains = Object.keys(sections);
+    if (domains.length === 0) return;
+    if (target === ConfigTarget.Memory) {
+      const staged: ResolvedConfig = { ...this.memory };
+      for (const domain of domains) {
+        const value = sections[domain];
+        if (value === undefined || value === null) {
+          delete staged[domain];
+        } else {
+          staged[domain] = this.registry.validate(domain, value);
+        }
+      }
+      this.memory = staged;
+      this.commit('set', domains);
+      return;
+    }
+    await this.enqueueStateTransition(async () => {
+      const staged: ResolvedConfig = { ...this.raw };
+      for (const domain of domains) {
+        // Same `null`-means-clear encoding as `replace` (see above).
+        const value = sections[domain] === null ? undefined : sections[domain];
+        const stripped = this.stripEnv(domain, value);
+        if (stripped === undefined) {
+          delete staged[domain];
+        } else {
+          staged[domain] = this.registry.validate(domain, stripped);
+        }
+      }
+      this.raw = staged;
+      await this.persistDomains(domains);
+      this.rebuildEffective('set', domains);
     });
   }
 
@@ -418,13 +458,6 @@ export class ConfigService extends Disposable implements IConfigService {
     this.applyEnvOverlay(next);
     this.effective = next;
 
-    // Commit candidates: the explicitly touched domains PLUS anything the
-    // recompute actually changed. Section env bindings and effective overlays
-    // rewrite sibling domains the caller's list never names (e.g. setting
-    // `[secondary_model]` synthesizes a derived entry into `models`; removing
-    // the recipe retracts it). `commit` re-checks every candidate with
-    // deepEqual before firing, so widening the set is free — missing a real
-    // change is what costs (a stale registry downstream).
     const candidates = new Set(
       domains ?? [...Object.keys(previous), ...Object.keys(next)],
     );
@@ -565,7 +598,13 @@ export class ConfigService extends Disposable implements IConfigService {
   }
 
   private async persist(domain: string): Promise<void> {
-    applySectionToToml(this.rawSnake, domain, this.raw[domain], this.registry);
+    await this.persistDomains([domain]);
+  }
+
+  private async persistDomains(domains: readonly string[]): Promise<void> {
+    for (const domain of domains) {
+      applySectionToToml(this.rawSnake, domain, this.raw[domain], this.registry);
+    }
     await this.documentStore.set(CONFIG_SCOPE, this.configKey, this.rawSnake);
   }
 }

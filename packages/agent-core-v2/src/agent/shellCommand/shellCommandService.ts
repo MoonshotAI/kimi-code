@@ -1,5 +1,5 @@
 /**
- * `shellCommand` domain (L4) — `IAgentShellCommandService` implementation.
+ * `shellCommand` domain — `IAgentShellCommandService` implementation.
  *
  * Runs user-initiated `!` commands through the builtin `Bash` tool from
  * `toolRegistry`, records the command and output as `shell_command`-origin
@@ -38,12 +38,6 @@ import {
   type RunShellCommandResult,
 } from './shellCommand';
 
-/**
- * Live stdout/stderr chunk from a user-initiated `!` shell command. Transient
- * (never persisted, never replayed) — the final output is still recorded once
- * via `context.append_message` on completion. `commandId` lets the TUI route
- * chunks to the matching live entry and drop stale events from a prior run.
- */
 export interface ShellOutputEvent {
   readonly type: 'shell.output';
   readonly commandId: string;
@@ -51,10 +45,6 @@ export interface ShellOutputEvent {
   readonly taskId?: string;
 }
 
-/**
- * Fired once when a `!` shell command's foreground process task is registered,
- * carrying the task id so the client can detach (ctrl+b) it. Transient.
- */
 export interface ShellStartedEvent {
   readonly type: 'shell.started';
   readonly commandId: string;

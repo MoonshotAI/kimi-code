@@ -1,13 +1,12 @@
 /**
- * `externalHooksRunner` domain (L6) — App-scope contract for executing
+ * `externalHooksRunner` domain — App-scope contract for executing
  * configured external hooks.
  *
  * A single App-scope executor owns the configured-hook lifecycle (load from
  * `IConfigService` + `IPluginService`, reload on plugin change) and runs
- * matching hooks. The per-scope observers (`AgentExternalHooksService`,
- * `SessionExternalHooksService`) inject this runner and pass per-call caller
- * facts (`cwd`, `sessionId`, `signal`, matcher/payload) at trigger time, so
- * the runner itself holds no per-scope state.
+ * matching hooks. Per-scope observers inject this runner and pass per-call
+ * caller facts (`cwd`, `sessionId`, `signal`, matcher/payload) at trigger
+ * time, so the runner itself holds no per-scope state.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

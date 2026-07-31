@@ -1,5 +1,5 @@
 /**
- * `di` domain (L0) — `InstantiationService` container (instantiation, child scopes, cycle detection).
+ * `di` domain — `InstantiationService` container (instantiation, child scopes, cycle detection).
  */
 
 import { SyncDescriptor } from './descriptors';

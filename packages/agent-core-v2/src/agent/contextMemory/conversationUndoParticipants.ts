@@ -1,5 +1,5 @@
 /**
- * `contextMemory` domain (L4) — Agent-scoped post-undo reconciliation registry.
+ * `contextMemory` domain — Agent-scoped post-undo reconciliation registry.
  *
  * Hosts state-repair participants for the undo coordinator. Bound at Agent
  * scope.
