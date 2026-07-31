@@ -65,4 +65,16 @@ describe("question flow", () => {
     expect(canAdvanceQuestion(flow, editorQuestion)).toBe(true);
     expect(flow.answers).toEqual({ "Editor?": "Neovim" });
   });
+
+  it("removes a cleared custom response while preserving selected options", () => {
+    let flow = createQuestionFlow(questions);
+    flow = toggleQuestionOption(flow, languageQuestion, "Go");
+    flow = answerQuestionWithCustom(flow, languageQuestion, "Rust");
+
+    flow = answerQuestionWithCustom(flow, languageQuestion, "");
+
+    expect(flow.answers).toEqual({ "Languages?": "Go" });
+    expect(flow.customAnswers).toEqual({});
+    expect(flow.selections["Languages?"]).toEqual(["Go"]);
+  });
 });
