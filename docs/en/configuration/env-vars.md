@@ -111,6 +111,7 @@ Complete variable list:
 | `KIMI_MODEL_REASONING_KEY` | No | Reasoning field name override (`openai` only) | Auto-detected |
 | `KIMI_MODEL_THINKING_EFFORT` | No | Thinking effort level: `low`/`medium`/`high`/`xhigh`/`max` | — |
 | `KIMI_MODEL_ADAPTIVE_THINKING` | No | Force adaptive thinking on or off (`anthropic` only) | Inferred from model name |
+| `KIMI_MODEL_EFFORT_PARAM` | No | Send the Anthropic `output_config.effort` field on the enabled thinking path even when the model name is not recognized (`anthropic` only) | Off |
 
 If `KIMI_MODEL_NAME` is set but a required variable is missing, startup fails immediately with a clear error message.
 

@@ -111,6 +111,7 @@ kimi
 | `KIMI_MODEL_REASONING_KEY` | 否 | 推理字段名覆盖（仅 `openai`） | 自动探测 |
 | `KIMI_MODEL_THINKING_EFFORT` | 否 | Thinking 强度：`low`/`medium`/`high`/`xhigh`/`max` | — |
 | `KIMI_MODEL_ADAPTIVE_THINKING` | 否 | 强制开启或关闭 adaptive thinking（仅 `anthropic`） | 按模型名推断 |
+| `KIMI_MODEL_EFFORT_PARAM` | 否 | 在 enabled thinking 路径上发送 Anthropic `output_config.effort` 字段，即使模型名无法被识别（仅 `anthropic`） | 关闭 |
 
 设置了 `KIMI_MODEL_NAME` 但缺少必填变量时，启动会立即失败并给出明确提示。
 
