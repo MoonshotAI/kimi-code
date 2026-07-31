@@ -15,6 +15,7 @@
 use std::sync::Arc;
 
 use super::retry::RetryConfig;
+use super::tool_dedup::ToolCallDeduplicator;
 use super::turn_step::execute_loop_step_with_retry;
 use super::types::*;
 use crate::callbacks::HostCallbacks;
@@ -54,6 +55,12 @@ pub fn run_turn<'a>(
  // Background handles for prediction precise execution, indexed by
  // message index of the tool result that needs replacement.
  let mut pending_precise: Vec<(usize, tokio::task::JoinHandle<ExecutableToolResult>)> = Vec::new();
+
+ // Repeat breaker: same-step dedup + cross-step streak reminders. Held at
+ // turn scope so the consecutive streak survives across steps. Mirrors the
+ // host's agent-core tool-dedup.ts (upstream 0.31.1) natively, so the Rust
+ // engine no longer depends on the host JS dedupe bookkeeping.
+ let mut deduper = ToolCallDeduplicator::new();
 
  // Default retry configuration for LLM calls within this turn.
  let retry_config = RetryConfig::default();
@@ -255,10 +262,59 @@ pub fn run_turn<'a>(
  }
  };
 
-    let (immediate_results, mut background_handles) = execute_tools_split_predictions(
- &tool_calls,
- exec_fn,
- ).await?;
+    // Register every call with the repeat breaker. Same-step duplicates
+    // (synthetic) are skipped during execution and backfilled at finalize.
+    deduper.begin_step(&turn_id);
+    let mut synthetic_flags = vec![false; tool_calls.len()];
+    for (i, tc) in tool_calls.iter().enumerate() {
+        synthetic_flags[i] = deduper
+            .check_same_step(&tc.id, &tc.name, &tc.arguments)
+            .is_some();
+    }
+    let exec_calls: Vec<ToolCall> = tool_calls
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !synthetic_flags[*i])
+        .map(|(_, tc)| tc.clone())
+        .collect();
+    let (exec_results, mut background_handles) = if exec_calls.is_empty() {
+        (Vec::new(), Vec::new())
+    } else {
+        execute_tools_split_predictions(&exec_calls, exec_fn).await?
+    };
+
+    // Reassemble in provider order, placeholder for skipped duplicates.
+    let mut immediate_results: Vec<ExecutableToolResult> = Vec::with_capacity(tool_calls.len());
+    let mut exec_iter = exec_results.into_iter();
+    for i in 0..tool_calls.len() {
+        if synthetic_flags[i] {
+            immediate_results.push(ExecutableToolResult {
+                content: String::new(),
+                is_error: false,
+                is_prediction: false,
+                stop_turn: false,
+                media: Vec::new(),
+            });
+        } else {
+            immediate_results.push(exec_iter.next().unwrap_or_else(|| ExecutableToolResult {
+                content: "Tool result lost".into(),
+                is_error: true,
+                is_prediction: false,
+                stop_turn: false,
+                media: Vec::new(),
+            }));
+        }
+    }
+
+    // Finalize in provider order: backfills same-step duplicates with the
+    // original result and appends repeat-breaker reminders; a streak of 12
+    // force-stops the turn (stop_turn=true).
+    for (i, tr) in immediate_results.iter_mut().enumerate() {
+        let tc = &tool_calls[i];
+        *tr = deduper.finalize_result(&tc.id, &tc.name, tr.clone());
+    }
+    let force_stop = immediate_results.iter().any(|tr| tr.stop_turn);
+    deduper.end_step();
 
  // Insert tool results and track which message indices
  // correspond to predictions (for later replacement). Each
@@ -331,6 +387,13 @@ pub fn run_turn<'a>(
  return Ok(finish_turn(&mut messages, input_len, reason, steps, total_usage));
  }
  }
+ }
+
+ // Repeat-breaker force-stop: results are already in the transcript;
+ // end the turn like a normal stop.
+ if force_stop {
+ drain_pending_precise(&mut messages, &mut pending_precise).await;
+ return Ok(finish_turn(&mut messages, input_len, LoopTurnStopReason::EndTurn, steps, total_usage));
  }
  }
  LoopStepStopReason::Aborted => {

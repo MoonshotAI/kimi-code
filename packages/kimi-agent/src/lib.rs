@@ -12,7 +12,6 @@ pub mod context;
 pub mod context_injector;
 pub mod cron;
 pub mod discussion;
-pub mod fault_injection;
 pub mod permission;
 pub mod persistence;
 pub mod plan;

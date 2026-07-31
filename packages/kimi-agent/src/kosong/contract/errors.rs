@@ -22,6 +22,7 @@ pub enum ChatProviderError {
     ApiRequestTooLarge(ApiStatusPayload),
     ApiRateLimit(ApiStatusPayload),
     ApiProviderOverloaded(ApiStatusPayload),
+    ApiQuotaExhausted(ApiStatusPayload),
     ApiEmptyResponse {
         message: String,
         finish_reason: Option<String>,
@@ -48,6 +49,9 @@ impl fmt::Display for ChatProviderError {
             ChatProviderError::ApiRateLimit(p) => write!(f, "API rate limit (429): {}", p.message),
             ChatProviderError::ApiProviderOverloaded(p) => {
                 write!(f, "API provider overloaded: {}", p.message)
+            }
+            ChatProviderError::ApiQuotaExhausted(p) => {
+                write!(f, "API quota exhausted (429): {}", p.message)
             }
             ChatProviderError::ApiEmptyResponse { message, .. } => {
                 write!(f, "API empty response: {}", message)
@@ -81,6 +85,9 @@ impl ChatProviderError {
                 matches!(status_code, 408 | 409 | 429 | 500 | 502 | 503 | 504 | 529)
             }
             ChatProviderError::ApiRateLimit(_) | ChatProviderError::ApiProviderOverloaded(_) => true,
+            // Quota exhaustion (billing/balance) can never succeed on retry —
+            // fail fast even when a Retry-After header is present.
+            ChatProviderError::ApiQuotaExhausted(_) => false,
             ChatProviderError::ApiContextOverflow(_) => false,
             ChatProviderError::ApiRequestTooLarge(_) => false,
             ChatProviderError::VideoUploadUnsupported(_) => false,
@@ -98,7 +105,8 @@ impl ChatProviderError {
             | ChatProviderError::ApiContextOverflow(ApiStatusPayload { status_code, .. })
             | ChatProviderError::ApiRequestTooLarge(ApiStatusPayload { status_code, .. })
             | ChatProviderError::ApiRateLimit(ApiStatusPayload { status_code, .. })
-            | ChatProviderError::ApiProviderOverloaded(ApiStatusPayload { status_code, .. }) => {
+            | ChatProviderError::ApiProviderOverloaded(ApiStatusPayload { status_code, .. })
+            | ChatProviderError::ApiQuotaExhausted(ApiStatusPayload { status_code, .. }) => {
                 Some(*status_code)
             }
             _ => None,
@@ -112,6 +120,7 @@ pub enum ApiErrorKind {
     ContextOverflow,
     Overloaded,
     RateLimit,
+    QuotaExhausted,
     Auth,
     Server5xx,
     Client4xx,
@@ -140,6 +149,10 @@ pub fn classify_api_error(error: &ChatProviderError) -> ApiErrorClassification {
         }
         ChatProviderError::ApiProviderOverloaded(_) => ApiErrorClassification {
             kind: ApiErrorKind::Overloaded,
+            status_code,
+        },
+        ChatProviderError::ApiQuotaExhausted(_) => ApiErrorClassification {
+            kind: ApiErrorKind::QuotaExhausted,
             status_code,
         },
         ChatProviderError::ApiRateLimit(_) => ApiErrorClassification {
@@ -192,13 +205,25 @@ pub fn normalize_api_status_error(
     let msg = message.to_string();
 
     match status_code {
-        429 => ChatProviderError::ApiRateLimit(ApiStatusPayload {
-            status_code,
-            message: msg,
-            request_id,
-            retry_after_ms,
-            trace_id,
-        }),
+        429 => {
+            if is_quota_exhausted_status_error(status_code, message) {
+                ChatProviderError::ApiQuotaExhausted(ApiStatusPayload {
+                    status_code,
+                    message: msg,
+                    request_id,
+                    retry_after_ms,
+                    trace_id,
+                })
+            } else {
+                ChatProviderError::ApiRateLimit(ApiStatusPayload {
+                    status_code,
+                    message: msg,
+                    request_id,
+                    retry_after_ms,
+                    trace_id,
+                })
+            }
+        }
         _ if is_context_overflow_status_error(status_code, message) => {
             ChatProviderError::ApiContextOverflow(ApiStatusPayload {
                 status_code,
@@ -271,6 +296,34 @@ pub fn is_provider_overload_status_error(status_code: u16, message: &str) -> boo
         return false;
     }
     message_contains_any(message, &["overload"])
+}
+
+/// Detect a quota-exhausted 429 (account quota / insufficient balance).
+///
+/// Corresponds to upstream `classifyKimiQuotaError` / the OpenAI
+/// `insufficient_quota` code (#1857): such a 429 can never succeed on
+/// retry, so it must be classified as `ApiQuotaExhausted` (non-retryable)
+/// instead of `ApiRateLimit`. Signals cover both Moonshot's
+/// `exceeded_current_quota_error` error.type and OpenAI's documented
+/// `insufficient_quota` code, plus billing-anchored message wordings as a
+/// fallback for gateways that flatten the body to text.
+pub fn is_quota_exhausted_status_error(status_code: u16, message: &str) -> bool {
+    if status_code != 429 {
+        return false;
+    }
+    let lower = message.to_lowercase();
+    const PATTERNS: &[&str] = &[
+        "exceeded_current_quota_error", // Moonshot error.type
+        "insufficient_quota",           // OpenAI error.code
+        "quota exceeded",
+        "quota_exceeded",
+        "quota exhausted",
+        "out of quota",
+        "insufficient balance",
+        "billing limit",
+        "account balance",
+    ];
+    PATTERNS.iter().any(|p| lower.contains(p))
 }
 
 pub fn is_request_too_large_status_error(status_code: u16, message: &str) -> bool {
@@ -393,6 +446,42 @@ mod tests {
     }
 
     #[test]
+    fn test_quota_exhausted_429_is_not_rate_limit() {
+        // Moonshot error.type signal
+        let err = normalize_api_status_error(
+            429,
+            "{\"error\":{\"type\":\"exceeded_current_quota_error\"}}",
+            None,
+            None,
+            None,
+        );
+        assert!(
+            matches!(err, ChatProviderError::ApiQuotaExhausted(_)),
+            "quota signal must map to ApiQuotaExhausted, got {err:?}"
+        );
+        assert!(!err.is_retryable(), "quota exhaustion must not retry");
+
+        // OpenAI error.code signal
+        let err = normalize_api_status_error(
+            429,
+            "{\"error\":{\"code\":\"insufficient_quota\"}}",
+            None,
+            None,
+            None,
+        );
+        assert!(matches!(err, ChatProviderError::ApiQuotaExhausted(_)));
+
+        // Billing wording fallback
+        let err = normalize_api_status_error(429, "Quota exceeded for the account", None, None, None);
+        assert!(matches!(err, ChatProviderError::ApiQuotaExhausted(_)));
+
+        // A plain rate-limit 429 stays retryable
+        let err = normalize_api_status_error(429, "Too Many Requests", None, None, None);
+        assert!(matches!(err, ChatProviderError::ApiRateLimit(_)));
+        assert!(err.is_retryable());
+    }
+
+    #[test]
     fn test_image_format_error() {
         let err = ChatProviderError::ApiStatus {
             status_code: 400,
@@ -426,6 +515,19 @@ mod tests {
         });
         let classification = classify_api_error(&err);
         assert_eq!(classification.kind, ApiErrorKind::RateLimit);
+    }
+
+    #[test]
+    fn test_api_quota_exhausted_classification() {
+        let err = ChatProviderError::ApiQuotaExhausted(ApiStatusPayload {
+            status_code: 429,
+            message: "exceeded_current_quota_error".to_string(),
+            request_id: None,
+            retry_after_ms: None,
+            trace_id: None,
+        });
+        let classification = classify_api_error(&err);
+        assert_eq!(classification.kind, ApiErrorKind::QuotaExhausted);
     }
 
     #[test]

@@ -246,6 +246,8 @@ impl LLM for NativeHttpLlm {
     fn is_retryable_error(&self, error: &str) -> bool {
         // Transport-level and throttling/server errors are retryable;
         // auth and request-shape errors are not.
+        // A quota-exhausted 429 (billing/balance) can never succeed on
+        // retry — fail fast instead of walking the backoff ladder.
         const RETRYABLE: &[&str] = &[
             "status 429",
             "status 500",
@@ -260,7 +262,16 @@ impl LLM for NativeHttpLlm {
             "connection",
             "sse decode error",
         ];
+        const QUOTA: &[&str] = &[
+            "quota",
+            "insufficient_balance",
+            "billing",
+            "account balance",
+        ];
         let lower = error.to_lowercase();
+        if lower.contains("status 429") && QUOTA.iter().any(|s| lower.contains(s)) {
+            return false;
+        }
         RETRYABLE.iter().any(|s| lower.contains(s))
     }
 
@@ -327,6 +338,16 @@ mod tests {
         assert!(llm.is_retryable_error("operation timed out"));
         assert!(!llm.is_retryable_error("llm http status 401 Unauthorized: bad key"));
         assert!(!llm.is_retryable_error("llm http status 400 Bad Request: invalid schema"));
+        // Quota-exhausted 429 fails fast instead of retrying.
+        assert!(!llm.is_retryable_error(
+            "llm http status 429 Too Many Requests: exceeded_current_quota_error"
+        ));
+        assert!(!llm.is_retryable_error(
+            "llm http status 429 Too Many Requests: insufficient_quota"
+        ));
+        assert!(!llm.is_retryable_error(
+            "llm http status 429 Too Many Requests: Quota exceeded for the account"
+        ));
     }
 
     #[test]
