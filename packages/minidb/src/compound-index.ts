@@ -84,33 +84,36 @@ export class CompoundIndexManager {
     return typeof order === 'string';
   }
 
-  /** Add/update a document across all compound indexes. */
-  add(pk: string, doc: unknown, dt: Record<string, number> | null): void {
-    for (const entry of this.indexes.values()) {
-      const { group, order } = this.extract(entry, doc, dt);
-      const prev = entry.byPk.get(pk);
-      const valid = group !== undefined && group !== null && this.validOrder(entry, order);
+  /** Add/update a document in one compound index entry. */
+  private addToEntry(entry: CompoundEntry, pk: string, doc: unknown, dt: Record<string, number> | null): void {
+    const { group, order } = this.extract(entry, doc, dt);
+    const prev = entry.byPk.get(pk);
+    const valid = group !== undefined && group !== null && this.validOrder(entry, order);
 
-      // No-op when placement is unchanged. Without this guard, re-setting a key
-      // with the same group+order inserted a duplicate skiplist node (and a
-      // later delete left a phantom entry behind).
-      if (prev && valid && prev.group === group && prev.order === order) continue;
+    // No-op when placement is unchanged. Without this guard, re-setting a key
+    // with the same group+order inserted a duplicate skiplist node (and a
+    // later delete left a phantom entry behind).
+    if (prev && valid && prev.group === group && prev.order === order) return;
 
-      if (prev) {
-        const oldList = entry.groups.get(prev.group);
-        if (oldList) {
-          oldList.delete(prev.order, pk);
-          if (oldList.length === 0) entry.groups.delete(prev.group);
-        }
-      }
-
-      if (valid) {
-        this.groupOf(entry, group).insert(order, pk);
-        entry.byPk.set(pk, { group, order });
-      } else {
-        entry.byPk.delete(pk);
+    if (prev) {
+      const oldList = entry.groups.get(prev.group);
+      if (oldList) {
+        oldList.delete(prev.order, pk);
+        if (oldList.length === 0) entry.groups.delete(prev.group);
       }
     }
+
+    if (valid) {
+      this.groupOf(entry, group).insert(order, pk);
+      entry.byPk.set(pk, { group, order });
+    } else {
+      entry.byPk.delete(pk);
+    }
+  }
+
+  /** Add/update a document across all compound indexes. */
+  add(pk: string, doc: unknown, dt: Record<string, number> | null): void {
+    for (const entry of this.indexes.values()) this.addToEntry(entry, pk, doc, dt);
   }
 
   remove(pk: string, _doc?: unknown, _dt?: Record<string, number> | null): void {
@@ -141,12 +144,30 @@ export class CompoundIndexManager {
 
   /** Rebuild from entries of { key, value, dt }. */
   rebuild(entries: Iterable<{ key: string | Buffer; value: unknown; dt?: Record<string, number> | null }>): void {
-    for (const entry of this.indexes.values()) {
-      entry.groups.clear();
-      entry.byPk.clear();
-    }
+    const b = this.beginRebuild();
     for (const { key, value, dt } of entries) {
-      this.add(typeof key === 'string' ? key : Buffer.from(key).toString('binary'), value, dt ?? null);
+      b.add(typeof key === 'string' ? key : Buffer.from(key).toString('binary'), value, dt ?? null);
     }
+    b.commit();
+  }
+
+  /** Stage a rebuild in fresh per-index state and swap it in on commit(), so
+   *  a rebuild that fails midway leaves the previous indexes fully intact. */
+  beginRebuild(): { add(pk: string, doc: unknown, dt: Record<string, number> | null): void; commit(): void } {
+    const staged: { entry: CompoundEntry; next: CompoundEntry }[] = [];
+    for (const entry of this.indexes.values()) {
+      staged.push({ entry, next: { ...entry, groups: new Map(), byPk: new Map() } });
+    }
+    return {
+      add: (pk, doc, dt) => {
+        for (const { next } of staged) this.addToEntry(next, pk, doc, dt);
+      },
+      commit: () => {
+        for (const { entry, next } of staged) {
+          entry.groups = next.groups;
+          entry.byPk = next.byPk;
+        }
+      },
+    };
   }
 }

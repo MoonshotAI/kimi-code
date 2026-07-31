@@ -19,8 +19,8 @@ export interface DtRangeEntry {
 }
 
 export class DtIndex {
-  private readonly cols = new Map<string, DtColumn>(); // col -> column
-  private readonly byKey = new Map<string, Record<string, number>>(); // key -> { col: ms }
+  private cols = new Map<string, DtColumn>(); // col -> column
+  private byKey = new Map<string, Record<string, number>>(); // key -> { col: ms }
 
   private col(name: string): DtColumn {
     let c = this.cols.get(name);
@@ -97,10 +97,39 @@ export class DtIndex {
 
   /** Rebuild from an iterator of { key, dt }. */
   rebuild(entries: Iterable<{ key: string; dt: Record<string, number> | null | undefined }>): void {
-    this.cols.clear();
-    this.byKey.clear();
-    for (const { key, dt } of entries) {
-      if (dt) this.set(key, dt);
-    }
+    const b = this.beginRebuild();
+    for (const { key, dt } of entries) b.add(key, dt);
+    b.commit();
+  }
+
+  /** Stage a rebuild in fresh state and swap it in on commit(), so a rebuild
+   *  that fails midway leaves the previous index fully intact. Rebuild keys
+   *  are unique (one store record each), so add() is a pure insert — the
+   *  diff-based set() logic is not needed here. */
+  beginRebuild(): { add(key: string, dt: Record<string, number> | null | undefined): void; commit(): void } {
+    const cols = new Map<string, DtColumn>();
+    const byKey = new Map<string, Record<string, number>>();
+    return {
+      add: (key, dt) => {
+        if (!dt) return;
+        const rec: Record<string, number> = {};
+        for (const [name, ms] of Object.entries(dt)) {
+          if (typeof ms !== 'number' || !Number.isFinite(ms)) continue;
+          let c = cols.get(name);
+          if (!c) {
+            c = { list: new SkipList<number, string>({ compareKey: cmpNumber, compareVal: cmpString }), byKey: new Map() };
+            cols.set(name, c);
+          }
+          c.list.insert(ms, key);
+          c.byKey.set(key, ms);
+          rec[name] = ms;
+        }
+        if (Object.keys(rec).length) byKey.set(key, rec);
+      },
+      commit: () => {
+        this.cols = cols;
+        this.byKey = byKey;
+      },
+    };
   }
 }

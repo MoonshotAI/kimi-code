@@ -17,7 +17,7 @@ import { recover, catchUpWal, frameToOps } from './recovery.js';
 import { compact, shouldCompact } from './compaction.js';
 import { IndexManager, UniqueViolationError } from './index-manager.js';
 import { DtIndex } from './dt-index.js';
-import { TextIndex, type TextIndexOptions } from './text-index.js';
+import { TextIndex, type TextIndexOptions, type TextIndexBuild } from './text-index.js';
 import { createNgramTokenizer } from './trigram.js';
 import { CompoundIndexManager } from './compound-index.js';
 import { getPath, match, project } from './query.js';
@@ -44,6 +44,12 @@ export type { TextIndexTokenizerName } from './trigram.js';
 // subpath export to keep this module free of import cycles.
 
 export type ValueCodecName = 'buffer' | 'string' | 'json';
+
+const yieldToLoop = (): Promise<void> => new Promise((r) => setImmediate(r));
+/** The open-time index rebuild yields to the event loop every this many
+ *  records, so a huge Store walk never hard-blocks the host (mirrors the
+ *  BUILD_YIELD_DOCS watermark in text-index.ts). */
+const REBUILD_YIELD_DOCS = 2048;
 
 export interface ValueCodec<V> {
   encode(v: V): Buffer;
@@ -304,6 +310,9 @@ export class MiniDb<V = unknown> {
     recoveryDurationMs: 0,
     /** Open-time derived-index rebuilds (secondary + dt + compound). */
     indexRebuildDurationMs: 0,
+    /** Values decoded by the open-time shared rebuild walk (0 when no
+     *  value-derived index exists: the walk is metadata-only then). */
+    indexRebuildDecoded: 0,
     /** Text-index (re)builds: at open and after each compaction. */
     textRebuildDurationMs: 0,
     /** Whole successful compactions, hook included. */
@@ -560,14 +569,56 @@ export class MiniDb<V = unknown> {
   }
 
   private async rebuildAllIndexes(): Promise<void> {
+    // One Store walk feeds every staged builder. dt comes from record metadata
+    // (never decoded); the value is decoded at most once per record and only
+    // when a value-derived index (secondary / compound / text) actually exists
+    // — an index-less open performs a metadata-only walk.
+    const dtB = this.dt.beginRebuild();
+    const secB = this.indexes.indexes.size ? this.indexes.beginRebuild() : null;
+    const cmpB = this.compound.indexes.size ? this.compound.beginRebuild() : null;
+    const textBs: { b: TextIndexBuild }[] = [];
+    for (const [, ti] of this.text) textBs.push({ b: ti.beginBuild() });
+    const needValues = secB !== null || cmpB !== null || textBs.length > 0;
+
     const t0 = performance.now();
-    this.indexes.rebuild(this._liveRecordsRaw());
-    this.dt.rebuild([...this.liveRecords()].map(({ key, dt }) => ({ key: this.pk(key), dt })));
-    this.compound.rebuild(this.liveRecords());
+    let docsSinceYield = 0;
+    try {
+      for (const rec of this.store.rawRecords()) {
+        // Yield periodically so a huge open-time rebuild never hard-blocks the
+        // event loop; safe because open() awaits this before publishing the
+        // db or starting the background compaction.
+        if (++docsSinceYield >= REBUILD_YIELD_DOCS) {
+          docsSinceYield = 0;
+          await yieldToLoop();
+        }
+        dtB.add(rec.kstr, rec.dt);
+        if (!needValues) continue;
+        const value = this.decode(rec.readValue());
+        this.stats.indexRebuildDecoded++;
+        secB?.add(rec.kstr, value);
+        cmpB?.add(rec.kstr, value, rec.dt);
+        if (this.indexable(value)) for (const { b } of textBs) b.add(rec.kstr, value);
+      }
+    } catch (e) {
+      for (const { b } of textBs) b.abort();
+      throw e;
+    }
     this.stats.indexRebuildDurationMs += performance.now() - t0;
+
+    // Commit the fallible builders first (text postings do file I/O); the
+    // in-memory swaps cannot fail. A text commit failure leaves every
+    // not-yet-committed builder on its previous state.
     const t1 = performance.now();
-    for (const [, ti] of this.text) await ti.build(this.textRecords());
+    try {
+      for (const { b } of textBs) await b.commit();
+    } catch (e) {
+      for (const { b } of textBs) b.abort();
+      throw e;
+    }
     this.stats.textRebuildDurationMs += performance.now() - t1;
+    secB?.commit();
+    cmpB?.commit();
+    dtB.commit();
   }
 
   private *_liveRecordsRaw(): Generator<{ key: Buffer; value: unknown }> {
@@ -758,7 +809,9 @@ export class MiniDb<V = unknown> {
 
   private async ensureMemoryFor(ops: readonly PreparedOp<V>[]): Promise<void> {
     if (this.maxMemoryBytes === null) return;
-    this.store.reapExpired();
+    // Drain due TTL entries via the store's expiry heap (O(due)) instead of a
+    // full-store sweep on every write.
+    this.store.reapExpiredDue();
     let projected = this.projectedBytesForOps(ops);
     if (projected <= this.maxMemoryBytes) return;
 

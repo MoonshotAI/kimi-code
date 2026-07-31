@@ -102,12 +102,70 @@ export interface SearchOptions {
   limit?: number;
 }
 
+/** Staged text-index rebuild (see TextIndex.beginBuild): feed docs with
+ *  add(), swap everything in with commit(), or discard with abort(). */
+export interface TextIndexBuild {
+  /** Stage one document; returns its token count (feeds yield watermarks). */
+  add(key: string, value: unknown): number;
+  commit(): Promise<void>;
+  abort(): void;
+}
+
 const EMPTY_MAP: ReadonlyMap<number, number> = new Map();
 
 /** One write that landed while a `build()` was in flight (see buildQueue). */
 type BuildOp =
   | { readonly kind: 'add'; readonly key: string; readonly doc: unknown }
   | { readonly kind: 'remove'; readonly key: string };
+
+/** Bounded collector for the K best hits by (score desc, key asc). The heap
+ *  root holds the WORST kept hit, so a new candidate enters only when it beats
+ *  that root — O(log K) per candidate and K kept in memory, instead of an
+ *  O(C log C) full sort over every candidate. The key tie-break keeps the
+ *  order of equal-score hits stable across paginated queries. */
+class TopK {
+  private readonly a: SearchHit[] = [];
+
+  constructor(private readonly k: number) {}
+
+  /** x ranks strictly after y (smaller score, or equal score with larger key). */
+  private static worse(x: SearchHit, y: SearchHit): boolean {
+    return x.score < y.score || (x.score === y.score && x.key > y.key);
+  }
+
+  offer(hit: SearchHit): void {
+    const a = this.a;
+    if (a.length < this.k) {
+      a.push(hit);
+      let i = a.length - 1;
+      while (i > 0) {
+        const p = (i - 1) >> 1;
+        if (!TopK.worse(a[i]!, a[p]!)) break; // parent is worse -> heap holds
+        [a[p], a[i]] = [a[i]!, a[p]!];
+        i = p;
+      }
+      return;
+    }
+    if (this.k === 0 || !TopK.worse(a[0]!, hit)) return; // must beat the worst kept
+    a[0] = hit;
+    let i = 0;
+    for (;;) {
+      let w = i; // index of the worst among {i, left, right}
+      const l = 2 * i + 1;
+      const r = l + 1;
+      if (l < a.length && TopK.worse(a[l]!, a[w]!)) w = l;
+      if (r < a.length && TopK.worse(a[r]!, a[w]!)) w = r;
+      if (w === i) break;
+      [a[w], a[i]] = [a[i]!, a[w]!];
+      i = w;
+    }
+  }
+
+  /** The kept hits in final rank order: score descending, key ascending. */
+  sorted(): SearchHit[] {
+    return this.a.sort((x, y) => y.score - x.score || (x.key < y.key ? -1 : x.key > y.key ? 1 : 0));
+  }
+}
 
 export class TextIndex {
   private readonly fields: readonly string[] | null;
@@ -129,6 +187,10 @@ export class TextIndex {
   private readonly delta = new Map<string, Map<number, number>>(); // term -> (docID -> freq)
   private deltaCount = 0;
   private readonly removed = new Set<number>(); // tombstoned docIDs
+  // Reverse view of the delta: docID -> its distinct delta terms. remove()
+  // walks only the removed doc's own terms through it, instead of scanning
+  // every term in the delta vocabulary.
+  private readonly deltaDocs = new Map<number, Set<string>>();
 
   /**
    * Ops that landed while a `build()` was in flight. The ops ALSO apply to
@@ -208,35 +270,71 @@ export class TextIndex {
    * replaces the in-memory base (memory mode), and clears the delta +
    * tombstones. Called on open and on compaction.
    *
-   * Async and event-loop friendly: the tokenization pass yields every
+   * Async and event-loop friendly: the feeding loop yields every
    * BUILD_YIELD_DOCS docs / BUILD_YIELD_TOKENS tokens and the postings write
    * batches its I/O, so a large rebuild never hard-blocks the host process
-   * for many seconds the way the old fully-synchronous build did. Mutations
-   * arriving mid-build keep applying to the live view (searches stay correct)
-   * and are recorded in `buildQueue`; once the new base is swapped in, the
-   * queue is replayed synchronously, so the result is exactly as if those ops
-   * had arrived after the rebuild.
+   * for many seconds the way the old fully-synchronous build did.
+   */
+  async build(entries: Iterable<{ key: string; value: unknown }>): Promise<void> {
+    const b = this.beginBuild();
+    let docsSinceYield = 0;
+    let tokensSinceYield = 0;
+    try {
+      for (const { key, value } of entries) {
+        tokensSinceYield += b.add(key, value);
+        docsSinceYield++;
+        if (docsSinceYield >= BUILD_YIELD_DOCS || tokensSinceYield >= BUILD_YIELD_TOKENS) {
+          docsSinceYield = 0;
+          tokensSinceYield = 0;
+          await yieldToLoop();
+        }
+      }
+    } catch (e) {
+      b.abort();
+      throw e;
+    }
+    await b.commit();
+  }
+
+  /**
+   * Stage a rebuild: accumulate docs incrementally, then swap everything in on
+   * commit(). Lets the caller feed several indexes from one shared Store walk
+   * (one decode per record fanned out to every builder). add() is synchronous
+   * (pure tokenization) — a caller feeding many docs should yield to the
+   * event loop periodically (see build()); commit() is async (batched
+   * postings I/O).
+   *
+   * Mutations arriving while the build is staged keep applying to the live
+   * view (searches stay correct) and are recorded in `buildQueue`; once the
+   * new base is swapped in, commit() replays the queue synchronously, so the
+   * result is exactly as if those ops had arrived after the rebuild.
    *
    * Atomic on failure: everything is staged off to the side first and swapped
    * in only after the new postings file is durably renamed (disk mode), so a
-   * failed rebuild (e.g. a transient ENOSPC/EMFILE inside PostingsFile.rebuild)
-   * leaves the PREVIOUS index fully functional instead of silently emptying it
-   * until the next successful build.
+   * failed commit (e.g. a transient ENOSPC/EMFILE inside PostingsFile.rebuild)
+   * leaves the PREVIOUS index fully functional instead of silently emptying
+   * it until the next successful build. abort() discards the staged state
+   * (nothing is written before commit() runs).
    */
-  async build(entries: Iterable<{ key: string; value: unknown }>): Promise<void> {
+  beginBuild(): TextIndexBuild {
     if (this.buildQueue !== null) throw new Error('text index build already in progress');
     const queue: BuildOp[] = [];
     this.buildQueue = queue;
-    try {
-      // Staged state.
-      const agg = new Map<string, Map<number, number>>(); // term -> (docID -> freq)
-      const newKeys: (string | undefined)[] = []; // docID -> key
-      const newKeyToId = new Map<string, number>(); // key -> docID
-      const newDocLen = new Map<number, number>(); // docID -> token count
-      let n = 0;
-      let docsSinceYield = 0;
-      let tokensSinceYield = 0;
-      for (const { key, value } of entries) {
+    // Staged state.
+    const agg = new Map<string, Map<number, number>>(); // term -> (docID -> freq)
+    const newKeys: (string | undefined)[] = []; // docID -> key
+    const newKeyToId = new Map<string, number>(); // key -> docID
+    const newDocLen = new Map<number, number>(); // docID -> token count
+    let n = 0;
+    let done = false;
+    // Failure/abort paths only disarm their own queue: the ops in it were
+    // already applied to the live view, which stays authoritative.
+    const disarm = (): void => {
+      if (this.buildQueue === queue) this.buildQueue = null;
+    };
+    return {
+      add: (key, value): number => {
+        if (done) throw new Error('text index build already finished');
         const docID = newKeys.length;
         newKeys.push(key);
         newKeyToId.set(key, docID);
@@ -250,83 +348,103 @@ export class TextIndex {
         }
         newDocLen.set(docID, tokens.length);
         n++;
-        docsSinceYield++;
-        tokensSinceYield += tokens.length;
-        if (docsSinceYield >= BUILD_YIELD_DOCS || tokensSinceYield >= BUILD_YIELD_TOKENS) {
-          docsSinceYield = 0;
-          tokensSinceYield = 0;
-          await yieldToLoop();
-        }
-      }
-
-      if (this.path) {
-        // Disk mode: write the new postings file (tmp + fsync + atomic rename
-        // in PostingsFile.rebuild). The old read handle is closed only at the
-        // rename — and only on Windows, where an open fd would block it (POSIX
-        // keeps the old inode readable through the rename, so searches never
-        // lose the base). A rebuild that throws before its commit leaves the
-        // old file/handle untouched; a commit-time failure re-attaches it.
-        const oldPf = this.pf;
-        let dict: Map<string, PostingEntry>;
+        return tokens.length;
+      },
+      commit: async () => {
+        if (done) throw new Error('text index build already finished');
+        done = true;
         try {
-          dict = await PostingsFile.rebuild(this.path, aggToSorted(agg), {
-            beforeRename:
-              process.platform === 'win32' && oldPf !== null
-                ? () => {
-                    oldPf.close();
-                    if (this.pf === oldPf) this.pf = null;
-                  }
-                : undefined,
-          });
+          await this.commitBuild(queue, agg, newKeys, newKeyToId, newDocLen, n);
         } catch (e) {
-          if (oldPf !== null && !oldPf.open) {
-            try {
-              this.pf = PostingsFile.open(this.path);
-            } catch {
-              /* old handle unrecoverable; the next successful build fixes it */
-            }
-          }
+          // Staging never touched the live view, so the previous index is
+          // intact; the queued ops were already applied to it — just disarm.
+          disarm();
           throw e;
         }
-        // The rename happened — the old postings are replaced on disk, so from
-        // here the swap commits to the new index. A failed reopen (EMFILE & co.)
-        // is not special-cased: readBase treats a null pf as an empty base, so
-        // reads degrade to delta-only until the next build instead of reading
-        // through a stale dictionary.
-        const newPf = PostingsFile.open(this.path);
-        this.postings.clear();
-        for (const [t, e] of dict) this.postings.set(t, e);
-        oldPf?.close();
-        this.pf = newPf;
-      } else {
-        // Memory mode: pure in-memory staging, no fallible I/O involved.
-        this.memBase = agg;
-      }
+      },
+      // Nothing staged on disk yet (the postings write only happens inside
+      // commit): disarming the queue and dropping the reference is the whole
+      // abort.
+      abort: () => {
+        if (done) return;
+        done = true;
+        disarm();
+      },
+    };
+  }
 
-      // Swap in the staged per-doc state, drop the write buffer, and replay
-      // the ops that landed mid-build onto the new base — one synchronous
-      // segment, so no mutation can interleave mid-swap.
-      this.docLen.clear();
-      for (const [id, len] of newDocLen) this.docLen.set(id, len);
-      this.keys.length = 0;
-      for (const k of newKeys) this.keys.push(k);
-      this.keyToId.clear();
-      for (const [k, id] of newKeyToId) this.keyToId.set(k, id);
-      this.delta.clear();
-      this.deltaCount = 0;
-      this.removed.clear();
-      this.cache.clear();
-      this.N = n;
-      this.buildQueue = null;
-      for (const op of queue) {
-        if (op.kind === 'add') this.add(op.key, op.doc);
-        else this.remove(op.key);
+  /** Swap a fully staged build into the live index (see beginBuild). */
+  private async commitBuild(
+    queue: BuildOp[],
+    agg: Map<string, Map<number, number>>,
+    newKeys: (string | undefined)[],
+    newKeyToId: Map<string, number>,
+    newDocLen: Map<number, number>,
+    n: number,
+  ): Promise<void> {
+    if (this.path) {
+      // Disk mode: write the new postings file (tmp + fsync + atomic rename
+      // in PostingsFile.rebuild). The old read handle is closed only at the
+      // rename — and only on Windows, where an open fd would block it (POSIX
+      // keeps the old inode readable through the rename, so searches never
+      // lose the base). A rebuild that throws before its commit leaves the
+      // old file/handle untouched; a commit-time failure re-attaches it.
+      const oldPf = this.pf;
+      let dict: Map<string, PostingEntry>;
+      try {
+        dict = await PostingsFile.rebuild(this.path, aggToSorted(agg), {
+          beforeRename:
+            process.platform === 'win32' && oldPf !== null
+              ? () => {
+                  oldPf.close();
+                  if (this.pf === oldPf) this.pf = null;
+                }
+              : undefined,
+        });
+      } catch (e) {
+        if (oldPf !== null && !oldPf.open) {
+          try {
+            this.pf = PostingsFile.open(this.path);
+          } catch {
+            /* old handle unrecoverable; the next successful build fixes it */
+          }
+        }
+        throw e;
       }
-    } catch (e) {
-      // Staging never touched the live view, so the previous index is intact;
-      // the queued ops were already applied to it — just disarm the queue.
-      if (this.buildQueue === queue) this.buildQueue = null;
-      throw e;
+      // The rename happened — the old postings are replaced on disk, so from
+      // here the swap commits to the new index. A failed reopen (EMFILE & co.)
+      // is not special-cased: readBase treats a null pf as an empty base, so
+      // reads degrade to delta-only until the next build instead of reading
+      // through a stale dictionary.
+      const newPf = PostingsFile.open(this.path);
+      this.postings.clear();
+      for (const [t, e] of dict) this.postings.set(t, e);
+      oldPf?.close();
+      this.pf = newPf;
+    } else {
+      // Memory mode: pure in-memory staging, no fallible I/O involved.
+      this.memBase = agg;
+    }
+
+    // Swap in the staged per-doc state, drop the write buffer, and replay
+    // the ops that landed mid-build onto the new base — one synchronous
+    // segment, so no mutation can interleave mid-swap.
+    this.docLen.clear();
+    for (const [id, len] of newDocLen) this.docLen.set(id, len);
+    this.keys.length = 0;
+    for (const k of newKeys) this.keys.push(k);
+    this.keyToId.clear();
+    for (const [k, id] of newKeyToId) this.keyToId.set(k, id);
+    this.delta.clear();
+    this.deltaCount = 0;
+    this.deltaDocs.clear();
+    this.removed.clear();
+    this.cache.clear();
+    this.N = n;
+    this.buildQueue = null;
+    for (const op of queue) {
+      if (op.kind === 'add') this.add(op.key, op.doc);
+      else this.remove(op.key);
     }
   }
 
@@ -349,11 +467,14 @@ export class TextIndex {
       m.set(docID, c);
       this.deltaCount++;
     }
+    this.deltaDocs.set(docID, new Set(counts.keys()));
     this.docLen.set(docID, tokens.length);
     this.N++;
   }
 
-  /** Remove a document by key (tombstone its docID). */
+  /** Remove a document by key (tombstone its docID). Walks only the doc's own
+   *  delta terms via the reverse map — O(terms in document), not O(all delta
+   *  terms). */
   remove(key: string): void {
     this.buildQueue?.push({ kind: 'remove', key });
     this.removeInner(key);
@@ -366,7 +487,15 @@ export class TextIndex {
     this.keyToId.delete(key);
     this.keys[id] = undefined;
     this.docLen.delete(id);
-    for (const m of this.delta.values()) if (m.delete(id)) this.deltaCount--;
+    const terms = this.deltaDocs.get(id);
+    if (terms) {
+      for (const t of terms) {
+        const m = this.delta.get(t);
+        if (m?.delete(id)) this.deltaCount--;
+        if (m && m.size === 0) this.delta.delete(t);
+      }
+      this.deltaDocs.delete(id);
+    }
     this.N--;
   }
 
@@ -432,7 +561,7 @@ export class TextIndex {
       }
     }
 
-    const scored: SearchHit[] = [];
+    const top = new TopK(limit);
     for (const id of candidates) {
       const len = this.docLen.get(id) ?? 1;
       let score = 0;
@@ -442,11 +571,10 @@ export class TextIndex {
       }
       if (score > 0) {
         const key = this.keys[id];
-        if (key !== undefined) scored.push({ key, score });
+        if (key !== undefined) top.offer({ key, score });
       }
     }
-    scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, limit);
+    return top.sorted();
   }
 
   /** Close the underlying postings file. */

@@ -76,6 +76,54 @@ function flatten(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [value];
 }
 
+/** A live-index holder of a batch-claimed value must be the claimant itself
+ *  or a key the batch vacates (deletes, or overwrites with a doc that no
+ *  longer carries the value); anything else is a final-state conflict. The
+ *  "touched and still claims it" sub-case never reaches a verdict here: it is
+ *  detected by the batch-local claim map when the holder's own final claims
+ *  are checked, so a 'set' final op is always treated as vacated at this
+ *  point. */
+function assertVacated(
+  idx: AnyIndex,
+  holder: string,
+  claimant: string,
+  value: unknown,
+  lastOp: ReadonlyMap<string, { op: 'set' | 'del'; doc: unknown }>,
+): void {
+  if (holder === claimant) return;
+  const fin = lastOp.get(holder);
+  if (!fin) throw new UniqueViolationError(idx.name, value);
+  // fin.op === 'del': vacated. fin.op === 'set': either it still claims the
+  // value (the batch-local claim map throws on the holder's own entry) or it
+  // moved away — vacated either way for this claimant.
+}
+
+/** Insert one doc into an index's given state (shared by the incremental
+ *  write path and staged rebuilds). */
+function insertDoc(idx: AnyIndex, pk: string, doc: unknown): void {
+  const value = getField(doc, idx.field);
+  if (value === undefined && idx.sparse) return;
+  if (idx.type === 'range') {
+    // Index each distinct numeric element once. Without the de-dupe, an
+    // array like [10, 10, 10] would insert three (10, pk) nodes and the
+    // same key would be reported three times by findRange.
+    const vals = [...new Set(flatten(value).filter((v): v is number => typeof v === 'number' && Number.isFinite(v)))];
+    if (vals.length === 0) return;
+    for (const v of vals) idx.list.insert(v, pk);
+    idx.byPk.set(pk, vals);
+  } else {
+    const keys: string[] = [];
+    for (const v of flatten(value)) {
+      const sk = scalarKey(v);
+      let set = idx.map.get(sk);
+      if (!set) idx.map.set(sk, (set = new Set()));
+      set.add(pk);
+      keys.push(sk);
+    }
+    idx.byPk.set(pk, keys);
+  }
+}
+
 export class IndexManager {
   readonly indexes = new Map<string, AnyIndex>();
 
@@ -140,50 +188,51 @@ export class IndexManager {
   }
 
   /**
-   * Validate unique constraints for a batch of ops by computing the index state
-   * AFTER the whole batch and checking it for collisions. The check is
-   * order-independent, so valid transformations like swapping a unique value
-   * between two keys, or deleting one key and reusing its value in another,
-   * are accepted (their final state is still unique).
+   * Validate unique constraints for a batch of ops against the index state
+   * AFTER the whole batch. The check is order-independent, so valid
+   * transformations like swapping a unique value between two keys, or deleting
+   * one key and reusing its value in another, are accepted (their final state
+   * is still unique).
    *
    * `ops` is the full op list (set AND del); the last op per key wins.
+   *
+   * Incremental: for every value claimed by the batch it probes only that
+   * value's current posting (O(1) equality / O(log N) range per value) and a
+   * batch-local claim map — it never copies the full per-index owner state,
+   * so a small batch stays cheap on a large index.
    */
   checkUniqueBatch(ops: readonly { pk: string; op: 'set' | 'del'; doc: unknown }[]): void {
     const lastOp = new Map<string, { op: 'set' | 'del'; doc: unknown }>();
     for (const o of ops) lastOp.set(o.pk, o);
-    const touched = new Set(lastOp.keys());
 
     for (const idx of this.indexes.values()) {
       if (!idx.unique) continue;
-      if (idx.type === 'range') {
-        const owner = new Map<number, string>();
-        for (const [pk, vals] of idx.byPk) {
-          if (touched.has(pk)) continue;
-          for (const v of vals) owner.set(v, pk);
-        }
-        for (const [pk, o] of lastOp) {
-          if (o.op === 'del') continue;
-          for (const v of flatten(getField(o.doc, idx.field))) {
+      // Batch-local claims: value -> claiming pk. Two different keys finally
+      // claiming the same value is a conflict regardless of the live index.
+      // This also covers the "holder is touched and still claims the value"
+      // case: the holder's own final claims pass through this same map.
+      const claimed = new Map<string | number, string>();
+      for (const [pk, o] of lastOp) {
+        if (o.op === 'del') continue;
+        const value = getField(o.doc, idx.field);
+        if (value === undefined && idx.sparse) continue;
+        for (const v of flatten(value)) {
+          if (idx.type === 'range') {
             if (typeof v !== 'number' || !Number.isFinite(v)) continue;
-            const prev = owner.get(v);
+            const prev = claimed.get(v);
             if (prev !== undefined && prev !== pk) throw new UniqueViolationError(idx.name, v);
-            owner.set(v, pk);
-          }
-        }
-      } else {
-        const owner = new Map<string, string>();
-        for (const [sk, set] of idx.map) {
-          for (const pk of set) if (!touched.has(pk)) owner.set(sk, pk);
-        }
-        for (const [pk, o] of lastOp) {
-          if (o.op === 'del') continue;
-          const value = getField(o.doc, idx.field);
-          if (value === undefined && idx.sparse) continue;
-          for (const v of flatten(value)) {
+            claimed.set(v, pk);
+            // Current holder in the live index, if any: a conflict unless it
+            // is the claimant itself or a key the batch vacates.
+            const hit = idx.list.range({ gte: v, lte: v, count: 1 });
+            if (hit.length) assertVacated(idx, hit[0]!.val, pk, v, lastOp);
+          } else {
             const sk = scalarKey(v);
-            const prev = owner.get(sk);
+            const prev = claimed.get(sk);
             if (prev !== undefined && prev !== pk) throw new UniqueViolationError(idx.name, v);
-            owner.set(sk, pk);
+            claimed.set(sk, pk);
+            const set = idx.map.get(sk);
+            if (set) for (const h of set) assertVacated(idx, h, pk, v, lastOp);
           }
         }
       }
@@ -218,29 +267,7 @@ export class IndexManager {
   }
 
   add(pk: string, doc: unknown): void {
-    for (const idx of this.indexes.values()) {
-      const value = getField(doc, idx.field);
-      if (value === undefined && idx.sparse) continue;
-      if (idx.type === 'range') {
-        // Index each distinct numeric element once. Without the de-dupe, an
-        // array like [10, 10, 10] would insert three (10, pk) nodes and the
-        // same key would be reported three times by findRange.
-        const vals = [...new Set(flatten(value).filter((v): v is number => typeof v === 'number' && Number.isFinite(v)))];
-        if (vals.length === 0) continue;
-        for (const v of vals) idx.list.insert(v, pk);
-        idx.byPk.set(pk, vals);
-      } else {
-        const keys: string[] = [];
-        for (const v of flatten(value)) {
-          const sk = scalarKey(v);
-          let set = idx.map.get(sk);
-          if (!set) idx.map.set(sk, (set = new Set()));
-          set.add(pk);
-          keys.push(sk);
-        }
-        idx.byPk.set(pk, keys);
-      }
-    }
+    for (const idx of this.indexes.values()) insertDoc(idx, pk, doc);
   }
 
   remove(pk: string, _doc: unknown): void {
@@ -306,18 +333,37 @@ export class IndexManager {
 
   /** Rebuild all indexes from an iterator of { key, value } (value = decoded doc). */
   rebuild(entries: Iterable<{ key: string | Buffer; value: unknown }>): void {
-    for (const idx of this.indexes.values()) {
-      if (idx.type === 'range') {
-        idx.list = new SkipList<number, string>({ compareKey: cmpNumber, compareVal: cmpString });
-        idx.byPk.clear();
-      } else {
-        idx.map.clear();
-        idx.byPk.clear();
-      }
-    }
+    const b = this.beginRebuild();
     for (const { key, value } of entries) {
       const pk = typeof key === 'string' ? key : Buffer.from(key).toString('binary');
-      if (value && typeof value === 'object') this.add(pk, value);
+      b.add(pk, value);
     }
+    b.commit();
+  }
+
+  /** Stage a rebuild in fresh per-index state and swap it in on commit(), so
+   *  a rebuild that fails midway leaves the previous indexes fully intact. */
+  beginRebuild(): { add(pk: string, doc: unknown): void; commit(): void } {
+    const staged: { idx: AnyIndex; next: AnyIndex }[] = [];
+    for (const idx of this.indexes.values()) {
+      const next: AnyIndex =
+        idx.type === 'range'
+          ? { ...idx, list: new SkipList<number, string>({ compareKey: cmpNumber, compareVal: cmpString }), byPk: new Map() }
+          : { ...idx, map: new Map(), byPk: new Map() };
+      staged.push({ idx, next });
+    }
+    return {
+      add: (pk, doc) => {
+        if (!doc || typeof doc !== 'object') return;
+        for (const { next } of staged) insertDoc(next, pk, doc);
+      },
+      commit: () => {
+        for (const { idx, next } of staged) {
+          if (idx.type === 'range' && next.type === 'range') idx.list = next.list;
+          else if (idx.type === 'equality' && next.type === 'equality') idx.map = next.map;
+          idx.byPk = next.byPk;
+        }
+      },
+    };
   }
 }

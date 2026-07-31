@@ -118,3 +118,47 @@ test('secondary indexes require the json codec', async () => {
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('unique range index: batch swap, del+reuse, and conflict', async () => {
+  const dir = await tmpDir();
+  try {
+    const db = await MiniDb.open({ dir, valueCodec: 'json' });
+    await db.createIndex('byScore', { field: 'score', type: 'range', unique: true });
+    await db.set('a', { score: 1 });
+    await db.set('b', { score: 2 });
+
+    // Swapping two values inside one batch is a valid final state.
+    await db.batch([
+      { op: 'set', key: 'a', value: { score: 2 } },
+      { op: 'set', key: 'b', value: { score: 1 } },
+    ]);
+    assert.equal(db.get('a')?.score, 2);
+    assert.equal(db.get('b')?.score, 1);
+
+    // Claiming an untouched owner's value is still rejected, batch-atomically.
+    await assert.rejects(db.batch([{ op: 'set', key: 'c', value: { score: 2 } }]), UniqueViolationError);
+    assert.equal(db.get('c'), undefined, 'nothing committed on failure');
+
+    // Deleting the holder and reusing its value in the same batch is valid.
+    await db.batch([
+      { op: 'del', key: 'a' },
+      { op: 'set', key: 'c', value: { score: 2 } },
+    ]);
+    assert.equal(db.get('a'), undefined);
+    assert.equal(db.get('c')?.score, 2);
+
+    // Two batch keys claiming the same fresh value is an intra-batch conflict.
+    await assert.rejects(
+      db.batch([
+        { op: 'set', key: 'd', value: { score: 9 } },
+        { op: 'set', key: 'e', value: { score: 9 } },
+      ]),
+      UniqueViolationError,
+    );
+    assert.equal(db.get('d'), undefined);
+    assert.equal(db.get('e'), undefined);
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

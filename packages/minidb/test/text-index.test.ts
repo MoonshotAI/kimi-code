@@ -590,3 +590,83 @@ test('MiniDb: createTextIndex rejects an unknown tokenizer', async () => {
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+// ---- top-K + delta reverse map (plan/02 bounded hot paths) ----------------
+
+test('TextIndex: top-K ranks score desc with a stable key tie-break', async () => {
+  const dir = await tmpDir();
+  try {
+    const ti = new TextIndex({ postingsPath: path.join(dir, 't.postings') });
+    // Every doc has the same term freq and the same doc length, so all scores
+    // are identical and the order must come from the key tie-break alone.
+    await ti.build([
+      { key: 'k3', value: { bio: 'common pad' } },
+      { key: 'k1', value: { bio: 'common pad' } },
+      { key: 'k2', value: { bio: 'common pad' } },
+    ]);
+    assert.deepEqual(ti.search('common', { limit: 2 }).map((h) => h.key), ['k1', 'k2'], 'equal scores -> key asc');
+    assert.deepEqual(ti.search('common', { limit: 10 }).map((h) => h.key), ['k1', 'k2', 'k3']);
+    assert.deepEqual(ti.search('common', { limit: 0 }), [], 'limit 0 stays empty');
+    ti.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('TextIndex: top-K over many candidates matches the full-ranking reference', async () => {
+  const dir = await tmpDir();
+  try {
+    const ti = new TextIndex({ postingsPath: path.join(dir, 't.postings') });
+    const entries: { key: string; value: { bio: string } }[] = [];
+    for (let i = 0; i < 500; i++) {
+      // Vary both term frequency (i % 7 + 1) and doc length (i % 11 pads), so
+      // scores differ across docs; a third of the docs carry no 'x' at all.
+      const reps = i % 3 === 0 ? 0 : (i % 7) + 1;
+      const body = `${'x '.repeat(reps)}${Array.from({ length: i % 11 }, (_, j) => `p${j}`).join(' ')}`.trim();
+      entries.push({ key: `k${String(i).padStart(4, '0')}`, value: { bio: body } });
+    }
+    await ti.build(entries);
+
+    // The full ranking (limit above the candidate count returns everything).
+    const all = ti.search('x', { limit: 1_000_000 });
+    const matching = entries.filter((e) => e.value.bio.includes('x')).length;
+    assert.equal(all.length, matching, 'unbounded search returns every scoring doc');
+    for (let i = 1; i < all.length; i++) {
+      const [p, c] = [all[i - 1]!, all[i]!];
+      assert.ok(p.score > c.score || (p.score === c.score && p.key < c.key), `rank order at ${i}`);
+    }
+    const rank = new Map(all.map((h, i) => [h.key, i]));
+    for (const limit of [1, 5, 10, 50, 499]) {
+      const hits = ti.search('x', { limit });
+      assert.equal(hits.length, Math.min(limit, all.length));
+      // Exactly the first `limit` rows of the full ranking, in the same order.
+      assert.deepEqual(
+        hits.map((h) => h.key),
+        all.slice(0, limit).map((h) => h.key),
+        `limit=${limit} is the full ranking's prefix`,
+      );
+      for (const h of hits) assert.ok(rank.get(h.key)! < limit);
+    }
+    ti.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('TextIndex: overwrite/remove prune the delta via the doc reverse map', () => {
+  const ti = new TextIndex(); // memory base; adds go to the delta
+  ti.add('a', { bio: 'apple banana' });
+  ti.add('b', { bio: 'cherry' });
+  assert.equal(ti.termCount(), 3);
+
+  ti.add('a', { bio: 'mango' }); // overwrite: apple/banana leave the delta
+  assert.deepEqual(ti.search('apple').map((h) => h.key), []);
+  assert.deepEqual(ti.search('banana').map((h) => h.key), []);
+  assert.deepEqual(ti.search('mango').map((h) => h.key), ['a']);
+  assert.equal(ti.termCount(), 2, 'pruned terms leave the vocabulary (cherry, mango)');
+
+  ti.remove('b');
+  assert.deepEqual(ti.search('cherry').map((h) => h.key), []);
+  assert.equal(ti.termCount(), 1, 'only mango remains');
+  ti.close();
+});

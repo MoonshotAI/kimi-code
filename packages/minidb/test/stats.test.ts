@@ -221,3 +221,42 @@ test('query stats count candidates, decodes and sorted rows', async () => {
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('index rebuild stats: values decoded once per record, 0 without value-derived indexes', async () => {
+  // No secondary/compound/text index: the open-time rebuild walk must be
+  // metadata-only (dt comes from record metadata, values are never decoded).
+  const dir = await tmpDir();
+  let db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+  for (let i = 0; i < 20; i++) await db.set(`k${i}`, { n: i }, { dt: { created: i } });
+  await db.close();
+  db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+  try {
+    assert.equal(db.stats.indexRebuildDecoded, 0, 'no decodes without value-derived indexes');
+    assert.equal(db.dtRange('created', { gte: 0 }).length, 20, 'dt index rebuilt from metadata alone');
+  } finally {
+    await db.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+
+  // With several value-derived indexes: exactly one decode per live record,
+  // fanned out to every staged builder in the shared walk.
+  const dir2 = await tmpDir();
+  db = await MiniDb.open({ dir: dir2, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+  await db.createTextIndex('body', { fields: ['body'] });
+  await db.createTextIndex('title', { fields: ['title'] });
+  await db.createIndex('byN', { field: 'n' });
+  await db.createCompoundIndex('byGrpN', { groupBy: 'grp', orderBy: 'n' });
+  for (let i = 0; i < 20; i++) await db.set(`k${i}`, { n: i, grp: 'g', body: `b${i}`, title: `t${i}` });
+  await db.close();
+  db = await MiniDb.open({ dir: dir2, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+  try {
+    assert.equal(db.stats.indexRebuildDecoded, 20, 'one decode per record fanned out to all builders');
+    assert.equal(db.search('body', 'b1').length, 1);
+    assert.equal(db.search('title', 't2').length, 1);
+    assert.equal(db.findEq('byN', 3).length, 1);
+    assert.equal(db.compoundRange('byGrpN', 'g').length, 20);
+  } finally {
+    await db.close();
+    await fs.rm(dir2, { recursive: true, force: true });
+  }
+});
