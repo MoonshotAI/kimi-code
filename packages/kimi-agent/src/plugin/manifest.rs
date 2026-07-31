@@ -17,7 +17,26 @@ pub struct PluginManifest {
     pub mcp_servers: Vec<PluginManifestMcpServer>,
     #[serde(default)]
     pub hooks: Vec<PluginManifestHook>,
+    /// Inline system-prompt contribution (upstream #2314). Capped at 32 KiB.
+    #[serde(default, rename = "systemPrompt")]
+    pub system_prompt: Option<String>,
+    /// Path to a file whose contents contribute to the system prompt
+    /// (upstream #2314).
+    #[serde(default, rename = "systemPromptPath")]
+    pub system_prompt_path: Option<String>,
+    /// Agent directories (relative paths, resolved against the plugin root);
+    /// defaults to `agents/` (upstream #2365).
+    #[serde(default)]
+    pub agents: Vec<String>,
+    /// Plugin root directory, set by `from_file` so relative agent paths and
+    /// `systemPromptPath` resolve correctly.
+    #[serde(skip)]
+    pub root: Option<std::path::PathBuf>,
 }
+
+/// Per-plugin system-prompt cap (bytes), matching upstream
+/// `PLUGIN_SYSTEM_PROMPT_MAX_BYTES`.
+pub const PLUGIN_SYSTEM_PROMPT_MAX_BYTES: usize = 32 * 1024;
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct PluginManifestSkill {
@@ -52,7 +71,9 @@ impl PluginManifest {
     pub fn from_file(path: &std::path::Path) -> Result<Self, String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("Cannot read plugin manifest at {path:?}: {e}"))?;
-        Self::from_json(&content)
+        let mut manifest = Self::from_json(&content)?;
+        manifest.root = path.parent().map(|p| p.to_path_buf());
+        Ok(manifest)
     }
 
     /// Convert to a PluginRecord, given a source and plugin ID.
@@ -85,7 +106,69 @@ impl PluginManifest {
                 command: h.command.clone(),
                 matcher: h.matcher.clone(),
             }).collect(),
+            system_prompt: self.resolve_system_prompt(),
+            agents: self.resolve_agent_roots(),
         }
+    }
+
+    /// Resolve the plugin's system-prompt contribution: the inline
+    /// `systemPrompt` field, or the contents of `systemPromptPath` (both
+    /// honored, concatenated, upstream #2314). The per-plugin cap is 32 KiB.
+    fn resolve_system_prompt(&self) -> Option<String> {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(ref inline) = self.system_prompt {
+            if inline.len() <= PLUGIN_SYSTEM_PROMPT_MAX_BYTES {
+                parts.push(inline.clone());
+            }
+        }
+        if let Some(ref path) = self.system_prompt_path {
+            if let Some(ref root) = self.root {
+                let full = root.join(path);
+                if let Ok(content) = std::fs::read_to_string(&full) {
+                    if content.len() <= PLUGIN_SYSTEM_PROMPT_MAX_BYTES {
+                        parts.push(content);
+                    }
+                }
+            }
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n\n"))
+        }
+    }
+
+    /// Resolve the agent directories contributed by the plugin (upstream
+    /// #2365): explicit `agents` entries, or the default `agents/` directory.
+    fn resolve_agent_roots(&self) -> Vec<PluginAgent> {
+        let candidates: Vec<String> = if !self.agents.is_empty() {
+            self.agents.clone()
+        } else if self.root.is_some() && self.root.as_ref().unwrap().join("agents").is_dir() {
+            vec!["./agents".to_string()]
+        } else {
+            Vec::new()
+        };
+        let mut out = Vec::new();
+        let Some(ref root) = self.root else {
+            return out;
+        };
+        for (i, entry) in candidates.iter().enumerate() {
+            let full = if entry.starts_with("./") {
+                root.join(&entry[2..])
+            } else {
+                root.join(entry)
+            };
+            if full.is_dir() {
+                out.push(PluginAgent {
+                    name: full
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| format!("agents-{i}")),
+                    path: full.to_string_lossy().to_string(),
+                });
+            }
+        }
+        out
     }
 }
 

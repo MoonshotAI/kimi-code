@@ -51,6 +51,14 @@ pub struct PluginHook {
     pub matcher: Option<String>,
 }
 
+/// Agent directory contributed by a plugin (upstream #2365).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginAgent {
+    pub name: String,
+    /// Absolute path to the plugin's agent directory (Markdown agent files).
+    pub path: String,
+}
+
 /// A plugin record stored in the database.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginRecord {
@@ -64,6 +72,12 @@ pub struct PluginRecord {
     pub skills: Vec<PluginSkill>,
     pub mcp_servers: Vec<PluginMcpServer>,
     pub hooks: Vec<PluginHook>,
+    /// Plugin system-prompt contribution (upstream #2314).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    /// Agent directories contributed by the plugin (upstream #2365).
+    #[serde(default)]
+    pub agents: Vec<PluginAgent>,
 }
 
 impl PluginRecord {
