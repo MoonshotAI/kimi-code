@@ -239,7 +239,7 @@ export function toAgentCoreResponse(
       }
     }
   }
-  const out: InProcessQuestionResponse = { answers: flattened };
+  const out: InProcessQuestionResponse = { answers: flattened, note: resp.note };
   if (resp.method !== undefined) {
     // SCHEMAS §6.2 protocol allows 'click' as a method; agent-core's in-process
     // `QuestionAnswerMethod` is `'enter' | 'space' | 'number_key'` (NO 'click').

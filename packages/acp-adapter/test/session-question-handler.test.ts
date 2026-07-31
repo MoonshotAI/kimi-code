@@ -63,6 +63,7 @@ function makeQuestionSession(sessionId: string): {
  */
 class CapturingConn {
   readonly permissionRequests: RequestPermissionRequest[] = [];
+  replies: Array<RequestPermissionResponse | Error> = [];
   reply: RequestPermissionResponse = {
     outcome: { outcome: 'selected', optionId: 'q0_opt_0' },
   };
@@ -73,7 +74,9 @@ class CapturingConn {
     if (this.shouldThrow) {
       throw new Error('client unreachable');
     }
-    return this.reply;
+    const nextReply = this.replies.shift();
+    if (nextReply instanceof Error) throw nextReply;
+    return nextReply ?? this.reply;
   }
   async sessionUpdate(): Promise<void> {
     /* not exercised */
@@ -166,7 +169,7 @@ describe('AcpSession.handleQuestion', () => {
     expect(trackCalls).toEqual([{ event: 'question_answered', properties: { answered: 1 } }]);
   });
 
-  it('skip: q0_skip resolves to null with question_dismissed telemetry', async () => {
+  it('skip: q0_skip resolves with a skipped-question note', async () => {
     const { conn, raw } = makeConn();
     const handle = makeQuestionSession('s-q-skip');
     raw.reply = { outcome: { outcome: 'selected', optionId: 'q0_skip' } };
@@ -174,11 +177,14 @@ describe('AcpSession.handleQuestion', () => {
 
     const answer = await handle.invokeHandler(makeReq());
 
-    expect(answer).toBeNull();
+    expect(answer).toEqual({
+      answers: {},
+      note: 'User skipped 1 question: "哪个口味？".',
+    });
     expect(trackCalls).toEqual([{ event: 'question_dismissed', properties: undefined }]);
   });
 
-  it('cancelled: outcome cancelled resolves to null with question_dismissed', async () => {
+  it('cancelled: reports the current and remaining questions as skipped', async () => {
     const { conn, raw } = makeConn();
     const handle = makeQuestionSession('s-q-cancel');
     raw.reply = { outcome: { outcome: 'cancelled' } };
@@ -186,14 +192,21 @@ describe('AcpSession.handleQuestion', () => {
 
     const answer = await handle.invokeHandler(makeReq());
 
-    expect(answer).toBeNull();
+    expect(answer).toEqual({
+      answers: {},
+      note: 'User skipped 1 question: "哪个口味？".',
+    });
     expect(trackCalls).toEqual([{ event: 'question_dismissed', properties: undefined }]);
   });
 
-  it('multi-question degradation: 3 questions → only first asked + question_degraded', async () => {
+  it('asks every question in order and returns all non-skipped answers', async () => {
     const { conn, raw } = makeConn();
     const handle = makeQuestionSession('s-q-multi');
-    raw.reply = { outcome: { outcome: 'selected', optionId: 'q0_opt_1' } };
+    raw.replies = [
+      { outcome: { outcome: 'selected', optionId: 'q0_opt_1' } },
+      { outcome: { outcome: 'selected', optionId: 'q1_opt_0' } },
+      { outcome: { outcome: 'selected', optionId: 'q2_skip' } },
+    ];
     new AcpSession(conn, handle.session, undefined, track);
 
     const extra1: QuestionItem = { question: 'Q2', options: [{ label: 'a' }] };
@@ -202,24 +215,36 @@ describe('AcpSession.handleQuestion', () => {
       makeReq({ questions: [sampleQuestion, extra1, extra2] }),
     );
 
-    expect(answer).toEqual({ '哪个口味？': '巧克力' });
-    expect(raw.permissionRequests).toHaveLength(1);
-    // Telemetry: degraded(multi_question) first, then answered.
-    expect(trackCalls).toEqual([
-      { event: 'question_degraded', properties: { reason: 'multi_question', dropped: 2 } },
-      { event: 'question_answered', properties: { answered: 1 } },
+    expect(answer).toEqual({
+      answers: { '哪个口味？': '巧克力', Q2: 'a' },
+      note: 'User skipped 1 question: "Q3".',
+    });
+    expect(raw.permissionRequests).toHaveLength(3);
+    expect(raw.permissionRequests.map((request) => request.toolCall.title)).toEqual([
+      'AskUserQuestion (1/3)',
+      'AskUserQuestion (2/3)',
+      'AskUserQuestion (3/3)',
     ]);
-    // log.warn fired with the dropped count.
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('degrading to first question only'),
-      expect.objectContaining({ dropped: 2 }),
-    );
+    expect(raw.permissionRequests.map((request) => request.options[0]?.optionId)).toEqual([
+      'q0_opt_0',
+      'q1_opt_0',
+      'q2_opt_0',
+    ]);
+    expect(trackCalls).toEqual([
+      { event: 'question_answered', properties: { answered: 2 } },
+    ]);
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it('multiSelect degradation: still asks the question + question_degraded', async () => {
+  it('toggles multi-select choices until Done and returns the remaining selections', async () => {
     const { conn, raw } = makeConn();
     const handle = makeQuestionSession('s-q-multisel');
-    raw.reply = { outcome: { outcome: 'selected', optionId: 'q0_opt_0' } };
+    raw.replies = [
+      { outcome: { outcome: 'selected', optionId: 'q0_opt_0' } },
+      { outcome: { outcome: 'selected', optionId: 'q0_opt_1' } },
+      { outcome: { outcome: 'selected', optionId: 'q0_opt_0' } },
+      { outcome: { outcome: 'selected', optionId: 'q0_done' } },
+    ];
     new AcpSession(conn, handle.session, undefined, track);
 
     const multi: QuestionItem = {
@@ -232,15 +257,87 @@ describe('AcpSession.handleQuestion', () => {
       questions: [multi],
     });
 
-    expect(answer).toEqual({ 'Pick any': 'a' });
-    expect(raw.permissionRequests).toHaveLength(1);
+    expect(answer).toEqual({ 'Pick any': 'b' });
+    expect(raw.permissionRequests).toHaveLength(4);
+    expect(raw.permissionRequests[1]?.options.map((option) => option.name)).toEqual([
+      '✓ a',
+      'b',
+      'Done',
+      'Skip',
+    ]);
+    expect(raw.permissionRequests[2]?.options.map((option) => option.name)).toEqual([
+      '✓ a',
+      '✓ b',
+      'Done',
+      'Skip',
+    ]);
+    expect(raw.permissionRequests[3]?.options.map((option) => option.name)).toEqual([
+      'a',
+      '✓ b',
+      'Done',
+      'Skip',
+    ]);
     expect(trackCalls).toEqual([
-      { event: 'question_degraded', properties: { reason: 'multi_select' } },
       { event: 'question_answered', properties: { answered: 1 } },
     ]);
   });
 
-  it('requestPermission throw → log.warn + null', async () => {
+  it('continues to later questions after Skip', async () => {
+    const { conn, raw } = makeConn();
+    const handle = makeQuestionSession('s-q-skip-continue');
+    raw.replies = [
+      { outcome: { outcome: 'selected', optionId: 'q0_skip' } },
+      { outcome: { outcome: 'selected', optionId: 'q1_opt_0' } },
+    ];
+    new AcpSession(conn, handle.session, undefined, track);
+
+    const answer = await handle.invokeHandler(
+      makeReq({
+        questions: [
+          sampleQuestion,
+          { question: 'Q2', options: [{ label: 'second answer' }] },
+        ],
+      }),
+    );
+
+    expect(answer).toEqual({
+      answers: { Q2: 'second answer' },
+      note: 'User skipped 1 question: "哪个口味？".',
+    });
+    expect(raw.permissionRequests).toHaveLength(2);
+    expect(trackCalls).toEqual([
+      { event: 'question_answered', properties: { answered: 1 } },
+    ]);
+  });
+
+  it('distinguishes a skipped question from a later client failure', async () => {
+    const { conn, raw } = makeConn();
+    const handle = makeQuestionSession('s-q-skip-then-throw');
+    raw.replies = [
+      { outcome: { outcome: 'selected', optionId: 'q0_skip' } },
+      new Error('client unreachable'),
+    ];
+    new AcpSession(conn, handle.session, undefined, track);
+
+    const answer = await handle.invokeHandler(
+      makeReq({
+        questions: [
+          sampleQuestion,
+          { question: 'Q2', options: [{ label: 'second answer' }] },
+        ],
+      }),
+    );
+
+    expect(answer).toEqual({
+      answers: {},
+      note:
+        'User skipped 1 question: "哪个口味？". ' +
+        'The client stopped before 1 question could be answered.',
+    });
+    expect(raw.permissionRequests).toHaveLength(2);
+  });
+
+  it('requestPermission throw logs a warning and returns a client-stopped note', async () => {
     const { conn, raw } = makeConn();
     const handle = makeQuestionSession('s-q-throw');
     raw.shouldThrow = true;
@@ -248,14 +345,17 @@ describe('AcpSession.handleQuestion', () => {
 
     const answer = await handle.invokeHandler(makeReq());
 
-    expect(answer).toBeNull();
+    expect(answer).toEqual({
+      answers: {},
+      note: 'The client stopped before 1 question could be answered.',
+    });
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('requestPermission (question) failed'),
       expect.objectContaining({ toolCallId: 'tc-ask-1' }),
     );
-    // No question_answered / question_dismissed emitted on throw — the
-    // RPC failure is its own observability path (log.warn above).
-    expect(trackCalls).toEqual([]);
+    expect(trackCalls).toEqual([
+      { event: 'question_dismissed', properties: undefined },
+    ]);
   });
 
   it('no track sink: handler still runs without emitting telemetry', async () => {

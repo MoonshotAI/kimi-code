@@ -248,10 +248,12 @@ describe('question-adapter · toAgentCoreResponse · id → text translation', (
           q_1: { kind: 'skipped' },
         },
         method: 'click',
+        note: 'User skipped one question.',
       },
       request,
     );
     expect(inProc.answers).toEqual({ 'Which animal?': 'Hippopotamus' });
+    expect(inProc.note).toBe('User skipped one question.');
     // method 'click' is NOT in agent-core's in-process method union — dropped.
     expect((inProc as { method?: string }).method).toBeUndefined();
   });

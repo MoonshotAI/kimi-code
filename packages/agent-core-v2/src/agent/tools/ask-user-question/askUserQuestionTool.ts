@@ -187,7 +187,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
           trace_id: trace?.traceId,
         };
         this.telemetry.track2('question_dismissed', properties);
-        return dismissedQuestionResult();
+        return dismissedQuestionResult(normalized?.note);
       }
 
       const properties: QuestionAnsweredEvent = {
@@ -198,7 +198,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
       this.telemetry.track2('question_answered', properties);
       return {
         isError: false,
-        output: JSON.stringify({ answers: normalized.answers }),
+        output: JSON.stringify({ answers: normalized.answers, note: normalized.note }),
       };
     } catch (error) {
       if (isAbortError(error) || signal.aborted) throw error;
@@ -227,24 +227,29 @@ function questionDescription(questions: AskUserQuestionInput['questions']): stri
   return `${label} (+${String(questions.length - 1)} more)`;
 }
 
-function dismissedQuestionResult(): ExecutableToolResult {
+function dismissedQuestionResult(note = QUESTION_DISMISSED_MESSAGE): ExecutableToolResult {
   return {
     isError: false,
     output: JSON.stringify({
       answers: {},
-      note: QUESTION_DISMISSED_MESSAGE,
+      note,
     }),
   };
 }
 
 function normalizeQuestionResult(
   result: QuestionResult,
-): { readonly answers: QuestionAnswers; readonly method?: QuestionAnswerMethod | undefined } | null {
+): {
+  readonly answers: QuestionAnswers;
+  readonly method?: QuestionAnswerMethod | undefined;
+  readonly note?: string | undefined;
+} | null {
   if (result === null) return null;
   if (isQuestionResponse(result)) {
     return {
       answers: result.answers,
       method: result.method,
+      note: result.note,
     };
   }
   return { answers: result };
