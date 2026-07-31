@@ -81,6 +81,12 @@ export interface AgentRecordEvents {
   };
   'tools.set_active_tools': {
     names: readonly string[];
+    /**
+     * Profile denylist applied on top of `names` (agentfile
+     * `disallowedTools`). Optional for backwards compatibility: wires written
+     * before deny support (and v2-engine wires) carry no deny state.
+     */
+    disallowedNames?: readonly string[];
   };
 
   'usage.record': {

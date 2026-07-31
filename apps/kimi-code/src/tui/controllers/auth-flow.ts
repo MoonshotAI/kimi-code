@@ -85,6 +85,12 @@ export class AuthFlowController {
           ? 'yolo'
           : undefined,
       planMode: host.state.appState.planMode ? true : undefined,
+      // The post-login session is still the startup session: carry the
+      // --agent/--agent-file binding resolved at launch.
+      agentProfile: host.options.startup.agentProfile,
+      agentFiles: host.options.startup.agentFiles?.length
+        ? [...host.options.startup.agentFiles]
+        : undefined,
     };
     if (host.state.appState.additionalDirs.length > 0) {
       options.additionalDirs = [...host.state.appState.additionalDirs];

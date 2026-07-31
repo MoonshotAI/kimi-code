@@ -12,21 +12,23 @@ When writing business code you declare three things; the container handles the r
 
 Classes talk only to interfaces and never care how an implementation is constructed.
 
-## The three `LifecycleScope` tiers
+## The four `LifecycleScope` tiers
 
 Lifetimes form a tree, from longest to shortest:
 
 ```text
-App (0)         process-wide, single global instance
- └── Session (1)    one session
-      └── Agent (2)    one agent
+App (0)             process-wide, single global instance
+ └── Workspace (1)     one workspace handler (a materialized workspace root)
+      └── Session (2)    one session
+           └── Agent (3)    one agent
 ```
 
 ```ts
 export enum LifecycleScope {
   App = 0,
-  Session = 1,
-  Agent = 2,
+  Workspace = 1,
+  Session = 2,
+  Agent = 3,
 }
 ```
 
@@ -51,7 +53,7 @@ Deterministic: **child scopes die first; within one scope, instances dispose in 
 
 The `Ln` in a file-header identity line is the domain's **dependency layer** (L0–L7), **not** its `LifecycleScope`. They are easy to confuse because both are small integers, but they answer different questions:
 
-- `LifecycleScope` (App=0 / Session=1 / Agent=2) — **lifetime & visibility** (this stage).
+- `LifecycleScope` (App=0 / Workspace=1 / Session=2 / Agent=3) — **lifetime & visibility** (this stage).
 - Dependency layer `Ln` (L0–L7) — **who may import whom**: a domain at layer `L` may import only domains at layer `<= L`. Enforced by `lint:domain` from the authoritative `DOMAIN_LAYER` map in `scripts/check-domain-layers.mjs`.
 
 So a Session-scoped service is not "L1" — e.g. `session` is Session-scoped but lives at **L6**. When you write the header, read the number from the layer map, not from the scope.
@@ -73,7 +75,7 @@ So a Session-scoped service is not "L1" — e.g. `session` is Session-scoped but
 
 - **Header only.** Comments live solely in the top-of-file `/** */` block — never beside functions, methods, or statements. The code is the source of truth for *how*; the header states *what the module exposes and the responsibility it owns*.
 - **Identity line first.** Start with `` `<domain>` domain (Ln) — <one-line role>. `` Keep an existing `(cross-cutting)` label as-is. Write the role as a responsibility ("drives the turn lifecycle"), not a symbol list.
-- **Scope is in the filename.** `session*.ts` = Session, `agent*.ts` = Agent, no prefix = App (see service-authoring.md). State the same scope in the header so the two never drift.
+- **Scope is in the filename.** `workspace*.ts` = Workspace, `session*.ts` = Session, `agent*.ts` = Agent, no prefix = App (see service-authoring.md). State the same scope in the header so the two never drift.
 - **Interface files** (`<name>.ts`) state the public contract + scope: which `IXxx` they define and what it is for.
 - **Impl files** (`<name>Service.ts`) add collaborators + scope: list every imported cross-domain collaborator as a role ("persists records through `records`"); read scope from `registerScopedService(LifecycleScope.X, …)`.
 - **Contribution files** (`<targetDomain>.ts` / `<what>.contrib.ts`) state what they register into the target domain (e.g. "registers the `log` config section into `config`").

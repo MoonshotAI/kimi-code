@@ -30,6 +30,13 @@ export const SKILL_SOURCE_PRIORITY = {
   workspace: 30,
 } as const;
 
+/**
+ * The well-known `ISkillSource.id` of the plugin source, shared by every
+ * scope tier the source is bound at (today: Workspace scope) and by change
+ * listeners matching plugin-sourced refreshes.
+ */
+export const PLUGIN_SKILL_SOURCE_ID = 'plugin';
+
 export interface ISkillSource {
   readonly _serviceBrand: undefined;
   readonly id: string;

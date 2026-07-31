@@ -1,6 +1,6 @@
 # Plugins
 
-Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元——可以添加 [Agent Skills](./skills.md)、在会话启动时自动加载指定 Skill，也可以声明 MCP servers 来提供真实工具能力。适合把工作流共享给团队、连接外部服务，或从官方 marketplace 安装扩展。
+Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元——可以添加 [Agent Skills](./skills.md)、自定义 [Agent](./agents.md)、在会话启动时自动加载指定 Skill、提供系统提示词指令，也可以声明 MCP servers 来提供真实工具能力。适合把工作流共享给团队、连接外部服务，或从官方 marketplace 安装扩展。
 
 ## 安装与管理
 
@@ -143,6 +143,7 @@ Plugin 是一个带 manifest 的目录或 zip 文件。Manifest 可以放在以�
   "version": "1.0.0",
   "description": "Finance data and analysis workflows for Kimi Code CLI",
   "skills": "./skills/",
+  "systemPromptPath": "./SYSTEM.md",
   "sessionStart": {
     "skill": "using-finance"
   },
@@ -161,13 +162,35 @@ Plugin 是一个带 manifest 的目录或 zip 文件。Manifest 可以放在以�
 | `version`、`description`、`keywords`、`author`、`homepage`、`license` | 展示元数据 |
 | `interface` | 在 `/plugins` 中展示的字段：`displayName`、`shortDescription`、`longDescription`、`developerName`、`websiteURL` |
 | `skills` | 一个或多个 `./` 路径，必须位于 plugin 根目录内。省略时根目录的 `SKILL.md` 被当作单个 Skill root |
+| `agents` | 一个或多个 `./` 路径，必须位于 plugin 根目录内，指向含有 [Agent 文件](./agents.md#自定义-agent)的目录。省略时根下的 `agents/` 目录（若存在）被自动采用 |
 | `sessionStart.skill` | 在新会话或恢复会话开始时，把指定 plugin Skill 加载到主 Agent |
 | `skillInstructions` | 每次加载此 plugin 的 Skill 时一并附带的额外说明 |
+| `systemPrompt` | plugin 启用期间提供给 Agent 系统提示词的内联指令 |
+| `systemPromptPath` | 指向 UTF-8 文本文件的 `./` 路径；同时设置 `systemPrompt` 时，文件内容拼接在内联指令之后 |
 | `mcpServers` | MCP server 声明，默认启用，可从 `/plugins` 中禁用 |
 | `hooks` | 在 plugin 启用期间于生命周期事件上运行的 hook 规则；见[插件中的 Hooks](#插件中的-hooks) |
 | `commands` | 一个或多个 `./` 路径，指向目录或 `.md` 文件，把其中的 Markdown 文件注册为斜杠命令；见[插件斜杠命令](#插件斜杠命令) |
 
 `tools`、`apps`、`inject`、`configFile` 等不支持的运行时字段会显示为 diagnostics 并被忽略。
+
+### 系统提示词指令
+
+短指令可以直接写在 `systemPrompt`，较长内容则用 `systemPromptPath` 指向 plugin 根目录内的文件。两个字段同时存在时，内联文本在前，文件内容在后。文件内容在安装或重载 plugin 时读取，因此修改文件后需要 `/plugins reload` 才会生效。例如：
+
+```json
+{
+  "name": "code-review",
+  "systemPromptPath": "./SYSTEM.md"
+}
+```
+
+系统提示词贡献在两个 Agent 引擎上都生效：交互式 TUI 与 `kimi -p`（v1 引擎）、`kimi web`，以及 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 时的所有 CLI 界面（v2 引擎）。
+
+`systemPrompt` 字段与 `systemPromptPath` 文件各限制为 32 KB（UTF-8 字节）：超限内容会被忽略，并显示在 plugin 的 diagnostics 中。一次提示词构建最多注入所有已启用 plugin 合计 64 KB 的指令；超出预算的贡献会被跳过并给出警告——单个 plugin 的内联文本与文件合计超过该预算时同样整体跳过。
+
+新会话和新建 Agent 会读取当前已启用 plugin 的指令。正在进行的请求会继续使用已有的系统提示词。`/plugins reload` 会刷新 plugin Skill 列表，并请求重建活跃 Agent 的提示词；如果需要让变更在下一轮前明确收敛，请使用这个命令。在 v2 引擎中，安装、启用、禁用或移除 plugin 会立即更新 catalog，后续的提示词重建（例如压缩上下文或修改工具策略后）可能会读取新的指令。legacy 引擎会让每个活跃 session 保留自己的 plugin 快照，直到 `/plugins reload` 或创建新 session。从磁盘恢复的 session 会先使用持久化的提示词，后续重建再遵循对应引擎的行为。切换 plugin 的 MCP server 不会改变系统提示词指令。
+
+内置 Agent 提示词会自动包含已启用 plugin 的指令。自定义 `SYSTEM.md` 或 Agent 文件完全拥有自己的模板，因此应在希望出现 plugin 指令的位置加入 `${plugin_sections}`。如果自定义模板包含 `${base_prompt}`，且该有效默认提示词已经包含 plugin 块，就不要再重复加入 `${plugin_sections}`。完整变量表见 [自定义 Agent 与 SYSTEM.md](./agents.md#用-system-md-覆盖主-agent-的系统提示词)。
 
 ## 插件斜杠命令
 
@@ -249,6 +272,19 @@ my-plugin/
 
 无论 Skill 通过哪种方式加载（`sessionStart.skill`、`/skill:<name>` 或模型自动调用），`skillInstructions` 都会随该 plugin 的 Skill 一起出现。
 
+## 插件 Agent
+
+Plugin 可以携带自定义 Agent：在 manifest 的 `agents` 字段里声明一个或多个 `./` 目录（或直接在 plugin 根下放置 `agents/` 目录），其中的 Agent 文件与[自定义 Agent](./agents.md#自定义-agent) 格式相同，会在 plugin 启用期间作为子 Agent 被主 Agent 自动发现和委派。
+
+```text
+my-plugin/
+  kimi.plugin.json
+  agents/
+    reviewer.md
+```
+
+Plugin Agent 的优先级低于其他文件来源：同名时用户级、额外目录、项目级和 `--agent-file` 的 Agent 都会覆盖 plugin 提供的版本；替换内置 Agent 同样需要在 frontmatter 里显式写 `override: true`。安装、启用、禁用或移除 plugin 后，Agent 列表在新会话（或 `/reload`）时刷新；v2 引擎的当前会话还会在 `/plugins reload` 后刷新。
+
 ## Plugin 中的 MCP servers
 
 当 plugin 需要真实工具能力时，可以在 manifest 中声明 `mcpServers`，复用 [MCP](./mcp.md) 的 schema。
@@ -323,4 +359,3 @@ Plugin 的加载范围有限，以下操作不会在安装或会话启动时发�
 - 所有路径在解析符号链接后仍必须位于 plugin 根目录内
 - 已启用 plugin 的 MCP servers 会在 `/reload` 后或新会话中启动，且可随时从 `/plugins` 禁用
 - 损坏的 manifest 或不安全路径会显示在 `/plugins info <id>` 的 diagnostics 中，不影响其他会话
-

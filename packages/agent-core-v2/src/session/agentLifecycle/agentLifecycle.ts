@@ -5,9 +5,10 @@
  * registry (`get` / `list` / `remove`), and the lifecycle events — plus the
  * session-wide fan-outs only the live registry can reach
  * (`broadcastPermissionMode`). Driving turns on an agent — and the hook/event
- * surface those runs announce — lives in the `subagent` domain; session-level
- * MCP lives in the `sessionMcp` domain. Session-scoped — one instance per
- * session.
+ * surface those runs announce — lives in the `subagent` domain; the shared MCP
+ * connection manager lives in the Workspace-scope `workspaceMcp` domain and
+ * reaches agents through the seeded `ISessionMcpHandle`. Session-scoped — one
+ * instance per session.
  *
  * Invariants:
  * - The registry is flat: agents have no nesting. There is no parent/child or

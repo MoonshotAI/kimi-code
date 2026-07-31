@@ -1,5 +1,5 @@
 import type { HookDefConfig } from '#/agent/externalHooks/configSection';
-import type { McpServerConfig } from '#/agent/mcp/config-schema';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
 
 export type PluginDiagnosticSeverity = 'error' | 'warn' | 'info';
 
@@ -15,6 +15,17 @@ export interface PluginAuthor {
 
 export interface PluginSessionStart {
   readonly skill: string;
+}
+
+/**
+ * A plugin-contributed agent-definition root directory (`manifest.agents`
+ * entries). Structurally compatible with the workspace agent-profile loader's
+ * `AgentFileRoot` (`source: 'plugin'`) so the loader can feed them straight
+ * into discovery without the plugin domain importing it.
+ */
+export interface PluginAgentRoot {
+  readonly path: string;
+  readonly source: 'plugin';
 }
 
 export interface PluginInterface {
@@ -34,12 +45,14 @@ export interface PluginManifest {
   readonly homepage?: string;
   readonly license?: string;
   readonly skills?: readonly string[];
+  readonly agents?: readonly string[];
   readonly sessionStart?: PluginSessionStart;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly hooks?: readonly HookDefConfig[];
   readonly commands?: readonly PluginCommandEntry[];
   readonly interface?: PluginInterface;
   readonly skillInstructions?: string;
+  readonly systemPrompt?: string;
 }
 
 export interface PluginMcpServerState {
@@ -144,6 +157,11 @@ export interface PluginInfo extends PluginSummary {
 export interface EnabledPluginSessionStart {
   readonly pluginId: string;
   readonly skillName: string;
+}
+
+export interface EnabledPluginSystemPrompt {
+  readonly pluginId: string;
+  readonly content: string;
 }
 
 export interface ReloadSummary {

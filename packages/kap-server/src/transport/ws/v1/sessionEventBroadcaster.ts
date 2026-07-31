@@ -70,8 +70,8 @@ import {
   ISessionActivityView,
   ISessionInteractionService,
   ISessionIndex,
-  ISessionLifecycleService,
   MAIN_AGENT_ID,
+  getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import type { SessionCreatedEvent, SessionMetaUpdatedEvent, Event } from './events';
 import { isVolatileEventType } from './events';
@@ -754,7 +754,7 @@ export class SessionEventBroadcaster {
   private async createSessionState(sessionId: string): Promise<SessionState | undefined> {
     if (this.closed) return undefined;
 
-    const session = this.opts.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(this.opts.core.accessor, sessionId);
     if (session === undefined) return undefined;
 
     const journal = await SessionEventJournal.open(
@@ -1002,7 +1002,13 @@ export class SessionEventBroadcaster {
     const disposables: IDisposable[] = [
       eventBus.subscribe((event) => {
         let projected = event;
-        if (handle.id === MAIN_AGENT_ID && event.type === 'agent.status.updated') {
+        if (event.type === 'agent.status.updated') {
+          // v2 emits status in slices, and the model slice rides only the
+          // bind-time emission — for a subagent that lands before the client
+          // has seen `subagent.spawned` and is dropped there, leaving the
+          // subagent card without a model. Fold the full legacy snapshot
+          // (usage + context + model) into every agent's status event so the
+          // v1 combined-payload contract holds regardless of slice timing.
           const snapshot = readLegacyStatus(handle);
           if (snapshot !== undefined) {
             lastLegacyStatus = JSON.stringify(snapshot);

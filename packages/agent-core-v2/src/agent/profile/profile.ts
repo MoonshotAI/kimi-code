@@ -10,7 +10,9 @@
  * state, so the effort is validated against the model's supported efforts and
  * the bind rejects up front when unsupported — internal spawns pass inherited
  * thinking without the flag, and a persisted effort that drifted out of the
- * model's support list clamps instead of breaking the spawn.
+ * model's support list clamps instead of breaking the spawn. The profile
+ * contract also owns live status re-publication for consumers that attach to
+ * an agent after its initial model binding.
  */
 
 import type { AgentProfile, AgentProfileContext } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -36,7 +38,6 @@ export class ProfileError extends Error2 {
 }
 
 export interface AgentConfigData {
-  cwd: string;
   modelAlias?: string;
   modelCapabilities: ModelCapability;
   profileName?: string;
@@ -45,7 +46,6 @@ export interface AgentConfigData {
 }
 
 export type AgentConfigUpdateData = Partial<{
-  cwd: string;
   modelAlias: string;
   profileName: string;
   thinkingLevel: string;
@@ -65,7 +65,6 @@ export interface ProfileData extends AgentConfigData {
 }
 
 export type ProfileUpdateData = Partial<{
-  cwd: string;
   modelAlias: string;
   profileName: string;
   thinkingLevel: string;
@@ -75,7 +74,6 @@ export type ProfileUpdateData = Partial<{
 }>;
 
 export interface ProfileBindingSnapshot {
-  readonly cwd: string;
   readonly modelAlias?: string;
   readonly profileName?: string;
   readonly thinkingLevel: string;
@@ -86,8 +84,6 @@ export interface ProfileBindingSnapshot {
 }
 
 export interface ProfileServiceOptions {
-  readonly cwd?: string | (() => string | undefined);
-  readonly chdir?: (cwd: string) => void | Promise<void>;
   readonly emitStatusUpdated?: () => void;
 }
 
@@ -115,7 +111,6 @@ export interface BindAgentInput {
   readonly model?: string;
   readonly thinking?: string;
   readonly strictThinking?: boolean;
-  readonly cwd?: string;
 }
 
 export interface IAgentProfileService {
@@ -127,6 +122,7 @@ export interface IAgentProfileService {
   bind(input: BindAgentInput): Promise<void>;
   setModel(model: string): Promise<ProfileSetModelResult>;
   setThinking(level: string): void;
+  republishStatus(): void;
   getModel(): string;
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void;
   applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void>;

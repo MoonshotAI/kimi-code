@@ -276,7 +276,6 @@ export class SubagentTool implements ISubagentTool {
             profile: profile.name,
             model: binding.model,
             thinking: binding.thinking,
-            cwd: own.cwd,
           },
           labels: subagentLabels(this.callerAgentId),
         });

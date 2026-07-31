@@ -140,6 +140,8 @@ export class KimiHarness {
     if (active !== undefined) {
       if (kaos !== undefined || persistenceKaos !== undefined) {
         await this.rpc.resumeSessionWithKaos({ ...resumeInput, id }, kaos ?? persistenceKaos as Kaos, persistenceKaos);
+      } else if (input.agentProfile !== undefined) {
+        await this.rpc.resumeSession({ ...resumeInput, id });
       }
       return active;
     }
@@ -351,7 +353,7 @@ export class KimiHarness {
       // see core-impl.ts). Kept as an explicit key so both producers share the
       // same session_started schema.
       client_id: null,
-      client_name: this.identity?.userAgentProduct ?? null,
+      client_name: this.identity?.productName ?? null,
       client_version: this.identity?.version ?? null,
       ui_mode: this.uiMode,
       resumed,

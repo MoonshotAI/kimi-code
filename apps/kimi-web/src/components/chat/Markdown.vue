@@ -327,7 +327,14 @@ const CODE_DARK_THEME = 'github-dark';
 // blank placeholders. Pinning `loading` to false drops the skeleton entirely:
 // the block renders its plain-text fallback immediately and shiki upgrades it to
 // the highlighted version when the highlighter is ready. Streaming blocks are
-// unaffected (their `stream` is true, so the skeleton gate was already false).
+// unaffected (their `stream` is true, so the skeleton gate was already
+// false).
+// Chat code blocks show no gutter: line numbers eat 3+ characters of reading
+// width and every chat block starts at line 1 anyway. stream-diffs derives its
+// gutter from `lineNumbers === false` (boolean, not monaco's 'off' string).
+// This rides inside codeBlockProps because markstream 1.0.7 only forwards the
+// top-level codeBlockMonacoOptions to the 'monaco' renderer kind — the 'shiki'
+// kind's props object omits it, while codeBlockProps reach the same component.
 const codeBlockProps = {
   showHeader: true,
   showCopyButton: true,
@@ -336,6 +343,7 @@ const codeBlockProps = {
   showCollapseButton: false,
   showFontSizeButtons: false,
   loading: false,
+  monacoOptions: { lineNumbers: false },
 };
 
 // Root cause for the "large session turns into code skeletons" failure:

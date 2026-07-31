@@ -107,7 +107,7 @@ timeout = 5
 | `providers` | `table` | `{}` | API 供应商表 → [`providers`](#providers) |
 | `models` | `table` | — | 模型别名表 → [`models`](#models) |
 | `thinking` | `table` | — | Thinking 模式默认参数 → [`thinking`](#thinking) |
-| `loop_control` | `table` | — | Agent 循环控制参数 → [`loop_control`](#loop_control) |
+| `loop_control` | `table` | — | Agent 循环控制参数 → [`loop_control`](#loop-control) |
 | `background` | `table` | — | 后台任务运行参数 → [`background`](#background) |
 | `tools` | `table` | — | 全局工具开关 → [`tools`](#tools) |
 | `image` | `table` | — | 图片压缩参数 → [`image`](#image) |
@@ -192,7 +192,9 @@ display_name = "Kimi for Coding (custom)"
 
 次主力模型是主模型 `default_model` 之外的第二个模型指针——通常是一个更便宜的模型，供不需要主模型的功能绑定使用。目前的消费者是子 Agent 派生：设置后，新派生的子 Agent（`Agent` / `AgentSwarm`）默认绑定该模型，而不再继承主 Agent 的模型；主 Agent 会被告知每次派生可在 `"secondary"`（该模型）与 `"primary"`（主模型）之间选择。未设置时，子 Agent 继承主 Agent 的模型。
 
-该功能目前是实验功能，默认关闭。在 `kimi web` 下，通过 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1` 启用；在 `kimi -p` 下，选择 v2 引擎本就需要 `KIMI_CODE_EXPERIMENTAL_FLAG=1`，该 master flag 也会启用本功能。交互式 TUI 会忽略该配置。
+该功能目前是实验功能，默认关闭。通过 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1` 启用，或使用 master `KIMI_CODE_EXPERIMENTAL_FLAG=1`。它在包括交互式 TUI 在内的所有启动方式下生效。
+
+在交互式 TUI 中，可以使用 [`/secondary_model`](../reference/slash-commands.md) 命令打开模型选择器来设置该配置：选择后会写入本小节配置，并在当前会话立即生效——之后派生的子 Agent 会直接绑定新的第二模型。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -384,7 +386,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `theme` | `string` | `auto` | 配色主题：`auto`（跟随终端）、`dark`、`light`，或[自定义主题](../customization/themes)的名字 |
+| `theme` | `string` | `auto` | 配色主题：`auto`（跟随终端）、`dark`、`light`，或[自定义主题](../customization/themes.md)的名字 |
 | `disable_paste_burst` | `boolean` | `false` | 禁用非 bracketed paste 的粘贴突发兜底；默认开启，避免快速多行粘贴被逐行提交 |
 | `[editor].command` | `string` | `""` | 编写长输入用的外部编辑器命令；留空则回退到 `$VISUAL` / `$EDITOR` |
 | `[notifications].enabled` | `boolean` | `true` | 是否发送桌面通知 |

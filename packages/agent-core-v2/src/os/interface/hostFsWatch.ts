@@ -4,7 +4,7 @@
  * Defines the `IHostFsWatchService`, a thin primitive over the host OS file
  * watcher. It reports raw create/modify/delete events under an absolute path
  * and knows nothing about sessions, connections, workspaces or wire frames.
- * App-scoped — one shared instance. Higher layers (e.g. `sessionFsWatch`)
+ * App-scoped — one shared instance. Higher layers (e.g. `workspaceFsWatch`)
  * subscribe, confine events to a workspace, debounce/coalesce and re-expose
  * them as domain events.
  */

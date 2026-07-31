@@ -33,12 +33,20 @@ import type {
   ToolInputDisplay,
 } from '@moonshot-ai/agent-core';
 import {
+  ContextSizeModel,
+  IAgentContextSizeService,
   IAgentLifecycleService,
+  IAgentProfileService,
+  IAgentUsageService,
   IEventBus,
+  IModelCatalog,
   ISessionApprovalService,
   ISessionInteractionService,
   ISessionQuestionService,
+  IWireService,
   MAIN_AGENT_ID,
+  SECONDARY_DERIVED_MODEL_ID,
+  type DomainEvent,
   type IAgentScopeHandle,
   type IDisposable,
   type Interaction,
@@ -145,7 +153,9 @@ export class SessionEventWiring {
     this.agentSubscriptions.set(
       agentId,
       agent.accessor.get(IEventBus).subscribe((event) => {
-        const translated = translateDomainEvent(event, sessionId, agentId);
+        const enriched =
+          event.type === 'agent.status.updated' ? withStatusSnapshot(agent, event) : event;
+        const translated = translateDomainEvent(enriched, sessionId, agentId);
         if (translated !== undefined) this.sink.receiveEvent(translated);
       }),
     );
@@ -248,5 +258,64 @@ export class SessionEventWiring {
     } catch {
       // See bridgeApproval.
     }
+  }
+}
+
+/**
+ * v2 emits agent status in independent slices (see `agent/usage/usageOps.ts`
+ * in agent-core-v2), and the model slice rides only the bind-time emission —
+ * for a subagent that reaches the client before `subagent.spawned` and is
+ * dropped there, so subagent cards never learn the model. Fold a consistent
+ * usage + context + model snapshot into every status event at this edge,
+ * restoring the v1 combined-payload contract regardless of slice timing.
+ * Mirrors kap-server's `readLegacyStatus` bridge; the v1 edge lives in the
+ * two client-facing packages so the core engine stays free of v1
+ * wire-compatibility concerns.
+ */
+function withStatusSnapshot(agent: IAgentScopeHandle, event: DomainEvent): DomainEvent {
+  const profile = agent.accessor.get(IAgentProfileService) as IAgentProfileService | undefined;
+  const usageService = agent.accessor.get(IAgentUsageService) as IAgentUsageService | undefined;
+  const contextSize = agent.accessor.get(IAgentContextSizeService) as
+    | IAgentContextSizeService
+    | undefined;
+  const wire = agent.accessor.get(IWireService) as IWireService | undefined;
+  if (
+    profile === undefined ||
+    usageService === undefined ||
+    contextSize === undefined ||
+    wire === undefined
+  ) {
+    return event;
+  }
+  const measured = wire.getModel(ContextSizeModel);
+  const contextTokens = Math.max(contextSize.get().size, measured.tokens);
+  const capabilities = profile.getModelCapabilities();
+  const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
+  return {
+    ...event,
+    usage: usageService.status(),
+    contextTokens,
+    maxContextTokens,
+    model: displayModelAlias(agent, profile.getModel()),
+  } as unknown as DomainEvent;
+}
+
+/**
+ * The wire `model` is normally the bound alias, which clients resolve against
+ * the model listing into a display name. The secondary-model derived entry is
+ * synthesized runtime state hidden from that listing, so resolve it here to
+ * the pointed entry's display string (the client's own
+ * `displayName ?? wireName` priority) instead of leaking the reserved id.
+ * Mirrors kap-server's `displayModelAlias`.
+ */
+function displayModelAlias(agent: IAgentScopeHandle, alias: string): string {
+  if (alias !== SECONDARY_DERIVED_MODEL_ID) return alias;
+  const catalog = agent.accessor.get(IModelCatalog) as IModelCatalog | undefined;
+  if (catalog === undefined) return alias;
+  try {
+    const model = catalog.get(alias);
+    return model.displayName ?? model.name;
+  } catch {
+    return alias;
   }
 }

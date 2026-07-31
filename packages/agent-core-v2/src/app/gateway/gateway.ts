@@ -2,8 +2,9 @@
  * `gateway` domain (L7) — REST/WS gateways.
  *
  * Defines the public contracts of the gateway layer: the `IRestGateway` /
- * `IWSGateway` entry points. Session scope creation is owned by
- * `sessionLifecycle`; the gateway resolves sessions through it.
+ * `IWSGateway` entry points. Session scope creation is owned by the workspace
+ * handler (`workspaceHandler`); the gateway resolves sessions through the live
+ * handler registry (`workspaceLifecycle`).
  * App-scoped — shared across the application.
  */
 

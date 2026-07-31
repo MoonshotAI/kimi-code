@@ -164,7 +164,6 @@ export class SessionSwarmService implements ISessionSwarmService {
           profile: profile.name,
           model: binding.model,
           thinking: binding.thinking,
-          cwd: callerData.cwd,
         },
         labels: subagentLabels(callerAgentId, { swarmItem: options.swarmItem }),
       });

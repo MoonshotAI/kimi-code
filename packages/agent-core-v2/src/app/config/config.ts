@@ -203,6 +203,19 @@ export interface IConfigService {
   getAll(): ResolvedConfig;
   set(domain: string, patch: unknown, target?: ConfigTarget): Promise<void>;
   replace(domain: string, value: unknown, target?: ConfigTarget): Promise<void>;
+  /**
+   * Replaces several sections in ONE state transition: every domain's raw
+   * value is updated first, the document is persisted with a single disk
+   * write, and the effective view is rebuilt once — change events fire only
+   * after all domains have taken effect, so a reader can never observe a
+   * half-applied multi-section write. A domain mapped to `undefined` is
+   * cleared (same as `replace(domain, undefined)`). Domain application order
+   * follows the `sections` key order.
+   */
+  replaceSections(
+    sections: Readonly<Record<string, unknown>>,
+    target?: ConfigTarget,
+  ): Promise<void>;
   reload(): Promise<void>;
   diagnostics(): readonly ConfigDiagnostic[];
 }

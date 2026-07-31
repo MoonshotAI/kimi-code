@@ -11,13 +11,12 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { hostRequestHeadersSeed } from '@moonshot-ai/agent-core-v2';
 import { createServerLogger, startServer, type ServerLogger } from '@moonshot-ai/kap-server';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
 import { type Command } from 'commander';
 
-import { CLI_SHUTDOWN_TIMEOUT_MS } from '#/constant/app';
+import { CLI_SHUTDOWN_TIMEOUT_MS, WEB_USER_AGENT_SUFFIX } from '#/constant/app';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
@@ -25,7 +24,7 @@ import { getDataDir } from '#/utils/paths';
 
 import { initializeServerTelemetry } from '../../telemetry';
 import {
-  buildKimiDefaultHeaders,
+  createKimiCodeHostIdentity,
   getHostPackageRoot,
   getVersion,
 } from '../../version';
@@ -278,7 +277,16 @@ async function runServerInProcess(
     port: options.port,
     // Report the CLI's product version as `server_version` (/meta, web UI)
     // rather than kap-server's private package version.
-    version,
+    serverVersion: version,
+    // The CLI's host identity: feeds the engine's bootstrap client identity
+    // and the derived outbound headers (User-Agent + X-Msh-*), so web-UI
+    // OAuth flows and model / WebSearch requests carry the CLI identity. The
+    // `web` User-Agent suffix distinguishes web-UI traffic from direct CLI
+    // runs upstream (same product token, same platform).
+    hostIdentity: {
+      ...createKimiCodeHostIdentity(version),
+      userAgentSuffix: WEB_USER_AGENT_SUFFIX,
+    },
     logLevel: options.logLevel,
     logger,
     debugEndpoints: options.debugEndpoints,
@@ -291,10 +299,6 @@ async function runServerInProcess(
     // `telemetry` toggle). Complements the v1 client registered above, which
     // only covers host-level events.
     telemetry: true,
-    // Seed the CLI's Kimi identity headers so the engine's outbound
-    // requests (model, WebSearch, FetchURL) carry the same User-Agent +
-    // X-Msh-* identity as direct CLI runs.
-    seeds: hostRequestHeadersSeed(buildKimiDefaultHeaders(version)),
     webAssetsDir,
   });
   logger.info('serving the REST/WS API and the bundled web UI');

@@ -32,7 +32,8 @@ import {
   IOAuthToolkit,
   ISessionCronService,
   ISessionIndex,
-  ISessionLifecycleService,
+  IWorkspaceHandlerService,
+  IWorkspaceLifecycleService,
   ITelemetryService,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
@@ -41,6 +42,7 @@ import {
   bootstrap,
   createCloudAppender,
   ensureMainAgent,
+  resumeSessionById,
   hostRequestHeadersSeed,
   logSeed,
   parseAgentFileText,
@@ -128,7 +130,7 @@ export async function runV2Print(
   const identity = createKimiCodeHostIdentity(version);
   const hostHeaders = createKimiDefaultHeaders({ homeDir, ...identity });
 
-  const { app } = bootstrap({ homeDir, clientVersion: version }, [
+  const { app } = bootstrap({ homeDir, clientIdentity: identity }, [
     ...logSeed(logging),
     ...hostRequestHeadersSeed(hostHeaders),
     // `--skillsDir` (v1 print parity): explicit skill dirs replace default
@@ -256,7 +258,7 @@ async function resolveNativeSession(
   defaultModel: string | undefined,
   stderr: PromptOutput,
 ): Promise<ResolvedNativeSession> {
-  const lifecycle = app.accessor.get(ISessionLifecycleService);
+  const workspaceLifecycle = app.accessor.get(IWorkspaceLifecycleService);
   const index = app.accessor.get(ISessionIndex);
 
   // `--agent` selects a catalog profile by name; otherwise `--agent-file`
@@ -293,31 +295,18 @@ async function resolveNativeSession(
     }
   }
 
-  // `--agent` / `--agent-file` bind an explicit profile; without them the
-  // historical setModel path (default profile on first bind) is kept. A
-  // same-name re-select on a resumed session keeps the profile and only applies
-  // an explicitly requested model; a different name is rejected by the
-  // engine's first-bind guard inside `bind`.
-  const applyProfileSelection = async (
+  // `--agent` / `--agent-file` are creation-only: validateOptions rejects them
+  // together with --session/--continue, so resume paths only apply an
+  // explicitly requested model — the bound profile is restored by the engine.
+  const applyModelOverride = async (
     profile: IAgentProfileService,
     model: string | undefined,
   ): Promise<void> => {
-    if (agentProfileName !== undefined) {
-      if (profile.data().profileName === agentProfileName) {
-        if (model !== undefined) await profile.setModel(model);
-        return;
-      }
-      await profile.bind({
-        profile: agentProfileName,
-        model: requireConfiguredModel(model ?? profile.getModel(), defaultModel),
-      });
-    } else if (model !== undefined) {
-      await profile.setModel(model);
-    }
+    if (model !== undefined) await profile.setModel(model);
   };
 
   const resumeById = async (id: string): Promise<ISessionScopeHandle> => {
-    const session = await lifecycle.resume(id);
+    const session = await resumeSessionById(app.accessor, id);
     if (session === undefined) {
       throw new Error(`Session "${id}" not found.`);
     }
@@ -353,7 +342,7 @@ async function resolveNativeSession(
     const session = await resumeById(opts.session);
     const agent = await ensureMainAgent(session);
     const profile = agent.accessor.get(IAgentProfileService);
-    await applyProfileSelection(profile, opts.model);
+    await applyModelOverride(profile, opts.model);
     const currentModel = profile.getModel();
     const { restorePermission } = forceAuto(agent);
     return {
@@ -372,7 +361,7 @@ async function resolveNativeSession(
       const session = await resumeById(previous.id);
       const agent = await ensureMainAgent(session);
       const profile = agent.accessor.get(IAgentProfileService);
-      await applyProfileSelection(profile, opts.model);
+      await applyModelOverride(profile, opts.model);
       const currentModel = profile.getModel();
       const { restorePermission } = forceAuto(agent);
       return {
@@ -387,7 +376,8 @@ async function resolveNativeSession(
   }
 
   const model = requireConfiguredModel(opts.model, defaultModel);
-  const session = await lifecycle.create({
+  const handler = await workspaceLifecycle.handlerFor({ root: workDir });
+  const session = await handler.accessor.get(IWorkspaceHandlerService).create({
     workDir,
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
     mainAgentBinding: {

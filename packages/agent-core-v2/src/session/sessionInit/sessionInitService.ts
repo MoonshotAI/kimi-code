@@ -3,7 +3,7 @@
  *
  * Runs `/init` against the session's main agent: resolves `main` through
  * `agentLifecycle`, spawns a `coder` subagent bound to the main agent's own
- * model / thinking level / cwd (inheriting the main agent's permission mode),
+ * model / thinking level (inheriting the main agent's permission mode),
  * drives one init-brief turn via `subagents.run`, and mirrors the run onto the
  * main agent's record stream (`emitAgentRunSpawned` + `mirrorAgentRun`) so the
  * UI shows the nested transcript and the `subagent.*` records fire. Once the
@@ -33,6 +33,7 @@ import { IAgentSystemReminderService } from '#/agent/systemReminder/systemRemind
 import { IWireService } from '#/wire/wire';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 
@@ -55,6 +56,7 @@ export class SessionInitService implements ISessionInitService {
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IHostEnvironment private readonly env: IHostEnvironment,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @ISessionContext private readonly sessionContext: ISessionContext,
   ) {}
 
   cancelInit(): void {
@@ -81,7 +83,6 @@ export class SessionInitService implements ISessionInitService {
           profile: INIT_PROFILE_NAME,
           model: own.modelAlias,
           thinking: own.thinkingLevel,
-          cwd: own.cwd,
         },
       });
       child.accessor.get(IAgentPermissionModeService).setMode(permissionMode);
@@ -107,7 +108,7 @@ export class SessionInitService implements ISessionInitService {
 
       const agentsMd = await loadAgentsMd(
         { fs: this.fs, homeDir: this.env.homeDir },
-        own.cwd,
+        this.sessionContext.cwd,
         this.bootstrap.homeDir,
       );
       main.accessor

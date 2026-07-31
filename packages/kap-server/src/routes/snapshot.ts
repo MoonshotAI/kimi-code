@@ -5,8 +5,8 @@
  *
  *   - `auto` (default) — delegate to `ISnapshotReader`, which reads
  *     `state.json` + `agents/main/wire.jsonl` directly from disk and bypasses
- *     the heavy `ISessionLifecycleService.resume` chain (DI scope, MCP connect,
- *     full wire replay). Sub-200ms warm / sub-1s cold.
+ *     the heavy session-resume chain (handler + DI scope materialization, MCP
+ *     connect, full wire replay). Sub-200ms warm / sub-1s cold.
  *   - `legacy` — fall back to `resume` + live service assembly. Pure operator
  *     escape hatch; no silent per-request fallback.
  *
@@ -25,9 +25,9 @@ import {
   ILogService,
   ISessionInteractionService,
   ISessionContext,
-  ISessionLifecycleService,
   ISessionMetadata,
   IWorkspaceService,
+  resumeSessionById,
   toProtocolMessage,
   type IAgentScopeHandle,
   type Scope,
@@ -148,7 +148,7 @@ async function readViaLegacyAssembly(
   // Resolve the live handle, loading the session from disk when it is cold
   // (created by a previous process or by v1). `resume` returns `undefined`
   // only when the session is unknown or its workspace is gone → 404.
-  const handle = await core.accessor.get(ISessionLifecycleService).resume(sessionId);
+  const handle = await resumeSessionById(core.accessor, sessionId);
   if (handle === undefined) {
     throw new SnapshotNotFoundError(sessionId);
   }

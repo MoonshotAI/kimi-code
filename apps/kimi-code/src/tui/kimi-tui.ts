@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
+import { log } from '@moonshot-ai/kimi-code-sdk';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -174,6 +175,8 @@ export type {
 
 export interface KimiTUIStartupInput {
   readonly cliOptions: CLIOptions;
+  /** Profile name resolved from cliOptions --agent/--agent-file (see resolveAgentProfileSelection). */
+  readonly agentProfile?: string;
   readonly additionalDirs?: readonly string[];
   readonly tuiConfig: TuiConfig;
   readonly version: string;
@@ -385,6 +388,8 @@ export class KimiTUI {
         auto: startupInput.cliOptions.auto,
         plan: startupInput.cliOptions.plan,
         model: startupInput.cliOptions.model,
+        agentProfile: startupInput.agentProfile,
+        agentFiles: startupInput.cliOptions.agentFiles,
         startupNotice: startupInput.startupNotice,
       },
     };
@@ -744,6 +749,10 @@ export class KimiTUI {
       model: startup.model,
       permission: startup.auto ? 'auto' : startup.yolo ? 'yolo' : undefined,
       planMode: startup.plan ? true : undefined,
+      // --agent/--agent-file bind the startup session only; sessions created
+      // later in this process fall back to the default profile.
+      agentProfile: startup.agentProfile,
+      agentFiles: startup.agentFiles?.length ? [...startup.agentFiles] : undefined,
     };
     if (this.state.appState.additionalDirs.length > 0) {
       createSessionOptions.additionalDirs = [...this.state.appState.additionalDirs];
@@ -1676,8 +1685,11 @@ export class KimiTUI {
         this.state.appState.sessionId,
         this.hasSessionContent(),
       );
-    } catch {
-      /* silently ignore */
+    } catch (error) {
+      // The picker must keep working (it renders the empty state), but a
+      // swallowed failure surfaces as a misleading "No sessions found." —
+      // keep a log trail so the real error stays discoverable.
+      log.warn('failed to fetch sessions for picker', { error: String(error) });
     } finally {
       this.state.loadingSessions = false;
     }
@@ -2040,11 +2052,10 @@ export class KimiTUI {
     this.state.todoPanelContainer.clear();
     this.imageStore.clear();
     this.renderWelcome();
-    // Session resets (/new, /clear, session switch) want a pristine screen.
-    // Force a destructive full render: the renderer's collapse repaint
-    // intentionally preserves scrollback, which would leave the previous
-    // session's text above the welcome banner.
-    this.state.ui.requestRender(true);
+    // No forced full render on session reset: let the differential renderer
+    // converge on its own (a mass change above the viewport still makes the
+    // engine repaint everything, but nothing is forced destructively here).
+    this.state.ui.requestRender();
   }
 
   private isTurnBoundaryComponent(child: Component): boolean {
@@ -2538,12 +2549,10 @@ export class KimiTUI {
       if (!isExpandable(child)) continue;
       child.setExpanded(this.state.toolOutputExpanded && i >= expandCutoff);
     }
-    // Expanding/collapsing shifts content above the viewport; the clamped
-    // differential render would paint a second copy below the stale one in
-    // scrollback. This is a deliberate user action (like /clear), so do a
-    // destructive full render: scrollback holds exactly one copy and the
-    // expanded output can be read by scrolling up.
-    this.state.ui.requestRender(true);
+    // Differential render only — no destructive full redraw on expand/collapse.
+    // (When the expanded region reaches above the viewport, the engine's own
+    // fallback may still do a full render; that path is not forced from here.)
+    this.state.ui.requestRender();
   }
 
   toggleTodoPanelExpansion(): void {
@@ -2781,18 +2790,10 @@ export class KimiTUI {
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
-    // Measure overflow against the restored tree (editor mounted), not the tall
-    // panel just removed — otherwise a short session with a tall panel looks like
-    // it overflows and we take a full clear/home that yanks the editor to the top.
-    // Treat an exact one-screen fill as overflowing too: a full redraw is safe
-    // there (no blank tail) and clears a stale viewport offset after a shrink.
-    const { columns, rows } = this.state.terminal;
-    const overflowsViewport = this.state.ui.render(columns).length >= rows;
-    // Force a full re-render after replacing a tall panel with the shorter editor:
-    // differential rendering leaves the editor shifted up when the bottom-anchored
-    // region shrinks in place. Skip under tmux (its own reflow handles the shrink)
-    // and when content fits on one screen (a full clear would pull the editor up).
-    this.state.ui.requestRender(!this.state.terminalState.insideTmux && overflowsViewport);
+    // Differential render only: closing a tall panel leaves the editor a few
+    // rows above the bottom (blank tail) until the next append, but avoids a
+    // destructive full redraw on every dialog close.
+    this.state.ui.requestRender();
   }
 
   restoreInputText(text: string): void {

@@ -1,4 +1,6 @@
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import { IGitService } from '#/app/git/git';
+import type { IGitService as GitService } from '#/app/git/git';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IHostEnvironment as HostEnvironment } from '#/os/interface/hostEnvironment';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -9,7 +11,6 @@ import type {
 } from '#/agent/permissionPolicy/types';
 import {
   fileAccesses,
-  findLocalGitWorkTreeMarker,
   hasGitPathComponent,
   isGitControlPath,
 } from './path-utils';
@@ -20,6 +21,7 @@ export class GitControlPathAccessAskPermissionPolicyService implements Permissio
   constructor(
     @IHostEnvironment private readonly env: HostEnvironment,
     @ISessionWorkspaceContext private readonly workspace: WorkspaceContext,
+    @IGitService private readonly git: GitService,
   ) {}
 
   async evaluate(
@@ -36,7 +38,7 @@ export class GitControlPathAccessAskPermissionPolicyService implements Permissio
     );
     if (directGitAccess !== undefined) return { kind: 'ask' };
 
-    const marker = await findLocalGitWorkTreeMarker(cwd);
+    const marker = await this.git.findWorkTree(cwd);
     if (marker === null) return undefined;
     const access = accesses.find((fileAccess) =>
       isGitControlPath(fileAccess.path, marker, pathClass),

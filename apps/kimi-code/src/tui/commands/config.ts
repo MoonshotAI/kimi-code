@@ -1,6 +1,8 @@
 import {
   effectiveModelAlias,
+  SECONDARY_DERIVED_MODEL_ALIAS,
   type ExperimentalFeatureState,
+  type KimiConfig,
   type ModelAlias,
   type PermissionMode,
   type Session,
@@ -250,6 +252,25 @@ export async function handleModelCommand(host: SlashCommandHost, args: string): 
   showModelPicker(host, alias);
 }
 
+export async function handleSecondaryModelCommand(host: SlashCommandHost, args: string): Promise<void> {
+  const alias = args.trim();
+  await refreshModelsForPicker(host);
+  const models = pickerModelsForHost(host);
+  if (Object.keys(models).length === 0) {
+    host.showNotice(
+      'No models configured',
+      'Run /login to sign in to Kimi, or /provider to add another provider from a model catalog.',
+    );
+    return;
+  }
+  if (alias.length > 0 && models[alias] === undefined) {
+    host.showError(`Unknown model alias: ${alias}`);
+    return;
+  }
+  const secondary = (await host.harness.getConfig()).secondaryModel;
+  showSecondaryModelPicker(host, models, secondary?.model ?? '', secondary?.defaultEffort, alias);
+}
+
 export async function handleEffortCommand(host: SlashCommandHost, args: string): Promise<void> {
   const alias = host.state.appState.model;
   const model = host.state.appState.availableModels[alias];
@@ -390,13 +411,22 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
   );
 }
 
-export function showModelPicker(host: SlashCommandHost, selectedValue: string = host.state.appState.model): void {
-  const models = Object.fromEntries(
-    Object.entries(host.state.appState.availableModels).map(([alias, model]) => [
-      alias,
-      effectiveModelForHost(host, model),
-    ]),
+/**
+ * The models a picker may offer: the user's configured aliases with
+ * host-effective provider resolution applied, minus the synthesized
+ * `__secondary__` derived entry — a runtime artifact of the `[secondary_model]`
+ * recipe that must never be selectable as a primary or secondary model.
+ */
+function pickerModelsForHost(host: SlashCommandHost): Record<string, ModelAlias> {
+  return Object.fromEntries(
+    Object.entries(host.state.appState.availableModels)
+      .filter(([alias]) => alias !== SECONDARY_DERIVED_MODEL_ALIAS)
+      .map(([alias, model]) => [alias, effectiveModelForHost(host, model)]),
   );
+}
+
+export function showModelPicker(host: SlashCommandHost, selectedValue: string = host.state.appState.model): void {
+  const models = pickerModelsForHost(host);
   const entries = Object.entries(models);
   if (entries.length === 0) {
     host.showNotice(
@@ -551,6 +581,99 @@ async function persistModelSelection(
     thinking: patch,
   });
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Secondary model (`/secondary_model`)
+// ---------------------------------------------------------------------------
+
+function showSecondaryModelPicker(
+  host: SlashCommandHost,
+  models: Record<string, ModelAlias>,
+  currentValue: string,
+  currentEffort: string | undefined,
+  selectedValue?: string,
+): void {
+  host.mountEditorReplacement(
+    new TabbedModelSelectorComponent({
+      models,
+      currentValue,
+      selectedValue,
+      currentThinkingEffort: currentEffort ?? 'off',
+      title: ' Select a secondary model (subagents)',
+      onSelect: ({ alias, thinking }) => {
+        host.restoreEditor();
+        void performSecondaryModelSwitch(host, alias, thinking);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+/**
+ * Persist-first, then live-apply: the synthesized derived entry only exists in
+ * the core config after a reload. No session-only variant — a session-local
+ * recipe with patch fields would bind a derived alias the core config cannot
+ * resolve.
+ */
+async function performSecondaryModelSwitch(
+  host: SlashCommandHost,
+  alias: string,
+  effort: ThinkingEffort,
+): Promise<void> {
+  const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
+  let updatedConfig: KimiConfig;
+  try {
+    updatedConfig = await host.harness.setConfig({
+      secondaryModel: { model: alias, defaultEffort: effort },
+    });
+  } catch (error) {
+    host.showError(`Failed to save secondary model: ${formatErrorMessage(error)}`);
+    return;
+  }
+  if (host.session !== undefined) {
+    try {
+      await host.session.applyPersistedSecondaryModel();
+    } catch (error) {
+      host.showError(
+        `Saved ${displayName} as the secondary model, but failed to apply it to this session: ${formatErrorMessage(error)}`,
+      );
+      return;
+    }
+  }
+  host.setAppState({ availableModels: updatedConfig.models ?? {} });
+  // Report the effective binding from the reloaded config, not the picked
+  // value: KIMI_SECONDARY_MODEL / KIMI_SECONDARY_EFFORT override the recipe at
+  // runtime, and the session binds the overlaid snapshot (mirrors how
+  // /model displays the effective alias read back from the session).
+  const effective = updatedConfig.secondaryModel;
+  const envOverrides: string[] = [];
+  if (effective?.model !== undefined && effective.model !== alias) {
+    envOverrides.push(`KIMI_SECONDARY_MODEL=${effective.model}`);
+  }
+  if (effective?.defaultEffort !== undefined && effective.defaultEffort !== effort) {
+    envOverrides.push(`KIMI_SECONDARY_EFFORT=${effective.defaultEffort}`);
+  }
+  if (envOverrides.length > 0 && effective?.model !== undefined) {
+    const effectiveName = modelDisplayName(
+      effective.model,
+      updatedConfig.models?.[effective.model],
+    );
+    host.showStatus(
+      `Saved ${displayName} as the secondary model, but ${envOverrides.join(' and ')} ` +
+        `overrides it at runtime — subagents bind ${effectiveName} until the env var is unset.`,
+      'warning',
+    );
+    return;
+  }
+  host.showStatus(
+    host.session === undefined
+      ? `Secondary model set to ${displayName} with thinking ${effort}; applies to new sessions.`
+      : `Secondary model set to ${displayName} with thinking ${effort}.`,
+    'success',
+  );
 }
 
 function showThemePicker(host: SlashCommandHost): void {

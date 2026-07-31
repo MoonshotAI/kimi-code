@@ -3,8 +3,8 @@
  * (`KIMI_SNAPSHOT_READER=auto`, the default).
  *
  * Reads `<homeDir>/sessions/<workspaceId>/<sid>/state.json` and
- * `…/agents/main/wire.jsonl` directly, bypassing
- * `ISessionLifecycleService.resume` (DI-scope materialization, MCP connect,
+ * `…/agents/main/wire.jsonl` directly, bypassing the session-resume chain
+ * (handler materialization, DI-scope materialization, MCP connect,
  * full wire replay). The transcript is reduced from the `context.*` records
  * with `reduceContextTranscript`, which mirrors the live reducers EXCEPT that
  * `context.apply_compaction` keeps the full history and appends a summary
@@ -26,12 +26,13 @@ import {
   IAgentPromptService,
   ISessionIndex,
   ISessionInteractionService,
-  ISessionLifecycleService,
   IWorkspaceService,
+  getLiveSessionById,
   normalizeSessionMeta,
   reduceContextTranscript,
   toProtocolMessage,
   type ContextMessage,
+  type ISessionScopeHandle,
   type Scope,
   type SessionMeta,
 } from '@moonshot-ai/agent-core-v2';
@@ -115,7 +116,7 @@ export class SnapshotReader implements ISnapshotReader {
       return toProtocolMessage(sid, index, msg, located.meta.createdAt, createdAtMs);
     });
 
-    const live = core.accessor.get(ISessionLifecycleService).get(sid);
+    const live = getLiveSessionById(core.accessor, sid);
     const session = toWireSession(
       { ...located.meta, workspaceId: located.workspaceId },
       located.cwd,
@@ -227,7 +228,7 @@ export class SnapshotReader implements ISnapshotReader {
 
   private attachCurrentPromptId(
     sid: string,
-    live: ReturnType<ISessionLifecycleService['get']>,
+    live: ISessionScopeHandle | undefined,
     inFlightTurn: InFlightTurn | null,
   ): InFlightTurn | null {
     if (inFlightTurn === null || live === undefined) return inFlightTurn;
@@ -245,7 +246,7 @@ export class SnapshotReader implements ISnapshotReader {
 
   private readPending(
     sid: string,
-    live: ReturnType<ISessionLifecycleService['get']>,
+    live: ISessionScopeHandle | undefined,
   ): { approvals: ReturnType<typeof toWireApproval>[]; questions: ReturnType<typeof toWireQuestion>[] } {
     if (live === undefined) return { approvals: [], questions: [] };
     const interaction = live.accessor.get(ISessionInteractionService);

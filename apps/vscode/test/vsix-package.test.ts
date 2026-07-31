@@ -128,6 +128,27 @@ describe('VSIX verifier CLI (package contract and failure details)', () => {
     expect(result.stderr).toContain('Bare runtime dependency "left-pad"');
   });
 
+  it('does not mistake a bundled this.require(...) method call for a runtime dependency', async () => {
+    const fixture = await makeVsixFixture('darwin-arm64');
+    await writeFile(
+      join(fixture, 'extension', 'dist', 'extension.js'),
+      'class HostEnvironment {\n' +
+        '  require(field) { return this.info[field]; }\n' +
+        '  get osKind() { return this.require("osKind"); }\n' +
+        '}\n' +
+        'export function activate() { return new HostEnvironment(); }\n',
+    );
+
+    const result = runNode(verifierScript, [
+      '--target',
+      'darwin-arm64',
+      '--directory',
+      fixture,
+    ]);
+
+    expect(result.status).toBe(0);
+  });
+
   it('rejects generated session state inside the package', async () => {
     const fixture = await makeVsixFixture('win32-arm64');
     const stateDir = join(fixture, 'extension', 'runtime', 'profile');

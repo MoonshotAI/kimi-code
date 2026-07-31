@@ -146,7 +146,7 @@ export function buildSubagentModelDescriptions(
 export function wrapSubagentModelError(
   error: unknown,
   boundModel: string,
-  callerModelAlias: string,
+  callerModelAlias: string | undefined,
 ): unknown {
   if (boundModel === callerModelAlias) return error;
   if (!isError2(error) || error.code !== ErrorCodes.CONFIG_INVALID) return error;

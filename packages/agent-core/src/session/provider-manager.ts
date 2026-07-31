@@ -99,6 +99,7 @@ export class ProviderManager implements ModelProvider {
       throw new KimiError(
         ErrorCodes.CONFIG_INVALID,
         `Model "${model}" is not configured in config.toml. Add a [models."${model}"] entry with max_context_size.`,
+        { details: { model } },
       );
     }
 

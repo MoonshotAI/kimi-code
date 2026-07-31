@@ -16,8 +16,10 @@ import {
   IEventBus,
   ISessionIndex,
   ISessionInteractionService,
-  ISessionLifecycleService,
   ISessionMetadata,
+  IWorkspaceHandlerService,
+  IWorkspaceLifecycleService,
+  LifecycleScope,
   SessionInteractionService,
   StateRegistry,
   type DomainEvent,
@@ -1471,10 +1473,11 @@ describe('AgentTranscriptProjector', () => {
       core: {
         accessor: {
           get: (token: unknown) => {
-            if (token === ISessionLifecycleService) {
+            if (token === IWorkspaceLifecycleService) {
               return {
-                onDidCloseSession: () => ({ dispose: () => undefined }),
-                onDidArchiveSession: () => ({ dispose: () => undefined }),
+                handlers: { list: () => [] },
+                sessions: { list: () => [] },
+                onDidMaterializeHandler: () => ({ dispose: () => undefined }),
               };
             }
             if (token === ISessionIndex) return { get: async () => ({ workspaceId: 'ws' }) };
@@ -1569,10 +1572,11 @@ describe('AgentTranscriptProjector', () => {
         core: {
           accessor: {
             get: (token: unknown) => {
-              if (token === ISessionLifecycleService) {
+              if (token === IWorkspaceLifecycleService) {
                 return {
-                  onDidCloseSession: () => ({ dispose: () => undefined }),
-                  onDidArchiveSession: () => ({ dispose: () => undefined }),
+                  handlers: { list: () => [] },
+                  sessions: { list: () => [] },
+                  onDidMaterializeHandler: () => ({ dispose: () => undefined }),
                 };
               }
               if (token === ISessionIndex) return { get: async () => ({ workspaceId: 'ws' }) };
@@ -1881,14 +1885,27 @@ describe('bindSessionTranscript', () => {
   }
 
   function fakeCoreWithAgents(interactions: SessionInteractionService, agents: FakeAgents): Scope {
+    const handlerService = {
+      onDidCloseSession: () => ({ dispose: () => undefined }),
+      onDidArchiveSession: () => ({ dispose: () => undefined }),
+      get: (sid: string) => (sid === 's1' ? fakeSession(interactions, agents) : undefined),
+    };
+    const handler = {
+      id: 'ws',
+      kind: LifecycleScope.Workspace,
+      accessor: {
+        get: (t: unknown) => (t === IWorkspaceHandlerService ? handlerService : undefined),
+      },
+      dispose: () => undefined,
+    };
     return {
       accessor: {
         get: (token: unknown) => {
-          if (token === ISessionLifecycleService) {
+          if (token === IWorkspaceLifecycleService) {
             return {
-              onDidCloseSession: () => ({ dispose: () => undefined }),
-              onDidArchiveSession: () => ({ dispose: () => undefined }),
-              get: (sid: string) => (sid === 's1' ? fakeSession(interactions, agents) : undefined),
+              handlers: { list: () => [handler] },
+              sessions: { list: () => [] },
+              onDidMaterializeHandler: () => ({ dispose: () => undefined }),
             };
           }
           if (token === ISessionIndex) return { get: async () => ({ workspaceId: 'ws' }) };

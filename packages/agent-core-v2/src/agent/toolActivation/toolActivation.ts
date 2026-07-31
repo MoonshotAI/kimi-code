@@ -3,7 +3,8 @@
  *
  * Owns the activation pass that turns the module-level `registerAgentToolService`
  * contributions (`toolRegistry`, L3) into entries of the per-agent runtime
- * registry: a contribution activates only when its `when` predicate holds
+ * registry: a contribution activates only when its `when` predicate holds,
+ * the workspace os-level veto (`sessionToolPolicyGate`) does not disable it,
  * and its declared `name` is allowed by the bound Profile's tool policy
  * (`profile`, L4). `AgentLifecycleService.create` awaits one activation pass
  * after restore and profile binding, so an Agent's tools reflect the Profile

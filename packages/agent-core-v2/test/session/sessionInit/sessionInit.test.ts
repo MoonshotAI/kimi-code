@@ -16,6 +16,7 @@ import { IAgentSystemReminderService } from '#/agent/systemReminder/systemRemind
 import { IWireService } from '#/wire/wire';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInitService } from '#/session/sessionInit/sessionInit';
 import { SessionInitService } from '#/session/sessionInit/sessionInitService';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
@@ -31,6 +32,7 @@ describe('SessionInitService', () => {
   let events: unknown[];
   let appendSystemReminder: ReturnType<typeof vi.fn>;
   let flush: ReturnType<typeof vi.fn>;
+  let republishStatus: ReturnType<typeof vi.fn>;
   let create: ReturnType<typeof vi.fn>;
   let run: ReturnType<typeof vi.fn>;
   let runCompletion: Promise<{ summary: string; usage?: undefined }>;
@@ -41,6 +43,9 @@ describe('SessionInitService', () => {
     events = [];
     appendSystemReminder = vi.fn();
     flush = vi.fn(async () => {});
+    republishStatus = vi.fn(() => {
+      events.push({ type: 'agent.status.updated', model: 'mock-model' });
+    });
     runCompletion = Promise.resolve({ summary: 'Explored and wrote AGENTS.md', usage: undefined });
 
     const handles: Record<string, { id: string; accessor: { get: (id: unknown) => unknown } }> = {};
@@ -64,7 +69,7 @@ describe('SessionInitService', () => {
     const eventBus = { publish: vi.fn((event: unknown) => events.push(event)) };
     const telemetry = { track: vi.fn(), track2: vi.fn() };
     const profile = {
-      data: () => ({ modelAlias: 'mock-model', thinkingLevel: 'off', cwd: WORK_DIR }),
+      data: () => ({ modelAlias: 'mock-model', thinkingLevel: 'off' }),
     };
     const permissionMode = { mode: 'auto', setMode: vi.fn() };
 
@@ -89,6 +94,7 @@ describe('SessionInitService', () => {
       accessor: {
         get: (id: unknown) => {
           if (id === IAgentPermissionModeService) return permissionMode;
+          if (id === IAgentProfileService) return { republishStatus };
           return undefined;
         },
       },
@@ -117,6 +123,10 @@ describe('SessionInitService', () => {
       _serviceBrand: undefined,
       homeDir: '/home/brand',
     } as unknown as IBootstrapService);
+    ix.stub(ISessionContext, {
+      _serviceBrand: undefined,
+      cwd: WORK_DIR,
+    } as unknown as ISessionContext);
     ix.set(ISessionInitService, new SyncDescriptor(SessionInitService));
   });
 
@@ -128,7 +138,7 @@ describe('SessionInitService', () => {
 
     expect(create).toHaveBeenCalledTimes(1);
     expect(create.mock.calls[0]![0]).toMatchObject({
-      binding: { profile: 'coder', model: 'mock-model', thinking: 'off', cwd: WORK_DIR },
+      binding: { profile: 'coder', model: 'mock-model', thinking: 'off' },
     });
 
     expect(run).toHaveBeenCalledTimes(1);
@@ -155,6 +165,10 @@ describe('SessionInitService', () => {
         callerAgentId: 'main',
       }),
     );
+    expect(republishStatus).toHaveBeenCalledTimes(1);
+    const eventTypes = events.map((event) => (event as { type?: string }).type);
+    const spawnedIndex = eventTypes.indexOf('subagent.spawned');
+    expect(eventTypes[spawnedIndex + 1]).toBe('agent.status.updated');
     expect(events).toContainEqual(
       expect.objectContaining({ type: 'subagent.completed', subagentId: 'agent-0' }),
     );

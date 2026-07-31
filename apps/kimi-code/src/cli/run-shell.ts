@@ -31,6 +31,7 @@ import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
 
 import type { CLIOptions } from './options';
+import { resolveAgentProfileSelection } from './agent-selection';
 import { isKimiV2Enabled } from './experimental-v2';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
@@ -110,8 +111,12 @@ export async function runShell(
     configWarning = combineStartupNotice(configWarning, warning);
   }
   const configMs = Date.now() - configStartedAt;
+  // Resolve --agent/--agent-file once for the startup session; validateOptions
+  // has already rejected them alongside --session/--continue.
+  const agentProfile = await resolveAgentProfileSelection(opts, workDir);
   const tui = new KimiTUI(harness, {
     cliOptions: opts,
+    agentProfile,
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
     tuiConfig,
     version,
