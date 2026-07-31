@@ -67,13 +67,43 @@ impl HostCallbacks for ToolEventInterceptor {
     fn finalize_tool_result(&self, r: crate::rpc::types::FinalizeToolRequest) -> BoxFuture<'static, Result<crate::rpc::types::FinalizeToolResponse, String>> { self.inner.finalize_tool_result(r) }
 }
 
+/// Forwards session task lifecycle onto the host event channel so thin
+/// clients (web) can render task cards and progress without polling.
+struct TaskEventDelegate {
+    callbacks: Arc<dyn HostCallbacks>,
+    session_id: Option<String>,
+}
+
+impl crate::task::TaskDelegate for TaskEventDelegate {
+    fn on_task_started(&self, info: &crate::task::TaskInfoBase) {
+        self.callbacks.emit_event(serde_json::json!({
+            "type": "session.task.started",
+            "session_id": self.session_id,
+            "task_id": info.task_id,
+            "description": info.description,
+            "kind": info.kind,
+            "started_at_ms": info.started_at,
+        }));
+    }
+    fn on_task_terminated(&self, info: &crate::task::TaskInfoBase, _tail: Option<&str>) {
+        self.callbacks.emit_event(serde_json::json!({
+            "type": "session.task.terminated",
+            "session_id": self.session_id,
+            "task_id": info.task_id,
+            "status": info.status.as_str(),
+            "description": info.description,
+            "kind": info.kind,
+            "ended_at_ms": info.ended_at,
+        }));
+    }
+}
+
 /// Stamps the owning session id onto every host-bound request so a
 /// multi-session thin client (kap-server, TUI) can route host callbacks
 /// (llm_chat / execute_tool / prepare / authorize / finalize) back to the
 /// session that issued them. Sits at the base of the interceptor chain —
 /// only the raw host callbacks pass through it.
-struct SessionStampingCallbacks {
-    inner: Arc<dyn HostCallbacks>,
+struct SessionStampingCallbacks {    inner: Arc<dyn HostCallbacks>,
     session_id: Option<String>,
 }
 
@@ -795,6 +825,7 @@ impl Agent {
         // hooks) with this agent's session id so multi-session thin clients
         // can route callbacks back to the right session.
         let callbacks = SessionStampingCallbacks::new(callbacks, options.session_id.clone());
+        let task_event_callbacks = callbacks.clone();
         Self {
             agent_type: "main".to_string(),
             session_id: options.session_id.clone(),
@@ -859,11 +890,23 @@ impl Agent {
             swarm: crate::swarm::SwarmMode::new(),
             usage: crate::usage::UsageRecorder::new(),
             additional_dirs: Vec::new(),
-            task: options.task.clone().unwrap_or_else(|| {
-                std::sync::Arc::new(std::sync::Mutex::new(crate::task::TaskService::new(
-                    crate::task::TaskServiceConfig::default(),
-                )))
-            }),
+            task: {
+                let service = options.task.clone().unwrap_or_else(|| {
+                    std::sync::Arc::new(std::sync::Mutex::new(crate::task::TaskService::new(
+                        crate::task::TaskServiceConfig::default(),
+                    )))
+                });
+                // Forward task lifecycle onto the host event channel so thin
+                // clients (web) can render task cards without polling.
+                service
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .set_delegate(Box::new(TaskEventDelegate {
+                        callbacks: task_event_callbacks.clone(),
+                        session_id: options.session_id.clone(),
+                    }));
+                service
+            },
             approval: options.approval.clone().unwrap_or_default(),
             metadata: serde_json::json!({}),
             undo_checkpoints: Vec::new(),
@@ -1452,6 +1495,15 @@ impl Agent {
             .record(&usage_model, &result.usage, crate::usage::UsageRecordScope::Session);
 
         self.callbacks.emit_event(serde_json::json!({
+            "type": "session.usage.updated",
+            "session_id": self.session_id,
+            "turn_id": turn_id,
+            "input_tokens": result.usage.input_tokens,
+            "output_tokens": result.usage.output_tokens,
+            "total_tokens": result.usage.total_tokens,
+        }));
+
+        self.callbacks.emit_event(serde_json::json!({
             "type": "session.turn.ended",
             "session_id": self.session_id,
             "turn_id": turn_id,
@@ -1884,6 +1936,12 @@ any partial output shown above is incomplete. The user's next message continues 
     ) -> Result<Option<crate::context::compaction_handoff::ContextCompactionShape>, crate::compaction::CompactionError>
     {
         let used_tokens = self.context.token_count_with_pending();
+        self.callbacks.emit_event(serde_json::json!({
+            "type": "session.compaction.started",
+            "session_id": self.session_id,
+            "source": format!("{source:?}").to_lowercase(),
+            "tokens_before": used_tokens,
+        }));
         // PreCompact hooks: fire-and-forget with the pressure context (TS:
         // hook input carries the token tally). Non-fatal — a slow hook never
         // blocks compaction.
