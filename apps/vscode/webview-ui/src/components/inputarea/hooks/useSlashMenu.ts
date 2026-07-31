@@ -1,6 +1,7 @@
 import { useMemo, useState, useCallback } from "react";
 import { useSettingsStore } from "@/stores";
 import type { SlashCommandInfo } from "shared/legacy-sdk";
+import { dispatchSlashMenuCommand } from "../slash-menu-action";
 
 interface ActiveToken {
   trigger: "/" | "@";
@@ -46,7 +47,12 @@ interface UseSlashMenuResult {
   resetSlashMenu: () => void;
 }
 
-export function useSlashMenu(activeToken: ActiveToken | null, onSelectCommand: (name: string) => void, onCancel: () => void): UseSlashMenuResult {
+export function useSlashMenu(
+  activeToken: ActiveToken | null,
+  onSelectCommand: (name: string) => void,
+  onCompleteCommand: (name: string) => void,
+  onCancel: () => void,
+): UseSlashMenuResult {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const { slashCommands } = useSettingsStore();
 
@@ -82,12 +88,25 @@ export function useSlashMenu(activeToken: ActiveToken | null, onSelectCommand: (
           e.preventDefault();
           setSelectedIndex((i) => Math.max(i - 1, 0));
           return true;
-        case "Tab":
+        case "Tab": {
+          e.preventDefault();
+          const cmd = filteredCommands[selectedIndex];
+          if (cmd) {
+            dispatchSlashMenuCommand("Tab", cmd.name, {
+              select: onSelectCommand,
+              complete: onCompleteCommand,
+            });
+          }
+          return true;
+        }
         case "Enter": {
           e.preventDefault();
           const cmd = filteredCommands[selectedIndex];
           if (cmd) {
-            onSelectCommand(cmd.name);
+            dispatchSlashMenuCommand("Enter", cmd.name, {
+              select: onSelectCommand,
+              complete: onCompleteCommand,
+            });
           }
           return true;
         }
@@ -99,7 +118,7 @@ export function useSlashMenu(activeToken: ActiveToken | null, onSelectCommand: (
           return false;
       }
     },
-    [showSlashMenu, filteredCommands, selectedIndex, onSelectCommand, onCancel],
+    [showSlashMenu, filteredCommands, selectedIndex, onSelectCommand, onCompleteCommand, onCancel],
   );
 
   return {
