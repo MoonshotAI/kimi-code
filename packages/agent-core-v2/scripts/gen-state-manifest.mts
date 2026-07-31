@@ -122,6 +122,16 @@ function tsFieldKey(key: string): string {
   return /^[$A-Z_a-z][$\w]*$/.test(key) ? key : JSON.stringify(key);
 }
 
+/**
+ * The checker names a `unique symbol` key `__@<declName>@<globalSymbolId>` —
+ * the numeric id is a compilation-global counter that shifts with unrelated
+ * edits, so the manifest renders the stable `__@<declName>` form instead.
+ */
+function stableSymbolKey(key: string): string {
+  const match = /^__@(.+)@\d+$/.exec(key);
+  return match === null ? key : `__@${match[1]}`;
+}
+
 // ---------------------------------------------------------------------------
 // Static pass — key constants and their register call sites
 // ---------------------------------------------------------------------------
@@ -635,7 +645,7 @@ class TypeRenderer {
       const propLines = rendered.split('\n');
       propLines[propLines.length - 1] += ';';
       lines.push(
-        `  ${readonly}${tsFieldKey(prop.getName())}${optional ? '?' : ''}: ${propLines[0]}`,
+        `  ${readonly}${tsFieldKey(stableSymbolKey(prop.getName()))}${optional ? '?' : ''}: ${propLines[0]}`,
         ...propLines.slice(1).map((line) => `  ${line}`),
       );
     }
