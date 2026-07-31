@@ -47,6 +47,7 @@ const payload: StatusLinePayload = {
   gitBranch: 'main',
   permissionMode: 'manual',
   planMode: false,
+  thinkingEffort: 'off',
   contextUsage: 12,
   contextTokens: 1024,
   maxContextTokens: 8192,
@@ -175,6 +176,27 @@ describe('runStatusLineCommand', () => {
 });
 
 describe('FooterComponent status_line command', () => {
+  it('passes the effective thinking effort to the command', async () => {
+    const state: AppState = {
+      ...baseState,
+      thinkingEffort: 'max',
+      statusLine: { items: null, command: 'cat' },
+    };
+    const refreshed = Promise.withResolvers<void>();
+    const footer = new FooterComponent(state, refreshed.resolve);
+
+    try {
+      footer.render(120);
+      await refreshed.promise;
+
+      const renderedPayload = JSON.parse(plain(footer.render(1_000)[0]!));
+      expect(renderedPayload.thinkingEffort).toBe('max');
+    } finally {
+      footer.setState({ ...state, statusLine: { items: null, command: null } });
+      footer.dispose();
+    }
+  });
+
   it('swaps line 1 to the command output once it lands', async () => {
     const state: AppState = {
       ...baseState,

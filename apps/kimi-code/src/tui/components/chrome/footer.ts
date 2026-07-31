@@ -443,6 +443,7 @@ export class FooterComponent implements Component {
       gitBranch: this.gitCache.getStatus()?.branch ?? null,
       permissionMode: state.permissionMode,
       planMode: state.planMode,
+      thinkingEffort: state.thinkingEffort,
       contextUsage: state.contextUsage,
       contextTokens: state.contextTokens,
       maxContextTokens: state.maxContextTokens,

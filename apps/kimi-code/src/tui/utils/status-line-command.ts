@@ -10,6 +10,8 @@
 
 import { spawn } from 'node:child_process';
 
+import type { ThinkingEffort } from '@moonshot-ai/kimi-code-sdk';
+
 export const STATUS_LINE_COMMAND_TIMEOUT_MS = 300;
 export const STATUS_LINE_RERUN_INTERVAL_MS = 1_000;
 export const STATUS_LINE_MAX_CAPTURE_BYTES = 65_536;
@@ -20,6 +22,7 @@ export interface StatusLinePayload {
   gitBranch: string | null;
   permissionMode: string;
   planMode: boolean;
+  thinkingEffort: ThinkingEffort;
   contextUsage: number;
   contextTokens: number;
   maxContextTokens: number;
