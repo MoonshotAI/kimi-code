@@ -15,6 +15,7 @@ interface UseMediaUploadResult {
 
 export function useMediaUpload(
   workspaceRoot: string | null,
+  workspaceRootUri: string | null,
   onDropPaths: (paths: string[]) => void,
 ): UseMediaUploadResult {
   const { draftMedia, addDraftMedia, updateDraftMedia, removeDraftMedia } = useChatStore();
@@ -132,7 +133,7 @@ export function useMediaUpload(
       if (!e.dataTransfer) {
         return;
       }
-      const droppedContent = resolveDroppedContent(e.dataTransfer, workspaceRoot, isMediaFile);
+      const droppedContent = resolveDroppedContent(e.dataTransfer, workspaceRoot, workspaceRootUri, isMediaFile);
       if (droppedContent.kind === "paths") {
         onDropPaths(droppedContent.paths);
         return;
@@ -161,7 +162,7 @@ export function useMediaUpload(
       document.removeEventListener("dragover", handleDocDragOver);
       document.removeEventListener("drop", handleDocDrop);
     };
-  }, [hasProcessing, draftMedia.length, addMediaFiles, onDropPaths, workspaceRoot]);
+  }, [hasProcessing, draftMedia.length, addMediaFiles, onDropPaths, workspaceRoot, workspaceRootUri]);
 
   return {
     canAddMedia,

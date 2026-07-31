@@ -40,6 +40,7 @@ export interface WorkspaceStatus {
   hasWorkspace: boolean;
   path?: string;
   workspaceRoot?: string;
+  workspaceRootUri?: string;
 }
 
 export type ErrorPhase = "preflight" | "runtime";

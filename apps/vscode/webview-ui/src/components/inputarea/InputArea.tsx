@@ -55,7 +55,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
   const [previewMedia, setPreviewMedia] = useState<string | null>(null);
 
   const { isStreaming, sendMessage, abort, draftMedia, removeDraftMedia, hasProcessingMedia, getMediaInConversation, pendingInput, planMode, messages } = useChatStore();
-  const { currentModel, thinkingEffort, updateModel, toggleThinking, selectThinkingEffort, models, extensionConfig, getCurrentThinkingMode, currentWorkDir, workspaceRoot } = useSettingsStore();
+  const { currentModel, thinkingEffort, updateModel, toggleThinking, selectThinkingEffort, models, extensionConfig, getCurrentThinkingMode, currentWorkDir, workspaceRoot, workspaceRootUri } = useSettingsStore();
 
   const isProcessing = hasProcessingMedia();
   const thinkingMode = getCurrentThinkingMode();
@@ -154,7 +154,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
     }, 0);
   }, [text, cursorPos, adjustHeight]);
 
-  const { handlePaste, handlePickMedia } = useMediaUpload(currentWorkDir || workspaceRoot, handleDropPaths);
+  const { handlePaste, handlePickMedia } = useMediaUpload(currentWorkDir || workspaceRoot, workspaceRootUri, handleDropPaths);
 
   const {
     handleKey: handleHistoryKey,

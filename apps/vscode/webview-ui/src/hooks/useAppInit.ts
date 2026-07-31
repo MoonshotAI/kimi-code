@@ -58,7 +58,7 @@ export function useAppInit(): AppInitState {
     modelsCount: 0,
   });
   const [initKey, setInitKey] = useState(0);
-  const { initModels, setExtensionConfig, setMCPServers, setWireSlashCommands, setIsLoggedIn, setWorkspaceRoot } = useSettingsStore();
+  const { initModels, setExtensionConfig, setMCPServers, setWireSlashCommands, setIsLoggedIn, setWorkspaceRoot, setWorkspaceRootUri } = useSettingsStore();
 
   const refresh = useCallback(() => {
     setState({ status: "loading", errorMessage: null, modelsCount: 0 });
@@ -87,6 +87,7 @@ export function useAppInit(): AppInitState {
         }
 
         setWorkspaceRoot(workspace.workspaceRoot ?? workspace.path ?? null);
+        setWorkspaceRootUri(workspace.workspaceRootUri ?? null);
 
         const [extensionConfig, mcpServers, slashCommands] = await Promise.all([
           bridge.getExtensionConfig(),

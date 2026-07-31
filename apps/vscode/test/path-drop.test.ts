@@ -55,6 +55,25 @@ describe("parseDroppedFilePaths", () => {
     expect(parseDroppedFilePaths("file:///", "/")).toEqual(["."]);
     expect(parseDroppedFilePaths("file:///C:/", "C:\\")).toEqual(["."]);
   });
+
+  it("accepts resources from the active remote workspace", () => {
+    expect(parseDroppedFilePaths(
+      "vscode-remote://ssh-remote+devbox/home/ada/project/packages/app/src/main.ts",
+      "/home/ada/project/packages/app",
+      "vscode-remote://ssh-remote+devbox/home/ada/project",
+    )).toEqual(["src/main.ts"]);
+  });
+
+  it("rejects remote resources from a different workspace authority", () => {
+    const workspaceUri = "vscode-remote://ssh-remote+devbox/home/ada/project";
+    const uriList = [
+      "vscode-remote://ssh-remote+other/home/ada/project/file.ts",
+      "vscode-remote://unexpected@ssh-remote+devbox/home/ada/project/file.ts",
+      "https://ssh-remote+devbox/home/ada/project/file.ts",
+    ].join("\n");
+
+    expect(parseDroppedFilePaths(uriList, "/home/ada/project", workspaceUri)).toEqual([]);
+  });
 });
 
 describe("insertDroppedFilePaths", () => {
@@ -86,6 +105,7 @@ describe("resolveDroppedContent", () => {
     const dropped = resolveDroppedContent(
       transfer([image], "file:///work/project/diagram.png"),
       "/work/project",
+      null,
       (file) => file.type.startsWith("image/"),
     );
 
@@ -97,6 +117,7 @@ describe("resolveDroppedContent", () => {
     expect(resolveDroppedContent(
       transfer([source], "file:///work/project/src/main.ts"),
       "/work/project",
+      null,
       (file) => file.type.startsWith("image/"),
     )).toEqual({ kind: "paths", paths: ["src/main.ts"] });
   });

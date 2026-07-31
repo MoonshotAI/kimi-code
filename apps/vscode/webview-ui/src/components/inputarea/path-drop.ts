@@ -14,11 +14,11 @@ interface DropDataTransfer {
   getData(mimeType: string): string;
 }
 
-function fileUriToPath(uri: URL, useWindowsSeparators: boolean): string {
+function resourceUriToPath(uri: URL, useWindowsSeparators: boolean): string {
   let pathname = decodeURIComponent(uri.pathname);
   if (WINDOWS_DRIVE_PATH.test(pathname)) {
     pathname = pathname.slice(1);
-  } else if (uri.hostname) {
+  } else if (uri.protocol === FILE_SCHEME && uri.hostname) {
     pathname = `//${uri.hostname}${pathname}`;
   }
   return useWindowsSeparators ? pathname.replaceAll("/", "\\") : pathname;
@@ -44,10 +44,33 @@ function relativeToWorkspace(filePath: string, workspaceRoot: string | null): st
   return normalizedPath.slice(normalizedRoot.length + 1);
 }
 
-export function parseDroppedFilePaths(uriList: string, workspaceRoot: string | null): string[] {
+function hasSameWorkspaceAuthority(uri: URL, workspaceUri: URL | null): boolean {
+  return workspaceUri !== null &&
+    uri.username === "" &&
+    uri.password === "" &&
+    workspaceUri.username === "" &&
+    workspaceUri.password === "" &&
+    uri.protocol === workspaceUri.protocol &&
+    uri.hostname === workspaceUri.hostname &&
+    uri.port === workspaceUri.port;
+}
+
+export function parseDroppedFilePaths(
+  uriList: string,
+  workspaceRoot: string | null,
+  workspaceRootUri: string | null = null,
+): string[] {
   const useWindowsSeparators = workspaceRoot !== null &&
     (WINDOWS_ROOT.test(workspaceRoot) || workspaceRoot.startsWith("\\\\"));
   const paths: string[] = [];
+  let parsedWorkspaceUri: URL | null = null;
+  if (workspaceRootUri) {
+    try {
+      parsedWorkspaceUri = new URL(workspaceRootUri);
+    } catch {
+      // A malformed workspace URI cannot authorize non-file resource schemes.
+    }
+  }
 
   for (const line of uriList.split(/\r?\n/)) {
     const value = line.trim();
@@ -56,10 +79,11 @@ export function parseDroppedFilePaths(uriList: string, workspaceRoot: string | n
     }
     try {
       const uri = new URL(value);
-      if (uri.protocol !== FILE_SCHEME) {
+      const isWorkspaceScheme = hasSameWorkspaceAuthority(uri, parsedWorkspaceUri);
+      if (uri.protocol !== FILE_SCHEME && !isWorkspaceScheme) {
         continue;
       }
-      paths.push(relativeToWorkspace(fileUriToPath(uri, useWindowsSeparators), workspaceRoot));
+      paths.push(relativeToWorkspace(resourceUriToPath(uri, useWindowsSeparators), workspaceRoot));
     } catch {
       // A URI list may contain malformed or unsupported entries; valid file URIs still apply.
     }
@@ -70,6 +94,7 @@ export function parseDroppedFilePaths(uriList: string, workspaceRoot: string | n
 export function resolveDroppedContent(
   dataTransfer: DropDataTransfer,
   workspaceRoot: string | null,
+  workspaceRootUri: string | null,
   isMediaFile: (file: File) => boolean,
 ): DroppedContent {
   const mediaFiles = Array.from(dataTransfer.files).filter(isMediaFile);
@@ -77,7 +102,11 @@ export function resolveDroppedContent(
     return { kind: "media", files: mediaFiles };
   }
 
-  const paths = parseDroppedFilePaths(dataTransfer.getData(URI_LIST_MIME_TYPE), workspaceRoot);
+  const paths = parseDroppedFilePaths(
+    dataTransfer.getData(URI_LIST_MIME_TYPE),
+    workspaceRoot,
+    workspaceRootUri,
+  );
   return paths.length > 0 ? { kind: "paths", paths } : { kind: "none" };
 }
 

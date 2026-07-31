@@ -11,6 +11,7 @@ const checkWorkspace: Handler<void, WorkspaceStatus> = async (_, ctx) => {
     hasWorkspace: ctx.workDir !== null,
     path: ctx.workDir ?? undefined,
     workspaceRoot: ctx.workspaceRoot ?? undefined,
+    workspaceRootUri: ctx.workspaceRootUri?.toString(),
   };
 };
 
