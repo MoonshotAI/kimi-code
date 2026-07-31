@@ -3,7 +3,6 @@ import { Spacer } from '@moonshot-ai/pi-tui';
 import type {
   Event,
   KimiHarness,
-  Session,
   TurnEndedEvent,
 } from '@moonshot-ai/kimi-code-sdk';
 
@@ -13,11 +12,12 @@ import { formatErrorMessage } from '../utils/event-payload';
 import { formatHookResultPlain } from '../utils/hook-result-format';
 import { createMarkdownTheme } from '../theme/pi-tui-theme';
 import type { TUIState } from '../tui-state';
+import type { TuiSession } from '../tui-session';
 
 
 export interface BtwPanelHost {
   state: TUIState;
-  session: Session | undefined;
+  session: TuiSession | undefined;
   readonly harness: KimiHarness;
 
   showError(msg: string): void;

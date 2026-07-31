@@ -27,15 +27,32 @@ interface EngineWireEvent {
   content?: string;
   is_error?: boolean;
   snapshot?: unknown;
+  command_id?: string;
+  chunk?: string;
 }
 
 export class SessionEventTranslator {
   private currentTurnId = 0;
+  private agentId: string;
 
   constructor(
     private readonly sessionId: string,
-    private readonly agentId: string,
-  ) {}
+    agentId: string,
+  ) {
+    this.agentId = agentId;
+  }
+
+  /**
+   * Swap the agent id stamped onto translated events; returns the previous
+   * id so callers can restore it after a sub-agent (e.g. `btw-<sid>`)
+   * prompt completes. The engine wire events carry no agent id — the agent
+   * that owns a turn is the one driving the prompt when its events arrive.
+   */
+  setAgentId(agentId: string): string {
+    const previous = this.agentId;
+    this.agentId = agentId;
+    return previous;
+  }
 
   /**
    * Translate one engine event; null means "nothing to render" (unknown or
@@ -112,6 +129,16 @@ export class SessionEventTranslator {
           snapshot: mapGoalSnapshot(event.snapshot),
         };
       }
+      case 'session.shell.output': {
+        // User-initiated `!` shell stream chunk → SDK `shell.output`. The
+        // engine folds stderr into the same stream, so it rides as `stdout`.
+        return {
+          ...base,
+          type: 'shell.output',
+          commandId: event.command_id ?? '',
+          update: { kind: 'stdout', text: event.chunk ?? '' },
+        };
+      }
       default:
         return null;
     }
@@ -154,7 +181,7 @@ function mapGoalStatus(raw: unknown): GoalStatus {
   }
 }
 
-function mapGoalSnapshot(raw: unknown): GoalSnapshot | null {
+export function mapGoalSnapshot(raw: unknown): GoalSnapshot | null {
   if (raw === null || typeof raw !== 'object') return null;
   const s = raw as Record<string, unknown>;
   const budget = (typeof s['budget'] === 'object' && s['budget'] !== null

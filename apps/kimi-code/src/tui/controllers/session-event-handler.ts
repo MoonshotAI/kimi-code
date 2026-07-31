@@ -14,7 +14,6 @@ import type {
   GoalChange,
   GoalUpdatedEvent,
   HookResultEvent,
-  Session,
   SessionMetaUpdatedEvent,
   SkillActivatedEvent,
   PluginCommandActivatedEvent,
@@ -88,15 +87,16 @@ import type {
 } from '../types';
 import type { TUIState } from '../tui-state';
 import { createGoal as startGoalCommand } from '../commands/goal';
+import type { TuiSession } from '../tui-session';
 
 export interface SessionEventHost {
   state: TUIState;
-  session: Session | undefined;
+  session: TuiSession | undefined;
   aborted: boolean;
   sessionEventUnsubscribe: (() => void) | undefined;
   readonly streamingUI: StreamingUIController;
 
-  requireSession(): Session;
+  requireSession(): TuiSession;
   setAppState(patch: Partial<AppState>): void;
   patchLivePane(patch: Partial<LivePaneState>): void;
   resetLivePane(): void;
@@ -113,7 +113,7 @@ export interface SessionEventHost {
   handleShellStarted(event: { commandId: string; taskId: string }): void;
   sendNormalUserInput(text: string): void;
   updateTerminalTitle(): void;
-  sendQueuedMessage(session: Session, item: QueuedMessage): void;
+  sendQueuedMessage(session: TuiSession, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
   readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
@@ -128,7 +128,7 @@ function estimateTokensFromText(text: string): number {
   let ascii = 0;
   let nonAscii = 0;
   for (let i = 0; i < text.length; i++) {
-    if (text.charCodeAt(i) < 128) ascii++;
+    if (text.codePointAt(i) < 128) ascii++;
     else nonAscii++;
   }
   return Math.ceil(ascii / 4 + nonAscii);
@@ -214,7 +214,7 @@ export class SessionEventHandler {
     void this.syncMcpServerStatusSnapshot(session);
   }
 
-  async syncMcpServerStatusSnapshot(session: Session): Promise<void> {
+  async syncMcpServerStatusSnapshot(session: TuiSession): Promise<void> {
     const { host } = this;
     let servers: readonly McpServerStatusSnapshot[];
     try {
@@ -775,7 +775,7 @@ export class SessionEventHandler {
     this.scheduleQueuedGoalPromotion();
   }
 
-  private isReadyForQueuedGoalPromotion(session?: Session): boolean {
+  private isReadyForQueuedGoalPromotion(session?: TuiSession): boolean {
     return (
       (session === undefined || this.host.session === session) &&
       !this.host.aborted &&
@@ -838,7 +838,7 @@ export class SessionEventHandler {
   }
 
   private async restoreAndCancelStartedQueuedGoal(
-    session: Session,
+    session: TuiSession,
     goal: UpcomingGoal,
   ): Promise<void> {
     try {
@@ -849,7 +849,7 @@ export class SessionEventHandler {
     await this.cancelStartedQueuedGoal(session);
   }
 
-  private async cancelStartedQueuedGoal(session: Session): Promise<void> {
+  private async cancelStartedQueuedGoal(session: TuiSession): Promise<void> {
     try {
       await session.cancelGoal();
     } catch (error) {

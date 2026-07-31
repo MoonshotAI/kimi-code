@@ -40,6 +40,8 @@ export interface SessionClientFactoryOptions {
   goalEnabled?: boolean;
   homedir?: string;
   nativeLlm?: unknown;
+  /** Native permission mode for the session gate ('manual' | 'auto' | 'yolo'). */
+  permissionMode?: 'manual' | 'auto' | 'yolo';
   onEvent?: (event: unknown) => void;
   lifecycle?: {
     authorizeTool?: (req: unknown) => Promise<AuthorizeToolDecision>;
@@ -51,10 +53,13 @@ export interface SessionClientHandle {
   readonly sessionId: string;
   prompt(
     text: string,
+    agentId?: string,
   ): Promise<{ stop_reason: string; steps: number; usage: { total_tokens: number } } | null>;
   cancel(): Promise<boolean>;
   save(): Promise<boolean>;
   load(): Promise<boolean>;
+  startBtw?(): Promise<string | null>;
+  endBtw?(): Promise<boolean>;
 }
 
 export type SessionClientFactory = (
@@ -88,6 +93,12 @@ export interface SessionEngineStartOptions {
   readonly goalEnabled?: boolean;
   readonly homedir?: string;
   readonly nativeLlm?: unknown;
+  /**
+   * Native permission mode for the session gate. `auto`/`yolo` approve gated
+   * tools locally (no host authorize round-trip); `manual` keeps interactive
+   * approval on the host via `requestApproval`.
+   */
+  readonly permissionMode?: 'manual' | 'auto' | 'yolo';
 }
 
 export interface SessionPromptOutcome {
@@ -117,6 +128,7 @@ export class SessionEngineController {
       goalEnabled: init.goalEnabled,
       homedir: init.homedir,
       nativeLlm: init.nativeLlm,
+      permissionMode: init.permissionMode,
       onEvent: (raw) => {
         this.options.onRawEvent?.(raw);
         const translated = translator.translate(raw);
@@ -136,11 +148,19 @@ export class SessionEngineController {
       return { block: false, resolved: true };
     }
     const req = raw as { tool_name?: string; tool_call_id?: string; arguments?: unknown };
-    const allowed = await this.options.requestApproval({
-      toolName: req.tool_name ?? '',
-      toolCallId: req.tool_call_id ?? '',
-      args: req.arguments,
-    });
+    // Fail closed: a throwing/cancelled approval prompt must deny, never
+    // propagate into the engine's lifecycle RPC (which would hang or abort the
+    // turn). This keeps the interactive seam safe when the TUI approver errors.
+    let allowed: boolean;
+    try {
+      allowed = await this.options.requestApproval({
+        toolName: req.tool_name ?? '',
+        toolCallId: req.tool_call_id ?? '',
+        args: req.arguments,
+      });
+    } catch {
+      return { block: true, reason: 'Approval was cancelled', resolved: true };
+    }
     return allowed
       ? { block: false, resolved: true }
       : { block: true, reason: 'Denied by the user', resolved: true };
@@ -155,15 +175,38 @@ export class SessionEngineController {
   }
 
   /** Run one prompt; goal continuations run inside the engine. */
-  async prompt(text: string): Promise<SessionPromptOutcome | null> {
+  async prompt(text: string, agentId?: string): Promise<SessionPromptOutcome | null> {
     if (this.client === null) return null;
-    const result = await this.client.prompt(text);
-    if (result === null) return null;
-    return {
-      stopReason: result.stop_reason,
-      steps: result.steps,
-      totalTokens: result.usage.total_tokens,
-    };
+    // Events for a side-agent turn arrive in-band during its prompt RPC but
+    // carry no agent id on the wire; stamp them with the driving agent id
+    // for the duration of the call, then restore the main-agent stamp.
+    let previousAgentId: string | undefined;
+    if (this.translator !== undefined && agentId !== undefined) {
+      previousAgentId = this.translator.setAgentId(agentId);
+    }
+    try {
+      const result = await this.client.prompt(text, agentId);
+      if (result === null) return null;
+      return {
+        stopReason: result.stop_reason,
+        steps: result.steps,
+        totalTokens: result.usage.total_tokens,
+      };
+    } finally {
+      if (previousAgentId !== undefined) {
+        this.translator?.setAgentId(previousAgentId);
+      }
+    }
+  }
+
+  /** Spawn a side-question ("between turns") subagent; returns its id. */
+  async startBtw(): Promise<string | null> {
+    return (await this.client?.startBtw?.()) ?? null;
+  }
+
+  /** Destroy the active side-question subagent. */
+  async endBtw(): Promise<boolean> {
+    return (await this.client?.endBtw?.()) ?? false;
   }
 
   /** Stop the running prompt at the next step boundary. */
@@ -174,5 +217,10 @@ export class SessionEngineController {
   /** Persist context + goal. */
   async save(): Promise<boolean> {
     return (await this.client?.save()) ?? false;
+  }
+
+  /** Restore persisted context + goal (an active goal comes back paused). */
+  async load(): Promise<boolean> {
+    return (await this.client?.load()) ?? false;
   }
 }

@@ -17,6 +17,13 @@ import {
   resolveKimiHome,
   type RunTurnOverride,
 } from '@moonshot-ai/kimi-code-sdk';
+import { loadMcpServers } from '@moonshot-ai/agent-core/mcp/config-loader';
+import type { McpServerConfig } from '@moonshot-ai/agent-core/config/schema';
+import { PluginManager } from '@moonshot-ai/agent-core/plugin/manager';
+import { prepareSystemPromptContext } from '@moonshot-ai/agent-core/profile/context';
+import { DEFAULT_AGENT_PROFILES } from '@moonshot-ai/agent-core/profile/default';
+import { LocalKaos } from '@moonshot-ai/kaos';
+import type { HookDefInput, McpServerInput } from '@moonshot-ai/kimi-agent/rust-loop';
 
 interface LlmProviderDef {
   name: string;
@@ -25,7 +32,7 @@ interface LlmProviderDef {
 }
 
 interface NativeLlmDef {
-  protocol: 'openai' | 'anthropic';
+  protocol: 'openai' | 'anthropic' | 'google';
   base_url: string;
   api_key: string;
   model: string;
@@ -99,9 +106,10 @@ function extractMultiLlmProviders(
 /**
  * Extract the native HTTP LLM transport config from the kimi config.
  * `agent.nativeLlmProvider` names a provider whose endpoint the Rust
- * engine should call directly (SSE streaming). Only static-key
- * `openai`/`kimi` (Chat Completions) and `anthropic` (Messages) providers
- * are supported; anything else falls back to the host proxy.
+ * engine should call directly (SSE streaming). Static-key
+ * `openai`/`kimi` (Chat Completions), `anthropic` (Messages), and
+ * `google-genai` (Gemini streamGenerateContent) providers are supported;
+ * anything else falls back to the host proxy.
  */
 function extractNativeLlm(config: RustEngineConfig): NativeLlmDef | undefined {
   const explicit = config.agent?.nativeLlmProvider;
@@ -139,6 +147,158 @@ export function loadNativeLlmDef(
   return extractNativeLlm(loaded.config);
 }
 
+/**
+ * Map one config MCP-server entry onto the engine's session wire spec. Stdio
+ * carries command/args/env/cwd; remote (http/sse) carries the url, the header
+ * marker, and the bearer token resolved from its env var (never committed).
+ * Pure — no I/O — so it is unit-testable.
+ */
+export function mapMcpServerConfig(
+  name: string,
+  config: McpServerConfig,
+  env: Record<string, string | undefined> = process.env,
+): McpServerInput {
+  const common = {
+    name,
+    enabled: config.enabled,
+    enabledTools: config.enabledTools,
+    disabledTools: config.disabledTools,
+    startupTimeoutMs: config.startupTimeoutMs,
+    toolTimeoutMs: config.toolTimeoutMs,
+  };
+  if (config.transport === 'stdio') {
+    return {
+      ...common,
+      transport: 'stdio',
+      command: config.command,
+      args: config.args,
+      env: config.env,
+      cwd: config.cwd,
+    };
+  }
+  // http | sse — a remote server. Resolve the bearer token from its env var.
+  const bearerToken =
+    config.bearerTokenEnvVar !== undefined ? env[config.bearerTokenEnvVar] : undefined;
+  return {
+    ...common,
+    transport: config.transport,
+    url: config.url,
+    bearerTokenEnvVar: config.bearerTokenEnvVar,
+    bearerToken,
+    hasHeaders: config.headers !== undefined,
+  };
+}
+
+/**
+ * Load MCP servers for the session engine (print-mode pilot) from two trusted
+ * sources: the user-global `mcp.json` (`trustProjectMcpConfig: false` — a
+ * headless run never auto-starts untrusted project stdio) and enabled
+ * plugin-contributed servers (already namespaced + cwd-resolved by the plugin
+ * manager). Each source is fault-isolated; a bad source is skipped, not fatal.
+ */
+export async function loadSessionMcpServers(
+  homeDir?: string,
+  cwd?: string,
+): Promise<McpServerInput[]> {
+  // Keyed by name so plugin runtime names (namespaced) and user names coexist;
+  // on an unexpected collision the later source wins deterministically.
+  const merged = new Map<string, McpServerInput>();
+
+  try {
+    const servers = await loadMcpServers({
+      cwd: cwd ?? process.cwd(),
+      homeDir,
+      trustProjectMcpConfig: false,
+    });
+    for (const [name, config] of Object.entries(servers)) {
+      merged.set(name, mapMcpServerConfig(name, config));
+    }
+  } catch {
+    // A malformed mcp.json must not sink the whole session; run without it.
+  }
+
+  try {
+    const plugins = new PluginManager({ kimiHomeDir: resolveKimiHome(homeDir) });
+    await plugins.load();
+    for (const [name, config] of Object.entries(plugins.enabledMcpServers())) {
+      merged.set(name, mapMcpServerConfig(name, config));
+    }
+  } catch {
+    // Plugin discovery failures are non-fatal — run with whatever loaded.
+  }
+
+  return [...merged.values()];
+}
+
+/**
+ * Load external lifecycle hooks for the session engine from the two trusted
+ * sources the harness uses: the user config's `[[hooks]]` section and enabled
+ * plugin-contributed hooks. The engine executes them natively (PreToolUse /
+ * PostToolUse / UserPromptSubmit / Stop); each source is fault-isolated so a
+ * broken config never sinks the session.
+ */
+export async function loadSessionHooks(
+  homeDir?: string,
+  configPath?: string,
+): Promise<HookDefInput[]> {
+  const hooks: HookDefInput[] = [];
+
+  try {
+    const resolvedHome = resolveKimiHome(homeDir);
+    const resolvedConfig = resolveConfigPath({ homeDir: resolvedHome, configPath });
+    const loaded = loadRuntimeConfigSafe(resolvedConfig);
+    if (loaded.fileError === undefined) {
+      for (const hook of loaded.config.hooks ?? []) {
+        hooks.push({ ...hook });
+      }
+    }
+  } catch {
+    // A malformed config must not sink the whole session; run without hooks.
+  }
+
+  try {
+    const plugins = new PluginManager({ kimiHomeDir: resolveKimiHome(homeDir) });
+    await plugins.load();
+    for (const hook of plugins.enabledHooks()) {
+      hooks.push({ ...hook, env: hook.env === undefined ? undefined : { ...hook.env } });
+    }
+  } catch {
+    // Plugin discovery failures are non-fatal — run with whatever loaded.
+  }
+
+  return hooks;
+}
+
+/**
+ * Build the session system prompt with production parity: the default `coder`
+ * profile's base identity/rules (`profile/default/system.md`) plus freshly
+ * gathered runtime context (merged AGENTS.md, cwd listing) via the profile
+ * subsystem — the same assembly `Agent.updateSystemPromptFromProfile` performs
+ * on the harness path. Returns `undefined` on any failure so the caller keeps
+ * its fallback prompt rather than crashing the session.
+ */
+export async function loadSessionSystemPrompt(
+  homeDir?: string,
+  cwd?: string,
+): Promise<string | undefined> {
+  try {
+    const profile = DEFAULT_AGENT_PROFILES['coder'];
+    if (profile === undefined) return undefined;
+    const base = await LocalKaos.create();
+    const kaos = cwd !== undefined ? base.withCwd(cwd) : base;
+    const context = await prepareSystemPromptContext(kaos, homeDir);
+    return profile.systemPrompt({
+      osEnv: kaos.osEnv,
+      cwd: kaos.getcwd(),
+      cwdListing: context.cwdListing,
+      agentsMd: context.agentsMd,
+      additionalDirsInfo: context.additionalDirsInfo,
+    });
+  } catch {
+    return undefined;
+  }
+}
+
 function resolveNativeLlm(
   config: RustEngineConfig,
   name: string,
@@ -159,14 +319,22 @@ function resolveNativeLlm(
       ? 'anthropic'
       : provider.type === 'openai' || provider.type === 'kimi'
         ? 'openai'
-        : undefined;
+        : provider.type === 'google-genai'
+          ? 'google'
+          : undefined;
   if (protocol === undefined) {
     warn(
       `[kimi-agent] provider "${name}" type "${provider.type ?? 'unknown'}" is not supported by the native transport — falling back to host proxy.`,
     );
     return undefined;
   }
-  if (!provider.baseUrl || !provider.apiKey) {
+  // Gemini has a well-known public endpoint; a missing baseUrl means "the
+  // official API", unlike the other protocols where it must be explicit.
+  // The native transport needs the version segment in the URL.
+  const baseUrl =
+    provider.baseUrl ??
+    (protocol === 'google' ? 'https://generativelanguage.googleapis.com/v1beta' : undefined);
+  if (!baseUrl || !provider.apiKey) {
     warn(
       `[kimi-agent] provider "${name}" needs a static baseUrl + apiKey for the native transport — falling back to host proxy.`,
     );
@@ -187,7 +355,7 @@ function resolveNativeLlm(
 
   return {
     protocol,
-    base_url: provider.baseUrl,
+    base_url: baseUrl,
     api_key: provider.apiKey,
     model,
   };

@@ -1,4 +1,4 @@
-import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
+import type { KimiHarness } from '@moonshot-ai/kimi-code-sdk';
 import { compressImageForModel, persistOriginalImage, sessionMediaOriginalsDir } from '@moonshot-ai/kimi-code-sdk';
 
 import { t } from '#/i18n';
@@ -20,10 +20,11 @@ import { extractMediaAttachments } from '../utils/image-placeholder';
 import type { PendingExit, QueuedMessage, SteerInputItem } from '../types';
 import type { TUIState } from '../tui-state';
 import type { BtwPanelController } from './btw-panel';
+import type { TuiSession } from '../tui-session';
 
 export interface EditorKeyboardHost {
   state: TUIState;
-  session: Session | undefined;
+  session: TuiSession | undefined;
   cancelInFlight: (() => void) | undefined;
   /**
    * The host's harness (KimiTUI always has one). Its `imageLimits` drives
@@ -34,7 +35,7 @@ export interface EditorKeyboardHost {
 
   handleUserInput(text: string): void;
   readonly btwPanelController: BtwPanelController;
-  steerMessage(session: Session, input: readonly SteerInputItem[]): void;
+  steerMessage(session: TuiSession, input: readonly SteerInputItem[]): void;
   validateMediaCapabilities(extraction: {
     hasMedia: boolean;
     imageAttachmentIds: readonly number[];
@@ -100,7 +101,7 @@ export class EditorKeyboardController {
         return entry.slice(1);
       }
       editor.setInputMode('prompt');
-      return undefined;
+      return;
     };
 
     // Save/restore the input mode alongside pi-tui's history draft. Without

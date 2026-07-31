@@ -1,4 +1,4 @@
-import type { CreateSessionOptions, KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
+import type { CreateSessionOptions, KimiHarness } from '@moonshot-ai/kimi-code-sdk';
 
 import { createKimiCodeUserAgent } from '#/cli/version';
 
@@ -14,6 +14,7 @@ import { thinkingEffortFromConfig } from '../utils/thinking-config';
 import type { SessionEventHandler } from './session-event-handler';
 import type { AppState, KimiTUIOptions } from '../types';
 import type { TUIState } from '../tui-state';
+import type { TuiSession } from '../tui-session';
 
 type MutableCreateSessionOptions = {
   -readonly [P in keyof CreateSessionOptions]: CreateSessionOptions[P];
@@ -21,22 +22,22 @@ type MutableCreateSessionOptions = {
 
 export interface AuthFlowHost {
   state: TUIState;
-  session: Session | undefined;
+  session: TuiSession | undefined;
   readonly harness: KimiHarness;
   readonly options: KimiTUIOptions;
 
   setAppState(patch: Partial<AppState>): void;
   setStartupReady(): void;
   resetSessionRuntime(): void;
-  setSession(session: Session): Promise<void>;
-  syncRuntimeState(session?: Session): Promise<void>;
+  setSession(session: TuiSession): Promise<void>;
+  syncRuntimeState(session?: TuiSession): Promise<void>;
   closeSession(reason: string): Promise<void>;
   appendStartupNotice(extra: string): void;
   readonly sessionEventHandler: SessionEventHandler;
   fetchSessions(): Promise<void>;
   updateTerminalTitle(): void;
   refreshSkillCommands(session?: SkillListSession): Promise<void>;
-  refreshPluginCommands(session?: Session): Promise<void>;
+  refreshPluginCommands(session?: TuiSession): Promise<void>;
 }
 
 export class AuthFlowController {

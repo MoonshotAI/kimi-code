@@ -16,6 +16,9 @@ class FakeClient implements SessionClientHandle {
   cancelled = false;
   saved = false;
   prompts: string[] = [];
+  promptAgentIds: (string | undefined)[] = [];
+  /** Fired inside `prompt` before it resolves — in-band event delivery. */
+  onPromptEvent: (() => void) | undefined;
 
   constructor(options: SessionClientFactoryOptions) {
     this.sessionId = options.sessionId ?? 'fake';
@@ -25,8 +28,11 @@ class FakeClient implements SessionClientHandle {
 
   prompt(
     text: string,
+    agentId?: string,
   ): Promise<{ stop_reason: string; steps: number; usage: { total_tokens: number } } | null> {
     this.prompts.push(text);
+    this.promptAgentIds.push(agentId);
+    this.onPromptEvent?.();
     return Promise.resolve({ stop_reason: 'EndTurn', steps: 2, usage: { total_tokens: 9 } });
   }
   cancel(): Promise<boolean> {
@@ -136,6 +142,22 @@ describe('SessionEngineController', () => {
     expect(decision).toEqual({ block: false, resolved: true });
   });
 
+  it('fails closed (denies) when the approval prompt throws or is cancelled', async () => {
+    let fake: FakeClient | undefined;
+    const controller = new SessionEngineController({
+      createClient: (options) => {
+        fake = new FakeClient(options);
+        return Promise.resolve(fake);
+      },
+      emitEvent: () => {},
+      requestApproval: () => Promise.reject(new Error('user aborted the prompt')),
+    });
+    await controller.start({ sessionId: 's1' });
+    const decision = await fake!.authorizeTool!({ tool_name: 'Bash', tool_call_id: 'c1' });
+    // A throwing approver must resolve to a deny, never propagate.
+    expect(decision).toMatchObject({ block: true, resolved: true });
+  });
+
   it('reports engine-unavailable when the factory returns null', async () => {
     const controller = new SessionEngineController({
       createClient: () => Promise.resolve(null),
@@ -145,5 +167,43 @@ describe('SessionEngineController', () => {
     expect(controller.isStarted).toBe(false);
     expect(await controller.prompt('x')).toBeNull();
     expect(await controller.cancel()).toBe(false);
+  });
+
+  it('stamps side-agent prompt events with the driving agent id, then restores', async () => {
+    const emitted: Event[] = [];
+    let fake: FakeClient | undefined;
+    const controller = new SessionEngineController({
+      createClient: (options) => {
+        fake = new FakeClient(options);
+        return Promise.resolve(fake);
+      },
+      emitEvent: (event) => emitted.push(event),
+    });
+    await controller.start({ sessionId: 's1' });
+
+    // Main-agent events carry the default stamp.
+    fake!.onEvent!({ type: 'session.turn.started', turn_id: 1 });
+    expect(emitted.at(-1)).toMatchObject({ agentId: 'main' });
+
+    // A btw prompt's in-band events must carry the side-agent id so the
+    // btw panel can route them by agentId.
+    fake!.onPromptEvent = () => {
+      fake!.onEvent!({ type: 'session.turn.started', turn_id: 2 });
+      fake!.onEvent!({ type: 'llm.delta', part: { type: 'text', text: 'side answer' } });
+      fake!.onEvent!({ type: 'session.turn.ended', turn_id: 2, stop_reason: 'EndTurn' });
+    };
+    await controller.prompt('side question', 'btw-s1');
+    expect(fake!.promptAgentIds).toEqual(['btw-s1']);
+    expect(emitted.slice(-3).map((e) => e.type)).toEqual([
+      'turn.started',
+      'assistant.delta',
+      'turn.ended',
+    ]);
+    expect(emitted.at(-1)).toMatchObject({ agentId: 'btw-s1' });
+
+    // After the btw prompt resolves, main-agent events are stamped main again.
+    fake!.onPromptEvent = undefined;
+    fake!.onEvent!({ type: 'session.turn.started', turn_id: 3 });
+    expect(emitted.at(-1)).toMatchObject({ agentId: 'main' });
   });
 });

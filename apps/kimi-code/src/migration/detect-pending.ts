@@ -3,13 +3,14 @@
  * shown. Cheap, synchronous-ish, no TTY required. Returns the MigrationPlan to
  * drive the screen, or null when there is nothing to offer.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 
 import {
   detectMigration,
   shouldSuppressMigration,
   type MigrationPlan,
 } from '@moonshot-ai/migration-legacy';
+import { join } from 'pathe';
 
 export interface DetectPendingInput {
   readonly sourceHome: string;
@@ -54,4 +55,19 @@ export async function detectPendingMigration(
   if (nothingToMigrate) return null;
 
   return plan;
+}
+
+/**
+ * Persist the "never ask again" marker that `shouldSuppressMigration`
+ * checks (`<targetHome>/.skip-migration-from-kimi-cli`). Best-effort:
+ * a write failure must not break the TUI flow — the prompt simply
+ * reappears on the next launch.
+ */
+export function writeSkipMigrationMarker(targetHome: string): void {
+  try {
+    mkdirSync(targetHome, { recursive: true });
+    writeFileSync(join(targetHome, '.skip-migration-from-kimi-cli'), '');
+  } catch {
+    // Best-effort — see docblock.
+  }
 }

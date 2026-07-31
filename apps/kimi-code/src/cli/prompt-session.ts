@@ -5,9 +5,9 @@
  * API. Coding the print-mode driver against these narrow interfaces — instead of
  * the concrete SDK classes — lets the same driver run on either the v1 engine
  * (`createKimiHarness`, the default) or the experimental agent-core-v2 engine
- * (`createPromptHarnessV2`, gated by `KIMI_CODE_EXPERIMENTAL_FLAG`). Both the
- * v1 `KimiHarness` / `Session` and the v2 harness structurally satisfy these
- * interfaces, so no adapter wrappers are needed on the v1 path.
+ * (gated by `KIMI_CODE_EXPERIMENTAL_FLAG`). Both the v1 `KimiHarness` / `Session`
+ * and the v2 path structurally satisfy these interfaces, so no adapter wrappers
+ * are needed on the v1 path.
  */
 
 import type {

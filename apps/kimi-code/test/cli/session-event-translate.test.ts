@@ -111,4 +111,23 @@ describe('SessionEventTranslator', () => {
     expect(t.translate({ type: 'llm.step.begin', model: 'm' })).toBeNull();
     expect(t.translate('not-an-object')).toBeNull();
   });
+
+  it('swaps the stamped agent id for side-agent turns and returns the previous id', () => {
+    const t = new SessionEventTranslator('s1', 'main');
+    expect(t.translate({ type: 'session.turn.started', turn_id: 1 })).toMatchObject({
+      agentId: 'main',
+    });
+
+    const previous = t.setAgentId('btw-s1');
+    expect(previous).toBe('main');
+    expect(t.translate({ type: 'session.turn.started', turn_id: 2 })).toMatchObject({
+      agentId: 'btw-s1',
+    });
+
+    // Restore by passing the captured previous id back.
+    t.setAgentId(previous);
+    expect(t.translate({ type: 'session.turn.started', turn_id: 3 })).toMatchObject({
+      agentId: 'main',
+    });
+  });
 });

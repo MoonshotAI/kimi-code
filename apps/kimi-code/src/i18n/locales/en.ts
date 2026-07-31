@@ -157,6 +157,17 @@ export default {
     },
   },
   tui: {
+    multiLlm: {
+      noProviders: 'No providers configured — add one with /provider first.',
+      title: 'MultiLLM concurrent providers',
+      noticeOff: 'MultiLLM off — pick providers to race concurrently (Rust engine only).',
+      noticeOn: '{{count}} provider(s) racing · engine: {{engine}}',
+      providerOn: 'In the MultiLLM set — select to remove',
+      providerOff: 'Not in the MultiLLM set — select to add',
+      toggleFailed: 'Failed to update MultiLLM providers: {{error}}',
+      disabled: 'MultiLLM disabled',
+      statusWithProviders: 'MultiLLM providers: {{providers}}',
+    },
     chrome: {
       footer: {
         context: 'context: {{pct}}%',

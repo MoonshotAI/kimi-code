@@ -1,4 +1,4 @@
-import type { BackgroundTaskInfo, Session } from '@moonshot-ai/kimi-code-sdk';
+import type { BackgroundTaskInfo } from '@moonshot-ai/kimi-code-sdk';
 import type { Component, ProcessTerminal, TUI } from '@moonshot-ai/pi-tui';
 
 import { t } from '#/i18n';
@@ -6,6 +6,7 @@ import { TaskOutputViewer } from '../components/dialogs/task-output-viewer';
 import { TasksBrowserApp, type TasksFilter } from '../components/dialogs/tasks-browser';
 import type { Theme } from '#/tui/theme';
 import type { CustomEditor } from '../components/editor/custom-editor';
+import type { TuiSession } from '../tui-session';
 
 export interface TasksBrowserHost {
   readonly state: {
@@ -16,7 +17,7 @@ export interface TasksBrowserHost {
     readonly editor: CustomEditor;
   };
   readonly backgroundTasks: ReadonlyMap<string, BackgroundTaskInfo>;
-  readonly session: Session | undefined;
+  readonly session: TuiSession | undefined;
   showError(msg: string): void;
   setTasksBrowser(value: TasksBrowserState | undefined): void;
 }

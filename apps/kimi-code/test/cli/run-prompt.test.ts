@@ -240,6 +240,10 @@ describe('runPrompt', () => {
     // experimental path opt back in explicitly with `vi.stubEnv(..., '1')`.
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '');
     vi.stubEnv('KIMI_MODEL_OUTPUT_FORMAT', '');
+    // These tests target the agent-core harness print path; opt out of the
+    // now-default session-owned engine (which has its own tests) so the harness
+    // path is exercised deterministically. Opt back in per-test if needed.
+    vi.stubEnv('KIMI_SESSION_ENGINE', '0');
   });
 
   afterEach(() => {

@@ -7,8 +7,13 @@ import type {
   KimiHarness,
   PermissionMode,
   PromptPart,
-  Session,
 } from '@moonshot-ai/kimi-code-sdk';
+import type { TuiSession } from './tui-session';
+import {
+  createNativeTuiSession,
+  listNativeSessions,
+  type NativeTuiRustLoop,
+} from '../cli/native-session';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
 import {
   deleteAllKittyImages,
@@ -300,7 +305,7 @@ const DETACH_HINT_DISPLAY_MS = 4_000;
 export class KimiTUI {
   readonly harness: KimiHarness;
   readonly options: KimiTUIOptions;
-  session: Session | undefined;
+  session: TuiSession | undefined;
   state: TUIState;
   private readonly approvalController = new ApprovalController();
   private readonly questionController = new QuestionController();
@@ -510,7 +515,7 @@ export class KimiTUI {
     this.setupAutocomplete();
   }
 
-  async refreshPluginCommands(session?: Session): Promise<void> {
+  async refreshPluginCommands(session?: TuiSession): Promise<void> {
     if (session === undefined) {
       this.pluginCommands = [];
       this.pluginCommandMap.clear();
@@ -725,7 +730,7 @@ export class KimiTUI {
     void this.refreshPluginCommands(this.session);
   }
 
-  private async showSessionWarnings(session: Session): Promise<void> {
+  private async showSessionWarnings(session: TuiSession): Promise<void> {
     try {
       const warnings = await session.getSessionWarnings();
       if (this.session !== session) return;
@@ -751,9 +756,10 @@ export class KimiTUI {
 
     const { startup } = this.options;
     const { workDir } = this.state.appState;
-    let session: Session | undefined;
+    let session: TuiSession | undefined;
     let shouldReplayHistory = false;
     const isResumeStartup = startup.sessionFlag !== undefined || startup.continueLast;
+    const nativeTuiEnabled = process.env['KIMI_SESSION_ENGINE_TUI'] === '1';
     const createSessionOptions: MutableCreateSessionOptions = {
       workDir,
       model: startup.model,
@@ -771,35 +777,59 @@ export class KimiTUI {
           return false;
         }
 
+        // Native resume first (keystone): the engine owns its own session
+        // store, so resumed sessions must come from it. Any miss (no engine
+        // binary, id not in the engine store) falls through to the harness
+        // path below, so the flag can never hard-break startup.
+        if (nativeTuiEnabled) {
+          const rustLoop = (await import('@moonshot-ai/kimi-agent/rust-loop')) as NativeTuiRustLoop;
+          const nativeTargets = await listNativeSessions(rustLoop, workDir);
+          const nativeTarget =
+            startup.sessionFlag !== undefined
+              ? nativeTargets.find((s) => s.id === startup.sessionFlag)
+              : nativeTargets[0];
+          if (nativeTarget !== undefined) {
+            const nativeSession = await this.maybeCreateNativeSession(createSessionOptions, {
+              sessionId: nativeTarget.id,
+            });
+            if (nativeSession !== null) {
+              session = nativeSession;
+              shouldReplayHistory = true;
+            }
+          }
+        }
+
         if (startup.sessionFlag !== undefined) {
-          const sessions = await this.harness.listSessions({
-            sessionId: startup.sessionFlag,
-            workDir,
-          });
-          const target = sessions[0];
-          if (target === undefined) {
-            throw new Error(`Session "${startup.sessionFlag}" not found.`);
+          if (session === undefined) {
+            const sessions = await this.harness.listSessions({
+              sessionId: startup.sessionFlag,
+              workDir,
+            });
+            const target = sessions[0];
+            if (target === undefined) {
+              throw new Error(`Session "${startup.sessionFlag}" not found.`);
+            }
+            if (resolve(target.workDir) !== resolve(workDir)) {
+              this.state.ui.stop();
+              process.stderr.write(
+                `${currentTheme.fg(
+                  'warning',
+                  `Session "${startup.sessionFlag}" was created under a different directory.\n` +
+                    `  cd "${target.workDir}" && kimi -r ${startup.sessionFlag}`,
+                )}\n\n`,
+              );
+              throw new Error(
+                `Session "${startup.sessionFlag}" was created under a different directory.`,
+              );
+            }
+            session = await this.harness.resumeSession({
+              id: startup.sessionFlag,
+              additionalDirs: createSessionOptions.additionalDirs,
+              replayTurnLimit: REPLAY_TURN_LIMIT,
+            });
+            shouldReplayHistory = true;
           }
-          if (resolve(target.workDir) !== resolve(workDir)) {
-            this.state.ui.stop();
-            process.stderr.write(
-              `${currentTheme.fg(
-                'warning',
-                `Session "${startup.sessionFlag}" was created under a different directory.\n` +
-                  `  cd "${target.workDir}" && kimi -r ${startup.sessionFlag}`,
-              )}\n\n`,
-            );
-            throw new Error(
-              `Session "${startup.sessionFlag}" was created under a different directory.`,
-            );
-          }
-          session = await this.harness.resumeSession({
-            id: startup.sessionFlag,
-            additionalDirs: createSessionOptions.additionalDirs,
-            replayTurnLimit: REPLAY_TURN_LIMIT,
-          });
-          shouldReplayHistory = true;
-        } else {
+        } else if (session === undefined) {
           const sessions = await this.harness.listSessions({ workDir });
           const target = sessions[0];
           if (target !== undefined) {
@@ -826,6 +856,12 @@ export class KimiTUI {
           await session.setModel(startup.model);
         }
       }
+      // Native engine session (TUI flag): fresh sessions the harness did not
+      // create (the harness path above never runs for them). Any failure
+      // falls back to the harness session silently.
+      if (session === undefined && nativeTuiEnabled) {
+        session = (await this.maybeCreateNativeSession(createSessionOptions)) ?? undefined;
+      }
     } catch (error) {
       if (!isOAuthLoginRequiredError(error)) throw error;
       this.authFlow.enterLoginRequiredStartupState();
@@ -840,6 +876,44 @@ export class KimiTUI {
     this.applyStartupPermissionAndPlanToAppState();
     this.state.startupState = 'ready';
     return shouldReplayHistory;
+  }
+
+  /**
+   * Create a native-engine session behind `KIMI_SESSION_ENGINE_TUI`. Pass
+   * `resume` to restore a persisted engine session (context + goal; the
+   * active goal comes back paused). Returns null when the engine is
+   * unavailable, the session fails to start, or a resumed id is not in the
+   * engine store — the caller falls back to the harness.
+   */
+  private async maybeCreateNativeSession(
+    options: MutableCreateSessionOptions,
+    resume?: { sessionId: string },
+  ): Promise<TuiSession | null> {
+    try {
+      const rustLoop = (await import('@moonshot-ai/kimi-agent/rust-loop')) as NativeTuiRustLoop;
+      const native = await createNativeTuiSession(
+        rustLoop,
+        {
+          sessionId: `tui-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+          workDir: options.workDir,
+          model: options.model,
+          goalEnabled: true,
+          permissionMode:
+            options.permission === 'auto'
+              ? 'auto'
+              : options.permission === 'yolo'
+                ? 'yolo'
+                : 'manual',
+        },
+        resume,
+      );
+      return native;
+    } catch (error) {
+      console.warn(
+        `[kimi-tui] native session unavailable (${error instanceof Error ? error.message : String(error)}); falling back to the harness session.`,
+      );
+      return null;
+    }
   }
 
   async stop(exitCode?: number): Promise<void> {
@@ -1295,7 +1369,7 @@ export class KimiTUI {
     this.showError(message);
   }
 
-  sendQueuedMessage(session: Session, item: QueuedMessage): void {
+  sendQueuedMessage(session: TuiSession, item: QueuedMessage): void {
     if (item.mode === 'bash') {
       this.runShellCommandFromInput(item.text);
       return;
@@ -1312,7 +1386,7 @@ export class KimiTUI {
     this.sessionEventHandler.requestQueuedGoalPromotion();
   }
 
-  private sendMessageInternal(session: Session, input: string, options?: SendMessageOptions): void {
+  private sendMessageInternal(session: TuiSession, input: string, options?: SendMessageOptions): void {
     const imageAttachmentIds =
       options?.imageAttachmentIds !== undefined && options.imageAttachmentIds.length > 0
         ? options.imageAttachmentIds
@@ -1351,7 +1425,7 @@ export class KimiTUI {
     });
   }
 
-  sendSkillActivation(session: Session, skillName: string, skillArgs: string): void {
+  sendSkillActivation(session: TuiSession, skillName: string, skillArgs: string): void {
     // Args are a plain-text channel, so pasted media can't ride along as
     // inline parts. Skill args are XML-escaped on render (renderSkillAttributes
     // + expandSkillParameters), so rewrite placeholders into escape-proof
@@ -1374,7 +1448,7 @@ export class KimiTUI {
   }
 
   activatePluginCommand(
-    session: Session,
+    session: TuiSession,
     pluginId: string,
     commandName: string,
     args: string,
@@ -1399,7 +1473,7 @@ export class KimiTUI {
       });
   }
 
-  private sendMessage(session: Session, input: string, options?: SendMessageOptions): void {
+  private sendMessage(session: TuiSession, input: string, options?: SendMessageOptions): void {
     if (
       this.deferUserMessages ||
       this.state.appState.streamingPhase !== 'idle' ||
@@ -1411,7 +1485,7 @@ export class KimiTUI {
     this.sendMessageInternal(session, input, options);
   }
 
-  steerMessage(session: Session, input: readonly SteerInputItem[]): void {
+  steerMessage(session: TuiSession, input: readonly SteerInputItem[]): void {
     if (this.deferUserMessages || this.state.appState.isCompacting) {
       for (const item of input) {
         this.enqueueMessage(item.text, item);
@@ -1542,7 +1616,7 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  private syncAdditionalDirs(session: Session): void {
+  private syncAdditionalDirs(session: TuiSession): void {
     const additionalDirs = session.summary?.additionalDirs ?? [];
     if (sameStringArrays(this.state.appState.additionalDirs, additionalDirs)) return;
     this.setAppState({ additionalDirs: [...additionalDirs] });
@@ -1552,14 +1626,14 @@ export class KimiTUI {
   // Session Runtime
   // =========================================================================
 
-  requireSession(): Session {
+  requireSession(): TuiSession {
     if (this.session === undefined) {
       throw new Error(getNoActiveSessionMessage());
     }
     return this.session;
   }
 
-  private async createSessionFromCurrentState(): Promise<Session> {
+  private async createSessionFromCurrentState(): Promise<TuiSession> {
     const model = this.state.appState.model.trim();
     if (model.length === 0) {
       throw new Error(getLlmNotSetMessage());
@@ -1577,7 +1651,7 @@ export class KimiTUI {
     return this.harness.createSession(options);
   }
 
-  async setSession(session: Session): Promise<void> {
+  async setSession(session: TuiSession): Promise<void> {
     const previous = this.unloadCurrentSession('switching session');
     await previous?.close();
     this.session = session;
@@ -1587,7 +1661,7 @@ export class KimiTUI {
     this.syncAdditionalDirs(session);
   }
 
-  async syncRuntimeState(session: Session = this.requireSession()): Promise<void> {
+  async syncRuntimeState(session: TuiSession = this.requireSession()): Promise<void> {
     const [status, goalResult] = await Promise.all([session.getStatus(), session.getGoal()]);
     this.setAppState({
       sessionId: session.id,
@@ -1609,7 +1683,7 @@ export class KimiTUI {
   // session may already be in plan mode from its persisted records, and
   // re-entering plan mode throws, so only enable it when it is not active yet.
   // setPermission is idempotent and needs no such guard.
-  private async applyStartupModesToResumedSession(session: Session): Promise<void> {
+  private async applyStartupModesToResumedSession(session: TuiSession): Promise<void> {
     const { startup } = this.options;
     if (startup.auto) {
       await session.setPermission('auto');
@@ -1651,7 +1725,7 @@ export class KimiTUI {
     await previous?.close();
   }
 
-  private unloadCurrentSession(reason: string): Session | undefined {
+  private unloadCurrentSession(reason: string): TuiSession | undefined {
     const previous = this.session;
     this.sessionEventUnsubscribe?.();
     this.sessionEventUnsubscribe = undefined;
@@ -1675,7 +1749,7 @@ export class KimiTUI {
     this.reverseRpcDisposers.length = 0;
   }
 
-  private registerSessionHandlers(session: Session): void {
+  private registerSessionHandlers(session: TuiSession): void {
     session.setApprovalHandler(
       createApprovalRequestHandler(this.approvalController, (request, response) => {
         this.appendApprovalTranscriptEntry(request, response);
@@ -1755,7 +1829,7 @@ export class KimiTUI {
       return false;
     }
 
-    let session: Session;
+    let session: TuiSession;
     try {
       session = await this.harness.resumeSession({
         id: targetSessionId,
@@ -1771,7 +1845,7 @@ export class KimiTUI {
     return true;
   }
 
-  async switchToSession(session: Session, statusMessage: string): Promise<void> {
+  async switchToSession(session: TuiSession, statusMessage: string): Promise<void> {
     this.resetSessionRuntime();
     await this.setSession(session);
     await this.syncRuntimeState(session);
@@ -1799,7 +1873,7 @@ export class KimiTUI {
     void this.showSessionWarnings(session);
   }
 
-  async reloadCurrentSessionView(session: Session, statusMessage: string): Promise<void> {
+  async reloadCurrentSessionView(session: TuiSession, statusMessage: string): Promise<void> {
     this.sessionEventUnsubscribe?.();
     this.sessionEventUnsubscribe = undefined;
     this.clearReverseRpcPanels();
@@ -1835,7 +1909,7 @@ export class KimiTUI {
       return;
     }
 
-    let session: Session;
+    let session: TuiSession;
     try {
       session = await this.createSessionFromCurrentState();
     } catch (error) {

@@ -1,6 +1,6 @@
 import type { Component, Focusable } from '@moonshot-ai/pi-tui';
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
-import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
+import type { KimiHarness } from '@moonshot-ai/kimi-code-sdk';
 
 import type { ColorToken, ThemeName } from '#/tui/theme';
 
@@ -40,6 +40,7 @@ import {
 import { handleGoalCommand } from './goal';
 import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 import { handleAddDirCommand } from './add-dir';
+import { handleMultiLlmCommand } from './multi-llm';
 import { parseSlashInput } from './parse';
 import { handlePluginsCommand } from './plugins';
 import { handleProviderCommand } from './provider';
@@ -58,6 +59,7 @@ import { handleWorkflowCommand } from './workflow';
 import { handleDiscussCommand } from './discuss';
 import { handleUndoCommand } from './undo';
 import { handleWebCommand } from './web';
+import type { TuiSession } from '../tui-session';
 
 // ---------------------------------------------------------------------------
 // Re-exports — keep existing consumers working
@@ -104,7 +106,7 @@ export { handleWebCommand } from './web';
 
 export interface SlashCommandHost {
   state: TUIState;
-  session: Session | undefined;
+  session: TuiSession | undefined;
   readonly harness: KimiHarness;
   cancelInFlight: (() => void) | undefined;
   deferUserMessages: boolean;
@@ -122,12 +124,12 @@ export interface SlashCommandHost {
   refreshSlashCommandAutocomplete(): void;
 
   // Session
-  requireSession(): Session;
-  switchToSession(session: Session, message: string): Promise<void>;
-  reloadCurrentSessionView(session: Session, message: string): Promise<void>;
+  requireSession(): TuiSession;
+  switchToSession(session: TuiSession, message: string): Promise<void>;
+  reloadCurrentSessionView(session: TuiSession, message: string): Promise<void>;
   beginSessionRequest(): void;
   failSessionRequest(message: string): void;
-  sendQueuedMessage(session: Session, item: QueuedMessage): void;
+  sendQueuedMessage(session: TuiSession, item: QueuedMessage): void;
   requestQueuedGoalPromotion?(): void;
 
   // UI
@@ -153,9 +155,9 @@ export interface SlashCommandHost {
   createNewSession(): Promise<void>;
   showSessionPicker(): Promise<void>;
   sendNormalUserInput(text: string): void;
-  sendSkillActivation(session: Session, skillName: string, skillArgs: string): void;
+  sendSkillActivation(session: TuiSession, skillName: string, skillArgs: string): void;
   activatePluginCommand(
-    session: Session,
+    session: TuiSession,
     pluginId: string,
     commandName: string,
     args: string,
@@ -313,6 +315,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'provider':
       await handleProviderCommand(host);
+      return;
+    case 'multi-llm':
+      await handleMultiLlmCommand(host);
       return;
     case 'permission':
       showPermissionPicker(host);

@@ -13,6 +13,7 @@ import { isAbortError } from '../utils/errors';
 import { formatErrorMessage } from '../utils/event-payload';
 import { buildExportMarkdown } from '../utils/export-markdown';
 import type { SlashCommandHost } from './dispatch';
+import type { TuiSession } from '../tui-session';
 
 // ---------------------------------------------------------------------------
 // Session commands
@@ -79,7 +80,7 @@ export async function handleForkCommand(host: SlashCommandHost, args: string): P
   }
 }
 
-function forkSourceTitle(host: SlashCommandHost, session: Session): string {
+function forkSourceTitle(host: SlashCommandHost, session: TuiSession): string {
   const currentTitle = host.state.appState.sessionTitle?.trim();
   if (currentTitle !== undefined && currentTitle.length > 0) return currentTitle;
 

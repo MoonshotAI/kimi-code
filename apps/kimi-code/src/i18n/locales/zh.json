@@ -141,6 +141,17 @@
     }
   },
   "tui": {
+    "multiLlm": {
+      "noProviders": "尚未配置任何 provider —— 请先用 /provider 添加。",
+      "title": "MultiLLM 并发 provider",
+      "noticeOff": "MultiLLM 未开启 —— 选择要并发竞速的 provider（仅 Rust 引擎）。",
+      "noticeOn": "{{count}} 个 provider 并发竞速 · 引擎：{{engine}}",
+      "providerOn": "已在 MultiLLM 集合中 —— 选择即移除",
+      "providerOff": "不在 MultiLLM 集合中 —— 选择即加入",
+      "toggleFailed": "更新 MultiLLM provider 失败：{{error}}",
+      "disabled": "MultiLLM 已关闭",
+      "statusWithProviders": "MultiLLM provider：{{providers}}"
+    },
     "chrome": {
       "footer": {
         "context": "上下文：{{pct}}%",

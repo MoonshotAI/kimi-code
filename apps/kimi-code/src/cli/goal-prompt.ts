@@ -29,7 +29,7 @@ export const GOAL_EXIT_CODES = {
   paused: 6,
 } as const;
 
-export function goalExitCode(status: string | undefined): number {
+export function goalExitCode(status?: string): number {
   switch (status) {
     case 'blocked':
       return GOAL_EXIT_CODES.blocked;

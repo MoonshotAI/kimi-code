@@ -1,5 +1,3 @@
-import type { Session } from '@moonshot-ai/kimi-code-sdk';
-
 import { t } from '#/i18n';
 import { AgentGroupComponent } from '../components/messages/agent-group';
 import { AssistantMessageComponent } from '../components/messages/assistant-message';
@@ -23,16 +21,17 @@ import type {
   TranscriptEntry,
 } from '../types';
 import type { TUIState } from '../tui-state';
+import type { TuiSession } from '../tui-session';
 
 export interface StreamingUIHost {
   state: TUIState;
-  session: Session | undefined;
+  session: TuiSession | undefined;
   setAppState(patch: Partial<AppState>): void;
   patchLivePane(patch: Partial<LivePaneState>): void;
   resetLivePane(): void;
   updateActivityPane(): void;
   updateQueueDisplay(): void;
-  requireSession(): Session;
+  requireSession(): TuiSession;
   deferUserMessages: boolean;
   shiftQueuedMessage(): QueuedMessage | undefined;
   pushTranscriptEntry(entry: TranscriptEntry): void;

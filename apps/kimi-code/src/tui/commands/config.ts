@@ -3,7 +3,6 @@ import {
   type ExperimentalFeatureState,
   type ModelAlias,
   type PermissionMode,
-  type Session,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
@@ -41,6 +40,7 @@ import type { SlashCommandHost } from './dispatch';
 import { setExperimentalFeatures } from './experimental-flags';
 import { showUsage } from './info';
 import { promptApiKey } from './prompts';
+import type { TuiSession } from '../tui-session';
 
 // ---------------------------------------------------------------------------
 // Plan / Config commands
@@ -105,7 +105,7 @@ export async function handlePlanCommand(host: SlashCommandHost, args: string): P
 
 async function applyPlanMode(
   host: SlashCommandHost,
-  session: Session,
+  session: TuiSession,
   enabled: boolean,
 ): Promise<void> {
   try {

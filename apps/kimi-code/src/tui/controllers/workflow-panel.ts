@@ -7,13 +7,14 @@
  * or the controller is disposed.
  */
 
-import type { Event, Session, ToolCallStartedEvent, ToolResultEvent } from '@moonshot-ai/kimi-code-sdk';
+import type { Event, ToolCallStartedEvent, ToolResultEvent } from '@moonshot-ai/kimi-code-sdk';
 
 import type { WorkflowPanelComponent, WorkflowRunData } from '../components/chrome/workflow-panel';
+import type { TuiSession } from '../tui-session';
 
 export interface WorkflowPanelHost {
   readonly workflowPanel: WorkflowPanelComponent;
-  session: Session | undefined;
+  session: TuiSession | undefined;
   requestRender: () => void;
   showError: (msg: string) => void;
 }
@@ -32,7 +33,7 @@ export class WorkflowPanelController {
   }
 
   /** Subscribe to the session's event stream. */
-  subscribe(session: Session): void {
+  subscribe(session: TuiSession): void {
     this.unsubscribeFn?.();
     this.unsubscribeFn = session.onEvent((event: Event) => {
       this.handleEvent(event);

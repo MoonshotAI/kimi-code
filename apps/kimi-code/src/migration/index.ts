@@ -8,5 +8,5 @@
  */
 export { registerMigrateCommand } from './command';
 export { formatSessionLabel, isImportedSession, type SessionLabelInput } from './badge';
-export { detectPendingMigration } from './detect-pending';
+export { detectPendingMigration, writeSkipMigrationMarker } from './detect-pending';
 export { MigrationScreenComponent, type MigrationScreenResult } from './migration-screen';

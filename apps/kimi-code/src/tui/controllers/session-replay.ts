@@ -5,7 +5,6 @@ import type {
   PermissionMode,
   PromptOrigin,
   ResumedAgentState,
-  Session,
   ToolCall,
 } from '@moonshot-ai/kimi-code-sdk';
 
@@ -51,6 +50,7 @@ import { formatBashOutputForDisplay } from '../utils/shell-output';
 import { markTranscriptComponent } from '../utils/transcript-component-metadata';
 import type { SessionEventHandler } from './session-event-handler';
 import type { StreamingUIController } from './streaming-ui';
+import type { TuiSession } from '../tui-session';
 
 type GoalReplayRecord = Extract<AgentReplayRecord, { type: 'goal_updated' }>;
 type CompactionReplayRecord = Extract<AgentReplayRecord, { type: 'compaction' }>;
@@ -85,7 +85,7 @@ function unescapeBashXml(text: string): string {
 export class SessionReplayRenderer {
   constructor(private readonly host: SessionReplayHost) {}
 
-  async hydrateFromReplay(session: Session): Promise<boolean> {
+  async hydrateFromReplay(session: TuiSession): Promise<boolean> {
     this.host.setAppState({ isReplaying: true });
     try {
       const main = session.getResumeState()?.agents['main'];
