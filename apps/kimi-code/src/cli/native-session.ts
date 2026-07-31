@@ -6,7 +6,8 @@
  * `Session` surface the interactive TUI consumes, so the TUI can hold a native
  * engine session in place of the agent-core harness `Session`.
  *
- * Scope (Round 1, behind the default-off `KIMI_SESSION_ENGINE_TUI` flag):
+ * Scope (ON by default since the Rust session surface reached parity; opt out
+ * with `KIMI_SESSION_ENGINE_TUI=0`):
  *  - Engine-backed methods are translated for real (wire -> SDK types):
  *    getStatus, getUsage, listSkills, listMcpServers, getSessionWarnings,
  *    getGoal + goal lifecycle, setModel/setThinking/setPermission/setPlanMode/
@@ -128,15 +129,19 @@ const NATIVE_ENGINE_TRANSPORTS = new Set(['stdio', 'http', 'sse']);
 const SKILL_SOURCES = new Set(['builtin', 'user', 'extra', 'project']);
 const MCP_STATUSES = new Set(['pending', 'connected', 'failed', 'disabled', 'needs-auth']);
 
-/** Feature gate for the interactive TUI's native-engine sessions. Reads
- *  `KIMI_SESSION_ENGINE_TUI=1`; every call site (startup, resume, picker,
- *  btw panel) must route through this instead of re-reading the env var. */
+/** Feature gate for the interactive TUI's native-engine sessions. ON by
+ *  default (`KIMI_SESSION_ENGINE_TUI=0` opts out); every call site
+ *  (startup, resume, picker, btw panel) must route through this instead of
+ *  re-reading the env var. Any native-session failure falls back to the
+ *  harness, so the default can never hard-break startup. */
 export function isNativeTuiEngineEnabled(): boolean {
-  return process.env['KIMI_SESSION_ENGINE_TUI'] === '1';
+  return process.env['KIMI_SESSION_ENGINE_TUI'] !== '0';
 }
 
 function naError(feature: string): never {
-  throw new Error(`${feature} is not available under the native engine yet.`);
+  throw new Error(
+    `${feature} is a JS-host capability and is not available under the native engine yet.`,
+  );
 }
 
 /** Extract the plain-text of a prompt input; multimodal parts degrade to text. */
