@@ -6,6 +6,7 @@ import type {
   TurnEndedEvent,
 } from '@moonshot-ai/kimi-code-sdk';
 
+import { NativeSession } from '#/cli/native-session';
 import { getNoActiveSessionMessage } from '../constant/kimi-tui';
 import { BtwPanelComponent } from '../components/panes/btw-panel';
 import { formatErrorMessage } from '../utils/event-payload';
@@ -52,8 +53,13 @@ export class BtwPanelController {
 
   clear(): void {
     const active = this.active;
-    if (active !== undefined && this.shouldCancelOnUnmount(active.panel)) {
-      void this.cancelAgent(active.agentId);
+    if (active !== undefined) {
+      if (this.shouldCancelOnUnmount(active.panel)) {
+        void this.cancelAgent(active.agentId);
+      }
+      // The panel is going away (stop / session switch): end the engine
+      // side-question conversation so later prompts route back to main.
+      void this.endBtwSession();
     }
     this.active = undefined;
     this.panelsByAgentId.clear();
@@ -69,6 +75,10 @@ export class BtwPanelController {
     if (shouldCancel) {
       void this.cancelAgent(active.agentId);
     }
+    // The panel is dismissed (Esc / Ctrl+C / a new /btw): end the engine
+    // side-question conversation so subsequent prompts route to the main agent
+    // instead of the closed panel's subagent.
+    void this.endBtwSession();
     return true;
   }
 
@@ -184,6 +194,23 @@ export class BtwPanelController {
     await this.withInteractiveAgent(agentId, () => session.cancel()).catch((error: unknown) => {
       this.host.showError(t('tui.messages.btwCancelFailed', { error: formatErrorMessage(error) }));
     });
+  }
+
+  /**
+   * End the engine side-question conversation when its panel closes, so the
+   * native engine stops routing prompts to the (now hidden) subagent. Only the
+   * native engine session exposes `endBtw` — the harness `Session` has no such
+   * member, so this is a no-op for harness sessions (their subagents die with
+   * the turn).
+   */
+  private async endBtwSession(): Promise<void> {
+    const session = this.host.session;
+    if (!(session instanceof NativeSession)) return;
+    try {
+      await session.endBtw();
+    } catch (error) {
+      this.host.showError(t('tui.messages.btwEndFailed', { error: formatErrorMessage(error) }));
+    }
   }
 
   private shouldCancelOnUnmount(panel: BtwPanelComponent): boolean {

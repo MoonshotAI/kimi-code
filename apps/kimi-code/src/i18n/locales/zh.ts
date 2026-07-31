@@ -1776,6 +1776,7 @@ export default {
       // tui/controllers/btw-panel.ts
       btwSendFailed: '发送 /btw 提示失败：{{error}}',
       btwCancelFailed: '取消 /btw 失败：{{error}}',
+      btwEndFailed: '结束 /btw 失败：{{error}}',
       // tui/controllers/editor-keyboard.ts
       editorExternalFailed: '外部编辑器失败：{{msg}}',
       // tui/controllers/tasks-browser.ts

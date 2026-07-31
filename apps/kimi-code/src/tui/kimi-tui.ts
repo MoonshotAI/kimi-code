@@ -11,6 +11,7 @@ import type {
 import type { TuiSession } from './tui-session';
 import {
   createNativeTuiSession,
+  isNativeTuiEngineEnabled,
   listNativeSessions,
   type NativeTuiRustLoop,
 } from '../cli/native-session';
@@ -147,7 +148,7 @@ import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attach
 import { extractMediaAttachments, rewriteMediaPlaceholders } from './utils/image-placeholder';
 import { REPLAY_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
-import { sessionRowsForPicker } from './utils/session-picker-rows';
+import { sessionRowsForPicker, nativeSessionRowsForPicker } from './utils/session-picker-rows';
 import { formatBashOutputForDisplay } from './utils/shell-output';
 import { combineStartupNotice, isOAuthLoginRequiredError } from './utils/startup';
 import { installTerminalFocusTracking } from './utils/terminal-focus';
@@ -759,7 +760,7 @@ export class KimiTUI {
     let session: TuiSession | undefined;
     let shouldReplayHistory = false;
     const isResumeStartup = startup.sessionFlag !== undefined || startup.continueLast;
-    const nativeTuiEnabled = process.env['KIMI_SESSION_ENGINE_TUI'] === '1';
+    const nativeTuiEnabled = isNativeTuiEngineEnabled();
     const createSessionOptions: MutableCreateSessionOptions = {
       workDir,
       model: startup.model,
@@ -909,6 +910,9 @@ export class KimiTUI {
       );
       return native;
     } catch (error) {
+      // Telemetry hook point: report native-session-creation failures here
+      // (event name + the error message) once the TUI has a telemetry sink —
+      // the harness fallback below is the shipped product behavior.
       console.warn(
         `[kimi-tui] native session unavailable (${error instanceof Error ? error.message : String(error)}); falling back to the harness session.`,
       );
@@ -1762,15 +1766,43 @@ export class KimiTUI {
     this.state.loadingSessions = true;
     this.state.sessionsScope = scope;
     try {
+      const currentSessionId = this.state.appState.sessionId;
+      const currentSessionHasContent = this.hasSessionContent();
+      const workDir = this.state.appState.workDir;
       const sessions =
         scope === 'all'
           ? await this.harness.listSessions({})
-          : await this.harness.listSessions({ workDir: this.state.appState.workDir });
-      this.state.sessions = sessionRowsForPicker(
-        sessions,
-        this.state.appState.sessionId,
-        this.hasSessionContent(),
-      );
+          : await this.harness.listSessions({ workDir });
+      const rows = sessionRowsForPicker(sessions, currentSessionId, currentSessionHasContent);
+
+      // Merge persisted engine sessions (native store) into the picker so
+      // `tui-*` sessions are resumable from the runtime dialog. Harness rows
+      // win on id collisions; the native path is best-effort and can never
+      // hide harness rows (the flag-off path runs exactly one listSessions).
+      if (isNativeTuiEngineEnabled()) {
+        try {
+          const rustLoop = (await import('@moonshot-ai/kimi-agent/rust-loop')) as NativeTuiRustLoop;
+          const nativeRows = nativeSessionRowsForPicker(
+            await listNativeSessions(rustLoop, scope === 'all' ? undefined : workDir),
+            workDir,
+            currentSessionId,
+            currentSessionHasContent,
+          );
+          const seen = new Set(rows.map((row) => row.id));
+          for (const row of nativeRows) {
+            if (seen.has(row.id)) continue;
+            seen.add(row.id);
+            rows.push(row);
+          }
+          // The engine store sorts by updated_at; keep the merged list ordered
+          // by recency so the freshest session stays at the top.
+          rows.sort((a, b) => b.updated_at - a.updated_at);
+        } catch {
+          /* native listing is best-effort; harness rows remain usable */
+        }
+      }
+
+      this.state.sessions = rows;
     } catch {
       /* silently ignore */
     } finally {
@@ -1829,12 +1861,30 @@ export class KimiTUI {
       return false;
     }
 
-    let session: TuiSession;
+    let session: TuiSession | undefined;
     try {
-      session = await this.harness.resumeSession({
-        id: targetSessionId,
-        replayTurnLimit: REPLAY_TURN_LIMIT,
-      });
+      // Native resume first (keystone, mirrors the startup path): the engine
+      // owns its own session store, so a resumed id must be looked up there.
+      // Any miss (engine unavailable, id not in the engine store) falls
+      // through to the harness below.
+      if (isNativeTuiEngineEnabled()) {
+        const rustLoop = (await import('@moonshot-ai/kimi-agent/rust-loop')) as NativeTuiRustLoop;
+        const nativeTargets = await listNativeSessions(rustLoop, this.state.appState.workDir);
+        const nativeTarget = nativeTargets.find((s) => s.id === targetSessionId);
+        if (nativeTarget !== undefined) {
+          const native = await this.maybeCreateNativeSession(
+            { workDir: this.state.appState.workDir },
+            { sessionId: nativeTarget.id },
+          );
+          if (native !== null) session = native;
+        }
+      }
+      if (session === undefined) {
+        session = await this.harness.resumeSession({
+          id: targetSessionId,
+          replayTurnLimit: REPLAY_TURN_LIMIT,
+        });
+      }
     } catch (error) {
       const msg = formatErrorMessage(error);
       this.showError(`Failed to resume session ${targetSessionId}: ${msg}`);

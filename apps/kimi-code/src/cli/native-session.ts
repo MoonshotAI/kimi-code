@@ -128,6 +128,13 @@ const NATIVE_ENGINE_TRANSPORTS = new Set(['stdio', 'http', 'sse']);
 const SKILL_SOURCES = new Set(['builtin', 'user', 'extra', 'project']);
 const MCP_STATUSES = new Set(['pending', 'connected', 'failed', 'disabled', 'needs-auth']);
 
+/** Feature gate for the interactive TUI's native-engine sessions. Reads
+ *  `KIMI_SESSION_ENGINE_TUI=1`; every call site (startup, resume, picker,
+ *  btw panel) must route through this instead of re-reading the env var. */
+export function isNativeTuiEngineEnabled(): boolean {
+  return process.env['KIMI_SESSION_ENGINE_TUI'] === '1';
+}
+
 function naError(feature: string): never {
   throw new Error(`${feature} is not available under the native engine yet.`);
 }
@@ -816,19 +823,24 @@ export async function createNativeTuiSession(
 }
 
 /**
- * List persisted engine sessions under a workspace (SDK `listSessions`
- * parity for the native store). The engine records the workdir at session
- * creation, so sessions from other directories are excluded.
+ * List persisted engine sessions (SDK `listSessions` parity for the native
+ * store). The engine records the workdir at session creation; pass `workDir`
+ * to restrict to sessions created under that directory, or omit it to list
+ * every persisted engine session (used by the picker's "all" scope).
  */
 export async function listNativeSessions(
   rustLoop: NativeTuiRustLoop,
-  workDir: string,
+  workDir?: string,
 ): Promise<EngineSessionRecord[]> {
   const result = await rustLoop.sessionList(50, 0);
   const sessions = result?.sessions ?? [];
-  const normalized = resolve(workDir);
+  const normalized = workDir === undefined ? undefined : resolve(workDir);
   return sessions
-    .filter((s) => s.work_dir !== undefined && s.work_dir !== '' && resolve(s.work_dir) === normalized)
+    .filter(
+      (s) =>
+        normalized === undefined ||
+        (s.work_dir !== undefined && s.work_dir !== '' && resolve(s.work_dir) === normalized),
+    )
     .toSorted((a, b) => (a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : 0));
 }
 

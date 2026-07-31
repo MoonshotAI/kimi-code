@@ -1817,6 +1817,7 @@ export default {
       // tui/controllers/btw-panel.ts
       btwSendFailed: 'Failed to send /btw prompt: {{error}}',
       btwCancelFailed: 'Failed to cancel /btw: {{error}}',
+      btwEndFailed: 'Failed to end /btw: {{error}}',
       // tui/controllers/editor-keyboard.ts
       editorExternalFailed: 'External editor failed: {{msg}}',
       // tui/controllers/tasks-browser.ts
