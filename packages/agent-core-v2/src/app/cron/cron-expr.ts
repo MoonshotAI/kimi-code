@@ -14,7 +14,7 @@
  *   2. **Termination.** Computing `next` for a legal-but-never-fires
  *      expression like `0 0 31 2 *` must not spin. We bound the search
  *      at a fixed window (5 years by default) and return `null` past
- *      that — the validator at `CronCreate` reuses this signal.
+ *      that.
  */
 
 /** A parsed cron expression. Opaque to callers — pass it back into {@link computeNextCronRun}. */

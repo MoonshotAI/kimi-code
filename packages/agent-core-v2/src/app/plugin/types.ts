@@ -1,5 +1,5 @@
 import type { HookDefConfig } from '#/agent/externalHooks/configSection';
-import type { McpServerConfig } from '#/agent/mcp/config-schema';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
 
 export type PluginDiagnosticSeverity = 'error' | 'warn' | 'info';
 
@@ -15,6 +15,11 @@ export interface PluginAuthor {
 
 export interface PluginSessionStart {
   readonly skill: string;
+}
+
+export interface PluginAgentRoot {
+  readonly path: string;
+  readonly source: 'plugin';
 }
 
 export interface PluginInterface {

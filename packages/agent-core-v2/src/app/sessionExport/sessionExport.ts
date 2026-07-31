@@ -1,5 +1,5 @@
 /**
- * `sessionExport` domain (L6) — session diagnostic export contract.
+ * `sessionExport` domain — session diagnostic export contract.
  *
  * Defines the App-scope `ISessionExportService`, which packages a persisted
  * session directory plus optional global diagnostics into a zip archive. The

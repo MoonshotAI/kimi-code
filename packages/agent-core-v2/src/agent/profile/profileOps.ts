@@ -1,36 +1,38 @@
 /**
- * `profile` domain (L3) — wire Model (`ProfileModel`) and the `config.update`
+ * `profile` domain — wire Model (`ProfileModel`) and the `config.update`
  * Op (`configUpdate`) for the agent's persistent configuration slice.
  *
- * Declares the persistent profile config — `cwd`, `modelAlias`, `profileName`,
+ * Declares the persistent profile config — `modelAlias`, `profileName`,
  * the resolved base thinking effort, `systemPrompt`, and the profile
  * `disallowedTools` denylist and `subagents` delegation allowlist — as a wire
  * Model (initial `defaultProfileModel()`), plus the single Op whose `apply` is
  * a pure merge of an already-resolved payload. Live records carry
  * `thinkingEffort` (matching the v1 wire field); legacy replay still accepts
  * `thinkingLevel`. The value is
- * resolved to a `ThinkingEffort` at the call site (via `resolveThinkingEffort` +
- * the `thinking` config section) and carried in the payload, so `apply` stays
+ * resolved to a `ThinkingEffort` at the call site and carried in the
+ * payload, so `apply` stays
  * pure and a resumed agent restores the persisted base value rather than
- * re-resolving against a possibly-drifted config. Runtime-only Kimi env forcing
- * is projected by `AgentProfileService`; keeping it out of this Model prevents
- * that Kimi-only value from leaking through model switches or agent forks.
+ * re-resolving against a possibly-drifted config. Runtime-only Kimi env
+ * forcing is intentionally kept out of this Model so the Kimi-only value
+ * cannot leak through model switches or agent forks.
  * `modelCapabilities` is intentionally NOT in the Model — it is
- * derived live from `IModelCatalog` so resume never pins stale capabilities.
+ * derived live at runtime so resume never pins stale capabilities.
  * Each `apply` returns the same reference when nothing changes so the wire's
- * reference-equality gate stays quiet. The `chdir` side effect and the
- * `agent.status.updated` emission are NOT part of `apply`: they run after
+ * reference-equality gate stays quiet. The `agent.status.updated` emission is
+ * NOT part of `apply`: it runs after
  * `wire.dispatch` on the live path only, so `wire.replay` rebuilds the Model
- * silently.
+ * silently. The agent's working directory is deliberately NOT part of the
+ * binding: it is always the session's frozen cwd, read from `sessionContext`
+ * at render time rather than persisted here. Legacy `profile.bind` records
+ * that still carry a `cwd` field replay fine — the schema strips it.
  *
  * Also declares `ActiveToolsModel` (`readonly string[] | undefined`, initial
  * `undefined` = every tool active), the `tools.set_active_tools` whole-set
  * replace, and the v2-only `tools.reset_active_tools` transition back to the
  * unrestricted default. Both persisted transitions replay the base set. The
  * ephemeral per-tool
- * `addActiveTool` / `removeActiveTool` deltas (used by `userTool`) are NOT Ops —
- * they are intentionally not persisted and are re-derived on resume.
- * Consumed by the Agent-scope `profileService`.
+ * `addActiveTool` / `removeActiveTool` deltas are NOT Ops — they are
+ * intentionally not persisted and are re-derived on resume.
  */
 
 import { z } from 'zod';
@@ -42,7 +44,6 @@ import type { PayloadOf } from '#/wire/types';
 import { ProfileError, ProfileErrors } from './profile';
 
 export interface ProfileModelState {
-  readonly cwd?: string;
   readonly modelAlias?: string;
   readonly profileName?: string;
   readonly thinkingLevel: string;
@@ -58,7 +59,6 @@ export const ProfileModel = defineModel<ProfileModelState>('profile', () => ({
 
 export const profileBind = ProfileModel.defineOp('profile.bind', {
   schema: z.object({
-    cwd: z.string().optional(),
     modelAlias: z.string().optional(),
     profileName: z.string().optional(),
     thinkingEffort: z.custom<ThinkingEffort>(),
@@ -68,7 +68,6 @@ export const profileBind = ProfileModel.defineOp('profile.bind', {
     subagents: z.array(z.string()).readonly().optional(),
   }),
   apply: (s, p) => ({
-    cwd: p.cwd ?? s.cwd,
     modelAlias: p.modelAlias ?? s.modelAlias,
     profileName: p.profileName ?? s.profileName,
     thinkingLevel: p.thinkingEffort,
@@ -80,7 +79,6 @@ export const profileBind = ProfileModel.defineOp('profile.bind', {
 
 export const configUpdate = ProfileModel.defineOp('config.update', {
   schema: z.object({
-    cwd: z.string().optional(),
     modelAlias: z.string().optional(),
     profileName: z.string().optional(),
     thinkingEffort: z.custom<ThinkingEffort>().optional(),
@@ -90,9 +88,6 @@ export const configUpdate = ProfileModel.defineOp('config.update', {
   }),
   apply: (s, p) => {
     let next: ProfileModelState | undefined;
-    if (p.cwd !== undefined && p.cwd !== s.cwd) {
-      next = { ...(next ?? s), cwd: p.cwd };
-    }
     if (p.modelAlias !== undefined && p.modelAlias !== s.modelAlias) {
       next = { ...(next ?? s), modelAlias: p.modelAlias };
     }

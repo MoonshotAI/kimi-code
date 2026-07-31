@@ -74,6 +74,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/debug/workspace/{workspace_id}/{service}/{method}",
+    ],
+    [
+      "GET",
       "/api/v1/files/{file_id}",
     ],
     [
@@ -238,6 +242,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/workspaces/{workspace_id}/trust",
+    ],
+    [
+      "GET",
       "/asyncapi.json",
     ],
     [
@@ -263,6 +271,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/debug/session/{session_id}/agent/{agent_id}/{service}/{method}",
+    ],
+    [
+      "POST",
+      "/api/v1/debug/workspace/{workspace_id}/{service}/{method}",
     ],
     [
       "POST",
@@ -382,7 +394,19 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/workspace/fs:search",
+    ],
+    [
+      "POST",
       "/api/v1/workspaces",
+    ],
+    [
+      "POST",
+      "/api/v1/workspaces/{workspace_id}/trust",
+    ],
+    [
+      "POST",
+      "/api/v1/workspaces/{workspace_id}/untrust",
     ],
     [
       "PUT",

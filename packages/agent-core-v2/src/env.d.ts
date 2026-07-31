@@ -1,5 +1,4 @@
-// Raw-string imports for prompt sources. Vite/Vitest handles `?raw` natively;
-// tsdown uses the shared `raw-text-plugin` for the same import shape.
+// Raw-string imports for prompt sources. Vite/Vitest handles `?raw` natively.
 
 declare module '*?raw' {
   const content: string;

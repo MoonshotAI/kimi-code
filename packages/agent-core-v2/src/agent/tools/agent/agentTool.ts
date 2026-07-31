@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `SubagentTool` implementation (the `Agent` tool).
+ * `tools` domain — `SubagentTool` implementation (the `Agent` tool).
  *
  * The LLM-facing wrapper over the `subagent` domain: translates the tool args
  * into a Profile + Model binding, creates (or resumes) an agent through
@@ -8,8 +8,7 @@
  * (`mirrorAgentRun`). The tool also owns the JSON schema + description,
  * approval rule, background-task registration (so the LLM can see the run
  * under TaskList/TaskOutput/TaskStop when `run_in_background=true` or after
- * detach), and terminal text formatting. The public contract (schemas,
- * constants, `ISubagentTool`) lives in `./agent`.
+ * detach), and terminal text formatting.
  *
  * Spawn bindings use an explicit tool choice first, then the target profile's
  * symbolic model preference, before `resolveSubagentBinding` falls back to the
@@ -84,6 +83,7 @@ import {
   formatSubagentTimeoutDescription,
   resolveSubagentBinding,
   resolveSubagentTimeoutMs,
+  stripSubagentModelParameter,
   wrapSubagentModelError,
 } from '#/session/subagent/configSection';
 import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
@@ -104,10 +104,23 @@ import AGENT_BACKGROUND_DISABLED_DESCRIPTION from './agent-background-disabled.m
 import AGENT_BACKGROUND_DESCRIPTION from './agent-background-enabled.md?raw';
 import AGENT_DESCRIPTION_BASE from './agent.md?raw';
 
+const SUBAGENT_TOOL_PARAMETERS = toInputJsonSchema(SubagentToolInputSchema);
+const SUBAGENT_TOOL_PARAMETERS_NO_MODEL = stripSubagentModelParameter(SUBAGENT_TOOL_PARAMETERS);
+
 export class SubagentTool implements ISubagentTool {
   declare readonly _serviceBrand: undefined;
   readonly name: string = 'Agent';
-  readonly parameters: Record<string, unknown> = toInputJsonSchema(SubagentToolInputSchema);
+
+  /**
+   * The `model` choice only exists while the `secondary-model` experiment is
+   * on; off, the advertised schema drops it so the concept never enters the
+   * prompt. Read live per request (same as `description`).
+   */
+  get parameters(): Record<string, unknown> {
+    return this.flags.enabled(SECONDARY_MODEL_FLAG_ID)
+      ? SUBAGENT_TOOL_PARAMETERS
+      : SUBAGENT_TOOL_PARAMETERS_NO_MODEL;
+  }
 
   private readonly callerAgentId: string;
   private readonly canRunInBackground: () => boolean;
@@ -276,7 +289,6 @@ export class SubagentTool implements ISubagentTool {
             profile: profile.name,
             model: binding.model,
             thinking: binding.thinking,
-            cwd: own.cwd,
           },
           labels: subagentLabels(this.callerAgentId),
         });

@@ -4,8 +4,7 @@
  * Gates the minidb-backed derived read-model (`IQueryStore`) and the consumers
  * that read through it. Off by default; enable via
  * `KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL` or the `[experimental]`
- * config section. Imported for its side effect (registers the definition) from
- * the backend barrel.
+ * config section.
  */
 
 import { type FlagDefinitionInput, registerFlagDefinition } from '#/app/flag/flagRegistry';

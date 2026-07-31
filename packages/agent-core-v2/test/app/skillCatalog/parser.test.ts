@@ -1,30 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  FrontmatterError,
   SkillParseError,
   UnsupportedSkillTypeError,
-  parseFrontmatter,
   parseSkillText,
 } from '#/app/skillCatalog/parser';
-
-describe('parseFrontmatter', () => {
-  it('parses yaml frontmatter and body', () => {
-    const { data, body } = parseFrontmatter('---\nname: foo\n---\nbody text');
-    expect(data).toEqual({ name: 'foo' });
-    expect(body).toBe('body text');
-  });
-
-  it('returns null data when there is no frontmatter', () => {
-    const { data, body } = parseFrontmatter('just body');
-    expect(data).toBeNull();
-    expect(body).toBe('just body');
-  });
-
-  it('throws when the closing fence is missing', () => {
-    expect(() => parseFrontmatter('---\nname: foo')).toThrow(FrontmatterError);
-  });
-});
 
 describe('parseSkillText', () => {
   it('parses a directory skill with required fields', () => {

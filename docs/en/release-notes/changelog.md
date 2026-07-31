@@ -6,6 +6,22 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.31.1 (2026-07-31)
+
+### Polish
+
+- Reduce frequent full-screen redraws in the TUI.
+- Preserve the assistant's partial output when a turn is interrupted with Esc, and remind the model that the previous turn was deliberately interrupted.
+- web: Order permission modes from safest to most permissive across settings surfaces, and fix the swapped yolo/auto risk colors in the status panel and mobile settings.
+- web: Enable Monaco-based highlighting for code blocks, and fix line numbers overlapping or drifting out of alignment in fallback-rendered code blocks.
+
+### Bug Fixes
+
+- Fix sporadic "model is not configured" errors when starting kimi web, caused by the background provider-model refresh transiently clearing the model catalog while the first session was being created.
+- web: Fix new sessions showing the thinking level (e.g. Max) while the first message actually ran with thinking off.
+- web: Make the @ file mention work in a new-session draft, before the first prompt creates the session.
+- web: Fix chat code blocks rendering in the proportional UI font at the wrong size after the markdown renderer upgrade, and align the loading fallback with the highlighted block.
+
 ## 0.31.0 (2026-07-30)
 
 ### Features

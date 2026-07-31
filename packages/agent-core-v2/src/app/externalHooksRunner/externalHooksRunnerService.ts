@@ -1,5 +1,5 @@
 /**
- * `externalHooksRunner` domain (L6) — `IExternalHooksRunnerService` impl.
+ * `externalHooksRunner` domain — `IExternalHooksRunnerService` impl.
  *
  * Owns the configured-hook lifecycle: builds the event→hooks index from
  * `IConfigService` (`[[hooks]]`) + `IPluginService.enabledHooks()`, reloads it

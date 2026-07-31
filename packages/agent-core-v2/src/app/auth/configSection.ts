@@ -1,5 +1,5 @@
 /**
- * `auth` domain (L2) — `services` config-section schema, TOML transforms, and
+ * `auth` domain — `services` config-section schema, TOML transforms, and
  * env bindings.
  *
  * Owns the `[services]` configuration section (`moonshot_search` /
@@ -16,7 +16,7 @@
  * `config` domain never imports this domain's types.
  *
  * The `auth` domain owns this section because its OAuth login/logout flows
- * provision and clear it (see `authService`) and its `WebSearchProviderService`
+ * provision and clear it, and its `WebSearchProviderService`
  * consumes `moonshot_search`; the `web` domain reads `moonshot_fetch` from the
  * same section. Bound at App scope.
  */
@@ -48,9 +48,6 @@ export const SERVICES_SECTION = 'services';
 
 const StringRecordSchema = z.record(z.string(), z.string());
 
-// Local re-derivation of kosong's `OAuthRef` type: the canonical section
-// schema lives in `app/kosongConfig` (L3), which this L2 domain must not
-// import. The `AssertExact` pin keeps this copy in lockstep with the type.
 const OAuthRefSchema = z.object({
   storage: z.enum(['file', 'keyring']),
   key: z.string().min(1),

@@ -1,18 +1,17 @@
 /**
- * `subagent` domain (L6) — subagent config-section schema, env binding, and
+ * `subagent` domain — subagent config-section schema, env binding, and
  * timeout / model resolution.
  *
  * Owns the `[subagent]` configuration section (`timeout_ms` on disk) together
- * with the `KIMI_SUBAGENT_TIMEOUT_MS` env override, mirroring v1's
- * `resolveSubagentTimeoutMs` precedence (env > config.toml > 2h default). While
+ * with the `KIMI_SUBAGENT_TIMEOUT_MS` env override (precedence: env >
+ * config.toml > 2h default). While
  * the env var is set, `stripEnvBoundFields` restores the env-free raw value
- * before persistence, so the override never leaks into `config.toml`. Both
- * collaboration tools — `Agent` in this domain and `AgentSwarm` in the `swarm`
- * domain — resolve their per-run timeout through `resolveSubagentTimeoutMs`,
- * and render the timeout message with `formatSubagentTimeoutDescription`.
+ * before persistence, so the override never leaks into `config.toml`. Per-run
+ * timeouts resolve through `resolveSubagentTimeoutMs`, and the timeout
+ * message renders with `formatSubagentTimeoutDescription`.
  *
- * The model half of the spawn binding is the secondary model (the section
- * and type in `app/kosongConfig` — `[secondary_model]` on disk): when its
+ * The model half of the spawn binding is the secondary model (the
+ * `[secondary_model]` section on disk): when its
  * experiment is enabled and the model is set, newly spawned subagents bind to
  * it by default instead of inheriting the caller's model, and the
  * `Agent`/`AgentSwarm` tools let the parent model pick per spawn via their
@@ -25,15 +24,17 @@
  * rather than inheriting the caller's level. Both tools resolve spawn
  * bindings through `resolveSubagentBinding`, advertise the pair via
  * `buildSubagentModelDescriptions`, and wrap spawn failures with
- * `wrapSubagentModelError`. Self-registered at module load via
- * `registerConfigSection`, so the `config` domain never imports this
- * domain's types.
+ * `wrapSubagentModelError`; while the experiment is off they also strip the
+ * no-op `model` parameter from their advertised schemas via
+ * `stripSubagentModelParameter`. Self-registered at module load via
+ * `registerConfigSection`.
  */
 
 import { z } from 'zod';
 
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import type { AgentModelPreference } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { isPlainObject } from '#/app/config/toml';
 import type { IFlagService } from '#/app/flag/flag';
 import {
   SECONDARY_MODEL_ENV,
@@ -62,12 +63,10 @@ export const SubagentConfigSchema = z.object({
 
 export type SubagentConfig = z.infer<typeof SubagentConfigSchema>;
 
-/** Default per-run subagent timeout: 2 hours, same as v1. */
 export const DEFAULT_SUBAGENT_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 
 export const SUBAGENT_TIMEOUT_ENV = 'KIMI_SUBAGENT_TIMEOUT_MS';
 
-/** Parse the env override; anything but a positive integer is ignored (v1 semantics). */
 function parseTimeoutMsEnv(raw: string): number | undefined {
   const parsed = Number(raw);
   return Number.isInteger(parsed) && parsed >= 1 ? parsed : undefined;
@@ -88,11 +87,6 @@ registerConfigSection(SUBAGENT_SECTION, SubagentConfigSchema, {
   stripEnv: stripSubagentEnv,
 });
 
-/**
- * Resolve the effective per-run subagent timeout. Governs foreground and
- * background subagents (and AgentSwarm) through the task manager's per-task
- * timeout.
- */
 export function resolveSubagentTimeoutMs(config: IConfigService): number {
   return (
     config.get<SubagentConfig | undefined>(SUBAGENT_SECTION)?.timeoutMs ??
@@ -143,6 +137,32 @@ export function buildSubagentModelDescriptions(
   ].join('\n');
 }
 
+/**
+ * Strip the `model` property from a subagent collaboration tool's advertised
+ * JSON schema. While the `secondary-model` experiment is off the parameter is
+ * a silent no-op, so the schema the model sees (and the args validator
+ * compiled from the same advertised schema) drops it entirely — the
+ * secondary-model concept never enters the prompt, and a stray `model`
+ * argument is rejected instead of silently inheriting the caller's model.
+ * Returns the input unchanged when there is no `model` property; otherwise a
+ * shallow copy — the input is never mutated, so callers can keep both
+ * variants as shared constants.
+ */
+export function stripSubagentModelParameter(
+  parameters: Record<string, unknown>,
+): Record<string, unknown> {
+  const properties = parameters['properties'];
+  if (!isPlainObject(properties) || !('model' in properties)) return parameters;
+  const nextProperties = { ...properties };
+  delete nextProperties['model'];
+  const next: Record<string, unknown> = { ...parameters, properties: nextProperties };
+  const required = parameters['required'];
+  if (Array.isArray(required) && required.includes('model')) {
+    next['required'] = required.filter((entry) => entry !== 'model');
+  }
+  return next;
+}
+
 export function wrapSubagentModelError(
   error: unknown,
   boundModel: string,
@@ -173,7 +193,6 @@ export function wrapSubagentModelError(
   );
 }
 
-/** Human-readable duration for the subagent timeout message. */
 export function formatSubagentTimeoutDescription(ms: number): string {
   if (ms % (60 * 60 * 1000) === 0) {
     const h = ms / (60 * 60 * 1000);

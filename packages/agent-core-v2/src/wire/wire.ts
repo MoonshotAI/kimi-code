@@ -1,5 +1,5 @@
 /**
- * `wire` domain (L2) — the single Agent-scoped wire aggregate contract.
+ * `wire` domain — the single Agent-scoped wire aggregate contract.
  *
  * The service owns one Agent's replayable model state and its journal as one
  * consistency boundary: restore reads, validates, migrates, rewrites, replays,

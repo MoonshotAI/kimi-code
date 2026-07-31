@@ -992,7 +992,7 @@ describe('tool exchange structure', () => {
     }
   }, 60_000);
 
-  it('after an abort, consecutive user messages are merged into one on the wire (projector fallback)', async () => {
+  it('after a user abort, an interruption reminder separates the next user message on the wire', async () => {
     const ctx = await newCase(M_OPENAI, 'abort-merge');
     resetMock((_req, callIndex) => (callIndex === 0 ? { kind: 'hang' } : OK_OPENAI));
 
@@ -1006,11 +1006,14 @@ describe('tool exchange structure', () => {
 
     expect(requests).toHaveLength(2);
     const userMessages = openAiMessages(1).filter((message) => message['role'] === 'user');
-    // The projector folds consecutive origin=user messages into one
-    // (\n\n-joined) instead of sending two same-role messages in a row.
-    expect(userMessages).toHaveLength(1);
+    // A deliberate user cancel injects an interruption reminder between the
+    // aborted turn's prompt and the next user message, so the two prompts no
+    // longer merge into one wire message.
+    expect(userMessages).toHaveLength(3);
     expect(String(userMessages[0]?.['content'])).toContain('first message');
-    expect(String(userMessages[0]?.['content'])).toContain('second message');
+    expect(String(userMessages[1]?.['content'])).toContain('<system-reminder>');
+    expect(String(userMessages[1]?.['content'])).toContain('interrupted by the user');
+    expect(String(userMessages[2]?.['content'])).toContain('second message');
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 60_000);
 });

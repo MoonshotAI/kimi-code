@@ -1,14 +1,10 @@
 /**
- * `bootstrap` domain (L1) — `IBootstrapService` implementation.
+ * `bootstrap` domain — `IBootstrapService` implementation.
  *
  * Holds the resolved startup snapshot from the seeded `IBootstrapOptions` and
- * exposes the host facts, app path layout, and semantic scope mapping. All
- * `scope*(...)` methods and `configKey` are computed once at construction so
- * business code can read them synchronously. Path fields (`homeDir` / `*Dir` /
- * `configPath`) are kept alongside for now to ease migration, but new business
- * code should prefer `scope(name)` / `sessionScope(...)` / `agentScope(...)` —
- * only the file-only accessors (`sessionDir` / `agentHomedir`) still hand out
- * absolute paths, for the small number of legacy APIs that need them.
+ * exposes the host facts, app path layout, and top-level scope mapping. All
+ * `scope(name)` values and `configKey` are computed once at construction so
+ * business code can read them synchronously.
  *
  * Bound at App scope.
  */
@@ -22,6 +18,7 @@ import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/
 import {
   IBootstrapOptions,
   IBootstrapService,
+  type HostArgs,
   type PersistenceScopeName,
 } from './bootstrap';
 
@@ -35,6 +32,7 @@ export class BootstrapService implements IBootstrapService {
   readonly homeDir: string;
   readonly configPath: string;
   readonly clientIdentity: KimiHostIdentity;
+  readonly args: HostArgs;
   readonly sessionsDir: string;
   readonly blobsDir: string;
   readonly storeDir: string;
@@ -54,6 +52,7 @@ export class BootstrapService implements IBootstrapService {
     this.homeDir = options.homeDir;
     this.configPath = options.configPath;
     this.clientIdentity = options.clientIdentity;
+    this.args = options.args;
     this.sessionsDir = join(options.homeDir, 'sessions');
     this.blobsDir = join(options.homeDir, 'blobs');
     this.storeDir = join(options.homeDir, 'store');
@@ -62,7 +61,7 @@ export class BootstrapService implements IBootstrapService {
     this.configKey = basename(options.configPath);
     this.scopes = {
       config: '',
-      sessions: relative(options.homeDir, this.sessionsDir),
+      sessions: relative(options.homeDir, join(options.homeDir, 'sessions')),
       blobs: relative(options.homeDir, this.blobsDir),
       store: relative(options.homeDir, this.storeDir),
       logs: relative(options.homeDir, this.logsDir),
@@ -78,22 +77,6 @@ export class BootstrapService implements IBootstrapService {
 
   scope(name: PersistenceScopeName): string {
     return this.scopes[name];
-  }
-
-  sessionScope(workspaceId: string, sessionId: string): string {
-    return join(this.scopes.sessions, workspaceId, sessionId);
-  }
-
-  agentScope(workspaceId: string, sessionId: string, agentId: string): string {
-    return join(this.sessionScope(workspaceId, sessionId), 'agents', agentId);
-  }
-
-  sessionDir(workspaceId: string, sessionId: string): string {
-    return join(this.homeDir, this.sessionScope(workspaceId, sessionId));
-  }
-
-  agentHomedir(workspaceId: string, sessionId: string, agentId: string): string {
-    return join(this.homeDir, this.agentScope(workspaceId, sessionId, agentId));
   }
 }
 

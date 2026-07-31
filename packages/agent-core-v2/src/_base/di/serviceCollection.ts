@@ -1,5 +1,5 @@
 /**
- * `di` domain (L0) — `ServiceCollection` map of service id → descriptor or instance.
+ * `di` domain — `ServiceCollection` map of service id → descriptor or instance.
  */
 
 import type { SyncDescriptor } from './descriptors';

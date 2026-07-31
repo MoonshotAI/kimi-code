@@ -84,7 +84,8 @@ export async function runShell(
   // Experimental agent-core-v2 route (same master switch as `kimi -p`): the
   // harness is the SDK's v2-backed client, so the whole TUI runs on the
   // agent-core-v2 engine.
-  const harness = isKimiV2Enabled()
+  const engineV2 = isKimiV2Enabled();
+  const harness = engineV2
     ? createKimiHarnessV2(harnessOptions)
     : createKimiHarness(harnessOptions);
   log.info('kimi-code starting', {
@@ -124,6 +125,7 @@ export async function runShell(
     startupNotice: configWarning,
     migrationPlan,
     migrateOnly: runOptions.migrateOnly,
+    engineV2,
   });
 
   initializeCliTelemetry({

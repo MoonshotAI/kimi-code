@@ -1,8 +1,8 @@
 /**
- * `event` domain (L0) — `IEventService` implementation.
+ * `event` domain — `IEventService` implementation.
  *
- * Delivers published events to subscribers through the `_base/event` `Emitter`
- * primitive. Bound at App scope.
+ * Delivers published events to subscribers through the `Emitter` primitive.
+ * Bound at App scope.
  */
 
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';

@@ -51,7 +51,7 @@
     "gen:config-manifest": "tsx --import ../../build/register-raw-text-loader.mjs scripts/gen-config-manifest.mts",
     "gen:wire-manifest": "tsx --import ../../build/register-raw-text-loader.mjs scripts/gen-wire-manifest.mts",
     "gen:state-manifest": "tsx scripts/gen-state-manifest.mts",
-    "lint:domain": "node scripts/check-domain-layers.mjs",
+    "lint:imports": "node scripts/check-import-boundaries.mjs",
     "clean": "rm -rf dist",
     "dep-graph:analyze": "tsx scripts/dep-graph/cli.ts",
     "dep-graph:dev": "vite --config scripts/dep-graph/vite.config.ts",

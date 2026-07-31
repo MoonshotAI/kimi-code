@@ -1,5 +1,5 @@
 /**
- * `todo` domain (L4) — `ISessionTodoService` implementation.
+ * `todo` domain — `ISessionTodoService` implementation.
  *
  * Provides session-wide todo access through the main agent's `wire`, binds
  * todo capabilities into each agent, and publishes changes through its typed

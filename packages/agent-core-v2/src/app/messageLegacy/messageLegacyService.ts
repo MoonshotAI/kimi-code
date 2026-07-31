@@ -6,16 +6,16 @@
  * shape.
  *
  * History is streamed from the main agent's append log after its pending wire
- * writes are flushed. The journal is folded incrementally by the same
- * transcript reducer v1's `MessageService` uses, keeping full history across
- * compactions (inserting a summary marker instead of folding) — unlike the live
+ * writes are flushed. The journal is folded incrementally by the shared
+ * transcript reducer, keeping full history across compactions (inserting a
+ * summary marker instead of folding) — unlike the live
  * `IAgentContextMemoryService.get()`, whose folded context collapses into
  * `[...keptUserMessages, compaction_summary]` and would lose the prefix.
  * `foldedLength` is what the live history length WOULD be from the journal's
  * records; because the journal can trail the live context by a record within a
  * single dispatch, anything beyond it is appended as the unflushed tail.
- * Pagination, id derivation, and the role filter mirror v1's `MessageService`
- * (`packages/agent-core/src/services/message/messageService.ts`).
+ * Pagination, id derivation, and the role filter mirror the legacy v1
+ * semantics.
  */
 
 import type { Message } from '#/agent/contextMemory/protocolMessage';
@@ -41,7 +41,11 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
-import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
+import { resumeSessionById } from '#/app/workspaceLifecycle/sessionLookup';
+import {
+  IInstantiationService,
+  type ServicesAccessor,
+} from '#/_base/di/instantiation';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 
@@ -53,11 +57,17 @@ const MAX_PAGE_SIZE = 100;
 export class MessageLegacyService implements IMessageLegacyService {
   declare readonly _serviceBrand: undefined;
 
+  private readonly services: ServicesAccessor;
+
   constructor(
-    @ISessionLifecycleService private readonly lifecycle: ISessionLifecycleService,
+    @IInstantiationService instantiation: IInstantiationService,
     @ISessionIndex private readonly index: ISessionIndex,
     @IAppendLogStore private readonly appendLog: IAppendLogStore,
-  ) {}
+  ) {
+    this.services = {
+      get: (id) => instantiation.invokeFunction((accessor) => accessor.get(id)),
+    };
+  }
 
   async list(sessionId: string, query: MessageListQuery): Promise<PageResponse<Message>> {
     const all = await this.loadMessages(sessionId);
@@ -107,7 +117,7 @@ export class MessageLegacyService implements IMessageLegacyService {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     }
 
-    const session = await this.lifecycle.resume(sessionId);
+    const session = await resumeSessionById(this.services, sessionId);
     if (session === undefined) return [];
     const agent = await ensureMainAgent(session);
 
@@ -125,11 +135,6 @@ export class MessageLegacyService implements IMessageLegacyService {
     });
   }
 
-  /**
-   * Replace `blobref:` media URLs with `data:` URIs read from the agent's
-   * blob store (v1's `rehydrateBlobRefs`); unresolvable refs become the
-   * `[media missing]` placeholder, same as v1 and live replay.
-   */
   private async rehydrate(
     agent: IAgentScopeHandle,
     messages: readonly ContextMessage[],

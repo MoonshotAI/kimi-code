@@ -1,5 +1,5 @@
 /**
- * `media` domain (L4) — `IAgentVideoResolverService` implementation.
+ * `media` domain — `IAgentVideoResolverService` implementation.
  *
  * Resolves each `kimi-file://` video reference in the projected wire messages
  * to a provider-acceptable part right before the request leaves for the wire.

@@ -1,5 +1,5 @@
 /**
- * `contextProjector` domain (L4) — projects stored context history into the wire
+ * `contextProjector` domain — projects stored context history into the wire
  * messages sent to the model, and surfaces every repair it had to apply.
  *
  * `AgentContextProjectorService` is the Agent-scope binding. The projection

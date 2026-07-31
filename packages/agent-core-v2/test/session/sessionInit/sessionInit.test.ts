@@ -16,6 +16,7 @@ import { IAgentSystemReminderService } from '#/agent/systemReminder/systemRemind
 import { IWireService } from '#/wire/wire';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInitService } from '#/session/sessionInit/sessionInit';
 import { SessionInitService } from '#/session/sessionInit/sessionInitService';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
@@ -68,7 +69,7 @@ describe('SessionInitService', () => {
     const eventBus = { publish: vi.fn((event: unknown) => events.push(event)) };
     const telemetry = { track: vi.fn(), track2: vi.fn() };
     const profile = {
-      data: () => ({ modelAlias: 'mock-model', thinkingLevel: 'off', cwd: WORK_DIR }),
+      data: () => ({ modelAlias: 'mock-model', thinkingLevel: 'off' }),
     };
     const permissionMode = { mode: 'auto', setMode: vi.fn() };
 
@@ -122,6 +123,10 @@ describe('SessionInitService', () => {
       _serviceBrand: undefined,
       homeDir: '/home/brand',
     } as unknown as IBootstrapService);
+    ix.stub(ISessionContext, {
+      _serviceBrand: undefined,
+      cwd: WORK_DIR,
+    } as unknown as ISessionContext);
     ix.set(ISessionInitService, new SyncDescriptor(SessionInitService));
   });
 
@@ -133,7 +138,7 @@ describe('SessionInitService', () => {
 
     expect(create).toHaveBeenCalledTimes(1);
     expect(create.mock.calls[0]![0]).toMatchObject({
-      binding: { profile: 'coder', model: 'mock-model', thinking: 'off', cwd: WORK_DIR },
+      binding: { profile: 'coder', model: 'mock-model', thinking: 'off' },
     });
 
     expect(run).toHaveBeenCalledTimes(1);

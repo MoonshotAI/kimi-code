@@ -1,5 +1,5 @@
 /**
- * `profile` domain (L4) — `IAgentProfileService` contract.
+ * `profile` domain — `IAgentProfileService` contract.
  *
  * Owns the active agent's identity: bound profile, model alias, thinking
  * level, system prompt, and active-tool set. `bind()` takes an optional
@@ -38,7 +38,6 @@ export class ProfileError extends Error2 {
 }
 
 export interface AgentConfigData {
-  cwd: string;
   modelAlias?: string;
   modelCapabilities: ModelCapability;
   profileName?: string;
@@ -47,7 +46,6 @@ export interface AgentConfigData {
 }
 
 export type AgentConfigUpdateData = Partial<{
-  cwd: string;
   modelAlias: string;
   profileName: string;
   thinkingLevel: string;
@@ -67,7 +65,6 @@ export interface ProfileData extends AgentConfigData {
 }
 
 export type ProfileUpdateData = Partial<{
-  cwd: string;
   modelAlias: string;
   profileName: string;
   thinkingLevel: string;
@@ -77,7 +74,6 @@ export type ProfileUpdateData = Partial<{
 }>;
 
 export interface ProfileBindingSnapshot {
-  readonly cwd: string;
   readonly modelAlias?: string;
   readonly profileName?: string;
   readonly thinkingLevel: string;
@@ -88,8 +84,6 @@ export interface ProfileBindingSnapshot {
 }
 
 export interface ProfileServiceOptions {
-  readonly cwd?: string | (() => string | undefined);
-  readonly chdir?: (cwd: string) => void | Promise<void>;
   readonly emitStatusUpdated?: () => void;
 }
 
@@ -117,7 +111,6 @@ export interface BindAgentInput {
   readonly model?: string;
   readonly thinking?: string;
   readonly strictThinking?: boolean;
-  readonly cwd?: string;
 }
 
 export interface IAgentProfileService {
@@ -138,11 +131,6 @@ export interface IAgentProfileService {
   data(): ProfileData;
   getEffectiveThinkingLevel(): ThinkingEffort;
   resolveModelContext(): ProfileModelContext;
-  /**
-   * The dialect-free per-turn intent for the bound model: prompt-cache key,
-   * sampling overrides, thinking effort/keep. Wire encoding is each dialect's
-   * own business — the profile never branches on protocol or vendor.
-   */
   resolveRequestParams(): ModelRequestParams;
   getModelCapabilities(): ModelCapability;
   getMaxOutputSize(): number | undefined;

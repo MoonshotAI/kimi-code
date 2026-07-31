@@ -17,8 +17,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   ISessionApprovalService,
-  ISessionLifecycleService,
   ISessionQuestionService,
+  getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 
 import {
@@ -169,9 +169,9 @@ function scrubHomePrefixes(value: unknown, home: HomePair): unknown {
  */
 const KNOWN_DIFFS = {
   // v2's flag registry is per-domain and already carries flags v1 does not
-  // have (minidb backend, subagent); v1-only flags would be
-  // the symmetric case. Parity is enforced on the intersection of ids until
-  // the registries are unified.
+  // have (minidb backend, subagent); v1-only flags would be the symmetric
+  // case. Parity is enforced on the intersection of ids until the registries
+  // are unified.
   getExperimentalFeatures: (
     features: readonly { id: string }[],
     other: readonly { id: string }[],
@@ -3710,6 +3710,33 @@ describe('v1↔v2 global MCP parity', () => {
   }, 20_000);
 });
 
+type McpServerList = Awaited<ReturnType<SDKRpcClientBase['listMcpServers']>>;
+
+/**
+ * List MCP servers on both engines once the initial connect has settled.
+ * v1 connects in the background after create resolves while v2 awaits the
+ * initial connect inside create, so an immediate list can catch either side
+ * still pending under load; poll until no server reports a transient status.
+ */
+async function listMcpServersWhenSettled(
+  pair: SessionParityPair,
+  input: { readonly sessionId: string },
+  timeoutMs = 10_000,
+): Promise<readonly [McpServerList, McpServerList]> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const lists = await Promise.all([
+      pair.v1.listMcpServers(input),
+      pair.v2.listMcpServers(input),
+    ] as const);
+    const settled = lists.every((servers) =>
+      servers.every((server) => server.status !== 'pending'),
+    );
+    if (settled || Date.now() >= deadline) return lists;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 describe('v1↔v2 session MCP parity', () => {
   /** working (connects, 3 tools) + broken (fails fast) + off (disabled). */
   const SESSION_MCP_FIXTURE = {
@@ -3735,10 +3762,7 @@ describe('v1↔v2 session MCP parity', () => {
     try {
       await createOnBoth(pair, { id: 'session_parity_mcp_list' });
       const input = { sessionId: 'session_parity_mcp_list' } as const;
-      const [v1Servers, v2Servers] = await Promise.all([
-        pair.v1.listMcpServers(input),
-        pair.v2.listMcpServers(input),
-      ]);
+      const [v1Servers, v2Servers] = await listMcpServersWhenSettled(pair, input);
       expect(normalize(v2Servers, 'name')).toEqual(normalize(v1Servers, 'name'));
       const byName = new Map(v1Servers.map((server) => [server.name, server]));
       expect(byName.get('working')).toMatchObject({
@@ -4051,7 +4075,7 @@ describe('v1↔v2 event & interaction parity', () => {
     try {
       await createOnBoth(pair, { id: 'session_parity_events_approval' });
       const sessionId = 'session_parity_events_approval';
-      const v2Session = pair.v2.engineAccessor.get(ISessionLifecycleService).get(sessionId);
+      const v2Session = getLiveSessionById(pair.v2.engineAccessor, sessionId);
       expect(v2Session).toBeDefined();
       const v2Approvals = v2Session!.accessor.get(ISessionApprovalService);
       const requestInput = {
@@ -4130,7 +4154,7 @@ describe('v1↔v2 event & interaction parity', () => {
     try {
       await createOnBoth(pair, { id: 'session_parity_events_question' });
       const sessionId = 'session_parity_events_question';
-      const v2Session = pair.v2.engineAccessor.get(ISessionLifecycleService).get(sessionId);
+      const v2Session = getLiveSessionById(pair.v2.engineAccessor, sessionId);
       expect(v2Session).toBeDefined();
       const v2Questions = v2Session!.accessor.get(ISessionQuestionService);
       const requestInput = {

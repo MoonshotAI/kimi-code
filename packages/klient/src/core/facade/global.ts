@@ -49,7 +49,7 @@ export type Caller = (service: string, method: string, args: unknown[]) => Promi
 
 /** Scoped variant — the factory's real signature; global methods bind the core scope. */
 export type ScopedCaller = (
-  scope: { readonly sessionId?: string; readonly agentId?: string },
+  scope: { readonly workspaceId?: string; readonly sessionId?: string; readonly agentId?: string },
   service: string,
   method: string,
   args: unknown[],
@@ -57,7 +57,7 @@ export type ScopedCaller = (
 
 /** Streaming variant of `ScopedCaller` — returns a validated `AsyncIterable`. */
 export type ScopedStreamCaller = (
-  scope: { readonly sessionId?: string; readonly agentId?: string },
+  scope: { readonly workspaceId?: string; readonly sessionId?: string; readonly agentId?: string },
   service: string,
   method: string,
   args: unknown[],
@@ -126,6 +126,15 @@ export interface GlobalConfigFacade {
   replace(input: {
     domain: string;
     value: unknown;
+    target?: ConfigTargetLiteral;
+  }): Promise<void>;
+  /**
+   * Replace several domains in ONE atomic write (the engine's
+   * `IConfigService.replaceSections`): a domain mapped to `undefined` is
+   * cleared, domains absent from `sections` are left untouched.
+   */
+  replaceSections(input: {
+    sections: Record<string, unknown>;
     target?: ConfigTargetLiteral;
   }): Promise<void>;
   reload(): Promise<void>;
@@ -272,7 +281,12 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       countActive: (workspaceIds) =>
         call('sessionIndex', 'countActive', [workspaceIds]) as Promise<number>,
       create: async ({ workDir, additionalDirs, title }) => {
-        const handle = (await scoped({}, 'sessionLifecycleService', 'create', [
+        // The workspace handler owns session creation: materialize (or reuse)
+        // the handler for the root, then create under it.
+        const handler = (await scoped({}, 'workspaceLifecycleService', 'handlerFor', [
+          { root: workDir },
+        ])) as { id: string };
+        const handle = (await scoped({ workspaceId: handler.id }, 'sessionLifecycleService', 'create', [
           { workDir, additionalDirs },
         ])) as { id: string };
         const scope = { sessionId: handle.id };
@@ -301,7 +315,19 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       set: ({ domain, patch, target }) =>
         call('configService', 'set', [domain, patch, target]) as Promise<void>,
       replace: ({ domain, value, target }) =>
-        call('configService', 'replace', [domain, value, target]) as Promise<void>,
+        // `null` is the wire encoding of "clear this domain" — JSON
+        // round-trips cannot carry `undefined` (see IConfigService.replace).
+        call('configService', 'replace', [domain, value === undefined ? null : value, target]) as Promise<void>,
+      replaceSections: ({ sections, target }) =>
+        call('configService', 'replaceSections', [
+          Object.fromEntries(
+            Object.entries(sections).map(([domain, value]) => [
+              domain,
+              value === undefined ? null : value,
+            ]),
+          ),
+          target,
+        ]) as Promise<void>,
       reload: () => call('configService', 'reload', []) as Promise<void>,
       diagnostics: () =>
         call('configService', 'diagnostics', []) as Promise<readonly ConfigDiagnostic[]>,

@@ -9,8 +9,6 @@
 
 import {
   bootstrap,
-  hostIdentitySeed,
-  hostRequestHeadersSeed,
   IConfigService,
   IProviderDiscoveryService,
   IWorkspaceService,
@@ -18,7 +16,6 @@ import {
   resolveConfigPath,
   resolveKimiHome,
   resolveLoggingConfig,
-  skillCatalogRuntimeOptionsSeed,
   type Scope,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
@@ -247,18 +244,17 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       homeDir,
       configPath,
       clientIdentity: opts.hostIdentity,
+      args: {
+        // Default host identity headers derived from `hostIdentity`: outbound
+        // requests (model, WebSearch, registry refresh) carry the host
+        // product's User-Agent + X-Msh-* set.
+        requestHeaders: createKimiDefaultHeaders({ homeDir, ...opts.hostIdentity }),
+        skillDirs: opts.skillDirs,
+        displayName: opts.hostIdentity.displayName,
+        replyStyleGuide: opts.hostIdentity.replyStyleGuide,
+      },
     },
-    [
-      ...logSeed(logging),
-      // Default host identity headers derived from `hostIdentity`: outbound
-      // requests (model, WebSearch, registry refresh) carry the host product's
-      // User-Agent + X-Msh-* set. A host can still override individual headers
-      // through `opts.seeds`, which are applied last (last seed wins).
-      ...hostRequestHeadersSeed(createKimiDefaultHeaders({ homeDir, ...opts.hostIdentity })),
-      ...skillCatalogRuntimeOptionsSeed(opts.skillDirs),
-      ...hostIdentitySeed(opts.hostIdentity),
-      ...(opts.seeds ?? []),
-    ],
+    [...logSeed(logging), ...(opts.seeds ?? [])],
   );
 
   // Attach the cloud telemetry appender BEFORE any session is created:

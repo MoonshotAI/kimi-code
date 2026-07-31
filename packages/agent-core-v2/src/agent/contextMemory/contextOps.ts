@@ -1,5 +1,5 @@
 /**
- * `contextMemory` domain (L4) — wire Model (`ContextModel`) and the wire-protocol
+ * `contextMemory` domain — wire Model (`ContextModel`) and the wire-protocol
  * 1.4 Ops `context.append_message` (`contextAppendMessage`) / `context.clear`
  * (`contextClear`) / `context.apply_compaction` (`contextApplyCompaction`) /
  * `context.undo` (`contextUndo`) / `context.append_loop_event`
@@ -15,15 +15,15 @@
  * without local ids — the on-disk record matches v1's field set), while the
  * agent loop streams each turn as `context.append_loop_event` records — the
  * same on-disk shape the v1 loop writes — and `contextAppendLoopEvent` folds
- * them into assistant / tool messages (see `loopEventFold.ts`) both at live
- * dispatch time and on replay, so v1- and v2-written sessions reduce
+ * them into assistant / tool messages both at live dispatch time and on
+ * replay, so v1- and v2-written sessions reduce
  * identically. The swarm-mode exit reminder removal is a cross-model fold:
  * `ContextModel` registers a reducer on `swarm_mode.exit` (see
  * `popSwarmModeReminder`) so the pop replays from the `swarm_mode.exit` record
- * itself, exactly like v1's restore-time `popMatchedMessage`.
+ * itself.
  *
  * `context.undo` counts conversation ticks with the single `isUndoAnchor`
- * predicate (`./conversationTime`) — the same definition the checkpoint
+ * predicate — the same definition the checkpoint
  * protocol pushes with, so anchor counting and checkpoint pushing can never
  * drift apart.
  *

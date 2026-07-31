@@ -1,8 +1,8 @@
 /**
- * `plugin` domain (L3) — manages installed plugin state and consumption metadata.
+ * `plugin` domain — manages installed plugin state and consumption metadata.
  *
- * Installs, reloads, persists, and summarizes plugins for `PluginService`,
- * using `skillCatalog` discovery to count loadable plugin skills.
+ * Installs, reloads, persists, and summarizes plugins, counting loadable
+ * plugin skills through skill discovery.
  */
 
 import { cp, mkdir, mkdtemp, realpath, rename, rm, stat } from 'node:fs/promises';
@@ -11,8 +11,8 @@ import path from 'node:path';
 
 import { Error2, PluginErrors } from '#/errors';
 import type { HookDef } from '#/agent/externalHooks/types';
-import type { McpServerConfig } from '#/agent/mcp/config-schema';
-import type { AgentFileRoot } from '#/app/agentFileCatalog/types';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
+import type { PluginAgentRoot } from './types';
 import { discoverFileSkills } from '#/app/skillCatalog/fileSkillDiscovery';
 import type { SkillDiscoveryResult } from '#/app/skillCatalog/skillDiscovery';
 import type { SkillRoot } from '#/app/skillCatalog/types';
@@ -314,8 +314,8 @@ export class PluginManager {
     return roots;
   }
 
-  pluginAgentRoots(): readonly AgentFileRoot[] {
-    const roots: AgentFileRoot[] = [];
+  pluginAgentRoots(): readonly PluginAgentRoot[] {
+    const roots: PluginAgentRoot[] = [];
     for (const record of this.records.values()) {
       if (!record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
       for (const dir of record.manifest.agents ?? []) {
@@ -676,9 +676,6 @@ function withPluginMcpRuntime(
   };
 
   if (config.command === 'node' && isElectron()) {
-    // Electron host: run the entry with the bundled Node (`ELECTRON_RUN_AS_NODE`)
-    // instead of the CLI's `__plugin_run_node` subcommand, which only the CLI
-    // binary implements (Electron would try to open it as an app and fail).
     return {
       ...config,
       command: process.execPath,

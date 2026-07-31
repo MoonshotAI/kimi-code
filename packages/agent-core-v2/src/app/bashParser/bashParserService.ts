@@ -1,12 +1,12 @@
 /**
- * `bashParser` domain (L1) — `IBashParserService` implementation.
+ * `bashParser` domain — `IBashParserService` implementation.
  *
  * Thin adapter over the pure `@moonshot-ai/tree-sitter-bash` package: runs
  * its budgeted `parse` and snapshots the returned tree into the wire-safe
  * `BashSyntaxNode` DTO (source-ordered children including anonymous tokens,
- * `parent` links dropped). The snapshot is iterative (explicit stack) for
- * the same reason the parser's own `materialize` is: a long left-associative
- * chain (e.g. `$((1+1+...))` with thousands of operands) produces a tree
+ * `parent` links dropped). The snapshot is iterative (explicit stack): a
+ * long left-associative chain (e.g. `$((1+1+...))` with thousands of
+ * operands) produces a tree
  * thousands of levels deep, and a recursive walk would overflow the call
  * stack and throw `RangeError`, breaking the never-throws contract. Owns no
  * state and injects no services. Bound at App scope.
@@ -30,9 +30,6 @@ interface MutableBashSyntaxNode {
 }
 
 function snapshot(root: SyntaxNode): BashSyntaxNode {
-  // Two passes over a pre-order walk: allocate every DTO first, then link
-  // children — no recursion, so depth is bounded only by heap, not the call
-  // stack.
   const order: SyntaxNode[] = [];
   const stack: SyntaxNode[] = [root];
   while (stack.length > 0) {

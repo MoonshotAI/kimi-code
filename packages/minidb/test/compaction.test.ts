@@ -80,6 +80,32 @@ test('auto-compaction triggers when the WAL crosses the threshold', async () => 
   }
 });
 
+test('open-time compaction runs in the background — open() returns with the full dataset', async () => {
+  const dir = await tmpDir();
+  try {
+    // Grow the WAL well past the threshold without any compaction.
+    let db = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false });
+    for (let i = 0; i < 200; i++) await db.set(`k${i}`, `v${i}`.padEnd(50, 'x'));
+    await db.close();
+
+    // Reopen with a 1 KiB threshold: the WAL far exceeds it, so compaction
+    // fires — but open() must NOT block on the rewrite. The recovered store
+    // is already complete and consistent the moment open() resolves.
+    db = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'no', compactThresholdBytes: 1024 });
+    assert.equal(db.size, 200);
+    for (let i = 0; i < 200; i++) assert.equal(db.get(`k${i}`), `v${i}`.padEnd(50, 'x'));
+
+    // The background compaction finishes on its own and shrinks the WAL.
+    if (db.compacting) await db._compactDone;
+    assert.ok(db.stats.compactions >= 1, 'open-time background compaction ran');
+    assert.ok((await fs.stat(path.join(dir, 'db.wal'))).size < 1024, 'WAL shrank');
+    assert.equal(db.size, 200);
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('del-then-compact drops tombstoned keys from the snapshot', async () => {
   const dir = await tmpDir();
   try {

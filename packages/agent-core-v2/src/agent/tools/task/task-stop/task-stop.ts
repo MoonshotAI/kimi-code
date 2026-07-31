@@ -1,10 +1,9 @@
 /**
- * `tools` domain (L7) — `ITaskStopTool` contract (the `TaskStop` tool).
+ * `tools` domain — `ITaskStopTool` contract (the `TaskStop` tool).
  *
  * Public contract of the `TaskStop` tool (stop a running task): the input
  * zod schema the model-facing parameters are derived from and the
- * `ITaskStopTool` DI decorator that the implementation (`taskStopTool.ts`)
- * registers against via `registerAgentToolService`. Bound at Agent scope.
+ * `ITaskStopTool` DI decorator. Bound at Agent scope.
  */
 
 import { z } from 'zod';

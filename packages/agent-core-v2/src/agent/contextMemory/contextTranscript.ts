@@ -1,5 +1,5 @@
 /**
- * `contextMemory` domain (L4) — rebuilds display history from the wire journal.
+ * `contextMemory` domain — rebuilds display history from the wire journal.
  *
  * Supplies transcript consumers with full pre-compaction history and folded
  * context length while preserving undo/clear semantics. Scope-agnostic.

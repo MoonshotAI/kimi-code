@@ -9,6 +9,7 @@ import {
 } from '#/_base/di/scope';
 import { createServices } from '#/_base/di/test';
 import { IEventBus } from '#/app/event/eventBus';
+import { Event } from '#/_base/event';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { AgentToolActivationService } from '#/agent/toolActivation/toolActivationService';
@@ -20,6 +21,7 @@ import {
 } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
+import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import type { AgentTool, ToolExecution } from '#/tool/toolContract';
 
 class StubTool implements AgentTool {
@@ -68,6 +70,7 @@ describe('AgentToolActivationService', () => {
     activeToolNames?: readonly string[];
     disallowedTools?: readonly string[];
   } = {};
+  const gateData: { disabledTools: readonly string[] } = { disabledTools: [] };
 
   function createActivationHost() {
     disposables = new DisposableStore();
@@ -80,6 +83,13 @@ describe('AgentToolActivationService', () => {
         reg.definePartialInstance(IEventBus, {
           subscribe: () => toDisposable(() => {}),
         });
+        reg.defineInstance(ISessionToolPolicyGate, {
+          _serviceBrand: undefined,
+          get disabledTools() {
+            return gateData.disabledTools;
+          },
+          onDidChange: Event.None as Event<void>,
+        } satisfies ISessionToolPolicyGate);
         reg.define(IAgentToolRegistryService, AgentToolRegistryService);
         reg.define(IAgentToolActivationService, AgentToolActivationService);
         reg.define(IAlphaTool, AlphaTool);
@@ -98,6 +108,7 @@ describe('AgentToolActivationService', () => {
     _clearAgentToolContributionsForTests();
     delete profileData.activeToolNames;
     delete profileData.disallowedTools;
+    gateData.disabledTools = [];
   });
 
   afterEach(() => {
@@ -171,6 +182,38 @@ describe('AgentToolActivationService', () => {
 
     expect(ix.get(IAgentToolRegistryService).resolve('Gamma')).toBeUndefined();
     expect(gammaConstructions).toBe(0);
+  });
+
+  // Phase-4 behavior contract: the workspace (os-level) veto outranks the
+  // profile — a workspace-disabled tool never activates, so it never lands
+  // in `registry.list()` (and therefore never reaches the model's schema).
+  it('honors the workspace tool-policy veto before the profile', async () => {
+    gateData.disabledTools = ['Beta'];
+    registerAgentToolService(IAlphaTool, AlphaTool, { name: 'Alpha' });
+    registerAgentToolService(IBetaTool, BetaTool, { name: 'Beta' });
+    const ix = createActivationHost();
+
+    await ix.get(IAgentToolActivationService).activate();
+
+    const registry = ix.get(IAgentToolRegistryService);
+    expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
+    expect(registry.resolve('Beta')).toBeUndefined();
+    expect(registry.list().map((t) => t.name)).not.toContain('Beta');
+    expect(betaConstructions).toBe(0);
+  });
+
+  it('lets the workspace veto win over a profile allowlist', async () => {
+    profileData.activeToolNames = ['Alpha', 'Beta'];
+    gateData.disabledTools = ['Beta'];
+    registerAgentToolService(IAlphaTool, AlphaTool, { name: 'Alpha' });
+    registerAgentToolService(IBetaTool, BetaTool, { name: 'Beta' });
+    const ix = createActivationHost();
+
+    await ix.get(IAgentToolActivationService).activate();
+
+    const registry = ix.get(IAgentToolRegistryService);
+    expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
+    expect(registry.resolve('Beta')).toBeUndefined();
   });
 
   it('is idempotent and picks up newly allowed tools on re-activation', async () => {

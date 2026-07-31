@@ -1,6 +1,6 @@
 /**
- * `task` domain (L5) — `AgentTaskPersistence`, the per-agent
- * persistence helper behind `AgentTaskService`.
+ * `task` domain — `AgentTaskPersistence`, the per-agent task
+ * persistence helper.
  *
  * Persists task state (`<taskId>.json`) and raw task output (`output.log`)
  * through the `storage` access-pattern stores (`IAtomicDocumentStore` for
@@ -14,8 +14,7 @@
  * every write remains rooted at the owning agent. Task ids are validated
  * against the `{prefix}-{8 hex}` shape before use as path segments
  * (path-traversal and legacy `bg_<hex>` guard), and legacy snake_case records
- * are normalized to the current shape on read. Not scope-bound; constructed
- * by `AgentTaskService`.
+ * are normalized to the current shape on read. Not scope-bound.
  */
 
 import { join } from 'pathe';

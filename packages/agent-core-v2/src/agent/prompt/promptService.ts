@@ -1,5 +1,5 @@
 /**
- * `prompt` domain (L4) — owns the per-agent prompt scheduler.
+ * `prompt` domain — owns the per-agent prompt scheduler.
  *
  * Assigns prompt and message identities, serializes user prompts through an
  * active slot and FIFO, converts selected pending prompts into active-turn

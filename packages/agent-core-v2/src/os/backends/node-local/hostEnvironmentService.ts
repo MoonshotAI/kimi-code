@@ -1,5 +1,5 @@
 /**
- * `hostEnvironment` domain (L1) — `IHostEnvironment` implementation.
+ * `hostEnvironment` domain — `IHostEnvironment` implementation.
  *
  * Kicks off the OS / shell probe (`probeHostEnvironmentFromNode`) and the
  * login-shell PATH enrichment (`applyLoginShellPathFromNode`) at construction

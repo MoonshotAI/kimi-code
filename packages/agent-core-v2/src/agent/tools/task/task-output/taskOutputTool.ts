@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `TaskOutputTool` implementation (the `TaskOutput`
+ * `tools` domain — `TaskOutputTool` implementation (the `TaskOutput`
  * tool).
  *
  * Returns structured task metadata plus a fixed-size tail preview of the
@@ -11,8 +11,6 @@
  * For terminal tasks the output also surfaces why the task ended:
  * `stop_reason` records the concrete reason; `terminal_reason` classifies
  * timeout vs. explicit stop vs. failure for callers that need stable labels.
- * The public contract (input schema, `ITaskOutputTool`) lives in
- * `./task-output`.
  *
  * Registered via the module-level `registerAgentToolService(ITaskOutputTool,
  * TaskOutputTool)` at the bottom of this file — the same "import = register"

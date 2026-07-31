@@ -1,5 +1,25 @@
 # @moonshot-ai/kimi-code
 
+## 0.31.1
+
+### Patch Changes
+
+- [#2410](https://github.com/MoonshotAI/kimi-code/pull/2410) [`f1a3475`](https://github.com/MoonshotAI/kimi-code/commit/f1a3475ad5d6540447496701aa75fd4b035ecb28) Thanks [@sailist](https://github.com/sailist)! - Fix sporadic "model is not configured" errors when starting kimi web, caused by the background provider-model refresh transiently clearing the model catalog while the first session was being created.
+
+- [#2400](https://github.com/MoonshotAI/kimi-code/pull/2400) [`1f3f5da`](https://github.com/MoonshotAI/kimi-code/commit/1f3f5dadaaa4a1d705cc98aee1dbbef13680502c) Thanks [@7Sageer](https://github.com/7Sageer)! - Preserve the assistant's partial output when a turn is interrupted with Esc, and remind the model that the previous turn was deliberately interrupted.
+
+- [#2415](https://github.com/MoonshotAI/kimi-code/pull/2415) [`5c0ec29`](https://github.com/MoonshotAI/kimi-code/commit/5c0ec2938ac3a01624b6503e5e5df80c9b08f46a) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Enable Monaco-based highlighting for code blocks, and fix line numbers overlapping or drifting out of alignment in fallback-rendered code blocks.
+
+- [#2442](https://github.com/MoonshotAI/kimi-code/pull/2442) [`bb2919e`](https://github.com/MoonshotAI/kimi-code/commit/bb2919eb818a6cb51c71cbabf1bac9020131bce7) Thanks [@liruifengv](https://github.com/liruifengv)! - Reduce frequent full-screen redraws in the TUI.
+
+- [#2125](https://github.com/MoonshotAI/kimi-code/pull/2125) [`e111c87`](https://github.com/MoonshotAI/kimi-code/commit/e111c878fd5cd07994e125b9e4e07e4069f01be1) Thanks [@bowenliang123](https://github.com/bowenliang123)! - web: Order permission modes from safest to most permissive across settings surfaces, and fix the swapped yolo/auto risk colors in the status panel and mobile settings.
+
+- [#2459](https://github.com/MoonshotAI/kimi-code/pull/2459) [`326e1fb`](https://github.com/MoonshotAI/kimi-code/commit/326e1fb6ce59fbf2d6c7646e6d587759565814fd) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Fix chat code blocks rendering in the proportional UI font at the wrong size after the markdown renderer upgrade, and align the loading fallback with the highlighted block so the upgrade no longer shifts layout.
+
+- [#2437](https://github.com/MoonshotAI/kimi-code/pull/2437) [`ed7a4cc`](https://github.com/MoonshotAI/kimi-code/commit/ed7a4cc095e1619e4dbb6c2c77c89a52e312b085) Thanks [@sailist](https://github.com/sailist)! - web: Make the @ file mention work in a new-session draft, before the first prompt creates the session.
+
+- [#2437](https://github.com/MoonshotAI/kimi-code/pull/2437) [`ed7a4cc`](https://github.com/MoonshotAI/kimi-code/commit/ed7a4cc095e1619e4dbb6c2c77c89a52e312b085) Thanks [@sailist](https://github.com/sailist)! - web: Fix new sessions showing the thinking level (e.g. Max) while the first message actually ran with thinking off.
+
 ## 0.31.0
 
 ### Minor Changes

@@ -1,5 +1,5 @@
 /**
- * `workspace` domain (L2) — `FileWorkspacePersistence` implementation.
+ * `workspace` domain — `FileWorkspacePersistence` implementation.
  *
  * File backend of `IWorkspacePersistence`. Persists the catalog as a single
  * v1-compatible `workspaces.json` document at the storage root

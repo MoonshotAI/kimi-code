@@ -242,8 +242,8 @@ describe('fsSearchRequestSchema (W11.1)', () => {
     });
   });
 
-  it('rejects empty query', () => {
-    expect(fsSearchRequestSchema.safeParse({ query: '' }).success).toBe(false);
+  it('accepts an empty query (workspace-root listing)', () => {
+    expect(fsSearchRequestSchema.safeParse({ query: '' }).success).toBe(true);
   });
 
   it('caps limit at 200', () => {

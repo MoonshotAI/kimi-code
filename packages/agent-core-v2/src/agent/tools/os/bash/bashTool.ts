@@ -1,13 +1,10 @@
 /**
- * `tools` domain (L7) — `BashTool` implementation, the model's shell command
+ * `tools` domain — `BashTool` implementation, the model's shell command
  * runner.
  *
  * Invokes the execution-environment shell (POSIX bash; Git Bash on Windows)
  * through the injected `ISessionProcessRunner`. The command runs as
- * `cd <cwd> && <command>` inside the environment's working directory. The
- * model-facing contract (schemas, timeout constants, `IBashTool` identifier)
- * lives in `./bash`; the background process task wrapper lives in
- * `./process-task`.
+ * `cd <cwd> && <command>` inside the environment's working directory.
  *
  * Collaborators injected via constructor:
  *   - `runner`     — `ISessionProcessRunner`, spawns the shell process
@@ -34,7 +31,7 @@
  *   - stdout/stderr are captured by `ProcessTask` for task output;
  *     foreground runs pass a callback to collect chunks for this call.
  *
- * Ported from v1 (`packages/agent-core/src/tools/builtin/shell/bash.ts`). The
+ * Ported from v1. The
  * v1 `process.env` spread is intentionally dropped: v2's `ISessionProcessRunner.exec`
  * already overlays the per-call `env` on `process.env`, so only the
  * noninteractive knobs are passed here.
