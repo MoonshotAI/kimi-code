@@ -96,10 +96,11 @@ const thinkingOptions = computed(() =>
 const planOn = computed<boolean>(() => props.planMode === true);
 const swarmOn = computed<boolean>(() => props.swarmMode === true);
 
+// Risk progression matches the Composer: yolo = warning, auto = danger.
 const permColor = computed<string>(() => {
   const p = props.status.permission;
-  if (p === 'yolo') return 'var(--color-danger)';
-  if (p === 'auto') return 'var(--color-warning)';
+  if (p === 'yolo') return 'var(--color-warning)';
+  if (p === 'auto') return 'var(--color-danger)';
   return 'var(--color-text-muted)';
 });
 /** Permission sub-line, e.g. "manual · confirm every tool". */
