@@ -117,6 +117,33 @@ describe('CronManager', () => {
   });
 
   describe('handleFire — recurring', () => {
+    it('keeps a due cron queued while the goal is paused', () => {
+      const stub = createAgentStub({ goalStatus: 'paused' });
+      const harness = createClocks();
+      const manager = new CronManager(stub.agent, {
+        clocks: harness.clocks,
+        pollIntervalMs: null,
+      });
+
+      const task = manager.store.add(
+        { cron: '*/5 * * * *', prompt: 'check the deploy' },
+        harness.now() - 1,
+      );
+      harness.advance(6 * 60_000);
+      manager.tick();
+
+      expect(stub.steerCalls).toHaveLength(0);
+      expect(stub.telemetryCalls).toHaveLength(0);
+      expect(manager.store.get(task.id)?.lastFiredAt).toBeUndefined();
+
+      stub.setGoalStatus('active');
+      manager.tick();
+
+      expect(stub.steerCalls).toHaveLength(1);
+      expect(stub.telemetryCalls).toHaveLength(1);
+      expect(manager.store.get(task.id)?.lastFiredAt).toBeDefined();
+    });
+
     it('steers with cron_job origin and emits cron_fired telemetry', () => {
       const stub = createAgentStub({ steerReturns: 7 });
       const harness = createClocks();
