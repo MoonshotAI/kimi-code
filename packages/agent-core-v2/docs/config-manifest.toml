@@ -14,12 +14,12 @@
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
 #   defaultPlanMode          src/agent/plan/configSection.ts
 #   experimental             src/app/flag/flag.ts
-#   extraAgentDirs           src/app/agentFileCatalog/configSection.ts
+#   extraAgentDirs           src/workspace/workspaceAgentProfileLoader/configSection.ts
 #   extraSkillDirs           src/app/skillCatalog/configSection.ts
 #   hooks                    src/agent/externalHooks/configSection.ts
 #   image                    src/agent/media/configSection.ts
 #   loopControl              src/agent/loop/configSection.ts
-#   mcp                      src/agent/mcp/configSection.ts
+#   mcp                      src/app/mcpConfig/configSection.ts
 #   mergeAllAvailableSkills  src/app/skillCatalog/configSection.ts
 #   modelCatalog             src/app/kosongConfig/configSection.ts
 #   models                   src/app/kosongConfig/configSection.ts
@@ -106,7 +106,7 @@ default_plan_mode = false
 
 # ##########################################################################
 # extraAgentDirs (config.toml: extra_agent_dirs)
-#   owner: src/app/agentFileCatalog/configSection.ts
+#   owner: src/workspace/workspaceAgentProfileLoader/configSection.ts
 #   scope: core
 # ##########################################################################
 
@@ -167,7 +167,7 @@ extra_skill_dirs = []
 
 # ##########################################################################
 # mcp
-#   owner: src/agent/mcp/configSection.ts
+#   owner: src/app/mcpConfig/configSection.ts
 #   scope: core
 #   hooks: stripEnv
 #   env:

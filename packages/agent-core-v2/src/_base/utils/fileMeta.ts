@@ -2,7 +2,7 @@
  * File content metadata helpers — binary detection, line counting, etag, and
  * extension-based mime / language guessing.
  *
- * Shared by the fs edge domains (`sessionFs`) and the kap-server fs routes so
+ * Shared by the fs edge domains (`workspaceFs`) and the kap-server fs routes so
  * every read-style surface classifies and labels file content the same way.
  * Pure functions over bytes, text, and stat-like shapes; no io happens here.
  * Binary detection samples the leading `FS_BINARY_SAMPLE_BYTES` of a file and

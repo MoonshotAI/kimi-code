@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import {
   ISessionQuestionService,
-  ISessionLifecycleService,
+  getLiveSessionById,
   type QuestionRequest,
   type QuestionResult,
 } from '@moonshot-ai/agent-core-v2';
@@ -123,7 +123,7 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
   }
 
   function questionService(sessionId: string): ISessionQuestionService {
-    const handle = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const handle = getLiveSessionById(server!.core.accessor, sessionId);
     expect(handle).toBeDefined();
     return handle!.accessor.get(ISessionQuestionService);
   }

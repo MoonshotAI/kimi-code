@@ -10,13 +10,13 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
 import type { HookDef } from '#/agent/externalHooks/types';
-import type { McpServerConfig } from '#/agent/mcp/config-schema';
-import type { AgentFileRoot } from '#/app/agentFileCatalog/types';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { SkillRoot } from '#/app/skillCatalog/types';
 
 import type {
   EnabledPluginSessionStart,
   EnabledPluginSystemPrompt,
+  PluginAgentRoot,
   PluginCommandDef,
   PluginInfo,
   PluginSummary,
@@ -60,7 +60,7 @@ export interface IPluginService {
   listPluginCommands(): Promise<readonly PluginCommandDef[]>;
   checkUpdates(): Promise<readonly PluginUpdateStatus[]>;
   pluginSkillRoots(): Promise<readonly SkillRoot[]>;
-  pluginAgentRoots(): Promise<readonly AgentFileRoot[]>;
+  pluginAgentRoots(): Promise<readonly PluginAgentRoot[]>;
   enabledSessionStarts(): Promise<readonly EnabledPluginSessionStart[]>;
   enabledSystemPrompts(): Promise<readonly EnabledPluginSystemPrompt[]>;
   enabledMcpServers(): Promise<Record<string, McpServerConfig>>;

@@ -354,6 +354,43 @@ export class ConfigService extends Disposable implements IConfigService {
     });
   }
 
+  async replaceSections(
+    sections: Readonly<Record<string, unknown>>,
+    target: ConfigTarget = ConfigTarget.User,
+  ): Promise<void> {
+    await this.ready;
+    const domains = Object.keys(sections);
+    if (domains.length === 0) return;
+    if (target === ConfigTarget.Memory) {
+      const staged: ResolvedConfig = { ...this.memory };
+      for (const domain of domains) {
+        const value = sections[domain];
+        if (value === undefined) {
+          delete staged[domain];
+        } else {
+          staged[domain] = this.registry.validate(domain, value);
+        }
+      }
+      this.memory = staged;
+      this.commit('set', domains);
+      return;
+    }
+    await this.enqueueStateTransition(async () => {
+      const staged: ResolvedConfig = { ...this.raw };
+      for (const domain of domains) {
+        const stripped = this.stripEnv(domain, sections[domain]);
+        if (stripped === undefined) {
+          delete staged[domain];
+        } else {
+          staged[domain] = this.registry.validate(domain, stripped);
+        }
+      }
+      this.raw = staged;
+      await this.persistDomains(domains);
+      this.rebuildEffective('set', domains);
+    });
+  }
+
   private stripEnv(domain: string, value: unknown): unknown {
     let result = value;
     const section = this.registry.getSection(domain);
@@ -565,7 +602,13 @@ export class ConfigService extends Disposable implements IConfigService {
   }
 
   private async persist(domain: string): Promise<void> {
-    applySectionToToml(this.rawSnake, domain, this.raw[domain], this.registry);
+    await this.persistDomains([domain]);
+  }
+
+  private async persistDomains(domains: readonly string[]): Promise<void> {
+    for (const domain of domains) {
+      applySectionToToml(this.rawSnake, domain, this.raw[domain], this.registry);
+    }
     await this.documentStore.set(CONFIG_SCOPE, this.configKey, this.rawSnake);
   }
 }

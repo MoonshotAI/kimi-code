@@ -85,6 +85,12 @@ const DOMAIN_LAYER = new Map([
   // (`sessionId`/`workspaceId`/`sessionDir`/`metaScope`/`cwd`); a pure seed
   // with no IO, so it sits in L1.
   ['sessionContext', 1],
+  // `sessionLifecycleHooks` is the per-session lifecycle hook-slots seed
+  // (created by the Workspace-scope `workspaceHandler`, registered into by
+  // Session-scope adapters such as `externalHooks`) plus the shared
+  // create-source/close-reason vocabulary; a pure contract with no IO, so it
+  // sits in L1 beside `sessionContext`.
+  ['sessionLifecycleHooks', 1],
   // `scopeContext` is the Agent-scope seeded immutable facts value
   // (`agentId` plus a persistence scope helper); a pure seed with no IO, so it
   // sits in L1 beside `sessionContext`.
@@ -95,7 +101,22 @@ const DOMAIN_LAYER = new Map([
   // `IHostFileSystem`; besides those host bridges it depends only on `_base`
   // and the `errors` facade, so it sits in L1 beside the other host bridges.
   ['git', 1],
+  // `workspaceContext` covers two same-layer seeds: the Session-scope
+  // read-only workspace view (`session/workspaceContext`) and the
+  // Workspace-scope seeded handler facts (`workspace/workspaceContext`) —
+  // one domain name per scope tier, same pattern as `state`.
   ['workspaceContext', 1],
+  // `sessionInstructions` is the Session-scope seeded AGENTS.md provider
+  // contract (`ISessionInstructionsProvider`): a pure data + change-event
+  // injection contract (the Workspace-scope `workspaceInstructions` impl
+  // hands it to each session) with no IO, so it sits in L1 beside
+  // `sessionContext`.
+  ['sessionInstructions', 1],
+  // `workspaceInfo` is the Session-scope seeded workspace-directory data
+  // contract (`ISessionWorkspaceInfo`): a pure data + change-event injection
+  // contract (the Workspace-scope `workspaceDirs` impl hands it to each
+  // session) with no IO, so it sits in L1 beside `sessionInstructions`.
+  ['workspaceInfo', 1],
   ['protocol', 1],
   ['hooks', 1],
   // `task` is the managed-concurrent-execution primitive (run + defer).
@@ -131,8 +152,33 @@ const DOMAIN_LAYER = new Map([
   ['file', 2],
   ['config', 2],
   ['projectLocalConfig', 2],
-  ['sessionFs', 2],
+  // `process` is the Session-scope process-runner CONTRACT
+  // (`ISessionProcessRunner`); the implementation moved to the Workspace
+  // scope (`workspaceProcess`) but the contract stays in the session domain
+  // so Session/Agent consumers keep importing it without crossing the
+  // Workspace-tier import ban.
   ['process', 2],
+  // `workspaceProcess` is the Workspace-scope `ISessionProcessRunner`
+  // implementation (default cwd = handler root); it consumes the `process`
+  // contract (L2) and the os process bridge (L1).
+  ['workspaceProcess', 2],
+  // `workspaceGit` is the Workspace-scope git facade pinned to the handler
+  // root over the App-scope `git` service (L1).
+  ['workspaceGit', 2],
+  // `workspaceToolPolicy` is the Workspace-scope owner of the os-level tool
+  // veto set (runtime capabilities keyed off the handler's os backend); it
+  // hands every session the `sessionToolPolicyGate` seed contract (L1).
+  ['workspaceToolPolicy', 2],
+  // `workspaceTrust` is the Workspace-scope owner of the per-workspace trust
+  // marker that gates project-level config (first consumer:
+  // `workspaceMcpConfig`); its only collaborators are the handler's
+  // `workspaceContext` (L1) and the `persistence` document store.
+  ['workspaceTrust', 2],
+  // `sessionToolPolicyGate` is the Session-scope seeded workspace tool-veto
+  // contract (`ISessionToolPolicyGate`): a pure data + change-event
+  // injection contract (the Workspace-scope `workspaceToolPolicy` impl hands
+  // it to each session) with no IO, so it sits in L1 beside `workspaceInfo`.
+  ['sessionToolPolicyGate', 1],
   ['workspace', 2],
   ['workspaceAliases', 2],
   ['workspaceSessions', 2],
@@ -142,12 +188,40 @@ const DOMAIN_LAYER = new Map([
   ['model', 2],
   ['sessionIndex', 2],
   ['sessionStore', 2],
+  // `mcpCore` is the scope-agnostic MCP connection core: the connection
+  // manager, the stdio/SSE/HTTP transport clients, the OAuth flow, the
+  // server-config schemas, and the `McpOAuthStore` port. It holds no file
+  // loading, no persistence implementation, and no engine-config reads —
+  // those live in the `mcpConfig` / `workspaceMcpConfig` wrappers (L5) — so
+  // its highest dependencies are `config`-adjacent L1–L2 building blocks and
+  // the kosong contract (L0).
+  ['mcpCore', 2],
   // L3 — registries & capabilities
   ['tool', 3],
   ['skill', 3],
   ['skillCatalog', 3],
   ['sessionSkillCatalog', 3],
   ['sessionAgentProfileCatalog', 3],
+  // `workspaceSkillCatalog` is the Workspace-scope owner of skill discovery
+  // + merging (sources bound per handler, single-source incremental
+  // refresh); `workspaceAgentProfileLoader` is the Workspace-scope loader
+  // half of the agent-profile extension point (workspace / extra / explicit
+  // file scans registered into the App-scope `IAgentProfileRegistry`,
+  // tagged with the handler's workspaceId) — the merged read view their
+  // Session-scope counterparts (`sessionSkillCatalog` /
+  // `sessionAgentProfileCatalog`) project sits in L3 beside them.
+  ['workspaceSkillCatalog', 3],
+  ['workspaceAgentProfileLoader', 3],
+  // `workspaceDirs` is the Workspace-scope owner of the handler's shared
+  // additional-directory set (local.toml load + append, caller-dir union,
+  // fs-watch refresh); its highest dependency is `projectLocalConfig` (L2),
+  // so it sits in L3 beside the other Workspace-scope resource owners.
+  ['workspaceDirs', 3],
+  // `workspaceFs` is the Workspace-scope fs surface (list/read/search/grep/
+  // git status/diff) plus the shared fs-watch fan-out; its highest
+  // dependency is `workspaceDirs` (L3 — the additional-dir set used for
+  // path confinement), so it sits in L3 beside it.
+  ['workspaceFs', 3],
   ['sessionToolPolicy', 3],
   ['permissionGate', 3],
   ['toolApproval', 3],
@@ -163,13 +237,12 @@ const DOMAIN_LAYER = new Map([
   ['record', 3],
   ['modelCatalog', 3],
   ['agentProfileCatalog', 3],
-  ['agentFileCatalog', 3],
   ['hostIdentity', 3],
   // L4 — agent behaviour
   // `activityView` is the Agent-scope read model folding the agent's own event
   // bus into the activity projection (`agent.activity.updated`); it owns no
   // authoritative state (turn mechanics live in `loop`, admission/drain in
-  // `sessionLifecycle`, background bookkeeping in `agentLifecycle`).
+  // `workspaceHandler`, background bookkeeping in `agentLifecycle`).
   ['activityView', 4],
   ['context', 4],
   ['message', 4],
@@ -205,6 +278,10 @@ const DOMAIN_LAYER = new Map([
   ['edit', 4],
   ['llmRequester', 4],
   ['profile', 4],
+  // `workspaceInstructions` is the Workspace-scope AGENTS.md snapshot service
+  // (load once per handler, watch-driven reload): it consumes the `profile`
+  // domain's pure AGENTS.md loader, so it sits in L4 beside it.
+  ['workspaceInstructions', 4],
   ['prompt', 4],
   // `shellCommand` orchestrates user `!` commands through `toolRegistry` (L3),
   // `contextMemory` / `prompt` (L4) and `eventBus` (L1); its highest dependency is L4.
@@ -214,19 +291,49 @@ const DOMAIN_LAYER = new Map([
   ['web', 4],
   // L5 — agent task management
   ['agentTask', 5],
+  // `mcp` is the Agent-scope MCP assembly layer: the per-agent tool mirror
+  // (`IAgentMcpService`), the `ExecutableTool` adapters and tool-result
+  // output pipeline (which reach `media`, L4), and the wire discovery
+  // records. The scope-agnostic connection core lives in `mcpCore` (L2).
   ['mcp', 5],
+  // `workspaceMcp` is the Workspace-scope owner of the handler's one shared
+  // MCP connection manager (connect at build, change-event-driven reconcile);
+  // it consumes the `mcpCore` domain's manager and the `workspaceMcpConfig`
+  // domain's effective server set, so it sits in L5 beside them.
+  ['workspaceMcp', 5],
+  // `workspaceMcpConfig` is the Workspace-scope owner of the handler's
+  // effective MCP server config: it loads and merges the mcp.json files
+  // (through the os hostFs) with the plugin contributions, watches both
+  // sources, and publishes the reconciled diff; its highest dependencies are
+  // `plugin` (L3) and the `mcpCore` domain's config schema (L2), so it sits
+  // in L5 beside the other Workspace-scope resource owners.
+  ['workspaceMcpConfig', 5],
+  // `mcpConfig` (App, L5) is the persistence wrapper over the `mcpCore`
+  // domain: it declares the `[mcp]` config section (schema + env bindings +
+  // stripEnv guard) and implements the domain's `McpOAuthStore` port over
+  // `IAtomicDocumentStore`. Same wrapper shape as `kosongConfig` over kosong.
+  ['mcpConfig', 5],
   ['cron', 5],
   // `btw` forks a single side-question sub-agent via `agentLifecycle`,
   // parallel to how the `Agent` tool spawns child agents. Agent-scope, L5.
   ['btw', 5],
   // L6 — coordination
   ['agentLifecycle', 6],
+  // `workspaceHandler` is the Workspace-scope anchor of one materialized
+  // workspace: it owns the session lifecycle (create/resume/fork/close) of
+  // that workspace's sessions as its child scopes — the re-scoped heir of
+  // the deleted App-scope `sessionLifecycle` domain — so it sits in L6.
+  ['workspaceHandler', 6],
+  // `workspaceLifecycle` is the App-scope owner of the live handler registry
+  // (create-or-get + in-flight join, handlers never closed). It coordinates
+  // the `workspace` catalog, `sessionIndex`, and the `workspaceHandler`
+  // domain, so it sits in L6 beside them.
+  ['workspaceLifecycle', 6],
   // `subagent` drives turns on other agents (`run`) and hosts the
   // requester-side run hook/event surface (`SubagentStart`/`SubagentStop`).
   // Its highest real dependency is `agentLifecycle` (target lookup), so it
   // sits in L6 beside it.
   ['subagent', 6],
-  ['sessionLifecycle', 6],
   ['externalHooks', 6],
   ['externalHooksRunner', 6],
   ['sessionExport', 6],
@@ -240,18 +347,11 @@ const DOMAIN_LAYER = new Map([
   ['sessionActivity', 6],
   ['session', 6],
   ['terminal', 6],
-  // `workspaceCommand` orchestrates session-level workspace mutations
-  // (`addAdditionalDir`): it reaches through `agentLifecycle` (L6) to the
-  // `main` agent's `contextMemory` (L4) to mirror the action's stdout, and
-  // delegates project-local config persistence to `projectLocalConfig` (L2).
-  // Its highest real dependency is `agentLifecycle`, so it sits in L6 beside
-  // the other coordination domains.
-  ['workspaceCommand', 6],
   // `sessionInit` runs the `/init` command: it reaches through `agentLifecycle`
   // (L6) to spawn the `coder` sub-agent and to the `main` agent's `profile`
   // (L4) / `systemReminder` (L4) / `wireRecord` (L4), and reloads `AGENTS.md`
   // through `profile` (L4). Its highest real dependency is `agentLifecycle`,
-  // so it sits in L6 beside `workspaceCommand`.
+  // so it sits in L6 beside the other coordination domains.
   ['sessionInit', 6],
   // L7 — boundary
   ['approval', 7],
@@ -292,7 +392,7 @@ const V1_PACKAGE = '@moonshot-ai/agent-core';
  * Scope directories introduced by the `src/{scope}/{domain}` layout. A path's
  * first segment is a scope tier, not a domain; the domain is the next segment.
  */
-const SCOPE_DIRS = new Set(['app', 'session', 'agent', 'persistence', 'os', 'kosong']);
+const SCOPE_DIRS = new Set(['app', 'workspace', 'session', 'agent', 'persistence', 'os', 'kosong']);
 
 /**
  * Two-level scope directories: `persistence` and `os` use `{scope}/{tier}`
@@ -300,6 +400,30 @@ const SCOPE_DIRS = new Set(['app', 'session', 'agent', 'persistence', 'os', 'kos
  * uses `{scope}/{layer}` (e.g. `kosong/contract`) the same way.
  */
 const TWO_LEVEL_SCOPES = new Set(['persistence', 'os', 'kosong']);
+
+/**
+ * Scope-direction hard constraint (red line): Session- and Agent-tier code
+ * must never import Workspace-tier code (`src/workspace/**`) or the App-tier
+ * workspace lifecycle domain (`src/app/workspaceLifecycle/**`). Workspace
+ * capabilities reach sessions only through session-domain contracts + scope
+ * seeds. The numeric layers cannot express this (the workspace domains sit
+ * at L6 beside their consumers), so it is checked directly.
+ */
+const SESSION_AGENT_TIERS = new Set(['session', 'agent']);
+const WORKSPACE_LIFECYCLE_PREFIX = 'app/workspaceLifecycle/';
+
+/**
+ * The scope tier (`app` / `workspace` / `session` / `agent` / …) of an
+ * absolute path under `src/`, or `undefined` for files outside the tier
+ * layout (top-level facades, kosong/persistence/os internals).
+ * @param {string} absPath
+ */
+function scopeTierOf(absPath) {
+  const rel = relative(SRC_ROOT, absPath);
+  if (rel.startsWith('..') || rel === '') return undefined;
+  const seg = rel.split(/[\\/]/)[0];
+  return SCOPE_DIRS.has(seg) ? seg : undefined;
+}
 
 /**
  * Kosong-internal layer order: contract ← protocol ← provider/model.
@@ -488,7 +612,6 @@ const ALLOWED_EXCEPTIONS = new Set([
   // `tool`; the remaining upward import is a `loop` error/event helper.
   'contextMemory>agentTask',
   'llmRequester>session',
-  'loop>mcp',
   // `registerMediaTools` (media, L4) imports the `ReadMediaFileTool`
   // implementation from the `tools` domain (L7) to register it for media
   // capability agents.
@@ -505,7 +628,6 @@ const ALLOWED_EXCEPTIONS = new Set([
   // projection side references the context message type by structure only.
   'record>contextMemory',
   'plugin>externalHooks',
-  'plugin>mcp',
   'profile>session',
   'replayBuilder>agentTask',
   'replayBuilder>rpc',
@@ -520,7 +642,6 @@ const ALLOWED_EXCEPTIONS = new Set([
   'filestore>persistence/backends',
   'process>os/backends',
   'terminal>os/backends',
-  'sessionFs>os/backends',
   'blobStore>persistence/backends',
   // `sessionIndex` (L2) reads the `persistence_minidb_readmodel` experimental
   // flag (L3) to switch session listings between the legacy N+1 disk read and
@@ -637,6 +758,22 @@ export function checkSource(source, absFile) {
         });
       }
       continue;
+    }
+
+    // Rule 2b: scope direction — Session/Agent tiers never import the
+    // Workspace tier (`src/workspace/**` or `src/app/workspaceLifecycle/**`).
+    const sourceTier = scopeTierOf(absFile);
+    if (SESSION_AGENT_TIERS.has(sourceTier)) {
+      const targetTier = scopeTierOf(targetAbs);
+      const targetRel = relative(SRC_ROOT, targetAbs).split(/[\\/]/).join('/');
+      if (targetTier === 'workspace' || targetRel.startsWith(WORKSPACE_LIFECYCLE_PREFIX)) {
+        violations.push({
+          file: absFile,
+          line,
+          message: `scope violation: '${sourceTier}' tier must not import Workspace-tier code ('${targetRel}' via '${specifier}') — workspace capabilities reach sessions only through session-domain contracts + scope seeds`,
+        });
+        continue;
+      }
     }
 
     // Rule 3b: kosong-internal layering. Runs even for same-domain imports

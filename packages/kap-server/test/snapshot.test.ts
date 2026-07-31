@@ -16,9 +16,13 @@ import {
   ILogService,
   ISessionInteractionService,
   ISessionContext,
-  ISessionLifecycleService,
+  ISessionIndex,
   ISessionMetadata,
+  IWorkspaceHandlerService,
+  IWorkspaceLifecycleService,
   IWorkspaceService,
+  getLiveSessionById,
+  resumeSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import { sessionSnapshotResponseSchema } from '../src/protocol/rest-snapshot';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -75,11 +79,32 @@ describe('server-v2 snapshot route enrichment', () => {
         [ISessionInteractionService, { listPending: () => [] }],
       ]),
     };
+    const handler = {
+      accessor: fakeAccessor([
+        [
+          IWorkspaceHandlerService,
+          { resume: async () => session, get: () => undefined },
+        ],
+      ]),
+    };
     const core = {
       accessor: fakeAccessor([
         [
-          ISessionLifecycleService,
-          { resume: async () => session, get: () => undefined },
+          ISessionIndex,
+          {
+            get: async () => ({
+              id: sessionId,
+              workspaceId,
+              cwd: '/workspace',
+              createdAt: now,
+              updatedAt: now,
+              archived: false,
+            }),
+          },
+        ],
+        [
+          IWorkspaceLifecycleService,
+          { handlerFor: async () => handler, handlers: { list: () => [] } },
         ],
         [IWorkspaceService, { get: async () => ({ root: '/workspace' }) }],
       ]),
@@ -282,13 +307,13 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
   }
 
   async function ensureMainAgent(sessionId: string): Promise<void> {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     const agents = session!.accessor.get(IAgentLifecycleService);
     if (agents.get('main') === undefined) await agents.create({ agentId: 'main' });
   }
 
   function emit(sessionId: string, event: DomainEvent): void {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     const main = session!.accessor.get(IAgentLifecycleService).get('main');
     main!.accessor.get(IEventBus).publish(event);
   }
@@ -355,7 +380,7 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
     base = `http://127.0.0.1:${server.port}`;
 
     // Guard: nothing is live in the new process — the session is cold.
-    expect(server!.core.accessor.get(ISessionLifecycleService).get(sid)).toBeUndefined();
+    expect(getLiveSessionById(server!.core.accessor, sid)).toBeUndefined();
 
     const snap = await snapshot(sid);
     expect(snap.session.id).toBe(sid);
@@ -367,7 +392,7 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
   // transcript while the scope stays un-materialized.
   it('auto reader returns messages read directly from wire.jsonl for a cold session', async () => {
     const sid = await createSession();
-    const live = server!.core.accessor.get(ISessionLifecycleService).get(sid);
+    const live = getLiveSessionById(server!.core.accessor, sid);
     if (live === undefined) throw new Error(`session ${sid} not found`);
     const metaScope = live.accessor.get(ISessionContext).metaScope;
 
@@ -400,7 +425,7 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
     base = `http://127.0.0.1:${server.port}`;
 
     // Guard: still cold — the auto reader must serve from disk, not resume.
-    expect(server!.core.accessor.get(ISessionLifecycleService).get(sid)).toBeUndefined();
+    expect(getLiveSessionById(server!.core.accessor, sid)).toBeUndefined();
 
     const snap = await snapshot(sid);
     expect(snap.session.id).toBe(sid);
@@ -420,7 +445,7 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
   // (no reliance on wire-restore timing).
   it('serves a v1-layout session (ISO timestamps, no id field) without crashing', async () => {
     const sid = await createSession();
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sid);
+    const session = getLiveSessionById(server!.core.accessor, sid);
     if (session === undefined) throw new Error(`session ${sid} not found`);
     const metaScope = session.accessor.get(ISessionContext).metaScope;
 
@@ -445,7 +470,7 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
 
     // Resume the cold session, then seed messages into the live context so the
     // snapshot projects message timestamps from the normalized numeric base.
-    const resumed = await server!.core.accessor.get(ISessionLifecycleService).resume(sid);
+    const resumed = await resumeSessionById(server!.core.accessor, sid);
     if (resumed === undefined) throw new Error(`session ${sid} failed to resume`);
     const main = await resumed.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
     const context = main.accessor.get(IAgentContextMemoryService);

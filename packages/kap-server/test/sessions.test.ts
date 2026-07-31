@@ -22,8 +22,10 @@ import {
   IAgentLifecycleService,
   IEventBus,
   IEventService,
-  ISessionLifecycleService,
   MAIN_AGENT_ID,
+  closeSessionById,
+  getLiveSessionById,
+  sessionDirOf,
   type ServiceIdentifier,
 } from '@moonshot-ai/agent-core-v2';
 import { sessionWarningsResponseSchema } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
@@ -209,9 +211,11 @@ describe('server-v2 /api/v1/sessions', () => {
       metadata: { cwd: home as string },
     });
     const id = created.body.data.id;
-    const sessionDir = (server as RunningServer).core.accessor
-      .get(IBootstrapService)
-      .sessionDir(created.body.data.workspace_id, id);
+    const sessionDir = sessionDirOf(
+      (server as RunningServer).core.accessor.get(IBootstrapService).homeDir,
+      `sessions/${created.body.data.workspace_id}`,
+      id,
+    );
     await writeFile(join(sessionDir, 'cancel-test.bin'), randomBytes(8 * 1024 * 1024));
 
     const res = await fetch(`${base}/api/v1/sessions/${id}/export`, {
@@ -289,9 +293,7 @@ describe('server-v2 /api/v1/sessions', () => {
     await postJson<SessionWire>(`/api/v1/sessions/${id}/profile`, {
       agent_config: { goal_objective: 'finish the migration' },
     });
-    const session = (server as RunningServer).core.accessor
-      .get(ISessionLifecycleService)
-      .get(id);
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id);
     if (session === undefined) throw new Error('expected a live session');
     const agent = session.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
     if (agent === undefined) throw new Error('expected a live main agent');
@@ -664,7 +666,7 @@ describe('server-v2 /api/v1/sessions', () => {
     // only) — the state right after opening a session in the web UI before any
     // prompt has been sent. Before the fix, `:undo` resolved the main agent via
     // `lifecycle.get` (memory only) and reported 40401 "session does not exist".
-    await (server as RunningServer).core.accessor.get(ISessionLifecycleService).close(id);
+    await closeSessionById((server as RunningServer).core.accessor, id);
 
     const res = await postJson<{ messages: unknown }>(`/api/v1/sessions/${id}:undo`, { count: 1 });
     // Cold-loaded successfully: the empty history yields "nothing to undo"
@@ -680,9 +682,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', {
       metadata: { cwd: home as string },
     });
-    const session = (server as RunningServer).core.accessor
-      .get(ISessionLifecycleService)
-      .get(created.body.data.id);
+    const session = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id);
     if (session === undefined) throw new Error('expected live session');
     const agent = await session.accessor
       .get(IAgentLifecycleService)

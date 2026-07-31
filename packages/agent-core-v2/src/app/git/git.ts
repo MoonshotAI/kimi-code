@@ -2,16 +2,22 @@
  * `git` domain (L1) — git integration for a repository on the local disk.
  *
  * Defines the `IGitService` that runs `git status` / `git diff` (plus `gh pr
- * view`) against a repository identified by an absolute `cwd`. App-scoped; it
- * spawns `git` / `gh` through the `os/interface` process service rather than a
- * Session's execution environment, so it never depends on a Session. Path
- * confinement is the caller's responsibility — the service receives
- * already-resolved absolute `cwd` and repo-relative paths.
+ * view`) against a repository identified by an absolute `cwd`, and discovers
+ * the enclosing git work tree of a directory (`findWorkTree`, the DI entry
+ * point over the pure `workTree` probe). App-scoped; it spawns `git` / `gh`
+ * through the `os/interface` process service rather than a Session's
+ * execution environment, so it never depends on a Session. Path confinement
+ * is the caller's responsibility — the service receives already-resolved
+ * absolute `cwd` and repo-relative paths.
  */
 
 import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+
+import type { GitWorkTree } from './workTree';
+
+export type { GitWorkTree } from './workTree';
 
 export const fsGitStatusSchema = z.enum([
   'clean',
@@ -71,6 +77,7 @@ export interface IGitService {
 
   status(cwd: string, pathFilter?: ReadonlySet<string>): Promise<FsGitStatusResponse>;
   diff(cwd: string, relPath: string, absPath: string): Promise<FsDiffResponse>;
+  findWorkTree(cwd: string): Promise<GitWorkTree | null>;
 }
 
 export const IGitService: ServiceIdentifier<IGitService> =

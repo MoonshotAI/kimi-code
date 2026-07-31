@@ -186,6 +186,7 @@ function profileCatalogWithPreference(
     get: (name) => [main, target].find((profile) => profile.name === name),
     getDefault: () => main,
     list: () => [target],
+    inspect: () => undefined,
     load: async () => {},
     reload: async () => {},
   };
@@ -238,7 +239,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
   const servicesByAgentId = new Map(options.handleServices);
   const handle = (agentId: string): IAgentScopeHandle => ({
     id: agentId,
-    kind: 2,
+    kind: LifecycleScope.Agent,
     accessor: {
       get: (serviceId) => {
         const service = servicesByAgentId.get(agentId)?.get(serviceId);
@@ -586,6 +587,7 @@ describe('Agent tool description', () => {
       get: (name) => profiles.find((profile) => profile.name === name),
       getDefault: () => restricted,
       list: () => profiles,
+      inspect: () => undefined,
       load: async () => {},
       reload: async () => {},
     };
@@ -623,6 +625,7 @@ describe('Agent tool description', () => {
       get: (name) => profiles.find((profile) => profile.name === name),
       getDefault: () => caller,
       list: () => [coder, explore],
+      inspect: () => undefined,
       load: async () => {},
       reload: async () => {},
     };
@@ -658,12 +661,12 @@ describe('Agent tool description', () => {
       get: (name) => [caller, coder, explore].find((profile) => profile.name === name),
       getDefault: () => caller,
       list: () => [coder, explore],
+      inspect: () => undefined,
       load: async () => {},
       reload: async () => {},
     };
     ctx = createTestAgent(sessionService(ISessionAgentProfileCatalog, catalog));
     ctx.get(IAgentProfileService).applyBindingSnapshot({
-      cwd: '',
       profileName: 'deleted-profile',
       thinkingLevel: 'off',
       systemPrompt: 'persisted prompt',
@@ -803,6 +806,7 @@ describe('Agent tool execution contract', () => {
       get: (name) => profiles.find((profile) => profile.name === name),
       getDefault: () => caller,
       list: () => [coder, explore],
+      inspect: () => undefined,
       load: async () => {},
       reload: async () => {},
     };
@@ -834,7 +838,6 @@ describe('Agent tool execution contract', () => {
       sessionService(ISessionAgentProfileCatalog, allowlistCatalog(['coder'])),
     );
     context.get(IAgentProfileService).applyBindingSnapshot({
-      cwd: '',
       profileName: 'deleted-profile',
       thinkingLevel: 'off',
       systemPrompt: 'persisted prompt',

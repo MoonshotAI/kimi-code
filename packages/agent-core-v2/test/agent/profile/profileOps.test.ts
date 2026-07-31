@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { AgentProfileService } from '#/agent/profile/profileService';
 import { ActiveToolsModel, ProfileModel } from '#/agent/profile/profileOps';
@@ -21,13 +22,13 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostIdentity } from '#/app/hostIdentity/hostIdentity';
-import { IPluginService } from '#/app/plugin/plugin';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IWireService } from '#/wire/wire';
@@ -213,10 +214,6 @@ function buildHost(key: string): {
   host.stub(IHostEnvironment, stubUnused());
   host.stub(IHostFileSystem, stubUnused());
   host.stub(IHostIdentity, stubUnused());
-  host.stub(IPluginService, {
-    _serviceBrand: undefined,
-    onDidReload: () => ({ dispose: () => {} }),
-  });
   host.stub(IBootstrapService, stubUnused());
   host.stub(ISessionContext, createSessionContextStub());
   host.stub(ISessionWorkspaceContext, stubUnused());
@@ -225,6 +222,13 @@ function buildHost(key: string): {
     _serviceBrand: undefined,
     onDidChange: () => ({ dispose: () => {} }),
   });
+  host.stub(ISessionInstructionsProvider, {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    agentsMd: undefined,
+    agentsMdWarning: undefined,
+    onDidChange: Event.None as Event<void>,
+  } satisfies ISessionInstructionsProvider);
   host.stub(ISessionToolPolicy, {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
@@ -308,14 +312,12 @@ describe('AgentProfileService (wire-backed config.update)', () => {
 
   it('persists and replays an allowlist reset to unrestricted', async () => {
     svc.applyBindingSnapshot({
-      cwd: '/work',
       profileName: 'restricted',
       thinkingLevel: 'off',
       systemPrompt: 'restricted',
       activeToolNames: ['Read'],
     });
     svc.applyBindingSnapshot({
-      cwd: '/work',
       profileName: 'unrestricted',
       thinkingLevel: 'off',
       systemPrompt: 'unrestricted',
@@ -334,31 +336,22 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     replay.ix.dispose();
   });
 
-  it('chdir and emitStatusUpdated run live-only and are silent during replay', async () => {
-    let chdirCalls = 0;
+  it('emitStatusUpdated runs live-only and is silent during replay', async () => {
     let statusEmits = 0;
     svc.configure({
-      chdir: () => {
-        chdirCalls += 1;
-      },
       emitStatusUpdated: () => {
         statusEmits += 1;
       },
     });
 
-    svc.update({ cwd: '/work', profileName: DEFAULT_AGENT_PROFILE_NAME });
-    expect(chdirCalls).toBe(1);
+    svc.update({ profileName: DEFAULT_AGENT_PROFILE_NAME });
     expect(statusEmits).toBe(1);
 
     const records = await readRecords();
 
     const host = buildHost('profile-replay');
-    let replayChdir = 0;
     let replayEmits = 0;
     host.svc.configure({
-      chdir: () => {
-        replayChdir += 1;
-      },
       emitStatusUpdated: () => {
         replayEmits += 1;
       },
@@ -370,9 +363,7 @@ describe('AgentProfileService (wire-backed config.update)', () => {
       testWireScope(SCOPE, 'profile-replay'),
       records,
     );
-    expect(modelOf(host.wire).cwd).toBe('/work');
     expect(modelOf(host.wire).profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
-    expect(replayChdir).toBe(0);
     expect(replayEmits).toBe(0);
 
     const written: WireRecord[] = [];

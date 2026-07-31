@@ -15,16 +15,6 @@ type McpTimeoutField = 'startupTimeoutMs' | 'toolTimeoutMs';
 
 const timeoutCases = [
   {
-    surface: 'session creation',
-    parse: (field: McpTimeoutField, value: number) =>
-      createSessionOptionsSchema.safeParse({
-        workDir: '/tmp/example',
-        mcpServers: {
-          example: { transport: 'stdio', command: 'node', [field]: value },
-        },
-      }),
-  },
-  {
     surface: 'plugin manifests',
     parse: (field: McpTimeoutField, value: number) =>
       pluginManifestSchema.safeParse({
@@ -46,5 +36,16 @@ describe('MCP timeout contract validation', () => {
 
   it.each(timeoutCases)('rejects an above-maximum $field for $surface', ({ field, parse }) => {
     expect(parse(field, 2_147_483_648).success).toBe(false);
+  });
+
+  it('session creation options carry no caller mcpServers channel', () => {
+    const parsed = createSessionOptionsSchema.safeParse({
+      workDir: '/tmp/example',
+      mcpServers: {
+        example: { transport: 'stdio', command: 'node' },
+      },
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data).toEqual({ workDir: '/tmp/example' });
   });
 });

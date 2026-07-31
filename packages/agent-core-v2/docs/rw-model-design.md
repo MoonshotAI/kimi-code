@@ -65,7 +65,7 @@
 - W3 Session 域借 main agent 的 wire 写（todo/cron），main 缺失时**静默丢写**
   （`sessionTodoService.ts:99-100`），且要 `as never` 绕过类型。
 - W4 fork 直接在 appendLogStore 层改写 wire log，绕过全部写模型
-  （`sessionLifecycleService.ts:303-337`）。
+  （`workspaceHandlerService.ts` 的 `fork` / `copyAgentWire`）。
 - W5 restore 期 append 在 wireRecord 层被静默吞掉（`wireRecordService.ts:81`），
   但 recordService 仍然 foldViews、仍然跑 facet——"进内存不进磁盘"完全隐式。
 
@@ -98,7 +98,7 @@
   onChange 处理器若 append 会无检测地重入。
 - L3 restore 正确性依赖三重隐式契约：DI 构造顺序 + hook 注册顺序 +
   "resumer 先于 hooks"；`doResume` 需手动预热 contextMemory
-  （`sessionLifecycleService.ts:158-162`）。
+  （现 `workspaceHandlerService.ts` 的 `doResume` / `materializeSession`）。
 - L4 相位规则（restoring / postRestoring / live）在 append/signal/push/hook
   四条通道上各不相同，没有一处集中定义。
 
@@ -189,7 +189,7 @@
   逻辑 seq 顺序，因此边缘 journal 的 seq 与核心逻辑 seq 单调一致。
 - fork 保持现实现（复制 main 的 wire log）；接口上表达为
   `stream.forkInto(target)`，实现仍走 appendLogStore（W4 的接口层收口：
-  唯一入口，不再散落在 sessionLifecycle 里手写）。
+  唯一入口，不再散落在 workspaceHandler 里手写）。
 - App scope 一条逻辑流（config/model catalog/session 生命周期），取代
   `IEventService`（V4）——App 流本就无持久化，纯接口替换。
 - **Topic = 流上的类型化过滤视角**，不是独立机制。订阅方用

@@ -11,8 +11,8 @@ import path from 'node:path';
 
 import { Error2, PluginErrors } from '#/errors';
 import type { HookDef } from '#/agent/externalHooks/types';
-import type { McpServerConfig } from '#/agent/mcp/config-schema';
-import type { AgentFileRoot } from '#/app/agentFileCatalog/types';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
+import type { PluginAgentRoot } from './types';
 import { discoverFileSkills } from '#/app/skillCatalog/fileSkillDiscovery';
 import type { SkillDiscoveryResult } from '#/app/skillCatalog/skillDiscovery';
 import type { SkillRoot } from '#/app/skillCatalog/types';
@@ -314,8 +314,8 @@ export class PluginManager {
     return roots;
   }
 
-  pluginAgentRoots(): readonly AgentFileRoot[] {
-    const roots: AgentFileRoot[] = [];
+  pluginAgentRoots(): readonly PluginAgentRoot[] {
+    const roots: PluginAgentRoot[] = [];
     for (const record of this.records.values()) {
       if (!record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
       for (const dir of record.manifest.agents ?? []) {

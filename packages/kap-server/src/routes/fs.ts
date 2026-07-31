@@ -3,18 +3,22 @@
  *
  * Mirrors `packages/server/src/routes/fs.ts` path-for-path and schema-for-schema
  * so existing v1 clients keep working against server-v2. Backed by the v2
- * Session-scoped `ISessionFsService` (`agent-core-v2/src/sessionFs`): the route resolves
- * the session from the URL, then dispatches `fs:<action>` to the matching
- * `ISessionFsService` method. The wire schema comes from the engine's own
- * `sessionFs` domain contract (`agent-core-v2`).
+ * Workspace-scoped `IWorkspaceFsService` (`agent-core-v2/src/workspace/workspaceFs`):
+ * the route resolves the session from the URL, then dispatches `fs:<action>`
+ * to the matching `IWorkspaceFsService` method — the session's accessor
+ * resolves it from its parent Workspace scope (the handler), which is the
+ * "session → handler → workspace fs" chain (chdir is gone, so the handler
+ * root is the one fixed fs root). The wire schema comes from the engine's own
+ * `workspaceFs` domain contract (`agent-core-v2`).
  */
 
 import { createReadStream } from 'node:fs';
 
 import {
   ErrorCodes,
-  ISessionFsService,
-  ISessionLifecycleService,
+  IWorkspaceFsService,
+  getLiveSessionById,
+  resumeSessionById,
   isError2,
   Error2,
   type Scope,
@@ -30,7 +34,7 @@ import {
   fsSearchRequestSchema,
   fsStatManyRequestSchema,
   fsStatRequestSchema,
-} from '@moonshot-ai/agent-core-v2/session/sessionFs/fs';
+} from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -99,12 +103,14 @@ const FS_ACTIONS = [
 type FsAction = (typeof FS_ACTIONS)[number];
 const FS_TAIL_PREFIX = 'fs:';
 
-function resolveFs(core: Scope, sessionId: string): ISessionFsService {
-  const session = core.accessor.get(ISessionLifecycleService).get(sessionId);
+function resolveFs(core: Scope, sessionId: string): IWorkspaceFsService {
+  const session = getLiveSessionById(core.accessor, sessionId);
   if (session === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
   }
-  return session.accessor.get(ISessionFsService);
+  // The fs service lives on the session's parent Workspace scope (the
+  // handler): one instance per workspace, pinned to the handler root.
+  return session.accessor.get(IWorkspaceFsService);
 }
 
 export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
@@ -154,7 +160,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       // need the work dir) do not 404 on a freshly-opened session. Matches v1,
       // which reads the persisted cwd. `resume` returns undefined only when the
       // session is unknown or its workspace is gone.
-      const session = await core.accessor.get(ISessionLifecycleService).resume(session_id);
+      const session = await resumeSessionById(core.accessor, session_id);
       if (session === undefined) {
         reply.send(
           errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
@@ -251,7 +257,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
 
       // Cold-load so a freshly-opened (persisted but not live) session can still
       // serve downloads; `resume` only returns undefined for unknown / workspace-gone.
-      const session = await core.accessor.get(ISessionLifecycleService).resume(session_id);
+      const session = await resumeSessionById(core.accessor, session_id);
       if (session === undefined) {
         reply.send(
           errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
@@ -259,7 +265,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         return;
       }
 
-      let resolved: Awaited<ReturnType<ISessionFsService['resolveDownload']>>;
+      let resolved: Awaited<ReturnType<IWorkspaceFsService['resolveDownload']>>;
       try {
         resolved = await resolveFs(core, session_id).resolveDownload(relPath);
       } catch (err) {
@@ -332,7 +338,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
 }
 
 // ---------------------------------------------------------------------------
-// Action handlers — thin adapters: parse body, call ISessionFsService, wrap result.
+// Action handlers — thin adapters: parse body, call IWorkspaceFsService, wrap result.
 // ---------------------------------------------------------------------------
 
 type Req = { id: string; body: unknown };
@@ -531,7 +537,7 @@ function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void 
       case ErrorCodes.SESSION_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
         return;
-      // hostFs errors that escaped the sessionFs layer keep their `os.fs.*`
+      // hostFs errors that escaped the workspaceFs layer keep their `os.fs.*`
       // code; map them onto the closest v1 wire code (ENOTDIR collapses into
       // path-not-found, matching `mapFsError`).
       case ErrorCodes.OS_FS_NOT_FOUND:
