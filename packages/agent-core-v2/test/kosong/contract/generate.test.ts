@@ -3,13 +3,17 @@
  *
  * Covers event normalization (text/think deltas merged, tool-call argument
  * deltas routed by stream index), the empty/thinking-only response
- * rejections, the abort contract (standard DOMException, stream cancelled),
- * callback plumbing, and per-turn intent passthrough via GenerateOptions.
+ * rejections, abort and stream-idle contracts, callback plumbing, and
+ * per-turn intent passthrough via GenerateOptions.
  */
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { APIEmptyResponseError } from '#/kosong/contract/errors';
+import {
+  APIEmptyResponseError,
+  isRetryableGenerateError,
+  StreamIdleTimeoutError,
+} from '#/kosong/contract/errors';
 import { generate, type GenerateResult } from '#/kosong/contract/generate';
 import type { Message, StreamedMessagePart, ToolCall } from '#/kosong/contract/message';
 import type {
@@ -54,6 +58,49 @@ class FakeStreamedMessage implements StreamedMessage {
   cancel(): void {
     this.cancelCalls++;
   }
+}
+
+function createStalledStream(
+  options: {
+    traceId?: string | null;
+    stallBeforeFirst?: boolean;
+    onStall?: () => void;
+    cancel?: () => unknown;
+    iteratorReturn?: () => Promise<IteratorResult<StreamedMessagePart>>;
+  } = {},
+): StreamedMessage {
+  let first = true;
+  const stream: StreamedMessage & { cancel(): unknown } = {
+    id: 'stalled-1',
+    usage: null,
+    finishReason: null,
+    rawFinishReason: null,
+    traceId: options.traceId,
+    cancel: () => options.cancel?.(),
+    [Symbol.asyncIterator]() {
+      return {
+        next(): Promise<IteratorResult<StreamedMessagePart>> {
+          if (first) {
+            first = false;
+            if (options.stallBeforeFirst !== true) {
+              return Promise.resolve({
+                done: false,
+                value: { type: 'think', think: 'partial' },
+              });
+            }
+          }
+          options.onStall?.();
+          return new Promise<never>(() => {});
+        },
+        return(): Promise<IteratorResult<StreamedMessagePart>> {
+          return (
+            options.iteratorReturn?.() ?? Promise.resolve({ done: true, value: undefined })
+          );
+        },
+      };
+    },
+  };
+  return stream;
 }
 
 interface FakeProvider {
@@ -299,6 +346,103 @@ describe('generate() abort contract', () => {
   });
 });
 
+describe('generate() stream idle deadline', () => {
+  it('throws a retryable stream timeout when no part arrives before the idle deadline', async () => {
+    const stream = createStalledStream({ traceId: 'trace-stalled' });
+    const { provider } = createFakeProvider(stream);
+    let caught: unknown;
+
+    try {
+      await generate(provider, SYSTEM_PROMPT, NO_TOOLS, HISTORY, undefined, {
+        streamIdleTimeoutMs: 10,
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(StreamIdleTimeoutError);
+    expect(caught).toMatchObject({
+      idleTimeoutMs: 10,
+      traceId: 'trace-stalled',
+    });
+    expect(isRetryableGenerateError(caught)).toBe(true);
+  });
+
+  it('throws a stream timeout when the first streamed part never arrives', async () => {
+    const stream = createStalledStream({ stallBeforeFirst: true });
+    const { provider } = createFakeProvider(stream);
+
+    await expect(
+      generate(provider, SYSTEM_PROMPT, NO_TOOLS, HISTORY, undefined, {
+        streamIdleTimeoutMs: 10,
+      }),
+    ).rejects.toBeInstanceOf(StreamIdleTimeoutError);
+  });
+
+  it('does not forward the stream idle deadline to the provider', async () => {
+    const stream = new FakeStreamedMessage([{ type: 'text', text: 'ok' }]);
+    const { provider, generateSpy } = createFakeProvider(stream);
+
+    await generate(provider, SYSTEM_PROMPT, NO_TOOLS, HISTORY, undefined, {
+      streamIdleTimeoutMs: 10,
+    });
+
+    expect(generateSpy.mock.calls[0]?.[3]).not.toHaveProperty('streamIdleTimeoutMs');
+  });
+
+  it('aborts the provider signal when the stream idle deadline expires', async () => {
+    const { provider, generateSpy } = createFakeProvider(createStalledStream());
+
+    await expect(
+      generate(provider, SYSTEM_PROMPT, NO_TOOLS, HISTORY, undefined, {
+        streamIdleTimeoutMs: 10,
+      }),
+    ).rejects.toBeInstanceOf(StreamIdleTimeoutError);
+
+    const providerOptions = generateSpy.mock.calls[0]?.[3] as GenerateOptions | undefined;
+    expect(providerOptions?.signal?.aborted).toBe(true);
+    expect(providerOptions?.signal?.reason).toBeInstanceOf(StreamIdleTimeoutError);
+  });
+
+  it('reports a stream timeout without waiting for stalled cleanup', async () => {
+    const cancel = vi.fn(() => new Promise<never>(() => {}));
+    const iteratorReturn = vi.fn(
+      () => new Promise<IteratorResult<StreamedMessagePart>>(() => {}),
+    );
+    const stream = createStalledStream({ cancel, iteratorReturn });
+    const { provider } = createFakeProvider(stream);
+
+    await expect(
+      generate(provider, SYSTEM_PROMPT, NO_TOOLS, HISTORY, undefined, {
+        streamIdleTimeoutMs: 10,
+      }),
+    ).rejects.toBeInstanceOf(StreamIdleTimeoutError);
+
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(iteratorReturn).toHaveBeenCalledOnce();
+  });
+
+  it('throws AbortError when the caller aborts while the stream is stalled', async () => {
+    const controller = new AbortController();
+    const stream = createStalledStream({ onStall: () => controller.abort() });
+    const { provider } = createFakeProvider(stream);
+    let caught: unknown;
+
+    try {
+      await generate(provider, SYSTEM_PROMPT, NO_TOOLS, HISTORY, undefined, {
+        signal: controller.signal,
+        streamIdleTimeoutMs: 10,
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(DOMException);
+    expect((caught as DOMException).name).toBe('AbortError');
+    expect(isRetryableGenerateError(caught)).toBe(false);
+  });
+});
+
 describe('generate() per-turn intent passthrough', () => {
   it('passes the GenerateOptions intent fields through to the provider', async () => {
     const stream = new FakeStreamedMessage([{ type: 'text', text: 'ok' }]);
@@ -315,6 +459,7 @@ describe('generate() per-turn intent passthrough', () => {
     await generate(provider, SYSTEM_PROMPT, NO_TOOLS, HISTORY, undefined, options);
 
     expect(generateSpy).toHaveBeenCalledTimes(1);
-    expect(generateSpy.mock.calls[0]?.[3]).toBe(options);
+    expect(generateSpy.mock.calls[0]?.[3]).toMatchObject(options);
+    expect(generateSpy.mock.calls[0]?.[3]?.signal).toBeInstanceOf(AbortSignal);
   });
 });

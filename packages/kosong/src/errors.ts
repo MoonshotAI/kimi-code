@@ -31,6 +31,33 @@ export class APITimeoutError extends ChatProviderError {
 }
 
 /**
+ * A provider stream stopped producing parts before its idle deadline.
+ */
+export class StreamIdleTimeoutError extends APITimeoutError {
+  readonly idleTimeoutMs: number;
+  readonly elapsedMs: number;
+  readonly traceId: string | null;
+
+  constructor(
+    providerName: string,
+    modelName: string,
+    idleTimeoutMs: number,
+    elapsedMs: number,
+    traceId: string | null,
+  ) {
+    const traceHint = traceId === null ? '' : `, traceId: ${traceId}`;
+    super(
+      `LLM stream stalled for ${idleTimeoutMs}ms ` +
+        `(provider: ${providerName}, model: ${modelName}, elapsedMs: ${elapsedMs}${traceHint}).`,
+    );
+    this.name = 'StreamIdleTimeoutError';
+    this.idleTimeoutMs = idleTimeoutMs;
+    this.elapsedMs = elapsedMs;
+    this.traceId = traceId;
+  }
+}
+
+/**
  * HTTP status error from the API.
  */
 export class APIStatusError extends ChatProviderError {

@@ -56,6 +56,30 @@ export class APITimeoutError extends ChatProviderError {
   }
 }
 
+export class StreamIdleTimeoutError extends APITimeoutError {
+  readonly idleTimeoutMs: number;
+  readonly elapsedMs: number;
+  readonly traceId: string | null;
+
+  constructor(
+    providerName: string,
+    modelName: string,
+    idleTimeoutMs: number,
+    elapsedMs: number,
+    traceId: string | null,
+  ) {
+    const traceHint = traceId === null ? '' : `, traceId: ${traceId}`;
+    super(
+      `LLM stream stalled for ${idleTimeoutMs}ms ` +
+        `(provider: ${providerName}, model: ${modelName}, elapsedMs: ${elapsedMs}${traceHint}).`,
+    );
+    this.name = 'StreamIdleTimeoutError';
+    this.idleTimeoutMs = idleTimeoutMs;
+    this.elapsedMs = elapsedMs;
+    this.traceId = traceId;
+  }
+}
+
 export class APIStatusError extends ChatProviderError {
   readonly statusCode: number;
   readonly requestId: string | null;
