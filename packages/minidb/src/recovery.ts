@@ -21,6 +21,9 @@ export type ValueMode = 'memory' | 'disk';
 export interface RecoveryInfo {
   snapshotFrames: number;
   walFrames: number;
+  /** On-disk sizes of the files recovery scanned (0 when absent). */
+  snapshotBytes: number;
+  walBytes: number;
   truncatedWal: boolean;
   corruptRanges: [number, number][];
   snapshotCorruptRanges: [number, number][];
@@ -144,10 +147,12 @@ export async function recover({
   const walPath = path.join(dir, 'db.wal');
 
   let snapshotFrames = 0;
+  let snapshotBytes = 0;
   let snapshotCorrupt: [number, number][] = [];
   if (fsSync.existsSync(snapPath)) {
     const fd = fsSync.openSync(snapPath, 'r');
     try {
+      snapshotBytes = fsSync.fstatSync(fd).size;
       const r = scanFrameRefsFd(fd, { onCorrupt: mode });
       applyFrames(r.frames, 'snapshot', fd, store, valueMode);
       snapshotFrames = r.frames.length;
@@ -158,6 +163,7 @@ export async function recover({
   }
 
   let walFrames = 0;
+  let walBytes = 0;
   let walCorrupt: [number, number][] = [];
   let truncatedWal = false;
   let walScanEnd = 0;
@@ -169,6 +175,7 @@ export async function recover({
     try {
       const st = fsSync.fstatSync(fd);
       walSize = st.size;
+      walBytes = st.size;
       walDev = st.dev;
       walIno = st.ino;
       const r = scanFrameRefsFd(fd, { onCorrupt: mode });
@@ -195,6 +202,8 @@ export async function recover({
   return {
     snapshotFrames,
     walFrames,
+    snapshotBytes,
+    walBytes,
     truncatedWal,
     corruptRanges: walCorrupt,
     snapshotCorruptRanges: snapshotCorrupt,

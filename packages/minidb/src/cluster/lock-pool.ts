@@ -173,6 +173,15 @@ export class ShardLockPool {
   async closeAll(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    // Opens already in flight are not in writers/readers yet: wait for every
+    // one of them to settle FIRST, so their entries land in the maps below and
+    // their handles get closed too. Without this a late open would outlive
+    // closeAll — holding its lock and recreating db.wal/lock files after the
+    // owner had already started tearing the directory down. New opens cannot
+    // start meanwhile: withWriter/withReader throw on this.closed.
+    for (const opening of [...this.openingWriters.values(), ...this.openingReaders.values()]) {
+      await opening.catch(() => {});
+    }
     const writers = [...this.writers.values()];
     const readers = [...this.readers.values()];
     this.writers.clear();

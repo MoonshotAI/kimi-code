@@ -11,6 +11,8 @@ async function tmpDir() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'minidb-stats-'));
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 // Frame overhead is 22 (header) + 4 (crc) = 26 bytes, plus key + value.
 const FRAME_OVERHEAD = 26;
 
@@ -86,6 +88,134 @@ test('batch writes a single frame (lower write amplification than per-key sets)'
     // Just assert it is far less than 10 individual SET frames would be.
     const individual = 10 * (FRAME_OVERHEAD + 2 + 2); // ~10 * 30 = 300
     assert.ok(db.stats.walBytesWritten < individual, `batch wrote ${db.stats.walBytesWritten} < ${individual}`);
+  } finally {
+    await db.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("everysec: idle db performs zero background fsyncs; a dirty window syncs once then goes quiet", async () => {
+  const dir = await tmpDir();
+  const db = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'everysec', syncIntervalMs: 25, autoCompact: false });
+  try {
+    await sleep(120);
+    assert.equal(db.stats.walFsyncs, 0, 'idle everysec db must not fsync in the background');
+
+    await db.set('k', 'v');
+    await sleep(120);
+    assert.equal(db.stats.walFsyncs, 1, 'the dirty interval fsyncs once');
+
+    await sleep(120);
+    assert.equal(db.stats.walFsyncs, 1, 'no fsync growth after the writes stopped');
+
+    await db.set('k2', 'v2');
+    await sleep(120);
+    assert.equal(db.stats.walFsyncs, 2, 'the next dirty window fsyncs once more');
+  } finally {
+    await db.close(); // final close sync runs after our assertions
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('everysec background sync failure is observable in stats but does not change write semantics', async () => {
+  const dir = await tmpDir();
+  const db = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'everysec', syncIntervalMs: 25, autoCompact: false });
+  try {
+    const fh = (db as unknown as { wal: { fh: { sync: () => Promise<void> } } }).wal.fh;
+    const orig = fh.sync.bind(fh);
+    const boom = new Error('injected fsync failure');
+    fh.sync = () => Promise.reject(boom);
+
+    // The cache-rebuildable write contract is unchanged: sets resolve from the
+    // page cache even while every background fsync fails.
+    await db.set('k', 'v');
+    await sleep(150);
+    assert.ok(db.stats.walFsyncErrors >= 1, `expected walFsyncErrors >= 1, got ${db.stats.walFsyncErrors}`);
+    assert.equal(db.stats.lastWalFsyncError, boom, 'the failure is observable via stats');
+    assert.equal(db.stats.walFsyncs, 0, 'no successful fsync yet');
+
+    fh.sync = orig;
+    await sleep(150);
+    assert.ok(db.stats.walFsyncs >= 1, 'background sync recovers once the failure clears');
+    assert.equal(db.stats.lastWalFsyncError, boom, 'sticky error survives later successes');
+  } finally {
+    await db.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('recovery stats capture scanned bytes, frames and duration at open', async () => {
+  const dir = await tmpDir();
+  const db = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false });
+  const N = 50;
+  for (let i = 0; i < N; i++) await db.set(`k${i}`, `v${i}`);
+  await db.close();
+
+  const walBytes = (await fs.stat(path.join(dir, 'db.wal'))).size;
+  const reopened = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false });
+  try {
+    assert.equal(reopened.stats.recoveryFrames, N, 'one frame per set replayed');
+    assert.equal(reopened.stats.recoveryBytes, walBytes, 'WAL bytes accounted (no snapshot yet)');
+    assert.ok(reopened.stats.recoveryDurationMs >= 0, 'duration recorded');
+    assert.equal(reopened.recoveryInfo.walBytes, walBytes);
+    assert.equal(reopened.recoveryInfo.snapshotBytes, 0);
+  } finally {
+    await reopened.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('compaction phase stats break down into snapshot/rotation/postings/total', async () => {
+  const dir = await tmpDir();
+  const db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+  try {
+    await db.createTextIndex('body', { fields: ['body'] });
+    for (let i = 0; i < 100; i++) await db.set(`k${i}`, { body: `message number ${i} hello world` });
+    await db.compact();
+
+    assert.equal(db.stats.compactions, 1);
+    assert.ok(db.stats.compactionDurationMs > 0, 'total recorded');
+    assert.ok(db.stats.compactionSnapshotDurationMs > 0, 'snapshot phase recorded');
+    assert.ok(db.stats.compactionRotationDurationMs > 0, 'rotation phase recorded');
+    assert.ok(db.stats.compactionPostingsDurationMs > 0, 'postings rebuild recorded');
+    assert.ok(db.stats.textRebuildDurationMs > 0, 'postings rebuild also counts as a text rebuild');
+    assert.ok(
+      db.stats.compactionSnapshotDurationMs + db.stats.compactionRotationDurationMs <= db.stats.compactionDurationMs,
+      'phases are bounded by the total',
+    );
+  } finally {
+    await db.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('query stats count candidates, decodes and sorted rows', async () => {
+  const dir = await tmpDir();
+  const db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+  try {
+    for (let i = 0; i < 100; i++) await db.set(`k${i}`, { n: i, grp: i % 10 === 0 ? 'x' : 'y' });
+
+    const c0 = db.stats.queryCandidates;
+    const d0 = db.stats.queryDecoded;
+    const s0 = db.stats.querySortedRows;
+
+    // Full-scan filter without sort: every candidate is decoded, nothing sorted.
+    const filtered = db.query({ filter: { grp: 'x' } });
+    assert.equal(filtered.length, 10);
+    assert.equal(db.stats.queryCandidates - c0, 100, 'every record was a candidate');
+    assert.equal(db.stats.queryDecoded - d0, 100, 'every candidate was decoded to match the filter');
+    assert.equal(db.stats.querySortedRows - s0, 0, 'no sort without sort/text');
+
+    // Same query with a sort: only the matched rows reach the sort.
+    const sorted = db.query({ filter: { grp: 'x' }, sort: { n: -1 } });
+    assert.equal(sorted.length, 10);
+    assert.equal(db.stats.querySortedRows - s0, 10, 'only matched rows are sorted');
+
+    // A bounded query decodes only until the limit is filled.
+    const c1 = db.stats.queryCandidates;
+    const page = db.query({ filter: { grp: 'x' }, limit: 3 });
+    assert.equal(page.length, 3);
+    assert.ok(db.stats.queryCandidates - c1 < 100, 'early exit stops before the full scan');
   } finally {
     await db.close();
     await fs.rm(dir, { recursive: true, force: true });

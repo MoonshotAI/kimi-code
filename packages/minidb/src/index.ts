@@ -145,6 +145,8 @@ export interface OpenOptions {
   dir: string;
   valueCodec?: ValueCodecName;
   fsyncPolicy?: FsyncPolicy;
+  /** Background-sync interval for fsyncPolicy 'everysec' (default 1000 ms). */
+  syncIntervalMs?: number;
   compactThresholdBytes?: number;
   autoCompact?: boolean;
   activeExpireIntervalMs?: number;
@@ -251,6 +253,7 @@ export class MiniDb<V = unknown> {
   private codec!: ValueCodec<V>;
   private codecName: ValueCodecName = 'buffer';
   fsyncPolicy: FsyncPolicy = 'everysec';
+  syncIntervalMs = 1000;
   private closed = false;
   recoveryInfo: RecoveryInfo | null = null;
   /** Continuation watermark for catchUpFromWal: the WAL inode + applied
@@ -278,10 +281,45 @@ export class MiniDb<V = unknown> {
     compactErrors: 0,
     walBytesWritten: 0,
     walFsyncs: 0,
+    /** Failed fsync attempts; a background everysec failure never rejects a
+     *  write — it surfaces only here and in lastWalFsyncError. */
+    walFsyncErrors: 0,
+    /** Sticky copy of the most recent fsync failure (never cleared). */
+    lastWalFsyncError: null as unknown,
+    /** Bytes currently queued in the live WAL's in-memory append buffer. */
+    walQueuedBytes: 0,
+    /** High-water mark of walQueuedBytes. */
+    walMaxQueuedBytes: 0,
+    /** WAL group commits (one per flushed batch) and the frames they carried. */
+    walGroupCommits: 0,
+    walGroupCommitFrames: 0,
     snapshotBytesWritten: 0,
     evictions: 0,
     maxMemoryRejections: 0,
     queryIndexHits: 0,
+    // ---- lifecycle phase metrics (cumulative wall-clock ms / counts) ----
+    /** Bytes and frames recovery scanned at open (snapshot + WAL). */
+    recoveryBytes: 0,
+    recoveryFrames: 0,
+    recoveryDurationMs: 0,
+    /** Open-time derived-index rebuilds (secondary + dt + compound). */
+    indexRebuildDurationMs: 0,
+    /** Text-index (re)builds: at open and after each compaction. */
+    textRebuildDurationMs: 0,
+    /** Whole successful compactions, hook included. */
+    compactionDurationMs: 0,
+    /** The non-blocking snapshot phase of compaction. */
+    compactionSnapshotDurationMs: 0,
+    /** The rotation critical section of compaction (writes park meanwhile). */
+    compactionRotationDurationMs: 0,
+    /** Text-postings rebuild after a compaction rotation. */
+    compactionPostingsDurationMs: 0,
+    /** Cumulative time write ops spent parked on a compaction rotation. */
+    compactionRotationPauseMs: 0,
+    /** Candidate keys iterated / values decoded / rows fed to a sort in query(). */
+    queryCandidates: 0,
+    queryDecoded: 0,
+    querySortedRows: 0,
   };
 
   /** Hook called by compaction after the store snapshot + WAL are rotated, so
@@ -289,7 +327,11 @@ export class MiniDb<V = unknown> {
    *  live set. Structural part of the CompactionTarget interface; the
    *  compaction awaits it, so it may be sync or async. */
   onCompacted: () => void | Promise<void> = async (): Promise<void> => {
+    const t0 = performance.now();
     await this.rebuildTextPostings();
+    const ms = performance.now() - t0;
+    this.stats.compactionPostingsDurationMs += ms;
+    this.stats.textRebuildDurationMs += ms;
   };
 
   static async open<V = unknown>(opts: OpenOptions): Promise<MiniDb<V>> {
@@ -301,6 +343,7 @@ export class MiniDb<V = unknown> {
     db.textIndexPath = path.join(db.dir, 'db.textindexes.json');
     db.compoundIndexPath = path.join(db.dir, 'db.compound-indexes.json');
     db.fsyncPolicy = opts.fsyncPolicy ?? 'everysec';
+    db.syncIntervalMs = opts.syncIntervalMs ?? 1000;
     db.codecName = opts.valueCodec ?? 'buffer';
     db.codec = CODECS[db.codecName] as ValueCodec<V>;
     const valueMode: ValueModeSetting = opts.valueMode ?? 'memory';
@@ -364,13 +407,14 @@ export class MiniDb<V = unknown> {
       },
     });
     try {
-      db.wal = new WAL(db.walPath, { fsyncPolicy: db.fsyncPolicy, stats: db.stats });
+      db.wal = new WAL(db.walPath, { fsyncPolicy: db.fsyncPolicy, syncIntervalMs: db.syncIntervalMs, stats: db.stats });
       // A read-only instance must not create or modify any file: the WAL is
       // constructed but never opened (opening with 'a' would create db.wal on
       // disk). Writes are already rejected by ensureWritable, and the unopened
       // WAL's size stays 0, so shouldCompact never fires for it.
       if (!db.readOnly) await db.wal.open();
 
+      const recT0 = performance.now();
       db.recoveryInfo = await recover({
         dir: db.dir,
         store: db.store,
@@ -378,6 +422,9 @@ export class MiniDb<V = unknown> {
         truncate: !db.readOnly,
         valueMode: db.valueMode,
       });
+      db.stats.recoveryDurationMs += performance.now() - recT0;
+      db.stats.recoveryBytes += db.recoveryInfo.snapshotBytes + db.recoveryInfo.walBytes;
+      db.stats.recoveryFrames += db.recoveryInfo.snapshotFrames + db.recoveryInfo.walFrames;
       // Recovery may have truncated a torn WAL tail behind the WAL's back;
       // re-sync its size bookkeeping so later appends (and their disk-mode
       // value pointers) are computed against the real, truncated file size.
@@ -513,10 +560,14 @@ export class MiniDb<V = unknown> {
   }
 
   private async rebuildAllIndexes(): Promise<void> {
+    const t0 = performance.now();
     this.indexes.rebuild(this._liveRecordsRaw());
     this.dt.rebuild([...this.liveRecords()].map(({ key, dt }) => ({ key: this.pk(key), dt })));
     this.compound.rebuild(this.liveRecords());
+    this.stats.indexRebuildDurationMs += performance.now() - t0;
+    const t1 = performance.now();
     for (const [, ti] of this.text) await ti.build(this.textRecords());
+    this.stats.textRebuildDurationMs += performance.now() - t1;
   }
 
   private *_liveRecordsRaw(): Generator<{ key: Buffer; value: unknown }> {
@@ -586,6 +637,17 @@ export class MiniDb<V = unknown> {
     if (this.autoCompact && !this.compacting && shouldCompact(this)) compact(this).catch(() => {});
   }
 
+  /** Park a write op while a compaction rotation is in flight, accounting the
+   *  wait so compactionRotationPauseMs reflects the writer-visible pause
+   *  (as opposed to compactionRotationDurationMs, the rotation's wall time). */
+  private async awaitRotation(): Promise<void> {
+    const rl = this._rotateLock;
+    if (!rl) return;
+    const t0 = performance.now();
+    await rl;
+    this.stats.compactionRotationPauseMs += performance.now() - t0;
+  }
+
   private hasUniqueIndexes(): boolean {
     for (const idx of this.indexes.indexes.values()) if (idx.unique) return true;
     return false;
@@ -624,7 +686,7 @@ export class MiniDb<V = unknown> {
       const closedMidRotation =
         this._rotateLock !== null && e instanceof Error && e.message === 'WAL is closed';
       if (!sealed && !closedMidRotation) throw e;
-      if (this._rotateLock) await this._rotateLock;
+      await this.awaitRotation();
       await commit();
     }
   }
@@ -771,7 +833,7 @@ export class MiniDb<V = unknown> {
     this.ensureOpen();
     this.ensureWritable();
     this.checkKey(key);
-    if (this._rotateLock) await this._rotateLock;
+    await this.awaitRotation();
     const op = this.prepareSet(key, value, { ttl, dt });
     await this.ensureMemoryFor([op]);
 
@@ -817,7 +879,7 @@ export class MiniDb<V = unknown> {
   async del(key: string | Buffer): Promise<boolean> {
     this.ensureOpen();
     this.ensureWritable();
-    if (this._rotateLock) await this._rotateLock;
+    await this.awaitRotation();
     const existed = this.store.has(toKStr(key));
     if (!existed) return false;
     const op = this.prepareDel(key);
@@ -842,7 +904,7 @@ export class MiniDb<V = unknown> {
   async batch(ops: readonly BatchInputOp<V>[]): Promise<void> {
     this.ensureOpen();
     this.ensureWritable();
-    if (this._rotateLock) await this._rotateLock;
+    await this.awaitRotation();
     if (!ops || ops.length === 0) return;
     const prepared = ops.map((o) => this.prepareOp(o));
     await this.ensureMemoryFor(prepared);
@@ -1068,7 +1130,7 @@ export class MiniDb<V = unknown> {
   async expire(key: string | Buffer, ttlMs: number): Promise<boolean> {
     this.ensureOpen();
     this.ensureWritable();
-    if (this._rotateLock) await this._rotateLock;
+    await this.awaitRotation();
     const k = toKStr(key);
     const cur = this.store.getRecord(k);
     if (cur === undefined) return false;
@@ -1457,6 +1519,7 @@ export class MiniDb<V = unknown> {
     const out: { key: string; value: V; dt: Record<string, number> | undefined }[] = [];
     let skipped = 0;
     for (const { key: kstr } of this.dt.iterate(col, iterOpts)) {
+      this.stats.queryCandidates++;
       let rejected = false;
       for (const c of eqChecks) {
         if (!this.indexes.hasEq(c.name, c.value, kstr)) {
@@ -1468,6 +1531,7 @@ export class MiniDb<V = unknown> {
       const buf = this.store.get(kstr);
       if (buf === undefined) continue;
       const r = this.store.map.get(kstr);
+      this.stats.queryDecoded++;
       const value = this.decode(buf)!;
       if (q.filter && !match(value, q.filter)) continue;
       if (skipped < skip) {
@@ -1548,9 +1612,11 @@ export class MiniDb<V = unknown> {
     const docs: ScanEntry<V>[] = [];
     let seen = 0;
     for (const k of keys) {
+      this.stats.queryCandidates++;
       const buf = this.store.get(k);
       if (buf === undefined) continue;
       const r = this.store.map.get(k);
+      this.stats.queryDecoded++;
       const value = this.decode(buf)!;
       if (q.filter && !match(value, q.filter)) continue;
       if (early) {
@@ -1563,11 +1629,13 @@ export class MiniDb<V = unknown> {
     }
 
     if (textOrder && !q.sort) {
+      this.stats.querySortedRows += docs.length;
       const rank = new Map(textOrder.map((h, i) => [h.key, i]));
       docs.sort((a, b) => (rank.get(a.key) ?? 1e9) - (rank.get(b.key) ?? 1e9));
     }
 
     if (q.sort) {
+      this.stats.querySortedRows += docs.length;
       const entries = Object.entries(q.sort);
       docs.sort((a, b) => {
         for (const [p, dir] of entries) {

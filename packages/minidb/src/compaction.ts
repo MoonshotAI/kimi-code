@@ -51,13 +51,15 @@ import { WAL } from './wal.js';
 import { renameReplace } from './rename-replace.js';
 import { writeSnapshot } from './snapshot.js';
 import type { Store, ValueLoc } from './store.js';
-import type { FsyncPolicy } from './wal.js';
+import type { FsyncPolicy, WalStats } from './wal.js';
 
 /** Structural interface of the bits compaction needs from a MiniDb. */
 export interface CompactionTarget {
   dir: string;
   walPath: string;
   fsyncPolicy: FsyncPolicy;
+  /** Background-sync interval the replacement WALs inherit (see WALOptions). */
+  syncIntervalMs?: number;
   store: Store;
   wal: WAL;
   compactThresholdBytes: number;
@@ -67,7 +69,16 @@ export interface CompactionTarget {
    *  Null outside rotation, so the snapshot phase is fully non-blocking. */
   _rotateLock: Promise<void> | null;
   lastCompactError: unknown;
-  stats: { compactions: number; walBytesWritten: number; walFsyncs: number; snapshotBytesWritten: number; compactErrors?: number };
+  stats: WalStats & {
+    compactions: number;
+    snapshotBytesWritten: number;
+    compactErrors?: number;
+    /** Cumulative phase timings (wall-clock ms). Optional so structural test
+     *  doubles need not carry them; MiniDb always provides them. */
+    compactionDurationMs?: number;
+    compactionSnapshotDurationMs?: number;
+    compactionRotationDurationMs?: number;
+  };
   /** Reader for disk-backed values; reopened after snapshot/WAL rotation so
    *  remapped value pointers read from the new files. On Windows it is also
    *  closed before the rotation renames (see rotateReplace). */
@@ -158,12 +169,14 @@ export async function compact(db: CompactionTarget): Promise<void> {
 
   db.compacting = true;
   db._compactDone = (async () => {
+    const t0 = performance.now();
     try {
       await runCompaction(db);
       // The onCompacted hook is part of the compaction: a run whose hook
       // throws is counted as a compactError, not a successful compaction.
       await db.onCompacted?.();
       db.stats.compactions++;
+      db.stats.compactionDurationMs = (db.stats.compactionDurationMs ?? 0) + (performance.now() - t0);
       db.lastCompactError = null;
     } catch (err) {
       db.stats.compactErrors = (db.stats.compactErrors ?? 0) + 1;
@@ -191,8 +204,10 @@ async function runCompaction(db: CompactionTarget): Promise<void> {
 
   // Phase 2: snapshot. NON-BLOCKING — writers keep appending to the WAL and
   // mutating the store while we iterate. Fuzziness is repaired by the tail.
+  const snapT0 = performance.now();
   const snapRes = await writeSnapshot(db.store, tmp);
   db.stats.snapshotBytesWritten += snapRes.bytes;
+  db.stats.compactionSnapshotDurationMs = (db.stats.compactionSnapshotDurationMs ?? 0) + (performance.now() - snapT0);
 
   // Phase 2.5: pre-copy the post-fence WAL tail into db.wal.tmp. NON-BLOCKING.
   // Each pass flushes to get a stable `head`, then copies the bytes that landed
@@ -246,6 +261,7 @@ async function runCompaction(db: CompactionTarget): Promise<void> {
   db._rotateLock = new Promise<void>((resolve) => {
     releaseRotation = resolve;
   });
+  const rotateT0 = performance.now();
   let rotated = false;
   let remapped = false;
   // Remap disk-backed value pointers to the new snapshot/WAL files. Guarded
@@ -290,7 +306,7 @@ async function runCompaction(db: CompactionTarget): Promise<void> {
     rotated = true;
     await fsyncDir(db.dir);
 
-    const fresh = new WAL(db.walPath, { fsyncPolicy: db.fsyncPolicy, stats: db.stats });
+    const fresh = new WAL(db.walPath, { fsyncPolicy: db.fsyncPolicy, syncIntervalMs: db.syncIntervalMs, stats: db.stats });
     db.wal = fresh;
     await fresh.open();
 
@@ -305,7 +321,7 @@ async function runCompaction(db: CompactionTarget): Promise<void> {
       // comes first: it both restores appendability and stops late in-flight
       // writers from publishing old-file value pointers against the fresh WAL.
       await db.wal.close().catch(() => {});
-      const fresh = new WAL(db.walPath, { fsyncPolicy: db.fsyncPolicy, stats: db.stats });
+      const fresh = new WAL(db.walPath, { fsyncPolicy: db.fsyncPolicy, syncIntervalMs: db.syncIntervalMs, stats: db.stats });
       await fresh.open();
       db.wal = fresh;
       if (rotated) {
@@ -319,5 +335,9 @@ async function runCompaction(db: CompactionTarget): Promise<void> {
   } finally {
     releaseRotation();
     db._rotateLock = null;
+    // Wall time of the rotation critical section — the window writers were
+    // parked (their per-op waits accumulate separately in MiniDb's
+    // compactionRotationPauseMs).
+    db.stats.compactionRotationDurationMs = (db.stats.compactionRotationDurationMs ?? 0) + (performance.now() - rotateT0);
   }
 }

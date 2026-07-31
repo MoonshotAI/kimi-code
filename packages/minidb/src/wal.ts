@@ -4,7 +4,9 @@
 // policies matching Redis AOF.
 //
 //   'always'   — write + fsync for every flush (safest, slowest)
-//   'everysec' — write every flush; fsync on a 1s timer (default; ≤1s loss window)
+//   'everysec' — write every flush; fsync on a 1s timer, but only while there
+//                are writes not yet covered by a successful fsync (default;
+//                ≤1s loss window; an idle WAL never fsyncs)
 //   'no'       — write only; let the OS flush (fastest, may lose seconds)
 //
 // Group commit: all append() calls within a tick are coalesced into a single
@@ -24,12 +26,33 @@ interface PendingWrite {
   reject: (err: unknown) => void;
 }
 
+/** Cumulative WAL counters, owned by MiniDb so they survive WAL rotation
+ *  during compaction (which replaces the WAL). */
+export interface WalStats {
+  walBytesWritten: number;
+  /** Successful fsyncs (write-path 'always', background 'everysec', close). */
+  walFsyncs: number;
+  /** Failed fsync attempts. A background everysec failure does not reject any
+   *  write — it is observable only here and via lastWalFsyncError. */
+  walFsyncErrors: number;
+  /** Sticky copy of the most recent fsync failure (never cleared on success). */
+  lastWalFsyncError: unknown;
+  /** Bytes currently sitting in the in-memory append queue. */
+  walQueuedBytes: number;
+  /** High-water mark of walQueuedBytes. */
+  walMaxQueuedBytes: number;
+  /** Number of group commits (one per flushed batch). */
+  walGroupCommits: number;
+  /** Total frames carried by those group commits. */
+  walGroupCommitFrames: number;
+}
+
 export interface WALOptions {
   fsyncPolicy?: FsyncPolicy;
   syncIntervalMs?: number;
   /** Optional sink for cumulative write/fsync counters. Owned by MiniDb so the
    *  counts survive WAL rotation during compaction (which replaces the WAL). */
-  stats?: { walBytesWritten: number; walFsyncs: number };
+  stats?: WalStats;
 }
 
 export class WAL {
@@ -52,7 +75,17 @@ export class WAL {
   private sealed = false;
   private timer: ReturnType<typeof setInterval> | null = null;
   private closed = false;
-  private readonly stats: { walBytesWritten: number; walFsyncs: number } | null;
+  private readonly stats: WalStats | null;
+  /** Durability watermark, Redis-AOF style: writeGen counts the writev batches
+   *  that landed in the OS page cache, syncedGen the watermark the last
+   *  successful fsync is known to cover. The WAL is dirty while they differ.
+   *  A generation (not a boolean) so a successful fsync never clears writes a
+   *  concurrent flush landed while the fsync was in flight. */
+  private writeGen = 0;
+  private syncedGen = 0;
+  /** Set while a background (everysec) sync is in flight, so a slow fsync
+   *  never stacks a second background fsync on top of itself. */
+  private bgSyncing = false;
 
   constructor(path: string, opts: WALOptions = {}) {
     const policy = opts.fsyncPolicy ?? 'everysec';
@@ -71,7 +104,19 @@ export class WAL {
     this.nextOffset = st.size;
     if (this.policy === 'everysec') {
       this.timer = setInterval(() => {
-        this.sync().catch(() => {});
+        // Skip idle ticks entirely: an everysec WAL with no unsynced writes
+        // must not fsync (the previous unconditional fsync cost one syscall +
+        // disk wake-up per second for the database's whole lifetime).
+        // Sync failures do not reject any write (the page-cache copy is the
+        // acknowledged one); they are recorded in stats.walFsyncErrors /
+        // lastWalFsyncError instead of being silently swallowed.
+        if (this.writeGen === this.syncedGen || this.bgSyncing) return;
+        this.bgSyncing = true;
+        this.sync()
+          .catch(() => {})
+          .finally(() => {
+            this.bgSyncing = false;
+          });
       }, this.syncIntervalMs);
       this.timer.unref?.();
     }
@@ -102,6 +147,12 @@ export class WAL {
     const done = new Promise<void>((resolve, reject) => {
       this.queue.push({ buf: frame, resolve, reject });
       this.queuedBytes += frame.length;
+      if (this.stats) {
+        this.stats.walQueuedBytes += frame.length;
+        if (this.stats.walQueuedBytes > this.stats.walMaxQueuedBytes) {
+          this.stats.walMaxQueuedBytes = this.stats.walQueuedBytes;
+        }
+      }
       if (!this.flushing && !this.scheduled) {
         this.scheduled = true;
         setImmediate(() => { void this.flushBatch(); });
@@ -125,7 +176,13 @@ export class WAL {
     const run = async () => {
       const batch = this.queue;
       this.queue = [];
+      const batchBytes = this.queuedBytes;
       this.queuedBytes = 0;
+      if (this.stats) {
+        this.stats.walQueuedBytes -= batchBytes;
+        this.stats.walGroupCommits++;
+        this.stats.walGroupCommitFrames += batch.length;
+      }
       // writev(2) may short-write (signal interruption, RLIMIT_FSIZE, …). Retry
       // until the whole batch lands so a partial write never rejects frames
       // whose in-memory side effects were already applied. Only a real I/O
@@ -139,6 +196,9 @@ export class WAL {
           if (bytesWritten === 0) throw new Error('WAL writev made no progress (short write)');
           this.size += bytesWritten;
           if (this.stats) this.stats.walBytesWritten += bytesWritten;
+          // The bytes are in the OS page cache but not necessarily on disk:
+          // the WAL is dirty until a successful fsync covers this generation.
+          this.writeGen++;
           let rem = bytesWritten;
           while (rem > 0 && bufs.length > 0) {
             const left = bufs[0]!.length - off;
@@ -181,12 +241,27 @@ export class WAL {
     this.nextOffset = st.size;
   }
 
-  /** Force an fsync of the underlying file. */
+  /** Force an fsync of the underlying file. On success the durability
+   *  watermark advances to the write generation sampled when the fsync was
+   *  issued; a failure is recorded (walFsyncErrors + sticky lastWalFsyncError)
+   *  and rethrown, and the WAL stays dirty. */
   async sync(): Promise<void> {
-    if (this.fh) {
+    if (!this.fh) return;
+    const gen = this.writeGen;
+    try {
       await this.fh.sync();
-      if (this.stats) this.stats.walFsyncs++;
+    } catch (err) {
+      if (this.stats) {
+        this.stats.walFsyncErrors++;
+        this.stats.lastWalFsyncError = err;
+      }
+      throw err;
     }
+    if (this.stats) this.stats.walFsyncs++;
+    // Only generations issued BEFORE this fsync may be marked synced: a flush
+    // that landed while the fsync was in flight is not covered by it, so the
+    // WAL stays dirty and the next tick syncs again.
+    if (this.syncedGen < gen) this.syncedGen = gen;
   }
 
   /** Flush buffered frames to the OS (without necessarily fsync'ing).

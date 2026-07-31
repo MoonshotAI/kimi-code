@@ -9,6 +9,7 @@
 
 import {
   bootstrap,
+  drainQueryStoreDisposals,
   IConfigService,
   IEventService,
   IProviderDiscoveryService,
@@ -367,10 +368,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     }
     try {
       core.dispose();
-      // `core.dispose()` triggers the search service's synchronous `dispose()`,
-      // whose minidb close is asynchronous — await it before releasing the
-      // instance registration (and before embedding hosts tear down homeDir).
+      // `core.dispose()` runs the search service's and query store's
+      // synchronous `dispose()`, whose minidb closes are asynchronous — await
+      // them before releasing the instance registration (and before embedding
+      // hosts tear down homeDir).
       await drainGlobalSearchDisposals();
+      await drainQueryStoreDisposals();
     } finally {
       await registration.release();
     }

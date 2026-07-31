@@ -81,6 +81,19 @@ function isRebuildable(error: unknown): boolean {
   return error instanceof SyntaxError || (error as { name?: string }).name === 'CorruptFrameError';
 }
 
+/**
+ * Fire-and-forget close promises produced by DI disposal (which is
+ * synchronous). The server shutdown path awaits these via
+ * `drainQueryStoreDisposals()` before the homeDir is released, so a teardown
+ * `rm()` never races an in-flight ClusterDb open/close (a late shard open
+ * would recreate db.wal and fail the rm with ENOTEMPTY).
+ */
+const pendingDisposals = new Set<Promise<void>>();
+
+export async function drainQueryStoreDisposals(): Promise<void> {
+  await Promise.all(pendingDisposals);
+}
+
 export class MiniDbQueryStore extends Disposable implements IQueryStore {
   declare readonly _serviceBrand: undefined;
 
@@ -96,7 +109,12 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
     super();
     this.dir = join(this.bootstrap.cacheDir, STORE_SUBDIR);
     this._register(toDisposable(() => {
-      void this.close();
+      // DI disposal is synchronous, but closing a ClusterDb is not: track the
+      // close module-level so the shutdown path (`drainQueryStoreDisposals`)
+      // can await it before the homeDir is torn down.
+      const pending = this.close().catch(() => {});
+      pendingDisposals.add(pending);
+      void pending.finally(() => pendingDisposals.delete(pending));
     }));
   }
 

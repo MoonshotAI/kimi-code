@@ -138,3 +138,38 @@ test('close releases every shard lock it holds', async () => {
     await rmrf(dir);
   }
 });
+
+test('close() waits for an in-flight shard open and releases its lock', async () => {
+  const dir = await tmpDir('minidb-cluster-');
+  try {
+    const key = keyOnShard('inflight', 0, 4);
+    const db1 = await ClusterDb.open({ dir, shardCount: 4, valueCodec: 'json' });
+    await db1.set(key, { holder: 1 }); // db1 holds shard 0
+
+    // lockHoldMs: 0 — an acquired writer never auto-yields, so a leaked handle
+    // would hold the shard lock indefinitely.
+    const db2 = await ClusterDb.open({ dir, shardCount: 4, valueCodec: 'json', lockAcquireTimeoutMs: 5_000, lockHoldMs: 0 });
+    // db2's shard-0 open is now stuck in the lock-retry loop behind db1.
+    const pendingSet = db2.set(key, { holder: 2 });
+    await sleep(50);
+    const t0 = performance.now();
+    const closing = db2.close();
+    // Release the holder mid-close: db2's in-flight open can now succeed —
+    // close() must still wait for it and close the freshly acquired handle.
+    await sleep(100);
+    await db1.close();
+
+    await pendingSet.catch(() => {}); // may resolve or reject; either is fine
+    await closing;
+    const waited = performance.now() - t0;
+    assert.ok(waited >= 80, `close() waited for the in-flight open to settle (${Math.round(waited)}ms)`);
+
+    // No leaked handle holds the shard lock: a fresh instance writes at once.
+    const db3 = await ClusterDb.open({ dir, shardCount: 4, valueCodec: 'json', lockAcquireTimeoutMs: 300, lockHoldMs: 0 });
+    await db3.set(key, { holder: 3 });
+    assert.deepEqual(await db3.get(key), { holder: 3 });
+    await db3.close();
+  } finally {
+    await rmrf(dir);
+  }
+});

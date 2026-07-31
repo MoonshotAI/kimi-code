@@ -1527,3 +1527,96 @@ describe('GlobalSearchService', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// stage-1 performance baseline over a synthetic corpus
+// ---------------------------------------------------------------------------
+// Numbers are logged as JSON for phase-to-phase comparison; only a loose
+// complexity budget is asserted (no tight absolute millisecond thresholds in
+// shared CI), so an accidental quadratic regression trips the test anywhere.
+
+describe('baseline: synthetic corpus', () => {
+  let home: string | undefined;
+  const services: GlobalSearchService[] = [];
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-kap-search-baseline-'));
+  });
+
+  afterEach(async () => {
+    for (const service of services.splice(0)) service.dispose();
+    await drainGlobalSearchDisposals();
+    if (home !== undefined) {
+      await rm(home, { recursive: true, force: true });
+      home = undefined;
+    }
+  });
+
+  const TOPICS = ['compaction', 'walrus', 'snapshot', 'recovery', '索引', '持久化'];
+
+  async function writeCorpus(from: number, to: number): Promise<SessionSummary[]> {
+    const summaries: SessionSummary[] = [];
+    for (let i = from; i < to; i++) {
+      const id = `s${i}`;
+      summaries.push(summary(id, `session ${i} 索引讨论`, T1 + i));
+      const lines: string[] = [];
+      for (let j = 0; j < 8; j++) {
+        lines.push(userLine(`session ${i} message ${j} about ${TOPICS[(i + j) % TOPICS.length]!}`, T1 + i * 100 + j));
+        lines.push(assistantLine(`reply ${j} covering ${TOPICS[(i + 2 * j) % TOPICS.length]!}`, T1 + i * 100 + j + 1));
+      }
+      await writeWire(home!, id, 'main', lines);
+    }
+    return summaries;
+  }
+
+  async function medianMs(fn: () => Promise<unknown>, runs = 5): Promise<number> {
+    const times: number[] = [];
+    for (let r = 0; r < runs; r++) {
+      const t0 = performance.now();
+      await fn();
+      times.push(performance.now() - t0);
+    }
+    times.sort((a, b) => a - b);
+    return times[(times.length / 2) | 0]!;
+  }
+
+  it('indexing and search latency scale within a linear budget from 100 to 400 sessions', async () => {
+    // The stub holds the array by reference, so the second reindex sees the
+    // sessions appended after the first measurement.
+    const all: SessionSummary[] = [];
+    const service = makeService(home!, staticIndex(all));
+    services.push(service);
+
+    all.push(...(await writeCorpus(0, 100)));
+    const t0 = performance.now();
+    await service.reindex();
+    const index100 = performance.now() - t0;
+    const terms100 = await medianMs(() => service.search({ query: 'compaction' }));
+    const literal100 = await medianMs(() => service.search({ query: 'message 3 about', mode: 'literal' }));
+
+    all.push(...(await writeCorpus(100, 400)));
+    const t1 = performance.now();
+    await service.reindex();
+    const index400 = performance.now() - t1;
+    const terms400 = await medianMs(() => service.search({ query: 'compaction' }));
+    const literal400 = await medianMs(() => service.search({ query: 'message 3 about', mode: 'literal' }));
+
+    // Sanity: the corpus really grew and both modes still hit.
+    const hits = await service.search({ query: 'compaction' });
+    expect(hits.items.length).toBeGreaterThan(0);
+    expect((await service.search({ query: 'message 3 about', mode: 'literal' })).items.length).toBeGreaterThan(0);
+
+    console.log(
+      `[baseline] searchService ${JSON.stringify({
+        sessions: [100, 400],
+        reindexMs: [index100, index400],
+        termsMedianMs: [terms100, terms400],
+        literalMedianMs: [literal100, literal400],
+      })}`,
+    );
+    // 4x the data must cost well under 10x the time at each step.
+    expect(index400).toBeLessThan(index100 * 10 + 2000);
+    expect(terms400).toBeLessThan(terms100 * 10 + 100);
+    expect(literal400).toBeLessThan(literal100 * 10 + 100);
+  }, 120_000);
+});

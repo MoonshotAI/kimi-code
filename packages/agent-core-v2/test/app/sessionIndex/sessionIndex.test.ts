@@ -17,7 +17,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { FileSessionIndex } from '#/app/sessionIndex/sessionIndexService';
-import { MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
+import { drainQueryStoreDisposals, MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -266,6 +266,9 @@ describe('FileSessionIndex (read model)', () => {
   afterEach(async () => {
     disposeHost?.();
     disposeHost = undefined;
+    // The host's synchronous dispose() fires the query store's async close;
+    // await it so the rm below never races an in-flight ClusterDb close.
+    await drainQueryStoreDisposals();
     await fsp.rm(homeDir, { recursive: true, force: true });
   });
 
@@ -460,5 +463,64 @@ describe('FileSessionIndex (read model)', () => {
     expect(await store.countActive([workspaceId])).toBe(1);
     // The lock is warned about once, then the read model stays disabled.
     expect(warnings).toEqual(['query-store locked by another process; disabling read model']);
+  });
+
+  // -- stage-1 performance baselines ------------------------------------------
+  // Not tight CI thresholds: numbers are logged as JSON for phase-to-phase
+  // comparison, and only a loose complexity budget is asserted so an
+  // accidental quadratic regression trips the test anywhere.
+
+  it('baseline: warm list() at 300 vs 1200 sessions stays within a linear budget', async () => {
+    const store = build();
+    // Session ids are enumerated from disk; summaries come from the read
+    // model. Seed empty session dirs + batch-put the summaries so the list
+    // path serves fully warm reads.
+    const seed = async (from: number, to: number): Promise<void> => {
+      const ops = [];
+      for (let i = from; i < to; i++) {
+        await fsp.mkdir(join(sessionsDir, workspaceId, `s${i}`), { recursive: true });
+        ops.push({
+          kind: 'put' as const,
+          collection: SESSION_COLLECTION,
+          key: `s${i}`,
+          value: summary(`s${i}`, { title: `session ${i}`, createdAt: i, updatedAt: i }),
+        });
+      }
+      await queryStore.batch(ops);
+    };
+    const medianListMs = async (): Promise<number> => {
+      const runs: number[] = [];
+      for (let r = 0; r < 5; r++) {
+        const t0 = performance.now();
+        const page = await store.list({ workspaceIds: [workspaceId], limit: 50 });
+        expect(page.items.length).toBe(50);
+        runs.push(performance.now() - t0);
+      }
+      runs.sort((a, b) => a - b);
+      return runs[(runs.length / 2) | 0]!;
+    };
+
+    await seed(0, 300);
+    const small = await medianListMs();
+    await seed(300, 1200);
+    const large = await medianListMs();
+    console.log(
+      `[baseline] sessionIndex warm list ${JSON.stringify({ sessions: [300, 1200], medianMs: [small, large] })}`,
+    );
+    // 4x the data must cost well under 10x the time (a linear top page is ~4x).
+    expect(large).toBeLessThan(small * 10 + 100);
+  }, 60_000);
+
+  it('baseline: cold backfill over 200 session dirs', async () => {
+    for (let i = 0; i < 200; i++) {
+      await seedSession(`s${i}`, { title: `session ${i}`, createdAt: i, updatedAt: i });
+    }
+    const store = build();
+    const t0 = performance.now();
+    const page = await store.list({ workspaceIds: [workspaceId], limit: 50 });
+    const ms = performance.now() - t0;
+    expect(page.items.length).toBe(50);
+    expect(page.items[0]?.id).toBe('s199');
+    console.log(`[baseline] sessionIndex cold backfill ${JSON.stringify({ sessions: 200, ms })}`);
   });
 });
