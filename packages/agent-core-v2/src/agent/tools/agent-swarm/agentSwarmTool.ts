@@ -45,7 +45,9 @@ import {
   buildSubagentModelDescriptions,
   resolveSubagentBinding,
   resolveSubagentTimeoutMs,
+  stripSubagentModelParameter,
 } from '#/session/subagent/configSection';
+import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import {
   AgentSwarmToolInputSchema,
   IAgentSwarmTool,
@@ -56,6 +58,9 @@ import {
 import AGENT_SWARM_DESCRIPTION from './agent-swarm.md?raw';
 
 const DEFAULT_SUBAGENT_TYPE = 'coder';
+
+const AGENT_SWARM_PARAMETERS = toInputJsonSchema(AgentSwarmToolInputSchema);
+const AGENT_SWARM_PARAMETERS_NO_MODEL = stripSubagentModelParameter(AGENT_SWARM_PARAMETERS);
 
 interface AgentSwarmSpawnSpec {
   readonly kind: 'spawn';
@@ -86,7 +91,17 @@ interface SwarmRunResult {
 export class AgentSwarmTool implements IAgentSwarmTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'AgentSwarm' as const;
-  readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentSwarmToolInputSchema);
+
+  /**
+   * The `model` choice only exists while the `secondary-model` experiment is
+   * on; off, the advertised schema drops it so the concept never enters the
+   * prompt. Read live per request (same as `description`).
+   */
+  get parameters(): Record<string, unknown> {
+    return this.flags.enabled(SECONDARY_MODEL_FLAG_ID)
+      ? AGENT_SWARM_PARAMETERS
+      : AGENT_SWARM_PARAMETERS_NO_MODEL;
+  }
 
   private readonly callerAgentId: string;
 
