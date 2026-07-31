@@ -121,7 +121,7 @@ export interface AnthropicOptions {
    * `/thinking` effort levels take effect. budget_tokens is still sent
    * (required by Anthropic's enabled-thinking contract; ignored by z.ai).
    */
-  effortParam?: boolean | undefined;
+  effortParam?: boolean;
   /**
    * Use the Anthropic **beta** Messages API (`client.beta.messages.create`,
    * `POST /v1/messages?beta=true`) instead of the standard Messages API.
