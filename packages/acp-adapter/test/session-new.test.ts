@@ -266,7 +266,9 @@ describe('AcpServer session/new', () => {
 
       const response = await client.newSession({ cwd: '/tmp/work', mcpServers: [] });
 
-      expect(fakeSession.getStatus).toHaveBeenCalledOnce();
+      // Called twice: once by resolveCurrentThinkingEffort, once by
+      // pushContextUsage (best-effort usage_update after session creation).
+      expect(fakeSession.getStatus).toHaveBeenCalledTimes(2);
       const thinking = response.configOptions?.find((option) => option.id === 'thinking');
       if (thinking?.type !== 'select') throw new Error('thinking option must be a select');
       expect(thinking.currentValue).toBe(expected);

@@ -546,6 +546,7 @@ export function contextUsageToUsageUpdate(
   maxContextTokens: number | undefined,
 ): SessionNotification | null {
   if (contextTokens === undefined || maxContextTokens === undefined) return null;
+  if (maxContextTokens <= 0) return null;
   return {
     sessionId,
     update: {

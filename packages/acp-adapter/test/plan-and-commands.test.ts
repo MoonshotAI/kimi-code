@@ -384,6 +384,11 @@ describe('contextUsageToUsageUpdate', () => {
   it('returns null when both values are undefined', () => {
     expect(contextUsageToUsageUpdate('sess-u', undefined, undefined)).toBeNull();
   });
+
+  it('returns null when maxContextTokens is zero or negative', () => {
+    expect(contextUsageToUsageUpdate('sess-u', 100, 0)).toBeNull();
+    expect(contextUsageToUsageUpdate('sess-u', 100, -1)).toBeNull();
+  });
 });
 
 describe('e2e · agent.status.updated emits usage_update', () => {

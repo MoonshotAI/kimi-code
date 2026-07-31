@@ -552,6 +552,41 @@ export class AcpSession {
   }
 
   /**
+   * Push a one-shot `usage_update` snapshot derived from the SDK
+   * `getStatus()` call. Best-effort — failures are logged and never
+   * surface to the client as errors.
+   *
+   * Called on session creation and after history replay so the client
+   * sees context usage immediately instead of waiting for the next
+   * `agent.status.updated` event (which only fires inside an active
+   * turn, via `runTurnBody`).
+   */
+  async pushContextUsage(): Promise<void> {
+    if (typeof this.session.getStatus !== 'function') return;
+    try {
+      const status = await this.session.getStatus();
+      const update = contextUsageToUsageUpdate(
+        this.id,
+        status.contextTokens,
+        status.maxContextTokens,
+      );
+      if (update !== null) {
+        this.conn.sessionUpdate(update).catch((err) => {
+          log.warn('acp: failed to push usage_update', {
+            sessionId: this.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
+    } catch (err) {
+      log.warn('acp: failed to push usage_update', {
+        sessionId: this.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
    * Replay the underlying SDK session's persisted history as a stream
    * of ACP `session/update` notifications.
    *

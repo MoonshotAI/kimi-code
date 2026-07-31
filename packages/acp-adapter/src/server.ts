@@ -416,6 +416,7 @@ export class AcpServer implements Agent {
       DEFAULT_MODE_ID,
     );
     this.scheduleAvailableCommandsUpdate(session.id);
+    void acpSession.pushContextUsage();
     return {
       sessionId: session.id,
       configOptions,
@@ -459,6 +460,7 @@ export class AcpServer implements Agent {
     // `resumeSession`, which intentionally omits this step.
     await acpSession.replayHistory();
     this.scheduleAvailableCommandsUpdate(session.id);
+    void acpSession.pushContextUsage();
     return { configOptions };
   }
 
@@ -489,6 +491,7 @@ export class AcpServer implements Agent {
       mode: 'resume',
     });
     this.scheduleAvailableCommandsUpdate(session.id);
+    void this.sessions.get(session.id)?.pushContextUsage();
     return { configOptions };
   }
 
