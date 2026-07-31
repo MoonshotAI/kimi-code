@@ -298,7 +298,7 @@ function toKosongProviderConfig(
         ...(provider.type === 'kimi'
           ? { kimiThinking: true, convertError: classifyKimiQuotaError }
           : {}),
-        ...(effortParam !== undefined ? { effortParam } : {}),
+        effortParam,
         ...(betaApi !== undefined ? { betaApi } : {}),
         // Session affinity: Anthropic's analog of OpenAI `prompt_cache_key` is
         // `metadata.user_id` on the Messages API (cache-affinity / end-user id).

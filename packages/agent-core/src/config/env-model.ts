@@ -140,7 +140,7 @@ export function applyEnvModelConfig(config: KimiConfig, env: Env = process.env):
     ...(maxOutputSize !== undefined ? { maxOutputSize } : {}),
     ...(reasoningKey !== undefined ? { reasoningKey } : {}),
     ...(adaptiveThinking !== undefined ? { adaptiveThinking } : {}),
-    ...(effortParam !== undefined ? { effortParam } : {}),
+    effortParam,
   };
 
   const thinkingEffort = trimmed(env['KIMI_MODEL_THINKING_EFFORT']);
