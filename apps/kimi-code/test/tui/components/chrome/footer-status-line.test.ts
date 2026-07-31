@@ -134,7 +134,7 @@ describe('FooterComponent status_line items', () => {
 });
 
 describe('runStatusLineCommand', () => {
-  it('passes the payload as JSON on stdin and returns the first stdout line', async () => {
+  it('passes the payload as JSON on stdin and returns stdout', async () => {
     const line = await runStatusLineCommand('cat', payload);
 
     expect(line).not.toBeNull();
@@ -156,10 +156,10 @@ describe('runStatusLineCommand', () => {
     expect(await runStatusLineCommand('sleep 2', payload, 100)).toBeNull();
   });
 
-  it('trims the line and ignores later lines', async () => {
+  it('preserves stdout lines', async () => {
     const line = await runStatusLineCommand('printf "first\\nsecond\\n"', payload);
 
-    expect(line).toBe('first');
+    expect(line).toBe('first\nsecond');
   });
 
   it('caps the captured output instead of accumulating an unending stream', async () => {
@@ -200,6 +200,46 @@ describe('FooterComponent status_line command', () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
 
     expect(plain(footer.render(120)[0]!)).toContain('kimi-k2');
+  });
+
+  it('renders command output as separate lines before the context readout', async () => {
+    const state: AppState = {
+      ...baseState,
+      statusLine: { items: null, command: 'printf "model\\nbranch\\nquota"' },
+    };
+    const footer = new FooterComponent(state);
+    footer.render(120);
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect(footer.render(120).map(plain)).toEqual([
+      'model',
+      'branch',
+      'quota',
+      expect.stringContaining('context: 0%'),
+    ]);
+  });
+
+  it('caps command output lines without dropping the context readout', async () => {
+    const output = 'line-1\\nline-2\\nline-3\\nline-4\\nline-5\\nline-6';
+    const state: AppState = {
+      ...baseState,
+      statusLine: { items: null, command: `printf "${output}"` },
+    };
+    const footer = new FooterComponent(state);
+    footer.render(120);
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const lines = footer.render(120).map(plain);
+    expect(lines).toEqual([
+      'line-1',
+      'line-2',
+      'line-3',
+      'line-4',
+      'line-5',
+      expect.stringContaining('context: 0%'),
+    ]);
   });
 });
 

@@ -2,10 +2,10 @@
  * User-provided status line command (`status_line.command` in tui.toml).
  *
  * The footer spawns the command with a JSON snapshot on stdin and renders the
- * first stdout line. Runs are throttled and time-boxed; any failure (spawn
+ * stdout. Runs are throttled and time-boxed; any failure (spawn
  * error, nonzero exit, timeout) yields null so the caller falls back to the
  * built-in layout. Mirrors Claude Code's statusLine contract at the seam:
- * JSON in, first line out, 300ms ceiling.
+ * JSON in, stdout out, 300ms ceiling.
  */
 
 import { spawn } from 'node:child_process';
@@ -13,6 +13,7 @@ import { spawn } from 'node:child_process';
 export const STATUS_LINE_COMMAND_TIMEOUT_MS = 300;
 export const STATUS_LINE_RERUN_INTERVAL_MS = 1_000;
 export const STATUS_LINE_MAX_CAPTURE_BYTES = 65_536;
+export const STATUS_LINE_MAX_RENDER_LINES = 5;
 
 export interface StatusLinePayload {
   model: string;
@@ -81,17 +82,8 @@ export function runStatusLineCommand(
     let stdout = '';
     child.stdout?.setEncoding('utf-8');
     child.stdout?.on('data', (chunk: string) => {
-      if (stdout.includes('\n')) return; // first line is complete
-      stdout += chunk;
-      // Only the first line is ever used; stop accumulating past it (and cap
-      // a missing-newline stream) so a chatty command can't grow memory
-      // unboundedly before the timeout lands.
-      const cut = stdout.indexOf('\n');
-      if (cut >= 0) {
-        stdout = stdout.slice(0, cut + 1);
-      } else if (stdout.length > STATUS_LINE_MAX_CAPTURE_BYTES) {
-        stdout = stdout.slice(0, STATUS_LINE_MAX_CAPTURE_BYTES);
-      }
+      if (stdout.length >= STATUS_LINE_MAX_CAPTURE_BYTES) return;
+      stdout += chunk.slice(0, STATUS_LINE_MAX_CAPTURE_BYTES - stdout.length);
     });
     child.on('error', () => {
       clearTimeout(timer);
@@ -103,8 +95,8 @@ export function runStatusLineCommand(
         finish(null);
         return;
       }
-      const firstLine = (stdout.split('\n')[0] ?? '').trimEnd();
-      finish(firstLine.length > 0 ? firstLine : null);
+      const output = stdout.trimEnd();
+      finish(output.length > 0 ? output : null);
     });
 
     child.stdin?.on('error', () => {

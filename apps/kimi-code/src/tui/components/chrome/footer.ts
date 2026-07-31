@@ -17,6 +17,7 @@ import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
 import {
+  STATUS_LINE_MAX_RENDER_LINES,
   StatusLineCommandRunner,
   type StatusLinePayload,
 } from '#/tui/utils/status-line-command';
@@ -276,15 +277,21 @@ export class FooterComponent implements Component {
 
     // ── Line 1: slots composed per status_line.items, or a user command ──
     let line1: string;
-    let customLine: string | null = null;
+    let customOutput: string | null = null;
     if (this.statusLineRunner !== null) {
       this.statusLineRunner.maybeRefresh(this.statusLinePayload());
-      customLine = this.statusLineRunner.current();
+      customOutput = this.statusLineRunner.current();
     }
 
-    if (customLine !== null) {
-      // status_line.command: the first stdout line takes over line 1.
-      line1 = chalk.hex(colors.text)(customLine);
+    const customLines =
+      customOutput === null
+        ? null
+        : customOutput
+            .split(/\r?\n/)
+            .slice(0, STATUS_LINE_MAX_RENDER_LINES)
+            .map((line) => chalk.hex(colors.text)(line));
+    if (customLines !== null) {
+      line1 = customLines[0] ?? '';
     } else {
       const slots = this.buildSlots(colors);
       const configured = this.state.statusLine?.items ?? null;
@@ -350,7 +357,11 @@ export class FooterComponent implements Component {
       line2 = ' '.repeat(leftPad) + chalk.hex(colors.text)(contextText);
     }
 
-    return [truncateToWidth(line1, width), truncateToWidth(line2, width)];
+    const renderedStatusLines = customLines ?? [line1];
+    return [
+      ...renderedStatusLines.map((line) => truncateToWidth(line, width)),
+      truncateToWidth(line2, width),
+    ];
   }
 
   /**

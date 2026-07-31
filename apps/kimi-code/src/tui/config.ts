@@ -41,7 +41,7 @@ export const StatusLineFileConfigSchema = z.object({
 export const StatusLineConfigSchema = z.object({
   /** Ordered built-in slots for footer line 1; null means the default layout. */
   items: z.array(z.enum(STATUS_LINE_ITEMS)).nullable(),
-  /** User command whose first stdout line replaces footer line 1; null disables. */
+  /** User command whose first five stdout lines precede the context readout; null disables. */
   command: z.string().nullable(),
 });
 export type StatusLineConfig = z.infer<typeof StatusLineConfigSchema>;
@@ -224,7 +224,7 @@ export function renderTuiConfig(config: TuiConfig): string {
       : `# [status_line]
 # Pick and order the built-in footer slots: ${STATUS_LINE_ITEMS.join(', ')}
 # items = ${JSON.stringify([...STATUS_LINE_ITEMS])}
-# Or render your own: a command whose first stdout line replaces footer line 1.
+# Or render your own: up to five stdout lines, followed by the built-in context readout.
 # It receives a JSON snapshot (model, cwd, git, usage, mode) on stdin.
 # command = "~/.kimi-code/statusline.sh"
 `;

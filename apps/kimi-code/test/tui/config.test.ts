@@ -35,6 +35,7 @@ describe('TUI config', () => {
     expect(text).toContain('Client preferences for kimi-code.');
     expect(text).toContain('theme = "auto"');
     expect(text).toContain('command = ""');
+    expect(text).toContain('up to five stdout lines, followed by the built-in context readout');
     expect(text).toContain('[upgrade]');
     expect(text).toContain('auto_install = true');
     expect(text).toContain('[notifications]');
