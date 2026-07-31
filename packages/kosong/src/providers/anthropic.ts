@@ -1259,7 +1259,8 @@ export class AnthropicChatProvider implements ChatProvider {
           ? ({ type: 'enabled' } as MessageCreateParams['thinking'])
           : { type: 'enabled', budget_tokens: budgetTokens };
       outputConfig =
-        (profile.supportsEffortParam || this._effortParam === true || budgetTokens === undefined) && effort !== 'on'
+        (profile.supportsEffortParam || this._effortParam === true || budgetTokens === undefined) &&
+        effort !== 'on'
           ? ({ effort } as MessageCreateParams['output_config'])
           : undefined;
     }
