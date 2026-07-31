@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-web: Reorder default permission options in Agent settings from safest to most permissive.
+web: Reorder permission modes from safest to most permissive in Agent settings and the mobile permission cycle.
