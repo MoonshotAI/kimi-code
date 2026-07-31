@@ -103,7 +103,7 @@ Hook 命令的工作目录是当前会话的项目目录。非 Windows 平台上
 | `UserPromptSubmit` | 用户提交的文本内容 | ✓ | 用户发送消息时触发；返回文本会附加到上下文；若阻断，本轮不调用模型 |
 | `UserPromptQueued` | 排队消息的文本内容 | — | 上一回合仍在运行、消息进入队列时触发；payload 含 `prompt_id`、`prompt` 和 `queue_length`（观察用） |
 | `PreToolUse` | 工具名 | ✓ | 工具调用前触发（权限检查前）；阻断后工具不会执行 |
-| `Stop` | 空字符串 | ✓ | 模型准备结束本轮时触发；阻断后可追加一条消息让模型继续 |
+| `Stop` | 空字符串 | ✓ | 模型准备结束本轮时触发；payload 通过 `last_assistant_message` 提供最后一条助手文本；阻断后可追加一条消息让模型继续 |
 | `TurnStarted` | 回合来源类型（如 `user`、`task`、`system_trigger`） | — | 新回合开始时触发；payload 含 `turn_id`、`origin_kind`、`origin_name` 和 `prompt`（观察用） |
 | `PostToolUse` | 工具名 | — | 工具成功执行后触发（观察用） |
 | `PostToolUseFailure` | 工具名 | — | 工具失败或被阻断后触发（观察用） |

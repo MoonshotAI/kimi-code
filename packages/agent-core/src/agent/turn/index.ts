@@ -8,6 +8,7 @@ import {
   APIProviderQuotaExhaustedError,
   APIStatusError,
   APITimeoutError,
+  extractText,
   inputTotal,
   isContextOverflowStatusError,
   type ContentPart,
@@ -942,9 +943,16 @@ export class TurnFlow {
               // 3. The external Stop hook gets exactly one continuation; the cap
               //    is intentionally separate from (and does not cap) goal mode.
               if (!stopHookContinuationUsed) {
+                const lastAssistant = this.agent.context.history.findLast(
+                  (entry) => entry.role === 'assistant',
+                );
                 const stopBlock = await this.agent.hooks?.triggerBlock('Stop', {
                   signal,
-                  inputData: { stopHookActive: stopHookContinuationUsed },
+                  inputData: {
+                    stopHookActive: stopHookContinuationUsed,
+                    last_assistant_message:
+                      lastAssistant === undefined ? '' : extractText(lastAssistant),
+                  },
                 });
                 signal.throwIfAborted();
                 if (stopBlock !== undefined) {

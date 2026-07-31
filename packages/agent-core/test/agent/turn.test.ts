@@ -1466,6 +1466,37 @@ describe('Agent turn flow', () => {
     expect(JSON.stringify(ctx.agent.context.data().history)).toContain('Second answer.');
   });
 
+  it('includes the final assistant message in the Stop hook payload', async () => {
+    const script = [
+      "let input='';",
+      "process.stdin.on('data',chunk=>input+=chunk);",
+      "process.stdin.on('end',()=>{",
+      'const payload=JSON.parse(input);',
+      "process.stdout.write(JSON.stringify({hookSpecificOutput:{permissionDecision:'deny',permissionDecisionReason:payload.last_assistant_message}}));",
+      '});',
+    ].join('');
+    const hookEngine = new HookEngine([
+      {
+        event: 'Stop',
+        command: `node -e ${JSON.stringify(script)}`,
+      },
+    ]);
+    const ctx = testAgent({ hookEngine });
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'Final answer for the hook.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Continued after the hook.' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.agent.context.data().history).toContainEqual({
+      role: 'user',
+      content: [{ type: 'text', text: 'Final answer for the hook.' }],
+      toolCalls: [],
+      origin: { kind: 'system_trigger', name: 'stop_hook' },
+    });
+  });
+
   it('cancels while waiting for a Stop hook', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-stop-hook-'));
     const marker = join(dir, 'started');
