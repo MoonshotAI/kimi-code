@@ -1569,6 +1569,12 @@ export class AgentTestContext {
     return this.snapshots.until('turn.ended');
   }
 
+  /** The agent's persisted wire journal (drains the persistence queue first). */
+  async persistedWireRecords(): Promise<WireRecord[]> {
+    await this.drainWirePersistence();
+    return this.persistedRecords();
+  }
+
   untilApprovalRequest(): Promise<EventSnapshot> {
     return this.snapshots.until('requestApproval');
   }

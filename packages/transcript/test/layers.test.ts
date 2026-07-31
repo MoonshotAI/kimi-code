@@ -1036,4 +1036,75 @@ describe('foldWireRecordFacts (cold facts)', () => {
     );
     expect(folded.interactions).toEqual([]);
   });
+
+  it('folds turn.ended records into the matching turn items', () => {
+    const base = baseWithMarker();
+    const folded = foldWireRecordFacts(
+      [
+        {
+          type: 'turn.ended',
+          turnId: 0,
+          reason: 'failed',
+          error: { code: 'provider.overloaded', message: 'Overloaded', name: 'APIStatusError', retryable: true },
+          durationMs: 1234,
+          time: 5000,
+        },
+      ],
+      base,
+    );
+    const turn = folded.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    // The base grouping hardcodes 'completed'; the record rewrites it.
+    expect(turn.state).toBe('failed');
+    // Only the error's message rides the transcript turn (mirrors the live path).
+    expect(turn.error).toBe('Overloaded');
+    expect(turn.durationMs).toBe(1234);
+    expect(turn.endedAt).toBe(new Date(5000).toISOString());
+    // Turn ends append no items.
+    expect(folded.items).toHaveLength(base.items.length);
+  });
+
+  it('applies turn.ended records last-wins per turn and folds blocked into failed', () => {
+    const base = baseWithMarker();
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.ended', turnId: 0, reason: 'failed', error: { message: 'boom' }, time: 1000 },
+        { type: 'turn.ended', turnId: 0, reason: 'cancelled', durationMs: 10, time: 2000 },
+      ],
+      base,
+    );
+    const turn = folded.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.state).toBe('cancelled');
+    // The last record replaces the whole terminal upsert — no earlier error.
+    expect(turn.error).toBeUndefined();
+    expect(turn.durationMs).toBe(10);
+    expect(turn.endedAt).toBe(new Date(2000).toISOString());
+
+    const blocked = foldWireRecordFacts(
+      [{ type: 'turn.ended', turnId: 0, reason: 'blocked', time: 3000 }],
+      base,
+    );
+    const blockedTurn = blocked.items[0];
+    if (blockedTurn?.kind !== 'turn') throw new Error('expected turn');
+    expect(blockedTurn.state).toBe('failed');
+  });
+
+  it('ignores turn.ended records with unknown turn ids or malformed payloads', () => {
+    const base = baseWithMarker();
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.ended', turnId: 9, reason: 'cancelled', time: 1000 },
+        { type: 'turn.ended', reason: 'completed', time: 2000 },
+        { type: 'turn.ended', turnId: 0, reason: 'not-a-reason', time: 3000 },
+      ],
+      base,
+    );
+    const turn = folded.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    // An unrecognized reason keeps the grouping default; only the timestamp lands.
+    expect(turn.state).toBe('completed');
+    expect(turn.endedAt).toBe(new Date(3000).toISOString());
+    expect(folded.items).toHaveLength(base.items.length);
+  });
 });

@@ -1,8 +1,8 @@
 /**
  * Cold-path fact fold: enrich a base snapshot (the turn tree built by
  * `groupMessagesIntoSnapshot`) with the durable facts carried by the
- * non-`context.*` wire records — tasks, interactions, todos, and the
- * goal/plan/swarm meta.
+ * non-`context.*` wire records — tasks, interactions, todos, turn ends, and
+ * the goal/plan/swarm meta.
  *
  * This is the second half of the cold rebuild: the engine persists these
  * records next to the context messages in the same `wire.jsonl`, and the live
@@ -15,10 +15,14 @@
  *    position (the base items carry no timestamps to interleave with), so
  *    they append IN RECORD ORDER at the END of the base items with an
  *    accurate `at` (record time). Entity state is complete.
+ *  - turn end facts (terminal state / durationMs / error message) are
+ *    rebuilt from the persisted `turn.ended` records when the journal
+ *    carries them; journals written before those records existed keep the
+ *    grouping default (`completed`).
  *  - live-only detail is never backfilled: step usage / finishReason /
- *    timing / retry, turn durationMs / error, tool inputText / progress, and
- *    task resultSummary / error / stateReason / usage exist only on live
- *    engine events — the persisted records do not carry them.
+ *    timing / retry, tool inputText / progress, and task resultSummary /
+ *    error / stateReason / usage exist only on live engine events — the
+ *    persisted records do not carry them.
  *  - prompts are NOT cold-rebuilt: the wire journal has no prompt records
  *    (`prompt.submitted/completed/aborted/steered` are in-memory eventBus
  *    events of the engine's prompt service, never persisted as Ops), so a
@@ -34,6 +38,7 @@ import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../mod
 import type { GoalMeta, GoalStatus, TranscriptMeta } from '../model/meta';
 import type { TranscriptTask } from '../model/task';
 import type { TodoItem, TranscriptTodo } from '../model/todo';
+import type { TranscriptTurn } from '../model/turn';
 import type { AgentTranscriptSnapshot } from '../ops/operation';
 
 export interface HistoryWireRecord {
@@ -97,6 +102,14 @@ interface PlanRevisionPayload {
   readonly bytes?: unknown;
 }
 
+/** `turn.ended` payload (the loop's terminal turn record). */
+interface TurnEndedPayload {
+  readonly turnId?: unknown;
+  readonly reason?: unknown;
+  readonly error?: unknown;
+  readonly durationMs?: unknown;
+}
+
 /** Engine task kinds (`AgentTaskInfoByKind`: process / agent / question) → transcript kinds. */
 function mapTaskKind(kind: unknown): TranscriptTask['kind'] {
   switch (kind) {
@@ -131,6 +144,28 @@ function mapInteractionEndState(
     return decision;
   }
   return 'cancelled';
+}
+
+/** Turn terminal state — mirrors the live path's `mapTurnEndState` (`blocked` folds into `failed`). */
+function mapTurnEndReason(reason: unknown): TranscriptTurn['state'] | undefined {
+  switch (reason) {
+    case 'completed':
+      return 'completed';
+    case 'cancelled':
+      return 'cancelled';
+    case 'failed':
+    case 'blocked':
+      return 'failed';
+    default:
+      return undefined;
+  }
+}
+
+/** The transcript turn carries only the terminal error's message. */
+function readTurnErrorMessage(error: unknown): string | undefined {
+  if (error === null || typeof error !== 'object') return undefined;
+  const message = (error as { message?: unknown }).message;
+  return typeof message === 'string' ? message : undefined;
 }
 
 /** Epoch-ms record times become ISO `at` stamps; ISO strings pass through. */
@@ -173,6 +208,8 @@ export function foldWireRecordFacts(
 ): AgentTranscriptSnapshot {
   const tasks = new Map<string, TranscriptTask>();
   const interactions = new Map<string, TranscriptInteraction>();
+  /** Latest `turn.ended` record per engine turn id (last-wins). */
+  const endedTurns = new Map<number, HistoryWireRecord>();
   let todo: TranscriptTodo | undefined;
   let goal: GoalMeta | undefined;
   let goalTouched = false;
@@ -379,6 +416,11 @@ export function foldWireRecordFacts(
         });
         break;
       }
+      case 'turn.ended': {
+        const payload = record as TurnEndedPayload;
+        if (typeof payload.turnId === 'number') endedTurns.set(payload.turnId, record);
+        break;
+      }
       default:
         break;
     }
@@ -391,6 +433,28 @@ export function foldWireRecordFacts(
       interactions.set(id, { ...entity, state: 'cancelled' });
     }
   }
+
+  // `turn.ended` records rewrite the matching base turn items (the engine's
+  // 0-based turn id aligns with the grouping ordinal — see groupTurns).
+  // Unmatched ids are ignored: grouping can drift when hidden origins consume
+  // engine turns the fold cannot see.
+  const items =
+    endedTurns.size > 0
+      ? base.items.map((item) => {
+          if (item.kind !== 'turn') return item;
+          const record = endedTurns.get(item.ordinal);
+          if (record === undefined) return item;
+          const payload = record as TurnEndedPayload;
+          return {
+            ...item,
+            state: mapTurnEndReason(payload.reason) ?? item.state,
+            endedAt: recordTimeIso(record) ?? item.endedAt,
+            durationMs:
+              typeof payload.durationMs === 'number' ? payload.durationMs : item.durationMs,
+            error: readTurnErrorMessage(payload.error) ?? item.error,
+          };
+        })
+      : base.items;
 
   const modesTouched = planActive !== undefined || swarmActive !== undefined;
   const meta: TranscriptMeta = {
@@ -416,7 +480,7 @@ export function foldWireRecordFacts(
 
   return {
     ...base,
-    items: appended.length > 0 ? [...base.items, ...appended] : base.items,
+    items: appended.length > 0 ? [...items, ...appended] : items,
     tasks: [...tasks.values()],
     interactions: [...interactions.values()],
     todos: todo !== undefined ? [todo] : base.todos,

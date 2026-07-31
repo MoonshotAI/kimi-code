@@ -84,7 +84,7 @@ import {
 } from './stepRequest';
 import { StepRequestQueue, type StepRequestBatch } from './stepRequestQueue';
 import { isDisplayablePromptOrigin, turnPromptText } from './turnEvents';
-import { cancelTurn, promptTurn, TurnModel } from './turnOps';
+import { cancelTurn, endTurn, promptTurn, TurnModel } from './turnOps';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
 
@@ -495,12 +495,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           : this.activeRequestTrace?.traceId;
       if (result !== undefined) {
         const error = result.type === 'failed' ? toKimiErrorPayload(result.error) : undefined;
+        const durationMs = Date.now() - startedAt;
+        this.wire.dispatch(endTurn({ turnId: turn.id, reason: result.type, error, durationMs }));
         this.eventBus.publish({
           type: 'turn.ended',
           turnId: turn.id,
           reason: result.type,
           error,
-          durationMs: Date.now() - startedAt,
+          durationMs,
         });
         if (error !== undefined) this.eventBus.publish({ type: 'error', ...error });
         if (result.type !== 'completed') {
