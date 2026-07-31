@@ -49,6 +49,7 @@ import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { toKimiErrorPayload } from '#/errors';
+import { extractText } from '#/kosong/contract/message';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
@@ -426,11 +427,15 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   private async runStop(ctx: AfterStepContext): Promise<string | undefined> {
     ctx.signal.throwIfAborted();
     if (this.stopHookContinuationUsed) return undefined;
+    const lastAssistant = this.context.get().findLast((entry) => entry.role === 'assistant');
 
     const block = await this.runner.triggerBlock('Stop', {
       signal: ctx.signal,
       sessionId: this.sessionContext.sessionId,
-      inputData: this.withSessionFacts({ stopHookActive: false }),
+      inputData: this.withSessionFacts({
+        stopHookActive: false,
+        last_assistant_message: lastAssistant === undefined ? '' : extractText(lastAssistant),
+      }),
     });
     ctx.signal.throwIfAborted();
     return block?.reason;
