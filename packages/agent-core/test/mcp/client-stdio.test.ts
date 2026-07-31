@@ -315,7 +315,7 @@ describe('mergeStdioEnv', () => {
     const merged = mergeStdioEnv({ HTTP_PROXY: 'http://corp:3128' }, { PATH: '/usr/bin' });
     expect(merged['HTTP_PROXY']).toBe('http://corp:3128');
     expect(merged['NODE_USE_ENV_PROXY']).toBe('1');
-    expect(merged['NO_PROXY']).toBe('localhost,127.0.0.1,::1,[::1]');
+    expect(merged['NO_PROXY']).toBe('localhost,127.0.0.1,::1');
     expect(merged['PATH']).toBe('/usr/bin');
   });
 

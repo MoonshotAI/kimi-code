@@ -24,6 +24,16 @@ export interface SocksProxyConfig {
 
 const LOOPBACK_NO_PROXY = ['localhost', '127.0.0.1', '::1', '[::1]'] as const;
 
+// Spawned child processes get the loopback list WITHOUT the bracketed
+// `[::1]`: Python's httpx (the HTTP client behind many MCP servers, e.g.
+// fastmcp-based ones) crashes on it with `Invalid port: ':1]'` while building
+// its proxy mounts, which kills every Python stdio MCP server at startup
+// whenever a proxy is configured. The bracketed form only exists for undici
+// 7.x's NO_PROXY parser (our own in-process dispatcher); for a child, losing
+// the bypass for literal `http://[::1]` URLs is a far smaller risk than
+// breaking every Python child outright.
+const CHILD_LOOPBACK_NO_PROXY = ['localhost', '127.0.0.1', '::1'] as const;
+
 const SOCKS_SCHEMES = new Set(['socks', 'socks4', 'socks4a', 'socks5', 'socks5h']);
 
 function schemeOf(value: string): string | undefined {
@@ -90,14 +100,17 @@ export function isProxyConfigured(env: Env): boolean {
   return hasHttpProxy(env) || resolveSocksProxy(env) !== undefined;
 }
 
-export function resolveNoProxy(env: Env): string {
+export function resolveNoProxy(
+  env: Env,
+  loopbackHosts: readonly string[] = LOOPBACK_NO_PROXY,
+): string {
   const raw = [env['no_proxy'], env['NO_PROXY']].find((value) => (value?.trim() ?? '').length > 0) ?? '';
   const hosts = raw
     .split(',')
     .map((host) => host.trim())
     .filter((host) => host.length > 0);
   if (hosts.includes('*')) return '*';
-  for (const loopback of LOOPBACK_NO_PROXY) {
+  for (const loopback of loopbackHosts) {
     if (!hosts.includes(loopback)) hosts.push(loopback);
   }
   return hosts.join(',');
@@ -232,7 +245,7 @@ export function installGlobalProxyDispatcher(
 
 export function proxyEnvForChild(env: Env): Record<string, string> {
   if (!hasHttpProxy(env)) return {};
-  const noProxy = resolveNoProxy(env);
+  const noProxy = resolveNoProxy(env, CHILD_LOOPBACK_NO_PROXY);
   const result: Record<string, string> = {
     NODE_USE_ENV_PROXY: '1',
     NO_PROXY: noProxy,
@@ -258,7 +271,7 @@ export function reconcileChildNoProxy(
     (value) => (value?.trim() ?? '').length > 0,
   );
   if (override === undefined) return;
-  const noProxy = resolveNoProxy({ no_proxy: override, NO_PROXY: override });
+  const noProxy = resolveNoProxy({ no_proxy: override, NO_PROXY: override }, CHILD_LOOPBACK_NO_PROXY);
   childEnv['NO_PROXY'] = noProxy;
   childEnv['no_proxy'] = noProxy;
 }

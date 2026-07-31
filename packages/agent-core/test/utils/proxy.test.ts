@@ -61,6 +61,15 @@ describe('resolveNoProxy', () => {
   it('falls through to NO_PROXY when no_proxy is set but blank', () => {
     expect(resolveNoProxy({ no_proxy: '', NO_PROXY: 'corp' })).toBe('corp,localhost,127.0.0.1,::1,[::1]');
   });
+
+  it('honors a custom loopback list (child form drops the bracketed [::1])', () => {
+    // Child processes get the list without `[::1]`: Python's httpx crashes on
+    // the bracketed entry with `Invalid port: ':1]'`.
+    expect(resolveNoProxy({}, ['localhost', '127.0.0.1', '::1'])).toBe('localhost,127.0.0.1,::1');
+    expect(resolveNoProxy({ NO_PROXY: 'corp' }, ['localhost', '127.0.0.1', '::1'])).toBe(
+      'corp,localhost,127.0.0.1,::1',
+    );
+  });
 });
 
 describe('resolveSocksProxy', () => {
@@ -343,11 +352,20 @@ describe('proxyEnvForChild', () => {
     // the resolved value or the protection/proxying is silently defeated.
     expect(proxyEnvForChild({ HTTP_PROXY: 'http://p:3128', NO_PROXY: 'corp' })).toEqual({
       NODE_USE_ENV_PROXY: '1',
-      NO_PROXY: 'corp,localhost,127.0.0.1,::1,[::1]',
-      no_proxy: 'corp,localhost,127.0.0.1,::1,[::1]',
+      NO_PROXY: 'corp,localhost,127.0.0.1,::1',
+      no_proxy: 'corp,localhost,127.0.0.1,::1',
       HTTP_PROXY: 'http://p:3128',
       http_proxy: 'http://p:3128',
     });
+  });
+
+  it('omits the bracketed [::1] from the child NO_PROXY (Python httpx crashes on it)', () => {
+    // The bracketed form is only needed by undici 7.x's in-process dispatcher;
+    // a child must get the bare loopback list, while a user-supplied `[::1]`
+    // in the parent's own NO_PROXY is preserved verbatim.
+    const env = proxyEnvForChild({ HTTP_PROXY: 'http://p:3128', NO_PROXY: 'corp,[::1]' });
+    expect(env['NO_PROXY']).toBe('corp,[::1],localhost,127.0.0.1,::1');
+    expect(env['no_proxy']).toBe('corp,[::1],localhost,127.0.0.1,::1');
   });
 
   it('synthesizes scheme-specific proxies from an http-scheme ALL_PROXY for the child', () => {
@@ -355,8 +373,8 @@ describe('proxyEnvForChild', () => {
     // ALL_PROXY-only parent must hand the child the scheme-specific vars.
     expect(proxyEnvForChild({ ALL_PROXY: 'http://proxy:8080' })).toEqual({
       NODE_USE_ENV_PROXY: '1',
-      NO_PROXY: 'localhost,127.0.0.1,::1,[::1]',
-      no_proxy: 'localhost,127.0.0.1,::1,[::1]',
+      NO_PROXY: 'localhost,127.0.0.1,::1',
+      no_proxy: 'localhost,127.0.0.1,::1',
       HTTP_PROXY: 'http://proxy:8080',
       http_proxy: 'http://proxy:8080',
       HTTPS_PROXY: 'http://proxy:8080',
@@ -385,32 +403,32 @@ describe('reconcileChildNoProxy', () => {
     // would shadow the server config's uppercase override (undici reads
     // lowercase first); the override must also keep the loopback bypass.
     const childEnv: Record<string, string> = {
-      NO_PROXY: 'corp,localhost,127.0.0.1,::1,[::1]',
-      no_proxy: 'corp,localhost,127.0.0.1,::1,[::1]',
+      NO_PROXY: 'corp,localhost,127.0.0.1,::1',
+      no_proxy: 'corp,localhost,127.0.0.1,::1',
     };
     reconcileChildNoProxy(childEnv, { NO_PROXY: 'server.local' });
-    expect(childEnv['NO_PROXY']).toBe('server.local,localhost,127.0.0.1,::1,[::1]');
-    expect(childEnv['no_proxy']).toBe('server.local,localhost,127.0.0.1,::1,[::1]');
+    expect(childEnv['NO_PROXY']).toBe('server.local,localhost,127.0.0.1,::1');
+    expect(childEnv['no_proxy']).toBe('server.local,localhost,127.0.0.1,::1');
   });
 
   it('prefers the first non-blank casing (lowercase) and keeps loopback', () => {
     const childEnv: Record<string, string> = { NO_PROXY: 'aug', no_proxy: 'aug' };
     reconcileChildNoProxy(childEnv, { no_proxy: 'lower', NO_PROXY: 'upper' });
-    expect(childEnv['NO_PROXY']).toBe('lower,localhost,127.0.0.1,::1,[::1]');
-    expect(childEnv['no_proxy']).toBe('lower,localhost,127.0.0.1,::1,[::1]');
+    expect(childEnv['NO_PROXY']).toBe('lower,localhost,127.0.0.1,::1');
+    expect(childEnv['no_proxy']).toBe('lower,localhost,127.0.0.1,::1');
   });
 
   it('does not let a blank lowercase no_proxy mask a populated NO_PROXY', () => {
     const childEnv: Record<string, string> = { NO_PROXY: 'aug', no_proxy: 'aug' };
     reconcileChildNoProxy(childEnv, { no_proxy: '', NO_PROXY: 'real.corp' });
-    expect(childEnv['NO_PROXY']).toBe('real.corp,localhost,127.0.0.1,::1,[::1]');
-    expect(childEnv['no_proxy']).toBe('real.corp,localhost,127.0.0.1,::1,[::1]');
+    expect(childEnv['NO_PROXY']).toBe('real.corp,localhost,127.0.0.1,::1');
+    expect(childEnv['no_proxy']).toBe('real.corp,localhost,127.0.0.1,::1');
   });
 
   it('passes the "*" wildcard override through verbatim', () => {
     const childEnv: Record<string, string> = {
-      NO_PROXY: 'corp,localhost,127.0.0.1,::1,[::1]',
-      no_proxy: 'corp,localhost,127.0.0.1,::1,[::1]',
+      NO_PROXY: 'corp,localhost,127.0.0.1,::1',
+      no_proxy: 'corp,localhost,127.0.0.1,::1',
     };
     reconcileChildNoProxy(childEnv, { NO_PROXY: '*' });
     expect(childEnv['NO_PROXY']).toBe('*');
