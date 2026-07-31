@@ -525,3 +525,48 @@ export function configOptionUpdateNotification(
     },
   };
 }
+
+/** One quota window of the managed platform's `/usages` payload. */
+export interface RateLimitRow {
+  readonly name?: string;
+  /** Human window, e.g. `5h` / `1w` — already folded by the parser. */
+  readonly window?: string;
+  readonly used: number;
+  readonly limit: number;
+  readonly resetAt?: string;
+}
+
+/** What `_meta.kimiCode.rateLimits` carries on a `usage_update` frame. */
+export interface RateLimitsReport {
+  readonly summary?: RateLimitRow;
+  readonly limits: readonly RateLimitRow[];
+  readonly booster?: {
+    readonly balanceCents: number;
+    readonly totalCents: number;
+    readonly currency: string;
+  };
+}
+
+/**
+ * Build the stable `usage_update` frame from the engine's session status,
+ * with the managed platform's quota attached as `_meta.kimiCode.rateLimits`
+ * when the provider reports it. The frame is standard (used/size); clients
+ * that do not read `_meta` still get the context ring — same extension
+ * pattern claude-agent-acp uses for its rateLimit payload.
+ */
+export function usageReportToSessionUpdate(
+  sessionId: string,
+  status: { contextTokens: number; maxContextTokens: number },
+  rateLimits?: RateLimitsReport,
+): SessionNotification {
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: 'usage_update',
+      used: status.contextTokens,
+      size: status.maxContextTokens,
+      // `undefined` never reaches the wire — JSON.stringify drops the key.
+      _meta: rateLimits === undefined ? undefined : { kimiCode: { rateLimits } },
+    },
+  };
+}

@@ -54,7 +54,9 @@ import {
   toolProgressToSessionUpdate,
   toolResultToSessionUpdate,
   turnEndReasonToStopReason,
+  usageReportToSessionUpdate,
 } from './events-map';
+import type { RateLimitsReport, RateLimitRow } from './events-map';
 import { acpModeToToggles, DEFAULT_MODE_ID, isAcpModeId, type AcpModeId } from './modes';
 import { outcomeToQuestionAnswer, questionItemToPermissionOptions } from './question';
 import { detectSlashIntent } from './slash';
@@ -544,6 +546,89 @@ export class AcpSession {
       await this.conn.sessionUpdate(configOptionUpdateNotification(this.id, snapshot));
     } catch (err) {
       log.warn('acp: failed to emit config_option_update', {
+        sessionId: this.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /** Quota answers move slowly; one `/usages` fetch per minute per session. */
+  private rateLimitsCache: { at: number; report: RateLimitsReport | undefined } | undefined;
+
+  /**
+   * The managed platform's quota for the session's provider, or undefined
+   * for any non-managed provider (the frame then carries no rateLimits).
+   * Best-effort: every failure mode collapses to a cached `undefined`
+   * rather than an error, because a ring that fails to load must never
+   * take the turn down with it.
+   */
+  private async loadRateLimitsReport(modelAlias?: string): Promise<RateLimitsReport | undefined> {
+    if (this.rateLimitsCache && Date.now() - this.rateLimitsCache.at < 60_000) {
+      return this.rateLimitsCache.report;
+    }
+    let report: RateLimitsReport | undefined;
+    try {
+      const auth = this.harness?.auth;
+      if (!this.harness || typeof this.harness.getConfig !== 'function' || !auth) {
+        this.rateLimitsCache = { at: Date.now(), report: undefined };
+        return undefined;
+      }
+      const config = await this.harness.getConfig();
+      const providerKey =
+        (modelAlias !== undefined ? config.models?.[modelAlias]?.provider : undefined) ??
+        config.defaultProvider;
+      // DEFAULT_OAUTH_PROVIDER_NAME in apps/kimi-code/src/constant/app.ts;
+      // only the managed platform exposes a /usages endpoint to read.
+      if (providerKey === 'managed:kimi-code') {
+        const res = await auth.getManagedUsage(providerKey);
+        if (res.kind === 'ok') {
+          const row = (r: {
+            name?: string;
+            window?: { duration: number; unit: string };
+            used: number;
+            limit: number;
+            resetAt?: string;
+          }): RateLimitRow => ({
+            name: r.name,
+            window: r.window ? `${String(r.window.duration)}${r.window.unit[0]}` : undefined,
+            used: r.used,
+            limit: r.limit,
+            resetAt: r.resetAt,
+          });
+          report = {
+            summary: res.summary === null ? undefined : row(res.summary),
+            limits: res.limits.map(row),
+            booster: res.extraUsage
+              ? {
+                  balanceCents: res.extraUsage.balanceCents,
+                  totalCents: res.extraUsage.totalCents,
+                  currency: res.extraUsage.currency,
+                }
+              : undefined,
+          };
+        }
+      }
+    } catch {
+      report = undefined;
+    }
+    this.rateLimitsCache = { at: Date.now(), report };
+    return report;
+  }
+
+  /**
+   * Push the stable `usage_update` frame (context used/size) with the
+   * managed quota in `_meta.kimiCode.rateLimits` when available. Emitted
+   * after every turn and on session open; fire-and-forget at the call
+   * sites, under the same idle-stream discipline as the other updates.
+   */
+  async emitUsageReport(): Promise<void> {
+    try {
+      if (typeof this.session.getStatus !== 'function') return;
+      const status = await this.session.getStatus();
+      const rateLimits = await this.loadRateLimitsReport(status.model);
+      await this.conn.sessionUpdate(usageReportToSessionUpdate(this.id, status, rateLimits));
+    } catch (err) {
+      log.warn('acp: failed to emit usage_update', {
         sessionId: this.id,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -1229,6 +1314,10 @@ export class AcpSession {
           if (settled) return;
           if (!isFromMainAgent(event)) return;
           settled = true;
+          // Context/quota accounting is final only now — emit it after
+          // every turn, whatever the reason (fire-and-forget; a quota
+          // fetch must never hold the prompt response).
+          void this.emitUsageReport();
           if (event.reason === 'failed') {
             // Failures bubble up via the SDK `error` payload. Phase 11.1
             // upgrades the prior "log + resolve end_turn" behaviour to

@@ -402,6 +402,8 @@ export class AcpServer implements Agent {
       currentThinkingEffort,
     );
     this.sessions.set(session.id, acpSession);
+    // The ring should appear on session open, not after the first turn.
+    void acpSession.emitUsageReport();
     // Phase 14 (PLAN D11) advertises both the model and mode pickers as
     // a unified `configOptions: SessionConfigOption[]` surface. The
     // dedicated Phase 12 `modes:` field is gone — see
@@ -612,6 +614,8 @@ export class AcpServer implements Agent {
       currentThinkingEffort,
       DEFAULT_MODE_ID,
     );
+    // The ring should appear on session open, not after the first turn.
+    void acpSession.emitUsageReport();
     return { session, acpSession, configOptions };
   }
 
