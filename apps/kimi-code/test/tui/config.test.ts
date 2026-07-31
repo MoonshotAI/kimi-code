@@ -164,12 +164,12 @@ describe('TUI config status_line', () => {
   it('parses items and command', () => {
     const config = parseTuiConfig(`
 [status_line]
-items = ["model", "git", "cwd"]
+items = ["provider", "model", "git", "cwd"]
 command = "~/.kimi-code/statusline.sh"
 `);
 
     expect(config.statusLine).toEqual({
-      items: ['model', 'git', 'cwd'],
+      items: ['provider', 'model', 'git', 'cwd'],
       command: '~/.kimi-code/statusline.sh',
     });
   });

@@ -60,6 +60,25 @@ function plain(text: string): string {
 }
 
 describe('FooterComponent status_line items', () => {
+  it('renders the active model provider as a configurable slot', () => {
+    const state: AppState = {
+      ...baseState,
+      model: 'custom-model',
+      availableModels: {
+        'custom-model': {
+          provider: 'custom-provider',
+          model: 'upstream-model',
+          displayName: 'Model Name',
+          maxContextSize: 128_000,
+        },
+      },
+      statusLine: { items: ['provider', 'model'], command: null },
+    };
+    const footer = new FooterComponent(state);
+
+    expect(plain(footer.render(120)[0]!).trimEnd()).toBe('custom-provider  Model Name');
+  });
+
   it('renders only the chosen slots in the given order', () => {
     const state: AppState = {
       ...baseState,

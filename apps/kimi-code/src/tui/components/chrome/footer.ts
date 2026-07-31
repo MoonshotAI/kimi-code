@@ -362,6 +362,7 @@ export class FooterComponent implements Component {
     const slots: Record<string, string[]> = {
       mode: [],
       goal: [],
+      provider: [],
       model: [],
       tasks: [],
       cwd: [],
@@ -386,11 +387,14 @@ export class FooterComponent implements Component {
     if (goalBadge !== null) slots['goal'] = [goalBadge];
 
     const model = modelDisplayName(state);
+    const rawCurrentModel = state.availableModels[state.model];
+    const currentModel =
+      rawCurrentModel === undefined ? undefined : effectiveModelAlias(rawCurrentModel);
+    if (currentModel?.provider) {
+      slots['provider'] = [chalk.hex(colors.text)(currentModel.provider)];
+    }
     if (model) {
       const effort = state.thinkingEffort;
-      const rawCurrentModel = state.availableModels[state.model];
-      const currentModel =
-        rawCurrentModel === undefined ? undefined : effectiveModelAlias(rawCurrentModel);
       // Only effort-capable models (those declaring support_efforts) show the
       // concrete effort; legacy boolean models keep the plain "thinking" suffix.
       const hasEfforts = (currentModel?.supportEfforts?.length ?? 0) > 0;
