@@ -77,6 +77,8 @@ export { FsWatcherService } from './fs/fsWatcherService';
 export {
   FsPathEscapesError,
   resolveSafePath,
+  isTempPath,
+  resolveTempPath,
 } from './fs/fsPathSafety';
 export type { PathSafetyResult } from './fs/fsPathSafety';
 

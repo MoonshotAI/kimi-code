@@ -32,7 +32,7 @@ import {
   type FsDownloadResolved,
   type FsPathResolved,
 } from './fs';
-import { FsPathEscapesError, resolveSafePath } from './fsPathSafety';
+import { FsPathEscapesError, resolveSafePath, resolveTempPath } from './fsPathSafety';
 
 const FS_READ_MAX_BYTES = 10 * 1024 * 1024;
 
@@ -55,6 +55,26 @@ export class FsService extends Disposable implements IFsService {
   override dispose(): void {
     this.gitignoreCache.clear();
     super.dispose();
+  }
+
+  /**
+   * Try resolveSafePath first; if the path is absolute and inside a system
+   * temp directory, fall back to resolveTempPath. This lets web clients
+   * preview files written to /tmp (or platform equivalents) without escaping
+   * the session workspace for normal relative paths.
+   */
+  private async resolveWithTempFallback(
+    cwd: string,
+    inputPath: string,
+  ): Promise<{ absolute: string; relative: string }> {
+    try {
+      return await resolveSafePath(cwd, inputPath);
+    } catch (err) {
+      if (err instanceof FsPathEscapesError && err.reason === 'absolute') {
+        return resolveTempPath(inputPath);
+      }
+      throw err;
+    }
   }
 
   async list(sessionId: string, req: FsListRequest): Promise<FsListResponse> {
@@ -163,7 +183,7 @@ export class FsService extends Disposable implements IFsService {
   async read(sessionId: string, req: FsReadRequest): Promise<FsReadResponse> {
     const session = await this.sessions.get(sessionId);
     const cwd = session.metadata.cwd;
-    const safe = await resolveSafePath(cwd, req.path);
+    const safe = await this.resolveWithTempFallback(cwd, req.path);
 
     let st: import('node:fs').Stats;
     try {
@@ -358,7 +378,7 @@ export class FsService extends Disposable implements IFsService {
   ): Promise<FsDownloadResolved> {
     const session = await this.sessions.get(sessionId);
     const cwd = session.metadata.cwd;
-    const safe = await resolveSafePath(cwd, relPath);
+    const safe = await this.resolveWithTempFallback(cwd, relPath);
     let st: import('node:fs').Stats;
     try {
       st = await fs.stat(safe.absolute);
@@ -392,7 +412,7 @@ export class FsService extends Disposable implements IFsService {
   ): Promise<FsPathResolved> {
     const session = await this.sessions.get(sessionId);
     const cwd = session.metadata.cwd;
-    const safe = await resolveSafePath(cwd, relPath);
+    const safe = await this.resolveWithTempFallback(cwd, relPath);
     let st: import('node:fs').Stats;
     try {
       st = await fs.stat(safe.absolute);
