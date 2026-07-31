@@ -393,6 +393,13 @@ export async function maybeLoadRustEngine(
   // fallback lives here rather than only in the schema.
   const engine = agentConfig?.engine ?? 'rust';
   if (engine !== 'rust') {
+    // The JS engine is deprecated: the Rust engine is the only engine since
+    // the v1/v2 migration reached parity. Keep the escape hatch for
+    // debugging, but make the retirement visible.
+    console.warn(
+      '[kimi-agent] agent.engine = "js" selects the deprecated JS engine — ' +
+        'the Rust engine is the supported engine. Remove the setting to use it.',
+    );
     // Warn if multiLlm is set but engine isn't rust — it's a no-op in this case.
     if (agentConfig?.multiLlm && agentConfig.multiLlm.length > 0) {
       console.warn(
