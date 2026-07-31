@@ -187,6 +187,7 @@ const ModelBaseSchema = z.object({
   displayName: z.string().optional(),
   reasoningKey: z.string().optional(),
   adaptiveThinking: z.boolean().optional(),
+  effortParam: z.boolean().optional(),
   betaApi: z.boolean().optional(),
   supportEfforts: z.array(z.string()).optional(),
   defaultEffort: z.string().optional(),

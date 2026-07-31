@@ -103,6 +103,7 @@ describe('kimiModelEnvOverlay.apply', () => {
       KIMI_MODEL_DISPLAY_NAME: 'Mine',
       KIMI_MODEL_REASONING_KEY: 'reasoning_content',
       KIMI_MODEL_ADAPTIVE_THINKING: 'true',
+      KIMI_MODEL_EFFORT_PARAM: 'true',
     });
     expect((effective['models'] as Record<string, unknown>)[ENV_MODEL_ALIAS_KEY]).toEqual({
       provider: ENV_MODEL_PROVIDER_KEY,
@@ -113,6 +114,7 @@ describe('kimiModelEnvOverlay.apply', () => {
       displayName: 'Mine',
       reasoningKey: 'reasoning_content',
       adaptiveThinking: true,
+      effortParam: true,
     });
 
     expect(() => apply({}, { KIMI_MODEL_NAME: 'm', KIMI_MODEL_MAX_CONTEXT_SIZE: 'abc' })).toThrowError(

@@ -150,6 +150,10 @@ export const kimiModelEnvOverlay: ConfigEffectiveOverlay = {
       getEnv('KIMI_MODEL_ADAPTIVE_THINKING'),
       'KIMI_MODEL_ADAPTIVE_THINKING',
     );
+    const effortParam = parseBooleanVar(
+      getEnv('KIMI_MODEL_EFFORT_PARAM'),
+      'KIMI_MODEL_EFFORT_PARAM',
+    );
 
     const alias: Record<string, unknown> = {
       provider: ENV_MODEL_PROVIDER_KEY,
@@ -161,6 +165,7 @@ export const kimiModelEnvOverlay: ConfigEffectiveOverlay = {
     if (maxOutputSize !== undefined) alias['maxOutputSize'] = maxOutputSize;
     if (reasoningKey !== undefined) alias['reasoningKey'] = reasoningKey;
     if (adaptiveThinking !== undefined) alias['adaptiveThinking'] = adaptiveThinking;
+    if (effortParam !== undefined) alias['effortParam'] = effortParam;
 
     const models = asRecord(effective['models']);
     const nextModels = { ...models, [ENV_MODEL_ALIAS_KEY]: alias };

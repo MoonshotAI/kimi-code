@@ -274,6 +274,28 @@ describe('Model assembly (pure data)', () => {
     }
   });
 
+  it('passes a declared effortParam through providerOptions for the Anthropic wire', () => {
+    const { host, catalog } = createHost({
+      providers: {
+        zai: {
+          type: 'anthropic',
+          apiKey: 'sk-z',
+          baseUrl: 'https://zai.example.test/api/anthropic',
+        },
+      },
+      models: {
+        glm: { provider: 'zai', model: 'glm-5.2', maxContextSize: 200000, effortParam: true },
+        plain: { provider: 'zai', model: 'glm-4.6', maxContextSize: 200000 },
+      },
+    });
+    try {
+      expect(catalog.get('glm').providerOptions).toEqual({ effortParam: true });
+      expect(catalog.get('plain').providerOptions).toBeUndefined();
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('enables google-genai vertex mode through providerOptions when project and location resolve', () => {
     const { host, catalog } = createHost({
       providers: {

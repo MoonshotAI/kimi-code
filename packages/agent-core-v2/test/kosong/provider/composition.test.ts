@@ -739,6 +739,37 @@ describe('per-turn intent wire encoding (behavior probes)', () => {
     // adds nothing else: no beta header reaches the wire at all.
     expect(requestOptions).toBeUndefined();
   });
+
+  it('emits output_config.effort on the budget path only with the effortParam opt-in', async () => {
+    // Third-party Anthropic-compatible endpoints (e.g. z.ai GLM over
+    // /api/anthropic) honor output_config.effort on the enabled thinking path
+    // even though their model name is not name-recognized.
+    // adaptiveThinking:false forces budget mode (supportsEffortParam:false),
+    // so effortParam is the ONLY way effort reaches the wire for these models.
+    const optedIn = new AnthropicChatProvider({
+      model: 'glm-5.2',
+      apiKey: 'sk-probe',
+      stream: false,
+      adaptiveThinking: false,
+      effortParam: true,
+    });
+    const { params } = await captureAnthropicBody(optedIn, { thinking: { effort: 'high' } });
+    expect(params['thinking']).toEqual({ type: 'enabled', budget_tokens: 32000 });
+    expect(params['output_config']).toEqual({ effort: 'high' });
+
+    // Same budget-mode config, no opt-in -> budget_tokens only.
+    const optedOut = new AnthropicChatProvider({
+      model: 'glm-5.2',
+      apiKey: 'sk-probe',
+      stream: false,
+      adaptiveThinking: false,
+    });
+    const { params: plainParams } = await captureAnthropicBody(optedOut, {
+      thinking: { effort: 'high' },
+    });
+    expect(plainParams['thinking']).toEqual({ type: 'enabled', budget_tokens: 32000 });
+    expect(plainParams['output_config']).toBeUndefined();
+  });
 });
 
 describe('quota-exhausted classification through the real composition (behavior probes)', () => {

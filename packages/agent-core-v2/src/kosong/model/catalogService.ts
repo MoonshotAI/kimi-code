@@ -610,6 +610,7 @@ function buildProtocolProviderOptions(
       if (model.maxOutputSize !== undefined) options.defaultMaxTokens = model.maxOutputSize;
       if (model.supportEfforts !== undefined) options.supportEfforts = model.supportEfforts;
       if (model.adaptiveThinking !== undefined) options.adaptiveThinking = model.adaptiveThinking;
+      if (model.effortParam !== undefined) options.effortParam = model.effortParam;
       if (model.betaApi !== undefined) options.betaApi = model.betaApi;
       break;
     case 'openai': {

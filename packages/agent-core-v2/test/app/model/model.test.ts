@@ -446,6 +446,7 @@ describe('kimiModelEnvOverlay', () => {
       KIMI_MODEL_DISPLAY_NAME: 'Custom Model',
       KIMI_MODEL_REASONING_KEY: 'reasoning',
       KIMI_MODEL_ADAPTIVE_THINKING: 'true',
+      KIMI_MODEL_EFFORT_PARAM: 'true',
       KIMI_MODEL_TEMPERATURE: '0.3',
       KIMI_MODEL_TOP_P: ' 0.95 ',
       KIMI_MODEL_THINKING_KEEP: 'all',
@@ -465,6 +466,7 @@ describe('kimiModelEnvOverlay', () => {
       displayName: 'Custom Model',
       reasoningKey: 'reasoning',
       adaptiveThinking: true,
+      effortParam: true,
     });
     expect(effective['modelOverrides']).toEqual({
       temperature: 0.3,
@@ -488,6 +490,7 @@ describe('kimiModelEnvOverlay', () => {
     ['KIMI_MODEL_MAX_CONTEXT_SIZE', '1.5'],
     ['KIMI_MODEL_MAX_OUTPUT_SIZE', 'nope'],
     ['KIMI_MODEL_ADAPTIVE_THINKING', 'maybe'],
+    ['KIMI_MODEL_EFFORT_PARAM', 'maybe'],
     ['KIMI_MODEL_TEMPERATURE', 'abc'],
     ['KIMI_MODEL_TEMPERATURE', '1.2.3'],
     ['KIMI_MODEL_TOP_P', 'NaN'],
