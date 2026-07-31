@@ -271,6 +271,11 @@ const DOMAIN_LAYER = new Map([
   ['contextSize', 4],
   ['fullCompaction', 4],
   ['loop', 4],
+  // `interruptionReminder` is the model-context aspect reacting to the loop's
+  // `turn.cancel` fact: it projects pending reminders into its own wire model
+  // and appends them through `systemReminder`, so it sits in L4 beside the
+  // other agent-behaviour aspects.
+  ['interruptionReminder', 4],
   ['stepRetry', 4],
   ['media', 4],
   // `edit` spans two scopes: the App-scope `IFileEditService` capability (pure

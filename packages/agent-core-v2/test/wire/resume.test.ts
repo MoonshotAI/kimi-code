@@ -119,7 +119,7 @@ describe('Agent resume', () => {
         }),
       );
       expect(persistence.appended).toContainEqual(
-        expect.objectContaining({ type: 'turn.interruption_reminded', turnId: 0 }),
+        expect.objectContaining({ type: 'interruptionReminder.recorded', turnId: 0 }),
       );
 
       await ctx.expectResumeMatches();

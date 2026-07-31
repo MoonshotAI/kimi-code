@@ -1052,7 +1052,7 @@ describe('interruption reminder', () => {
     expect(interruptionReminders()).toHaveLength(1);
     expect(
       ctx.allEvents.filter(
-        (entry) => entry.type === '[wire]' && entry.event === 'turn.interruption_reminded',
+        (entry) => entry.type === '[wire]' && entry.event === 'interruptionReminder.recorded',
       ),
     ).toHaveLength(1);
   });

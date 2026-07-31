@@ -1,10 +1,10 @@
 /**
- * `loop` domain (L4) — `IAgentLoopInterruptionReminderService` implementation.
+ * `interruptionReminder` domain (L4) — `IAgentInterruptionReminderService` implementation.
  *
  * Observes turn completion through `event`, persists reminder completion through
- * `turn`, reads conversation history through `contextMemory`, and appends
- * model-visible notices through `systemReminder`. Reconciles reminders left
- * pending by an interrupted restore. Bound at Agent scope.
+ * its own wire model, reads conversation history through `contextMemory`, and
+ * appends model-visible notices through `systemReminder`. Reconciles reminders
+ * left pending by an interrupted restore. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -16,8 +16,8 @@ import { IAgentSystemReminderService } from '#/agent/systemReminder/systemRemind
 import { IEventBus } from '#/app/event/eventBus';
 import { IWireService } from '#/wire/wire';
 
-import { IAgentLoopInterruptionReminderService } from './interruptionReminder';
-import { interruptionReminderRecorded, TurnModel } from './turnOps';
+import { IAgentInterruptionReminderService } from './interruptionReminder';
+import { interruptionReminderRecorded, InterruptionReminderModel } from './interruptionReminderOps';
 
 export const INTERRUPTION_REMINDER_VARIANT = 'interruption';
 
@@ -27,9 +27,9 @@ const INTERRUPTION_REMINDER = [
   "The user's next message continues the conversation.",
 ].join(' ');
 
-export class AgentLoopInterruptionReminderService
+export class AgentInterruptionReminderService
   extends Disposable
-  implements IAgentLoopInterruptionReminderService
+  implements IAgentInterruptionReminderService
 {
   declare readonly _serviceBrand: undefined;
 
@@ -55,12 +55,12 @@ export class AgentLoopInterruptionReminderService
   }
 
   private reconcilePendingReminders(): void {
-    const pending = this.wire.getModel(TurnModel).pendingUserInterruptionTurnIds;
+    const pending = this.wire.getModel(InterruptionReminderModel);
     for (const turnId of pending) this.recordReminder(turnId);
   }
 
   private recordReminder(turnId: number, allowUntracked = false): void {
-    const pending = this.wire.getModel(TurnModel).pendingUserInterruptionTurnIds.includes(turnId);
+    const pending = this.wire.getModel(InterruptionReminderModel).includes(turnId);
     if (!pending && !allowUntracked) return;
     if (!this.appendInterruptionReminder()) return;
     if (pending) this.wire.dispatch(interruptionReminderRecorded({ turnId }));
@@ -101,8 +101,8 @@ function lastDurableMessageOrigin(
 
 registerScopedService(
   LifecycleScope.Agent,
-  IAgentLoopInterruptionReminderService,
-  AgentLoopInterruptionReminderService,
+  IAgentInterruptionReminderService,
+  AgentInterruptionReminderService,
   ScopeActivation.OnScopeCreated,
-  'loop',
+  'interruptionReminder',
 );
