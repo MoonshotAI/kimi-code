@@ -6,6 +6,13 @@
  * headers vs the beta endpoint, and the thinking profile matrix (budget vs
  * adaptive).
  *
+ * `output_config.effort` is emitted only for name-recognized (adaptive)
+ * profiles; the `effortParam` option is an opt-in for third-party
+ * Anthropic-compatible endpoints (e.g. z.ai GLM over `/api/anthropic`) that
+ * honor effort on the enabled thinking path without a recognizable model
+ * name. budget_tokens is still sent there (required by Anthropic's
+ * enabled-thinking contract; ignored by such gateways).
+ *
  * The hook surface is `withThinking` plus `convertError`. `withThinking`
  * lets a vendor dialect running over this transport re-encode the thinking
  * intent; when the per-turn thinking intent carries `keep`, the BASE
@@ -144,16 +151,7 @@ export interface AnthropicOptions {
   stream?: boolean | undefined;
   adaptiveThinking?: boolean | undefined;
   supportEfforts?: readonly string[] | undefined;
-  /**
-   * Opt-in: declare that this model's endpoint honors Anthropic
-   * `output_config.effort` on the *enabled* thinking path. The provider only
-   * emits `output_config.effort` for model names it recognizes (adaptive
-   * profiles); third-party Anthropic-compatible endpoints that honor effort
-   * without a recognizable name (e.g. z.ai GLM over `/api/anthropic`) set
-   * this so `/thinking` effort levels take effect. budget_tokens is still
-   * sent (required by Anthropic's enabled-thinking contract; ignored by z.ai).
-   */
-  effortParam?: boolean | undefined;
+  effortParam?: boolean;
   betaApi?: boolean | undefined;
   thinkingEffort?: ThinkingEffort | undefined;
   clientFactory?: (auth: ProviderRequestAuth) => Anthropic;
