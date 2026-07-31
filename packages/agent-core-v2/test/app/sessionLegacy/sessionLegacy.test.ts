@@ -25,7 +25,7 @@ import { ISessionLegacyService } from '#/app/sessionLegacy/sessionLegacy';
 import { SessionLegacyService } from '#/app/sessionLegacy/sessionLegacyService';
 import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
-import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
+import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -52,7 +52,7 @@ function stubSessionChain(ix: TestInstantiationService, session: ISessionScopeHa
     kind: LifecycleScope.Workspace,
     accessor: accessor([
       [
-        IWorkspaceHandlerService,
+        ISessionLifecycleService,
         {
           resume: () => Promise.resolve(session),
           get: () => session,

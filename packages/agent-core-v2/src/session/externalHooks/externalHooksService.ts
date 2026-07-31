@@ -3,7 +3,7 @@
  * commands.
  *
  * Registers with the per-session `sessionLifecycleHooks` slots (seeded by
- * the Workspace-scope `workspaceHandler`, which runs them around
+ * the Workspace-scope `sessionLifecycle`, which runs them around
  * create/close) to run `SessionStart` and `SessionEnd` external commands
  * for the current `sessionContext`, and
  * observes the requester-side agent-run hook slot (`onWillStartAgentTask`) and

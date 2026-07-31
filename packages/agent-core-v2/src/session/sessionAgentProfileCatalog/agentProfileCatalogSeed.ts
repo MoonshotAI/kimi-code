@@ -10,7 +10,7 @@
  * view is seeded anymore. The key travels as a seed (rather than being
  * recomputed from the session's workDir) because the handler's id may be
  * folded from an alias spelling of the root. Seeded into the Session scope by
- * `workspaceHandler` when the session is materialized. Session-scoped.
+ * `sessionLifecycle` when the session is materialized. Session-scoped.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

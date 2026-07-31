@@ -12,7 +12,7 @@ import { type IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IWireService } from '#/wire/wire';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
-import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
+import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
@@ -81,7 +81,7 @@ function buildService(opts: {
         kind: LifecycleScope.Workspace,
         accessor: {
           get: (token: unknown): unknown => {
-            if (token === IWorkspaceHandlerService) {
+            if (token === ISessionLifecycleService) {
               return {
                 resume: (sessionId: string) =>
                   Promise.resolve(sessionId === opts.summary.id ? sessionHandle : undefined),

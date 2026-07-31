@@ -5,7 +5,7 @@
  * query facade over the set of persisted sessions (open or closed). It
  * enumerates sessions and derives session identity (`workspaceId`), returning
  * data (`SessionSummary`) or counts — never filesystem paths or live handles.
- * Writes (create / archive) live in `workspaceHandler` / `session`; the index
+ * Writes (create / archive) live in `sessionLifecycle` / `session`; the index
  * is a read model. Backends are deployment-specific (local filesystem today;
  * database / query store on a server).
  */

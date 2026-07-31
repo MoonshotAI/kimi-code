@@ -86,7 +86,7 @@ const DOMAIN_LAYER = new Map([
   // with no IO, so it sits in L1.
   ['sessionContext', 1],
   // `sessionLifecycleHooks` is the per-session lifecycle hook-slots seed
-  // (created by the Workspace-scope `workspaceHandler`, registered into by
+  // (created by the Workspace-scope `sessionLifecycle`, registered into by
   // Session-scope adapters such as `externalHooks`) plus the shared
   // create-source/close-reason vocabulary; a pure contract with no IO, so it
   // sits in L1 beside `sessionContext`.
@@ -123,10 +123,13 @@ const DOMAIN_LAYER = new Map([
   // Depends only on `_base`; sits in L1 beside the other program-control
   // layer substrates.
   ['task', 1],
-  // `state` is the per-scope keyed state container (`IStateService` /
-  // `ISessionStateService` / `IAgentStateService`, one per scope tier under
-  // `app/state`, `session/state`, `agent/state` — all resolve to this domain).
-  // It wraps the `_base` `StateRegistry` and depends on nothing else, so any
+  // `state` is the per-scope keyed state container (`IAppStateService` /
+  // `IWorkspaceStateService` / `ISessionStateService` / `IAgentStateService`,
+  // one per scope tier under `app/state`, `workspace/state`, `session/state`,
+  // `agent/state` — all resolve to this domain). It wraps the `_base`
+  // `StateRegistry`; each tier injects the parent tier's registry so
+  // `inspect()` cascades App → … → current scope (see the Rule 2b
+  // state-on-state exemption). It depends on nothing else, so any
   // domain may hold its plain-data state through it; sits in L1 beside `event`.
   ['state', 1],
   // `bashParser` is the App-scope adapter over the pure
@@ -242,7 +245,7 @@ const DOMAIN_LAYER = new Map([
   // `activityView` is the Agent-scope read model folding the agent's own event
   // bus into the activity projection (`agent.activity.updated`); it owns no
   // authoritative state (turn mechanics live in `loop`, admission/drain in
-  // `workspaceHandler`, background bookkeeping in `agentLifecycle`).
+  // `sessionLifecycle`, background bookkeeping in `agentLifecycle`).
   ['activityView', 4],
   ['context', 4],
   ['message', 4],
@@ -319,14 +322,15 @@ const DOMAIN_LAYER = new Map([
   ['btw', 5],
   // L6 — coordination
   ['agentLifecycle', 6],
-  // `workspaceHandler` is the Workspace-scope anchor of one materialized
+  // `sessionLifecycle` is the Workspace-scope anchor of one materialized
   // workspace: it owns the session lifecycle (create/resume/fork/close) of
-  // that workspace's sessions as its child scopes — the re-scoped heir of
-  // the deleted App-scope `sessionLifecycle` domain — so it sits in L6.
-  ['workspaceHandler', 6],
+  // that workspace's sessions as its child scopes. It revives the name of
+  // the deleted App-scope `sessionLifecycle` domain — formerly named
+  // `workspaceHandler` — so it sits in L6.
+  ['sessionLifecycle', 6],
   // `workspaceLifecycle` is the App-scope owner of the live handler registry
   // (create-or-get + in-flight join, handlers never closed). It coordinates
-  // the `workspace` catalog, `sessionIndex`, and the `workspaceHandler`
+  // the `workspace` catalog, `sessionIndex`, and the `sessionLifecycle`
   // domain, so it sits in L6 beside them.
   ['workspaceLifecycle', 6],
   // `subagent` drives turns on other agents (`run`) and hosts the
@@ -407,7 +411,9 @@ const TWO_LEVEL_SCOPES = new Set(['persistence', 'os', 'kosong']);
  * workspace lifecycle domain (`src/app/workspaceLifecycle/**`). Workspace
  * capabilities reach sessions only through session-domain contracts + scope
  * seeds. The numeric layers cannot express this (the workspace domains sit
- * at L6 beside their consumers), so it is checked directly.
+ * at L6 beside their consumers), so it is checked directly. One scoped
+ * exemption: the cross-tier `state` domain's own parent-chain injection
+ * (state-on-state imports) — see Rule 2b in `checkSource`.
  */
 const SESSION_AGENT_TIERS = new Set(['session', 'agent']);
 const WORKSPACE_LIFECYCLE_PREFIX = 'app/workspaceLifecycle/';
@@ -762,11 +768,20 @@ export function checkSource(source, absFile) {
 
     // Rule 2b: scope direction — Session/Agent tiers never import the
     // Workspace tier (`src/workspace/**` or `src/app/workspaceLifecycle/**`).
+    // Exemption: the `state` domain spans all four scope tiers as ONE L1
+    // domain (`app/state`, `workspace/state`, `session/state`, `agent/state`),
+    // and each per-tier service injects the parent tier's registry for the
+    // `inspect()` cascade — state-on-state imports are that domain's own
+    // shape, not a workspace-capability reach.
     const sourceTier = scopeTierOf(absFile);
     if (SESSION_AGENT_TIERS.has(sourceTier)) {
       const targetTier = scopeTierOf(targetAbs);
       const targetRel = relative(SRC_ROOT, targetAbs).split(/[\\/]/).join('/');
-      if (targetTier === 'workspace' || targetRel.startsWith(WORKSPACE_LIFECYCLE_PREFIX)) {
+      const stateOnState = sourceDomain === 'state' && targetDomainOf(targetAbs) === 'state';
+      if (
+        !stateOnState &&
+        (targetTier === 'workspace' || targetRel.startsWith(WORKSPACE_LIFECYCLE_PREFIX))
+      ) {
         violations.push({
           file: absFile,
           line,

@@ -8,7 +8,7 @@
  * connections exist) plus the initial-connect readiness promise. The contract
  * carries no IO of its own — connecting, reloading and watching MCP config
  * files live on the workspace side. Seeded into the Session scope by
- * `workspaceHandler` when the session is materialized; the Agent-scope `mcp`
+ * `sessionLifecycle` when the session is materialized; the Agent-scope `mcp`
  * mirror resolves it upward through the scope tree. Session-scoped.
  */
 

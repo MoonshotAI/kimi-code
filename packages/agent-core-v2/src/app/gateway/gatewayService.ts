@@ -2,7 +2,7 @@
  * `gateway` domain (L7) — `IRestGateway` / `IWSGateway` implementations.
  *
  * Owns the REST/WS entry points; resolves sessions through the live handler
- * registry (`workspaceLifecycle` → the handler's `IWorkspaceHandlerService`),
+ * registry (`workspaceLifecycle` → the handler's `ISessionLifecycleService`),
  * agents through `agentLifecycle`, drives turns through `prompt` / `loop`,
  * and flushes logs through `log`. Bound at App scope.
  *
@@ -20,7 +20,7 @@ import {
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ILogService } from '#/_base/log/log';
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
-import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
+import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentLoopService } from '#/agent/loop/loop';
 
@@ -45,7 +45,7 @@ export class RestGateway implements IRestGateway {
 
   private liveSession(sessionId: string) {
     for (const handler of this.workspaceLifecycle.handlers.list()) {
-      const handle = handler.accessor.get(IWorkspaceHandlerService).get(sessionId);
+      const handle = handler.accessor.get(ISessionLifecycleService).get(sessionId);
       if (handle !== undefined) return handle;
     }
     return undefined;

@@ -228,17 +228,17 @@ Read it as:
 - `──holds──►` = the ancestor owns a handle to the child scope (it stores the key, not the service). DI allows this.
 - `accessor.get(...)` = a **runtime borrow**, not a dependency edge. It must cross an `IScopeHandle`, run on demand, never be cached, and finish before the child scope is disposed.
 
-Worked example — `workspaceHandler`:
+Worked example — `sessionLifecycle`:
 
 ```text
-domain: `workspaceHandler`   (owning scope: Workspace)
+domain: `sessionLifecycle`   (owning scope: Workspace)
 ├─ serves (who uses me)
 │   ├─ (inject)   — (none)
 │   └─ (accessor)
 │       ├─ sessionLegacy     @App(edge)  — v1-compatible create/fork/archive/…
 │       └─ gateway / rpc     @App(edge)  — native v2 session lifecycle actions
 ├─ exposes (interfaces I provide, by scope)
-│   ├─ Workspace : IWorkspaceHandlerService — owns this workspace's live session scope tree
+│   ├─ Workspace : ISessionLifecycleService — owns this workspace's live session scope tree
 │   ├─ Session   : —                    — (per-session state lives in sessionMetadata / agentLifecycle / …)
 │   └─ Agent     : —                    — (per-agent state lives in agentLifecycle)
 └─ depends (what I inject)
@@ -252,17 +252,17 @@ domain: `workspaceHandler`   (owning scope: Workspace)
     └─ event             @App        direct  — broadcasts session-level facts (e.g. archived)
 ```
 
-Cross-scope borrow for `workspaceHandler`:
+Cross-scope borrow for `sessionLifecycle`:
 
 ```text
 App scope
   WorkspaceLifecycleService ──holds──► IScopeHandle(workspaceId)   (one per live handler)
                                             │
-                                            │  accessor.get(IWorkspaceHandlerService)
+                                            │  accessor.get(ISessionLifecycleService)
                                             │   └── resolve runs inside the Workspace scope
                                             ▼
                                       Workspace scope (workspaceId)
-                                        WorkspaceHandlerService ──holds──► IScopeHandle(sessionId)
+                                        SessionLifecycleService ──holds──► IScopeHandle(sessionId)
                                                                               │
                                                                               │  accessor.get(ISessionMetadata) …
                                                                               │   └── resolve runs inside the Session scope
@@ -274,8 +274,8 @@ App scope
 How the three lenses shaped it:
 
 - **Scope (§2)** → the live registry of one workspace's session scopes is per-handler, so it is Workspace-scoped; the process-wide handler registry lives in the App-scoped `workspaceLifecycle`; per-session data stays in Session-scoped services, reached through the handle's `accessor`.
-- **Dependency direction (§5)** → `workspaceHandler` is consumed by the edge via `accessor` borrows; it never imports the edge. Every downward arrow lands on a peer or a more foundational Service.
-- **Extension points (§4)** → new per-session behavior plugs into the Session-scoped services (`sessionMetadata`, `agentLifecycle`, `sessionActivity`); new transports stay at the edge. Neither edits `workspaceHandler`.
+- **Dependency direction (§5)** → `sessionLifecycle` is consumed by the edge via `accessor` borrows; it never imports the edge. Every downward arrow lands on a peer or a more foundational Service.
+- **Extension points (§4)** → new per-session behavior plugs into the Session-scoped services (`sessionMetadata`, `agentLifecycle`, `sessionActivity`); new transports stay at the edge. Neither edits `sessionLifecycle`.
 
 For a multi-scope split, the `exposes` block fills more than one scope — see the `records` pattern in §3.
 

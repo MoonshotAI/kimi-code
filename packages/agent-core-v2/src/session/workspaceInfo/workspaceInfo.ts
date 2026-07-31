@@ -8,7 +8,7 @@
  * (`.kimi-code/local.toml`), caller-dir merging and file watching all live
  * on the workspace side; the Session-scope `workspaceContext` read view
  * reads this seed and refreshes itself off `onDidChange`. Seeded into the
- * Session scope by `workspaceHandler` when the session is materialized.
+ * Session scope by `sessionLifecycle` when the session is materialized.
  * Session-scoped.
  */
 

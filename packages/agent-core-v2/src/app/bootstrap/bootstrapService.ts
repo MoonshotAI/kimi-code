@@ -6,7 +6,7 @@
  * `scope(name)` values and `configKey` are computed once at construction so
  * business code can read them synchronously. Session/agent persistence
  * addressing is NOT here — it derives from the workspace handler's
- * persistence scope (`workspaceHandler` addressing).
+ * persistence scope (`sessionLifecycle` addressing).
  *
  * Bound at App scope.
  */

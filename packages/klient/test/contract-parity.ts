@@ -44,7 +44,7 @@ import type {
   CreateChildSessionOptions,
   CreateSessionOptions,
   ForkSessionOptions,
-} from '@moonshot-ai/agent-core-v2/workspace/workspaceHandler/workspaceHandler';
+} from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/sessionLifecycle';
 import type {
   ApprovalRequest,
   ApprovalResponse,

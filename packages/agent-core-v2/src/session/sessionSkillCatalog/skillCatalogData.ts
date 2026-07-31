@@ -7,7 +7,7 @@
  * source-keyed change event. The contract carries no IO — discovery, merging
  * and rescanning all live on the workspace side; the Session-scope
  * `ISessionSkillCatalog` business view reads this seed and refreshes itself
- * off `onDidChange`. Seeded into the Session scope by `workspaceHandler` when
+ * off `onDidChange`. Seeded into the Session scope by `sessionLifecycle` when
  * the session is materialized. Session-scoped.
  */
 

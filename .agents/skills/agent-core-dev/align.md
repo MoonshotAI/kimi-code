@@ -63,7 +63,7 @@ Worked example — v1 `ISessionService` (one class, ~600 lines) holds:
 - this session's metadata → **per-session** unit → v2 `sessionMetaStore` (`ISessionMetaStore`, Session);
 - this session's activity / status → **per-session** unit → v2 `sessionActivity`;
 - this session's context projection → **per-session** unit → v2 `sessionContext`;
-- child-agent lifecycle driven by a session → **per-session** unit → v2 `agentLifecycle`; create/close/archive/fork of the session itself → **per-workspace** unit → v2 `workspaceHandler` (Workspace, one per live workspace handler).
+- child-agent lifecycle driven by a session → **per-session** unit → v2 `agentLifecycle`; create/close/archive/fork of the session itself → **per-workspace** unit → v2 `sessionLifecycle` (Workspace, one per live workspace handler).
 
 A v1 class that maps cleanly to one v1 decorator often becomes **three to five** v2 Services. That is expected and correct — do not try to keep the v1 class shape.
 

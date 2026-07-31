@@ -32,7 +32,7 @@ import {
   IOAuthToolkit,
   ISessionCronService,
   ISessionIndex,
-  IWorkspaceHandlerService,
+  ISessionLifecycleService,
   IWorkspaceLifecycleService,
   ITelemetryService,
   PRINT_MAX_TURNS_DEFAULT,
@@ -377,7 +377,7 @@ async function resolveNativeSession(
 
   const model = requireConfiguredModel(opts.model, defaultModel);
   const handler = await workspaceLifecycle.handlerFor({ root: workDir });
-  const session = await handler.accessor.get(IWorkspaceHandlerService).create({
+  const session = await handler.accessor.get(ISessionLifecycleService).create({
     workDir,
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
     mainAgentBinding: {

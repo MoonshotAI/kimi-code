@@ -36,8 +36,8 @@ import {
   workspaceContextSeed,
   type IWorkspaceContext,
 } from '#/workspace/workspaceContext/workspaceContext';
-import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
-import { workspacePersistenceScope } from '#/workspace/workspaceHandler/addressing';
+import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import { workspacePersistenceScope } from '#/workspace/sessionLifecycle/addressing';
 
 import {
   IWorkspaceLifecycleService,
@@ -68,7 +68,7 @@ export class WorkspaceLifecycleService extends Disposable implements IWorkspaceL
       const handler = this.live.get(workspaceId);
       if (handler === undefined) return [];
       return handler.accessor
-        .get(IWorkspaceHandlerService)
+        .get(ISessionLifecycleService)
         .list()
         .map((session) => session.id);
     },

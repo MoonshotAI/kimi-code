@@ -8,7 +8,7 @@
  * watched instruction file invalidates the snapshot. The contract carries no
  * IO — loading and watching live on the workspace side; consumers (the
  * agent's `profile` service) read the seed and re-read it off `onDidChange`.
- * Seeded into the Session scope by `workspaceHandler` when the session is
+ * Seeded into the Session scope by `sessionLifecycle` when the session is
  * materialized. Session-scoped.
  */
 

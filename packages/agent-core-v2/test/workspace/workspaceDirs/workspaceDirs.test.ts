@@ -2,7 +2,7 @@
  * Scenario: workspace-level add-dir (the phase-3.5 behavior contract).
  *
  * Drives the REAL handler chain (WorkspaceLifecycleService →
- * WorkspaceHandlerService) with the real `WorkspaceDirsService`, the real
+ * SessionLifecycleService) with the real `WorkspaceDirsService`, the real
  * node-fs `FileProjectLocalConfigService`, the real fs watch service, and
  * the real Session-scope `workspaceContext` view, and proves:
  * - a persisted `addDir` writes `.kimi-code/local.toml` and refreshes every
@@ -61,6 +61,10 @@ import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolic
 import { ISessionProcessRunner } from '#/session/process/processRunner';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
+import { IAppStateService } from '#/app/state/appState';
+import { AppStateService } from '#/app/state/appStateService';
+import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
+import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { SessionWorkspaceContextService } from '#/session/workspaceContext/workspaceContextService';
 import { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
@@ -70,8 +74,8 @@ import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader
 import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
-import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
-import { WorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandlerService';
+import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceToolPolicy';
 import { WorkspaceToolPolicyService } from '#/workspace/workspaceToolPolicy/workspaceToolPolicyService';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
@@ -196,10 +200,10 @@ describe('workspace add-dir (handler chain)', () => {
     );
     registerScopedService(
       LifecycleScope.Workspace,
-      IWorkspaceHandlerService,
-      WorkspaceHandlerService,
+      ISessionLifecycleService,
+      SessionLifecycleService,
       ScopeActivation.OnScopeCreated,
-      'workspaceHandler',
+      'sessionLifecycle',
     );
     registerScopedService(
       LifecycleScope.Workspace,
@@ -214,6 +218,20 @@ describe('workspace add-dir (handler chain)', () => {
       WorkspaceDirsService,
       ScopeActivation.OnScopeCreated,
       'workspaceDirs',
+    );
+    registerScopedService(
+      LifecycleScope.App,
+      IAppStateService,
+      AppStateService,
+      ScopeActivation.OnScopeCreated,
+      'state',
+    );
+    registerScopedService(
+      LifecycleScope.Workspace,
+      IWorkspaceStateService,
+      WorkspaceStateService,
+      ScopeActivation.OnScopeCreated,
+      'state',
     );
     registerScopedService(
       LifecycleScope.Session,
@@ -363,10 +381,10 @@ describe('workspace add-dir (handler chain)', () => {
   async function handlerFor(
     host: ScopedTestHost,
     root: string,
-  ): Promise<{ service: IWorkspaceHandlerService; dirs: IWorkspaceDirs }> {
+  ): Promise<{ service: ISessionLifecycleService; dirs: IWorkspaceDirs }> {
     const handler = await host.app.accessor.get(IWorkspaceLifecycleService).handlerFor({ root });
     return {
-      service: handler.accessor.get(IWorkspaceHandlerService),
+      service: handler.accessor.get(ISessionLifecycleService),
       dirs: handler.accessor.get(IWorkspaceDirs),
     };
   }

@@ -3,9 +3,10 @@
  *
  * Owns the typed `StateKey<T>` / `defineState(name, initial)` descriptor (the
  * state counterpart of wire's `defineModel`), the `IStateRegistry` base
- * interface shared by the per-scope state services (`IStateService` /
- * `ISessionStateService` / `IAgentStateService`), and the `StateRegistry`
- * implementation backing them: a `Map`-backed store where keys are declared
+ * interface shared by the per-scope state services (`IAppStateService` /
+ * `IWorkspaceStateService` / `ISessionStateService` / `IAgentStateService`),
+ * and the `StateRegistry` implementation backing them: a `Map`-backed store
+ * where keys are declared
  * up front (`register`), read and replaced (`get` / `set`), and observed
  * (`onDidChange(key)` per key, `onDidChangeAny` globally). Two exports serve
  * debugging: `entries()` returns the live key/value references for in-process
@@ -17,6 +18,13 @@
  * graphs are not, so a value that reaches into the DI object graph cannot
  * fan the copy out until the heap is exhausted. Misuse (duplicate registration, reading or writing an
  * unregistered key) is a caller bug and raises `BugIndicatingError`.
+ *
+ * Cascading inspection: each scope's state service keeps a reference to the
+ * parent scope's registry (`inspectParent`, assigned from the injected
+ * parent-tier state service; App is the root) and declares its tier name
+ * (`inspectScope`). `inspect()` folds that chain into a `StateInspection`
+ * tree — this scope's `snapshot()` plus the ancestors' — so one RPC call
+ * from any scope tier exports the whole App → … → current-scope state path.
  *
  * Values are stored as-is — the container does not freeze or clone, so
  * replacing the whole value via `set` is the recommended update style;
@@ -43,6 +51,17 @@ export interface StateChange {
   readonly value: unknown;
 }
 
+/**
+ * One scope tier's contribution to a cascading state inspection: the tier
+ * name, its JSON-safe `snapshot()`, and the parent tiers' inspections
+ * (absent at the App root).
+ */
+export interface StateInspection {
+  readonly scope: string;
+  readonly state: Record<string, unknown>;
+  readonly parent?: StateInspection;
+}
+
 export interface IStateRegistry {
   register<T>(key: StateKey<T>): void;
   has(key: StateKey<unknown>): boolean;
@@ -52,6 +71,7 @@ export interface IStateRegistry {
   readonly onDidChangeAny: Event<StateChange>;
   entries(): readonly [string, unknown][];
   snapshot(): Record<string, unknown>;
+  inspect(): StateInspection;
 }
 
 export class StateRegistry extends Disposable implements IStateRegistry {
@@ -59,6 +79,11 @@ export class StateRegistry extends Disposable implements IStateRegistry {
   private readonly keyEmitters = new Map<string, Emitter<unknown>>();
   private readonly anyEmitter = this._register(new Emitter<StateChange>());
   readonly onDidChangeAny: Event<StateChange> = this.anyEmitter.event;
+
+  /** Scope-tier name reported by `inspect()`; each scoped binding sets it. */
+  protected readonly inspectScope: string = 'unknown';
+  /** The parent scope's registry for the `inspect()` cascade; root = none. */
+  protected inspectParent?: IStateRegistry;
 
   register<T>(key: StateKey<T>): void {
     if (this.values.has(key.name)) {
@@ -106,6 +131,14 @@ export class StateRegistry extends Disposable implements IStateRegistry {
       out[key] = toJsonSafe(value, new WeakSet());
     }
     return out;
+  }
+
+  inspect(): StateInspection {
+    return {
+      scope: this.inspectScope,
+      state: this.snapshot(),
+      parent: this.inspectParent?.inspect(),
+    };
   }
 }
 

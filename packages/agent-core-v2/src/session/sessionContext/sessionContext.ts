@@ -7,7 +7,7 @@
  * `scope(subKey?)`
  * helper that returns the session's persistence scope (or a child under it,
  * e.g. `scope('agents/main/cron')`). Seeded into the Session scope by
- * `workspaceHandler` when the session is created.
+ * `sessionLifecycle` when the session is created.
  *
  * `cwd` is the default root the `process` runner spawns in and the seed the
  * `workspaceContext` derives its read-only `workDir` from. Pure facts — no

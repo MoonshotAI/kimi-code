@@ -19,14 +19,14 @@
  * The `POST /sessions/{tail}` actions split into two groups. The thin
  * pass-throughs — `fork` / `compact` / `abort` / `archive` / `restore` — call
  * the native v2 services directly (the workspace handler's
- * `IWorkspaceHandlerService.fork` / `archive` / `restore`, reached through the
+ * `ISessionLifecycleService.fork` / `archive` / `restore`, reached through the
  * `sessionIndex` → `IWorkspaceLifecycleService.handlerFor` composition,
  * `IAgentFullCompactionService.begin`, `IAgentRPCService.cancel`); there is no
  * v1-only projection to centralize, so no adapter is involved. `undo` likewise
  * calls `IAgentConversationUndoService.undo` directly (it throws
  * `session.undo_unavailable` with a structured reason) and only borrows
  * `ISessionLegacyService.status` for the cross-domain status rollup. The
- * `/sessions/{id}/children` endpoints call `IWorkspaceHandlerService.createChild`
+ * `/sessions/{id}/children` endpoints call `ISessionLifecycleService.createChild`
  * and `ISessionIndex.list({ childOf })` directly — the child markers and
  * parent-title default live in the lifecycle, and the child filter lives in the
  * index. Only `POST /sessions/{id}/profile` (`updateProfile`),
@@ -92,7 +92,7 @@ import {
   ISessionSecondaryModelWarningService,
   IEventService,
   IWorkspaceAliases,
-  IWorkspaceHandlerService,
+  ISessionLifecycleService,
   IWorkspaceLifecycleService,
   IWorkspaceService,
   getLiveSessionById,
@@ -318,7 +318,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       // Ensure the workspace is registered so `metadata.cwd` is resolvable on
       // read (gap G3 — v2 does not store workDir on the session). The session
       // is created through the workspace's handler (`handlerFor` → the
-      // handler's `IWorkspaceHandlerService`) — there is no App-scope session
+      // handler's `ISessionLifecycleService`) — there is no App-scope session
       // lifecycle entry point.
       try {
         const touched = await registry.createOrTouch(workDir);
@@ -326,7 +326,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         const handler = await core.accessor.get(IWorkspaceLifecycleService).handlerFor({
           root: workDir,
         });
-        const handle = await handler.accessor.get(IWorkspaceHandlerService).create({
+        const handle = await handler.accessor.get(ISessionLifecycleService).create({
           workDir,
         });
         if (typeof body.title === 'string') {
@@ -670,7 +670,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
               `session ${parsed.id} does not exist`,
             );
           }
-          const handle = await forkHandler.accessor.get(IWorkspaceHandlerService).fork({
+          const handle = await forkHandler.accessor.get(ISessionLifecycleService).fork({
             sourceSessionId: parsed.id,
             title: body.title,
             metadata: body.metadata,
@@ -770,7 +770,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           const restored =
             restoreHandler === undefined
               ? undefined
-              : await restoreHandler.accessor.get(IWorkspaceHandlerService).restore(parsed.id);
+              : await restoreHandler.accessor.get(ISessionLifecycleService).restore(parsed.id);
           if (restored === undefined) {
             throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
           }
@@ -793,11 +793,11 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         const archived =
           archiveHandler === undefined
             ? undefined
-            : await archiveHandler.accessor.get(IWorkspaceHandlerService).resume(parsed.id);
+            : await archiveHandler.accessor.get(ISessionLifecycleService).resume(parsed.id);
         if (archived === undefined || archiveHandler === undefined) {
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
         }
-        await archiveHandler.accessor.get(IWorkspaceHandlerService).archive(parsed.id);
+        await archiveHandler.accessor.get(ISessionLifecycleService).archive(parsed.id);
         requestLog(req)?.info({ session_id: parsed.id, action: 'archive' }, 'session action completed');
         reply.send(okEnvelope({ archived: true }, req.id));
       } catch (error) {
@@ -920,7 +920,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         if (childHandler === undefined) {
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
         }
-        const handle = await childHandler.accessor.get(IWorkspaceHandlerService).createChild({
+        const handle = await childHandler.accessor.get(ISessionLifecycleService).createChild({
           sourceSessionId: session_id,
           title: req.body.title,
           metadata: req.body.metadata,

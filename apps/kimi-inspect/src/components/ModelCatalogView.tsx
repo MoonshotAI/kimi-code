@@ -19,7 +19,7 @@
 
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
-import { IWorkspaceHandlerService } from '@moonshot-ai/agent-core-v2/workspace/workspaceHandler/workspaceHandler';
+import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/sessionLifecycle';
 import type { InspectionSource } from '@moonshot-ai/agent-core-v2/kosong/contract/inspection';
 import type { TokenUsage } from '@moonshot-ai/agent-core-v2/kosong/contract/usage';
 import {
@@ -410,7 +410,7 @@ function ModelSection({
       if (summary !== undefined) {
         await klient
           .workspace(summary.workspaceId)
-          .service(IWorkspaceHandlerService)
+          .service(ISessionLifecycleService)
           .resume(sessionId);
       }
       await klient

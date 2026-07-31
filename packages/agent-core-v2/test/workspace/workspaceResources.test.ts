@@ -3,7 +3,7 @@
  * phase-3 behavior contract).
  *
  * Drives the REAL handler chain (WorkspaceLifecycleService →
- * WorkspaceHandlerService) with the real Workspace-scope resource services
+ * SessionLifecycleService) with the real Workspace-scope resource services
  * and proves: one shared MCP connection manager (and one initial connect)
  * for two sessions of the same workspace, no skill rescan when the second
  * session lists skills, and the fs-watch fan-out refreshing a live session's
@@ -70,10 +70,14 @@ import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog
 import { SessionSkillCatalogService } from '#/session/sessionSkillCatalog/skillCatalogService';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
+import { IAppStateService } from '#/app/state/appState';
+import { AppStateService } from '#/app/state/appStateService';
+import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
+import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
-import { IWorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandler';
-import { WorkspaceHandlerService } from '#/workspace/workspaceHandler/workspaceHandlerService';
+import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceToolPolicy';
 import { WorkspaceToolPolicyService } from '#/workspace/workspaceToolPolicy/workspaceToolPolicyService';
 import { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
@@ -170,10 +174,10 @@ describe('workspace resource sharing (handler chain)', () => {
     );
     registerScopedService(
       LifecycleScope.Workspace,
-      IWorkspaceHandlerService,
-      WorkspaceHandlerService,
+      ISessionLifecycleService,
+      SessionLifecycleService,
       ScopeActivation.OnScopeCreated,
-      'workspaceHandler',
+      'sessionLifecycle',
     );
     registerScopedService(
       LifecycleScope.Workspace,
@@ -247,6 +251,8 @@ describe('workspace resource sharing (handler chain)', () => {
       'workspaceDirs',
     );
     registerScopedService(LifecycleScope.Session, ISessionSkillCatalog, SessionSkillCatalogService, ScopeActivation.OnScopeCreated, 'sessionSkillCatalog');
+    registerScopedService(LifecycleScope.App, IAppStateService, AppStateService, ScopeActivation.OnScopeCreated, 'state');
+    registerScopedService(LifecycleScope.Workspace, IWorkspaceStateService, WorkspaceStateService, ScopeActivation.OnScopeCreated, 'state');
     registerScopedService(LifecycleScope.Session, ISessionStateService, SessionStateService, ScopeActivation.OnScopeCreated, 'state');
     registerScopedService(LifecycleScope.App, IBuiltinSkillSource, BuiltinSkillSource, ScopeActivation.OnDemand, 'skillCatalog');
     registerScopedService(LifecycleScope.App, IUserFileSkillSource, UserFileSkillSource, ScopeActivation.OnDemand, 'skillCatalog');
@@ -378,11 +384,11 @@ describe('workspace resource sharing (handler chain)', () => {
     ]);
   }
 
-  async function handlerFor(root: string): Promise<IWorkspaceHandlerService> {
+  async function handlerFor(root: string): Promise<ISessionLifecycleService> {
     const handler = await (host as ScopedTestHost).app.accessor
       .get(IWorkspaceLifecycleService)
       .handlerFor({ root });
-    return handler.accessor.get(IWorkspaceHandlerService);
+    return handler.accessor.get(ISessionLifecycleService);
   }
 
   it('runs one shared MCP manager and one initial connect for two concurrent sessions', async () => {

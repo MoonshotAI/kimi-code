@@ -18,7 +18,7 @@ import {
   ISessionContext,
   ISessionIndex,
   ISessionMetadata,
-  IWorkspaceHandlerService,
+  ISessionLifecycleService,
   IWorkspaceLifecycleService,
   IWorkspaceService,
   getLiveSessionById,
@@ -82,7 +82,7 @@ describe('server-v2 snapshot route enrichment', () => {
     const handler = {
       accessor: fakeAccessor([
         [
-          IWorkspaceHandlerService,
+          ISessionLifecycleService,
           { resume: async () => session, get: () => undefined },
         ],
       ]),

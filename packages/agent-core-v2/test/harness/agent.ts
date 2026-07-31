@@ -14,6 +14,7 @@ import { escapeXmlAttr } from '#/_base/utils/xml-escape';
 import type { AgentTaskInfo } from '#/agent/task/task';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
+import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { CHECKPOINTED_MODELS, type Checkpointed } from '#/agent/contextMemory/conversationTime';
@@ -123,6 +124,7 @@ import {
   IAgentLoopContinuationService,
   IAgentSwarmService,
   AgentSwarmService,
+  IAppStateService,
   ITelemetryService,
   IHostTerminalService,
   IAgentToolRegistryService,
@@ -130,6 +132,7 @@ import {
   IAgentUserToolService,
   IAgentUsageService,
   ISessionWorkspaceContext,
+  IWorkspaceStateService,
   AgentLLMRequesterService,
   LifecycleScope,
   AgentMcpService,
@@ -1209,6 +1212,13 @@ export class AgentTestContext {
               additionalDirs: [],
               onDidChange: Event.None as Event<void>,
             } satisfies ISessionWorkspaceInfo);
+            // The harness skips the Workspace scope entirely, so the session
+            // state service's cascade parent is seeded directly: a workspace
+            // state instance chained onto the App-scope root.
+            reg.defineInstance(
+              IWorkspaceStateService,
+              new WorkspaceStateService(this.root.accessor.get(IAppStateService)),
+            );
             reg.defineInstance(IAgentLifecycleService, {
               _serviceBrand: undefined,
               onDidCreate: Event.None as Event<IAgentScopeHandle>,

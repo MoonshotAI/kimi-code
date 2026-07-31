@@ -13,7 +13,7 @@ import {
   ISessionIndex,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
-import { IWorkspaceHandlerService } from '@moonshot-ai/agent-core-v2/workspace/workspaceHandler/workspaceHandler';
+import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/sessionLifecycle';
 import {
   IWorkspaceService,
   type Workspace,
@@ -113,7 +113,7 @@ export function Sidebar({
         if (summary !== undefined) {
           await klient
             .workspace(summary.workspaceId)
-            .service(IWorkspaceHandlerService)
+            .service(ISessionLifecycleService)
             .resume(sessionId);
         }
         await klient.session(sessionId).agent('main').service(IAgentProfileService).setModel(model);
