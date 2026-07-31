@@ -26,6 +26,11 @@ struct PermissionStateInner {
     /// Optional context type tag. Set to "plan_mode" when the agent is in
     /// plan mode, so the plan guard policies can activate.
     context_type: Option<String>,
+    /// The absolute path of the active plan file, when plan mode is on. The
+    /// plan-mode guard denies Write/Edit that target anything else. Wired by
+    /// the host when a plan is opened (`session/set_plan_mode`); while `None`
+    /// the guard stays fail-open so plan-mode writes keep working.
+    plan_file_path: Option<String>,
 }
 
 impl Default for PermissionStateInner {
@@ -35,6 +40,7 @@ impl Default for PermissionStateInner {
             session_approved: Vec::new(),
             mode: PermissionMode::Manual,
             context_type: None,
+            plan_file_path: None,
         }
     }
 }
@@ -90,6 +96,16 @@ impl PermissionState {
     /// Set the context type.
     pub fn set_context_type(&self, ct: Option<String>) {
         self.write().context_type = ct;
+    }
+
+    /// The active plan file path, if plan mode carries one.
+    pub fn plan_file_path(&self) -> Option<String> {
+        self.read().plan_file_path.clone()
+    }
+
+    /// Set the active plan file path (or clear it when plan mode exits).
+    pub fn set_plan_file_path(&self, path: Option<String>) {
+        self.write().plan_file_path = path;
     }
 
     /// Set the permission mode.

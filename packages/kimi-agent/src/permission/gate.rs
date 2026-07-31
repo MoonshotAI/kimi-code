@@ -93,6 +93,12 @@ impl PermissionGate {
         self.manager.set_context_type(ct);
     }
 
+    /// Register the active plan file path (or clear it when plan mode exits).
+    /// The plan-mode guard denies Write/Edit that target anything else.
+    pub fn set_plan_file_path(&self, path: Option<String>) {
+        self.manager.set_plan_file_path(path);
+    }
+
     /// Returns the chain's decision: `Approve` (run it), `Deny` (block it),
     /// or `Ask` (interactive approval required).
     pub fn evaluate(

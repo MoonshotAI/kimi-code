@@ -59,21 +59,22 @@ impl PermissionManager {
             // 3. Auto mode + AskUserQuestion → deny
             Box::new(AutoModeAskUserQuestionDenyPermissionPolicy),
             // 4. Plan mode: Write/Edit outside the plan file → deny
-            Box::new(PlanModeGuardDenyPermissionPolicy),
+            Box::new(PlanModeGuardDenyPermissionPolicy::new(state.clone())),
             // 5. Swarm mode: Agent tool is not available
             Box::new(SwarmModeAgentDenyPermissionPolicy),
             // 6. User-configured deny rules
             Box::new(UserConfiguredDenyPermissionPolicy::new(state.clone())),
-            // 7. Plan mode: specific tools are approved
-            Box::new(PlanModeToolApprovePermissionPolicy),
+            // 7. Plan mode: writing into the plan file is approved
+            Box::new(PlanModeToolApprovePermissionPolicy::new(state.clone())),
             // 8. Swarm mode: AgentSwarm is approved
             Box::new(SwarmModeAgentSwarmApprovePermissionPolicy),
-            // 9. User-configured allow rules
+            // 9. User-configured ask rules — evaluated before allow so a rule
+            //    that both allows and asks resolves as ask (TS order).
+            Box::new(UserConfiguredAskPermissionPolicy::new(state.clone())),
+            // 10. User-configured allow rules
             Box::new(UserConfiguredAllowPermissionPolicy::new(state.clone())),
-            // 10. Auto mode: approve all
+            // 11. Auto mode: approve all
             Box::new(AutoModeApprovePermissionPolicy),
-            // 11. Yolo mode: approve all
-            Box::new(YoloModeApprovePermissionPolicy),
             // 12. Session approval history
             Box::new(SessionApprovalHistoryPermissionPolicy::new(state.clone())),
             // 13. Sensitive file access → ask
@@ -84,8 +85,9 @@ impl PermissionManager {
             Box::new(ExitPlanModeReviewAskPermissionPolicy),
             // 16. Goal start → ask for review
             Box::new(GoalStartReviewAskPermissionPolicy),
-            // 17. User-configured ask rules
-            Box::new(UserConfiguredAskPermissionPolicy::new(state.clone())),
+            // 17. Yolo mode: approve all — after the ask-class policies so
+            //     sensitive-file and user-configured ask rules still fire.
+            Box::new(YoloModeApprovePermissionPolicy),
             // 18. Default tool approval (let the manager's mode handle it)
             Box::new(DefaultToolApprovePermissionPolicy),
             // 19. Fallback ask (mode-based: Manual asks, Auto/Yolo approve)
@@ -135,6 +137,17 @@ impl PermissionManager {
     /// Set the context type (through the shared state).
     pub fn set_context_type(&self, ct: Option<String>) {
         self.state.set_context_type(ct);
+    }
+
+    /// Set the active plan file path (through the shared state). Wired by the
+    /// host when a plan opens/closes; the plan-mode guard reads it.
+    pub fn set_plan_file_path(&self, path: Option<String>) {
+        self.state.set_plan_file_path(path);
+    }
+
+    /// The active plan file path, if any.
+    pub fn plan_file_path(&self) -> Option<String> {
+        self.state.plan_file_path()
     }
 
     /// Get the full permission data snapshot.

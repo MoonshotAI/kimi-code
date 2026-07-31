@@ -83,25 +83,66 @@ impl RuleMatchInput {
 
 /// Build the rule-match input for a tool call from a policy context.
 ///
-/// Bash rules carrying an argPattern get command-level matching (the tool's
-/// `matchesRule` in TS terms): `Bash(ls *)` only matches commands that glob
-/// `ls *`. Other tools have no native arg matcher and keep the name-only +
-/// host-verification behavior.
+/// Tools that carry a matchable subject get subject-level matching (the
+/// tool's `matchesRule` in TS terms): Bash rules match the command string,
+/// file tools match the target path, FetchUrl/WebSearch match the URL/query.
+/// Tools without a subject keep the name-only + host-verification behavior.
 pub fn rule_match_input(
     rule: PermissionRule,
     context: &PermissionPolicyContext,
 ) -> RuleMatchInput {
-    let subject = bash_command_from_args(&context.args);
+    let subject = rule_subject_from_args(&context.tool_name, &context.args);
     RuleMatchInput {
         rule,
         tool_name: context.tool_name.clone(),
-        has_matches_rule: context.tool_name == "Bash" && subject.is_some(),
-        subject: subject.map(String::from),
+        has_matches_rule: subject.is_some(),
+        subject,
     }
 }
 
-fn bash_command_from_args(args: &serde_json::Value) -> Option<&str> {
-    crate::tools::bash::command_from_args(args)
+/// Extract the rule-matching subject for a tool call, when the tool has one.
+///
+/// Mirrors TS `matchRuleSubjects` (rule-match.ts): the argument pattern of a
+/// rule is matched against this subject — for file tools the target path,
+/// for Bash the command line, for FetchUrl the URL.
+pub fn rule_subject_from_args(tool: &str, args: &serde_json::Value) -> Option<String> {
+    match tool {
+        "Bash" => crate::tools::bash::command_from_args(args).map(String::from),
+        "Read" | "Write" => args.get("path").and_then(serde_json::Value::as_str).map(String::from),
+        "Edit" => args
+            .get("file_path")
+            .and_then(serde_json::Value::as_str)
+            .map(String::from),
+        "Grep" => args
+            .get("path")
+            .or_else(|| args.get("pattern"))
+            .and_then(serde_json::Value::as_str)
+            .map(String::from),
+        "Glob" => args
+            .get("pattern")
+            .or_else(|| args.get("path"))
+            .and_then(serde_json::Value::as_str)
+            .map(String::from),
+        "FetchUrl" => args.get("url").and_then(serde_json::Value::as_str).map(String::from),
+        "WebSearch" => args.get("query").and_then(serde_json::Value::as_str).map(String::from),
+        _ => None,
+    }
+}
+
+/// Glob-match a rule's arg pattern against a non-Bash subject (paths, URLs).
+///
+/// Mirrors TS `matchesGlobRuleSubject`: a leading `!` negates; the glob uses
+/// the native `literal_separator(true)` semantics (`*` does not cross `/`).
+pub fn matches_rule_subject(arg_pattern: &str, subject: &str) -> bool {
+    let negated = arg_pattern.starts_with('!') && !arg_pattern.starts_with("\\!");
+    let positive = if negated { &arg_pattern[1..] } else { arg_pattern };
+    let hit = globset::GlobBuilder::new(positive)
+        .literal_separator(true)
+        .backslash_escape(true)
+        .build()
+        .map(|g| g.compile_matcher().is_match(subject))
+        .unwrap_or(false);
+    if negated { !hit } else { hit }
 }
 
 /// Match a permission rule against a tool call.
@@ -128,11 +169,17 @@ pub fn match_permission_rule(input: &RuleMatchInput) -> Option<RuleMatch> {
 
     // If the rule has args, we need the tool's matches_rule callback to match.
     if input.has_matches_rule {
-        // Command-level matching (Bash): the argPattern must actually match
-        // the subject command; a miss means the rule does not apply.
+        // Subject-level matching: the argPattern must actually match the
+        // subject (Bash command, file path, URL…); a miss means the rule
+        // does not apply.
         if let Some(subject) = input.subject.as_deref() {
             let arg_pattern = parsed.arg_pattern.as_deref().unwrap_or("");
-            if crate::tools::bash::matches_command_rule(arg_pattern, subject) {
+            let hit = if input.tool_name == "Bash" {
+                crate::tools::bash::matches_command_rule(arg_pattern, subject)
+            } else {
+                matches_rule_subject(arg_pattern, subject)
+            };
+            if hit {
                 return Some(RuleMatch {
                     rule: input.rule.clone(),
                     strategy: RuleMatchStrategy::MatchesRule,
@@ -366,6 +413,199 @@ mod tests {
             &ctx,
         );
         assert!(!input.has_matches_rule);
+    }
+
+    #[test]
+    fn test_write_path_rule_matches_at_subject_level() {
+        use crate::permission::types::{PermissionMode, PermissionPolicyContext};
+        let rule = PermissionRule {
+            decision: PermissionRuleDecision::Allow,
+            scope: PermissionRuleScope::User,
+            pattern: "Write(src/**)".into(),
+            reason: None,
+        };
+        // A relative write inside src/ matches the arg pattern.
+        let ctx = PermissionPolicyContext {
+            tool_name: "Write".into(),
+            tool_call_id: "1".into(),
+            args: serde_json::json!({ "path": "src/main.rs" }),
+            mode: PermissionMode::Manual,
+            r#type: None,
+        };
+        let input = rule_match_input(rule.clone(), &ctx);
+        assert!(input.has_matches_rule, "Write carries a path subject");
+        let m = match_permission_rule(&input).expect("src write must match Write(src/**)");
+        assert_eq!(m.strategy, RuleMatchStrategy::MatchesRule);
+        // A write outside src/ no longer slips through the name-only match.
+        let ctx = PermissionPolicyContext {
+            tool_name: "Write".into(),
+            tool_call_id: "2".into(),
+            args: serde_json::json!({ "path": "tests/main.rs" }),
+            mode: PermissionMode::Manual,
+            r#type: None,
+        };
+        let input = rule_match_input(rule, &ctx);
+        assert!(match_permission_rule(&input).is_none());
+    }
+
+    #[test]
+    fn test_write_absolute_path_rule_with_doublestar() {
+        use crate::permission::types::{PermissionMode, PermissionPolicyContext};
+        let rule = PermissionRule {
+            decision: PermissionRuleDecision::Allow,
+            scope: PermissionRuleScope::User,
+            pattern: "Write(**/src/**)".into(),
+            reason: None,
+        };
+        let ctx = PermissionPolicyContext {
+            tool_name: "Write".into(),
+            tool_call_id: "1".into(),
+            args: serde_json::json!({ "path": "/workspace/src/main.rs" }),
+            mode: PermissionMode::Manual,
+            r#type: None,
+        };
+        let input = rule_match_input(rule.clone(), &ctx);
+        assert!(match_permission_rule(&input).is_some());
+        let ctx = PermissionPolicyContext {
+            tool_name: "Write".into(),
+            tool_call_id: "2".into(),
+            args: serde_json::json!({ "path": "/workspace/tests/main.rs" }),
+            mode: PermissionMode::Manual,
+            r#type: None,
+        };
+        let input = rule_match_input(rule, &ctx);
+        assert!(match_permission_rule(&input).is_none());
+    }
+
+    #[test]
+    fn test_read_deny_rule_matches_path_only() {
+        use crate::permission::types::{PermissionMode, PermissionPolicyContext};
+        let rule = PermissionRule {
+            decision: PermissionRuleDecision::Deny,
+            scope: PermissionRuleScope::User,
+            pattern: "Read(.env)".into(),
+            reason: None,
+        };
+        let ctx = PermissionPolicyContext {
+            tool_name: "Read".into(),
+            tool_call_id: "1".into(),
+            args: serde_json::json!({ "path": ".env" }),
+            mode: PermissionMode::Manual,
+            r#type: None,
+        };
+        let input = rule_match_input(rule.clone(), &ctx);
+        assert!(input.has_matches_rule);
+        assert!(
+            match_permission_rule(&input).is_some(),
+            "Read(.env) must deny the .env file itself"
+        );
+        // Any other file is untouched by the rule.
+        let ctx = PermissionPolicyContext {
+            tool_name: "Read".into(),
+            tool_call_id: "2".into(),
+            args: serde_json::json!({ "path": "src/main.rs" }),
+            mode: PermissionMode::Manual,
+            r#type: None,
+        };
+        let input = rule_match_input(rule, &ctx);
+        assert!(match_permission_rule(&input).is_none());
+    }
+
+    #[test]
+    fn test_read_doublestar_env_rule_matches_absolute() {
+        use crate::permission::types::{PermissionMode, PermissionPolicyContext};
+        let rule = PermissionRule {
+            decision: PermissionRuleDecision::Deny,
+            scope: PermissionRuleScope::User,
+            pattern: "Read(**/.env)".into(),
+            reason: None,
+        };
+        let ctx = PermissionPolicyContext {
+            tool_name: "Read".into(),
+            tool_call_id: "1".into(),
+            args: serde_json::json!({ "path": "/workspace/.env" }),
+            mode: PermissionMode::Manual,
+            r#type: None,
+        };
+        let input = rule_match_input(rule, &ctx);
+        assert!(
+            match_permission_rule(&input).is_some(),
+            "Read(**/.env) must match an absolute .env path"
+        );
+    }
+
+    #[test]
+    fn test_path_rule_negation() {
+        use crate::permission::types::{PermissionMode, PermissionPolicyContext};
+        let rule = PermissionRule {
+            decision: PermissionRuleDecision::Allow,
+            scope: PermissionRuleScope::User,
+            pattern: "Write(!**/.git/**)".into(),
+            reason: None,
+        };
+        let ctx = PermissionPolicyContext {
+            tool_name: "Write".into(),
+            tool_call_id: "1".into(),
+            args: serde_json::json!({ "path": "/workspace/src/main.rs" }),
+            mode: PermissionMode::Manual,
+            r#type: None,
+        };
+        let input = rule_match_input(rule.clone(), &ctx);
+        assert!(
+            match_permission_rule(&input).is_some(),
+            "!**/.git/** allows non-git writes"
+        );
+        let ctx = PermissionPolicyContext {
+            tool_name: "Write".into(),
+            tool_call_id: "2".into(),
+            args: serde_json::json!({ "path": "/workspace/.git/config" }),
+            mode: PermissionMode::Manual,
+            r#type: None,
+        };
+        let input = rule_match_input(rule, &ctx);
+        assert!(
+            match_permission_rule(&input).is_none(),
+            "!**/.git/** must not match .git writes"
+        );
+    }
+
+    #[test]
+    fn test_fetch_url_rule_subject() {
+        use crate::permission::types::{PermissionMode, PermissionPolicyContext};
+        let rule = PermissionRule {
+            decision: PermissionRuleDecision::Deny,
+            scope: PermissionRuleScope::User,
+            pattern: "FetchUrl(http://localhost:3000/**)".into(),
+            reason: None,
+        };
+        let ctx = PermissionPolicyContext {
+            tool_name: "FetchUrl".into(),
+            tool_call_id: "1".into(),
+            args: serde_json::json!({ "url": "http://localhost:3000/secret" }),
+            mode: PermissionMode::Manual,
+            r#type: None,
+        };
+        let input = rule_match_input(rule.clone(), &ctx);
+        assert!(input.has_matches_rule);
+        assert!(match_permission_rule(&input).is_some());
+        let ctx = PermissionPolicyContext {
+            tool_name: "FetchUrl".into(),
+            tool_call_id: "2".into(),
+            args: serde_json::json!({ "url": "https://example.com/page" }),
+            mode: PermissionMode::Manual,
+            r#type: None,
+        };
+        let input = rule_match_input(rule, &ctx);
+        assert!(match_permission_rule(&input).is_none());
+    }
+
+    #[test]
+    fn test_matches_rule_subject_glob_semantics() {
+        // `*` does not cross `/`; `**` does.
+        assert!(matches_rule_subject("src/**", "src/main.rs"));
+        assert!(!matches_rule_subject("src/*", "src/deep/main.rs"));
+        assert!(matches_rule_subject("!src/**", "tests/main.rs"));
+        assert!(!matches_rule_subject("!src/**", "src/main.rs"));
     }
 
     #[test]
