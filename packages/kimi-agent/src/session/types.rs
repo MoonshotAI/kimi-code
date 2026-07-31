@@ -127,6 +127,21 @@ impl SessionRecord {
         });
         self.touch();
     }
+
+    /// Shape check for cached session records.
+    ///
+    /// A cached `SessionRecord` is only trusted when it carries the fields the
+    /// session layer relies on. Entries whose key fields are empty (e.g. an
+    /// `id` or timestamp that was missing on write and came back as an empty
+    /// string — mirroring the TS read-model bug where `undefined` fields were
+    /// dropped by JSON serialization) are treated as poisoned: the session
+    /// manager treats them as a cold miss, rebuilds from the store, and
+    /// overwrites the bad cache entry. `state` is excluded from the check: the
+    /// enum guarantees a valid variant by construction, and an invalid variant
+    /// fails at deserialization instead.
+    pub fn is_valid_shape(&self) -> bool {
+        !self.id.is_empty() && !self.created_at.is_empty() && !self.updated_at.is_empty()
+    }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

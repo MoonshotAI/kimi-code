@@ -9,6 +9,7 @@
 
 pub mod bash;
 pub mod fetch_url;
+pub mod fs_search;
 pub mod manager;
 pub mod todo;
 pub mod web_search;
@@ -245,6 +246,11 @@ impl NativeToolset {
                 input_schema: Some(todo::input_schema()),
             },
             crate::context::types::ToolDefinition {
+                name: fs_search::FS_SEARCH_TOOL_NAME.into(),
+                description: fs_search::description().into(),
+                input_schema: Some(fs_search::input_schema()),
+            },
+            crate::context::types::ToolDefinition {
                 name: "WebSearch".into(),
                 description: "Search the web and return titles, URLs, and snippets".into(),
                 input_schema: Some(serde_json::json!({"type":"object","properties":{"query":{"type":"string"}},"required":["query"]})),
@@ -282,6 +288,9 @@ impl NativeToolset {
             // TodoList: pure in-memory session state (no filesystem, no
             // network) — always safe to run natively.
             "todolist" => Some(todo::execute_todo_list(&self.todo, args)),
+            // FsSearch: filename search for the @ file-mention picker
+            // (read-class, ungated like `read`/`glob`).
+            "fssearch" => self.fs_search(args),
             // ReadMediaFile: read an image inside the sandbox and return it as
             // an image media part (read-class, ungated like `read`).
             "readmediafile" => self.read_media_file(args),
@@ -539,6 +548,35 @@ impl NativeToolset {
             stop_turn: false,
             media: vec![crate::rpc::types::ContentBlock::Image { media_type, data: b64 }],
         })
+    }
+
+    // ── FsSearch ──────────────────────────────────────────────────────
+
+    /// `FsSearch` — filename search for the @ file-mention picker. Searches
+    /// the toolset root, or `workspace_root` when given and inside the
+    /// sandbox. `None` falls back to the host (malformed arguments, or a
+    /// workspace root outside the sandbox).
+    fn fs_search(&self, args: &Value) -> Option<ExecutableToolResult> {
+        let query = args.get("query").and_then(Value::as_str)?;
+        let limit = args
+            .get("limit")
+            .and_then(Value::as_u64)
+            .map(|n| n as usize)
+            .unwrap_or(fs_search::DEFAULT_LIMIT);
+        let root = match args.get("workspace_root").and_then(Value::as_str) {
+            Some(r) if !r.is_empty() => {
+                let resolved = std::fs::canonicalize(r).ok()?;
+                if !self.is_within_any_root(&resolved) {
+                    return None;
+                }
+                resolved
+            }
+            _ => self.root.clone(),
+        };
+        match fs_search::fs_search(&root, query, limit) {
+            Ok(hits) => Some(ok_result(fs_search::render_hits(&hits))),
+            Err(err) => Some(err_result(err)),
+        }
     }
 
     // ── Grep ───────────────────────────────────────────────────────────

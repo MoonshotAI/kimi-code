@@ -178,12 +178,10 @@ impl SessionManager {
     ///
     /// Returns `None` if the session does not exist.
     pub fn activate_session(&mut self, id: &str) -> Option<&SessionRecord> {
-        // Ensure the session is loaded into cache.
-        if !self.sessions.contains_key(id) {
-            let persisted = self.store.load_session(id).ok()??;
-            let record: SessionRecord =
-                serde_json::from_value(persisted.state_json).ok()?;
-            self.sessions.insert(id.to_string(), record);
+        // Ensure the session is loaded into cache; a cached entry that fails
+        // the shape check is a cold miss and gets rebuilt from the store.
+        if !self.ensure_loaded(id) {
+            return None;
         }
 
         if let Some(old_id) = self.active_id.as_ref() {
@@ -237,11 +235,8 @@ impl SessionManager {
 
     /// Resume a paused session and make it active.
     pub fn resume_session(&mut self, id: &str) -> Option<&SessionRecord> {
-        if !self.sessions.contains_key(id) {
-            let persisted = self.store.load_session(id).ok()??;
-            let record: SessionRecord =
-                serde_json::from_value(persisted.state_json).ok()?;
-            self.sessions.insert(id.to_string(), record);
+        if !self.ensure_loaded(id) {
+            return None;
         }
 
         if let Some(old_id) = self.active_id.as_ref() {
@@ -491,13 +486,10 @@ impl SessionManager {
         let Some(persisted) = self.store.load_session(session_id)? else {
             return Ok(false);
         };
-        let record: crate::session::types::SessionRecord =
-            serde_json::from_value(persisted.state_json).unwrap_or_else(|_| {
-                crate::session::types::SessionRecord::new(
-                    session_id,
-                    crate::session::types::ModelConfig::default(),
-                )
-            });
+        let record: SessionRecord = serde_json::from_value(persisted.state_json)
+            .ok()
+            .filter(SessionRecord::is_valid_shape)
+            .unwrap_or_else(|| SessionRecord::new(session_id, ModelConfig::default()));
         let agent_state = record.agent_state.clone();
         self.sessions.insert(session_id.to_string(), record);
         match self.agents.get_mut(session_id) {
@@ -592,8 +584,14 @@ impl SessionManager {
         let persisted = self.store.list_sessions(limit, offset)?;
         let mut records = Vec::with_capacity(persisted.len());
         for p in persisted {
-            if let Ok(record) = serde_json::from_value(p.state_json) {
-                records.push(record);
+            if let Ok(record) = serde_json::from_value::<SessionRecord>(p.state_json) {
+                // Records whose key fields are empty (e.g. an `id` or
+                // timestamp dropped during JSON serialization) are treated as
+                // cold misses and skipped rather than surfaced as partial
+                // data.
+                if record.is_valid_shape() {
+                    records.push(record);
+                }
             }
         }
         Ok(records)
@@ -626,6 +624,42 @@ impl SessionManager {
     }
 
     // ── Persistence helpers ───────────────────────────────────────────────
+
+    /// Ensure a session is cached under a valid shape, loading it from the
+    /// store otherwise.
+    ///
+    /// A cached entry that fails [`SessionRecord::is_valid_shape`] is treated
+    /// as a cold miss: it is dropped, re-read from the store, and the rebuilt
+    /// record overwrites the bad entry (self-healing entries poisoned before
+    /// the shape check existed). Returns `false` — without touching the cache
+    /// — when the session does not exist or its persisted record cannot be
+    /// trusted.
+    fn ensure_loaded(&mut self, id: &str) -> bool {
+        let needs_rebuild = match self.sessions.get(id) {
+            Some(record) => !record.is_valid_shape(),
+            None => true,
+        };
+        if !needs_rebuild {
+            return true;
+        }
+        self.sessions.remove(id);
+        let persisted = match self.store.load_session(id) {
+            Ok(Some(persisted)) => persisted,
+            _ => return false,
+        };
+        let record: SessionRecord = match serde_json::from_value(persisted.state_json) {
+            Ok(record) => record,
+            Err(_) => return false,
+        };
+        // The rebuilt entry is only trusted when it also passes the shape
+        // check; a broken persisted record stays a miss rather than
+        // re-poisoning the cache.
+        if !record.is_valid_shape() {
+            return false;
+        }
+        self.sessions.insert(id.to_string(), record);
+        true
+    }
 
     /// Persist a session record to the store.
     fn save_to_store(&self, record: &SessionRecord) -> anyhow::Result<()> {
@@ -812,5 +846,158 @@ mod tests {
             serde_json::from_value(listed[0].state_json.clone()).unwrap();
         assert_eq!(rich.work_dir, "/work/a");
         assert_eq!(rich.agent_state, serde_json::json!({ "context": [] }));
+    }
+
+    // ── Cache shape validation (cold miss on poisoned entries) ────────────
+
+    #[test]
+    fn test_activate_serves_valid_cached_entry_without_reload() {
+        let mut mgr = SessionManager::new(test_store());
+        mgr.create_session("sess-1", test_model());
+        // Give the cache copy a distinctive work dir, then persist an older
+        // copy to the store. A direct cache hit must keep the cached copy; a
+        // reload would overwrite it with the store copy.
+        let mut cached = mgr.sessions.get("sess-1").unwrap().clone();
+        cached.work_dir = "/cached".into();
+        mgr.sessions.insert("sess-1".into(), cached);
+        let mut on_disk = mgr.sessions.get("sess-1").unwrap().clone();
+        on_disk.work_dir = "/disk".into();
+        mgr.save_to_store(&on_disk).unwrap();
+
+        let active = mgr.activate_session("sess-1").unwrap();
+        assert_eq!(active.work_dir, "/cached");
+    }
+
+    #[test]
+    fn test_activate_rebuilds_poisoned_cached_entry() {
+        let mut mgr = SessionManager::new(test_store());
+        mgr.create_session("sess-1", test_model());
+        mgr.set_work_dir("sess-1", "/disk");
+        mgr.persist_session("sess-1");
+
+        // Poison the cache: timestamps wiped (as if a pre-fix writer dropped
+        // the fields during JSON serialization) and a stale work dir.
+        let mut poisoned = mgr.sessions.get("sess-1").unwrap().clone();
+        poisoned.created_at.clear();
+        poisoned.updated_at.clear();
+        poisoned.work_dir = "/stale".into();
+        mgr.sessions.insert("sess-1".into(), poisoned);
+
+        let active = mgr.activate_session("sess-1").unwrap();
+        // Rebuilt from the store, not the poisoned cache copy.
+        assert_eq!(active.work_dir, "/disk");
+        assert!(!active.created_at.is_empty());
+        assert!(!active.updated_at.is_empty());
+        // The bad entry was overwritten with the rebuilt record.
+        assert!(mgr.sessions.get("sess-1").unwrap().is_valid_shape());
+    }
+
+    #[test]
+    fn test_resume_rebuilds_poisoned_cached_entry() {
+        let mut mgr = SessionManager::new(test_store());
+        mgr.create_session("sess-1", test_model());
+        mgr.set_work_dir("sess-1", "/disk");
+        mgr.persist_session("sess-1");
+        mgr.pause_session();
+
+        // Poison the cache copy, then resume — must heal from the store.
+        let mut poisoned = mgr.sessions.get("sess-1").unwrap().clone();
+        poisoned.created_at.clear();
+        poisoned.work_dir = "/stale".into();
+        mgr.sessions.insert("sess-1".into(), poisoned);
+
+        let resumed = mgr.resume_session("sess-1").unwrap();
+        assert_eq!(resumed.work_dir, "/disk");
+        assert_eq!(resumed.state, SessionState::Active);
+        assert!(!mgr.sessions.get("sess-1").unwrap().created_at.is_empty());
+    }
+
+    #[test]
+    fn test_activate_misses_on_broken_persisted_record() {
+        let store = test_store();
+        store
+            .save_session(&crate::persistence::session_store::SessionRecord {
+                id: "sess-broken".into(),
+                created_at: "2025-01-01T00:00:00Z".into(),
+                updated_at: "2025-01-01T00:00:00Z".into(),
+                config_json: serde_json::Value::Null,
+                // Parses as a SessionRecord, but the key fields are empty —
+                // the persisted record itself fails the shape check.
+                state_json: serde_json::json!({
+                    "id": "sess-broken",
+                    "created_at": "",
+                    "updated_at": "",
+                }),
+            })
+            .unwrap();
+        let mut mgr = SessionManager::new(store);
+        // A poisoned cache entry for the same id.
+        let mut poisoned = SessionRecord::new("sess-broken", test_model());
+        poisoned.id.clear();
+        mgr.sessions.insert("sess-broken".into(), poisoned);
+
+        let active = mgr.activate_session("sess-broken");
+        assert!(active.is_none());
+        // The poisoned entry was dropped, not left behind to surface later.
+        assert!(!mgr.sessions.contains_key("sess-broken"));
+    }
+
+    #[test]
+    fn test_list_skips_records_failing_shape_check() {
+        let store = test_store();
+        let good = SessionRecord::new("good", test_model());
+        store
+            .save_session(&crate::persistence::session_store::SessionRecord {
+                id: "good".into(),
+                created_at: good.created_at.clone(),
+                updated_at: good.updated_at.clone(),
+                config_json: serde_json::to_value(&good.model_config).unwrap(),
+                state_json: serde_json::to_value(&good).unwrap(),
+            })
+            .unwrap();
+        // A record that parses but whose key fields are empty (the analog of
+        // a pre-fix cache entry that lost fields during JSON serialization).
+        store
+            .save_session(&crate::persistence::session_store::SessionRecord {
+                id: "bad".into(),
+                created_at: "2025-01-01T00:00:00Z".into(),
+                updated_at: "2025-01-01T00:00:00Z".into(),
+                config_json: serde_json::Value::Null,
+                state_json: serde_json::json!({
+                    "id": "bad",
+                    "created_at": "",
+                    "updated_at": "",
+                }),
+            })
+            .unwrap();
+
+        let mgr = SessionManager::new(store);
+        let list = mgr.list_sessions(10, 0).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, "good");
+    }
+
+    #[test]
+    fn test_load_agent_session_does_not_cache_broken_record() {
+        let store = test_store();
+        store
+            .save_session(&crate::persistence::session_store::SessionRecord {
+                id: "sess-1".into(),
+                created_at: "2025-01-01T00:00:00Z".into(),
+                updated_at: "2025-01-01T00:00:00Z".into(),
+                config_json: serde_json::Value::Null,
+                state_json: serde_json::json!({
+                    "id": "sess-1",
+                    "created_at": "",
+                    "updated_at": "",
+                }),
+            })
+            .unwrap();
+        let mut mgr = SessionManager::new(store);
+        mgr.load_agent_session("sess-1").unwrap();
+        // The cache holds a freshly-built valid record, not the broken one.
+        let cached = mgr.sessions.get("sess-1").unwrap();
+        assert!(cached.is_valid_shape());
+        assert_eq!(cached.id, "sess-1");
     }
 }

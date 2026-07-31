@@ -445,6 +445,22 @@ impl TaskService {
         self.ghosts.len()
     }
 
+    /// Snapshot the notification bookkeeping for `/undo` (upstream #2055
+    /// participant rewind): scheduled + delivered notification keys.
+    pub fn notifications_snapshot(&self) -> (Vec<String>, Vec<String>) {
+        let mut scheduled: Vec<String> = self.scheduled_notification_keys.iter().cloned().collect();
+        let mut delivered: Vec<String> = self.delivered_notification_keys.iter().cloned().collect();
+        scheduled.sort();
+        delivered.sort();
+        (scheduled, delivered)
+    }
+
+    /// Restore notification bookkeeping from an undo snapshot.
+    pub fn restore_notification_keys(&mut self, scheduled: &[String], delivered: &[String]) {
+        self.scheduled_notification_keys = scheduled.iter().cloned().collect();
+        self.delivered_notification_keys = delivered.iter().cloned().collect();
+    }
+
     // ── Output ────────────────────────────────────────────────────────────
 
     /// Record a chunk of task output.
@@ -799,11 +815,11 @@ impl TaskService {
             }
             lost.push(updated);
         }
-        self.restore_notifications();
+        self.replay_restored_notifications();
         lost
     }
 
-    fn restore_notifications(&mut self) {
+    fn replay_restored_notifications(&mut self) {
         for info in self.list(false, None) {
             if !info.status.is_terminal() {
                 continue;

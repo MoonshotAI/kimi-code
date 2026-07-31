@@ -301,6 +301,33 @@ async fn native_authorize(
     }
 }
 
+/// Bash variant of [`native_authorize`]: a dangerous command must reach host
+/// approval unless a user-configured allow rule explicitly matches it. This
+/// stops a session approval — or auto/yolo mode — from blanket-approving
+/// destructive commands locally; an explicit deny still wins. The `approval_rule`
+/// the host sees for dangerous commands is `Bash(__dangerous__)`, which never
+/// globs a real command, so a host-side session grant also cannot unlock
+/// later shell access.
+async fn bash_native_authorize(
+    permission: &Option<crate::permission::gate::PermissionGate>,
+    hooks: &Option<Arc<crate::hooks::external::HookManager>>,
+    tool_name: &str,
+    tool_call_id: &str,
+    args: &serde_json::Value,
+    dangerous: bool,
+) -> NativeAuth {
+    let mut auth = native_authorize(permission, hooks, tool_name, tool_call_id, args).await;
+    if dangerous
+        && matches!(auth, NativeAuth::Approved)
+        && !permission.as_ref().map_or(false, |gate| {
+            gate.user_allow_matches(tool_name, tool_call_id, args)
+        })
+    {
+        auth = NativeAuth::Defer;
+    }
+    auth
+}
+
 impl HostCallbacks for NativeToolCallbacks {
     fn supports_tool_lifecycle(&self) -> bool {
         self.inner.supports_tool_lifecycle()
@@ -677,12 +704,13 @@ async fn execute_gated_bash(
         .to_string();
 
     // ── Authorize (the permission gate) ────────────────────────────────────
-    let approval_rule = if crate::tools::bash::is_dangerous_command(&command) {
+    let dangerous = crate::tools::bash::is_dangerous_command(&command);
+    let approval_rule = if dangerous {
         format!("Bash({})", crate::tools::bash::DANGEROUS_COMMAND_MARKER)
     } else {
         format!("Bash({})", escape_rule_subject_literal(&command))
     };
-    match native_authorize(&permission, &hooks, &request.tool_name, &request.tool_call_id, &effective_args).await {
+    match bash_native_authorize(&permission, &hooks, &request.tool_name, &request.tool_call_id, &effective_args, dangerous).await {
         NativeAuth::Approved => {}
         NativeAuth::Denied(reason) => {
             return Ok(blocked_response(Some(reason), &request.tool_name));
@@ -821,12 +849,13 @@ async fn execute_gated_background_bash(
         .to_string();
 
     // ── Authorize (the permission gate) ────────────────────────────────────
-    let approval_rule = if crate::tools::bash::is_dangerous_command(&command) {
+    let dangerous = crate::tools::bash::is_dangerous_command(&command);
+    let approval_rule = if dangerous {
         format!("Bash({})", crate::tools::bash::DANGEROUS_COMMAND_MARKER)
     } else {
         format!("Bash({})", escape_rule_subject_literal(&command))
     };
-    match native_authorize(&permission, &hooks, &request.tool_name, &request.tool_call_id, &effective_args).await {
+    match bash_native_authorize(&permission, &hooks, &request.tool_name, &request.tool_call_id, &effective_args, dangerous).await {
         NativeAuth::Approved => {}
         NativeAuth::Denied(reason) => {
             return Ok(blocked_response(Some(reason), &request.tool_name));
@@ -1329,6 +1358,27 @@ mod tests {
         Some((dir, host, callbacks))
     }
 
+    /// Like [`setup_with_shell`], but with an explicit permission gate —
+    /// used by the dangerous-Bash tests, which must exercise the native
+    /// approval gate while the shell is present.
+    fn setup_with_gate_and_shell(
+        gate: PermissionGate,
+    ) -> Option<(tempfile::TempDir, Arc<MockHost>, NativeToolCallbacks)> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let host = Arc::new(MockHost::new(true, true));
+        let toolset = crate::tools::NativeToolset::new(dir.path().to_str().unwrap())?
+            .with_shell();
+        toolset.shell()?;
+        let callbacks = NativeToolCallbacks {
+            inner: host.clone(),
+            toolset: Arc::new(toolset),
+            background: None,
+            permission: Some(gate),
+            hooks: None,
+        };
+        Some((dir, host, callbacks))
+    }
+
     fn bash_request(command: &str) -> ToolExecuteRequest {
         ToolExecuteRequest {
             turn_id: "t".into(),
@@ -1589,6 +1639,104 @@ mod tests {
         // Denied locally: no host authorize, no host execution, no network.
         assert_eq!(host.authorize_calls.load(Ordering::SeqCst), 0);
         assert_eq!(host.host_execute_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn dangerous_bash_reaches_host_approval_even_under_yolo() {
+        // Even in yolo mode (which approves everything locally) a dangerous
+        // command without an explicit user allow rule defers to the host
+        // approve hook — a session approval or auto/yolo mode must never
+        // blanket-approve destructive commands. authorize_block=true here:
+        // the host hook runs and blocks, so nothing executes.
+        let mgr = PermissionManager::new();
+        mgr.set_mode(PermissionMode::Yolo);
+        let Some((_dir, host, callbacks)) = setup_with_gate_and_shell(PermissionGate::new(mgr))
+        else {
+            eprintln!("no shell available; skipping");
+            return;
+        };
+
+        let response = callbacks
+            .execute_tool(ToolExecuteRequest {
+                turn_id: "t".into(),
+                tool_call_id: "d1".into(),
+                tool_name: "Bash".into(),
+                arguments: serde_json::json!({ "command": "chmod 777 no-such-file" }),
+                force_precise: false,
+            })
+            .await
+            .unwrap();
+        // The host authorize hook was consulted (and blocked) → dangerous
+        // commands are never approved locally under a broad grant.
+        assert_eq!(host.authorize_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(host.host_execute_calls.load(Ordering::SeqCst), 0);
+        assert!(response.is_error);
+    }
+
+    #[tokio::test]
+    async fn dangerous_bash_with_explicit_allow_is_approved_locally() {
+        // An explicit user-configured allow rule that matches the command
+        // exempts it from host approval, even when the command is dangerous.
+        let mgr = PermissionManager::new();
+        mgr.set_mode(PermissionMode::Yolo);
+        mgr.add_rule(PermissionRule {
+            decision: PermissionRuleDecision::Allow,
+            scope: PermissionRuleScope::User,
+            pattern: "Bash(chmod 777 *)".into(),
+            reason: None,
+        });
+        let Some((dir, host, callbacks)) = setup_with_gate_and_shell(PermissionGate::new(mgr))
+        else {
+            eprintln!("no shell available; skipping");
+            return;
+        };
+        std::fs::write(dir.path().join("perm.txt"), "x").unwrap();
+
+        let response = callbacks
+            .execute_tool(ToolExecuteRequest {
+                turn_id: "t".into(),
+                tool_call_id: "d2".into(),
+                tool_name: "Bash".into(),
+                arguments: serde_json::json!({ "command": "chmod 777 perm.txt" }),
+                force_precise: false,
+            })
+            .await
+            .unwrap();
+        assert!(!response.is_error, "{}", response.content);
+        assert_eq!(host.authorize_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn dangerous_bash_session_approval_does_not_skip_host() {
+        // A session approval granted for a dangerous command (`Bash(__dangerous__)`)
+        // must not unlock later shell access: the same dangerous command still
+        // reaches host approval.
+        let mgr = PermissionManager::new();
+        mgr.set_mode(PermissionMode::Yolo);
+        mgr.state().record_session_approval(PermissionRule {
+            decision: PermissionRuleDecision::Allow,
+            scope: PermissionRuleScope::SessionRuntime,
+            pattern: "Bash(__dangerous__)".into(),
+            reason: None,
+        });
+        let Some((_dir, host, callbacks)) = setup_with_gate_and_shell(PermissionGate::new(mgr))
+        else {
+            eprintln!("no shell available; skipping");
+            return;
+        };
+
+        let response = callbacks
+            .execute_tool(ToolExecuteRequest {
+                turn_id: "t".into(),
+                tool_call_id: "d3".into(),
+                tool_name: "Bash".into(),
+                arguments: serde_json::json!({ "command": "chmod 777 no-such-file" }),
+                force_precise: false,
+            })
+            .await
+            .unwrap();
+        assert_eq!(host.authorize_calls.load(Ordering::SeqCst), 1);
+        assert!(response.is_error);
     }
 
     #[tokio::test]

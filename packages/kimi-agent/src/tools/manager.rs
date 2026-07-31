@@ -22,7 +22,11 @@ pub enum ToolSource {
 }
 
 /// Disclosure mode for a tool.
+///
+/// Serializes lowercase (`"inline"` / `"deferred"`) to match the TS
+/// `ToolDisclosure` wire type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ToolDisclosure {
     Inline,
     Deferred,
@@ -268,6 +272,64 @@ impl ToolManager {
     }
 
     // ── Tool list builders ───────────────────────────────────────────────
+
+    /// Assemble the provider-visible tool definitions for a model with the
+    /// given dynamic-loading capability (TS `defaultTools` plus
+    /// `providerVisibleTools`).
+    ///
+    /// Inline tools are listed with their full schema. Deferred tools (user
+    /// tools registered with `ToolDisclosure::Deferred`, and MCP tools) are
+    /// announce-only when the model can load them dynamically — name and
+    /// description with an empty parameter schema, so the model knows they
+    /// exist and can pull the full definition through `select_tools` — and
+    /// are hidden from the list entirely otherwise, since a model without
+    /// dynamic loading has no way to obtain their schema.
+    ///
+    /// This is the assembly entry point for the loop: the agent builds the
+    /// model-visible tool list from it, unlike `loop_tools`, which keeps the
+    /// deferred disclosure state machine (loaded-vs-not) internal.
+    pub fn tool_defs_for(&self, dynamic_capable: bool) -> Vec<ToolInfo> {
+        let mut names: Vec<String> = Vec::new();
+
+        // Enabled builtin/user tools
+        for name in &self.enabled_tools {
+            if self.builtin_tools.contains_key(name) || self.user_tools.contains_key(name) {
+                names.push(name.clone());
+            }
+        }
+
+        // Enabled MCP tools (filtered by access patterns)
+        for name in self.mcp_tools.keys() {
+            if self.is_mcp_tool_enabled(name) {
+                names.push(name.clone());
+            }
+        }
+
+        names.sort();
+        names.dedup();
+
+        names.into_iter().filter_map(|name| {
+            let tool = self.builtin_tools.get(&name)
+                .or_else(|| self.user_tools.get(&name))
+                .or_else(|| self.mcp_tools.get(&name))?;
+            match tool.disclosure {
+                ToolDisclosure::Inline => Some(ToolInfo {
+                    name: tool.name.clone(),
+                    description: tool.description.clone(),
+                    input_schema: tool.parameters.clone(),
+                }),
+                // Announce-only: name + description survive so the model can
+                // select the tool; the parameter schema is withheld until it
+                // loads the full definition.
+                ToolDisclosure::Deferred if dynamic_capable => Some(ToolInfo {
+                    name: tool.name.clone(),
+                    description: tool.description.clone(),
+                    input_schema: serde_json::json!({ "type": "object", "properties": {} }),
+                }),
+                ToolDisclosure::Deferred => None,
+            }
+        }).collect()
+    }
 
     /// Build the list of tools to send to the LLM on each step.
     pub fn loop_tools(&self) -> Vec<ToolInfo> {
@@ -577,6 +639,97 @@ mod tests {
         // After marking loaded, they should appear
         tm.mark_dynamic_tools_loaded(&["deferred-tool".to_string()]);
         assert_eq!(tm.loop_tools().len(), 1);
+    }
+
+    #[test]
+    fn test_tool_defs_for_inline_tools_keep_full_schema() {
+        let mut tm = ToolManager::new();
+        let params = serde_json::json!({
+            "type": "object",
+            "properties": { "path": { "type": "string" } },
+            "required": ["path"],
+        });
+        tm.register_builtin("read", "Read a file", params.clone());
+        tm.register_user_tool(UserToolRegistration {
+            name: "inline-tool".into(),
+            description: "Inline".into(),
+            parameters: params.clone(),
+            disclosure: None,
+        });
+
+        // Inline tools appear with their full schema in both modes.
+        for dynamic_capable in [false, true] {
+            let defs = tm.tool_defs_for(dynamic_capable);
+            assert_eq!(defs.len(), 2, "mode={dynamic_capable}");
+            assert!(defs.iter().all(|d| d.input_schema == params));
+        }
+    }
+
+    #[test]
+    fn test_tool_defs_for_hides_deferred_without_dynamic_capability() {
+        let mut tm = ToolManager::new();
+        tm.register_builtin("read", "Read a file", serde_json::json!({}));
+        tm.register_user_tool(UserToolRegistration {
+            name: "deferred-tool".into(),
+            description: "Deferred heavy tool".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": { "query": { "type": "string" } },
+            }),
+            disclosure: Some(ToolDisclosure::Deferred),
+        });
+
+        // A model without dynamic loading cannot fetch the schema, so the
+        // deferred tool disappears from the main schema entirely.
+        let defs = tm.tool_defs_for(false);
+        assert_eq!(defs.len(), 1, "deferred tool must vanish: {:#?}", defs);
+        assert_eq!(defs[0].name, "read");
+    }
+
+    #[test]
+    fn test_tool_defs_for_announces_deferred_with_dynamic_capability() {
+        let mut tm = ToolManager::new();
+        tm.register_builtin("read", "Read a file", serde_json::json!({}));
+        tm.register_user_tool(UserToolRegistration {
+            name: "deferred-tool".into(),
+            description: "Deferred heavy tool".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": { "query": { "type": "string" }, "mode": { "type": "string" } },
+            }),
+            disclosure: Some(ToolDisclosure::Deferred),
+        });
+
+        // Announce-only shape: name + description survive, the parameter
+        // schema is withheld (empty object) until `select_tools` loads it.
+        let defs = tm.tool_defs_for(true);
+        assert_eq!(defs.len(), 2, "deferred tool is announced: {:#?}", defs);
+        let deferred = defs.iter().find(|d| d.name == "deferred-tool").unwrap();
+        assert_eq!(deferred.description, "Deferred heavy tool");
+        assert_eq!(deferred.input_schema, serde_json::json!({ "type": "object", "properties": {} }));
+    }
+
+    #[test]
+    fn test_tool_defs_for_mcp_tools_follow_deferred_disclosure() {
+        let mut tm = ToolManager::new();
+        tm.register_mcp_server(
+            "filesystem",
+            &[(
+                "list".into(),
+                "List files".into(),
+                serde_json::json!({ "type": "object", "properties": { "dir": { "type": "string" } } }),
+            )],
+            None,
+        );
+        tm.set_active_tools(&["mcp__filesystem__*".to_string()]);
+
+        // MCP tools are dynamic by disclosure: hidden without the capability,
+        // announce-only (no parameter schema) with it.
+        assert!(tm.tool_defs_for(false).is_empty());
+        let defs = tm.tool_defs_for(true);
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].name, "mcp__filesystem__list");
+        assert_eq!(defs[0].input_schema, serde_json::json!({ "type": "object", "properties": {} }));
     }
 
     #[test]

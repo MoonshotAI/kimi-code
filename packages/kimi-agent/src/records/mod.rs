@@ -47,6 +47,13 @@ pub enum AgentRecord {
         #[serde(default)]
         usage_scope: String,
     },
+    /// Terminal `turn.ended` record (upstream agent-core-v2 #2457): the turn's
+    /// final stop reason and step count, written when the turn completes.
+    TurnEnded {
+        turn_id: String,
+        stop_reason: String,
+        steps: u32,
+    },
     PlanModeEnter {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,

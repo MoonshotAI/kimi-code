@@ -918,6 +918,75 @@ async fn main() -> anyhow::Result<()> {
         })
     });
 
+    // Register a user tool for the session (SDK `registerTool` parity,
+    // upstream #2119). The tool lands in the session's ToolManager with its
+    // disclosure; deferred tools stay out of the model-visible list while
+    // the dynamic-loading experiment is off.
+    let mgr = session_manager.clone();
+    RpcServer::register_arc(
+        &server,
+        kimi_agent::user_tool::REGISTER_TOOL_METHOD,
+        move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let payload: kimi_agent::user_tool::RegisterToolParams =
+                    serde_json::from_value(params).map_err(|e| {
+                        types::JsonRpcError::internal_error(format!("Invalid params: {e}"))
+                    })?;
+                let mut manager = mgr.lock().await;
+                let session_id = match payload.session_id.clone() {
+                    Some(id) => id,
+                    None => manager
+                        .active_session_id()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "default".to_string()),
+                };
+                let agent = manager.get_agent(&session_id).ok_or_else(|| {
+                    types::JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        session_id
+                    ))
+                })?;
+                let mut tm = agent.tool_manager.lock().unwrap_or_else(|e| e.into_inner());
+                tm.register_user_tool(payload.into_registration());
+                Ok(serde_json::json!({ "ok": true }))
+            })
+        },
+    );
+
+    // Unregister a user tool (SDK `unregisterTool` parity).
+    let mgr = session_manager.clone();
+    RpcServer::register_arc(
+        &server,
+        kimi_agent::user_tool::UNREGISTER_TOOL_METHOD,
+        move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let payload: kimi_agent::user_tool::UnregisterToolParams =
+                    serde_json::from_value(params).map_err(|e| {
+                        types::JsonRpcError::internal_error(format!("Invalid params: {e}"))
+                    })?;
+                let mut manager = mgr.lock().await;
+                let session_id = match payload.session_id.clone() {
+                    Some(id) => id,
+                    None => manager
+                        .active_session_id()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "default".to_string()),
+                };
+                let agent = manager.get_agent(&session_id).ok_or_else(|| {
+                    types::JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        session_id
+                    ))
+                })?;
+                let mut tm = agent.tool_manager.lock().unwrap_or_else(|e| e.into_inner());
+                tm.unregister_user_tool(&payload.name);
+                Ok(serde_json::json!({ "ok": true }))
+            })
+        },
+    );
+
     // Manual context compaction (SDK `compact` parity). Requires a native-LLM
     // summarizer; a missing provider surfaces as a JSON-RPC error.
     let mgr = session_manager.clone();
@@ -1006,6 +1075,8 @@ async fn main() -> anyhow::Result<()> {
     // when the requested count is not fully available (or would cross a
     // compaction boundary), the engine reports the shortfall as an error and
     // leaves the history untouched, matching the SDK's throwing contract.
+    // Plan mode and task notifications rewind together with the history
+    // (upstream #2055 participant rewind).
     let mgr = session_manager.clone();
     RpcServer::register_arc(&server, types::methods::SESSION_UNDO_HISTORY, move |params| {
         let mgr = mgr.clone();
@@ -1019,10 +1090,9 @@ async fn main() -> anyhow::Result<()> {
                     input.session_id
                 ))
             })?;
-            if let Some(reason) = agent.context.undo_unavailable_message(input.count) {
-                return Err(types::JsonRpcError::internal_error(reason));
-            }
-            let cut = agent.context.undo(input.count);
+            let cut = agent
+                .undo_history(input.count)
+                .map_err(types::JsonRpcError::internal_error)?;
             Ok(serde_json::json!({ "undone_turns": cut.removed_count, "cut_index": cut.cut_index }))
         })
     });

@@ -186,6 +186,18 @@ impl PlanMode {
         self.plan_id.as_deref()
     }
 
+    /// Snapshot plan-mode state for `/undo` (upstream #2055 participant
+    /// rewind): whether plan mode is active and which plan is open.
+    pub fn snapshot(&self) -> (bool, Option<String>) {
+        (self.is_active, self.plan_id.clone())
+    }
+
+    /// Restore plan-mode state from an undo snapshot.
+    pub fn restore(&mut self, is_active: bool, plan_id: Option<String>) {
+        self.is_active = is_active;
+        self.plan_id = plan_id;
+    }
+
     /// Return the plan data (id, content, path) or None if no active plan.
     pub fn data(&self) -> Result<Option<PlanData>, String> {
         let plan_id = match &self.plan_id {
