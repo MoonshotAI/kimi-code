@@ -344,6 +344,9 @@ async function onLogout(): Promise<void> {
       <Icon name="user" />
       <span class="user-menu-name">{{ t('sidebar.notSignedIn') }}</span>
     </template>
+    <Badge v-if="isDesktop && isProd" class="user-menu-badge" variant="warning" size="sm">
+      {{ t('settings.internalTest') }}
+    </Badge>
   </button>
 
   <!-- Teleport: the sidebar column's container-type would capture position:fixed and mis-anchor the menu. -->
@@ -417,7 +420,6 @@ async function onLogout(): Promise<void> {
         <MenuItem @click="onOpenSettings" @mouseenter="scheduleSubmenuClose">
           <Icon name="settings" size="sm" />
           <span class="user-menu-item-label">{{ t('settings.title') }}</span>
-          <Badge v-if="isDesktop && isProd" variant="warning" size="sm">{{ t('settings.internalTest') }}</Badge>
           <Kbd v-if="settingsShortcutKeys.length > 0" :keys="settingsShortcutKeys" />
         </MenuItem>
         <template v-if="signedIn">
@@ -536,9 +538,15 @@ async function onLogout(): Promise<void> {
   object-fit: cover;
 }
 .user-menu-name {
+  /* Explicit shrink floor for the trailing badge: overflow:hidden already zeroes
+     the automatic minimum size, this just makes the intent obvious. */
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.user-menu-badge {
+  flex: none;
 }
 
 /* Class-level top:0 is only the pre-positioning frame — menuStyle always sets both vertical axes. */
