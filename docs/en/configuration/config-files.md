@@ -392,8 +392,12 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
 | `[notifications].notification_condition` | `string` | `unfocused` | When to notify: `unfocused` (only when the terminal is not focused) or `always` |
 | `[upgrade].auto_install` | `boolean` | `true` | Whether new versions are installed automatically |
-| `[status_line].items` | `string[]` | `[]` | Built-in slots to show on the first footer line and their order: `mode`, `goal`, `model`, `tasks`, `cwd`, `git`, `tips`. Unset keeps the default layout; unknown ids are skipped with a warning |
-| `[status_line].command` | `string` | `""` | Custom status line command. Its first stdout line replaces the first footer line, with a JSON snapshot (model, cwd, git branch, permission mode, plan mode, context usage, session id, version) passed on stdin. Runs are capped at 300ms and throttled to once per second; failures fall back to the built-in layout |
+| `[status_line].items` | `string[]` | `[]` | Built-in slots to show on the first footer line and their order: `mode`, `goal`, `provider`, `model`, `tasks`, `cwd`, `git`, `tips`. Unset keeps the default layout, which does not include `provider`; unknown ids are skipped with a warning |
+| `[status_line].command` | `string` | `""` | Custom status line command. Its first stdout line replaces the first footer line, with a JSON snapshot (model, provider, cwd, git branch, permission mode, plan mode, context usage, session id, version) passed on stdin. Runs are capped at 300ms and throttled to once per second; failures fall back to the built-in layout |
+
+The `provider` slot shows which provider serves the current model (`managed:` ids
+render without the prefix, e.g. `openrouter`), which disambiguates look-alike model
+names across providers. It is opt-in: list it in `items` to enable it.
 
 ```toml
 # ~/.kimi-code/tui.toml
@@ -411,7 +415,7 @@ notification_condition = "unfocused" # "unfocused" | "always"
 auto_install = true
 
 # [status_line]
-# items = ["mode", "goal", "model", "tasks", "cwd", "git", "tips"]
+# items = ["mode", "goal", "provider", "model", "tasks", "cwd", "git", "tips"]
 # command = "~/.kimi-code/statusline.sh"
 ```
 

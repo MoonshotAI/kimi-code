@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it } from 'vitest';
 
 import { FooterComponent } from '#/tui/components/chrome/footer';
@@ -41,8 +42,15 @@ const baseState: AppState = {
   mcpServersSummary: null,
 };
 
+const catalogModel: ModelAlias = {
+  provider: 'moonshot',
+  model: 'kimi-k2-0905',
+  maxContextSize: 262_144,
+};
+
 const payload: StatusLinePayload = {
   model: 'kimi-k2',
+  provider: 'moonshot',
   cwd: '/tmp/project',
   gitBranch: 'main',
   permissionMode: 'manual',
@@ -122,6 +130,46 @@ describe('FooterComponent status_line items', () => {
     expect(tipsLast.indexOf('kimi-k2')).toBeLessThan(tipsLast.indexOf(tipsOnly));
   });
 
+  it('renders the provider ahead of the model when the slot is configured', () => {
+    const state: AppState = {
+      ...baseState,
+      availableModels: { 'kimi-k2': catalogModel },
+      statusLine: { items: ['provider', 'model'], command: null },
+    };
+
+    const line1 = plain(new FooterComponent(state).render(120)[0]!);
+    const providerAt = line1.indexOf('moonshot');
+    const modelAt = line1.indexOf('kimi-k2-0905');
+    expect(providerAt).toBeGreaterThanOrEqual(0);
+    expect(modelAt).toBeGreaterThan(providerAt);
+  });
+
+  it('keeps the provider out of the default layout', () => {
+    const state: AppState = { ...baseState, availableModels: { 'kimi-k2': catalogModel } };
+
+    expect(plain(new FooterComponent(state).render(200)[0]!)).not.toContain('moonshot');
+  });
+
+  it('strips the managed: prefix from the provider label', () => {
+    const state: AppState = {
+      ...baseState,
+      availableModels: { 'kimi-k2': { ...catalogModel, provider: 'managed:openrouter' } },
+      statusLine: { items: ['provider'], command: null },
+    };
+
+    const line1 = plain(new FooterComponent(state).render(120)[0]!).trim();
+    expect(line1).toBe('openrouter');
+  });
+
+  it('drops the provider slot when the active model is not in the catalog', () => {
+    const state: AppState = {
+      ...baseState,
+      statusLine: { items: ['provider', 'model'], command: null },
+    };
+
+    expect(plain(new FooterComponent(state).render(120)[0]!).trim()).toBe('kimi-k2');
+  });
+
   it('renders nothing on line 1 for an empty items list', () => {
     const state: AppState = {
       ...baseState,
@@ -140,6 +188,7 @@ describe('runStatusLineCommand', () => {
     expect(line).not.toBeNull();
     const parsed = JSON.parse(line!);
     expect(parsed.model).toBe('kimi-k2');
+    expect(parsed.provider).toBe('moonshot');
     expect(parsed.gitBranch).toBe('main');
     expect(parsed.cwd).toBe('/tmp/project');
   });
