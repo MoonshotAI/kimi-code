@@ -1,5 +1,37 @@
 # kimi-code-app
 
+## 0.0.14
+
+### Patch Changes
+
+- [#164](https://github.com/MoonshotAI/kimi-code-app/pull/164) [`5272a23`](https://github.com/MoonshotAI/kimi-code-app/commit/5272a23f59bc23bef87b2448e212c16e18121b5f) - 优化会话归档交互。
+
+- [#156](https://github.com/MoonshotAI/kimi-code-app/pull/156) [`6e1c9da`](https://github.com/MoonshotAI/kimi-code-app/commit/6e1c9da713b52d7ed862c821096412fa204418fa) - 网页授权登录完成后，支持一键唤起桌面端。
+
+- [#158](https://github.com/MoonshotAI/kimi-code-app/pull/158) [`54cf068`](https://github.com/MoonshotAI/kimi-code-app/commit/54cf068ebaf7213799c0e40a64c8ccecd3b14c5d) - 修复复制会话 ID 后菜单项出现对号图标的问题。
+
+- [#160](https://github.com/MoonshotAI/kimi-code-app/pull/160) [`0c9a22f`](https://github.com/MoonshotAI/kimi-code-app/commit/0c9a22fd1bdf3d55198ad7ec7a3b2419fb3d62c0) - 修复部分代码块行号与代码正文重叠的问题。
+
+- [#158](https://github.com/MoonshotAI/kimi-code-app/pull/158) [`54cf068`](https://github.com/MoonshotAI/kimi-code-app/commit/54cf068ebaf7213799c0e40a64c8ccecd3b14c5d) - 修复"最新消息"按钮悬停时背景变半透明的问题。
+
+- [#162](https://github.com/MoonshotAI/kimi-code-app/pull/162) [`12cc99c`](https://github.com/MoonshotAI/kimi-code-app/commit/12cc99ca74822e81225473ca627076aef986daf0) - 优化登录交互
+
+- [#157](https://github.com/MoonshotAI/kimi-code-app/pull/157) [`ac9b35c`](https://github.com/MoonshotAI/kimi-code-app/commit/ac9b35c52c47baaba44e30ef79dacbffc77687a2) - 设置页和移动端设置里显示登录用户的头像、昵称和用户等级。
+
+- [#155](https://github.com/MoonshotAI/kimi-code-app/pull/155) [`dd04056`](https://github.com/MoonshotAI/kimi-code-app/commit/dd04056d5dc73f43a225e1108677873cf2dced71) - 修复流式输出中代码块的语法高亮偶尔丢失、定居后仍显示为纯文本的问题。
+
+- [#152](https://github.com/MoonshotAI/kimi-code-app/pull/152) [`223323b`](https://github.com/MoonshotAI/kimi-code-app/commit/223323b5189f7e13db17c5855ac0e32f3cd9edc8) - 修复输入单独的 @ 时文件菜单误显示"无匹配"的问题。
+
+- [#164](https://github.com/MoonshotAI/kimi-code-app/pull/164) [`5272a23`](https://github.com/MoonshotAI/kimi-code-app/commit/5272a23f59bc23bef87b2448e212c16e18121b5f) - 移除工作区按时间排序逻辑。
+
+- [#163](https://github.com/MoonshotAI/kimi-code-app/pull/163) [`9e17cee`](https://github.com/MoonshotAI/kimi-code-app/commit/9e17cee9dc5ede5f057a277a6e715297d7f65620) - 设置页新增子智能体模型与思考强度设置（实验性，需在服务端开启 secondary-model 实验开关后显示）。
+
+- [#153](https://github.com/MoonshotAI/kimi-code-app/pull/153) [`8abde94`](https://github.com/MoonshotAI/kimi-code-app/commit/8abde94b2bbd690400ccc0dffa99a88f77f3ea8e) - 优化 session 展开收起交互。
+
+- [#157](https://github.com/MoonshotAI/kimi-code-app/pull/157) [`ac9b35c`](https://github.com/MoonshotAI/kimi-code-app/commit/ac9b35c52c47baaba44e30ef79dacbffc77687a2) - 侧栏左下角新增用户区：显示登录头像与昵称，菜单内含套餐用量、主题与语言切换、设置和退出登录，退出登录增加二次确认。
+
+- [#161](https://github.com/MoonshotAI/kimi-code-app/pull/161) [`4212517`](https://github.com/MoonshotAI/kimi-code-app/commit/42125177b9b3d61600078eada84862cb99441347) - 修复打开终端时右侧消息大纲遮挡终端面板的问题。
+
 ## 0.0.13
 
 ### Patch Changes
