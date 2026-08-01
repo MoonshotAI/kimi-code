@@ -46,6 +46,8 @@ import {
   type FsStatManyResponse,
   type FsStatRequest,
   type FsStatResponse,
+  type FsWriteRequest,
+  type FsWriteResponse,
 } from './fs';
 
 const FsWireErrorCode = {
@@ -386,6 +388,33 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     }
     const st = await this.hostFs.lstat(abs);
     return buildFsEntry(rel, basename(abs), st, false);
+  }
+
+  async write(req: FsWriteRequest): Promise<FsWriteResponse> {
+    const abs = await this.resolveWithin(req.path);
+    const rel = this.toRel(abs);
+    try {
+      await this.hostFs.writeText(abs, req.content);
+    } catch (err) {
+      const code = errnoCode(err);
+      if (code === 'EACCES' || code === 'EPERM') {
+        throw new Error2(ErrorCodes.FS_PERMISSION_DENIED, `permission denied: ${req.path}`, {
+          details: { path: req.path },
+        });
+      }
+      if (code === 'EISDIR') {
+        throw new Error2(ErrorCodes.FS_IS_DIRECTORY, `path is a directory: ${req.path}`, {
+          details: { path: req.path },
+        });
+      }
+      if (code === 'ENOENT' || code === 'ENOTDIR') {
+        throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `parent not found: ${req.path}`, {
+          details: { path: req.path },
+        });
+      }
+      throw err;
+    }
+    return { path: rel, size: Buffer.byteLength(req.content, 'utf8') };
   }
 
   async resolvePath(relPath: string): Promise<FsPathResolved> {

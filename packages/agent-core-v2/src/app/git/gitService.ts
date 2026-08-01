@@ -128,6 +128,28 @@ export class GitService implements IGitService {
     return findGitWorkTree(this.fs, cwd);
   }
 
+  async listBranches(cwd: string): Promise<string[]> {
+    const res = await this.runCommand(
+      'git',
+      ['branch', '--format=%(refname:short)'],
+      cwd,
+    );
+    if (res.exitCode !== 0) {
+      throw this.gitUnavailable(cwd, res.stderr.trim() || `git branch exit ${res.exitCode}`);
+    }
+    return res.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  }
+
+  async checkout(cwd: string, branch: string): Promise<void> {
+    const res = await this.runCommand('git', ['checkout', branch], cwd);
+    if (res.exitCode !== 0) {
+      throw this.gitUnavailable(cwd, res.stderr.trim() || `git checkout exit ${res.exitCode}`);
+    }
+  }
+
   private async readPullRequest(cwd: string): Promise<FsPullRequest | null> {
     const cached = this.pullRequestCache.get(cwd);
     const now = Date.now();
