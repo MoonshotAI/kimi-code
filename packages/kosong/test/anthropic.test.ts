@@ -1205,6 +1205,42 @@ describe('AnthropicChatProvider', () => {
       ]);
     });
 
+    it('still sanitizes a canonical Kimi-native id (Anthropic charset forbids `.`/`:`)', async () => {
+      // Anthropic tool ids must match `^[a-zA-Z0-9_-]+$`, so unlike the OpenAI/Kimi policies the
+      // Anthropic policy must NOT preserve `functions.<name>:<idx>` — it keeps rewriting it. This
+      // pins that the native-id preservation did not leak across the provider boundary (#327).
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Read' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'functions.Read:0',
+              name: 'Read',
+              arguments: '{"path":"/tmp/a"}',
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'ok' }],
+          toolCallId: 'functions.Read:0',
+          toolCalls: [],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+      const messages = body['messages'] as Array<{ content: Array<Record<string, unknown>> }>;
+      expect(messages[1]?.content[0]).toMatchObject({ type: 'tool_use', id: 'functions_Read_0' });
+      expect(messages[2]?.content[0]).toMatchObject({
+        type: 'tool_result',
+        tool_use_id: 'functions_Read_0',
+      });
+    });
+
     it('tool call with image result wraps image source inside tool_result', async () => {
       const provider = createProvider();
       const toolCall: ToolCall = {

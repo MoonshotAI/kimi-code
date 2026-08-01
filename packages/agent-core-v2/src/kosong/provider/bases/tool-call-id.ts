@@ -4,6 +4,19 @@
  * The shared `ToolCallIdPolicy` implementation: id sanitization plus
  * history-wide id normalization that rewrites every `toolCalls[].id` /
  * `toolCallId` pair consistently and keeps rewritten ids unique.
+ *
+ * It also owns the Kimi native-id carve-out. Kimi-K2 is trained to see its
+ * canonical id shape `functions.<name>:<idx>` echoed back in history;
+ * sanitizing it makes the model reply with reasoning and no tool call, so the
+ * OpenAI and Kimi policies preserve that shape verbatim while
+ * charset-restricted providers (Anthropic) keep sanitizing. The guard is keyed
+ * on the id shape, not the provider, because self-hosted Kimi is configured as
+ * a plain `openai` provider and does not self-identify here — the trade-off is
+ * that a Kimi-authored id replayed onto a stricter OpenAI-compatible backend
+ * is passed through rather than sanitized. Length handling follows each API:
+ * the chat `tool_call.id` is uncapped, so a canonical id survives at any
+ * length and the cap bounds only the sanitized fallback, while the Responses
+ * `call_id` caps at 64, so an over-long canonical id normalizes instead.
  */
 
 import type { Message, ToolCall } from '#/kosong/contract/message';
@@ -17,9 +30,33 @@ export function sanitizeToolCallId(id: string, maxLength?: number): string {
   return maxLength === undefined ? sanitized : sanitized.slice(0, maxLength);
 }
 
+const KIMI_NATIVE_TOOL_CALL_ID = /^functions\.[A-Za-z0-9_-]+:\d+$/;
+
+export function sanitizeToolCallIdPreservingNative(
+  id: string,
+  fallbackMaxLength?: number,
+): string {
+  return KIMI_NATIVE_TOOL_CALL_ID.test(id) ? id : sanitizeToolCallId(id, fallbackMaxLength);
+}
+
+function isPreservableResponsesCallId(id: string, maxLength?: number): boolean {
+  return KIMI_NATIVE_TOOL_CALL_ID.test(id) && (maxLength === undefined || id.length <= maxLength);
+}
+
 export function sanitizeOpenAIResponsesCallId(id: string, maxLength?: number): string {
   const [callId] = id.split('|', 1);
   return sanitizeToolCallId(callId ?? id, maxLength);
+}
+
+export function sanitizeOpenAIResponsesCallIdPreservingNative(
+  id: string,
+  maxLength?: number,
+): string {
+  const [callId] = id.split('|', 1);
+  const base = callId ?? id;
+  return isPreservableResponsesCallId(base, maxLength)
+    ? base
+    : sanitizeOpenAIResponsesCallId(id, maxLength);
 }
 
 export function normalizeToolCallIdsForProvider(

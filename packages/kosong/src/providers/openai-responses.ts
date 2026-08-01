@@ -36,7 +36,7 @@ import {
 } from './request-auth';
 import {
   normalizeToolCallIdsForProvider,
-  sanitizeOpenAIResponsesCallId,
+  sanitizeOpenAIResponsesCallIdPreservingNative,
   type ToolCallIdPolicy,
 } from './tool-call-id';
 
@@ -78,8 +78,10 @@ function normalizeResponsesFinishReason(
 }
 
 type RawObject = Record<string, unknown>;
+// Preserves a canonical Kimi-native id for the same reason as the chat policy; here the cap is a
+// real wire limit, so an over-long canonical id still normalizes. See `KIMI_NATIVE_TOOL_CALL_ID`.
 const OPENAI_RESPONSES_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
-  normalize: (id) => sanitizeOpenAIResponsesCallId(id, 64),
+  normalize: (id) => sanitizeOpenAIResponsesCallIdPreservingNative(id, 64),
   maxLength: 64,
 };
 

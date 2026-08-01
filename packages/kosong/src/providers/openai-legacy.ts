@@ -39,7 +39,7 @@ import {
 } from './request-auth';
 import {
   normalizeToolCallIdsForProvider,
-  sanitizeToolCallId,
+  sanitizeToolCallIdPreservingNative,
   type ToolCallIdPolicy,
 } from './tool-call-id';
 
@@ -54,8 +54,10 @@ import {
  * (the documented range is `[1, 131072]`).
  */
 const CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING = 128 * 1024;
+// Preserves a canonical Kimi-native id, because self-hosted Kimi is commonly served through an
+// OpenAI-compatible endpoint configured as an `openai` provider. See `KIMI_NATIVE_TOOL_CALL_ID`.
 const OPENAI_CHAT_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
-  normalize: (id) => sanitizeToolCallId(id, 64),
+  normalize: (id) => sanitizeToolCallIdPreservingNative(id, 64),
   maxLength: 64,
 };
 
