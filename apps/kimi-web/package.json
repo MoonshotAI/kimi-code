@@ -21,6 +21,7 @@
     "markstream-vue": "^1.0.7",
     "mermaid": "^11.15.0",
     "shiki": "^4.3.0",
+    "stream-diffs": "^0.0.2",
     "stream-markdown": "^0.0.16",
     "vue": "^3.5.35",
     "vue-i18n": "^11.4.5"
