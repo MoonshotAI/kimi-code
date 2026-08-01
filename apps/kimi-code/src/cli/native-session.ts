@@ -545,6 +545,11 @@ export class NativeSession implements TuiSession {
     }
   }
 
+  /** /title: native sessions rename via the metadata patch (engine-owned). */
+  async renameSession(title: string): Promise<void> {
+    await this.updateMetadata({ title } as JsonObject);
+  }
+
   async setPlanMode(enabled: boolean): Promise<void> {
     // Rejects on re-enter (engine "Already in plan mode"), mirroring the SDK.
     await this.adapter.setPlanMode(enabled);

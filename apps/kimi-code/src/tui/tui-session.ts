@@ -100,4 +100,11 @@ export type TuiSession = Pick<
   | 'handlePrintMainTurnCompleted'
   // Lifecycle
   | 'close'
->;
+> & {
+  /**
+   * Native-engine sessions rename via `session/update_metadata`; harness
+   * sessions go through the harness instead. Absent on sessions that cannot
+   * rename themselves.
+   */
+  renameSession?: (title: string) => Promise<void>;
+};

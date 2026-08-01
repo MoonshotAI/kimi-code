@@ -39,7 +39,11 @@ export async function handleTitleCommand(host: SlashCommandHost, args: string): 
 
   const newTitle = title.slice(0, 200);
   try {
-    await host.harness.renameSession({ id: session.id, title: newTitle });
+    if (session.renameSession !== undefined) {
+      await session.renameSession(newTitle);
+    } else {
+      await host.harness.renameSession({ id: session.id, title: newTitle });
+    }
   } catch (error) {
     const msg = formatErrorMessage(error);
     host.showError(t('tui.statusMessages.sessionFailedToSetTitle', { message: msg }));
