@@ -6,6 +6,11 @@
  * paths become labeled `<REDACTED: ...>` placeholders, while `node_modules/`
  * path tails are kept because they carry diagnostic value without user data.
  * App-scoped, no collaborators.
+ *
+ * Path matching is Unicode-aware (`\p{L}` / `\p{N}`) so non-ASCII home
+ * directory names, apostrophes, UNC shares, `\\?\` long paths, and
+ * drive-letter paths spelled with `/` are redacted the same way as the
+ * ASCII `C:\…` / `/home/…` forms.
  */
 
 const REDACTED_PATH = '<REDACTED: user-file-path>';
@@ -21,19 +26,41 @@ const LABELED_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\b(?:sk|pk|ak)-[A-Za-z0-9_-]{16,}\b/g, '<REDACTED: API Key>'],
 ];
 
-const POSIX_PATH = /(?:\/[\w.~+-]+){2,}\/?/g;
-const WINDOWS_PATH = /\b[A-Za-z]:\\(?:[\w.~ -]+\\?){2,}/g;
+/** Path segment atom: letters/digits (any script) plus common filename marks — no spaces. */
+const SEGMENT_ATOM = String.raw`[\p{L}\p{N}._'~+-]+`;
+/** Directory segment that may contain internal single spaces (`Program Files`). */
+const SEGMENT_DIR = String.raw`${SEGMENT_ATOM}(?: ${SEGMENT_ATOM})*`;
+
+const WINDOWS_UNC_OR_LONG = String.raw`(?:\\\\\?(?:\\(?:UNC\\[^\s\\/]+\\[^\s\\/]+|[A-Za-z]:))|\\\\[^\s\\/]+\\[^\s\\/]+)(?:[\\/]${SEGMENT_DIR})*[\\/]${SEGMENT_ATOM}`;
+/** Drive paths need ≥2 segments after the drive letter (`C:\Users\alice`). */
+const WINDOWS_DRIVE = String.raw`\b[A-Za-z]:(?:[\\/]${SEGMENT_DIR})+[\\/]${SEGMENT_ATOM}`;
+/** POSIX absolute paths with at least two segments (`/home/alice/…`). */
+const POSIX_PATH = String.raw`(?:\/${SEGMENT_DIR})*\/${SEGMENT_ATOM}(?:\/${SEGMENT_ATOM})+\/?`;
+
+/**
+ * Absolute paths in one alternation (Windows first) so a replacement — including a
+ * kept `node_modules/…` tail — is not re-matched by the POSIX arm.
+ *
+ * Intermediate segments may include spaces; the final segment may not, so
+ * trailing message text after a path is preserved.
+ */
+const ABSOLUTE_PATH = new RegExp(
+  `${WINDOWS_UNC_OR_LONG}|${WINDOWS_DRIVE}|${POSIX_PATH}`,
+  'gu',
+);
+
+function redactAbsolutePath(match: string): string {
+  const normalized = match.replaceAll('\\', '/');
+  const index = normalized.toLowerCase().indexOf(NODE_MODULES_MARKER);
+  return index === -1 ? REDACTED_PATH : normalized.slice(index);
+}
 
 export function cleanTelemetryString(value: string): string {
   let out = value;
   for (const [pattern, label] of LABELED_PATTERNS) {
     out = out.replace(pattern, label);
   }
-  out = out.replace(WINDOWS_PATH, REDACTED_PATH);
-  out = out.replace(POSIX_PATH, (match) => {
-    const index = match.indexOf(NODE_MODULES_MARKER);
-    return index === -1 ? REDACTED_PATH : match.slice(index);
-  });
+  out = out.replace(ABSOLUTE_PATH, redactAbsolutePath);
   return out;
 }
 
