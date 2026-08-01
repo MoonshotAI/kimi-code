@@ -1,14 +1,39 @@
 import {
   type ChatProvider,
   type GenerationKwargs,
-  KimiChatProvider,
   type ThinkingEffort,
 } from '@moonshot-ai/kosong';
-import { AnthropicChatProvider } from '@moonshot-ai/kosong/providers/anthropic';
 
 import { parseFloatEnv } from '#/config/resolve';
 
 type Env = Readonly<Record<string, string | undefined>>;
+
+/**
+ * Narrowed interface for {@link KimiChatProvider} methods that are not part
+ * of the general {@link ChatProvider} contract. Used after a runtime
+ * `provider.name === 'kimi'` guard so callers can access Kimi-specific APIs
+ * without importing the concrete class.
+ */
+interface KimiProviderApi {
+  withGenerationKwargs(kwargs: GenerationKwargs): ChatProvider;
+  withExtraBody(extraBody: Record<string, unknown>): ChatProvider;
+}
+
+/**
+ * Narrowed interface for {@link AnthropicChatProvider} methods outside the
+ * general {@link ChatProvider} contract.
+ */
+interface AnthropicProviderApi {
+  withThinkingKeep(keep: string): ChatProvider;
+}
+
+function kimiApi(provider: ChatProvider): KimiProviderApi {
+  return provider as unknown as KimiProviderApi;
+}
+
+function anthropicApi(provider: ChatProvider): AnthropicProviderApi {
+  return provider as unknown as AnthropicProviderApi;
+}
 
 /**
  * Apply Kimi sampling params (`KIMI_MODEL_TEMPERATURE`, `KIMI_MODEL_TOP_P`) from
@@ -26,7 +51,7 @@ export function applyKimiEnvSamplingParams(
   provider: ChatProvider,
   env: Env = process.env,
 ): ChatProvider {
-  if (!(provider instanceof KimiChatProvider)) return provider;
+  if (provider.name !== 'kimi') return provider;
 
   const kwargs: GenerationKwargs = {};
   const temperature = parseFloatEnv(env['KIMI_MODEL_TEMPERATURE'], 'KIMI_MODEL_TEMPERATURE');
@@ -34,7 +59,7 @@ export function applyKimiEnvSamplingParams(
   const topP = parseFloatEnv(env['KIMI_MODEL_TOP_P'], 'KIMI_MODEL_TOP_P');
   if (topP !== undefined) kwargs.top_p = topP;
 
-  return Object.keys(kwargs).length > 0 ? provider.withGenerationKwargs(kwargs) : provider;
+  return Object.keys(kwargs).length > 0 ? kimiApi(provider).withGenerationKwargs(kwargs) : provider;
 }
 
 /**
@@ -112,10 +137,10 @@ export function applyKimiEnvThinkingKeep(
   env: Env = process.env,
   configKeep?: string,
 ): ChatProvider {
-  if (!(provider instanceof KimiChatProvider)) return provider;
+  if (provider.name !== 'kimi') return provider;
   const keep = resolveThinkingKeep(env, configKeep, thinkingEffort);
   if (keep === undefined) return provider;
-  return provider.withExtraBody({ thinking: { keep } });
+  return kimiApi(provider).withExtraBody({ thinking: { keep } });
 }
 
 /**
@@ -133,8 +158,8 @@ export function applyAnthropicThinkingKeep(
   env: Env = process.env,
   configKeep?: string,
 ): ChatProvider {
-  if (!(provider instanceof AnthropicChatProvider)) return provider;
+  if (provider.name !== 'anthropic') return provider;
   const keep = resolveThinkingKeep(env, configKeep, thinkingEffort);
   if (keep === undefined) return provider;
-  return provider.withThinkingKeep(keep);
+  return anthropicApi(provider).withThinkingKeep(keep);
 }
