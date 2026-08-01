@@ -854,10 +854,12 @@ describe('KimiTUI message flow', () => {
     const homeDir = await makeTempHome();
     process.env['KIMI_CODE_HOME'] = homeDir;
     const session = makeSession({ id: 'ses-lazy' });
-    const getConfig = vi.fn(async () => ({
-      models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
-      // Initially no default model configured.
-    }));
+    const getConfig = vi.fn(
+      async (): Promise<{ models: Record<string, unknown>; defaultModel?: string }> => ({
+        models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+        // Initially no default model configured.
+      }),
+    );
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
       engineV2: true,
