@@ -133,6 +133,13 @@ export interface SlashCommandHost {
    * mutations apply before the first session exists.
    */
   refreshPluginCommands(session?: Session): Promise<void>;
+  /**
+   * Seed appState with the config defaults the v2 engine would apply at
+   * createSession time (model, permission, plan mode, thinking effort,
+   * context cap). No-op semantics on a live session path: only /reload calls
+   * it while still session-less.
+   */
+  hydrateLazyConfigDefaults(): Promise<void>;
 
   // Session
   requireSession(): Session;

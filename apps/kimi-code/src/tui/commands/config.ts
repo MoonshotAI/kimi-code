@@ -93,6 +93,13 @@ export async function handlePlanCommand(host: SlashCommandHost, args: string): P
     return;
   }
 
+  // The session may already be in the requested mode (e.g. it was created
+  // with config.defaultPlanMode applied), and re-entering plan mode throws.
+  if (host.state.appState.planMode === enabled) {
+    host.showNotice(`Plan mode is already ${enabled ? 'on' : 'off'}`);
+    return;
+  }
+
   await applyPlanMode(host, session, enabled);
 }
 

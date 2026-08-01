@@ -867,33 +867,7 @@ export class KimiTUI {
         // and applied when that session is created; until then the footer
         // shows the config defaults the engine would apply at createSession
         // time (model, permission, plan mode, thinking effort, context cap).
-        const config = await this.harness.getConfig({ reload: true });
-        const patch: Partial<AppState> = {};
-        const startupModel = startup.model ?? config.defaultModel;
-        if (startupModel !== undefined) {
-          patch.model = startupModel;
-          const selected = config.models?.[startupModel];
-          if (selected?.maxContextSize !== undefined) {
-            patch.maxContextTokens = selected.maxContextSize;
-          }
-        }
-        // CLI --auto/--yolo/--plan win over config defaults; the flags are
-        // re-applied by applyStartupPermissionAndPlanToAppState below.
-        if (!startup.auto && !startup.yolo && config.defaultPermissionMode !== undefined) {
-          patch.permissionMode = config.defaultPermissionMode;
-        }
-        if (!startup.plan && config.defaultPlanMode !== undefined) {
-          patch.planMode = config.defaultPlanMode;
-        }
-        const effort = thinkingEffortFromConfig(config.thinking);
-        if (effort !== undefined) {
-          patch.thinkingEffort = effort;
-        }
-        if (startup.agentProfile !== undefined || startup.agentFiles !== undefined) {
-          patch.agentProfile = startup.agentProfile;
-          patch.agentFiles = startup.agentFiles?.length ? [...startup.agentFiles] : undefined;
-        }
-        this.setAppState(patch);
+        await this.hydrateLazyConfigDefaults();
       } else {
         session = await this.harness.createSession(createSessionOptions);
       }
@@ -1660,6 +1634,45 @@ export class KimiTUI {
       throw new Error(NO_ACTIVE_SESSION_MESSAGE);
     }
     return this.session;
+  }
+
+  /**
+   * Seed appState with the config defaults the v2 engine would apply at
+   * createSession time (model, permission, plan mode, thinking effort,
+   * context cap), so the footer and the lazy create path reflect them while
+   * no session exists. Runs at session-less startup and again on /reload
+   * while still session-less, so externally edited defaults take effect
+   * before the first lazy-created session.
+   */
+  async hydrateLazyConfigDefaults(): Promise<void> {
+    const { startup } = this.options;
+    const config = await this.harness.getConfig({ reload: true });
+    const patch: Partial<AppState> = {};
+    const startupModel = startup.model ?? config.defaultModel;
+    if (startupModel !== undefined) {
+      patch.model = startupModel;
+      const selected = config.models?.[startupModel];
+      if (selected?.maxContextSize !== undefined) {
+        patch.maxContextTokens = selected.maxContextSize;
+      }
+    }
+    // CLI --auto/--yolo/--plan win over config defaults; the flags are
+    // re-applied by applyStartupPermissionAndPlanToAppState at startup.
+    if (!startup.auto && !startup.yolo && config.defaultPermissionMode !== undefined) {
+      patch.permissionMode = config.defaultPermissionMode;
+    }
+    if (!startup.plan && config.defaultPlanMode !== undefined) {
+      patch.planMode = config.defaultPlanMode;
+    }
+    const effort = thinkingEffortFromConfig(config.thinking);
+    if (effort !== undefined) {
+      patch.thinkingEffort = effort;
+    }
+    if (startup.agentProfile !== undefined || startup.agentFiles !== undefined) {
+      patch.agentProfile = startup.agentProfile;
+      patch.agentFiles = startup.agentFiles?.length ? [...startup.agentFiles] : undefined;
+    }
+    this.setAppState(patch);
   }
 
   private async createSessionFromCurrentState(bindStartupAgent = false): Promise<Session> {

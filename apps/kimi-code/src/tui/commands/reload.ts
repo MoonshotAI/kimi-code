@@ -31,6 +31,12 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
   await applyReloadedTuiConfig(host, tuiConfig);
 
   if (session === undefined) {
+    // Still session-less on the v2 engine: refresh the lazy defaults too, so
+    // defaults edited externally (config.toml, a newly added default model)
+    // reach the first lazy-created session instead of staying stale.
+    if (host.engineV2) {
+      await host.hydrateLazyConfigDefaults();
+    }
     host.showStatus(
       'Runtime and TUI config reloaded; no active session.',
       'success',
