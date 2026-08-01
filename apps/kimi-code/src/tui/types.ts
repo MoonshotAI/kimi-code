@@ -44,6 +44,13 @@ export interface AppState {
    * the TUI. */
   thinkingEffort: ThinkingEffort;
   /**
+   * The current `defaultPlanMode` value from config (false when absent),
+   * refreshed by `hydrateLazyConfigDefaults`. Used to tell a config-driven
+   * plan-mode entry apart from an explicit CLI `--plan` when lazy-creating
+   * the first session (the engine applies the config default itself).
+   */
+  configDefaultPlanMode?: boolean;
+  /**
    * Session-only thinking effort chosen (e.g. via the model picker's Alt+S)
    * while no session exists yet on the v2 engine. Applied to the first
    * lazy-created session and cleared once it exists; the engine's config

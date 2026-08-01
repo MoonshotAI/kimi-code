@@ -955,6 +955,86 @@ describe('KimiTUI message flow', () => {
     expect(driver.state.appState.planMode).toBe(true);
   });
 
+  it('clears the stale permission default when it is removed from config (v2 engine)', async () => {
+    const homeDir = await makeTempHome();
+    process.env['KIMI_CODE_HOME'] = homeDir;
+    const session = makeSession({ id: 'ses-lazy' });
+    const getConfig = vi.fn(
+      async (): Promise<{
+        models: Record<string, unknown>;
+        defaultModel?: string;
+        defaultPermissionMode?: string;
+      }> => ({
+        models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+        defaultModel: 'k2',
+        defaultPermissionMode: 'auto',
+      }),
+    );
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions },
+    };
+    const { driver } = await makeDriver(session, { getConfig }, startupInput);
+    expect(driver.state.appState.permissionMode).toBe('auto');
+
+    // The elevated default is removed externally, then /reload runs — a stale
+    // elevated mode must not reach the first lazy-created session.
+    getConfig.mockResolvedValue({
+      models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+      defaultModel: 'k2',
+    });
+    driver.handleUserInput('/reload');
+
+    await vi.waitFor(() => {
+      expect(driver.state.appState.permissionMode).toBe('manual');
+    });
+  });
+
+  it('does not pass --plan when config already applies default plan mode (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      // The engine applied the config default at create.
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingEffort: 'off',
+        permission: 'manual',
+        planMode: true,
+        contextTokens: 0,
+        maxContextTokens: 100,
+        contextUsage: 0,
+      })),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2', plan: true },
+    };
+    const { driver, harness } = await makeDriver(
+      session,
+      {
+        getConfig: vi.fn(async () => ({
+          models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+          defaultModel: 'k2',
+          defaultPlanMode: true,
+        })),
+      },
+      startupInput,
+    );
+
+    driver.handleUserInput('hello');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('hello');
+    });
+    // The engine applies the config default at create; repeating --plan would
+    // re-enter plan mode and throw, so it must not be passed again.
+    expect(harness.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ planMode: undefined }),
+    );
+    expect(driver.state.appState.planMode).toBe(true);
+  });
+
   it('tracks /clear as the clear alias for /new', async () => {
     const { driver, harness } = await makeDriver(makeSession({ id: 'ses-1' }));
     const nextSession = makeSession({ id: 'ses-2' });

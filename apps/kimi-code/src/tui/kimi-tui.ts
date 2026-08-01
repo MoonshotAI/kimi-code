@@ -1664,11 +1664,17 @@ export class KimiTUI {
     }
     // CLI --auto/--yolo/--plan win over config defaults; the flags are
     // re-applied by applyStartupPermissionAndPlanToAppState at startup.
-    if (!startup.auto && !startup.yolo && config.defaultPermissionMode !== undefined) {
-      patch.permissionMode = config.defaultPermissionMode;
+    if (!startup.auto && !startup.yolo) {
+      // Reset to manual when the default was removed from config — a stale
+      // elevated mode must not be passed to the first lazy-created session.
+      patch.permissionMode = config.defaultPermissionMode ?? 'manual';
     }
-    if (!startup.plan && config.defaultPlanMode !== undefined) {
-      patch.planMode = config.defaultPlanMode;
+    // Track the config default itself (vs an explicit CLI --plan) so the lazy
+    // create path can tell which one would activate plan mode; a removed
+    // default also clears the hydrated footer value.
+    patch.configDefaultPlanMode = config.defaultPlanMode === true;
+    if (!startup.plan) {
+      patch.planMode = config.defaultPlanMode === true;
     }
     const effort = thinkingEffortFromConfig(config.thinking);
     if (effort !== undefined) {
@@ -1688,14 +1694,14 @@ export class KimiTUI {
     }
     // With an active session, carry the live plan state. Session-less (lazy
     // creation / `/new` before the first session) on v2, pass only the
-    // explicit CLI --plan intent: the engine applies `defaultPlanMode` itself
-    // at create time (sessionLifecycleService), so passing the config default
-    // here too would enter plan mode twice and throw. On v1 (which never
+    // explicit CLI --plan intent — and only when the engine is not already
+    // applying `defaultPlanMode` at create time (sessionLifecycleService),
+    // since re-entering an active plan mode throws. On v1 (which never
     // pre-fills plan mode from config), keep the historical appState value.
     const explicitPlanMode =
       this.session !== undefined || !this.engineV2
         ? this.state.appState.planMode
-        : this.options.startup.plan;
+        : this.options.startup.plan && this.state.appState.configDefaultPlanMode !== true;
     const options: MutableCreateSessionOptions = {
       workDir: this.state.appState.workDir,
       model,
