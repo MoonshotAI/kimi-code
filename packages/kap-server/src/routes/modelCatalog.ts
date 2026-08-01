@@ -734,7 +734,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         204: { description: 'Provider deleted.' },
       },
       description:
-        'Delete a provider and all of its model aliases (204, no body). The global default_provider/default_model pointers are left untouched — they are the user\'s settings, not this endpoint\'s to garbage-collect. OAuth-managed providers are rejected: log out via /oauth/logout instead.',
+        'Delete a provider and all of its model aliases (204, no body). The global default_provider pointer is left untouched — it is the user\'s setting, not this endpoint\'s to garbage-collect — but a global default_model that points at one of the deleted provider\'s models is reset (that alias no longer exists). OAuth-managed providers are rejected: log out via /oauth/logout instead.',
       tags: ['providers'],
       operationId: 'deleteProvider',
     },
@@ -774,6 +774,13 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         );
         if (Object.keys(restModels).length !== Object.keys(models).length) {
           await config.replace(MODELS_SECTION, restModels);
+        }
+        // A global default_model pointing at one of the deleted provider's
+        // models would dangle — the alias no longer exists (and a later /auth
+        // readiness check would fail to resolve it), so reset the pointer.
+        const defaultModel = config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
+        if (defaultModel !== undefined && defaultModel.startsWith(`${provider_id}/`)) {
+          await config.replace(DEFAULT_MODEL_SECTION, undefined);
         }
         (reply as unknown as StatusReply).code(204).send();
       });

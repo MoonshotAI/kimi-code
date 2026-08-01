@@ -42,8 +42,12 @@ export type GetProviderResponse = z.infer<typeof getProviderResponseSchema>;
 // ---------------------------------------------------------------------------
 
 /**
- * The six wire protocols the core config schema accepts as a provider `type`.
- * (`vertexai` resolves through the google-genai base's vertex mode at runtime.)
+ * The wire protocols the core config schema accepts as a provider `type`,
+ * plus the contributed vendor ids registered in agent-core-v2's
+ * `vendors.contrib.ts` — each of those speaks the OpenAI wire protocol via
+ * its registered `baseProtocol`, so they are accepted here directly and the
+ * client no longer needs a wire-type alias map. (`vertexai` resolves through
+ * the google-genai base's vertex mode at runtime.)
  */
 export const providerWireTypeSchema = z.enum([
   'kimi',
@@ -52,6 +56,13 @@ export const providerWireTypeSchema = z.enum([
   'anthropic',
   'google-genai',
   'vertexai',
+  'deepseek',
+  'qwen',
+  'zhipu',
+  'baichuan',
+  'minimax',
+  'ollama',
+  'custom',
 ]);
 export type ProviderWireType = z.infer<typeof providerWireTypeSchema>;
 
