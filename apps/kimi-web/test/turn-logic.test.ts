@@ -590,10 +590,31 @@ describe('messagesToTurns resync dedup', () => {
 
     expect(turns).toHaveLength(1);
     expect(turns[0]?.thinking).toBe('let me check');
-    expect(turns[0]?.text).toBe('I will \nrun ls');
+    expect(turns[0]?.text).toBe('I will run ls');
     expect(turns[0]?.tools).toHaveLength(1);
     // The seed's live progress survives the dedup — the persisted card had none.
     expect(turns[0]?.tools?.[0]?.output).toEqual(['total 8']);
+  });
+
+  it('coalesces consecutive streamed text chunks without inserting newlines', () => {
+    // History projection keeps one content part per stream delta; joining with
+    // '\n' made reloads show one line per chunk under white-space: pre-wrap.
+    const turns = messagesToTurns(
+      [
+        message('a1', 'assistant', [
+          { type: 'text', text: '你好！' },
+          { type: 'text', text: '我的' },
+          { type: 'text', text: '上下文' },
+        ]),
+      ],
+      [],
+      undefined,
+      false,
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.text).toBe('你好！我的上下文');
+    expect(turns[0]?.blocks).toEqual([{ kind: 'text', text: '你好！我的上下文' }]);
   });
 
   it('keeps the seeded message when the transcript has no copy of the current step yet', () => {
