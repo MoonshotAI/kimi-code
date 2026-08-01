@@ -13,18 +13,25 @@ export interface RenderedHookResult {
 export function renderUserPromptHookResult(
   results: readonly HookResult[] | undefined,
 ): RenderedHookResult | undefined {
+  return renderAllowedHookResult('UserPromptSubmit', results);
+}
+
+export function renderAllowedHookResult(
+  event: string,
+  results: readonly HookResult[] | undefined,
+): RenderedHookResult | undefined {
   const messages =
     results
       ?.filter((result) => result.action !== 'block')
-      ?.map(userPromptHookMessage)
+      ?.map(allowedHookMessage)
       .filter(isNonEmptyString) ??
     [];
   if (messages.length === 0) return undefined;
   const displayMessage = messages.join('\n\n');
   return {
-    event: 'UserPromptSubmit',
+    event,
     message: displayMessage,
-    text: messages.map((message) => renderHookResult('UserPromptSubmit', message)).join('\n'),
+    text: messages.map((message) => renderHookResult(event, message)).join('\n'),
   };
 }
 
@@ -51,7 +58,7 @@ export function renderUserPromptHookBlockResult(
   };
 }
 
-function userPromptHookMessage(result: HookResult): string | undefined {
+function allowedHookMessage(result: HookResult): string | undefined {
   if (result.timedOut === true || (result.exitCode !== undefined && result.exitCode !== 0)) {
     return undefined;
   }

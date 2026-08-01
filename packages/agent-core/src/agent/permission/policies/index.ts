@@ -1,4 +1,5 @@
 import type { Agent } from '../..';
+import type { RenderedHookResult } from '../../../session/hooks';
 import type { PermissionPolicy } from '../types';
 import { AgentSwarmExclusiveDenyPermissionPolicy } from './agent-swarm-exclusive-deny';
 import { AutoModeApprovePermissionPolicy } from './auto-mode-approve';
@@ -25,10 +26,13 @@ import {
 import { YoloModeApprovePermissionPolicy } from './yolo-mode-approve';
 
 /** Permission policies run in order; the first non-undefined result wins. */
-export function createPermissionDecisionPolicies(agent: Agent): PermissionPolicy[] {
+export function createPermissionDecisionPolicies(
+  agent: Agent,
+  onAllowedPreToolHookResult?: (toolCallId: string, result: RenderedHookResult) => void,
+): PermissionPolicy[] {
   return [
     // PreToolUse hook returned a block → deny.
-    new PreToolCallHookPermissionPolicy(agent),
+    new PreToolCallHookPermissionPolicy(agent, onAllowedPreToolHookResult),
     // AgentSwarm is batch-exclusive and must run alone, regardless of permission mode.
     new AgentSwarmExclusiveDenyPermissionPolicy(),
     // auto mode + AskUserQuestion → deny.
