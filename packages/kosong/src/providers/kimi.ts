@@ -324,8 +324,11 @@ class KimiStreamedMessage implements StreamedMessage {
     // Reasoning dialect: accept any known wire key and remember which one the
     // endpoint used, so the next request echoes thinking back under the same
     // field (newer vLLM renamed `reasoning_content` to `reasoning`).
+    // Observe empty strings for dialect detection, but do not journal no-op
+    // think parts — some gateways keep `reasoning_content: ""` on every chunk
+    // after thinking ends (see #2506).
     const reasoning = this._reasoningKeyDialect.observe(message);
-    if (reasoning !== undefined) {
+    if (reasoning) {
       yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
     }
 
@@ -382,8 +385,11 @@ class KimiStreamedMessage implements StreamedMessage {
         const delta = choice.delta;
 
         // Reasoning dialect: same detection as the non-stream path.
+        // Observe empty strings for dialect detection, but do not journal no-op
+        // think parts — some gateways keep `reasoning_content: ""` on every chunk
+        // after thinking ends (see #2506).
         const reasoning = this._reasoningKeyDialect.observe(delta);
-        if (reasoning !== undefined) {
+        if (reasoning) {
           yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
         }
 
