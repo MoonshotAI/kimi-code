@@ -160,6 +160,8 @@ describe('EditTool', () => {
     expect(tool.description).toContain('`old_string` must be unique');
     expect(tool.description).toContain('only when they do not target the same file');
     expect(tool.description).toContain('DO NOT issue consecutive Edit calls on the same file');
+    expect(tool.description).toContain('allow_large_delete=true');
+    expect(tool.description).toContain('short 30–50 line Read');
     expect(tool.description).toContain('DO NOT use Write or Bash `sed`');
     expect(tool.description).toContain('same-file edits in response order');
     expect(tool.description).toContain('old_string not found');
@@ -531,6 +533,55 @@ describe('EditTool', () => {
 
     expect(result.output).toContain('Replaced 1 occurrence');
     expect(writeText).toHaveBeenCalledWith('/tmp/e.txt', 'Hello !');
+  });
+
+  it('refuses multi-line empty deletions unless allow_large_delete is set', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const file = ['# Practice Phase', '', 'body line', '', 'more'].join('\n');
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue(file),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const refused = await execute(tool, {
+      path: '/tmp/skill.md',
+      old_string: '# Practice Phase\n\nbody line',
+      new_string: '',
+    });
+    expect(refused).toMatchObject({ isError: true });
+    expect(refused.output).toContain('Refusing a multi-line deletion');
+    expect(refused.output).toContain('allow_large_delete=true');
+    expect(writeText).not.toHaveBeenCalled();
+
+    const allowed = await execute(tool, {
+      path: '/tmp/skill.md',
+      old_string: '# Practice Phase\n\nbody line',
+      new_string: '',
+      allow_large_delete: true,
+    });
+    expect(allowed.output).toContain('Replaced 1 occurrence');
+    expect(writeText).toHaveBeenCalledWith('/tmp/skill.md', '\n\nmore');
+  });
+
+  it('tells the model to reread a large region when old_string is missing', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue('alpha beta'),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/a.txt',
+      old_string: 'delta',
+      new_string: 'gamma',
+    });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('large enough region');
+    expect(result.output).toContain('30–50 line window');
+    expect(writeText).not.toHaveBeenCalled();
   });
 
   it('allows absolute edits outside the workspace under default policy', async () => {
