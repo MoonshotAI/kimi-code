@@ -29,10 +29,16 @@ export async function handleTitleCommand(host: SlashCommandHost, args: string): 
     return;
   }
 
-  const session = host.session;
+  let session = host.session;
   if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
+    if (!host.engineV2) {
+      host.showError(NO_ACTIVE_SESSION_MESSAGE);
+      return;
+    }
+    // Setting a title needs a live session; lazy-create it on first use (the
+    // bare read-only form above works session-less).
+    session = await host.ensureSession();
+    if (session === undefined) return;
   }
 
   const newTitle = title.slice(0, 200);

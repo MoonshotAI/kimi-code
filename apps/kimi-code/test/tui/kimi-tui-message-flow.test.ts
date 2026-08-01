@@ -505,13 +505,12 @@ describe('KimiTUI message flow', () => {
 
     expect(harness.createSession).not.toHaveBeenCalled();
 
-    driver.handleUserInput('/auto on');
+    driver.handleUserInput('/compact');
 
     await vi.waitFor(() => {
-      expect(session.setPermission).toHaveBeenCalledWith('auto');
+      expect(session.compact).toHaveBeenCalledWith({ instruction: undefined });
     });
     expect(harness.createSession).toHaveBeenCalledTimes(1);
-    expect(driver.state.appState.permissionMode).toBe('auto');
     expect(driver.getCurrentSessionId()).toBe('ses-lazy');
   });
 
@@ -1033,6 +1032,52 @@ describe('KimiTUI message flow', () => {
       expect.objectContaining({ planMode: undefined }),
     );
     expect(driver.state.appState.planMode).toBe(true);
+  });
+
+  it('opens read-only status commands without creating a session (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      // No model configured: read-only views must still open.
+      cliOptions: { ...makeStartupInput().cliOptions },
+    };
+    const { driver, harness } = await makeDriver(session, {}, startupInput);
+
+    driver.handleUserInput('/status');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Status');
+    });
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(driver.state.appState.sessionId).toBe('');
+  });
+
+  it('applies /yolo on session-less and passes the mode to the lazy session (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(session, {}, startupInput);
+
+    driver.handleUserInput('/yolo on');
+
+    await vi.waitFor(() => {
+      expect(driver.state.appState.permissionMode).toBe('yolo');
+    });
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(session.setPermission).not.toHaveBeenCalled();
+
+    driver.handleUserInput('hello');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('hello');
+    });
+    expect(harness.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ permission: 'yolo' }),
+    );
   });
 
   it('tracks /clear as the clear alias for /new', async () => {

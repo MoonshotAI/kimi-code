@@ -323,7 +323,6 @@ async function ensureSessionForCommand(host: SlashCommandHost): Promise<Session 
 
 /** Builtin commands that need an active session; lazy-created on the v2 engine. */
 const SESSION_REQUIRING_COMMANDS: ReadonlySet<BuiltinSlashCommandName> = new Set([
-  'auto',
   'btw',
   'compact',
   'export-debug-zip',
@@ -331,16 +330,10 @@ const SESSION_REQUIRING_COMMANDS: ReadonlySet<BuiltinSlashCommandName> = new Set
   'fork',
   'goal',
   'init',
-  'mcp',
-  'permission',
   'plan',
-  'status',
   'swarm',
-  'title',
   'undo',
-  'usage',
   'web',
-  'yolo',
 ]);
 
 async function handleBuiltInSlashCommand(

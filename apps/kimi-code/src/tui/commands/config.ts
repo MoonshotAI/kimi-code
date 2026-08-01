@@ -124,10 +124,12 @@ async function applyPlanMode(host: SlashCommandHost, session: Session, enabled: 
 
 export async function handleYoloCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
-  if (session === undefined) {
+  if (session === undefined && !host.engineV2) {
     host.showError(NO_ACTIVE_SESSION_MESSAGE);
     return;
   }
+  // v2 session-less: the chosen mode is recorded in appState and passed to the
+  // lazy-created session; apply the runtime permission only when one exists.
 
   const subcmd = args.trim().toLowerCase();
   const currentMode = host.state.appState.permissionMode;
@@ -137,7 +139,7 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
       host.showNotice('YOLO mode is already on');
       return;
     }
-    await session.setPermission('yolo');
+    await session?.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
     host.showNotice('YOLO mode: ON', 'Tool actions auto-approved; the agent may still ask you questions.');
     return;
@@ -148,7 +150,7 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
       host.showNotice('YOLO mode is already off');
       return;
     }
-    await session.setPermission('manual');
+    await session?.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
     host.showNotice('YOLO mode: OFF');
     return;
@@ -156,11 +158,11 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
 
   // toggle
   if (currentMode === 'yolo') {
-    await session.setPermission('manual');
+    await session?.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
     host.showNotice('YOLO mode: OFF');
   } else {
-    await session.setPermission('yolo');
+    await session?.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
     host.showNotice('YOLO mode: ON', 'Tool actions auto-approved; the agent may still ask you questions.');
   }
@@ -168,10 +170,12 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
 
 export async function handleAutoCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
-  if (session === undefined) {
+  if (session === undefined && !host.engineV2) {
     host.showError(NO_ACTIVE_SESSION_MESSAGE);
     return;
   }
+  // v2 session-less: the chosen mode is recorded in appState and passed to the
+  // lazy-created session; apply the runtime permission only when one exists.
 
   const subcmd = args.trim().toLowerCase();
   const currentMode = host.state.appState.permissionMode;
@@ -181,7 +185,7 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
       host.showNotice('Auto mode is already on');
       return;
     }
-    await session.setPermission('auto');
+    await session?.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
     host.showNotice('Auto mode: ON', 'All actions auto-approved; the agent will not ask you questions.');
     return;
@@ -192,7 +196,7 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
       host.showNotice('Auto mode is already off');
       return;
     }
-    await session.setPermission('manual');
+    await session?.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
     host.showNotice('Auto mode: OFF');
     return;
@@ -200,11 +204,11 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
 
   // toggle
   if (currentMode === 'auto') {
-    await session.setPermission('manual');
+    await session?.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
     host.showNotice('Auto mode: OFF');
   } else {
-    await session.setPermission('auto');
+    await session?.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
     host.showNotice('Auto mode: ON', 'All actions auto-approved; the agent will not ask you questions.');
   }
@@ -882,7 +886,14 @@ async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMod
   }
 
   try {
-    await host.requireSession().setPermission(mode);
+    if (host.session !== undefined) {
+      await host.session.setPermission(mode);
+    } else if (!host.engineV2) {
+      host.showError(NO_ACTIVE_SESSION_MESSAGE);
+      return;
+    }
+    // v2 session-less: the chosen mode is recorded in appState and passed to
+    // the lazy-created session.
   } catch (error) {
     const msg = formatErrorMessage(error);
     host.showError(`Failed to set permission mode: ${msg}`);
