@@ -18,6 +18,7 @@ const apiMock = vi.hoisted(() => ({
   abortPrompt: vi.fn(),
   abortSession: vi.fn(),
   addWorkspace: vi.fn(),
+  archiveSession: vi.fn(),
   updateWorkspace: vi.fn(),
   createSession: vi.fn(),
   exportSession: vi.fn(),
@@ -2662,5 +2663,263 @@ describe('useWorkspaceState — loadAllSessions usage preservation', () => {
 
     const next = setSessions.mock.calls[0][0];
     expect(next[0].usage.contextTokens).toBe(0);
+  });
+});
+
+describe('useWorkspaceState — archiveSession backfill and cursor re-anchoring', () => {
+  const WS = 'wd_1';
+  const BASE = Date.parse('2026-01-10T00:00:00.000Z');
+
+  beforeEach(() => {
+    apiMock.archiveSession.mockReset().mockResolvedValue({ archived: true });
+    apiMock.listSessions.mockReset();
+  });
+
+  function wsSession(id: string, index: number): AppSession {
+    return {
+      ...createSession(),
+      id,
+      workspaceId: WS,
+      updatedAt: new Date(BASE - index * 1000).toISOString(),
+    };
+  }
+
+  function createArchiveRig(loaded: AppSession[], cursor: string | undefined, hasMore: boolean) {
+    const state = createState();
+    state.sessions = [...loaded];
+    state.sessionsCursorByWorkspace = { [WS]: cursor };
+    state.sessionsHasMoreByWorkspace = { [WS]: hasMore };
+    const deps = {
+      ...createDeps(),
+      sideChat: { clearSideChatForSession: vi.fn() },
+      forgetSession: vi.fn((id: string) => {
+        state.sessions = state.sessions.filter((s) => s.id !== id);
+      }),
+      setSessions: vi.fn((next: AppSession[]) => {
+        state.sessions = next;
+      }),
+      workspaceIdForSession: vi.fn(
+        (s: { workspaceId?: string; cwd: string }) => s.workspaceId ?? s.cwd,
+      ),
+    } as unknown as UseWorkspaceStateDeps;
+    return { state, deps, workspaceState: useWorkspaceState(state, deps) };
+  }
+
+  // The backfill is fire-and-forget; a macrotask boundary drains its chain of
+  // immediately-resolving fetches.
+  function flush(): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  const ids = (sessions: AppSession[]) => sessions.map((s) => s.id);
+
+  it('archiving a middle row fetches the next page to restore the loaded count', async () => {
+    const loaded = [1, 2, 3, 4, 5].map((i) => wsSession(`s${i}`, i - 1));
+    const page2 = [6, 7, 8, 9, 10].map((i) => wsSession(`s${i}`, i - 1));
+    apiMock.listSessions.mockResolvedValue({ items: page2, hasMore: true });
+    const { state, workspaceState } = createArchiveRig(loaded, 's5', true);
+
+    await workspaceState.archiveSession('s2');
+    await flush();
+
+    expect(apiMock.listSessions).toHaveBeenCalledTimes(1);
+    expect(apiMock.listSessions).toHaveBeenCalledWith({
+      workspaceId: WS,
+      pageSize: 5,
+      beforeId: 's5',
+      excludeEmpty: true,
+    });
+    expect(ids(state.sessions)).toEqual(['s1', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10']);
+    expect(state.sessionsCursorByWorkspace[WS]).toBe('s10');
+    expect(state.sessionsHasMoreByWorkspace[WS]).toBe(true);
+  });
+
+  it('re-anchors the cursor first when the archived session was the cursor', async () => {
+    const loaded = [1, 2, 3, 4, 5].map((i) => wsSession(`s${i}`, i - 1));
+    apiMock.listSessions.mockResolvedValue({ items: [wsSession('s6', 5)], hasMore: false });
+    const { state, workspaceState } = createArchiveRig(loaded, 's5', true);
+
+    await workspaceState.archiveSession('s5');
+    await flush();
+
+    // The fetch must page from the new oldest loaded session — the archived
+    // id would resolve to an empty, terminal page on the server.
+    expect(apiMock.listSessions).toHaveBeenCalledWith({
+      workspaceId: WS,
+      pageSize: 5,
+      beforeId: 's4',
+      excludeEmpty: true,
+    });
+    expect(state.sessionsCursorByWorkspace[WS]).toBe('s6');
+    expect(state.sessionsHasMoreByWorkspace[WS]).toBe(false);
+    expect(ids(state.sessions)).toEqual(['s1', 's2', 's3', 's4', 's6']);
+  });
+
+  it('re-anchors an emptied workspace with a fresh first page (no before_id)', async () => {
+    apiMock.listSessions.mockResolvedValue({
+      items: [wsSession('s2', 1), wsSession('s3', 2)],
+      hasMore: false,
+    });
+    const { state, workspaceState } = createArchiveRig([wsSession('s1', 0)], 's1', true);
+
+    await workspaceState.archiveSession('s1');
+    await flush();
+
+    expect(apiMock.listSessions).toHaveBeenCalledTimes(1);
+    expect(apiMock.listSessions).toHaveBeenCalledWith({
+      workspaceId: WS,
+      pageSize: 5,
+      excludeEmpty: true,
+    });
+    expect(ids(state.sessions)).toEqual(['s2', 's3']);
+    expect(state.sessionsCursorByWorkspace[WS]).toBe('s3');
+    expect(state.sessionsHasMoreByWorkspace[WS]).toBe(false);
+  });
+
+  it('does not fetch when the server has no more pages — the group just shrinks', async () => {
+    const loaded = [1, 2, 3, 4, 5].map((i) => wsSession(`s${i}`, i - 1));
+    const { state, workspaceState } = createArchiveRig(loaded, 's5', false);
+
+    await workspaceState.archiveSession('s2');
+    await flush();
+
+    expect(apiMock.listSessions).not.toHaveBeenCalled();
+    expect(ids(state.sessions)).toEqual(['s1', 's3', 's4', 's5']);
+  });
+
+  it('stops after one attempt when the backfill fetch fails (no retry spin)', async () => {
+    const loaded = [1, 2, 3, 4, 5].map((i) => wsSession(`s${i}`, i - 1));
+    apiMock.listSessions.mockRejectedValue(new Error('network down'));
+    const { state, deps, workspaceState } = createArchiveRig(loaded, 's5', true);
+
+    await workspaceState.archiveSession('s2');
+    await flush();
+
+    expect(apiMock.listSessions).toHaveBeenCalledTimes(1);
+    expect(deps.pushOperationFailure).toHaveBeenCalled();
+    expect(ids(state.sessions)).toEqual(['s1', 's3', 's4', 's5']);
+  });
+
+  it('stops after one attempt when the emptied-workspace reload fails', async () => {
+    apiMock.listSessions.mockRejectedValue(new Error('network down'));
+    const { state, deps, workspaceState } = createArchiveRig([wsSession('s1', 0)], 's1', true);
+
+    await workspaceState.archiveSession('s1');
+    await flush();
+
+    expect(apiMock.listSessions).toHaveBeenCalledTimes(1);
+    expect(deps.pushOperationFailure).toHaveBeenCalled();
+    expect(state.sessions).toEqual([]);
+    expect(state.sessionsHasMoreByWorkspace[WS]).toBe(true);
+  });
+
+  it('re-anchors to the contiguous predecessor, not an off-page loaded row', async () => {
+    // s20 was appended out of band (deep link / search) — it must not become
+    // the cursor when the contiguous cursor row is archived, or the next page
+    // would skip every session between them.
+    const loaded = [1, 2, 3, 4, 5].map((i) => wsSession(`s${i}`, i - 1));
+    loaded.push(wsSession('s20', 19));
+    apiMock.listSessions.mockResolvedValue({ items: [wsSession('s6', 5)], hasMore: true });
+    const { state, workspaceState } = createArchiveRig(loaded, 's5', true);
+
+    await workspaceState.archiveSession('s5');
+    await flush();
+
+    // The backfill must page from the contiguous predecessor s4 — never from
+    // the off-page s20.
+    expect(apiMock.listSessions).toHaveBeenCalledWith({
+      workspaceId: WS,
+      pageSize: 5,
+      beforeId: 's4',
+      excludeEmpty: true,
+    });
+    expect(state.sessionsCursorByWorkspace[WS]).toBe('s6');
+  });
+
+  it('retries a stale load-more from the re-anchored cursor instead of discarding', async () => {
+    const loaded = [1, 2, 3, 4, 5].map((i) => wsSession(`s${i}`, i - 1));
+    const resolvers: Array<(page: { items: AppSession[]; hasMore: boolean }) => void> = [];
+    apiMock.listSessions.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+    const { state, workspaceState } = createArchiveRig(loaded, 's5', true);
+
+    const pending = workspaceState.loadMoreSessions(WS);
+    await workspaceState.archiveSession('s5'); // re-anchors the cursor to s4 mid-flight
+    // The stale page (anchored to the archived s5) must not be committed —
+    // the request is re-issued from the re-anchored cursor instead.
+    resolvers[0]!({ items: [], hasMore: false });
+    await flush();
+    expect(apiMock.listSessions).toHaveBeenCalledTimes(2);
+    expect(apiMock.listSessions).toHaveBeenNthCalledWith(2, {
+      workspaceId: WS,
+      pageSize: 5,
+      beforeId: 's4',
+      excludeEmpty: true,
+    });
+    resolvers[1]!({ items: [wsSession('s6', 5)], hasMore: false });
+    await pending;
+    await flush();
+
+    // The retry restores the row the backfill skipped while it was locked
+    // out by this in-flight request.
+    expect(state.sessionsCursorByWorkspace[WS]).toBe('s6');
+    expect(state.sessionsHasMoreByWorkspace[WS]).toBe(false);
+    expect(ids(state.sessions)).toEqual(['s1', 's2', 's3', 's4', 's6']);
+  });
+
+  it('stops after the page budget when backfill pages are all child sessions', async () => {
+    const loaded = [1, 2, 3, 4, 5].map((i) => wsSession(`s${i}`, i - 1));
+    // Child-only pages: the cursor advances, the visible (non-child) count
+    // never does — the budget, not the no-progress guard, must stop the walk.
+    const childPage = (page: number) =>
+      Array.from({ length: 5 }, (_, i) => ({
+        ...wsSession(`c${page}_${i}`, 5 + page * 5 + i),
+        parentSessionId: 'parent_1',
+      }));
+    apiMock.listSessions.mockImplementation(async ({ beforeId }: { beforeId?: string }) => {
+      const page = beforeId === 's5' ? 0 : beforeId === 'c0_4' ? 1 : 2;
+      return { items: childPage(page), hasMore: true };
+    });
+    const { state, workspaceState } = createArchiveRig(loaded, 's5', true);
+
+    await workspaceState.archiveSession('s1');
+    await flush();
+
+    expect(apiMock.listSessions).toHaveBeenCalledTimes(3);
+    expect(ids(state.sessions).filter((id) => !id.startsWith('c'))).toEqual([
+      's2',
+      's3',
+      's4',
+      's5',
+    ]);
+  });
+
+  it('still backfills when another client removes the row while the POST is in flight', async () => {
+    const loaded = [1, 2, 3, 4, 5].map((i) => wsSession(`s${i}`, i - 1));
+    apiMock.listSessions.mockResolvedValue({ items: [wsSession('s6', 5)], hasMore: false });
+    const { state, workspaceState } = createArchiveRig(loaded, 's5', true);
+    // Simulate the WS-driven removal landing before the archive POST resolves.
+    apiMock.archiveSession.mockImplementation(async () => {
+      state.sessions = state.sessions.filter((s) => s.id !== 's5');
+      return { archived: true };
+    });
+
+    await workspaceState.archiveSession('s5');
+    await flush();
+
+    // The re-anchor and backfill must run from the state captured before the
+    // POST — paging from the contiguous predecessor s4.
+    expect(apiMock.listSessions).toHaveBeenCalledWith({
+      workspaceId: WS,
+      pageSize: 5,
+      beforeId: 's4',
+      excludeEmpty: true,
+    });
+    expect(state.sessionsCursorByWorkspace[WS]).toBe('s6');
+    expect(ids(state.sessions)).toEqual(['s1', 's2', 's3', 's4', 's6']);
   });
 });
