@@ -44,6 +44,9 @@ import { registerTranscriptRoutes } from './transcript';
 import { registerWorkspaceFsRoutes } from './workspaceFs';
 import { registerWorkspacesRoutes } from './workspaces';
 
+import type { RustSessionService } from '../services/rustSession/rustSessionService';
+import { registerRustSessionsRoutes } from './rustSessions';
+
 interface ApiV1AppHost {
   register(
     plugin: (apiV1: ApiV1RouteHost) => Promise<void> | void,
@@ -76,6 +79,13 @@ export interface RegisterApiV1RoutesOptions {
    * flag).
    */
   readonly dangerousBypassAuth?: boolean;
+  /**
+   * Rust engine session backend. When present, the engine-owned session
+   * routes (create/prompt/cancel/approvals) are registered INSTEAD of their
+   * v2-backed counterparts — web sessions then run entirely on the Rust
+   * engine. Absent (engine unavailable) → v2 routes serve.
+   */
+  readonly rustSession?: RustSessionService;
 }
 
 export async function registerApiV1Routes(
@@ -107,33 +117,47 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerModelCatalogRoutes>[0],
         core,
       );
-      registerSessionsRoutes(
-        apiV1 as unknown as Parameters<typeof registerSessionsRoutes>[0],
-        core,
-      );
+      if (opts.rustSession !== undefined) {
+        // Rust engine session backend: web sessions run entirely on the
+        // engine (loop/context/tools/approval). The v2 engine routes below
+        // (sessions/prompts/approvals/questions/tasks/messages) are skipped —
+        // the engine-owned surface replaces them. Host routes (workspaces,
+        // config, model catalog, auth, fs) keep serving.
+        registerRustSessionsRoutes(
+          apiV1 as unknown as Parameters<typeof registerRustSessionsRoutes>[0],
+          opts.rustSession,
+        );
+      } else {
+        registerSessionsRoutes(
+          apiV1 as unknown as Parameters<typeof registerSessionsRoutes>[0],
+          core,
+        );
+      }
       registerSessionExportRoute(
         apiV1 as unknown as Parameters<typeof registerSessionExportRoute>[0],
         core,
         { serverVersion: opts.serverVersion },
       );
       registerSkillsRoutes(apiV1 as unknown as Parameters<typeof registerSkillsRoutes>[0], core);
-      registerMessagesRoutes(
-        apiV1 as unknown as Parameters<typeof registerMessagesRoutes>[0],
-        core,
-      );
-      registerTasksRoutes(apiV1 as unknown as Parameters<typeof registerTasksRoutes>[0], core);
-      registerApprovalsRoutes(
-        apiV1 as unknown as Parameters<typeof registerApprovalsRoutes>[0],
-        core,
-      );
-      registerQuestionsRoutes(
-        apiV1 as unknown as Parameters<typeof registerQuestionsRoutes>[0],
-        core,
-      );
-      registerPromptsRoutes(
-        apiV1 as unknown as Parameters<typeof registerPromptsRoutes>[0],
-        core,
-      );
+      if (opts.rustSession === undefined) {
+        registerMessagesRoutes(
+          apiV1 as unknown as Parameters<typeof registerMessagesRoutes>[0],
+          core,
+        );
+        registerTasksRoutes(apiV1 as unknown as Parameters<typeof registerTasksRoutes>[0], core);
+        registerApprovalsRoutes(
+          apiV1 as unknown as Parameters<typeof registerApprovalsRoutes>[0],
+          core,
+        );
+        registerQuestionsRoutes(
+          apiV1 as unknown as Parameters<typeof registerQuestionsRoutes>[0],
+          core,
+        );
+        registerPromptsRoutes(
+          apiV1 as unknown as Parameters<typeof registerPromptsRoutes>[0],
+          core,
+        );
+      }
       registerWorkspacesRoutes(
         apiV1 as unknown as Parameters<typeof registerWorkspacesRoutes>[0],
         core,

@@ -8,3 +8,6 @@
 *.swo
 # napi build artifacts
 *.node
+
+# Plan-mode run residue (plan files created relative to cwd)
+/plan/plan-*.md

@@ -61,6 +61,7 @@ import { createOriginHook, isOriginAllowed, parseCorsOrigins } from './middlewar
 import { createSecurityHeadersHook } from './middleware/securityHeaders';
 import { createAuthHook } from './middleware/auth';
 import { GuiStoreService } from './services/guiStore/guiStoreService';
+import { RustSessionService } from './services/rustSession/rustSessionService';
 import { loadSnapshotConfig, SnapshotReader } from './services/snapshot';
 import { TranscriptService } from './services/transcript/transcriptService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
@@ -73,16 +74,51 @@ import { createCredentialValidator } from './services/auth/credentials';
 import { resolvePasswordHash } from './services/auth/password';
 import { createTokenStore } from './services/auth/tokenStore';
 
+/**
+ * Best-effort Rust session backend: loads rust-loop and returns a
+ * RustSessionService when the stdio engine is available, else undefined.
+ * The session surface is stdio-only, so the napi fast path is skipped.
+ */
+async function maybeCreateRustSessionService(
+  logger: ServerLogger,
+): Promise<RustSessionService | undefined> {
+  try {
+    // The session-owned surface (`session/*` RPC) is stdio-only — force the
+    // binary transport so a present napi addon cannot shadow it.
+    process.env['KIMI_AGENT_FORCE_STDIO'] = '1';
+    const mod = (await import('@moonshot-ai/kimi-agent/rust-loop')) as typeof import('@moonshot-ai/kimi-agent/rust-loop');
+    // Probe: createSessionClient triggers engine init and returns null when
+    // the stdio binary is unavailable.
+    const probe = await mod.createSessionClient({
+      sessionId: `probe-${Date.now().toString(36)}`,
+      homedir: process.cwd(),
+    });
+    if (probe === null) {
+      logger.info('Rust engine unavailable — serving web sessions from the v2 engine');
+      return undefined;
+    }
+    probe.close?.();
+    logger.info('Rust engine online — web sessions run on the engine');
+    return new RustSessionService(mod, {
+      onFrame: (_sessionId, _frame) => {
+        // WS frame fan-out lands here (Rust events → v1 frames); the HTTP
+        // surface (create/prompt/cancel/approvals) is live without it.
+      },
+    });
+  } catch (error) {
+    logger.warn(
+      { err: error instanceof Error ? error.message : String(error) },
+      'Rust engine adapter unavailable — serving web sessions from the v2 engine',
+    );
+    return undefined;
+  }
+}
+
 export interface ServerStartOptions {
   readonly host?: string;
   readonly port?: number;
   readonly homeDir?: string;
   readonly configPath?: string;
-  /**
-   * Override the instance-registry directory — used in tests that need the
-   * registry OUTSIDE `homeDir` (e.g. folder-picker fixtures browsing the home
-   * dir). Defaults to `<homeDir>/server/instances`.
-   */
   readonly instancesDir?: string;
   readonly logLevel?: ServerLogLevel;
   readonly logger?: ServerLogger;
@@ -300,6 +336,10 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
 
   const connectionRegistry = new ConnectionRegistry();
   const transcriptService = new TranscriptService({ homeDir, core, logger });
+  // Rust-engine session backend (web sessions bound to engine-owned sessions).
+  // Best-effort: when the engine is unavailable the v2-backed routes serve
+  // instead, so a missing binary never breaks `kimi web` startup.
+  const rustSession = await maybeCreateRustSessionService(logger);
   const broadcaster = new SessionEventBroadcaster({
     eventsDir: join(homeDir, 'server', 'events'),
     core,
@@ -367,13 +407,14 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     enableTerminals,
     guiStore,
     onShutdown: () => {
-      void close().catch((err: unknown) => logger.error({ err }, 'server close failed'));
+      void close().catch((error: unknown) => logger.error({ error }, 'server close failed'));
     },
     connectionRegistry,
     broadcaster,
     snapshotReader,
     transcriptService,
     dangerousBypassAuth: opts.disableAuth === true,
+    rustSession,
   });
 
   const wssV1 = registerWsV1(core, {

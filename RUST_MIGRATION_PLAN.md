@@ -8,10 +8,13 @@
 ## 当前状态（2026-07-31 核对）
 
 - **Phase 0-5 全部完成**：v1 与 v2 引擎均已接通，`engine = "rust"` 为默认值
-- **测试**：`cargo test -p kimi-agent` = 1926 lib + 49 集成全绿、0 warnings（RUST_WORK_LOG 07-31 记录）；含 native-tools 的全工作区历史口径约 2260+（GAP_ANALYSIS 07-26 快照）
-- **unsafe 审计（2026-07-31 完成）**：`plan.md` 早前声称"0 unsafe"已过时——实测全工作区真实 unsafe 共 8 处：`user_tool/mod.rs` 6 处（`*mut ToolManager` raw pointer + `unsafe impl Send/Sync`）已重构为 `Arc<Mutex<ToolManager>>` 消除（13 测试全绿，与 `Agent::tool_manager` 所有权模式对齐）；`llm/http.rs` 2 处为测试内 `env::set_var/remove_var`（Edition 2024 标记，单测试独占该 env，已注释说明，风险可接受）。`kimi-native-tools` 唯一命中为 prompt 字符串字面量，非真实 unsafe。**当前 unsafe 数：2（仅测试，均在 `llm/http.rs`）**
-- **构建产物**：2026-07-31 清理 28.7GB（root target 18GB debug + per-crate 旧布局 target 10.8GB），per-crate target 布局已废除，`rust-loop.ts` 的"取最新 mtime"兼容逻辑随之可简化
-- **待办**：上游 0.31.1+ 同步、Bash 命令策略审批强化、goal/compaction/permission 双实现合并进 kimi-shared、RPC wire 类型生成化
+- **测试**：`cargo test -p kimi-agent` = 1999 lib 全绿、0 warnings（2026-08-01 复验）；包内 vitest 38/38（含 stdio e2e）；含 native-tools 的全工作区历史口径约 2260+（GAP_ANALYSIS 07-26 快照）
+- **wire 契约生成（2026-08-01 落地，commit `5eda2c584`）**：`scripts/gen-wire-contract.mjs` 从 `src/rpc/types.rs`（含引用类型递归解析：GoalContext/McpServerSpecInput/SkillMetadataInput/HookDef 等 81 个类型）生成 `src/rpc/wire.gen.ts`；serde 语义 1:1（`#[serde(default)]`→optional、`Option<T>`→`T|undefined`、顶层 Option 别名→`|null`、tagged enum→判别联合、`rename_all`/variant rename 全处理）；rust-loop.ts 手写 wire 接口全部替换为生成类型（仅路由 envelope 与 napi 特有 camelCase 类型保留本地）；`pnpm gen:wire` 幂等。**新增 wire 类型时：改 Rust → `pnpm gen:wire` → 提交生成文件**
+- **unsafe 审计（2026-08-01 完成）**：`plan.md` 早前声称"0 unsafe"已过时——实测全工作区真实 unsafe 8 处：`user_tool/mod.rs` 6 处（`*mut ToolManager` raw pointer + `unsafe impl Send/Sync`）已重构为 `Arc<Mutex<ToolManager>>` 消除（与 `Agent::tool_manager` 所有权模式对齐，commit `10afd6750`）；`llm/http.rs` 2 处为测试内 `env::set_var/remove_var`（Edition 2024 标记，单测试独占该 env，已注释，风险可接受）。**当前 unsafe 数：2（仅测试，均在 `llm/http.rs`）**
+- **web session 后端（2026-08-01，commit `87833b1be` + 路由接线未提交）**：`RustSessionService`（kap-server）——web 会话直接绑定引擎会话（rust-loop `createSessionClient`），引擎全权负责 loop/context/goal/tools/approval/持久化，服务只做 v1 wire 翻译（`projectRustEvent` 事件投影：turn/tool/approval/task/usage/compaction）；approval 面走 `session/approval_list`+`resolve`。路由接线（`registerApiV1Routes.ts`/`start.ts`/`rustSessions.ts`）在 rustSession 存在时替换 v2-backed 的 sessions/prompts/approvals/questions/tasks/messages 路由；`maybeCreateRustSessionService` 强制 stdio + probe 探测，失败静默回退 v2（缺失二进制不破坏 `kimi web` 启动）。**剩余：WS frame fan-out（onFrame）待接**
+- **Bug 修复（2026-08-01，已提交 `ab532de95`）**：`main.rs::open_session_store()` 缺 `create_dir_all`（subagent.rs 有、main.rs 漏），新机器上 `~/.kimi-code/agent` 不存在时 stdio e2e 直接 exit 1——已按 subagent.rs 语义补齐，两个 e2e 测试恢复绿
+- **构建产物**：2026-07-31 清理 28.7GB（root target 18GB debug + per-crate 旧布局 target 10.8GB），per-crate target 布局已废除；rust-loop `findBinary` 已移除旧布局候选（commit `5eda2c584`）
+- **待办**：上游 0.31.1+ 同步、Bash 命令策略审批强化、goal/compaction/permission 双实现合并进 kimi-shared、`pnpm gen:wire` 接入 CI 漂移检查、web session 的 WS frame fan-out、清理 `packages/kimi-agent/plan/` 运行残留（32 个 0 字节 plan-*.md，勿入库）
 
 ---
 
