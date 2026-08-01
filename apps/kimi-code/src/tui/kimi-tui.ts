@@ -1655,6 +1655,12 @@ export class KimiTUI {
       if (selected?.maxContextSize !== undefined) {
         patch.maxContextTokens = selected.maxContextSize;
       }
+    } else {
+      // The default disappeared from config (edited externally): clear the
+      // previously hydrated value instead of passing a stale explicit model
+      // to the first lazy-created session.
+      patch.model = '';
+      patch.maxContextTokens = 0;
     }
     // CLI --auto/--yolo/--plan win over config defaults; the flags are
     // re-applied by applyStartupPermissionAndPlanToAppState at startup.

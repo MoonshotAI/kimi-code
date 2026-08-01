@@ -882,6 +882,38 @@ describe('KimiTUI message flow', () => {
     expect(harness.createSession).not.toHaveBeenCalled();
   });
 
+  it('clears stale lazy defaults when the default model is removed (v2 engine)', async () => {
+    const homeDir = await makeTempHome();
+    process.env['KIMI_CODE_HOME'] = homeDir;
+    const session = makeSession({ id: 'ses-lazy' });
+    const getConfig = vi.fn(
+      async (): Promise<{ models: Record<string, unknown>; defaultModel?: string }> => ({
+        models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+        defaultModel: 'k2',
+      }),
+    );
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions },
+    };
+    const { driver } = await makeDriver(session, { getConfig }, startupInput);
+    expect(driver.state.appState.model).toBe('k2');
+    expect(driver.state.appState.maxContextTokens).toBe(100);
+
+    // The default model is removed externally, then /reload runs — the
+    // hydrated value must not survive as a stale explicit model.
+    getConfig.mockResolvedValue({
+      models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+    });
+    driver.handleUserInput('/reload');
+
+    await vi.waitFor(() => {
+      expect(driver.state.appState.model).toBe('');
+    });
+    expect(driver.state.appState.maxContextTokens).toBe(0);
+  });
+
   it('does not re-enter plan mode on /plan on when config already applied it (v2 engine)', async () => {
     const session = makeSession({
       id: 'ses-lazy',
