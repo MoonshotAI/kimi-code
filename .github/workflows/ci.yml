@@ -170,3 +170,29 @@ jobs:
       - name: Cargo build (release)
         working-directory: packages/kimi-native-tools
         run: cargo build --release
+
+  wire-contract:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Wire contract is up to date
+        # Regenerate wire.gen.ts from src/rpc/types.rs; a diff means a Rust
+        # wire type changed without the generated file being committed
+        # (workflow: 改 Rust → pnpm gen:wire → 提交生成文件).
+        run: |
+          pnpm gen:wire
+          git diff --exit-code -- packages/kimi-agent/src/rpc/wire.gen.ts
