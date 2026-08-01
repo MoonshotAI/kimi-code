@@ -8,33 +8,13 @@
 /// and supersedes this value. Used to keep `tokenCountWithPending`
 /// monotonic between LLM round-trips without paying for a tokenizer.
 ///
-/// ## Byte-level scanning
+/// ## Single source
 ///
-/// Instead of decoding UTF-8 into code points (which `str::chars()` does),
-/// we scan raw bytes. In UTF-8:
-///   - Bytes `0x00..0x80` are ASCII code points (1 byte = 1 code point)
-///   - Bytes `0xC0..0xFF` are start bytes of multi-byte sequences
-///     (each code point has exactly one start byte)
-///   - Bytes `0x80..0xC0` are continuation bytes (skip)
-///
-/// This gives identical counts to iterating `char` values but is
-/// SIMD-friendly — the compiler auto-vectorizes the byte comparisons.
-/// It also matches the JS `for (const char of text)` semantics, which
-/// iterates Unicode code points.
-///
-/// Estimate token count from a single text string.
-pub fn estimate_tokens(text: &str) -> usize {
-    let mut ascii = 0usize;
-    let mut non_ascii = 0usize;
-    for &b in text.as_bytes() {
-        if b < 0x80 {
-            ascii += 1;
-        } else if b >= 0xC0 {
-            non_ascii += 1;
-        }
-    }
-    (ascii.div_ceil(4)) + non_ascii
-}
+/// The core `estimate_tokens` heuristic lives in `kimi-shared` (`tokens.rs`);
+/// the byte-level scan used here is equivalent to the shared scalar-value
+/// walk (UTF-8 continuation bytes 0x80..0xC0 never count, so each multi-byte
+/// character contributes exactly one count) and is SIMD-friendly.
+pub use kimi_shared::tokens::estimate_tokens;
 
 /// Estimate token count across multiple text strings (batch mode).
 ///
@@ -44,7 +24,7 @@ pub fn estimate_tokens(text: &str) -> usize {
 pub fn estimate_tokens_batch(texts: &[&str]) -> usize {
     let mut total = 0usize;
     for &text in texts {
-        total += estimate_tokens(text);
+        total += estimate_tokens(text) as usize;
     }
     total
 }
@@ -315,12 +295,12 @@ mod tests {
         for (text, budget) in cases {
             let front = truncate_text_to_tokens(text, budget);
             let front_tokens = estimate_tokens(&front);
-            assert!(front_tokens <= budget,
+            assert!(front_tokens <= budget as u64,
                 "forward({:?}, {}): got {} tokens in {:?}",
                 text, budget, front_tokens, front);
             let back = truncate_text_to_tokens_from_end(text, budget);
             let back_tokens = estimate_tokens(&back);
-            assert!(back_tokens <= budget,
+            assert!(back_tokens <= budget as u64,
                 "backward({:?}, {}): got {} tokens in {:?}",
                 text, budget, back_tokens, back);
         }

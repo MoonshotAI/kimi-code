@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn test_clear() {
-        let state = native_fault_injection_arm(empty_state(), "image-format".to_string());
+        let _state = native_fault_injection_arm(empty_state(), "image-format".to_string());
         let cleared = native_fault_injection_clear();
         let parsed: serde_json::Value = serde_json::from_str(&cleared).unwrap();
         assert!(parsed["armed"].is_null());

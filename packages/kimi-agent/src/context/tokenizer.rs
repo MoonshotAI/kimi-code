@@ -27,18 +27,9 @@ const JSON_TOKEN_MULTIPLIER_DEN: u64 = 10;
 /// Estimate the number of tokens in a text string.
 ///
 /// `ceil(ascii_count / 4) + non_ascii_count`, matching `tsEstimateTokens`.
-pub fn estimate_tokens(text: &str) -> u64 {
-    let mut ascii_count: u64 = 0;
-    let mut non_ascii_count: u64 = 0;
-    for ch in text.chars() {
-        if (ch as u32) <= 127 {
-            ascii_count += 1;
-        } else {
-            non_ascii_count += 1;
-        }
-    }
-    ascii_count.div_ceil(4) + non_ascii_count
-}
+/// Shared implementation lives in `kimi-shared` (`tokens.rs`) — the single
+/// source for both the napi toolset and the engine.
+pub use kimi_shared::tokens::estimate_tokens;
 
 /// Estimate tokens for JSON-serialized content. The multiplier compensates
 /// for the heuristic's under-counting of JSON's dense punctuation.

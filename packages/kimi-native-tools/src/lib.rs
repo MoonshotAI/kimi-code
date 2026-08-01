@@ -26,7 +26,7 @@ mod goal;
 mod grep;
 mod image_compress;
 mod knowledge;
-mod line_endings;
+pub use kimi_shared::line_endings;
 mod list_directory;
 mod llm_requester;
 mod llm_stream;

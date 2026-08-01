@@ -27,7 +27,7 @@ mod tests {
 
     #[test]
     fn test_not_animated() {
-        let mut data = vec![0u8; 100];
+        let data = vec![0u8; 100];
         assert!(!is_animated_webp(&data));
     }
 

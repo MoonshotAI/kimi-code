@@ -787,8 +787,8 @@ impl NativeToolset {
         let raw = std::fs::read_to_string(&resolved).ok()?;
 
         // TS `toModelTextView`: only a *pure* CRLF file is normalised.
-        let style = detect_line_ending_style(&raw);
-        let view = if style == LineEndingStyle::Crlf { raw.replace("\r\n", "\n") } else { raw };
+        let style = detect_line_ending_style(raw.as_bytes());
+        let view = if style == LineEndingStyle::CrLf { raw.replace("\r\n", "\n") } else { raw };
 
         let occurrences = view.matches(old_string).count();
         if occurrences == 0 {
@@ -813,7 +813,7 @@ impl NativeToolset {
         // TS `materializeModelText`: re-materialise CRLF for pure-CRLF files,
         // collapsing any CRLF the replacement text itself carried first so no
         // `\r\r\n` can be produced.
-        let materialized = if style == LineEndingStyle::Crlf {
+        let materialized = if style == LineEndingStyle::CrLf {
             next_view.replace("\r\n", "\n").replace('\n', "\r\n")
         } else {
             next_view
@@ -829,43 +829,13 @@ impl NativeToolset {
     }
 }
 
-/// TS `detectLineEndingStyle`: lone `\r` or a CRLF/LF mix is `Mixed`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LineEndingStyle {
-    Lf,
-    Crlf,
-    Mixed,
-}
-
-fn detect_line_ending_style(text: &str) -> LineEndingStyle {
-    let bytes = text.as_bytes();
-    let mut has_crlf = false;
-    let mut has_lf = false;
-    let mut has_lone_cr = false;
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\r' => {
-                if bytes.get(i + 1) == Some(&b'\n') {
-                    has_crlf = true;
-                    i += 2;
-                    continue;
-                }
-                has_lone_cr = true;
-            }
-            b'\n' => has_lf = true,
-            _ => {}
-        }
-        i += 1;
-    }
-    if has_lone_cr || (has_crlf && has_lf) {
-        LineEndingStyle::Mixed
-    } else if has_crlf {
-        LineEndingStyle::Crlf
-    } else {
-        LineEndingStyle::Lf
-    }
-}
+/// TS `detectLineEndingStyle`: lone `\r` or a CRLF/LF mix is `Mixed`. Shared
+/// implementation lives in `kimi-shared` (`line_endings.rs`) — the single
+/// source for both the napi toolset and the engine. (The previous local copy
+/// here was semantically equivalent — its CRLF walk skips the LF of a CRLF
+/// pair, so its `has_lf` flag is exactly the shared `has_bare_lf` — but the
+/// duplication is gone.)
+use kimi_shared::line_endings::{detect_line_ending_style, LineEndingStyle};
 
 /// Compile a glob, auto-prefixing bare patterns with `**/` the way the JS
 /// Glob tool does, so `*.rs` matches at any depth.
@@ -1154,11 +1124,11 @@ mod tests {
 
     #[test]
     fn line_ending_detection_matches_ts() {
-        assert_eq!(detect_line_ending_style("a\nb\n"), LineEndingStyle::Lf);
-        assert_eq!(detect_line_ending_style("a\r\nb\r\n"), LineEndingStyle::Crlf);
-        assert_eq!(detect_line_ending_style("a\r\nb\n"), LineEndingStyle::Mixed);
-        assert_eq!(detect_line_ending_style("a\rb"), LineEndingStyle::Mixed);
-        assert_eq!(detect_line_ending_style("plain"), LineEndingStyle::Lf);
+        assert_eq!(detect_line_ending_style(b"a\nb\n"), LineEndingStyle::Lf);
+        assert_eq!(detect_line_ending_style(b"a\r\nb\r\n"), LineEndingStyle::CrLf);
+        assert_eq!(detect_line_ending_style(b"a\r\nb\n"), LineEndingStyle::Mixed);
+        assert_eq!(detect_line_ending_style(b"a\rb"), LineEndingStyle::Mixed);
+        assert_eq!(detect_line_ending_style(b"plain"), LineEndingStyle::Lf);
     }
 
     #[test]
