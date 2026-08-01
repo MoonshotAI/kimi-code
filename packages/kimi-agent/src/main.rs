@@ -386,11 +386,28 @@ async fn main() -> anyhow::Result<()> {
             let rpc_callbacks: Arc<dyn HostCallbacks> =
                 Arc::new(RpcHostCallbacks { server: srv.clone() });
             let mcp_servers = std::mem::take(&mut input.mcp_servers);
+            let workspace_trusted = input.workspace_trusted;
             let skills = std::mem::take(&mut input.skills);
             let external_hooks = std::mem::take(&mut input.hooks);
             let native_tools = input.native_tools;
             let homedir = input.homedir.clone();
             let (mcp_runtime, cancellation, steer_queue) = {
+                // A12: resolve the secondary-model config for subagent spawns
+                // (gated by the experimental flag; inherits the primary
+                // transport). `None` → children inherit the parent model.
+                let secondary_native_llm = input.native_llm.as_ref().and_then(|primary| {
+                    let env_map: std::collections::HashMap<String, String> =
+                        std::env::vars().collect();
+                    kimi_agent::config::loader::load_config_with_env()
+                        .ok()
+                        .and_then(|config| {
+                            kimi_agent::config::native_llm::resolve_secondary_native_llm(
+                                Some(&config),
+                                primary,
+                                &env_map,
+                            )
+                        })
+                });
                 let agent = manager
                     .create_agent(
                         &id,
@@ -407,6 +424,7 @@ async fn main() -> anyhow::Result<()> {
                             }),
                             goal_enabled: input.goal_enabled.unwrap_or(true),
                             native_llm: input.native_llm,
+                            secondary_native_llm,
                             host_tools: input
                                 .tools
                                 .into_iter()
@@ -475,6 +493,10 @@ async fn main() -> anyhow::Result<()> {
                 let _ = tokio::task::spawn_blocking(move || {
                     handle.block_on(async move {
                         let mut runtime = rt_handle.lock().await;
+                        // Workspace trust (C6, #2453): a trusted workspace
+                        // connects the repo's own .mcp.json stdio servers
+                        // immediately instead of holding them for approval.
+                        runtime.set_workspace_trusted(workspace_trusted);
                         for server in mcp_servers {
                             let (name, spec, source) = server.into_registration();
                             let _ = runtime.register(&name, spec, source).await;

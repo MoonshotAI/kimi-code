@@ -170,6 +170,81 @@ pub fn load_native_llm_from_config() -> Option<NativeLlmConfig> {
     extract_native_llm(&config)
 }
 
+/// Resolve the secondary-model config for subagent spawns (A12, upstream
+/// `secondaryModel` + the `secondary-model` experimental flag).
+///
+/// The result inherits the primary transport (protocol / base_url / api_key /
+/// headers) and swaps in the secondary `model` plus an optional
+/// `reasoning_effort` — mirroring the upstream `secondaryModelOverlay`
+/// synthesized derived entry.
+///
+/// Resolution order:
+///   1. Experimental gate: `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL` (or the
+///      master `KIMI_CODE_EXPERIMENTAL_FLAG`) must be set — the flag is off
+///      by default, exactly like upstream.
+///   2. `KIMI_SECONDARY_MODEL` env overrides the config `model`; `KIMI_SECONDARY_EFFORT`
+///      overrides the effort.
+///   3. Otherwise `config.secondary_model.model` (+ `default_effort`).
+///   4. The model names a `[models]` alias when one resolves; otherwise it is
+///      used verbatim.
+///
+/// `None` means "no secondary model configured" — subagents inherit the
+/// parent model.
+pub fn resolve_secondary_native_llm(
+    config: Option<&KimiConfig>,
+    primary: &NativeLlmConfig,
+    env: &HashMap<String, String>,
+) -> Option<NativeLlmConfig> {
+    // Experimental gate (upstream `secondary-model` flag, default off).
+    let gate = env
+        .get("KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL")
+        .or_else(|| env.get("KIMI_CODE_EXPERIMENTAL_FLAG"))
+        .filter(|v| !v.trim().is_empty());
+    if gate.is_none() {
+        return None;
+    }
+
+    // Env override wins over the config section.
+    let env_model = env
+        .get("KIMI_SECONDARY_MODEL")
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string());
+    let env_effort = env
+        .get("KIMI_SECONDARY_EFFORT")
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string());
+
+    let (model, effort) = match env_model {
+        Some(m) => (Some(m), env_effort),
+        None => {
+            let secondary = config?.secondary_model.as_ref()?;
+            (
+                secondary.model.clone(),
+                env_effort.or_else(|| secondary.default_effort.clone()),
+            )
+        }
+    };
+    let model = model.filter(|m| !m.trim().is_empty())?;
+
+    // The secondary model names a `[models]` alias when one resolves;
+    // otherwise it is used verbatim.
+    let model = config
+        .and_then(|c| c.model_aliases.as_ref())
+        .and_then(|aliases| aliases.get(&model))
+        .map(|alias| alias.model.clone())
+        .unwrap_or(model);
+
+    Some(NativeLlmConfig {
+        protocol: primary.protocol.clone(),
+        base_url: primary.base_url.clone(),
+        api_key: primary.api_key.clone(),
+        model,
+        max_tokens: None,
+        reasoning_effort: effort,
+        custom_headers: primary.custom_headers.clone(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,6 +286,7 @@ mod tests {
             hooks: None,
             background: None,
             subagent: None,
+            secondary_model: None,
             services: None,
         }
     }
@@ -289,6 +365,7 @@ mod tests {
             hooks: None,
             background: None,
             subagent: None,
+            secondary_model: None,
             services: None,
         };
         let cfg = extract_native_llm(&config).unwrap();
@@ -318,6 +395,7 @@ mod tests {
             hooks: None,
             background: None,
             subagent: None,
+            secondary_model: None,
             services: None,
         };
         let cfg = extract_native_llm(&config).unwrap();
@@ -356,5 +434,78 @@ mod tests {
     fn env_synthesis_requires_key() {
         let env = HashMap::from([("KIMI_MODEL_NAME".to_string(), "kimi-k2".to_string())]);
         assert!(native_llm_from_env(&env).is_none());
+    }
+
+    #[test]
+    fn secondary_requires_the_experimental_gate() {
+        let config = config_with(None, Some(kimi_provider()));
+        let primary = extract_native_llm(&config).unwrap();
+        // Flag off by default: no secondary even with a config section.
+        let gated = KimiConfig {
+            secondary_model: Some(crate::config::types::SecondaryModelConfig {
+                model: Some("other".into()),
+                default_effort: None,
+            }),
+            ..config_with(None, Some(kimi_provider()))
+        };
+        let env = HashMap::new();
+        assert!(resolve_secondary_native_llm(Some(&gated), &primary, &env).is_none());
+    }
+
+    #[test]
+    fn secondary_resolves_from_config_section_when_gated() {
+        let config = KimiConfig {
+            secondary_model: Some(crate::config::types::SecondaryModelConfig {
+                model: Some("other".into()),
+                default_effort: Some("high".into()),
+            }),
+            ..config_with(None, Some(kimi_provider()))
+        };
+        let primary = extract_native_llm(&config).unwrap();
+        let env = HashMap::from([(
+            "KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL".to_string(),
+            "1".to_string(),
+        )]);
+        let sec = resolve_secondary_native_llm(Some(&config), &primary, &env).unwrap();
+        // The `other` alias resolves to `kimi-latest`.
+        assert_eq!(sec.model, "kimi-latest");
+        assert_eq!(sec.reasoning_effort.as_deref(), Some("high"));
+        // The transport is inherited from the primary config.
+        assert_eq!(sec.base_url, primary.base_url);
+        assert_eq!(sec.api_key, primary.api_key);
+        assert_eq!(sec.protocol, primary.protocol);
+    }
+
+    #[test]
+    fn secondary_env_override_wins() {
+        let config = config_with(None, Some(kimi_provider()));
+        let primary = extract_native_llm(&config).unwrap();
+        let env = HashMap::from([
+            ("KIMI_CODE_EXPERIMENTAL_FLAG".to_string(), "1".to_string()),
+            ("KIMI_SECONDARY_MODEL".to_string(), "other".to_string()),
+            ("KIMI_SECONDARY_EFFORT".to_string(), "low".to_string()),
+        ]);
+        let sec = resolve_secondary_native_llm(Some(&config), &primary, &env).unwrap();
+        assert_eq!(sec.model, "kimi-latest");
+        assert_eq!(sec.reasoning_effort.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn secondary_model_used_verbatim_when_not_an_alias() {
+        let config = KimiConfig {
+            secondary_model: Some(crate::config::types::SecondaryModelConfig {
+                model: Some("kimi-k2-lite".into()),
+                default_effort: None,
+            }),
+            ..config_with(None, Some(kimi_provider()))
+        };
+        let primary = extract_native_llm(&config).unwrap();
+        let env = HashMap::from([(
+            "KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL".to_string(),
+            "1".to_string(),
+        )]);
+        let sec = resolve_secondary_native_llm(Some(&config), &primary, &env).unwrap();
+        assert_eq!(sec.model, "kimi-k2-lite");
+        assert_eq!(sec.reasoning_effort, None);
     }
 }

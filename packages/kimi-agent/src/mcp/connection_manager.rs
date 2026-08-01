@@ -145,11 +145,22 @@ pub struct ConnectAttempt {
 pub struct McpConnectionState {
     entries: HashMap<String, InternalEntry>,
     oauth_available: bool,
+    /// Workspace trust (C6, upstream #2453). When `false` (default), stdio
+    /// servers from the repo's own `.mcp.json` are held in `pending-approval`;
+    /// a trusted workspace connects them immediately.
+    workspace_trusted: bool,
 }
 
 impl McpConnectionState {
     pub fn new(oauth_available: bool) -> Self {
-        Self { entries: HashMap::new(), oauth_available }
+        Self { entries: HashMap::new(), oauth_available, workspace_trusted: false }
+    }
+
+    /// Set whether the workspace is trusted. Trusting the workspace lifts the
+    /// approval gate on stdio servers from the project root (upstream
+    /// workspace-trust, #2453).
+    pub fn set_workspace_trusted(&mut self, trusted: bool) {
+        self.workspace_trusted = trusted;
     }
 
     // ── Registration ──────────────────────────────────────────────────────
@@ -166,10 +177,12 @@ impl McpConnectionState {
     ) -> Option<ConnectAttempt> {
         let disabled = !config.enabled;
         // Stdio servers from the repo's own .mcp.json are untrusted: the file
-        // is typically checked into git, so hold them until the user approves.
+        // is typically checked into git, so hold them until the user approves
+        // the workspace (workspace trust, #2453) or approves this server.
         let needs_approval = !disabled
             && config.transport == McpTransport::Stdio
-            && source == McpConfigSource::ProjectRoot;
+            && source == McpConfigSource::ProjectRoot
+            && !self.workspace_trusted;
         let status = if disabled {
             McpServerStatus::Disabled
         } else if needs_approval {
@@ -489,6 +502,26 @@ mod tests {
     fn a_project_root_stdio_server_is_held_for_approval() {
         // A checked-in .mcp.json must not auto-launch processes.
         let mut state = McpConnectionState::new(false);
+        assert!(state.register("srv", stdio_config(), McpConfigSource::ProjectRoot).is_none());
+        assert_eq!(state.get("srv").unwrap().status, McpServerStatus::PendingApproval);
+    }
+
+    #[test]
+    fn a_trusted_workspace_connects_project_root_stdio_immediately() {
+        // Workspace trust (C6, #2453) lifts the approval gate on the repo's
+        // own .mcp.json stdio servers.
+        let mut state = McpConnectionState::new(false);
+        state.set_workspace_trusted(true);
+        let attempt = state.register("srv", stdio_config(), McpConfigSource::ProjectRoot);
+        assert!(attempt.is_some());
+        assert_eq!(state.get("srv").unwrap().status, McpServerStatus::Pending);
+    }
+
+    #[test]
+    fn trust_is_off_by_default_and_can_be_revoked() {
+        let mut state = McpConnectionState::new(false);
+        state.set_workspace_trusted(true);
+        state.set_workspace_trusted(false);
         assert!(state.register("srv", stdio_config(), McpConfigSource::ProjectRoot).is_none());
         assert_eq!(state.get("srv").unwrap().status, McpServerStatus::PendingApproval);
     }

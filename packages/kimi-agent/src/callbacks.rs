@@ -1055,7 +1055,7 @@ async fn execute_gated_background_bash(
     };
 
     let content = format!(
-        "Command started in background.\ntask_id: {task_id}\nUse TaskOutput(task_id=\"{task_id}\", block=false) to read its output."
+        "Command started in background.\ntask_id: {task_id}\nUse TaskOutput(task_id=\"{task_id}\") to read its output."
     );
     inner.emit_event(serde_json::json!({
         "type": "tool.native",
@@ -1651,7 +1651,7 @@ mod tests {
                 turn_id: "t".into(),
                 tool_call_id: "b4".into(),
                 tool_name: "TaskOutput".into(),
-                arguments: serde_json::json!({ "task_id": task_id, "block": false }),
+                arguments: serde_json::json!({ "task_id": task_id }),
                 force_precise: false,
             })
             .await

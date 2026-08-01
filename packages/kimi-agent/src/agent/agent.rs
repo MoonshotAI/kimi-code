@@ -446,6 +446,10 @@ pub(crate) struct SubagentInterceptor {
     pub host: Arc<dyn HostCallbacks>,
     pub homedir: Option<String>,
     pub native_llm: Option<crate::rpc::types::NativeLlmConfig>,
+    /// Secondary-model config for subagent spawns (A12). A `Task` subagent
+    /// whose `subagent_type` resolves to `model_preference: secondary` binds
+    /// this model instead of inheriting the parent's.
+    pub secondary_native_llm: Option<crate::rpc::types::NativeLlmConfig>,
     pub permission: crate::permission::gate::PermissionGate,
     pub system_prompt: String,
     pub max_steps_per_turn: u32,
@@ -543,8 +547,9 @@ impl HostCallbacks for SubagentInterceptor {
         // (by type name) may declare `model_preference: secondary`, which
         // selects the configured secondary model when present; otherwise the
         // child inherits the parent model. The secondary-model config is
-        // host-supplied and currently absent on the native path, so this
-        // resolves to inheritance until the config surface lands.
+        // resolved from `[secondary_model]` / `KIMI_SECONDARY_MODEL` behind
+        // the experimental gate (see `config/native_llm.rs`); when absent the
+        // preference resolves to inheritance.
         let parent_model = self
             .native_llm
             .as_ref()
@@ -567,10 +572,14 @@ impl HostCallbacks for SubagentInterceptor {
                 })
                 .unwrap_or(crate::agent::types::SubagentModelPreference::Primary)
         };
+        let secondary_model = self
+            .secondary_native_llm
+            .as_ref()
+            .map(|c| c.model.clone());
         let model_override = crate::agent::subagent::resolve_subagent_model(
             &parent_model,
             preference,
-            None,
+            secondary_model.as_deref(),
         );
 
         // Track the subagent as a detached task (TS `AgentBackgroundTask`
@@ -756,6 +765,9 @@ pub struct Agent {
     /// Goal mode state machine (active goal lifecycle).
     pub goal: Option<GoalMode>,
     pub native_llm: Option<crate::rpc::types::NativeLlmConfig>,
+    /// Secondary-model config for subagent spawns (A12). When a subagent's
+    /// model preference resolves to `Secondary`, the child binds this model.
+    pub secondary_native_llm: Option<crate::rpc::types::NativeLlmConfig>,
     pub mcp: std::sync::Arc<tokio::sync::Mutex<crate::mcp::runtime::McpRuntime>>,
     /// Total wall-clock milliseconds spent connecting MCP servers during
     /// `session/create` — the engine side of SDK `getMcpStartupMetrics`.
@@ -855,6 +867,7 @@ impl Agent {
             goal_enabled: options.goal_enabled,
             goal: if options.goal_enabled { Some(GoalMode::new()) } else { None },
             native_llm: options.native_llm.clone(),
+            secondary_native_llm: options.secondary_native_llm.clone(),
             mcp: std::sync::Arc::new(tokio::sync::Mutex::new(
                 crate::mcp::runtime::McpRuntime::new(false, options.homedir.clone(), None)
             )),
@@ -1199,6 +1212,7 @@ impl Agent {
                 host: self.callbacks.clone(),
                 homedir: self.homedir.clone(),
                 native_llm: self.native_llm.clone(),
+                secondary_native_llm: self.secondary_native_llm.clone(),
                 permission: self.permission.clone(),
                 system_prompt: self.config.system_prompt.clone(),
                 max_steps_per_turn: self.max_steps_per_turn,
@@ -1222,6 +1236,8 @@ impl Agent {
                 host: self.callbacks.clone(),
                 homedir: self.homedir.clone(),
                 native_llm: self.native_llm.clone(),
+                secondary_native_llm: self.secondary_native_llm.clone(),
+                profile_registry: self.profile_registry.clone(),
                 permission: self.permission.clone(),
                 system_prompt: self.config.system_prompt.clone(),
                 max_steps_per_turn: self.max_steps_per_turn,
@@ -1515,6 +1531,7 @@ impl Agent {
             stop_reason: result.stop_reason,
             steps: result.steps,
             usage: result.usage,
+            hit_step_cap: result.hit_step_cap,
         })
     }
 
@@ -1564,6 +1581,7 @@ impl Agent {
                 stop_reason: crate::turn_loop::types::LoopTurnStopReason::EndTurn,
                 steps: 0,
                 usage: crate::rpc::types::TokenUsage::default(),
+                hit_step_cap: false,
             });
         }
 
@@ -1640,12 +1658,23 @@ impl Agent {
             // Continuation input, rendered from the canonical `continuation.md`
             // steering template (GOAL.md: Codex-derived, carrying the tuned
             // completion audit and the 3-turn blocked audit) — a system-
-            // triggered input, not a lighter per-status reminder.
-            let prompt = crate::goal::steering::render_continuation(
-                &snapshot.objective,
-                snapshot.tokens_used,
-                snapshot.budget.token_budget,
-            );
+            // triggered input, not a lighter per-status reminder. When the
+            // previous turn ended at the per-turn step limit (#2210), the
+            // step-capped variant explains the split and asks for smaller
+            // slices instead of treating the cap as a goal failure.
+            let prompt = if result.hit_step_cap {
+                crate::goal::steering::render_step_capped_continuation(
+                    &snapshot.objective,
+                    snapshot.tokens_used,
+                    snapshot.budget.token_budget,
+                )
+            } else {
+                crate::goal::steering::render_continuation(
+                    &snapshot.objective,
+                    snapshot.tokens_used,
+                    snapshot.budget.token_budget,
+                )
+            };
             result = match self
                 .run_turn_with_origin(
                     vec![crate::context::types::ContentPart::Text { text: prompt }],
@@ -2743,6 +2772,7 @@ mod tests {
                     steps: 1,
                     usage: crate::rpc::types::TokenUsage::default(),
                     new_messages: Vec::new(),
+                    hit_step_cap: false,
                 })
             })
         }
@@ -2800,6 +2830,7 @@ mod tests {
                         steps: 0,
                         usage: crate::rpc::types::TokenUsage::default(),
                         new_messages: Vec::new(),
+                        hit_step_cap: false,
                     })
                 })
             }
@@ -2901,7 +2932,7 @@ mod tests {
         let (mut agent, _) = driver_agent(vec!["task"]);
         agent.run_prompt(text_input("run the task")).await.expect("prompt");
 
-        let mut guard = agent.task.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = agent.task.lock().unwrap_or_else(|e| e.into_inner());
         let tasks = guard.list(false, None);
         // The child agent runs against the NoopHost; whether it settles
         // completed or failed depends on the LLM stub — the track + settle

@@ -2093,6 +2093,12 @@ export interface SessionCreateOptions {
   skills?: SkillInput[];
   /** External lifecycle hooks the engine executes natively. */
   hooks?: HookDefInput[];
+  /**
+   * Workspace trust (upstream #2453): when true, stdio MCP servers from the
+   * repo's own `.mcp.json` connect immediately instead of being held in
+   * `pending-approval`. Defaults to false (untrusted).
+   */
+  workspaceTrusted?: boolean;
 }
 
 /** Create a session-owned agent inside the engine. */
@@ -2115,6 +2121,7 @@ export async function sessionCreate(
     mcp_servers: (options.mcpServers ?? []).map(toMcpServerWire),
     skills: (options.skills ?? []).map(toSkillWire),
     hooks: (options.hooks ?? []).map(toHookWire),
+    workspace_trusted: options.workspaceTrusted ?? false,
   });
 }
 
@@ -2549,9 +2556,7 @@ export interface EngineApprovalEntry {
 export async function sessionApprovalList(
   sessionId?: string,
 ): Promise<{ pending: EngineApprovalEntry[] } | null> {
-  return agentCall('session/approval_list', {
-    ...(sessionId !== undefined ? { session_id: sessionId } : {}),
-  });
+  return agentCall('session/approval_list', (sessionId !== undefined ? { session_id: sessionId } : {}));
 }
 
 /** Resolve a pending tool approval (allow/deny). Returns `{ resolved: false }`

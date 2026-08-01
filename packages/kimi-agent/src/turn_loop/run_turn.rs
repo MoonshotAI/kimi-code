@@ -80,14 +80,14 @@ pub fn run_turn<'a>(
  _ => LoopTurnStopReason::EndTurn,
  };
  drain_pending_precise(&mut messages, &mut pending_precise).await;
- return Ok(finish_turn(&mut messages, input_len, reason, step_num, total_usage));
+ return Ok(finish_turn(&mut messages, input_len, reason, step_num, total_usage, false));
  }
  // Check budgets with cumulative usage so far.
  let turn_tokens = total_usage.total_tokens as i64;
  let turns_this_turn = step_num as i64;
  if goal.would_exceed_budget(turn_tokens, turns_this_turn) {
  drain_pending_precise(&mut messages, &mut pending_precise).await;
- return Ok(finish_turn(&mut messages, input_len, LoopTurnStopReason::BudgetLimited, step_num, total_usage));
+ return Ok(finish_turn(&mut messages, input_len, LoopTurnStopReason::BudgetLimited, step_num, total_usage, false));
  }
  // Update steering text in system prompt with current progress.
  let steering = render_goal_steering(goal, turn_tokens, turns_this_turn);
@@ -100,7 +100,7 @@ pub fn run_turn<'a>(
  if let Some(ref cancel) = input.cancellation {
  if cancel.load(std::sync::atomic::Ordering::Relaxed) {
  drain_pending_precise(&mut messages, &mut pending_precise).await;
- return Ok(finish_turn(&mut messages, input_len, LoopTurnStopReason::Aborted, step_num, total_usage));
+ return Ok(finish_turn(&mut messages, input_len, LoopTurnStopReason::Aborted, step_num, total_usage, false));
  }
  }
 
@@ -137,7 +137,7 @@ pub fn run_turn<'a>(
  let before_result = before_step(&ctx)?;
  if let Some(BeforeStepResult::StopTurn(reason)) = before_result {
  drain_pending_precise(&mut messages, &mut pending_precise).await;
- return Ok(finish_turn(&mut messages, input_len, reason, steps, total_usage));
+ return Ok(finish_turn(&mut messages, input_len, reason, steps, total_usage, false));
  }
  }
  }
@@ -189,12 +189,12 @@ pub fn run_turn<'a>(
  let after_result = after_step(&ctx)?;
  if let Some(AfterStepResult::StopTurn(reason)) = after_result {
  drain_pending_precise(&mut messages, &mut pending_precise).await;
- return Ok(finish_turn(&mut messages, input_len, reason, steps, total_usage));
+ return Ok(finish_turn(&mut messages, input_len, reason, steps, total_usage, false));
  }
  }
  }
  drain_pending_precise(&mut messages, &mut pending_precise).await;
- return Ok(finish_turn(&mut messages, input_len, LoopTurnStopReason::EndTurn, steps, total_usage));
+ return Ok(finish_turn(&mut messages, input_len, LoopTurnStopReason::EndTurn, steps, total_usage, false));
  }
  LoopStepStopReason::ToolCalls(tool_calls) => {
  // AgentSwarm batch exclusivity veto: an AgentSwarm call must be the
@@ -385,7 +385,7 @@ pub fn run_turn<'a>(
  let after_result = after_step(&ctx)?;
  if let Some(AfterStepResult::StopTurn(reason)) = after_result {
  drain_pending_precise(&mut messages, &mut pending_precise).await;
- return Ok(finish_turn(&mut messages, input_len, reason, steps, total_usage));
+ return Ok(finish_turn(&mut messages, input_len, reason, steps, total_usage, false));
  }
  }
  }
@@ -394,12 +394,12 @@ pub fn run_turn<'a>(
  // end the turn like a normal stop.
  if force_stop {
  drain_pending_precise(&mut messages, &mut pending_precise).await;
- return Ok(finish_turn(&mut messages, input_len, LoopTurnStopReason::EndTurn, steps, total_usage));
+ return Ok(finish_turn(&mut messages, input_len, LoopTurnStopReason::EndTurn, steps, total_usage, false));
  }
  }
  LoopStepStopReason::Aborted => {
  drain_pending_precise(&mut messages, &mut pending_precise).await;
- return Ok(finish_turn(&mut messages, input_len, LoopTurnStopReason::Aborted, steps, total_usage));
+ return Ok(finish_turn(&mut messages, input_len, LoopTurnStopReason::Aborted, steps, total_usage, false));
  }
  LoopStepStopReason::Error(_msg) => continue,
  }
@@ -408,7 +408,7 @@ pub fn run_turn<'a>(
  // Turn ended: await any remaining background precise results
  drain_pending_precise(&mut messages, &mut pending_precise).await;
 
- Ok(finish_turn(&mut messages, input_len, LoopTurnStopReason::EndTurn, steps, total_usage))
+ Ok(finish_turn(&mut messages, input_len, LoopTurnStopReason::EndTurn, steps, total_usage, true))
  })
 }
 
@@ -422,6 +422,7 @@ fn finish_turn(
     stop_reason: LoopTurnStopReason,
     steps: u32,
     usage: crate::rpc::types::TokenUsage,
+    hit_step_cap: bool,
 ) -> TurnResult {
     let split_at = (1 + input_len).min(messages.len());
     TurnResult {
@@ -429,6 +430,7 @@ fn finish_turn(
         steps,
         usage,
         new_messages: messages.split_off(split_at),
+        hit_step_cap,
     }
 }
 

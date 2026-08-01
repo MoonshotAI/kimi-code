@@ -8,7 +8,7 @@
 //! not write assistant output back to context), with a context fallback for
 //! host-proxy mode where the capture sink never sees a native event.
 //!
-//! Swarm children (`run_child_agent_persistent` / `resume_child_agent`) are
+//! Swarm children (`run_child_agent_persistent_with_model` / `resume_child_agent`) are
 //! additionally stamped with a stable `agent_id` (`swarm-<ts>-<rand>`) and
 //! persist their conversation to the engine's session store on success, so a
 //! later `AgentSwarm` call carrying `resume_agent_ids` can restore that same
@@ -163,45 +163,12 @@ pub(crate) async fn run_child_agent_with_model(
     .map(|(_, text)| text)
 }
 
-/// Spawn a swarm child stamped with the given stable `agent_id`, persisting
-/// its context to the session store on success. Returns `(agent_id, text)`.
-pub(crate) async fn run_child_agent_persistent(
-    host: Arc<dyn HostCallbacks>,
-    homedir: Option<String>,
-    native_llm: Option<NativeLlmConfig>,
-    permission: PermissionGate,
-    parent_prompt: &str,
-    max_steps: u32,
-    depth: u32,
-    subagent_type: &str,
-    prompt: &str,
-    hooks: Option<Arc<crate::hooks::external::HookManager>>,
-    agent_id: &str,
-) -> Result<(String, String), String> {
-    run_child_agent_core(
-        host,
-        homedir,
-        native_llm,
-        permission,
-        parent_prompt,
-        max_steps,
-        depth,
-        subagent_type,
-        prompt,
-        hooks,
-        Some(agent_id.to_string()),
-        false,
-        None,
-    )
-    .await
-}
-
 /// Spawn a swarm child with an explicit model override (subagent model
-/// routing). Same as [`run_child_agent_persistent`], but newly spawned
-/// children bind the resolved `model_override` (see [`resolve_subagent_model`])
-/// instead of inheriting the parent's model. `None` behaves exactly like
-/// [`run_child_agent_persistent`].
-#[allow(dead_code)] // wired up when the AgentSwarm schema exposes a model parameter
+/// routing). The child is stamped with the given stable `agent_id` and its
+/// context persists to the session store on success. Returns `(agent_id,
+/// text)`. `model_override` binds the resolved secondary model (see
+/// [`resolve_subagent_model`]); `None` inherits the parent's model. Wired up
+/// for the AgentSwarm tool's secondary-model routing (A12).
 pub(crate) async fn run_child_agent_persistent_with_model(
     host: Arc<dyn HostCallbacks>,
     homedir: Option<String>,

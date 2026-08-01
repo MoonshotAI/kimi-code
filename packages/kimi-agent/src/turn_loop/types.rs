@@ -28,6 +28,13 @@ pub struct TurnResult {
     /// compatibility.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub new_messages: Vec<LLMMessage>,
+    /// True when the turn stopped because the per-turn step limit
+    /// (`max_steps`) was reached — the loop ran every step without an early
+    /// exit. Goal pursuit treats such a turn as a clean slice boundary and
+    /// continues with a step-capped continuation prompt instead of pausing
+    /// (upstream #2210).
+    #[serde(default)]
+    pub hit_step_cap: bool,
 }
 
 /// Reasons a turn can stop.

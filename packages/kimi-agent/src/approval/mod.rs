@@ -208,7 +208,7 @@ mod tests {
     #[tokio::test]
     async fn request_and_resolve_wakes_the_waiter() {
         let store = ApprovalStore::new();
-        let mut rx = store.request(
+        let rx = store.request(
             Some("s1".to_string()),
             "c1".to_string(),
             "Write".to_string(),
@@ -236,7 +236,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_by_tool_call_feeds_the_callback_channel() {
         let store = ApprovalStore::new();
-        let mut rx = store.request(None, "c9".to_string(), "Bash".to_string(), serde_json::json!({}), "Bash()".to_string());
+        let rx = store.request(None, "c9".to_string(), "Bash".to_string(), serde_json::json!({}), "Bash()".to_string());
         let ok = store.resolve_by_tool_call("c9", ApprovalDecision::Allow);
         assert!(ok);
         let decision = rx.await.ok();

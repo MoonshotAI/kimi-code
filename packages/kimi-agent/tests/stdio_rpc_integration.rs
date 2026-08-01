@@ -5177,7 +5177,6 @@ fn approval_rpc_resolves_pending_write() {
 
     let mut buf = String::new();
     let deadline = Instant::now() + Duration::from_secs(30);
-    let mut resolved_list_empty = false;
     loop {
         assert!(Instant::now() <= deadline, "timed out in approval loop");
         buf.clear();

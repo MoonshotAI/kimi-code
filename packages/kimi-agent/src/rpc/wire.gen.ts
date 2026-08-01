@@ -171,6 +171,7 @@ export interface SessionCreateParams {
   native_llm?: NativeLlmConfig | undefined;
   tools?: Array<ToolDef>;
   mcp_servers?: Array<McpServerSpecInput>;
+  workspace_trusted?: boolean;
   skills?: Array<SkillMetadataInput>;
   hooks?: Array<HookDef>;
   native_tools?: boolean;

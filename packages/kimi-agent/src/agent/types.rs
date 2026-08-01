@@ -49,6 +49,10 @@ pub struct AgentOptions {
     pub plan_enabled: bool,
     /// Native HTTP LLM config for direct provider calls.
     pub native_llm: Option<crate::rpc::types::NativeLlmConfig>,
+    /// Secondary-model config for subagent spawns (A12). When set and the
+    /// subagent's model preference resolves to `Secondary`, the child binds
+    /// this model instead of inheriting the parent's. `None` = inherit.
+    pub secondary_native_llm: Option<crate::rpc::types::NativeLlmConfig>,
     /// Maximum steps per turn.
     pub max_steps_per_turn: u32,
     /// Maximum retries per step.
@@ -83,6 +87,7 @@ impl Default for AgentOptions {
             goal_enabled: false,
             plan_enabled: false,
             native_llm: None,
+            secondary_native_llm: None,
             max_steps_per_turn: 50,
             max_retries_per_step: 3,
             host_tools: Vec::new(),
@@ -109,6 +114,11 @@ pub struct TurnResult {
     pub stop_reason: loop_types::LoopTurnStopReason,
     pub steps: u32,
     pub usage: crate::rpc::types::TokenUsage,
+    /// True when the turn stopped because the per-turn step limit was reached
+    /// (the loop ran every step without an early exit). Goal pursuit treats
+    /// this as a clean slice boundary and continues with a step-capped
+    /// continuation prompt (#2210).
+    pub hit_step_cap: bool,
 }
 
 /// Reason for a turn to end.

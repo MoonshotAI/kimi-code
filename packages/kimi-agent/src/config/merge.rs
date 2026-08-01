@@ -20,6 +20,7 @@ pub fn merge_configs(base: KimiConfig, overrides: KimiConfig) -> KimiConfig {
         hooks: overrides.hooks.or(base.hooks),
         background: overrides.background.or(base.background),
         subagent: overrides.subagent.or(base.subagent),
+        secondary_model: overrides.secondary_model.or(base.secondary_model),
         services: overrides.services.or(base.services),
     }
 }

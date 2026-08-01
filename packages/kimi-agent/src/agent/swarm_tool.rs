@@ -10,13 +10,13 @@
 //! tool produces. `resume_agent_ids` maps a previously spawned child's
 //! `agent_id` to its continuation prompt: the child's persisted context is
 //! restored and extended by one more turn (native children persist via
-//! `subagent::run_child_agent_persistent` / `resume_child_agent`).
+//! `subagent::run_child_agent_persistent_with_model` / `resume_child_agent`).
 
 use std::sync::{Arc, Mutex};
 
 use crate::agent::agent::MAX_SUBAGENT_DEPTH;
 use crate::agent::subagent::{
-    generate_agent_id, resume_child_agent, run_child_agent_persistent,
+    generate_agent_id, resume_child_agent, run_child_agent_persistent_with_model,
 };
 use crate::callbacks::HostCallbacks;
 use crate::permission::gate::PermissionGate;
@@ -53,6 +53,13 @@ pub(crate) struct SwarmToolInterceptor {
     pub host: Arc<dyn HostCallbacks>,
     pub homedir: Option<String>,
     pub native_llm: Option<NativeLlmConfig>,
+    /// Secondary-model config for subagent spawns (A12). Fresh swarm children
+    /// whose `subagent_type` resolves to `model_preference: secondary` bind
+    /// this model instead of inheriting the parent's.
+    pub secondary_native_llm: Option<NativeLlmConfig>,
+    /// Shared agent-profile registry — resolves `subagent_type` to its
+    /// declared model preference (custom agent files).
+    pub profile_registry: std::sync::Arc<std::sync::Mutex<crate::profile::registry::AgentProfileRegistry>>,
     pub permission: PermissionGate,
     pub system_prompt: String,
     pub max_steps_per_turn: u32,
@@ -243,6 +250,40 @@ impl HostCallbacks for SwarmToolInterceptor {
         let subagent_type = subagent_type.clone();
         let swarm = self.swarm.clone();
         let hooks = self.hooks.clone();
+        // A12: resolve the subagent model preference for this swarm's
+        // subagent_type — a custom agent file may declare
+        // `model_preference: secondary`, binding the configured secondary
+        // model; otherwise children inherit the parent model.
+        let parent_model = native_llm
+            .as_ref()
+            .map(|c| c.model.clone())
+            .unwrap_or_else(|| "default".to_string());
+        let secondary_model = self
+            .secondary_native_llm
+            .as_ref()
+            .map(|c| c.model.clone());
+        let model_override = {
+            let registry = self.profile_registry.lock().unwrap_or_else(|e| e.into_inner());
+            let preference = registry
+                .catalog()
+                .into_iter()
+                .find(|def| def.name == subagent_type)
+                .and_then(|def| def.model_preference)
+                .map(|p| match p {
+                    crate::profile::agent_file::ModelPreference::Primary => {
+                        crate::agent::types::SubagentModelPreference::Primary
+                    }
+                    crate::profile::agent_file::ModelPreference::Secondary => {
+                        crate::agent::types::SubagentModelPreference::Secondary
+                    }
+                })
+                .unwrap_or(crate::agent::types::SubagentModelPreference::Primary);
+            crate::agent::subagent::resolve_subagent_model(
+                &parent_model,
+                preference,
+                secondary_model.as_deref(),
+            )
+        };
 
         Box::pin(async move {
             // Enter swarm mode (one-shot `tool` trigger; the run_prompt
@@ -261,6 +302,7 @@ impl HostCallbacks for SwarmToolInterceptor {
                 let subagent_type = subagent_type.clone();
                 let prompt = spec.prompt.clone();
                 let hooks = hooks.clone();
+                let model_override = model_override.clone();
                 // Resume entries reuse their persisted agent id; fresh item
                 // spawns get a new stable id so the model can resume them
                 // from a later call.
@@ -285,7 +327,7 @@ impl HostCallbacks for SwarmToolInterceptor {
                             .map(|(_, text)| text)
                         }
                         None => {
-                            run_child_agent_persistent(
+                            run_child_agent_persistent_with_model(
                                 host,
                                 homedir,
                                 native_llm,
@@ -297,6 +339,7 @@ impl HostCallbacks for SwarmToolInterceptor {
                                 &prompt,
                                 hooks.clone(),
                                 &agent_id,
+                                model_override,
                             )
                             .await
                             .map(|(_, text)| text)
@@ -429,6 +472,10 @@ mod tests {
             inner,
             homedir,
             native_llm: None,
+            secondary_native_llm: None,
+            profile_registry: std::sync::Arc::new(std::sync::Mutex::new(
+                crate::profile::registry::AgentProfileRegistry::new(),
+            )),
             permission: crate::permission::gate::PermissionGate::from_env(),
             system_prompt: "parent".into(),
             max_steps_per_turn: 3,

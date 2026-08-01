@@ -184,6 +184,13 @@ impl McpRuntime {
         self.state.get(name).expect("just registered")
     }
 
+    /// Set workspace trust (C6, #2453): a trusted workspace connects stdio
+    /// servers from the project root immediately instead of holding them for
+    /// approval. Must be called before registering those servers.
+    pub fn set_workspace_trusted(&mut self, trusted: bool) {
+        self.state.set_workspace_trusted(trusted);
+    }
+
     /// Approve a `pending-approval` server and connect it.
     pub async fn approve(&mut self, name: &str) -> Result<McpServerEntry, String> {
         if let Some(attempt) = self.state.approve_server(name)? {

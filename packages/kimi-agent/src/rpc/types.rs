@@ -397,6 +397,11 @@ pub struct SessionCreateParams {
     /// untrusted project root. Empty on the RUN_TURN path (TS owns MCP there).
     #[serde(default)]
     pub mcp_servers: Vec<crate::mcp::runtime::McpServerSpecInput>,
+    /// Workspace trust (C6, #2453): when `true`, stdio MCP servers from the
+    /// repo's own `.mcp.json` connect immediately instead of being held in
+    /// `pending-approval`. Defaults to `false` (untrusted).
+    #[serde(default)]
+    pub workspace_trusted: bool,
     /// Skills to register into the session's skill registry (host-discovered).
     /// Populates the model-facing `Skill` tool's native activation path.
     #[serde(default)]

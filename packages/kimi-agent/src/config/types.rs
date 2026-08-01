@@ -93,6 +93,24 @@ pub struct ModelAlias {
     pub max_tokens: Option<u32>,
 }
 
+// ── Secondary model ─────────────────────────────────────────────────────────
+
+/// TS `secondaryModel` — the secondary-model recipe: `model` points at a
+/// `[models]` entry (or is used verbatim) and `default_effort` doubles as the
+/// subagent thinking effort. On disk `[secondary_model]`; env
+/// `KIMI_SECONDARY_MODEL` / `KIMI_SECONDARY_EFFORT`. Gated by the upstream
+/// `secondary-model` experimental flag (default off) — see
+/// `config/native_llm.rs::resolve_secondary_native_llm`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SecondaryModelConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// TS `defaultEffort` — the subagent thinking effort for secondary-model
+    /// spawns.
+    #[serde(rename = "defaultEffort", default, skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<String>,
+}
+
 // ── Model catalog ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -242,6 +260,11 @@ pub struct KimiConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent: Option<SubagentConfig>,
 
+    /// TS `secondaryModel` — the secondary-model recipe for subagent spawns
+    /// (model + thinking-effort override). Gated by the experimental flag.
+    #[serde(rename = "secondaryModel", default, skip_serializing_if = "Option::is_none")]
+    pub secondary_model: Option<SecondaryModelConfig>,
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub services: Option<ServicesConfig>,
 }
@@ -259,6 +282,7 @@ impl KimiConfig {
             hooks: None,
             background: None,
             subagent: None,
+            secondary_model: None,
             services: None,
         }
     }
@@ -330,6 +354,7 @@ mod tests {
             hooks: None,
             background: None,
             subagent: None,
+            secondary_model: None,
             services: None,
         };
 
