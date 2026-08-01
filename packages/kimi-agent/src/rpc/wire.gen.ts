@@ -173,6 +173,7 @@ export interface SessionCreateParams {
   mcp_servers?: Array<McpServerSpecInput>;
   skills?: Array<SkillMetadataInput>;
   hooks?: Array<HookDef>;
+  native_tools?: boolean;
 }
 
 export interface SessionPromptParams {
@@ -192,11 +193,11 @@ export interface SessionSetModelParams {
 }
 
 export interface SessionApprovalListParams {
-  session_id: string;
+  session_id?: string | undefined;
 }
 
 export interface SessionApprovalResolveParams {
-  session_id: string;
+  session_id?: string | undefined;
   id: string;
   decision: string;
   reason?: string | undefined;

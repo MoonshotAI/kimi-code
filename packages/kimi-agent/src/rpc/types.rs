@@ -407,6 +407,15 @@ pub struct SessionCreateParams {
     /// the prompt boundary.
     #[serde(default)]
     pub hooks: Vec<crate::hooks::external::HookDef>,
+    /// When true (default), write-class / bash / network tools execute in the
+    /// engine (sandboxed to the session workspace) behind the permission gate
+    /// and the pending-approval store. False keeps every tool at the host.
+    #[serde(default = "default_true")]
+    pub native_tools: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Input for session/prompt.
@@ -434,18 +443,21 @@ pub struct SessionSetModelParams {
     pub model: String,
 }
 
-/// Input for session/approval_list.
+/// Input for session/approval_list. The session id is optional: an empty or
+/// absent value lists approvals across all sessions (the run_turn path has no
+/// session id).
 #[derive(Debug, Deserialize)]
 pub struct SessionApprovalListParams {
-    pub session_id: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
-/// Input for session/approval_resolve (decision input reuses the crate-level
-/// `ApprovalResolveParams` from `crate::approval` — the session id rides here
-/// so the handler can route to the owning agent).
+/// Input for session/approval_resolve. The session id is optional: the
+/// process-wide store resolves by approval id alone (run_turn path has none).
 #[derive(Debug, Deserialize)]
 pub struct SessionApprovalResolveParams {
-    pub session_id: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub id: String,
     pub decision: String,
     #[serde(default)]

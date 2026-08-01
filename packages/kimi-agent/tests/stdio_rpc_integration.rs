@@ -5114,3 +5114,187 @@ fn native_memory_tool_persists_and_searches() {
     let _ = std::fs::remove_dir_all(&ws);
     let _ = std::fs::remove_dir_all(&home);
 }
+
+// ── Approval-surface integration tests ──────────────────────────────────────
+
+/// Approval surface end-to-end: a gated Write tool call in manual permission
+/// mode defers into the pending-approval store, `session/approval_list` sees
+/// it, and `session/approval_resolve` wakes the waiting tool call so the turn
+/// completes. The host deliberately does NOT answer `host/authorize_tool_execution`
+/// — the decision must come from the approval RPC channel.
+#[test]
+fn approval_rpc_resolves_pending_write() {
+    let binary = match find_binary() {
+        Some(b) => b,
+        None => {
+            eprintln!("Skipping test: kimi-agent binary not built.");
+            return;
+        }
+    };
+    let ws = tempfile::tempdir().expect("tempdir");
+    let home = ws.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    // Canonicalize so the Write target and the toolset sandbox root share the
+    // same (long-form) path spelling — 8.3 short names break lexical
+    // containment checks on Windows.
+    let home = std::fs::canonicalize(&home).unwrap();
+
+    let mut env: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+    env.insert("KIMI_PERMISSION_MODE", "manual".to_string());
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .envs(env)
+        .spawn()
+        .expect("failed to spawn kimi-agent");
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut stdout = BufReader::new(child.stdout.take().expect("stdout"));
+    let mut llm_step = 0u32;
+    let mut approval_seen = false;
+    let mut approve_resolved = false;
+
+    let run_turn = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "agent/run_turn",
+        "params": {
+            "turn_id": "approval-turn",
+            "system_prompt": "You are a test assistant.",
+            "model_name": "test-model",
+            "messages": [{"role": "user", "content": "write a file"}],
+            "tools": [{
+                "name": "Write", "description": "Write a file",
+                "input_schema": {"type": "object", "properties": {
+                    "path": {"type": "string"}, "content": {"type": "string"}
+                }}
+            }],
+            "max_steps": 5,
+            "native_tools": true,
+            "workspace_root": home.to_str().unwrap()
+        }
+    });
+    writeln!(stdin, "{run_turn}").unwrap();
+    stdin.flush().unwrap();
+
+    let mut buf = String::new();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut resolved_list_empty = false;
+    loop {
+        assert!(Instant::now() <= deadline, "timed out in approval loop");
+        buf.clear();
+        if stdout.read_line(&mut buf).unwrap_or(0) == 0 {
+            panic!("stdout closed in approval loop");
+        }
+        let Ok(msg) = serde_json::from_str::<serde_json::Value>(buf.trim()) else { continue };
+        let method_for_debug = msg.get("method").and_then(|m| m.as_str()).unwrap_or("<response>");
+        let id_for_debug = msg.get("id").cloned().unwrap_or(serde_json::Value::Null);
+        eprintln!("[approval-test] << {method_for_debug} id={id_for_debug} {:?}", msg.get("params"));
+        let Some(method) = msg.get("method").and_then(|m| m.as_str()) else {
+            if msg.get("id") == Some(&serde_json::json!(1)) {
+                break;
+            }
+            if msg.get("id") == Some(&serde_json::json!(100)) {
+                // Response to our approval_list request: assert one pending
+                // approval and resolve it over the RPC channel.
+                let pending = msg["result"]["pending"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                assert_eq!(pending.len(), 1, "expected 1 pending approval, got: {msg}");
+                let approval_id = pending[0]["id"].as_str().unwrap().to_string();
+                let resolve_req = serde_json::json!({
+                    "jsonrpc": "2.0", "id": 101, "method": "session/approval_resolve",
+                    "params": {"id": approval_id, "decision": "allow"}
+                });
+                writeln!(stdin, "{resolve_req}").unwrap();
+                stdin.flush().unwrap();
+            } else if msg.get("id") == Some(&serde_json::json!(101)) {
+                assert_eq!(msg["result"]["resolved"], true, "resolve failed: {msg}");
+                approve_resolved = true;
+            }
+            continue;
+        };
+        // host/event is a notification (no id): handle it before the id gate.
+        if method == "host/event" {
+            let event_type = msg["params"]["type"].as_str().unwrap_or("");
+            if event_type == "session.approval.requested" {
+                approval_seen = true;
+                // List pending approvals, then resolve the first one.
+                let list_req = serde_json::json!({
+                    "jsonrpc": "2.0", "id": 100, "method": "session/approval_list", "params": {}
+                });
+                writeln!(stdin, "{list_req}").unwrap();
+                stdin.flush().unwrap();
+            }
+            continue;
+        }
+        let Some(id) = msg.get("id").filter(|v| !v.is_null()) else { continue };
+        let req_id = id.clone();
+        match method {
+            "host/llm_chat" => {
+                let step = llm_step;
+                llm_step += 1;
+                let tool_calls = if step == 0 {
+                    serde_json::json!([{
+                        "id": "call-write",
+                        "name": "Write",
+                        "arguments": {"path": home.join("out.txt").to_str().unwrap(), "content": "approved"}
+                    }])
+                } else {
+                    serde_json::json!([])
+                };
+                let finish = if step == 0 { "tool_calls" } else { "stop" };
+                let resp = serde_json::json!({
+                    "jsonrpc": "2.0", "id": req_id, "result": {
+                        "tool_calls": tool_calls,
+                        "finish_reason": finish,
+                        "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
+                    }
+                });
+                writeln!(stdin, "{resp}").unwrap();
+                stdin.flush().unwrap();
+            }
+            "host/authorize_tool_execution" => {
+                // Deliberately NOT answered: the decision must come from the
+                // approval RPC channel, so the waiting tool call stays parked
+                // until session/approval_resolve feeds it.
+            }
+            "host/prepare_tool_execution" | "host/finalize_tool_result" => {
+                // Answer null (allow unchanged / use as-is) so the lifecycle
+                // proceeds to the authorize gate.
+                let resp = serde_json::json!({ "jsonrpc": "2.0", "id": req_id, "result": null });
+                writeln!(stdin, "{resp}").unwrap();
+                stdin.flush().unwrap();
+            }
+            "session/approval_list" | "session/approval_resolve" => {
+                // Responses to our own RPCs carry no method — they are handled
+                // in the no-method branch above. Requests here are impossible
+                // (we are the only client), so this arm is defensive only.
+                let resp = serde_json::json!({ "jsonrpc": "2.0", "id": req_id, "result": null });
+                writeln!(stdin, "{resp}").unwrap();
+                stdin.flush().unwrap();
+            }
+            _ => {
+                // Unknown host request — answer null to keep the engine moving.
+                let resp = serde_json::json!({ "jsonrpc": "2.0", "id": req_id, "result": null });
+                writeln!(stdin, "{resp}").unwrap();
+                stdin.flush().unwrap();
+            }
+        }
+    }
+
+    assert!(approval_seen, "session.approval.requested event must fire");
+    assert!(approve_resolved, "session/approval_resolve must succeed");
+    // The approved write landed on disk (native execution after the gate).
+    let out = home.join("out.txt");
+    assert!(
+        out.exists(),
+        "approved Write must execute; missing {}",
+        out.display()
+    );
+    let content = std::fs::read_to_string(&out).unwrap_or_default();
+    assert_eq!(content, "approved");
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&ws);
+}

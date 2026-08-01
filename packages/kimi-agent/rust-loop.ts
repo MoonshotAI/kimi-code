@@ -2544,11 +2544,14 @@ export interface EngineApprovalEntry {
   created_at_ms: number;
 }
 
-/** List the session's pending tool approvals (web approval cards). */
+/** List pending tool approvals (web approval cards). The session id is
+ *  optional: omitted lists approvals across sessions (run_turn path). */
 export async function sessionApprovalList(
-  sessionId: string,
+  sessionId?: string,
 ): Promise<{ pending: EngineApprovalEntry[] } | null> {
-  return agentCall('session/approval_list', { session_id: sessionId });
+  return agentCall('session/approval_list', {
+    ...(sessionId !== undefined ? { session_id: sessionId } : {}),
+  });
 }
 
 /** Resolve a pending tool approval (allow/deny). Returns `{ resolved: false }`

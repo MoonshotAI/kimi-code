@@ -120,16 +120,26 @@ async fn main() -> anyhow::Result<()> {
     // approve/deny gated tool calls locally; interactive Ask defers to host.
     let permission_gate = kimi_agent::permission::gate::PermissionGate::from_env();
 
+    // Shared pending-approval store (process-wide, keyed by session id in each
+    // entry). Deferred tool approvals land here so `session/approval_list` +
+    // `session/approval_resolve` can serve web approval cards WITHOUT taking
+    // the session-manager lock — a prompt holds that lock for its whole turn,
+    // and approval resolution must run while a prompt is parked on a decision.
+    let approval_store: kimi_agent::approval::SharedApprovalStore =
+        Arc::new(kimi_agent::approval::ApprovalStore::new());
+
     // Register run_turn handler
     let s = server.clone();
     let cm = cancel_map.clone();
     let run_turn_bg = bg_manager.clone();
     let run_turn_perm = permission_gate.clone();
+    let run_turn_approval = approval_store.clone();
     RpcServer::register_arc(&s.clone(), types::methods::RUN_TURN, move |params| {
         let server = s.clone();
         let cancel_map = cm.clone();
         let bg_manager = run_turn_bg.clone();
         let permission_gate = run_turn_perm.clone();
+        let approval = run_turn_approval.clone();
         Box::pin(async move {
             let input: types::RunTurnParams = serde_json::from_value(params)
                 .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
@@ -159,7 +169,7 @@ async fn main() -> anyhow::Result<()> {
                             background: Some(bg_manager.clone()),
                             permission: Some(permission_gate.clone()),
                             hooks: None,
-                            approval: None,
+                            approval: Some(approval.clone()),
                         }),
                         None => base_callbacks.clone(),
                     },
@@ -343,12 +353,14 @@ async fn main() -> anyhow::Result<()> {
     let sc = session_cancel.clone();
     let ss = session_steer.clone();
     let create_perm = permission_gate.clone();
+    let create_approval = approval_store.clone();
     RpcServer::register_arc(&server, types::methods::SESSION_CREATE, move |params| {
         let mgr = mgr.clone();
         let srv = srv.clone();
         let sc = sc.clone();
         let ss = ss.clone();
         let create_perm = create_perm.clone();
+        let create_approval = create_approval.clone();
         Box::pin(async move {
             let input: types::SessionCreateParams = serde_json::from_value(params)
                 .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
@@ -371,21 +383,23 @@ async fn main() -> anyhow::Result<()> {
             );
             // Record the workspace so `session/list` can filter by directory.
             manager.set_work_dir(&id, input.homedir.as_deref().unwrap_or(""));
-            let callbacks: Arc<dyn HostCallbacks> =
+            let rpc_callbacks: Arc<dyn HostCallbacks> =
                 Arc::new(RpcHostCallbacks { server: srv.clone() });
             let mcp_servers = std::mem::take(&mut input.mcp_servers);
             let skills = std::mem::take(&mut input.skills);
             let external_hooks = std::mem::take(&mut input.hooks);
+            let native_tools = input.native_tools;
+            let homedir = input.homedir.clone();
             let (mcp_runtime, cancellation, steer_queue) = {
                 let agent = manager
                     .create_agent(
                         &id,
-                        callbacks,
+                        rpc_callbacks,
                         kimi_agent::agent::types::AgentOptions {
                             session_id: Some(id.clone()),
-                            homedir: input.homedir.clone(),
+                            homedir: homedir.clone(),
                             config: Some(kimi_agent::agent::types::AgentConfig {
-                                cwd: input.homedir.unwrap_or_default(),
+                                cwd: homedir.clone().unwrap_or_default(),
                                 model_alias: input.model,
                                 system_prompt: input.system_prompt.unwrap_or_default(),
                                 has_provider: true,
@@ -408,11 +422,34 @@ async fn main() -> anyhow::Result<()> {
                             // Host-resolved external lifecycle hooks — the
                             // engine executes them natively on this session.
                             external_hooks,
+                            // Shared process-wide approval store (web-facing
+                            // `session/approval_list` + `session/approval_resolve`).
+                            approval: Some(create_approval.clone()),
                             ..Default::default()
                         },
                     )
                     .map_err(|e| types::JsonRpcError::internal_error(e.to_string()))?;
-                // Populate the session's skill registry (sync — no await while
+                // Native tool execution (sandboxed to the session workspace):
+                // write-class / bash / network tools run in the engine behind
+                // the permission gate and the pending-approval store, so the
+                // web/TUI approval surface (`session/approval_list` +
+                // `session/approval_resolve`) governs them. Off by default via
+                // `native_tools: false` (host executes the tools instead).
+                if native_tools {
+                    if let Some(home) = homedir.as_deref() {
+                        if let Some(toolset) = kimi_agent::tools::NativeToolset::new(home) {
+                            let gated = kimi_agent::callbacks::NativeToolCallbacks {
+                                inner: agent.callbacks.clone(),
+                                toolset: Arc::new(toolset),
+                                background: Some(agent.background.clone()),
+                                permission: Some(agent.permission.clone()),
+                                hooks: None,
+                                approval: Some(agent.approval.clone()),
+                            };
+                            agent.callbacks = Arc::new(gated);
+                        }
+                    }
+                }                // Populate the session's skill registry (sync — no await while
                 // borrowing the agent) so the native `Skill` tool can activate.
                 for skill in skills {
                     agent.skill_manager.registry.register(skill.into_metadata());
@@ -1018,21 +1055,17 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Pending approvals (web-facing approval surface): list the session's
-    // deferred tool approvals so the UI can render approval cards.
-    let mgr = session_manager.clone();
+    // deferred tool approvals so the UI can render approval cards. Uses the
+    // process-wide store directly — never the session-manager lock, which a
+    // running prompt holds for its whole turn.
+    let store = approval_store.clone();
     RpcServer::register_arc(&server, types::methods::SESSION_APPROVAL_LIST, move |params| {
-        let mgr = mgr.clone();
+        let store = store.clone();
         Box::pin(async move {
             let input: types::SessionApprovalListParams = serde_json::from_value(params)
                 .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
-            let mut manager = mgr.lock().await;
-            let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
-                types::JsonRpcError::internal_error(format!(
-                    "no agent for session: {}",
-                    input.session_id
-                ))
-            })?;
-            let pending = agent.approval.list(Some(&input.session_id));
+            let scope = input.session_id.as_deref().filter(|s| !s.is_empty());
+            let pending = store.list(scope);
             Ok(serde_json::to_value(kimi_agent::approval::ApprovalListResult { pending })
                 .map_err(|e| types::JsonRpcError::internal_error(e.to_string()))?)
         })
@@ -1040,19 +1073,12 @@ async fn main() -> anyhow::Result<()> {
 
     // Resolve a pending approval (web-facing): feed the decision into the
     // waiting tool call. Returns `resolved: false` for an unknown id.
-    let mgr = session_manager.clone();
+    let store = approval_store.clone();
     RpcServer::register_arc(&server, types::methods::SESSION_APPROVAL_RESOLVE, move |params| {
-        let mgr = mgr.clone();
+        let store = store.clone();
         Box::pin(async move {
             let input: types::SessionApprovalResolveParams = serde_json::from_value(params)
                 .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
-            let mut manager = mgr.lock().await;
-            let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
-                types::JsonRpcError::internal_error(format!(
-                    "no agent for session: {}",
-                    input.session_id
-                ))
-            })?;
             let decision = match input.decision.as_str() {
                 "allow" => kimi_agent::approval::ApprovalDecision::Allow,
                 "deny" => kimi_agent::approval::ApprovalDecision::Deny {
@@ -1064,7 +1090,7 @@ async fn main() -> anyhow::Result<()> {
                     ));
                 }
             };
-            let resolved = agent.approval.resolve(&input.id, decision);
+            let resolved = store.resolve(&input.id, decision);
             Ok(serde_json::json!({ "resolved": resolved }))
         })
     });
