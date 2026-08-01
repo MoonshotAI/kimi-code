@@ -693,8 +693,9 @@ export class NativeSession implements TuiSession {
   }
 
   // ── Plugin management (host plugin registry; Round 5) ─────────────────────
-  listPlugins(): Promise<readonly PluginSummary[]> {
-    return Promise.resolve([]);
+  async listPlugins(): Promise<readonly PluginSummary[]> {
+    const plugins = await this.adapter.listPlugins();
+    return plugins.map(mapPluginSummary);
   }
 
   installPlugin(_source: string): Promise<PluginSummary> {
