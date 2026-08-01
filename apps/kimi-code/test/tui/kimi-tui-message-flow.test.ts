@@ -97,6 +97,7 @@ function stripSgr(text: string): string {
 interface MessageDriver {
   state: TUIState;
   streamingUI: StreamingUIController;
+  pluginCommandMap: Map<string, string>;
   sessionEventHandler: {
     startSubscription(): void;
     handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void;
