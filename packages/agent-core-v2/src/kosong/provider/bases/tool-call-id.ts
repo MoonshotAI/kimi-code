@@ -10,9 +10,33 @@ export function sanitizeToolCallId(id: string, maxLength?: number): string {
   return maxLength === undefined ? sanitized : sanitized.slice(0, maxLength);
 }
 
+const KIMI_NATIVE_TOOL_CALL_ID = /^functions\.[A-Za-z0-9_-]+:\d+$/;
+
+export function sanitizeToolCallIdPreservingNative(
+  id: string,
+  fallbackMaxLength?: number,
+): string {
+  return KIMI_NATIVE_TOOL_CALL_ID.test(id) ? id : sanitizeToolCallId(id, fallbackMaxLength);
+}
+
+function isPreservableResponsesCallId(id: string, maxLength?: number): boolean {
+  return KIMI_NATIVE_TOOL_CALL_ID.test(id) && (maxLength === undefined || id.length <= maxLength);
+}
+
 export function sanitizeOpenAIResponsesCallId(id: string, maxLength?: number): string {
   const [callId] = id.split('|', 1);
   return sanitizeToolCallId(callId ?? id, maxLength);
+}
+
+export function sanitizeOpenAIResponsesCallIdPreservingNative(
+  id: string,
+  maxLength?: number,
+): string {
+  const [callId] = id.split('|', 1);
+  const base = callId ?? id;
+  return isPreservableResponsesCallId(base, maxLength)
+    ? base
+    : sanitizeOpenAIResponsesCallId(id, maxLength);
 }
 
 export function normalizeToolCallIdsForProvider(

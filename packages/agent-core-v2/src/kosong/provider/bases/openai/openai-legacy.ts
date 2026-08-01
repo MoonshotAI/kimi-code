@@ -52,12 +52,15 @@ import {
   requireProviderApiKey,
   resolveAuthBackedClient,
 } from '../request-auth';
-import { normalizeToolCallIdsForProvider, sanitizeToolCallId } from '../tool-call-id';
+import {
+  normalizeToolCallIdsForProvider,
+  sanitizeToolCallIdPreservingNative,
+} from '../tool-call-id';
 
 const CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING = 128 * 1024;
 
 export const OPENAI_CHAT_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
-  normalize: (id) => sanitizeToolCallId(id, 64),
+  normalize: (id) => sanitizeToolCallIdPreservingNative(id, 64),
   maxLength: 64,
 };
 
