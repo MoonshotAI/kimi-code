@@ -1,0 +1,80 @@
+import { describe, expect, it } from 'vitest';
+
+import { cleanTelemetryProperties, cleanTelemetryString } from '#/app/telemetry/privacy';
+
+const REDACTED = '<REDACTED: user-file-path>';
+
+describe('cleanTelemetryString (absolute path redaction)', () => {
+  it('redacts ASCII POSIX and Windows paths', () => {
+    expect(cleanTelemetryString('/home/alice/proj/x.txt')).toBe(REDACTED);
+    expect(cleanTelemetryString('C:\\Users\\alice\\proj\\x.txt')).toBe(REDACTED);
+  });
+
+  it('redacts POSIX paths whose home directory is non-ASCII', () => {
+    expect(cleanTelemetryString('/home/李明/proj/secret.txt')).toBe(REDACTED);
+    expect(cleanTelemetryString('/home/иван/proj/secret.txt')).toBe(REDACTED);
+    expect(cleanTelemetryString('/home/josé/proj/secret.txt')).toBe(REDACTED);
+  });
+
+  it('redacts Windows paths whose user folder is non-ASCII or contains an apostrophe', () => {
+    expect(cleanTelemetryString('C:\\Users\\李明\\proj\\secret.txt')).toBe(REDACTED);
+    expect(cleanTelemetryString('C:\\Users\\josé\\proj\\secret.txt')).toBe(REDACTED);
+    expect(cleanTelemetryString("C:\\Users\\O'Brien\\proj\\secret.txt")).toBe(REDACTED);
+  });
+
+  it('redacts UNC and long-path Windows spellings', () => {
+    expect(cleanTelemetryString('\\\\fileserver\\home\\alice.chen\\proj\\secret.txt')).toBe(REDACTED);
+    expect(cleanTelemetryString('\\\\?\\C:\\Users\\alice\\proj\\secret.txt')).toBe(REDACTED);
+    expect(cleanTelemetryString('\\\\?\\UNC\\fileserver\\home\\alice\\proj\\secret.txt')).toBe(
+      REDACTED,
+    );
+  });
+
+  it('redacts drive-letter paths spelled with forward slashes', () => {
+    expect(cleanTelemetryString('C:/Users/alice.chen/proj/secret.txt')).toBe(REDACTED);
+  });
+
+  it('keeps node_modules tails on POSIX and Windows', () => {
+    expect(cleanTelemetryString('/home/alice/app/node_modules/pkg/index.js')).toBe(
+      'node_modules/pkg/index.js',
+    );
+    expect(cleanTelemetryString('C:\\Users\\alice\\app\\node_modules\\pkg\\index.js')).toBe(
+      'node_modules/pkg/index.js',
+    );
+  });
+
+  it('does not swallow trailing diagnostic text after a spaced Windows path', () => {
+    expect(cleanTelemetryString('C:\\Program Files\\a.txt could not be read')).toBe(
+      `${REDACTED} could not be read`,
+    );
+  });
+
+  it('leaves non-path text alone', () => {
+    expect(cleanTelemetryString('edit failed: missing old_string')).toBe(
+      'edit failed: missing old_string',
+    );
+  });
+
+  it('still redacts emails and URLs before paths', () => {
+    expect(cleanTelemetryString('user@example.com')).toBe('<REDACTED: Email>');
+    expect(cleanTelemetryString('see https://example.com/a/b for details')).toBe(
+      'see <REDACTED: URL> for details',
+    );
+  });
+});
+
+describe('cleanTelemetryProperties', () => {
+  it('redacts string values and leaves non-strings untouched', () => {
+    expect(
+      cleanTelemetryProperties({
+        path: '/home/李明/proj/secret.txt',
+        count: 3,
+        ok: true,
+      }),
+    ).toEqual({
+      path: REDACTED,
+      count: 3,
+      ok: true,
+    });
+  });
+});
