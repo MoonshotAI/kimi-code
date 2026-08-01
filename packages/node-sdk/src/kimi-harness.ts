@@ -23,6 +23,7 @@ import type {
   KimiHostIdentity,
   ListSessionsOptions,
   McpServerConfig,
+  McpServerInfo,
   McpTestResult,
   PluginCommandDef,
   PluginInfo,
@@ -276,6 +277,15 @@ export class KimiHarness {
    */
   async listPlugins(): Promise<readonly PluginSummary[]> {
     return this.rpc.listPlugins();
+  }
+
+  /**
+   * Workspace-level MCP server list, no session required. The v2 engine owns
+   * one shared connection set per workspace handler, so `/mcp` is inspectable
+   * before the first session exists; empty on the v1 engine.
+   */
+  async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]> {
+    return this.rpc.listWorkspaceMcpServers(workDir);
   }
 
   async installPlugin(source: string): Promise<PluginSummary> {

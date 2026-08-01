@@ -1080,6 +1080,69 @@ describe('KimiTUI message flow', () => {
     );
   });
 
+  it('waits for lazy session assembly before dispatching further input (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(session, {}, startupInput);
+
+    // Hold the post-create assembly open inside setPermission: the session is
+    // assigned but setup is not finished yet.
+    let resolvePermission!: () => void;
+    session.setPermission.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolvePermission = resolve; }),
+    );
+
+    const ensure = (driver as unknown as { ensureSession(): Promise<unknown> }).ensureSession;
+    const first = ensure.call(driver);
+    await vi.waitFor(() => {
+      expect(session.setPermission).toHaveBeenCalled();
+    });
+
+    // A second trigger must wait for the assembly instead of dispatching
+    // against the half-initialized session.
+    const second = ensure.call(driver);
+    let secondResolved = false;
+    void second.then(() => {
+      secondResolved = true;
+    });
+    await Promise.resolve();
+    expect(secondResolved).toBe(false);
+
+    resolvePermission();
+    await Promise.all([first, second]);
+    expect(secondResolved).toBe(true);
+    expect(harness.createSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('lists MCP servers before the lazy session via the workspace view (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const listWorkspaceMcpServers = vi.fn(async () => [
+      { name: 'my-mcp', status: 'connected', transport: 'stdio', tools: [] },
+    ]);
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions },
+    };
+    const { driver, harness } = await makeDriver(
+      session,
+      { listWorkspaceMcpServers },
+      startupInput,
+    );
+
+    driver.handleUserInput('/mcp');
+
+    await vi.waitFor(() => {
+      expect(listWorkspaceMcpServers).toHaveBeenCalledWith('/tmp/proj-a');
+    });
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(session.listMcpServers).not.toHaveBeenCalled();
+  });
+
   it('tracks /clear as the clear alias for /new', async () => {
     const { driver, harness } = await makeDriver(makeSession({ id: 'ses-1' }));
     const nextSession = makeSession({ id: 'ses-2' });

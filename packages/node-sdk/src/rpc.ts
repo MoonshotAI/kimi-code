@@ -769,6 +769,17 @@ export abstract class SDKRpcClientBase {
     return rpc.listMcpServers({ sessionId: input.sessionId });
   }
 
+  /**
+   * Workspace-level MCP server list, no session required. The v2 engine owns
+   * one shared connection set per workspace handler, so `/mcp` is inspectable
+   * before the first session exists; the v1 engine only exposes MCP through
+   * a live session and the base returns an empty list.
+   */
+  async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]> {
+    void workDir;
+    return [];
+  }
+
   async getMcpStartupMetrics(input: SessionIdRpcInput): Promise<McpStartupMetrics> {
     const rpc = await this.getRpc();
     return rpc.getMcpStartupMetrics({ sessionId: input.sessionId });

@@ -196,6 +196,7 @@ import {
   ITelemetryService,
   IWorkspaceAliases,
   IWorkspaceDirs,
+  IWorkspaceMcpService,
   ISessionLifecycleService,
   IWorkspaceLifecycleService,
   IWorkspaceTrust,
@@ -2148,6 +2149,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async listMcpServers(input: SessionIdRpcInput): Promise<readonly McpServerInfo[]> {
     const mcp = this.requireLiveSession(input.sessionId).accessor.get(ISessionMcpHandle);
     return mcp.connectionManager.list() as readonly McpServerInfo[];
+  }
+
+  /**
+   * Workspace-level MCP view (the handler's one shared connection set), so
+   * `/mcp` is inspectable on a v2 session-less startup before any session
+   * exists. Same `McpServerEntry`-as-`McpServerInfo` cast as listMcpServers.
+   */
+  override async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]> {
+    const handler = await this.engineAccessor
+      .get(IWorkspaceLifecycleService)
+      .handlerFor({ root: normalizeRequiredWorkDir('listWorkspaceMcpServers', workDir) });
+    return handler.accessor.get(IWorkspaceMcpService).connectionManager().list() as readonly McpServerInfo[];
   }
 
   override async getMcpStartupMetrics(input: SessionIdRpcInput): Promise<McpStartupMetrics> {

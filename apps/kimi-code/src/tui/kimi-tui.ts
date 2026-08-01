@@ -1747,8 +1747,13 @@ export class KimiTUI {
    * first one mid-dispatch.
    */
   async ensureSession(): Promise<Session | undefined> {
+    // Even when a session is already assigned, a previous lazy creation may
+    // still be finishing its assembly (runtime sync, command refresh,
+    // subscription). Wait for it so callers never dispatch against a
+    // partially initialized session.
+    if (this.ensureSessionPromise !== null) return this.ensureSessionPromise;
     if (this.session !== undefined) return this.session;
-    this.ensureSessionPromise ??= this.lazyCreateSession().finally(() => {
+    this.ensureSessionPromise = this.lazyCreateSession().finally(() => {
       this.ensureSessionPromise = null;
     });
     return this.ensureSessionPromise;
