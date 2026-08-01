@@ -2,19 +2,25 @@
 
 > **📌 本文档是 Rust 迁移进度的唯一权威（single source of truth）。**
 > - 模块映射明细 → `packages/kimi-agent/GAP_ANALYSIS.md`（滚动更新）
-> - 逐会话工作日志 → `RUST_WORK_LOG.md`（当前未入库，建议随下个 commit 一并提交）
+> - 逐会话工作日志 → `RUST_WORK_LOG.md`（已入库）
 > - 根目录外的 `D:\kimi\plan.md` 是旧阶段快照，已废弃，仅作历史参考
 
-## 当前状态（2026-07-31 核对）
+## 当前状态（2026-08-01 核对）
 
 - **Phase 0-5 全部完成**：v1 与 v2 引擎均已接通，`engine = "rust"` 为默认值
-- **测试**：`cargo test -p kimi-agent` = 1999 lib 全绿、0 warnings（2026-08-01 复验）；包内 vitest 38/38（含 stdio e2e）；含 native-tools 的全工作区历史口径约 2260+（GAP_ANALYSIS 07-26 快照）
+- **测试**：`cargo test -p kimi-agent` = 2003 lib 全绿、0 warnings（2026-08-01 实测）；包内 vitest 38/38（含 stdio e2e）；含全部 crate 的全工作区口径约 **2,800+**（kimi-agent 2003 + 集成 51 + native-tools 631 + kimi-shared 35 + kosong/native 89，GAP_ANALYSIS 2026-08-01 快照）
 - **wire 契约生成（2026-08-01 落地，commit `5eda2c584`）**：`scripts/gen-wire-contract.mjs` 从 `src/rpc/types.rs`（含引用类型递归解析：GoalContext/McpServerSpecInput/SkillMetadataInput/HookDef 等 81 个类型）生成 `src/rpc/wire.gen.ts`；serde 语义 1:1（`#[serde(default)]`→optional、`Option<T>`→`T|undefined`、顶层 Option 别名→`|null`、tagged enum→判别联合、`rename_all`/variant rename 全处理）；rust-loop.ts 手写 wire 接口全部替换为生成类型（仅路由 envelope 与 napi 特有 camelCase 类型保留本地）；`pnpm gen:wire` 幂等。**新增 wire 类型时：改 Rust → `pnpm gen:wire` → 提交生成文件**
 - **unsafe 审计（2026-08-01 完成）**：`plan.md` 早前声称"0 unsafe"已过时——实测全工作区真实 unsafe 8 处：`user_tool/mod.rs` 6 处（`*mut ToolManager` raw pointer + `unsafe impl Send/Sync`）已重构为 `Arc<Mutex<ToolManager>>` 消除（与 `Agent::tool_manager` 所有权模式对齐，commit `10afd6750`）；`llm/http.rs` 2 处为测试内 `env::set_var/remove_var`（Edition 2024 标记，单测试独占该 env，已注释，风险可接受）。**当前 unsafe 数：2（仅测试，均在 `llm/http.rs`）**
-- **web session 后端（2026-08-01，commit `87833b1be` + 路由接线未提交）**：`RustSessionService`（kap-server）——web 会话直接绑定引擎会话（rust-loop `createSessionClient`），引擎全权负责 loop/context/goal/tools/approval/持久化，服务只做 v1 wire 翻译（`projectRustEvent` 事件投影：turn/tool/approval/task/usage/compaction）；approval 面走 `session/approval_list`+`resolve`。路由接线（`registerApiV1Routes.ts`/`start.ts`/`rustSessions.ts`）在 rustSession 存在时替换 v2-backed 的 sessions/prompts/approvals/questions/tasks/messages 路由；`maybeCreateRustSessionService` 强制 stdio + probe 探测，失败静默回退 v2（缺失二进制不破坏 `kimi web` 启动）。**剩余：WS frame fan-out（onFrame）待接**
+- **web session 后端（2026-08-01，commit `87833b1be` + 路由接线 `f861495e3`，已全部提交）**：`RustSessionService`（kap-server）——web 会话直接绑定引擎会话（rust-loop `createSessionClient`），引擎全权负责 loop/context/goal/tools/approval/持久化，服务只做 v1 wire 翻译（`projectRustEvent` 事件投影：turn/tool/approval/task/usage/compaction）；approval 面走 `session/approval_list`+`resolve`。路由接线（`registerApiV1Routes.ts`/`start.ts`/`rustSessions.ts`）在 rustSession 存在时替换 v2-backed 的 sessions/prompts/approvals/questions/tasks/messages 路由；`maybeCreateRustSessionService` 强制 stdio + probe 探测，失败静默回退 v2（缺失二进制不破坏 `kimi web` 启动）。**剩余：WS frame fan-out（onFrame）待接**
 - **Bug 修复（2026-08-01，已提交 `ab532de95`）**：`main.rs::open_session_store()` 缺 `create_dir_all`（subagent.rs 有、main.rs 漏），新机器上 `~/.kimi-code/agent` 不存在时 stdio e2e 直接 exit 1——已按 subagent.rs 语义补齐，两个 e2e 测试恢复绿
 - **构建产物**：2026-07-31 清理 28.7GB（root target 18GB debug + per-crate 旧布局 target 10.8GB），per-crate target 布局已废除；rust-loop `findBinary` 已移除旧布局候选（commit `5eda2c584`）
-- **待办**：上游 0.31.1+ 同步、Bash 命令策略审批强化、goal/compaction/permission 双实现合并进 kimi-shared、`pnpm gen:wire` 接入 CI 漂移检查、web session 的 WS frame fan-out、清理 `packages/kimi-agent/plan/` 运行残留（32 个 0 字节 plan-*.md，勿入库）
+- **上游同步 A 批次（2026-08-01 完成，见 `上游更新/迁移计划.md`）**：A6（goal step-limit 续跑——`TurnResult.hit_step_cap` + `render_step_capped_continuation`，2 测试）、A12（次模型配置面——config `secondaryModel` + `KIMI_SECONDARY_MODEL/EFFORT` + 实验门控，Task/AgentSwarm 子代理绑定，4 测试）、A15（TaskOutput 非阻塞——Rust 拦截器本就非阻塞 + 提示文本清理）；A1/A9/A25 核对为已实现/天然满足。测试基线升至 **2009 lib + 51 集成全绿、0 warnings**
+- **C6 workspace trust 引擎侧（2026-08-01，未提交）**：`McpConnectionState.workspace_trusted` 驱动 `.mcp.json` stdio 审批门 + `session/create` `workspace_trusted` RPC + rust-loop 传参，2 测试；TUI 询问留宿主。测试基线 **2011 lib + 51 集成全绿、0 warnings**
+- **JS 引擎回退移除（2026-08-01，未提交）**：v1/v2 迁移已收官,JS 引擎(agent-core/agent-core-v2 loop)全面退役——`schema.ts` engine 枚举移除 `js`(仅 `rust`);`maybeLoadRustEngine`/`buildRustTurnOverride`/`RustSessionService` 失败一律 throw,不再静默回退 JS loop/v2-backed 路由;v2 `loopService.ts` 工厂失败从吞错改重新抛出。**行为变更：无 Rust 二进制时 CLI/web 启动即报错(暴露而非掩盖 bug)**
+- **WS frame fan-out（2026-08-01，未提交）**：`SessionEventBroadcaster.broadcastRustFrame` + start.ts `onFrame` 接线——Rust 引擎投影帧经 WS 实时推给会话订阅者(volatile,骑 watermark 不推进 seq);web session 的 HTTP + WS 事件面全部打通。4 测试,kar-server 351 全绿
+- **kimi-shared 第二批（2026-08-01，未提交）**：line_endings + tokens 核心迁入 kimi-shared 单一真源(native-tools/kimi-agent 均 re-export);file_type / tool_naming 判定为语义分化非重复,不合并;`gen:wire` CI 漂移检查上线(`wire-contract` job)——实测检出并同步 C6 的 `workspace_trusted`。kimi-shared 47 / native-tools 617 / kimi-agent 2011+51 全绿、0 warnings
+- **JS 引擎退役完成（2026-08-01）**：引擎选择唯一 rust + 无回退 + 全生产代码零 `'js'` engine 残留(`getEngine()` 恒 rust,`Engine` 类型收窄)。**agent-core/agent-core-v2 包保留**——宿主(node-sdk/acp-adapter/kap-server)仍引用其类型/工具/宿主服务,引擎 loop 域不可达但物理删除需逐项梳理依赖,风险大于收益,待宿主依赖解除后另行清理
+- **待办**：上游 0.31.1+ 同步（A 表剩余：A23 models.dev 目录、C3 插件通知；A8 ⚪ 宿主面）、agent-core/agent-core-v2 宿主依赖解除后的引擎死代码物理删除
 
 ---
 
@@ -71,8 +77,6 @@
 | Grep: `type` 过滤器 | ✅ 已完成 | `grep.rs` — `file_type` 参数 + 扩展名映射表 |
 | Grep: `include_ignored` | ✅ 已完成 | `grep.rs` — `.gitignore` 跳过控制 |
 | 工具生命周期钩子 Rust 内实现 | ✅ 已完成 | `hooks/mod.rs` — `chain()`/`before_step_fn()`/`after_step_fn()` |
-| Grep: `include_ignored` | 0.25 天 | 🟡 P1 |
-| 工具生命周期钩子 Rust 内实现 | 2 天 | 🟡 P1 |
 
 ---
 
@@ -106,7 +110,7 @@
 
 ---
 
-## Phase 4: 默认引擎切换 — v1 已真实接通 ✅（2026-07-27），v2 待做
+## Phase 4: 默认引擎切换 — v1 与 v2 均已接通 ✅
 
 ### 4.1 v1 路径：Rust 引擎已默认且实际生效
 
@@ -141,8 +145,7 @@
 3. **布线**：`runV2Print` 在 enqueue 前 `installRustEngineV2`，任何加载失败
    静默回退 JS loop（与 v1 路径同策略）。
 
-剩余加固项（非缺口）：TUI / `kimi web` 面的接入验证、override 下 mid-turn
-steer 请求的投递语义。
+剩余加固项（非缺口）已全部关闭：TUI 原生会话默认开启（`6e03f1577`）、`kimi web` 已路由到 Rust 引擎（`f861495e3`）、override 下 mid-turn steer 请求的投递语义已实现（step 间 steer，`51cf1e5c1`）。
 
 ---
 
@@ -152,9 +155,9 @@ steer 请求的投递语义。
 
 | 类型 | 内容 | 当前状态 |
 |------|------|---------|
-| Rust 单元测试 | 补齐各模块 inline `#[cfg(test)]` | ✅ 完成 — 130 个测试函数覆盖所有模块 |
-| Rust 集成测试 | cron/bg 二进制测试、turn loop mock 测试 | ✅ 10 个集成测试全部通过 |
-| 安全审计测试 | 敏感文件过滤、路径遍历、权限绕过 | ✅ 完成 — path_access 新增 15 个测试，permission_rules 新增 5 个 |
+| Rust 单元测试 | 补齐各模块 inline `#[cfg(test)]` | ✅ 完成 — **2003 lib 测试全绿、0 warnings**（2026-08-01 实测） |
+| Rust 集成测试 | 真实二进制 + SSE stub、零 host 回调 | ✅ **51 个集成测试全部通过**（`stdio_rpc_integration.rs`，2026-08-01 实测） |
+| 安全审计测试 | 敏感文件过滤、路径遍历、权限绕过 | ✅ 完成 — path_access + permission_rules 测试（unsafe 仅剩测试内 2 处） |
 
 ### 5.2 性能基准
 
@@ -216,7 +219,7 @@ Phase 5 ── 3 周 ── 测试 + 性能 + 安全
 
 | 风险 | 级别 | 缓解 |
 |------|------|------|
-| Rust Agent 核心（`Agent`/`TurnFlow`/`SessionSubagentHost`）未稳定 → 阻塞 discussion | 🔴 高 | 优先稳定 Agent 核心；若不可行则标记 discussion 为"不迁移" |
-| v2 DI 服务架构复杂 → KapServer 桥接方案可能不够 | 🟡 中 | 方案 A 兜底；若不行则转向方案 B |
-| Grep 参数太多 → 12 个缺失参数中有 6 个已通过 host 回退处理 | 🟢 低 | 只移植高频参数（-i, output_mode, -A/-B/-C） |
-| Node.js 版本不匹配（需要 >=24.15.0，当前 22.16.0）| 🟡 中 | 升级 Node.js 版本 |
+| Rust Agent 核心（`Agent`/`TurnFlow`/`SessionSubagentHost`）未稳定 → 阻塞 discussion | 🔴 高（已缓解） | ✅ 已解除 — 2026-07-31 SwarmDiscussion / AgentSwarm 原生化，集成测试零 host 回调通过 |
+| v2 DI 服务架构复杂 → KapServer 桥接方案可能不够 | 🟡 中（已落地） | ✅ 已解除 — web session 后端（RustSessionService）上线，替换 v2-backed 路由 |
+| Grep 参数太多 → 12 个缺失参数中有 6 个已通过 host 回退处理 | 🟢 低（已解除） | ✅ 全部移植 — -i / output_mode / -A/-B/-C / type / include_ignored |
+| Node.js 版本不匹配（需要 >=24.15.0，当前 22.16.0）| 🟡 中（已解决） | ✅ 已升级 — 本机实测 v24.18.0（另有 `D:/kimi/node24` 便携包） |

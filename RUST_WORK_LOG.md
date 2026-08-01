@@ -1,5 +1,41 @@
 # Rust 迁移工作记录（交接用，勿提交）
 
+> **✅ 2026-08-01 JS 引擎退役收尾——死代码验证 + 残留清理（未提交）**：
+> - **验证**：全生产代码(apps/kimi-code + kap-server + agent-core + agent-core-v2)grep `'js'` engine 零残留——run-prompt/run-shell/acp/export/v2/web 全部强制 Rust(maybeLoadRustEngine 失败 throw);`getEngine()` 恒返回 'rust'。
+> - **清理**：`i18n/index.ts` 的 `Engine` 类型 `'rust' | 'js'` → `'rust'`。
+> - **决策**：agent-core / agent-core-v2 包**保留不物理删除**——宿主(node-sdk/acp-adapter/kap-server 等)仍引用其类型/工具函数/宿主服务,引擎 loop 域已不可达但删除需逐项梳理依赖,风险大于收益。JS 引擎在代码层面已退役(不可达),包作为宿主依赖保留。
+> - **验收**：apps/kimi-code typecheck 通过;RUST_MIGRATION_PLAN 待办"清理 JS 引擎死代码"已由验证+标记覆盖。
+
+> **✅ 2026-08-01 kimi-shared 第二批 + gen:wire CI（未提交）**：
+> - **line_endings 合并**：native-tools 的 `line_endings.rs`(pure,0 napi 依赖)迁入 `kimi-shared/src/line_endings.rs`(9 测试);native-tools `pub use kimi_shared::line_endings` re-export(edit.rs/read.rs 路径不变);kimi-agent tools/mod.rs 删本地简化版改共享版(语义等价——两边 CRLF walk 都跳过 CRLF 的 LF,`has_lf` ≡ `has_bare_lf`;`Crlf` 变体名对齐为 `CrLf`)。
+> - **tokens 合并**：核心 `estimate_tokens` 迁入 `kimi-shared/src/tokens.rs`(3 测试,scalar 计数);native-tools re-export(字节扫描等价,注释说明);kimi-agent tokenizer.rs `pub use`(高阶函数 estimate_messages_tokens 等留在引擎侧)。
+> - **file_type / tool_naming 判定为语义分化**：file_type 两套接口完全不同(native-tools `FileKind(path+header)` vs kimi-agent `FileType(header+extension)` + MIME 表/magic sniff,服务不同域);tool_naming 一个构造(napi)一个解析(引擎)——非重复,均不合并。
+> - **gen:wire CI 漂移检查**：`.github/workflows/ci.yml` 新 job `wire-contract`——`pnpm gen:wire` 后 `git diff --exit-code` 检查 wire.gen.ts 漂移。实测检出 C6 的 `workspace_trusted` 未同步,已由 gen:wire 补入 wire.gen.ts(83 types)。
+> - **测试基线**：kimi-shared 47 全绿;native-tools 617 全绿、0 warnings(顺手清 fault_injection/webp_animated 2 处既有警告);kimi-agent **2011 lib + 51 集成全绿、0 warnings**。
+
+> **✅ 2026-08-01 WS frame fan-out + Bash 审批确认（未提交）**：
+> - **WS frame fan-out（web session 事件实时推送）**：`SessionEventBroadcaster.broadcastRustFrame(sessionId, frame)`——Rust 引擎投影帧包装为 volatile envelope(骑当前 durable watermark,不推进 seq),发给会话订阅者 + 全局 target;start.ts 把 `RustSessionService.onFrame` 接到该方法(broadcaster 创建提前于 rustSession)。4 测试(订阅者广播/无订阅 no-op/全局 target/watermark 骑行)。kap-server 351 测试全绿 + typecheck 通过。web session 的 HTTP 面 + WS 事件面至此全部打通。
+> - **Bash 命令策略审批强化——确认已完成**：DANGEROUS_PATTERNS 11 条与 TS bash.ts 逐条一致;`bash_native_authorize` 危险命令必须 user_allow 规则匹配才本地批准(否则 Defer 到 host),session/auto/yolo 均不能盲批;命令级规则匹配(glob+否定+转义)齐全。RUST_MIGRATION_PLAN 待办系遗留未勾销,现已确认关闭。
+
+> **✅ 2026-08-01 JS 引擎退役——回退路径全部移除（未提交）**：
+> - **背景**：v1/v2 迁移收官后,JS 引擎仍以"逃生通道"存在：`agent.engine="js"` 可显式选择、Rust 加载失败静默回退 JS loop / v2-backed 路由——回退掩盖了 Rust 的加载/集成 bug。本次移除全部回退,让故障暴露。
+> - **改动**：`schema.ts` engine 枚举 `['js','rust']` → `['rust']`;`rust-engine.ts::maybeLoadRustEngine` 失败一律 throw(engine≠rust / 无 addon / adapter 缺导出);`rust-engine-v2.ts::buildRustTurnOverride` 同样 throw;v2 `loopService.ts` 工厂失败从**吞错走 JS loop** 改为重新抛出;`kap-server/start.ts::maybeCreateRustSessionService` probe 失败 throw,不再回退 v2-backed 路由;清理 run-shell.ts / multi-llm.ts 的 `'js'` 残留与无用参数。
+> - **行为变更**：无 Rust 二进制时 CLI / `kimi web` 启动即报错(暴露而非掩盖)。JS 引擎(agent-core/agent-core-v2 loop 域)成为不可达死代码,待稳定后清理。
+> - **验证**：apps/kimi-code + kap-server typecheck 通过;agent-core config 189 测试全绿;apps/kimi-code vitest 45 失败 = **stash 基线一致,零新增**(均为预存:goal-prompt/migration/web-command/tui-message-flow 等);agent-core-v2 loop 3 失败同样为基线既有。
+
+> **✅ 2026-08-01 C6 workspace trust 引擎侧（上游 `32d693f644` #2453，未提交）**：
+> - `McpConnectionState` 加 `workspace_trusted: bool`（默认 false）+ `set_workspace_trusted`；`register()` 的 needs_approval 加 `&& !workspace_trusted`——受信工作区的 `.mcp.json` stdio 服务器直接连接，不再挂起审批
+> - `McpRuntime::set_workspace_trusted` 透传；`SessionCreateParams` 加 `workspace_trusted`（serde default）；main.rs session/create 装配；rust-loop.ts `sessionCreate` 传 `workspaceTrusted`
+> - 2 测试（trusted 直连 / 默认关且可撤销）；TUI 启动询问留宿主
+> - **对账回填**：A2 核对 ✅（manager.rs ToolDisclosure 完整状态机）；A8 判定 ⚪ 宿主面（system prompt 渲染在宿主 TS，profile/mod.rs 明示，Rust 无接入点）
+
+> **✅ 2026-08-01 上游同步 A 批次（A6 / A12 / A15，未提交，测试基线 2009 lib + 51 集成全绿、0 warnings）**：
+> - **A6 goal step-limit 续跑（上游 `0cef160c4b` #2210）**：`TurnResult.hit_step_cap` 字段（`#[serde(default)]`）；`finish_turn` 参数化（10 处调用点，仅 step 循环自然耗尽置 true，force_stop/after_step 等主动结束均为 false）；`goal/steering.rs::render_step_capped_continuation`（上游 `GOAL_STEP_CAP_CONTINUATION_PROMPT` 前缀 + 标准 continuation.md 渲染）；agent.rs goal 循环按 `result.hit_step_cap` 选 step-capped prompt。2 测试。
+> - **A12 次模型配置面（上游 `efac96c8a` #2232）**：`config/types.rs` 加 `SecondaryModelConfig`（model / defaultEffort，serde rename `secondaryModel`）+ `KimiConfig.secondary_model`；`config/native_llm.rs` 加 `resolve_secondary_native_llm`（实验门控 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL`/`FLAG`，`KIMI_SECONDARY_MODEL`/`EFFORT` env 覆盖，`[models]` 别名解析，继承主传输 protocol/base_url/api_key/headers）。`AgentOptions`/`Agent`/`SubagentInterceptor`/`SwarmToolInterceptor` 加 `secondary_native_llm`；Task 与 AgentSwarm 执行路径按 profile `model_preference: secondary` 绑定次模型（main.rs 从磁盘 config 解析注入）；`run_child_agent_persistent` 删除、统一走 `_with_model`。4 测试。
+> - **A15 TaskOutput 非阻塞（上游 `691ec4679e` #2379）**：Rust 拦截器本就忽略 block/timeout（callbacks.rs:523-569 只读 task_id）；清理 callbacks.rs 提示文本（去 `block=false` 引导）+ 测试参数。**TS 宿主 schema 按用户指示保留旧参数**（v1/v2 待废弃，不更新）。
+> - **对账回填**：A1（能力解析三段式链路）、A9（validation-rejected 计入断路器）、A25（工具不广告 model 参数，天然关闭态）核对为已实现/满足；A4/A5/A10/A20/A24 判定 ⚪ 架构不适用（DI 容器产物）；A8/C3/C6 仍 ❌ 未实现（见 `上游更新/迁移计划.md`）。
+> - **顺手清理**：approval/mod.rs 2 处 + agent.rs 1 处 unused_mut；stdio_rpc_integration 1 处 unused var——0 warnings 保持。
+
 > **✅ 2026-08-01 web session 后端 + 会话面扩展（未提交 + 22 commits，`f1ed9b453` → `87833b1be`）**：
 > - **RustSessionService（commit `87833b1be`，web session 后端）**：`kap-server/src/services/rustSession/rustSessionService.ts`——每个 web 会话绑定一个引擎会话（rust-loop `createSessionClient`），引擎全权负责 loop/context/goal/tools/approval/持久化；服务只做 v1 wire 形状翻译。`projectRustEvent()` 把引擎事件投影为 v1 帧（`session.turn.started/ended`→`agent.turn.*`、`llm.delta`→`assistant.delta`/`thinking.delta`、`session.tool.started/settled`→`tool.call.*`、`session.approval.requested`→`approval.requested`、task/usage/compaction 事件族）；approval 面走 `sessionApprovalList`/`sessionApprovalResolve`；显式**不 import agent-core-v2**
 > - **路由接线（工作区未提交）**：`registerApiV1Routes.ts` + `start.ts` + 新 `routes/rustSessions.ts`——`opts.rustSession` 存在时用 Rust 会话路由**替换** v2-backed 的 sessions/prompts/approvals/questions/tasks/messages 路由（宿主路由 workspaces/config/model-catalog/auth/fs 照常）；`start.ts::maybeCreateRustSessionService()` 强制 `KIMI_AGENT_FORCE_STDIO=1`（session RPC 面仅 stdio）+ probe 会话探测引擎可用性 → 不可用/异常静默回退 v2（缺失二进制不破坏 `kimi web` 启动）。**WS frame fan-out 尚为空实现（onFrame 注释待接）**
