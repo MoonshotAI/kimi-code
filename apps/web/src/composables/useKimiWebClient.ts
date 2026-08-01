@@ -9,10 +9,7 @@ import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
 import {
   reconcileWorkspaceOrder,
   sortByWorkspaceOrder,
-  sortWorkspacesByRecent,
-  workspaceRecentActivity,
   type DropPosition,
-  type WorkspaceSortMode,
 } from '../lib/workspaceOrder';
 import { logError, logWarn } from '../lib/log';
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
@@ -25,16 +22,13 @@ import type { DiffFullTexts } from '../lib/diffFullTexts';
 import {
   loadPinnedSessions,
   loadUnread,
-  loadWorkspaceAddedAt,
   loadWorkspaceOrder,
-  loadWorkspaceSort,
   safeGetString,
   safeRemove,
   safeSetString,
   savePinnedSessions,
   saveUnread,
   saveWorkspaceOrder,
-  saveWorkspaceSort,
   STORAGE_KEYS,
 } from '../lib/storage';
 import {
@@ -312,6 +306,10 @@ interface QueuedPrompt {
   id?: string;
 }
 
+/** Membership of the signed-in managed account: 'member' or 'free' once
+    known, null while unknown. */
+export type ManagedMembership = 'member' | 'free' | null;
+
 export interface ExtendedState extends KimiClientState {
   connected: boolean;
   serverVersion: string;
@@ -328,6 +326,11 @@ export interface ExtendedState extends KimiClientState {
    * backend badge in the Sidebar.
    */
   backend: 'v1' | 'v2';
+  /** Effective experimental-flag state (flag id → enabled) reported by the
+   * server via GET /meta; `{}` until the first meta fetch and on servers too
+   * old to report it. Drives flag-gated UI (e.g. the secondary-model settings
+   * section). */
+  experimentalFlags: Record<string, boolean>;
   workspaceName: string;
   connection: ConnectionState;
   permission: PermissionMode;
@@ -376,6 +379,9 @@ export interface ExtendedState extends KimiClientState {
   /** Signed-in managed-account profile (GET /oauth/userinfo); null until
       fetched, on fetch failure, and when signed out. */
   managedUserInfo: ManagedUserInfo | null;
+  /** Membership derived from the userinfo probe (see ManagedMembership) —
+      drives the upgrade entries in the composer / settings / user menu. */
+  managedMembership: ManagedMembership;
   // Workspace state
   workspaces: AppWorkspace[];
   activeWorkspaceId: string | null;
@@ -383,13 +389,6 @@ export interface ExtendedState extends KimiClientState {
   recentRoots: string[];
   // Root paths the user removed from the sidebar (see HIDDEN_WORKSPACES_KEY).
   hiddenWorkspaceRoots: string[];
-  /** Local "just added" timestamp (epoch ms) per workspace id, stamped when the
-   *  user adds a workspace. The sidebar's `recent` sort keys off session
-   *  activity, which a freshly added workspace does not have — without this it
-   *  would sink below every workspace that does. Acts as its activity floor
-   *  until a real session takes over. Persisted (see storage.ts) so the spot
-   *  survives a refresh; entries are dropped when the workspace is removed. */
-  workspaceAddedAt: Record<string, number>;
   /** Installed external apps that can be used with "Open in app". */
   availableOpenInApps: string[];
   /** Global daemon configuration (secrets redacted). */
@@ -427,6 +426,7 @@ const rawState: ExtendedState = reactive({
   serverVersion: '',
   dangerousBypassAuth: false,
   backend: 'v1',
+  experimentalFlags: {},
   workspaceName: 'kimi-web',
   connection: 'disconnected' as ConnectionState,
   permission: loadPermissionFromStorage(),
@@ -449,12 +449,12 @@ const rawState: ExtendedState = reactive({
   defaultModel: null,
   managedProviderStatus: null,
   managedUserInfo: null,
+  managedMembership: null,
   workspaces: [],
   activeWorkspaceId: loadActiveWorkspaceFromStorage(),
   fsHome: null,
   recentRoots: [],
   hiddenWorkspaceRoots: loadHiddenWorkspacesFromStorage(),
-  workspaceAddedAt: loadWorkspaceAddedAt(),
   availableOpenInApps: [],
   config: null,
   sideChatMessagesByAgent: {},
@@ -2506,6 +2506,7 @@ const loadMoreMessagesError = computed<boolean>(() => {
   return sid ? rawState.messagesLoadMoreErrorBySession[sid] ?? false : false;
 });
 const serverVersion = computed<string>(() => rawState.serverVersion);
+const experimentalFlags = computed<Record<string, boolean>>(() => rawState.experimentalFlags);
 const backend = computed<'v1' | 'v2'>(() => rawState.backend);
 const dangerousBypassAuth = computed<boolean>(() => rawState.dangerousBypassAuth);
 
@@ -2730,6 +2731,7 @@ const authReady = computed<boolean>(() => rawState.authReady);
 const defaultModel = computed<string | null>(() => rawState.defaultModel);
 const managedProviderStatus = computed<string | null>(() => rawState.managedProviderStatus);
 const managedUserInfo = computed<ManagedUserInfo | null>(() => rawState.managedUserInfo);
+const managedMembership = computed<ManagedMembership>(() => rawState.managedMembership);
 const config = computed<AppConfig | null>(() => rawState.config);
 
 /** path → status map for quick badge lookup in the file tree */
@@ -2793,15 +2795,6 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() =>
  * known, its position is fixed until the user drags it elsewhere.
  */
 const workspaceOrder = ref<string[]>(loadWorkspaceOrder());
-
-/**
- * Sidebar workspace sort mode. `recent` (default) re-sorts by each workspace's
- * most recent session activity and stays live as sessions update; `manual` keeps
- * the persisted/dragged order. Persisted so the choice survives a refresh.
- */
-const workspaceSortMode = ref<WorkspaceSortMode>(
-  loadWorkspaceSort() === 'manual' ? 'manual' : 'recent',
-);
 
 // Reconcile the persisted order with the set of currently-known workspaces:
 // drop ids that no longer exist, and prepend newly-seen ids (newest first,
@@ -2894,11 +2887,8 @@ function pinSessionAt(id: string, targetId: string | null, position: DropPositio
   savePinnedSessions(next);
 }
 
-/** Sidebar-facing workspace list. Order follows `workspaceSortMode`: the
- *  persisted/dragged order in `manual` mode, or most-recent-session-first in
- *  `recent` mode. The recent map is only built (and `rawState.sessions` only
- *  read) in the recent branch, so manual mode does not re-sort on every session
- *  update. */
+/** Sidebar-facing workspace list, in the user's manual (dragged/persisted)
+ *  order, reconciled against the daemon's workspace set by the watcher above. */
 const workspacesView = computed<WorkspaceView[]>(() => {
   const views = mergedWorkspaces.value.map((w) => ({
     id: w.id,
@@ -2908,12 +2898,6 @@ const workspacesView = computed<WorkspaceView[]>(() => {
     branch: w.branch,
     sessionCount: w.sessionCount,
   }));
-  if (workspaceSortMode.value === 'recent') {
-    return sortWorkspacesByRecent(
-      views,
-      workspaceRecentActivity(rawState.sessions, rawState.workspaceAddedAt, workspaceIdForSession),
-    );
-  }
   return sortByWorkspaceOrder(views, workspaceOrder.value);
 });
 
@@ -3079,19 +3063,6 @@ const pinnedSessions = computed<Session[]>(() => {
 function reorderWorkspaces(ids: string[]): void {
   workspaceOrder.value = ids;
   saveWorkspaceOrder(ids);
-  // A drag is an explicit manual ordering, so drop out of `recent` mode — the
-  // dragged order would otherwise be overwritten by the live recency sort.
-  if (workspaceSortMode.value !== 'manual') {
-    workspaceSortMode.value = 'manual';
-    saveWorkspaceSort('manual');
-  }
-}
-
-/** Switch the sidebar workspace sort mode and persist the choice. */
-function setWorkspaceSortMode(mode: WorkspaceSortMode): void {
-  if (workspaceSortMode.value === mode) return;
-  workspaceSortMode.value = mode;
-  saveWorkspaceSort(mode);
 }
 
 /**
@@ -3341,7 +3312,6 @@ export function useKimiWebClient() {
 
     // Workspace view props
     workspacesView,
-    workspaceSortMode,
     visibleWorkspace,
     activeWorkspaceId,
     sessionsForView,
@@ -3392,6 +3362,7 @@ export function useKimiWebClient() {
     serverVersion,
     backend,
     dangerousBypassAuth,
+    experimentalFlags,
     clearDangerousBypassAuth,
     initialized,
     connectIssue,
@@ -3486,7 +3457,6 @@ export function useKimiWebClient() {
     renameWorkspace: workspaceState.renameWorkspace,
     deleteWorkspace: workspaceState.deleteWorkspace,
     reorderWorkspaces,
-    setWorkspaceSortMode,
     pinSession,
     unpinSession,
     togglePinSession,
@@ -3535,6 +3505,7 @@ export function useKimiWebClient() {
     defaultModel,
     managedProviderStatus,
     managedUserInfo,
+    managedMembership,
 
     // Config state + actions
     config,
@@ -3542,6 +3513,7 @@ export function useKimiWebClient() {
 
     // Auth actions
     checkAuth: workspaceState.checkAuth,
+    probeManagedMembership: workspaceState.probeManagedMembership,
     startOAuthLogin: modelProvider.startOAuthLogin,
     pollOAuthLogin: modelProvider.pollOAuthLogin,
     cancelOAuthLogin: modelProvider.cancelOAuthLogin,

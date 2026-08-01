@@ -16,15 +16,22 @@ import { useUpdateStatus, type UpdateCheckResult } from '../../composables/useUp
 import type { ColorScheme, FontScale } from '../../composables/useKimiWebClient';
 import type { AppConfig, AppModel, ManagedUserInfo, ManagedUsageResult } from '../../api/types';
 import PlanUsageCard from './PlanUsageCard.vue';
+import SecondaryModelPicker from './SecondaryModelPicker.vue';
+import PlanUpgradeCard from './PlanUpgradeCard.vue';
 import { logWarn } from '../../lib/log';
 import type { IconName } from '../../lib/icons';
 import { Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
+type SettingsTab = 'general' | 'agent' | 'account' | 'advanced' | 'archived';
+
 const props = defineProps<{
   colorScheme: ColorScheme;
   fontScale: FontScale;
+  /** Tab to open on (default 'general'); deep links (the archive undo toast)
+      land on 'archived'. */
+  initialTab?: SettingsTab;
   /** Managed Kimi account credential state from GET /api/v1/auth
       ('authenticated' | 'unauthenticated' | null when unconfigured). The
       account row keys off THIS, not a global "any usable model exists" flag —
@@ -51,6 +58,9 @@ const props = defineProps<{
   configSaving?: boolean;
   /** Server version reported by GET /api/v1/meta. */
   serverVersion?: string;
+  /** Effective experimental-flag state from GET /api/v1/meta (flag id →
+      enabled); gates the subagents settings section. Empty on older servers. */
+  experimentalFlags?: Record<string, boolean>;
 }>();
 
 const emit = defineEmits<{
@@ -90,9 +100,7 @@ const accountSubtitle = computed(() =>
   signedIn.value ? t('settings.signedIn') : t('settings.signedOutHint'),
 );
 
-type SettingsTab = 'general' | 'agent' | 'account' | 'advanced' | 'archived';
-
-const activeTab = ref<SettingsTab>('general');
+const activeTab = ref<SettingsTab>(props.initialTab ?? 'general');
 
 // Overlay-style scrollbar, same as the sidebar's .sessions: the thin thumb
 // stays hidden until the body is scrolled, then fades back out shortly after
@@ -139,7 +147,10 @@ useDialogFocus(dialogRef);
 const { isConfirmOpen } = useConfirmDialog();
 
 function handleKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Escape' && !isConfirmOpen.value) emit('close');
+  // defaultPrevented: an inner control (Select / SecondaryModelPicker menus)
+  // already consumed this Escape to close its own popup — don't close the
+  // dialog out from under it (same contract as the App shortcut dispatcher).
+  if (e.key === 'Escape' && !e.defaultPrevented && !isConfirmOpen.value) emit('close');
 }
 onMounted(() => document.addEventListener('keydown', handleKeydown));
 onUnmounted(() => {
@@ -297,6 +308,39 @@ function setDefaultPermissionMode(mode: 'manual' | 'auto' | 'yolo'): void {
   emit('updateConfig', { defaultPermissionMode: mode });
 }
 
+// --- Secondary model (subagents) — experimental. Gated by the server's
+// `secondary-model` flag: prefer the effective state from GET /meta
+// (covers env-enabled flags), falling back to the persisted [experimental]
+// config section on servers too old to report it. There is deliberately no
+// "clear" affordance — POST /config merges, so a recipe cannot be unset.
+
+const secondaryModelEnabled = computed(
+  () =>
+    (props.experimentalFlags?.['secondary-model'] ?? props.config?.experimental?.['secondary-model']) ===
+    true,
+);
+
+const secondaryModel = computed(() => props.config?.secondaryModel?.model ?? '');
+const secondaryModelEffort = computed(() => props.config?.secondaryModel?.defaultEffort ?? '');
+
+// Catalog thinking-capability info per model id — drives the picker's flyout
+// level options (off + declared levels / on / off / off alone). Config-only
+// models fall back to the boolean toggle inside the picker.
+const modelInfoById = computed(() =>
+  Object.fromEntries((props.models ?? []).map((model) => [model.id, model])),
+);
+
+function setSecondaryModel(value: { model: string; effort?: string }): void {
+  if (value.model === secondaryModel.value && (value.effort ?? '') === secondaryModelEffort.value) {
+    return;
+  }
+  // One atomic patch; omitting defaultEffort keeps merge semantics from
+  // touching a previously stored effort (which REST cannot clear anyway).
+  emit('updateConfig', {
+    secondaryModel: value.effort ? { model: value.model, defaultEffort: value.effort } : { model: value.model },
+  });
+}
+
 function toggleConfigBoolean(key: 'defaultPlanMode'): void {
   const current = props.config?.[key];
   emit('updateConfig', { [key]: !configBool(current) } as Partial<AppConfig>);
@@ -340,6 +384,12 @@ function setTab(tab: SettingsTab): void {
 // ---------------------------------------------------------------------------
 const client = useKimiWebClient();
 
+// A confirmed free managed account (the userinfo probe was rejected with 402)
+// gets the upgrade entry instead of the plan-usage module — free accounts
+// can't call usages, so there is nothing to meter. While the probe is still
+// unknown the usage card mounts as usual and swaps itself on a 402/403.
+const showPlanUpgrade = computed(() => signedIn.value && client.managedMembership.value === 'free');
+
 const archivedItems = ref<AppSession[]>([]);
 const archivedLoading = ref(false);
 const archivedLoaded = ref(false);
@@ -376,11 +426,17 @@ async function loadAllArchived(): Promise<void> {
   }
 }
 
-watch(activeTab, (tab) => {
-  if (tab === 'archived' && !archivedLoaded.value) {
-    void loadAllArchived();
-  }
-});
+// immediate: the dialog may MOUNT on the archived tab (initialTab deep link,
+// e.g. the archive undo toast) — no tab change fires then.
+watch(
+  activeTab,
+  (tab) => {
+    if (tab === 'archived' && !archivedLoaded.value) {
+      void loadAllArchived();
+    }
+  },
+  { immediate: true },
+);
 
 const archiveWorkspaces = computed<string[]>(() => {
   const set = new Set<string>();
@@ -569,7 +625,8 @@ function archiveTime(iso: string): string {
             </div>
             </div>
           </section>
-          <PlanUsageCard v-if="signedIn" :on-fetch-usage="props.onFetchUsage" />
+          <PlanUpgradeCard v-if="showPlanUpgrade" />
+          <PlanUsageCard v-else-if="signedIn" :on-fetch-usage="props.onFetchUsage" />
         </section>
 
         <!-- Agent defaults -->
@@ -637,6 +694,33 @@ function archiveTime(iso: string): string {
             <div v-else class="empty-config">
               {{ t('settings.configUnavailable') }}
             </div>
+            </div>
+          </section>
+
+          <!-- Subagents (secondary model) — experimental; only rendered while
+               the server reports the `secondary-model` flag as enabled. -->
+          <section v-if="config && secondaryModelEnabled" class="sec">
+            <div class="sec-head">
+              <h3 class="sec-title">{{ t('settings.secondaryModelSection') }}</h3>
+            </div>
+
+            <div class="settings-group">
+              <div class="row">
+                <span class="rlabel">
+                  {{ t('settings.secondaryModel') }}
+                  <span class="hint">{{ t('settings.secondaryModelHint') }}</span>
+                </span>
+                <div v-if="modelGroups.length > 0" class="select-wrap">
+                  <SecondaryModelPicker
+                    :model-value="secondaryModel"
+                    :effort="secondaryModelEffort"
+                    :groups="modelGroups"
+                    :model-info-by-id="modelInfoById"
+                    @select="setSecondaryModel"
+                  />
+                </div>
+                <span v-else class="rvalue mono">{{ secondaryModel || t('settings.noSecondaryModel') }}</span>
+              </div>
             </div>
           </section>
         </section>

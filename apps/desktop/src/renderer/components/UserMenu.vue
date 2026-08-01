@@ -22,9 +22,8 @@ import {
 } from '../lib/planUsage';
 import { isDesktop } from '../lib/desktopFlag';
 import { track } from '../lib/track';
+import { openUpgrade } from '../lib/upgrade';
 import { Badge, Button, Icon, Kbd, Menu, MenuItem, Spinner } from '@moonshot-ai/web-ui';
-
-const UPGRADE_URL = 'https://www.kimi.com/code?from=kimi_code_desktop';
 
 const emit = defineEmits<{
   login: [];
@@ -39,8 +38,14 @@ const isProd = import.meta.env.PROD;
 
 const signedIn = computed(() => client.managedProviderStatus.value === 'authenticated');
 const userInfo = client.managedUserInfo;
+const membership = client.managedMembership;
 const nickname = computed(() => userInfo.value?.nickname || t('sidebar.defaultUserName'));
-const showUpgrade = computed(() => shouldShowUpgrade(userInfo.value?.userLevel));
+// Free accounts (userinfo 402) have no readable level at all — show the
+// upgrade entry for them too, not just for members below the top level.
+const showUpgrade = computed(() => membership.value === 'free' || shouldShowUpgrade(userInfo.value?.userLevel));
+// Free accounts can't call usages — the usage row would only ever show the
+// fetch error, so the menu hides it outright.
+const showUsageRow = computed(() => membership.value !== 'free');
 
 // A broken avatar URL falls back to the placeholder glyph; a new avatar URL re-arms the <img>.
 const avatarLoadFailed = ref(false);
@@ -292,9 +297,9 @@ function resetHint(row: UsageRow): string {
   return row.resetAt === undefined ? '' : formatResetAt(row.resetAt, t);
 }
 
-function openUpgrade(): void {
+function onUpgrade(): void {
   closeMenu();
-  window.open(UPGRADE_URL, '_blank', 'noopener');
+  openUpgrade();
   track('upgrade_clicked', {});
 }
 
@@ -339,6 +344,9 @@ async function onLogout(): Promise<void> {
       <Icon name="user" />
       <span class="user-menu-name">{{ t('sidebar.notSignedIn') }}</span>
     </template>
+    <Badge v-if="isDesktop && isProd" class="user-menu-badge" variant="warning" size="sm">
+      {{ t('settings.internalTest') }}
+    </Badge>
   </button>
 
   <!-- Teleport: the sidebar column's container-type would capture position:fixed and mis-anchor the menu. -->
@@ -347,6 +355,7 @@ async function onLogout(): Promise<void> {
       <Menu v-if="menuOpen" ref="menuRef" class="user-menu" :style="menuStyle" @click.stop>
         <template v-if="signedIn">
           <MenuItem
+            v-if="showUsageRow"
             :ref="setRowRef('usage')"
             aria-haspopup="true"
             :aria-expanded="openSubmenu === 'usage'"
@@ -361,7 +370,7 @@ async function onLogout(): Promise<void> {
             <span class="user-menu-item-label">{{ t('settings.planUsage.title') }}</span>
             <Icon name="chevron-right" size="sm" />
           </MenuItem>
-          <MenuItem v-if="showUpgrade" @click="openUpgrade" @mouseenter="scheduleSubmenuClose">
+          <MenuItem v-if="showUpgrade" @click="onUpgrade" @mouseenter="scheduleSubmenuClose">
             <Icon name="music" size="sm" />
             <span class="user-menu-item-label">{{ t('sidebar.upgrade') }}</span>
             <Icon name="external-link" size="sm" />
@@ -411,7 +420,6 @@ async function onLogout(): Promise<void> {
         <MenuItem @click="onOpenSettings" @mouseenter="scheduleSubmenuClose">
           <Icon name="settings" size="sm" />
           <span class="user-menu-item-label">{{ t('settings.title') }}</span>
-          <Badge v-if="isDesktop && isProd" variant="warning" size="sm">{{ t('settings.internalTest') }}</Badge>
           <Kbd v-if="settingsShortcutKeys.length > 0" :keys="settingsShortcutKeys" />
         </MenuItem>
         <template v-if="signedIn">
@@ -530,9 +538,15 @@ async function onLogout(): Promise<void> {
   object-fit: cover;
 }
 .user-menu-name {
+  /* Explicit shrink floor for the trailing badge: overflow:hidden already zeroes
+     the automatic minimum size, this just makes the intent obvious. */
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.user-menu-badge {
+  flex: none;
 }
 
 /* Class-level top:0 is only the pre-positioning frame — menuStyle always sets both vertical axes. */

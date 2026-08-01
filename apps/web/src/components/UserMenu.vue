@@ -19,9 +19,8 @@ import {
   usagePercent,
   usageSeverity,
 } from '../lib/planUsage';
+import { openUpgrade } from '../lib/upgrade';
 import { Button, Icon, Menu, MenuItem, Spinner } from '@moonshot-ai/web-ui';
-
-const UPGRADE_URL = 'https://www.kimi.com/code?from=kimi_code_web';
 
 const emit = defineEmits<{
   login: [];
@@ -34,8 +33,14 @@ const { confirm } = useConfirmDialog();
 
 const signedIn = computed(() => client.managedProviderStatus.value === 'authenticated');
 const userInfo = client.managedUserInfo;
+const membership = client.managedMembership;
 const nickname = computed(() => userInfo.value?.nickname || t('sidebar.defaultUserName'));
-const showUpgrade = computed(() => shouldShowUpgrade(userInfo.value?.userLevel));
+// Free accounts (userinfo 402) have no readable level at all — show the
+// upgrade entry for them too, not just for members below the top level.
+const showUpgrade = computed(() => membership.value === 'free' || shouldShowUpgrade(userInfo.value?.userLevel));
+// Free accounts can't call usages — the usage row would only ever show the
+// fetch error, so the menu hides it outright.
+const showUsageRow = computed(() => membership.value !== 'free');
 
 // A broken avatar URL falls back to the placeholder glyph; a new avatar URL re-arms the <img>.
 const avatarLoadFailed = ref(false);
@@ -282,9 +287,9 @@ function resetHint(row: UsageRow): string {
   return row.resetAt === undefined ? '' : formatResetAt(row.resetAt, t);
 }
 
-function openUpgrade(): void {
+function onUpgrade(): void {
   closeMenu();
-  window.open(UPGRADE_URL, '_blank', 'noopener');
+  openUpgrade();
 }
 
 function onLogin(): void {
@@ -336,6 +341,7 @@ async function onLogout(): Promise<void> {
       <Menu v-if="menuOpen" ref="menuRef" class="user-menu" :style="menuStyle" @click.stop>
         <template v-if="signedIn">
           <MenuItem
+            v-if="showUsageRow"
             :ref="setRowRef('usage')"
             aria-haspopup="true"
             :aria-expanded="openSubmenu === 'usage'"
@@ -350,7 +356,7 @@ async function onLogout(): Promise<void> {
             <span class="user-menu-item-label">{{ t('settings.planUsage.title') }}</span>
             <Icon name="chevron-right" size="sm" />
           </MenuItem>
-          <MenuItem v-if="showUpgrade" @click="openUpgrade" @mouseenter="scheduleSubmenuClose">
+          <MenuItem v-if="showUpgrade" @click="onUpgrade" @mouseenter="scheduleSubmenuClose">
             <Icon name="music" size="sm" />
             <span class="user-menu-item-label">{{ t('sidebar.upgrade') }}</span>
             <Icon name="external-link" size="sm" />

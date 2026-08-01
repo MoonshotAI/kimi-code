@@ -29,7 +29,6 @@ import {
   loadPinnedSessions,
   loadWorkspaceNameOverrides,
   safeRemove,
-  saveWorkspaceAddedAt,
   saveWorkspaceNameOverrides,
   STORAGE_KEYS,
 } from '../../lib/storage';
@@ -73,6 +72,7 @@ const FS_PATH_NOT_FOUND_CODE = 40409;
 const ALREADY_RESOLVED_CODE = 40902;
 // First load polls /auth until it gives a definitive answer (see load()).
 const FIRST_LOAD_AUTH_RETRY_MS = 2000;
+const FREE_USER_LEVEL = 10;
 
 type AuthCheckResult = 'proceed' | 'retry' | 'server-auth-required';
 
@@ -521,6 +521,49 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   // profile the newest call wrote.
   let userInfoFetchGeneration = 0;
 
+  /** One guarded /oauth/userinfo fetch. Shared by checkAuth (fire-and-forget,
+   *  so the auth gate never blocks on profile dressing) and
+   *  probeManagedMembership (awaited). Never throws: every failure keeps the
+   *  anonymous fallback and an unknown membership. */
+  async function fetchManagedProfile(generation: number): Promise<void> {
+    try {
+      const infoResult = await getKimiWebApi().getUserInfo();
+      // The two guards: a logout during the fetch must not resurrect the
+      // profile (status check), and a superseded call must not answer at all
+      // (generation check).
+      if (generation !== userInfoFetchGeneration) return;
+      if (rawState.managedProviderStatus !== 'authenticated') return;
+      rawState.managedUserInfo = infoResult.kind === 'ok' ? infoResult.userInfo : null;
+      // user_level 10 = free; 402 stays as the fallback signal. Any other
+      // failure stays unknown rather than being mislabeled as free.
+      if (infoResult.kind === 'ok') {
+        rawState.managedMembership =
+          infoResult.userInfo.userLevel === FREE_USER_LEVEL ? 'free' : 'member';
+      } else {
+        rawState.managedMembership = infoResult.status === 402 ? 'free' : null;
+      }
+    } catch {
+      // Older daemon without the endpoint or a transient failure — the
+      // account row keeps its anonymous fallback.
+      if (generation !== userInfoFetchGeneration) return;
+      if (rawState.managedProviderStatus === 'authenticated') {
+        rawState.managedUserInfo = null;
+        rawState.managedMembership = null;
+      }
+    }
+  }
+
+  /** Awaitable membership probe for decisions that can't ride the
+   *  fire-and-forget fetch in checkAuth — the send gate choosing between the
+   *  sign-in and upgrade dialogs would otherwise snapshot a null membership
+   *  inside the probe window and misroute a signed-in free account to login.
+   *  No-op unless the managed account is authenticated; concurrent calls are
+   *  safe (the last-issued probe wins). */
+  async function probeManagedMembership(): Promise<void> {
+    if (rawState.managedProviderStatus !== 'authenticated') return;
+    await fetchManagedProfile(++userInfoFetchGeneration);
+  }
+
   async function checkAuth(): Promise<AuthCheckResult> {
     const generation = ++userInfoFetchGeneration;
     try {
@@ -531,28 +574,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       rawState.managedProviderStatus = result.managedProvider?.status ?? null;
       if (rawState.managedProviderStatus === 'authenticated') {
         // Fire-and-forget: the profile is settings-page dressing and must not
-        // block the auth gate. The late callbacks are guarded twice: a logout
-        // during the fetch must not resurrect the profile (status check), and
-        // a superseded call must not answer at all (generation check).
-        void api
-          .getUserInfo()
-          .then((infoResult) => {
-            if (generation !== userInfoFetchGeneration) return;
-            if (rawState.managedProviderStatus !== 'authenticated') return;
-            rawState.managedUserInfo = infoResult.kind === 'ok' ? infoResult.userInfo : null;
-          })
-          .catch(() => {
-            // Older daemon without the endpoint or a transient failure — the
-            // account row keeps its anonymous fallback.
-            if (generation !== userInfoFetchGeneration) return;
-            if (rawState.managedProviderStatus === 'authenticated') {
-              rawState.managedUserInfo = null;
-            }
-          });
+        // block the auth gate.
+        void fetchManagedProfile(generation);
       } else {
         // The entry increment already invalidated any in-flight profile fetch
         // from a previously authenticated check; just drop the profile.
         rawState.managedUserInfo = null;
+        rawState.managedMembership = null;
       }
       connectIssue.value = null;
       return 'proceed';
@@ -957,6 +985,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     rawState.serverVersion = m.serverVersion;
     rawState.availableOpenInApps = m.openInApps;
     rawState.dangerousBypassAuth = m.dangerousBypassAuth;
+    rawState.experimentalFlags = m.experimentalFlags;
     rawState.backend = m.backend;
   }
 
@@ -1427,11 +1456,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const api = getKimiWebApi();
     try {
       const ws = await api.addWorkspace({ root: trimmed });
-      // Stamp the local add time so the sidebar's `recent` sort (keyed off
-      // session activity) puts the new, still session-less workspace at the
-      // top instead of the bottom. Persisted so the spot survives a refresh.
-      rawState.workspaceAddedAt = { ...rawState.workspaceAddedAt, [ws.id]: Date.now() };
-      saveWorkspaceAddedAt(rawState.workspaceAddedAt);
       upsertWorkspacePreserveOrder(ws);
       openWorkspaceDraft(ws.id);
       return true;
@@ -2581,12 +2605,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       logWarn('[kimi-web] deleteWorkspace registry cleanup failed for', id, err);
     }
     rawState.workspaces = rawState.workspaces.filter((w) => w.id !== id && w.root !== root);
-    // Drop the local add-time entry with the workspace; re-adding re-stamps it.
-    if (id in rawState.workspaceAddedAt) {
-      const { [id]: _droppedAddedAt, ...restAddedAt } = rawState.workspaceAddedAt;
-      rawState.workspaceAddedAt = restAddedAt;
-      saveWorkspaceAddedAt(restAddedAt);
-    }
     if (removingActiveWorkspace || activeSessionInRemovedWorkspace) {
       const nextWorkspace = workspacesView.value[0]?.id ?? null;
       rawState.activeWorkspaceId = nextWorkspace;
@@ -3035,6 +3053,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     clearFileDiff,
     loadGitStatus,
     checkAuth,
+    probeManagedMembership,
     loadConfig,
     updateConfig,
     listAllSessionsGlobal,

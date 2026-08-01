@@ -304,6 +304,9 @@ html[data-color-scheme="dark"] {
   --z-tooltip: 250;
   --z-overlay: 300;
   --z-modal: 400;
+  /* Menus / popovers that open ABOVE a modal dialog (teleported to <body>,
+     e.g. the settings SecondaryModelPicker cascade). */
+  --z-modal-dropdown: 500;
   --z-toast: 600;
   --z-max: 9999;
 

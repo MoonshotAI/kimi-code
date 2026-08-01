@@ -26,7 +26,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "katex": "^0.17.0",
-    "markstream-vue": "^1.0.7",
+    "markstream-vue": "^1.0.9-beta.1",
     "mermaid": "^11.15.0",
     "photoswipe": "^5.4.4",
     "shiki": "^4.3.0",

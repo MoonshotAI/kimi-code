@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, TurnAttachment, UIQuestion, WorkspaceView } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
-import type { PromptAttachment } from '../../composables/useKimiWebClient';
+import type { ManagedMembership, PromptAttachment } from '../../composables/useKimiWebClient';
 import ChatPane from './ChatPane.vue';
 import ChatHeader from './ChatHeader.vue';
 import Composer from './Composer.vue';
@@ -14,6 +14,7 @@ import ConversationToc, { type ConversationTocItem } from './ConversationToc.vue
 import TranscriptSearch from './TranscriptSearch.vue';
 import KimiDoodle from '../KimiDoodle.vue';
 import { Icon, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
+import { openUpgrade } from '../../lib/upgrade';
 import { getVisibleWorkspaces } from '../../lib/workspacePicker';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
 import { isMacosDesktop } from '../../lib/desktopFlag';
@@ -90,6 +91,12 @@ const props = defineProps<{
       composer, which shows a sign-in entry instead of the model pill when
       nothing is usable. */
   authReady?: boolean;
+  /** Managed-account sign-in state — forwarded to the composer (a signed-in
+      account never gets the sign-in entry). */
+  managedSignedIn?: boolean;
+  /** Membership of the signed-in managed account — forwarded to the composer
+      ('free' swaps the model pill for the upgrade entry). */
+  managedMembership?: ManagedMembership;
   /** Starred model ids shown at the top of the composer's quick-switch dropdown. */
   starredIds?: string[];
   /** Session skills shown in the composer `/` menu. */
@@ -173,6 +180,17 @@ const activeWorkspaceLabel = computed(() => {
 });
 
 const hasWorkspaces = computed(() => (props.workspaces?.length ?? 0) > 0);
+
+// Signed-in free managed account with no other models configured: besides the
+// composer's upgrade pill, the empty-session landing shows a louder guidance
+// banner above the composer.
+const showUpgradeBanner = computed(
+  () =>
+    props.authReady === false &&
+    (props.models?.length ?? 0) === 0 &&
+    props.managedSignedIn === true &&
+    props.managedMembership === 'free',
+);
 
 // Capped recent list, no expander.
 const visibleWorkspaces = computed(() =>
@@ -2133,6 +2151,16 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
               </span>
               <span v-if="!starting" class="empty-hint-text">{{ t('composer.emptyConversation') }}</span>
             </div>
+            <!-- Signed-in free account, no usable models: upgrade guidance
+                 above the composer (the pill alone is easy to miss). Styled
+                 after the design-system Banner(info) recipe. -->
+            <div v-if="showUpgradeBanner" class="upgrade-banner">
+              <Icon class="upgrade-banner-icon" name="music" size="sm" />
+              <span class="upgrade-banner-text">{{ t('composer.upgradeBanner') }}</span>
+              <button type="button" class="upgrade-banner-cta" @click="openUpgrade()">
+                {{ t('sidebar.upgrade') }}
+              </button>
+            </div>
             <Composer
               ref="emptyComposerRef"
               class="empty-composer"
@@ -2151,6 +2179,8 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
               :activation-badges="activationBadges"
               :models="models"
               :auth-ready="authReady"
+              :managed-signed-in="managedSignedIn"
+              :managed-membership="managedMembership"
               :starred-ids="starredIds"
               :skills="skills"
               :starting="starting"
@@ -2295,6 +2325,8 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
         :activation-badges="activationBadges"
         :models="models"
         :auth-ready="authReady"
+        :managed-signed-in="managedSignedIn"
+        :managed-membership="managedMembership"
         :starred-ids="starredIds"
         :skills="skills"
         :goal="goal"
@@ -2535,6 +2567,50 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Upgrade guidance banner between the empty-session hint and the composer,
+   after the design-system Banner(info) recipe: accent-soft fill, accent-bd
+   hairline, accent leading icon. The horizontal inset mirrors .composer's own
+   padding so the two align. */
+.upgrade-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 var(--dock-inline-right, 16px) var(--space-2) var(--dock-inline-left, 16px);
+  padding: var(--space-2) var(--space-3);
+  border: 0.5px solid var(--color-accent-bd);
+  border-radius: var(--radius-xl);
+  background: var(--color-accent-soft);
+}
+.upgrade-banner-icon {
+  flex: none;
+  color: var(--color-accent);
+}
+.upgrade-banner-text {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+}
+.upgrade-banner-cta {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--color-accent);
+  cursor: pointer;
+}
+.upgrade-banner-cta:hover {
+  color: var(--color-accent-hover);
 }
 /* Attachment card tucked --space-4 under the complete composer card; the
    card is raised so the attachment always paints behind it. */

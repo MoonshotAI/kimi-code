@@ -34,6 +34,9 @@ const { isConfirmOpen } = useConfirmDialog();
 const props = withDefaults(
   defineProps<{
     modelValue: boolean;
+    /** View to open on (default 'main'); the archive undo toast deep-links to
+        the archived restore sub-view. */
+    initialView?: 'main' | 'archived';
     status: ConversationStatus;
     thinking?: ThinkingLevel;
     planMode?: boolean;
@@ -216,6 +219,15 @@ function openArchived(): void {
   archiveQuery.value = '';
   void loadAllArchived();
 }
+
+// Deep link (e.g. the archive undo toast's "Settings"): apply the requested
+// initial view each time the sheet opens.
+watch(
+  () => props.modelValue,
+  (open) => {
+    if (open && props.initialView === 'archived') openArchived();
+  },
+);
 
 function backToMain(): void {
   view.value = 'main';

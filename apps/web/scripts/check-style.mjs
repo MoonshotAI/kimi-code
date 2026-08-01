@@ -66,6 +66,9 @@ const GLASS_MENU_EXEMPT = new Set([
   'components/chat/SlashMenu.vue',
   'components/chat/MentionMenu.vue',
   'components/chat/ConversationPane.vue',
+  // Two-pane Select variant (settings → Agent → Subagents): its dropdown is a
+  // floating menu surface, same as the Select listbox.
+  'components/settings/SecondaryModelPicker.vue',
 ]);
 
 // Files exempt from no-gradient-text. The rule targets gradient TEXT, but the

@@ -16,6 +16,7 @@ import {
   usagePercent,
   usageSeverity,
 } from '../../lib/planUsage';
+import PlanUpgradeCard from './PlanUpgradeCard.vue';
 import { Button, Spinner } from '@moonshot-ai/web-ui';
 
 const props = defineProps<{
@@ -53,6 +54,16 @@ const errorMessage = computed(() =>
   result.value?.kind === 'error' ? result.value.message : t('settings.planUsage.loadFailed'),
 );
 
+// 402/403 = the account isn't a member: the usage endpoint is off-limits, so
+// the whole module swaps to the upgrade entry. SettingsDialog already gates
+// the confirmed free state on the userinfo probe — this catches the window
+// where the card mounted before the probe resolved.
+const isFreeAccountError = computed(
+  () =>
+    result.value?.kind === 'error' &&
+    (result.value.status === 402 || result.value.status === 403),
+);
+
 // TUI extra-usage logic: the monthly spend meter only exists when a monthly
 // cap is configured; otherwise the limit row reads "Unlimited".
 const hasMonthlyLimit = computed(
@@ -70,6 +81,10 @@ function resetHint(row: UsageRow): string {
 </script>
 
 <template>
+  <!-- Free account (usage fetch rejected 402/403) — upgrade entry replaces
+       the whole module. -->
+  <PlanUpgradeCard v-if="isFreeAccountError" />
+  <template v-else>
   <!-- Plan usage -->
   <section class="sec">
     <h3 class="sec-title">{{ t('settings.planUsage.title') }}</h3>
@@ -141,6 +156,7 @@ function resetHint(row: UsageRow): string {
       </div>
     </div>
   </section>
+  </template>
 </template>
 
 <style scoped>

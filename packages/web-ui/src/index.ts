@@ -3,6 +3,7 @@
 // ./src/*). Tokens live in ./style.css; the icon resolver + dialog stack are
 // the small bits of UI infrastructure exported alongside the components.
 
+export { default as ActionToast } from './components/ui/ActionToast.vue';
 export { default as AuthStateIcon } from './components/ui/AuthStateIcon.vue';
 export { default as Avatar } from './components/ui/Avatar.vue';
 export { default as Badge } from './components/ui/Badge.vue';

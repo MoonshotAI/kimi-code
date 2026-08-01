@@ -1,7 +1,9 @@
 <!-- apps/web/src/components/SessionRow.vue -->
-<!-- A single session row: status dot + title + time + attention pill + kebab. -->
-<!-- Inline rename (dblclick), the emoji icon affordance (hover wash + picker, -->
-<!-- see SessionEmojiPicker) and delete-confirm live here. -->
+<!-- A single session row: status dot + title + time + attention pill + hover -->
+<!-- actions (pin / archive). There is no kebab button — the full menu only -->
+<!-- opens on right-click, anchored to the cursor. -->
+<!-- Inline rename (dblclick) and the emoji icon affordance (hover wash + -->
+<!-- picker, see SessionEmojiPicker) live here. -->
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -49,68 +51,23 @@ const fullTime = computed(() =>
   props.session.updatedAt ? formatFullTime(props.session.updatedAt) : props.session.time,
 );
 
-// Kebab menu
+// Right-click menu — the row's only menu (there is no kebab button; the hover
+// actions are one-shot pin / archive buttons).
 const menuOpen = ref(false);
-/** What the open menu is anchored to: the kebab pins itself visible + lit
-    only while ITS menu is up; a right-click (cursor-anchored) menu leaves
-    the kebab out of it. */
-const menuAnchor = ref<'kebab' | 'cursor'>('kebab');
-const kebabRef = ref<InstanceType<typeof IconButton> | null>(null);
 const menuRef = ref<InstanceType<typeof Menu> | null>(null);
-// Fixed-position style for the teleported kebab menu, anchored to the ⋯ button.
+// Fixed-position style for the teleported menu, anchored to the cursor.
 const menuStyle = ref<Record<string, string>>({});
 
 function onDocClick(e: MouseEvent): void {
   const target = e.target as Node;
-  if (menuRef.value?.el?.contains(target) || kebabRef.value?.el?.contains(target)) return;
+  if (menuRef.value?.el?.contains(target)) return;
   closeMenu();
 }
 
-// Anchor the menu to the ⋯ button with a viewport flip (open upward when there
-// isn't room below), mirroring the workspace kebab menu in Sidebar.vue. The menu
-// is rendered through a body teleport so ancestor `overflow: hidden` (notably the
-// collapsing `.group-sessions` list) can't clip it.
-function positionMenu(): void {
-  const btn = kebabRef.value?.el;
-  if (!btn) return;
-  const menu = menuRef.value?.el;
-  const r = btn.getBoundingClientRect();
-  const gap = 4;
-  const margin = 8;
-  const menuH = menu?.offsetHeight ?? 0;
-  const menuW = menu?.offsetWidth ?? 0;
-  let top = r.bottom + gap;
-  let flipped = false;
-  if (top + menuH > window.innerHeight - margin) {
-    top = Math.max(margin, r.top - menuH - gap);
-    flipped = true;
-  }
-  let left = r.right - menuW;
-  if (left < margin) left = margin;
-  // The pop animation grows out of the trigger corner — the origin and the
-  // nudge direction follow the upward flip.
-  menuStyle.value = {
-    top: `${Math.round(top)}px`,
-    left: `${Math.round(left)}px`,
-    transformOrigin: flipped ? 'bottom right' : 'top right',
-    '--menu-pop-shift': flipped ? '2px' : '-2px',
-  };
-}
-
-async function toggleMenu(e: Event): Promise<void> {
-  e.stopPropagation();
-  if (menuOpen.value) {
-    closeMenu();
-    return;
-  }
-  menuAnchor.value = 'kebab';
-  await openMenu();
-  positionMenu();
-}
-
-// Shared open path: mount the (teleported) menu and arm dismissal; the
-// caller then anchors it — the ⋯ button for toggleMenu, the cursor for
-// right-click.
+// Open the (teleported) menu and arm dismissal; the caller then anchors it to
+// the cursor (positionMenuAtCursor). The menu is rendered through a body
+// teleport so ancestor `overflow: hidden` (notably the collapsing
+// `.group-sessions` list) can't clip it.
 async function openMenu(): Promise<void> {
   closePicker();
   menuOpen.value = true;
@@ -238,15 +195,14 @@ function openPickerFromRow(e: Event): void {
 }
 
 function openPickerFromMenu(e: Event): void {
-  // Right-click opened the menu at the cursor: anchor the picker to the click
-  // point (or, as a keyboard fallback, the menu's rect captured before
-  // closeMenu unmounts it), not to the hidden kebab.
-  const fromCursor = menuAnchor.value === 'cursor';
-  const anchor = fromCursor ? menuRef.value?.el : kebabRef.value?.el;
+  // The menu only opens at the cursor (right-click): anchor the picker to the
+  // click point (or, as a keyboard fallback, the menu's rect captured before
+  // closeMenu unmounts it).
+  const anchor = menuRef.value?.el;
   const me = e as MouseEvent;
   const rect = pointRect(me) ?? anchor?.getBoundingClientRect();
   closeMenu();
-  void openPicker(anchor, rect, fromCursor ? 'left' : 'right', me.clientX || undefined);
+  void openPicker(anchor, rect, 'left', me.clientX || undefined);
 }
 
 function applyEmoji(emoji: string | null): void {
@@ -302,14 +258,12 @@ async function onRowContextMenu(e: MouseEvent): Promise<void> {
   e.preventDefault();
   e.stopPropagation();
   if (menuOpen.value) closeMenu();
-  menuAnchor.value = 'cursor';
   await openMenu();
   positionMenuAtCursor(e);
 }
 
 // Cursor anchor (right-click): open at the pointer, flipping up / left when
-// the menu would leave the viewport — the kebab menu's clamping, minus a
-// trigger rect.
+// the menu would leave the viewport.
 function positionMenuAtCursor(e: MouseEvent): void {
   const menu = menuRef.value?.el;
   const margin = 8;
@@ -369,8 +323,8 @@ function togglePinRow(): void {
   emit('pin', props.session.id);
 }
 
-// Archive — the modal confirm and the async work live in App.vue
-// (confirmArchiveSession); the row only emits the intent.
+// Archive — no confirm; App.vue (archiveSessionWithToast) archives directly
+// and shows the undo toast. The row only emits the intent.
 function startArchive(): void {
   closeMenu();
   emit('archive', props.session.id);
@@ -452,37 +406,39 @@ defineExpose({ closeMenu });
       </Tooltip>
 
       <!-- Trailing action slot: the relative time and the hover actions (pin +
-           kebab) share one grid cell and cross-fade (opacity + visibility,
+           archive) share one grid cell and cross-fade (opacity + visibility,
            never display:none), so the slot width is identical in hover and
            rest. The badges and title therefore don't reflow on hover — see
            design-system §07 "Session row". -->
       <span class="act">
         <span class="ts">{{ session.time }}</span>
-        <span v-if="!renaming" class="ha" :class="{ open: menuOpen && menuAnchor === 'kebab' }">
-          <IconButton
-            class="pin-btn"
-            size="sm"
-            :label="session.pinned ? t('sidebar.unpin') : t('sidebar.pin')"
-            @click.stop="togglePinRow"
-          >
-            <Icon :name="session.pinned ? 'unpin' : 'pin'" />
-          </IconButton>
-          <IconButton
-            ref="kebabRef"
-            class="kebab"
-            :class="{ open: menuOpen && menuAnchor === 'kebab' }"
-            size="sm"
-            :label="t('sidebar.options')"
-            @click.stop="toggleMenu($event)"
-          >
-            <Icon name="dots-horizontal" />
-          </IconButton>
+        <span v-if="!renaming" class="ha">
+          <Tooltip :text="session.pinned ? t('sidebar.unpin') : t('sidebar.pin')">
+            <IconButton
+              class="pin-btn"
+              size="sm"
+              :label="session.pinned ? t('sidebar.unpin') : t('sidebar.pin')"
+              @click.stop="togglePinRow"
+            >
+              <Icon :name="session.pinned ? 'unpin' : 'pin'" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip :text="t('sidebar.archive')">
+            <IconButton
+              class="archive-btn"
+              size="sm"
+              :label="t('sidebar.archive')"
+              @click.stop="startArchive"
+            >
+              <Icon name="archive" />
+            </IconButton>
+          </Tooltip>
         </span>
       </span>
     </div>
 
-    <!-- Kebab dropdown — teleported to <body> and position:fixed so it escapes
-         the `overflow: hidden` on the collapsing `.group-sessions` list. -->
+    <!-- Right-click dropdown — teleported to <body> and position:fixed so it
+         escapes the `overflow: hidden` on the collapsing `.group-sessions` list. -->
     <Teleport to="body">
       <Transition name="menu-pop">
         <Menu ref="menuRef" v-if="menuOpen" class="menu" :style="menuStyle" @click.stop>
@@ -527,7 +483,7 @@ defineExpose({ closeMenu });
       </Transition>
     </Teleport>
 
-    <!-- Emoji picker — teleported like the kebab menu so the collapsing
+    <!-- Emoji picker — teleported like the right-click menu so the collapsing
          `.group-sessions` list's `overflow: hidden` can't clip it. -->
     <Teleport to="body">
       <Transition name="menu-pop">
@@ -578,8 +534,8 @@ defineExpose({ closeMenu });
   gap: var(--sb-gap, 6px);
   min-width: 0;
   /* Row height is font-driven: title line-height (13×1.25≈16px) + 2×5px
-     .se padding ≈ 26px. The hover kebab is absolutely positioned (see .act)
-     so it never contributes to row height and can't cause hover jitter. */
+     .se padding ≈ 26px. The hover actions are absolutely positioned (see .act)
+     so they never contribute to row height and can't cause hover jitter. */
 }
 
 .left {
@@ -626,21 +582,19 @@ defineExpose({ closeMenu });
   -webkit-mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - var(--sb-fade) - var(--sb-fade-len)), transparent calc(100% - var(--sb-fade)));
   mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - var(--sb-fade) - var(--sb-fade-len)), transparent calc(100% - var(--sb-fade)));
 }
-.se:hover .t,
-.se:has(.ha.open) .t {
+.se:hover .t {
   --sb-fade: 34px;
   --sb-fade-len: 26px;
 }
 /* With a badge the title tail never reaches the hover cluster — keep the rest-state fade. */
-.se:has(.ui-badge):hover .t,
-.se:has(.ui-badge):has(.ha.open) .t {
+.se:has(.ui-badge):hover .t {
   --sb-fade: 0px;
   --sb-fade-len: 16px;
 }
 
 /* Leading emoji (the session icon): an ordinary title character — no
-   decoration at rest or on hover. It stays a <button> for a11y; the kebab
-   menu's "Set Emoji…" is the discoverable path. */
+   decoration at rest or on hover. It stays a <button> for a11y; the
+   right-click menu's "Set Emoji…" is the discoverable path. */
 .t .emoji {
   padding: 0;
   background: transparent;
@@ -660,7 +614,7 @@ defineExpose({ closeMenu });
 }
 
 /* Trailing action slot: the relative time (in flow) sets the slot width; the
-   hover actions (pin + kebab) are absolutely positioned over it and swapped
+   hover actions (pin + archive) are absolutely positioned over it and swapped
    via a cross-fade, so they contribute neither height (the row stays
    font-driven) nor width changes (min-width reserves a button footprint, the
    title doesn't reflow). The slot stretches to the full row height so the
@@ -704,8 +658,7 @@ defineExpose({ closeMenu });
 /* The title dissolves (mask fade on .t) before it reaches the cluster, so the
    cluster paints nothing — no plate, no wash — and the hover/selected washes
    never have to be re-composited into a fake solid. */
-.se:hover .ha,
-.act:has(.ha.open) .ha {
+.se:hover .ha {
   opacity: 1;
   visibility: visible;
   transition: opacity var(--duration-fast) var(--ease-out);
@@ -713,18 +666,17 @@ defineExpose({ closeMenu });
 .act .ts {
   transition: opacity var(--duration-fast) var(--ease-out);
 }
-.se:hover .act .ts,
-.act:has(.ha.open) .ts {
+.se:hover .act .ts {
   opacity: 0;
   visibility: hidden;
   transition:
     opacity var(--duration-fast) var(--ease-out),
     visibility 0s linear var(--duration-fast);
 }
-.kebab.open { color: var(--color-text); background: var(--sb-hover, var(--color-hover)); }
 
-/* Fixed + anchored to the ⋯ button via inline style (see positionMenu); the menu
-   is teleported to <body> so the collapsing list's `overflow: hidden` can't clip it. */
+/* Fixed + anchored to the cursor via inline style (see positionMenuAtCursor);
+   the menu is teleported to <body> so the collapsing list's `overflow: hidden`
+   can't clip it. */
 .menu {
   position: fixed;
   top: 0;
@@ -732,7 +684,7 @@ defineExpose({ closeMenu });
   z-index: var(--z-dropdown);
 }
 /* The emoji picker shares the menu's fixed + teleported placement (anchored by
-   positionPicker, either to the ⋯ button or to the title's emoji). */
+   positionPicker, either to the right-click point or to the title's emoji). */
 .picker {
   position: fixed;
   top: 0;
@@ -792,5 +744,4 @@ defineExpose({ closeMenu });
   padding: 8px var(--se-pad-x);
 }
 .sessions .se .rename-input { border-radius: var(--radius-sm); font-family: var(--sans); }
-.sessions .se .kebab { border-radius: var(--radius-sm); }
 </style>
