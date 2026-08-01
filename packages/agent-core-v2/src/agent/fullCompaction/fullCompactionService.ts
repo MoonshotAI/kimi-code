@@ -7,7 +7,9 @@
  * context-overflow failures by blocking the turn on the in-flight job. The
  * mutable plain-data state (`compactionCountInTurn`,
  * `observedMaxContextTokensByModel`, `lastCompactedTokenCount`,
- * `consecutiveOverflowCompactions`, `activeTurnId`) is registered into
+ * `consecutiveOverflowCompactions`, `activeTurnId`,
+ * `pendingAutoCompactionCount`, `ineffectiveAutoCompactions`,
+ * `autoCompactionDisabled`) is registered into
  * `agentState` (`IAgentStateService`) and read/written through it;
  * `_compacting` (the in-flight job — AbortController / Promise / trace), the
  * `hooks.onWillCompact` slot, the `_onDidFinishCompaction` Emitter, the
@@ -89,6 +91,14 @@ const OVERFLOW_CONTEXT_SAFETY_RATIO = 0.85;
 const OVERFLOW_STATUS_RECOVERY_RATIO = 0.5;
 const MAX_COMPACTION_OVERFLOW_SHRINK_ATTEMPTS = 3;
 const COMPACTION_OVERFLOW_SHRINK_RATIOS = [0.7, 0.5, 0.35] as const;
+// A compaction is "ineffective" when the steady-state token count measured
+// after it stays >= this ratio of the count that triggered it — the trigger
+// is then driven by the fixed request overhead (system prompt, tool
+// schemas), which compaction cannot shrink. Two in a row mean auto-compaction
+// can never succeed for this model config, so it is disabled for the rest of
+// the session instead of looping forever.
+const INEFFECTIVE_AUTO_COMPACTION_RATIO = 0.8;
+const MAX_INEFFECTIVE_AUTO_COMPACTIONS = 2;
 const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
   type: 'object',
   properties: {},
@@ -138,6 +148,18 @@ export const fullCompactionActiveTurnIdKey = defineState<number | undefined>(
   'fullCompaction.activeTurnId',
   () => undefined as number | undefined,
 );
+export const fullCompactionPendingAutoCompactionCountKey = defineState<number | null>(
+  'fullCompaction.pendingAutoCompactionCount',
+  () => null,
+);
+export const fullCompactionIneffectiveAutoCompactionsKey = defineState<number>(
+  'fullCompaction.ineffectiveAutoCompactions',
+  () => 0,
+);
+export const fullCompactionAutoCompactionDisabledKey = defineState<boolean>(
+  'fullCompaction.autoCompactionDisabled',
+  () => false,
+);
 
 export class AgentFullCompactionService extends Disposable implements IAgentFullCompactionService {
   declare readonly _serviceBrand: undefined;
@@ -173,6 +195,9 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     this.states.register(fullCompactionLastCompactedTokenCountKey);
     this.states.register(fullCompactionConsecutiveOverflowCompactionsKey);
     this.states.register(fullCompactionActiveTurnIdKey);
+    this.states.register(fullCompactionPendingAutoCompactionCountKey);
+    this.states.register(fullCompactionIneffectiveAutoCompactionsKey);
+    this.states.register(fullCompactionAutoCompactionDisabledKey);
     this.strategy = new RuntimeCompactionStrategy(() => this.resolveModelContextWithEffectiveMax());
     this._register(
       this.wire.hooks.onDidRestore.register('full-compaction', async (_ctx, next) => {
@@ -243,6 +268,30 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
 
   private set activeTurnId(value: number | undefined) {
     this.states.set(fullCompactionActiveTurnIdKey, value);
+  }
+
+  private get pendingAutoCompactionCount(): number | null {
+    return this.states.get(fullCompactionPendingAutoCompactionCountKey);
+  }
+
+  private set pendingAutoCompactionCount(value: number | null) {
+    this.states.set(fullCompactionPendingAutoCompactionCountKey, value);
+  }
+
+  private get ineffectiveAutoCompactions(): number {
+    return this.states.get(fullCompactionIneffectiveAutoCompactionsKey);
+  }
+
+  private set ineffectiveAutoCompactions(value: number) {
+    this.states.set(fullCompactionIneffectiveAutoCompactionsKey, value);
+  }
+
+  private get autoCompactionDisabled(): boolean {
+    return this.states.get(fullCompactionAutoCompactionDisabledKey);
+  }
+
+  private set autoCompactionDisabled(value: boolean) {
+    this.states.set(fullCompactionAutoCompactionDisabledKey, value);
   }
 
   get compacting(): FullCompactionTask | null {
@@ -487,14 +536,61 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
 
   private checkAutoCompaction(throwOnLimit = true): boolean {
     if (this._compacting) return true;
+    const usedSize = this.tokenCountWithPending();
+    this.evaluateAutoCompactionEffectiveness(usedSize);
     if (
       this.lastCompactedTokenCount !== null &&
-      this.tokenCountWithPending() <= this.lastCompactedTokenCount
+      usedSize <= this.lastCompactedTokenCount
     ) {
       return false;
     }
-    if (!this.strategy.shouldCompact(this.tokenCountWithPending())) return false;
-    return this.beginAutoCompaction(throwOnLimit);
+    if (!this.strategy.shouldCompact(usedSize)) return false;
+    if (this.autoCompactionDisabled) return false;
+    const began = this.beginAutoCompaction(throwOnLimit);
+    if (began) this.pendingAutoCompactionCount = usedSize;
+    return began;
+  }
+
+  // Circuit breaker for ineffective auto-compactions. When the fixed request
+  // overhead (system prompt, tool schemas) alone exceeds the trigger
+  // threshold — e.g. a self-hosted model whose max_context_size is small
+  // relative to the CLI's baseline — every auto-compaction shrinks only the
+  // conversation messages and the next server-reported usage jumps straight
+  // back over the threshold, looping forever. Each auto-compaction records
+  // the count that triggered it (`pendingAutoCompactionCount`); the next
+  // check compares the steady-state count against that baseline. A genuine
+  // drop below INEFFECTIVE_AUTO_COMPACTION_RATIO of the baseline resets the
+  // streak; otherwise the streak grows, and at MAX_INEFFECTIVE_AUTO_COMPACTIONS
+  // auto-compaction is disabled for the rest of the session. This runs on
+  // every checkAutoCompaction call, before the shouldCompact gate, so a legit
+  // compaction that brought the count back under the threshold also clears
+  // the baseline and the next genuine trigger is not misjudged. The streak
+  // deliberately spans turns (resetForTurn does not touch it): ineffectiveness
+  // is a property of the model config, not of one turn. Manual compaction and
+  // overflow recovery bypass the circuit — they never set the baseline.
+  private evaluateAutoCompactionEffectiveness(usedSize: number): void {
+    const baseline = this.pendingAutoCompactionCount;
+    if (baseline === null) return;
+    this.pendingAutoCompactionCount = null;
+    if (usedSize < baseline * INEFFECTIVE_AUTO_COMPACTION_RATIO) {
+      this.ineffectiveAutoCompactions = 0;
+      return;
+    }
+    this.ineffectiveAutoCompactions += 1;
+    if (this.ineffectiveAutoCompactions < MAX_INEFFECTIVE_AUTO_COMPACTIONS) return;
+    this.autoCompactionDisabled = true;
+    const maxContextTokens = this.getEffectiveMaxContextTokens();
+    const message =
+      `Auto-compaction disabled: repeated compactions failed to reduce the context size ` +
+      `(~${String(usedSize)} tokens remain against a ${String(maxContextTokens)}-token window). ` +
+      `The CLI's baseline request overhead likely exceeds the compaction threshold for this model; ` +
+      `increase the model's max_context_size or lower loop_control.reserved_context_size / compaction_trigger_ratio.`;
+    this.log.warn(message, { usedSize, maxContextTokens });
+    try {
+      this.eventBus.publish({ type: 'warning', code: 'auto-compaction-ineffective', message });
+    } catch {
+      // Diagnostics must never break the compaction check.
+    }
   }
 
   private beginAutoCompaction(throwOnLimit = true): boolean {
