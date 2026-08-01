@@ -911,19 +911,30 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   async function loadMoreSessions(workspaceId: string): Promise<void> {
     if (rawState.sessionsLoadingMoreByWorkspace[workspaceId]) return;
     if (rawState.sessionsHasMoreByWorkspace[workspaceId] === false) return;
-    const beforeId = rawState.sessionsCursorByWorkspace[workspaceId];
-    if (beforeId === undefined) return;
+    if (rawState.sessionsCursorByWorkspace[workspaceId] === undefined) return;
     rawState.sessionsLoadingMoreByWorkspace = {
       ...rawState.sessionsLoadingMoreByWorkspace,
       [workspaceId]: true,
     };
     try {
-      const page = await getKimiWebApi().listSessions({
-        workspaceId,
-        pageSize: SESSIONS_EXPAND_BATCH,
-        beforeId,
-        excludeEmpty: true,
-      });
+      // Re-issue the fetch when the cursor moves mid-flight (reload, archive
+      // re-anchor): a stale-anchored page is unsafe to commit. Capped so a
+      // moving cursor cannot spin requests.
+      let beforeId = rawState.sessionsCursorByWorkspace[workspaceId];
+      let page: { items: AppSession[]; hasMore: boolean } | undefined;
+      for (let attempt = 0; attempt < 3 && beforeId !== undefined; attempt += 1) {
+        page = await getKimiWebApi().listSessions({
+          workspaceId,
+          pageSize: SESSIONS_EXPAND_BATCH,
+          beforeId,
+          excludeEmpty: true,
+        });
+        if (rawState.sessionsCursorByWorkspace[workspaceId] === beforeId) break;
+        page = undefined;
+        beforeId = rawState.sessionsCursorByWorkspace[workspaceId];
+      }
+      // The cursor kept moving — give up rather than commit a stale page.
+      if (page === undefined) return;
       // Append de-duped against the latest list so a concurrently added/removed
       // session is respected.
       const existing = new Set(rawState.sessions.map((s) => s.id));
@@ -949,6 +960,97 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         ...rawState.sessionsLoadingMoreByWorkspace,
         [workspaceId]: false,
       };
+    }
+  }
+
+  /** Non-child sessions loaded for one workspace (pinned included — the data
+   *  layer doesn't track pin state). */
+  function loadedInWorkspace(workspaceId: string): AppSession[] {
+    return rawState.sessions.filter(
+      (s) => !s.parentSessionId && workspaceIdForSession(s) === workspaceId,
+    );
+  }
+
+  /** Archive backfill (local archive path only): restore the pre-archive
+   *  loaded count while the server has more pages; re-anchor the paging
+   *  cursor when the archived session was the cursor. */
+  async function backfillWorkspaceSessions(
+    workspaceId: string,
+    archivedId: string,
+    archivedUpdatedAt: string,
+    target: number,
+  ): Promise<void> {
+    if (rawState.sessionsCursorByWorkspace[workspaceId] === archivedId) {
+      // Re-anchor to the contiguous predecessor (the oldest loaded row NEWER
+      // than the archived one): off-page rows (deep link, search) must not
+      // become the cursor, or "show more" would skip the rows between.
+      const archivedMs = new Date(archivedUpdatedAt).getTime();
+      let anchor: AppSession | undefined;
+      for (const s of rawState.sessions) {
+        if (workspaceIdForSession(s) !== workspaceId) continue;
+        const ms = new Date(s.updatedAt).getTime();
+        if (ms <= archivedMs) continue;
+        if (anchor === undefined || ms < new Date(anchor.updatedAt).getTime()) anchor = s;
+      }
+      rawState.sessionsCursorByWorkspace = {
+        ...rawState.sessionsCursorByWorkspace,
+        [workspaceId]: anchor?.id,
+      };
+    }
+    // Page budget per archive: child-only pages advance the cursor without
+    // restoring the visible count — cap the walk.
+    let pagesLeft = 3;
+    while (
+      pagesLeft > 0 &&
+      loadedInWorkspace(workspaceId).length < target &&
+      (rawState.sessionsHasMoreByWorkspace[workspaceId] ?? false)
+    ) {
+      const cursor = rawState.sessionsCursorByWorkspace[workspaceId];
+      const loadedBefore = loadedInWorkspace(workspaceId).length;
+      if (cursor === undefined) {
+        // Emptied workspace: re-anchor with a fresh first page (no before_id).
+        try {
+          const page = await getKimiWebApi().listSessions({
+            workspaceId,
+            pageSize: SESSIONS_INITIAL_PAGE_SIZE,
+            excludeEmpty: true,
+          });
+          const existing = new Set(rawState.sessions.map((s) => s.id));
+          const fresh = page.items.filter((s) => !existing.has(s.id));
+          if (fresh.length > 0) {
+            // A first page can hold newer rows than loadMore appends — restore
+            // the global newest-first order sessions[0] readers rely on.
+            setSessions(
+              [...rawState.sessions, ...fresh].sort(
+                (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+              ),
+            );
+          }
+          rawState.sessionsCursorByWorkspace = {
+            ...rawState.sessionsCursorByWorkspace,
+            [workspaceId]:
+              page.items.length > 0 ? page.items[page.items.length - 1]!.id : undefined,
+          };
+          rawState.sessionsHasMoreByWorkspace = {
+            ...rawState.sessionsHasMoreByWorkspace,
+            [workspaceId]: page.hasMore,
+          };
+        } catch (err) {
+          pushOperationFailure('loadMoreSessions', err);
+          break;
+        }
+      } else {
+        await loadMoreSessions(workspaceId);
+      }
+      pagesLeft -= 1;
+      // No-progress guard: a failed or guard-dropped fetch changes nothing —
+      // stop instead of spinning.
+      if (
+        loadedInWorkspace(workspaceId).length === loadedBefore &&
+        rawState.sessionsCursorByWorkspace[workspaceId] === cursor
+      ) {
+        break;
+      }
     }
   }
 
@@ -2649,8 +2751,19 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   async function archiveSession(id: string): Promise<void> {
     try {
       const api = getKimiWebApi();
+      // Capture the backfill inputs BEFORE the POST: afterwards the row may
+      // already be gone (WS-driven removal mid-flight).
+      const archived = rawState.sessions.find((s) => s.id === id);
+      const workspaceId =
+        archived !== undefined ? workspaceIdForSession(archived) : undefined;
+      const backfillTarget =
+        workspaceId !== undefined ? loadedInWorkspace(workspaceId).length : 0;
       await api.archiveSession(id);
       forgetSession(id);
+      if (archived !== undefined && workspaceId !== undefined) {
+        // Fire-and-forget: the undo toast must not wait for the fetch.
+        void backfillWorkspaceSessions(workspaceId, id, archived.updatedAt, backfillTarget);
+      }
       sideChat.clearSideChatForSession(id);
       const { [id]: _removedIds, ...restIds } = rawState.sideChatUserMessageIdsBySession;
       void _removedIds;

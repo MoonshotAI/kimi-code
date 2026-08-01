@@ -748,8 +748,14 @@ function onPanesScroll(): void {
     return;
   }
   if (top < lastScrollTop - 1 && dist > 1) {
-    following.value = false;
-    showPill.value = true;
+    // Shrinking content (fold collapse, pane widening) makes the browser clamp
+    // scrollTop upward — not a user scroll-away. The RO cache behind dist lags
+    // a frame here, so recheck live: a clamp lands flush on the new bottom.
+    const liveDist = el.scrollHeight - top - el.clientHeight;
+    if (liveDist > 1) {
+      following.value = false;
+      showPill.value = true;
+    }
   } else if (
     dist <= BOTTOM_THRESHOLD &&
     top > lastScrollTop + 1 &&
