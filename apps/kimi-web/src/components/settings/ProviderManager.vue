@@ -4,6 +4,7 @@
 import { onMounted, onUnmounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppProvider } from '../../api/types';
+import { PROVIDER_TYPES } from '../../lib/providerPresets';
 import { useDialogFocus } from '../../composables/useDialogFocus';
 import Dialog from '../ui/Dialog.vue';
 import Button from '../ui/Button.vue';
@@ -30,6 +31,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   add: [input: { type: string; apiKey?: string; baseUrl?: string; defaultModel?: string }];
+  update: [id: string, input: { type?: string; apiKey?: string; baseUrl?: string; defaultModel?: string }];
   refresh: [id: string];
   delete: [id: string];
   /** Open the login dialog for the given platform (OAuth flow) */
@@ -52,6 +54,8 @@ function onDeleteProvider(id: string): void {
 // -------------------------------------------------------------------------
 
 const showAddForm = ref(false);
+/** Non-null when editing an existing provider; null when adding new. */
+const editingProviderId = ref<string | null>(null);
 const addForm = reactive({
   type: 'moonshot',
   apiKey: '',
@@ -60,9 +64,8 @@ const addForm = reactive({
 });
 const addError = ref('');
 
-const PROVIDER_TYPES = ['moonshot', 'anthropic', 'openai', 'custom'];
-
 function openAdd(): void {
+  editingProviderId.value = null;
   addForm.type = 'moonshot';
   addForm.apiKey = '';
   addForm.baseUrl = '';
@@ -70,22 +73,53 @@ function openAdd(): void {
   addError.value = '';
   showAddForm.value = true;
 }
+
+function openEdit(p: AppProvider): void {
+  editingProviderId.value = p.id;
+  // 编辑时用 provider id（即 UI 类型）填充表单，而不是 wire type（p.type）。
+  addForm.type = p.id;
+  addForm.apiKey = '';
+  addForm.baseUrl = p.baseUrl ?? '';
+  addForm.defaultModel = p.defaultModel ?? '';
+  addError.value = '';
+  showAddForm.value = true;
+}
+
+// 根据选中的类型自动填充 baseUrl 和 defaultModel
+function onTypeChange(): void {
+  const info = PROVIDER_TYPES.find((p) => p.value === addForm.type);
+  if (info) {
+    addForm.baseUrl = info.defaultUrl;
+    addForm.defaultModel = info.defaultModel;
+  }
+}
 function cancelAdd(): void {
   showAddForm.value = false;
+  editingProviderId.value = null;
 }
 function submitAdd(): void {
-  if (!addForm.apiKey.trim()) {
+  if (!addForm.apiKey.trim() && !editingProviderId.value) {
     addError.value = t('providers.apiKeyRequired');
     return;
   }
   addError.value = '';
-  emit('add', {
-    type: addForm.type,
-    apiKey: addForm.apiKey.trim() || undefined,
-    baseUrl: addForm.baseUrl.trim() || undefined,
-    defaultModel: addForm.defaultModel.trim() || undefined,
-  });
+  if (editingProviderId.value) {
+    const input: { type?: string; apiKey?: string; baseUrl?: string; defaultModel?: string } = {};
+    if (addForm.type) input.type = addForm.type;
+    if (addForm.apiKey.trim()) input.apiKey = addForm.apiKey.trim();
+    if (addForm.baseUrl.trim()) input.baseUrl = addForm.baseUrl.trim();
+    if (addForm.defaultModel.trim()) input.defaultModel = addForm.defaultModel.trim();
+    emit('update', editingProviderId.value, input);
+  } else {
+    emit('add', {
+      type: addForm.type,
+      apiKey: addForm.apiKey.trim() || undefined,
+      baseUrl: addForm.baseUrl.trim() || undefined,
+      defaultModel: addForm.defaultModel.trim() || undefined,
+    });
+  }
   showAddForm.value = false;
+  editingProviderId.value = null;
 }
 
 // -------------------------------------------------------------------------
@@ -147,21 +181,24 @@ function statusLabel(status: AppProvider['status']): string {
               />
             </Tooltip>
             <div class="prov-info">
-              <span class="prov-type">{{ p.type }}</span>
+              <span class="prov-type">{{ t('providers.types.' + p.id, p.id) }}</span>
               <span v-if="p.baseUrl" class="prov-url">{{ p.baseUrl }}</span>
               <span class="prov-meta">
                 <Badge :variant="p.hasApiKey ? 'success' : 'neutral'" size="sm">
                   {{ p.hasApiKey ? t('providers.keySet') : t('providers.keyNotSet') }}
                 </Badge>
-                <span v-if="p.models && p.models.length > 0"> · {{ t('providers.modelCount', { count: p.models.length }) }}</span>
+                <span v-if="p.models && p.models.length > 0"> · {{ p.models.join(', ') }}</span>
               </span>
             </div>
             <!-- Actions -->
             <div class="prov-actions">
-              <Tooltip :text="t('providers.refreshTitle', { type: p.type })">
+              <Tooltip :text="t('providers.editTitle', { type: t('providers.types.' + p.id, p.id) })">
+                <Button variant="secondary" size="sm" @click="openEdit(p)">{{ t('common.edit') }}</Button>
+              </Tooltip>
+              <Tooltip :text="t('providers.refreshTitle', { type: t('providers.types.' + p.id, p.id) })">
                 <Button variant="secondary" size="sm" @click="emit('refresh', p.id)">{{ t('providers.refresh') }}</Button>
               </Tooltip>
-              <Tooltip :text="t('providers.deleteTitle', { type: p.type })">
+              <Tooltip :text="t('providers.deleteTitle', { type: t('providers.types.' + p.id, p.id) })">
                 <Button variant="danger-soft" size="sm" @click="onDeleteProvider(p.id)">{{ t('providers.delete') }}</Button>
               </Tooltip>
             </div>
@@ -172,34 +209,25 @@ function statusLabel(status: AppProvider['status']): string {
       <!-- Add provider form / button -->
       <div v-if="!unavailable" class="add-section">
         <template v-if="!showAddForm">
-          <div class="add-btns">
-            <!-- OAuth login shortcuts for common platforms -->
-            <Button variant="secondary" size="sm" @click="emit('openLogin', 'moonshot')">
-              <Icon name="user" size="sm" />
-              {{ t('providers.loginKimi') }}
-            </Button>
-            <Button variant="secondary" size="sm" @click="emit('openLogin', 'anthropic')">
-              <Icon name="user" size="sm" />
-              {{ t('providers.loginAnthropic') }}
-            </Button>
-            <Button variant="primary" size="sm" @click="openAdd">
-              <Icon name="plus" size="sm" />
-              {{ t('providers.enterApiKey') }}
-            </Button>
-          </div>
+            <div class="add-btns">
+              <Button variant="primary" size="sm" @click="openAdd">
+                <Icon name="plus" size="sm" />
+                {{ t('providers.enterApiKey') }}
+              </Button>
+            </div>
         </template>
         <template v-else>
           <div class="add-form">
             <Field :label="t('providers.fieldType')">
-              <Select v-model="addForm.type">
-                <option v-for="pt in PROVIDER_TYPES" :key="pt" :value="pt">{{ pt }}</option>
+              <Select v-model="addForm.type" :disabled="!!editingProviderId" @update:model-value="onTypeChange">
+                <option v-for="pt in PROVIDER_TYPES" :key="pt.value" :value="pt.value">{{ t(pt.label) }}</option>
               </Select>
             </Field>
             <Field :label="t('providers.fieldApiKey')">
               <Input
                 v-model="addForm.apiKey"
                 type="password"
-                placeholder="sk-…"
+                :placeholder="editingProviderId ? t('providers.apiKeyOptional') : 'sk-…'"
                 autocomplete="off"
                 spellcheck="false"
               />
@@ -215,14 +243,14 @@ function statusLabel(status: AppProvider['status']): string {
             <Field :label="t('providers.fieldDefaultModel')">
               <Input
                 v-model="addForm.defaultModel"
-                :placeholder="t('providers.optional')"
+                :placeholder="addForm.defaultModel || t('providers.baseUrlPlaceholder')"
                 autocomplete="off"
                 spellcheck="false"
               />
             </Field>
             <div v-if="addError" class="add-error">{{ addError }}</div>
             <div class="form-btns">
-              <Button variant="primary" size="sm" @click="submitAdd">{{ t('providers.add') }}</Button>
+              <Button variant="primary" size="sm" @click="submitAdd">{{ editingProviderId ? t('common.save') : t('providers.add') }}</Button>
               <Button variant="secondary" size="sm" @click="cancelAdd">{{ t('common.cancel') }}</Button>
             </div>
           </div>

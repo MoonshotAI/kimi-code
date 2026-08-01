@@ -9,7 +9,7 @@ import { useI18n } from 'vue-i18n';
 
 export interface UsePageTitleOptions {
   running: Ref<boolean>;
-  showAuthGate: Ref<boolean>;
+  showAuthGate?: Ref<boolean>;
 }
 
 export function usePageTitle({ running, showAuthGate }: UsePageTitleOptions): void {
@@ -42,7 +42,7 @@ export function usePageTitle({ running, showAuthGate }: UsePageTitleOptions): vo
 
   const pageTitle = computed<string>(() => {
     const prefix = running.value ? `${SPINNER_FRAMES[spinnerFrame.value]} ` : '';
-    if (showAuthGate.value) return `${prefix}${t('app.authPageTitle')} - Kimi Code Web`;
+    if (showAuthGate?.value) return `${prefix}${t('app.authPageTitle')} - Kimi Code Web`;
     return `${prefix}Kimi Code Web`;
   });
   watchEffect(() => {

@@ -4,4 +4,8 @@ export default {
   /** Generic confirm / cancel button labels (used by ConfirmDialog). */
   confirm: 'Confirm',
   cancel: 'Cancel',
+  save: 'Save',
+  edit: 'Edit',
+  delete: 'Delete',
+  add: 'Add',
 } as const;

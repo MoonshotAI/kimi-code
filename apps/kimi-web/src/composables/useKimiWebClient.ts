@@ -2942,6 +2942,7 @@ export function useKimiWebClient() {
     setModel: modelProvider.setModel,
     toggleStarModel: modelProvider.toggleStarModel,
     addProvider: modelProvider.addProvider,
+    updateProvider: modelProvider.updateProvider,
     deleteProvider: modelProvider.deleteProvider,
     refreshProvider: modelProvider.refreshProvider,
     refreshAllProviders: modelProvider.refreshAllProviders,

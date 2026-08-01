@@ -13,7 +13,6 @@ import SideChatPanel from './components/chat/SideChatPanel.vue';
 import DiffView from './components/chat/DiffView.vue';
 import ModelPicker from './components/settings/ModelPicker.vue';
 import ProviderManager from './components/settings/ProviderManager.vue';
-import LoginDialog from './components/dialogs/LoginDialog.vue';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
 import AddWorkspaceDialog from './components/dialogs/AddWorkspaceDialog.vue';
 import ConfirmDialogHost from './components/dialogs/ConfirmDialogHost.vue';
@@ -30,7 +29,6 @@ import { useKimiWebClient } from './composables/useKimiWebClient';
 import { useConfirmDialog } from './composables/useConfirmDialog';
 import type { PromptAttachment } from './composables/useKimiWebClient';
 import type { TurnAttachment } from './types';
-import { useAuthGate } from './composables/useAuthGate';
 import { usePageTitle } from './composables/usePageTitle';
 import { useSidebarLayout } from './composables/useSidebarLayout';
 import { useFilePreview, type DetailTarget } from './composables/useFilePreview';
@@ -43,7 +41,6 @@ import { initServerAuth, onAuthRequired } from './api/daemon/serverAuth';
 import type { AppConfig, ThinkingLevel } from './api/types';
 import { commitLevel, effectiveThinkingLevel, segmentsFor } from './lib/modelThinking';
 import { stripSkillPrefix } from './lib/slashCommands';
-import Button from './components/ui/Button.vue';
 import IconButton from './components/ui/IconButton.vue';
 import Icon from './components/ui/Icon.vue';
 import InternalBuildBanner from './components/InternalBuildBanner.vue';
@@ -102,16 +99,13 @@ const activeWorkspaceSessionCount = computed<number>(
 // running: true when activity is not idle
 const running = computed(() => client.activity.value !== 'idle');
 
-// Auth readiness gates the main app. Once the first load finishes and auth is
-// still missing, show a full-page login entry instead of an in-app banner.
-const authLogoRef = ref<SVGSVGElement | null>(null);
-const { showAuthGate, blinkAuthLogo } = useAuthGate({ client, authLogoRef });
+// Auth gate is permanently bypassed — no Kimi login required.
 
 
 // Static page title (app name only). The session title and workspace name are
 // intentionally excluded so the tab title stays stable. Prefixes an animated
 // spinner while the agent is running so activity is visible at a glance.
-usePageTitle({ running, showAuthGate });
+usePageTitle({ running });
 
 // The /thinking slash command has no popover anchor, so it steps to the next
 // segment for the active model (effort models cycle through their declared
@@ -315,7 +309,6 @@ const conversationPaneRef = ref<InstanceType<typeof ConversationPane> | null>(nu
 const showModelPicker = ref(false);
 const showProviders = ref(false);
 
-const showLogin = ref(false);
 const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
 const showSettings = ref(false);
@@ -339,7 +332,6 @@ const anyOverlayOpen = computed<boolean>(
     openDialogCount.value > 0 ||
     showModelPicker.value ||
     showProviders.value ||
-    showLogin.value ||
     showAddWorkspace.value ||
     showStatusPanel.value ||
     showSettings.value ||
@@ -384,10 +376,6 @@ async function openProviders(): Promise<void> {
   }
 }
 
-function openLogin(): void {
-  showLogin.value = true;
-}
-
 async function handleSelectModel(modelId: string): Promise<void> {
   showModelPicker.value = false;
   // Same semantics as the composer dropdown rows: the overlay is just the
@@ -415,6 +403,12 @@ async function handleComposerSelectModel(modelId: string): Promise<void> {
 
 async function handleAddProvider(input: { type: string; apiKey?: string; baseUrl?: string; defaultModel?: string }): Promise<void> {
   await client.addProvider(input);
+  await client.loadProviders();
+}
+
+async function handleUpdateProvider(id: string, input: { type?: string; apiKey?: string; baseUrl?: string; defaultModel?: string }): Promise<void> {
+  await client.updateProvider(id, input);
+  await client.loadProviders();
 }
 
 async function handleRefreshProvider(id: string): Promise<void> {
@@ -464,26 +458,6 @@ async function handleUpdateConfig(patch: Partial<AppConfig>): Promise<void> {
   } finally {
     configSaving.value = false;
   }
-}
-
-// LoginDialog callbacks — delegates to composable
-async function handleStartOAuthLogin() {
-  return client.startOAuthLogin();
-}
-
-async function handlePollOAuthLogin() {
-  return client.pollOAuthLogin();
-}
-
-async function handleCancelOAuthLogin() {
-  return client.cancelOAuthLogin();
-}
-
-async function handleLoginSuccess(): Promise<void> {
-  showLogin.value = false;
-  // Re-check auth state and reload sessions now that we're authenticated
-  await client.checkAuth();
-  await client.load();
 }
 
 // Edit + resend the last user message: undo the latest exchange on the daemon,
@@ -570,7 +544,7 @@ function handleCommand(cmd: string): void {
       showStatusPanel.value = true;
       break;
     case '/login':
-      openLogin();
+      // Login is permanently removed — silently ignore.
       break;
     default: {
       // Not a built-in command → treat it as a session skill activation
@@ -685,32 +659,7 @@ function openPr(url: string): void {
 <template>
   <div class="app-shell">
     <ServerAuthDialog v-if="showServerAuth" />
-    <section v-if="showAuthGate" class="auth-page">
-      <div class="auth-page-inner">
-        <svg ref="authLogoRef" class="auth-page-logo ch-logo" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @mousedown.prevent @click="blinkAuthLogo">
-          <defs>
-            <mask id="authKimiEyes" maskUnits="userSpaceOnUse">
-              <rect x="0" y="0" width="32" height="22" fill="#fff" />
-              <g class="ch-eyes" fill="#000">
-                <rect class="ch-eye" x="11.8" y="7" width="2.8" height="8" rx="1.4" />
-                <rect class="ch-eye" x="17.4" y="7" width="2.8" height="8" rx="1.4" />
-              </g>
-            </mask>
-          </defs>
-          <rect x="1" y="1" width="30" height="20" rx="6" fill="var(--logo)" mask="url(#authKimiEyes)" />
-        </svg>
-        <div class="auth-page-copy">
-          <h1>{{ t('app.authPageTitle') }}</h1>
-          <p>{{ t('app.authPageMessage') }}</p>
-        </div>
-        <Button class="auth-page-btn" variant="primary" @click="openLogin">
-          <Icon name="log-in" size="md" />
-          <span>{{ t('app.authPageLogin') }}</span>
-        </Button>
-      </div>
-    </section>
     <div
-      v-else
       class="app"
       :class="{
         mobile: isMobile,
@@ -735,6 +684,9 @@ function openPr(url: string): void {
         :unread-by-session="client.unreadBySession.value"
         :workspace-sort-mode="client.workspaceSortMode.value"
         :backend="client.backend.value"
+        :providers="client.providers.value"
+        :providers-loading="providersLoading"
+        :providers-unavailable="providersUnavailable"
         @select="client.selectSession($event)"
         @create="handleCreateSession"
         @create-in-workspace="handleCreateSessionInWorkspace($event)"
@@ -990,7 +942,6 @@ function openPr(url: string): void {
       :color-scheme="client.colorScheme.value"
       :accent="client.accent.value"
       :ui-font-size="client.uiFontSize.value"
-      :auth-ready="client.authReady.value"
       :account-model="client.defaultModel.value"
       :notify="client.notifyOnComplete.value"
       :notify-question="client.notifyOnQuestion.value"
@@ -1003,6 +954,9 @@ function openPr(url: string): void {
       :config-saving="configSaving"
       :server-version="client.serverVersion.value"
       :backend="client.backend.value"
+      :providers="client.providers.value"
+      :providers-loading="providersLoading"
+      :providers-unavailable="providersUnavailable"
       @set-color-scheme="client.setColorScheme($event)"
       @set-accent="client.setAccent($event)"
       @set-ui-font-size="client.setUiFontSize($event)"
@@ -1012,10 +966,13 @@ function openPr(url: string): void {
       @set-sound="client.setSoundOnComplete($event)"
       @set-conversation-toc="client.setConversationToc($event)"
       @update-config="handleUpdateConfig($event)"
-      @login="() => { showSettings = false; openLogin(); }"
       @logout="client.logout"
       @open-onboarding="() => { showSettings = false; openOnboarding(); }"
       @open-providers="() => { showSettings = false; openProviders(); }"
+      @add-provider="handleAddProvider($event)"
+      @update-provider="(id, input) => handleUpdateProvider(id, input)"
+      @refresh-provider="handleRefreshProvider($event)"
+      @delete-provider="confirmDeleteProvider($event)"
       @close="showSettings = false"
     />
 
@@ -1026,9 +983,9 @@ function openPr(url: string): void {
       :loading="providersLoading"
       :unavailable="providersUnavailable"
       @add="handleAddProvider($event)"
+      @update="(id, input) => handleUpdateProvider(id, input)"
       @refresh="handleRefreshProvider($event)"
       @delete="confirmDeleteProvider($event)"
-      @open-login="() => { showProviders = false; openLogin(); }"
       @close="showProviders = false"
     />
 
@@ -1063,7 +1020,7 @@ function openPr(url: string): void {
          until the first load settled so it can't cover the connecting splash
          (it teleports to <body> and would float above the retry error). -->
     <Onboarding
-      v-if="client.initialized.value && showOnboarding && !showAuthGate"
+      v-if="client.initialized.value && showOnboarding"
       @complete="completeOnboarding"
       @skip="completeOnboarding"
     />
@@ -1108,7 +1065,6 @@ function openPr(url: string): void {
       :swarm-mode="client.swarmMode.value"
       :color-scheme="client.colorScheme.value"
       :ui-font-size="client.uiFontSize.value"
-      :auth-ready="client.authReady.value"
       :conversation-toc="client.conversationToc.value"
       :server-version="client.serverVersion.value"
       @pick-model="openModelPicker()"
@@ -1119,19 +1075,9 @@ function openPr(url: string): void {
       @set-color-scheme="client.setColorScheme($event)"
       @set-ui-font-size="client.setUiFontSize($event)"
       @set-conversation-toc="client.setConversationToc($event)"
-      @login="() => { showMobileSettings = false; openLogin(); }"
       @logout="client.logout"
     />
     </div>
-    <!-- Login Dialog overlay. It is outside `.app` so `/login` can open it too. -->
-    <LoginDialog
-      v-if="showLogin"
-      :on-start-o-auth-login="handleStartOAuthLogin"
-      :on-poll-o-auth-login="handlePollOAuthLogin"
-      :on-cancel-o-auth-login="handleCancelOAuthLogin"
-      @success="handleLoginSuccess"
-      @close="showLogin = false"
-    />
   </div>
 </template>
 

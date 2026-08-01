@@ -13,7 +13,6 @@ import type {
   AppProvider,
   AppSession,
   AppSkill,
-  OAuthLoginStartResult,
   ThinkingLevel,
 } from '../../api/types';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
@@ -486,14 +485,33 @@ export function useModelProviderState(
     }
   }
 
-  /** Delete a provider, then reload providers + models */
+  /** Delete a provider, then reload providers + models. Even on failure the
+   *  list is reloaded so a provider that no longer exists server-side (404)
+   *  drops out of the UI instead of lingering. */
   async function deleteProvider(id: string): Promise<void> {
     try {
       const api = getKimiWebApi();
       await api.deleteProvider(id);
-      await Promise.all([loadProviders(), loadModels()]);
     } catch (err) {
       pushOperationFailure('deleteProvider', err);
+    } finally {
+      await Promise.all([loadProviders(), loadModels()]);
+    }
+  }
+
+  /** Update a provider's config, then reload providers + models */
+  async function updateProvider(id: string, input: {
+    type?: string;
+    apiKey?: string;
+    baseUrl?: string;
+    defaultModel?: string;
+  }): Promise<void> {
+    try {
+      const api = getKimiWebApi();
+      await api.updateProvider(id, input);
+      await Promise.all([loadProviders(), loadModels()]);
+    } catch (err) {
+      pushOperationFailure('updateProvider', err);
     }
   }
 
@@ -527,41 +545,19 @@ export function useModelProviderState(
     }
   }
 
-  /** Start managed Kimi OAuth device flow. Returns flow data or null on error. */
-  async function startOAuthLogin(): Promise<OAuthLoginStartResult | null> {
-    try {
-      const api = getKimiWebApi();
-      return await api.startOAuthLogin();
-    } catch {
-      return null;
-    }
+  /** OAuth login is permanently removed — always returns null. */
+  async function startOAuthLogin(): Promise<null> {
+    return null;
   }
 
-  /** Poll the singleton OAuth flow. Returns null on error or no active flow. */
-  async function pollOAuthLogin(): Promise<{
-    flowId: string;
-    status: 'pending' | 'authenticated' | 'expired' | 'cancelled';
-    resolvedAt?: string;
-  } | null> {
-    try {
-      const api = getKimiWebApi();
-      return await api.pollOAuthLogin();
-    } catch (err) {
-      // The dialog counts consecutive nulls and gives up after a few; keep the
-      // cause in the log so a dead daemon is diagnosable.
-      console.warn('[kimi-web] pollOAuthLogin failed', err);
-      return null;
-    }
+  /** Poll the singleton OAuth flow — always returns null. */
+  async function pollOAuthLogin(): Promise<null> {
+    return null;
   }
 
-  /** Cancel the current OAuth flow (best-effort). */
+  /** Cancel the current OAuth flow — no-op. */
   async function cancelOAuthLogin(): Promise<void> {
-    try {
-      const api = getKimiWebApi();
-      await api.cancelOAuthLogin();
-    } catch {
-      // Best-effort
-    }
+    // no-op
   }
 
   /** Persist and apply a new extended-thinking level (also pushed to the active
@@ -592,6 +588,7 @@ export function useModelProviderState(
     toggleStarModel,
     activateSkill,
     addProvider,
+    updateProvider,
     deleteProvider,
     refreshProvider,
     refreshAllProviders,

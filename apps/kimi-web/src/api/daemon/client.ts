@@ -1227,6 +1227,22 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return toAppProvider(data);
   }
 
+  async updateProvider(id: string, input: {
+    type?: string;
+    apiKey?: string;
+    baseUrl?: string;
+    defaultModel?: string;
+  }): Promise<AppProvider> {
+    // PRESUMED endpoint: PATCH /v1/providers/{id} → WireProvider
+    const body: Record<string, unknown> = {};
+    if (input.type !== undefined) body['type'] = input.type;
+    if (input.apiKey !== undefined) body['api_key'] = input.apiKey;
+    if (input.baseUrl !== undefined) body['base_url'] = input.baseUrl;
+    if (input.defaultModel !== undefined) body['default_model'] = input.defaultModel;
+    const data = await this.http.patch<WireProvider>(`/providers/${encodeURIComponent(id)}`, body);
+    return toAppProvider(data);
+  }
+
   async deleteProvider(id: string): Promise<{ deleted: true }> {
     // PRESUMED endpoint: DELETE /v1/providers/{id} → { deleted: true }
     return this.http.delete<{ deleted: true }>(`/providers/${encodeURIComponent(id)}`);

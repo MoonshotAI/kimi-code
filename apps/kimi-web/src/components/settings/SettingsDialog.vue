@@ -26,7 +26,7 @@ const props = defineProps<{
   colorScheme: ColorScheme;
   accent: Accent;
   uiFontSize: number;
-  authReady: boolean;
+  authReady?: boolean;
   accountModel?: string | null;
   /** Browser-notification-on-completion preference. */
   notify: boolean;
@@ -66,6 +66,10 @@ const emit = defineEmits<{
   openOnboarding: [];
   openProviders: [];
   updateConfig: [patch: Partial<AppConfig>];
+  addProvider: [input: { type: string; apiKey?: string; baseUrl?: string; defaultModel?: string }];
+  updateProvider: [id: string, input: { type?: string; apiKey?: string; baseUrl?: string; defaultModel?: string }];
+  refreshProvider: [id: string];
+  deleteProvider: [id: string];
   close: [];
 }>();
 
