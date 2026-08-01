@@ -23,7 +23,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 67 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 70 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -62,10 +62,13 @@
 //     contextSize.lastEmittedTokens                   src/agent/contextSize/contextSizeService.ts
 //     externalHooks.stopHookContinuationUsed          src/agent/externalHooks/externalHooksService.ts
 //     fullCompaction.activeTurnId                     src/agent/fullCompaction/fullCompactionService.ts
+//     fullCompaction.autoCompactionDisabled           src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.compactionCountInTurn            src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.consecutiveOverflowCompactions   src/agent/fullCompaction/fullCompactionService.ts
+//     fullCompaction.ineffectiveAutoCompactions       src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.lastCompactedTokenCount          src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.observedMaxContextTokensByModel  src/agent/fullCompaction/fullCompactionService.ts
+//     fullCompaction.pendingAutoCompactionCount       src/agent/fullCompaction/fullCompactionService.ts
 //     goal.budgetGraceTurns                           src/agent/goal/goalService.ts
 //     goal.countedGoalTurns                           src/agent/goal/goalService.ts
 //     goal.exhaustedTurnBudgetGoals                   src/agent/goal/goalService.ts
@@ -979,10 +982,13 @@ export interface AgentStateSnapshot {
   'externalHooks.stopHookContinuationUsed': boolean;
   // src/agent/fullCompaction/fullCompactionService.ts
   'fullCompaction.activeTurnId': number | undefined;
+  'fullCompaction.autoCompactionDisabled': boolean;
   'fullCompaction.compactionCountInTurn': number;
   'fullCompaction.consecutiveOverflowCompactions': number;
+  'fullCompaction.ineffectiveAutoCompactions': number;
   'fullCompaction.lastCompactedTokenCount': number | null;
   'fullCompaction.observedMaxContextTokensByModel': Map<string, number>;
+  'fullCompaction.pendingAutoCompactionCount': number | null;
   // src/agent/goal/goalService.ts
   'goal.budgetGraceTurns': Set<number>;
   'goal.countedGoalTurns': Set<number>;

@@ -351,7 +351,7 @@ export class FullCompaction {
       `Auto-compaction disabled: repeated compactions failed to reduce the context size ` +
       `(~${String(usedSize)} tokens remain against a ${String(maxContextTokens)}-token window). ` +
       `The CLI's baseline request overhead likely exceeds the compaction threshold for this model; ` +
-      `increase the model's max_context_size or lower loop_control.reserved_context_size / compaction_trigger_ratio.`;
+      `increase the model's max_context_size, lower loop_control.reserved_context_size, or raise loop_control.compaction_trigger_ratio.`;
     try {
       this.agent.log.warn(message, { usedSize, maxContextTokens });
     } catch {
