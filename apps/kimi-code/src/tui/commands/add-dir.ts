@@ -9,7 +9,10 @@ export async function handleAddDirCommand(host: SlashCommandHost, args: string):
   let session = host.session;
 
   if (input.length === 0 || input.toLowerCase() === 'list') {
-    const additionalDirs = session?.summary?.additionalDirs ?? [];
+    // With no session yet (v2 session-less startup) the pending startup
+    // directories live in appState and will be passed to the lazy-created
+    // session; reflect them instead of reporting an empty list.
+    const additionalDirs = session?.summary?.additionalDirs ?? host.state.appState.additionalDirs;
     if (additionalDirs.length === 0) {
       host.showStatus('No additional directories configured.');
       return;

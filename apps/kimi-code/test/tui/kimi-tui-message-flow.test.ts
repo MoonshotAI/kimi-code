@@ -795,6 +795,60 @@ describe('KimiTUI message flow', () => {
     expect(harness.createSession).toHaveBeenCalledTimes(1);
   });
 
+  it('shows pending startup directories in /add-dir list before the lazy session (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      additionalDirs: ['/tmp/extra'],
+      cliOptions: { ...makeStartupInput().cliOptions },
+    };
+    const { driver, harness } = await makeDriver(session, {}, startupInput);
+    const showStatus = vi.spyOn(
+      driver as unknown as { showStatus: (msg: string) => void },
+      'showStatus',
+    );
+
+    driver.handleUserInput('/add-dir list');
+
+    await vi.waitFor(() => {
+      expect(showStatus).toHaveBeenCalledWith(expect.stringContaining('/tmp/extra'));
+    });
+    expect(harness.createSession).not.toHaveBeenCalled();
+  });
+
+  it('refreshes plugin slash commands after a sessionless /plugins reload (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const listPluginCommands = vi.fn(async () => [
+      {
+        pluginId: 'my-plugin',
+        name: 'my-command',
+        body: 'do things',
+        description: 'A plugin command',
+      },
+    ]);
+    const reloadPlugins = vi.fn(async () => ({ added: [], removed: [], errors: [] }));
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions },
+    };
+    const { driver, harness } = await makeDriver(
+      session,
+      { listPluginCommands, reloadPlugins },
+      startupInput,
+    );
+
+    driver.handleUserInput('/plugins reload');
+
+    await vi.waitFor(() => {
+      expect(reloadPlugins).toHaveBeenCalled();
+      expect(listPluginCommands).toHaveBeenCalled();
+      expect(driver.pluginCommandMap.get('my-plugin:my-command')).toBe('do things');
+    });
+    expect(harness.createSession).not.toHaveBeenCalled();
+  });
+
   it('tracks /clear as the clear alias for /new', async () => {
     const { driver, harness } = await makeDriver(makeSession({ id: 'ses-1' }));
     const nextSession = makeSession({ id: 'ses-2' });

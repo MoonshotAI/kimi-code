@@ -127,6 +127,12 @@ export interface SlashCommandHost {
   restoreEditor(): void;
   restoreInputText(text: string): void;
   refreshSlashCommandAutocomplete(): void;
+  /**
+   * Rebuild the plugin slash-command list. With no session (v2 session-less
+   * startup) this reads the app-global plugin commands instead, so `/plugins`
+   * mutations apply before the first session exists.
+   */
+  refreshPluginCommands(session?: Session): Promise<void>;
 
   // Session
   requireSession(): Session;

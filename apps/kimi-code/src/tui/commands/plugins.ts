@@ -596,6 +596,9 @@ async function reloadPlugins(host: SlashCommandHost): Promise<void> {
   const line = `Reload: +${summary.added.length} -${summary.removed.length}` +
     (summary.errors.length > 0 ? ` (${summary.errors.length} errors)` : '');
   host.showStatus(line);
+  // Rebuild the TUI's plugin slash-command list from the reloaded service so
+  // newly added/enabled commands resolve in this session-less UI right away.
+  await host.refreshPluginCommands(host.session);
 }
 
 function resolvePluginInstallSource(source: string, workDir: string): string {
