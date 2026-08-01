@@ -9,7 +9,8 @@
  * folder picker, the session filesystem, terminals, connections, shutdown).
  */
 
-import type { Scope } from '@moonshot-ai/agent-core-v2';
+import { IConfigService, type Scope } from '@moonshot-ai/agent-core-v2';
+import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import type { KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 import { ulid } from 'ulid';
 
@@ -105,6 +106,15 @@ export async function registerApiV1Routes(
         serverId: ulid(),
         startedAt: new Date().toISOString(),
         dangerousBypassAuth: opts.dangerousBypassAuth === true,
+        getExperimentalFlags: async () => {
+          // Same edge-facade contract as the config route: never project
+          // config-derived state before the initial load settles — an early
+          // /meta hit would otherwise advertise default/env-only flags and
+          // hide config-enabled features until the FlagService's change
+          // watcher catches up.
+          await core.accessor.get(IConfigService).ready;
+          return core.accessor.get(IFlagService).snapshot();
+        },
       });
 
       registerAuthRoute(apiV1 as unknown as Parameters<typeof registerAuthRoute>[0], core);

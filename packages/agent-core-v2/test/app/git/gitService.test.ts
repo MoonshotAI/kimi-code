@@ -38,6 +38,7 @@ describe('GitService', () => {
     git(repo, 'init');
     git(repo, 'config', 'user.email', 'test@example.com');
     git(repo, 'config', 'user.name', 'Test');
+    git(repo, 'config', 'commit.gpgsign', 'false');
     disposables = new DisposableStore();
     ix = createServices(disposables, {
       additionalServices: (reg) => {
