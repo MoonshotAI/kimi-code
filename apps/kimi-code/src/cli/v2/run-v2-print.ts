@@ -424,8 +424,8 @@ async function runNativeTurn(
 
   // Rust agent engine bridge: with `agent.engine = "rust"`, every v2 agent in
   // this process — main agent and subagents alike — resolves the Rust engine
-  // lazily at its first turn; a failed resolution falls back to the JS loop
-  // silently, mirroring the v1 path.
+  // lazily at its first turn; a failed resolution throws — the JS engine was
+  // removed with the v1/v2 migration.
   registerRustEngineV2();
 
   const turnEndings = createPrintTurnEndings();

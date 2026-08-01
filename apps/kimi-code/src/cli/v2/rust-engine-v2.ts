@@ -1,7 +1,7 @@
 /**
  * Rust agent engine bridge for the v2 (agent-core-v2) path.
  *
- * Mirrors the v1 wiring in `../rust-engine.ts`: unless `agent.engine = "js"`
+ * Mirrors the v1 wiring in `../rust-engine.ts`: the Rust engine is the only
  * opts out (the engine defaults to Rust), the battle-tested v1 adapter
  * (`createRunTurnOverride` from
  * `@moonshot-ai/kimi-agent/rust-loop`) drives the turn, and this module
@@ -129,17 +129,22 @@ const RECORDED_EVENT_TYPES = new Set([
  * check and every service lookup happen before the first `await`; only the
  * adapter import and override construction run asynchronously.
  *
- * Returns `undefined` to leave the JS loop in charge for this agent (engine
- * explicitly set to "js", adapter unavailable, or the addon failed to load).
+ * Throws when the Rust engine cannot be used — the deprecated JS loop is no
+ * longer a fallback (the v1/v2 migration is complete).
  */
 function buildRustTurnOverride(
   accessor: ServicesAccessor,
-): Promise<LoopTurnOverride | undefined> | undefined {
+): Promise<LoopTurnOverride> | undefined {
   const config = accessor.get(IConfigService);
   const agentConfig = config.get<{ engine?: string; nativeTools?: boolean } | undefined>('agent');
   // Same default as the v1 path (rust-engine.ts): the engine defaults to
-  // Rust even when the `[agent]` section is absent; `engine = "js"` opts out.
-  if ((agentConfig?.engine ?? 'rust') !== 'rust') return undefined;
+  // Rust even when the `[agent]` section is absent.
+  if ((agentConfig?.engine ?? 'rust') !== 'rust') {
+    throw new Error(
+      '[kimi-agent] agent.engine must be "rust" — the JS engine was removed with the ' +
+        'v1/v2 migration.',
+    );
+  }
 
   const llmRequester = accessor.get(IAgentLLMRequesterService);
   const context = accessor.get(IAgentContextMemoryService);
@@ -148,7 +153,7 @@ function buildRustTurnOverride(
   const eventBus = accessor.get(IEventBus);
   // The accessor must not be touched past this point.
 
-  return (async (): Promise<LoopTurnOverride | undefined> => {
+  return (async (): Promise<LoopTurnOverride> => {
     let createRunTurnOverride: CreateRunTurnOverride;
     try {
       const mod = (await import('@moonshot-ai/kimi-agent/rust-loop')) as {
@@ -156,12 +161,9 @@ function buildRustTurnOverride(
       };
       createRunTurnOverride = mod.createRunTurnOverride;
     } catch (error) {
-      // Fall back to the JS loop, but leave a trace — a silent fallback makes
-      // the active engine unknowable from the outside.
-      console.warn(
-        `[kimi-agent] Rust engine adapter failed to load — using the JS loop. (${String(error)})`,
+      throw new Error(
+        `[kimi-agent] Rust engine adapter failed to load: ${String(error)}`, { cause: error },
       );
-      return undefined;
     }
 
     // Native-LLM transport: when a static provider is configured, the Rust
@@ -181,10 +183,10 @@ function buildRustTurnOverride(
       nativeLlm,
     });
     if (override === undefined) {
-      console.warn(
-        '[kimi-agent] Rust engine unavailable (no napi addon or binary) — using the JS loop.',
+      throw new Error(
+        '[kimi-agent] Rust engine unavailable (no napi addon or binary found). ' +
+          'Reinstall or rebuild the kimi-agent package.',
       );
-      return undefined;
     }
 
     return async ({ turnId, signal }) => {

@@ -64,8 +64,8 @@ export async function runShell(
     setContext: setTelemetryContext,
   };
   // Wire the Rust agent engine for interactive sessions, mirroring the print
-  // path (run-prompt.ts). Resolves to undefined — the JS loop — when the
-  // config opts out (`agent.engine = "js"`) or the engine fails to load.
+  // path (run-prompt.ts). A load failure throws — the JS engine was removed
+  // with the v1/v2 migration.
   const runTurnOverride = await maybeLoadRustEngine(telemetryBootstrap.homeDir);
   const harness = createKimiHarness({
     homeDir: telemetryBootstrap.homeDir,
@@ -88,7 +88,7 @@ export async function runShell(
   log.info('kimi-code starting', {
     version,
     uiMode: CLI_UI_MODE,
-    engine: runTurnOverride !== undefined ? 'rust' : 'js',
+    engine: 'rust',
     nodeVersion: process.version,
     platform: `${process.platform}/${process.arch}`,
     workDir,

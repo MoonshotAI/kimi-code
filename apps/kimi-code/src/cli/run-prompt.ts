@@ -242,7 +242,8 @@ async function createPromptHarness(
 ): Promise<PromptHarness> {
   // The v2 engine is dispatched earlier in `runPrompt` (see the
   // `isKimiV2Enabled()` branch) and never reaches here; this is the v1 path.
-  // Wire the Rust agent engine (the default; `agent.engine = "js"` opts out).
+  // Wire the Rust agent engine — the only engine since the v1/v2 migration.
+  // A load failure throws here instead of degrading to the JS loop.
   const runTurnOverride = await maybeLoadRustEngine(options.homeDir, options.configPath);
   return createKimiHarness({ ...options, runTurnOverride });
 }

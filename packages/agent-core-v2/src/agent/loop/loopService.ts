@@ -152,8 +152,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       // The accessor dies when invokeFunction returns; the factory gathers its
       // services synchronously and may finish asynchronously after that.
       this.turnOverride = await this.instantiation.invokeFunction((accessor) => factory(accessor));
-    } catch {
-      // A failing factory must never take the agent down — JS loop it is.
+    } catch (error) {
+      // The Rust engine is the only engine since the v1/v2 migration — a
+      // failing override factory must surface the fault, not silently degrade
+      // to the deprecated JS loop (which used to hide Rust load bugs).
+      throw error instanceof Error ? error : new Error(String(error));
     }
   }
 

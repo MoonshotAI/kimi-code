@@ -37,7 +37,7 @@ export async function handleMultiLlmCommand(host: SlashCommandHost): Promise<voi
     return;
   }
 
-  reopenPicker(host, providerIds, config.agent?.multiLlm ?? [], config.agent?.engine === 'rust');
+  reopenPicker(host, providerIds, config.agent?.multiLlm ?? []);
 }
 
 /**
@@ -47,7 +47,6 @@ function reopenPicker(
   host: SlashCommandHost,
   providerIds: readonly string[],
   selected: readonly string[],
-  engineIsRust: boolean,
 ): void {
   const selectedSet = new Set(selected);
   const options: ChoiceOption[] = providerIds.map((id) => {
@@ -61,15 +60,14 @@ function reopenPicker(
     };
   });
 
-  // A summary line so the user knows the engine state (read from the live
-  // config — toggleProvider forces rust on when enabling, but the user may
-  // have switched back to the JS engine by hand).
+  // A summary line so the user knows the engine state — always the Rust
+  // engine since the v1/v2 migration (the JS engine was removed).
   const notice =
     selected.length === 0
       ? t('tui.multiLlm.noticeOff')
       : t('tui.multiLlm.noticeOn', {
           count: selected.length,
-          engine: engineIsRust ? 'rust' : 'js',
+          engine: 'rust',
         });
 
   const picker = new ChoicePickerComponent({
@@ -129,6 +127,5 @@ async function toggleProvider(
       : t('tui.multiLlm.statusWithProviders', { providers: nextList.join(', ') }),
   );
 
-  const updated = await host.harness.getConfig();
-  reopenPicker(host, providerIds, nextList, updated.agent?.engine === 'rust');
+  reopenPicker(host, providerIds, nextList);
 }

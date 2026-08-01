@@ -26,7 +26,8 @@ import zh from './locales/zh';
 // Re-export shared types for consumers.
 export type { Locale };
 export type TranslationKey = SharedTranslationKey<typeof en>;
-export type Engine = 'rust' | 'js';
+/** The agent engine — always `'rust'` since the v1/v2 migration retired the JS engine. */
+export type Engine = 'rust';
 
 // In a SEA binary, @moonshot-ai/kimi-native-tools is excluded from the JS
 // bundle and shipped as a native asset. The Module._load hook approach

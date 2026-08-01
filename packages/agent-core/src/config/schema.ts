@@ -201,13 +201,10 @@ export type SubagentConfig = z.infer<typeof SubagentConfigSchema>;
 
 export const AgentConfigSchema = z.object({
   /**
-   * Which agent engine to use.
-   * - `"rust"` (default): the Rust agent engine (napi addon, or the
-   *   kimi-agent binary via stdio JSON-RPC), falling back to the JS engine
-   *   when unavailable
-   * - `"js"`: the TypeScript agent engine
+   * The agent engine. The Rust engine is the only engine since the v1/v2
+   * migration — the TypeScript engine was removed. Defaults to `"rust"`.
    */
-  engine: z.enum(['js', 'rust']).default('rust'),
+  engine: z.enum(['rust']).default('rust'),
   /**
    * MultiLLM: list of provider names to use for concurrent execution.
    * When set and `engine === "rust"`, the Rust engine sends the same prompt

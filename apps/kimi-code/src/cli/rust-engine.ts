@@ -1,9 +1,10 @@
 /**
  * Rust agent engine integration.
  *
- * Reads the config and wires the Rust agent engine (kimi-agent) unless
- * `agent.engine = "js"` opts out — the engine defaults to Rust even when
- * the `[agent]` section is absent. Falls back to the JS engine (with a
+ * Reads the config and wires the Rust agent engine (kimi-agent). The Rust
+ * engine is the only engine since the v1/v2 migration — the engine defaults
+ * to Rust even when the `[agent]` section is absent, and a load failure
+ * throws instead of degrading to the deprecated JS loop. Falls back to the JS engine (with a
  * diagnostic log) if the Rust addon/binary is not found or fails to start.
  *
  * MultiLLM support: when `agent.multiLlm` lists provider names, those
@@ -364,49 +365,37 @@ function resolveNativeLlm(
 }
 
 /**
- * Try to wire the Rust agent engine based on config.
- * Reads the config file, checks `agent.engine`, and if `"rust"`,
- * dynamically imports the Rust adapter from the kimi-agent package.
+ * Wire the Rust agent engine. The Rust engine is the ONLY engine since the
+ * v1/v2 migration reached parity — there is no JS fallback. Any failure to
+ * load or construct the Rust adapter throws with a clear message instead of
+ * silently degrading to the deprecated JS loop.
  *
  * When `agent.multiLlm` is configured, extracts matching providers
  * and passes them to the Rust engine for concurrent MultiLLM execution.
  *
- * @returns The `runTurnOverride` function, or `undefined` to use the JS engine.
+ * @returns The `runTurnOverride` function.
+ * @throws When the Rust engine cannot be loaded — the caller reports it.
  */
 export async function maybeLoadRustEngine(
   homeDir?: string,
   configPath?: string,
-): Promise<RunTurnOverride | undefined> {
+): Promise<RunTurnOverride> {
   // Lazy-init: once loaded, cache the result
   if (rustRunTurnOverride !== undefined) return rustRunTurnOverride;
 
   const resolvedHome = resolveKimiHome(homeDir);
   const resolvedConfig = resolveConfigPath({ homeDir: resolvedHome, configPath });
   const loaded = loadRuntimeConfigSafe(resolvedConfig);
-  if (loaded.fileError !== undefined) {
-    return undefined;
-  }
-
+  // A missing config file is normal (defaults apply); the engine still
+  // defaults to Rust. A present-but-broken config surfaces via its own
+  // validation errors — neither case degrades to the JS engine.
   const agentConfig = loaded.config.agent;
-  // The schema defaults `engine` to "rust", but the whole `[agent]` section is
-  // optional — a config without it must resolve to the same default, so the
-  // fallback lives here rather than only in the schema.
   const engine = agentConfig?.engine ?? 'rust';
   if (engine !== 'rust') {
-    // The JS engine is deprecated: the Rust engine is the only engine since
-    // the v1/v2 migration reached parity. Keep the escape hatch for
-    // debugging, but make the retirement visible.
-    console.warn(
-      '[kimi-agent] agent.engine = "js" selects the deprecated JS engine — ' +
-        'the Rust engine is the supported engine. Remove the setting to use it.',
+    throw new Error(
+      '[kimi-agent] agent.engine must be "rust" — the JS engine was removed with the ' +
+        'v1/v2 migration. Remove the setting (it defaults to "rust").',
     );
-    // Warn if multiLlm is set but engine isn't rust — it's a no-op in this case.
-    if (agentConfig?.multiLlm && agentConfig.multiLlm.length > 0) {
-      console.warn(
-        '[kimi-agent] agent.multiLlm is set but agent.engine is not "rust" — MultiLLM ignored.',
-      );
-    }
-    return undefined;
   }
 
   // Extract MultiLLM providers and native execution options when configured
@@ -423,8 +412,10 @@ export async function maybeLoadRustEngine(
       '@moonshot-ai/kimi-agent/rust-loop'
     );
     if (typeof createRunTurnOverride !== 'function') {
-      log.warn('rust agent engine adapter has no createRunTurnOverride — using the JS loop');
-      return undefined;
+      throw new TypeError(
+        '[kimi-agent] rust-loop adapter has no createRunTurnOverride export — ' +
+          'the kimi-agent package is broken or stale.',
+      );
     }
     // The workspace root anchors the Read-prediction fast-path and the
     // native tool sandbox; the session working directory is the workspace.
@@ -432,24 +423,29 @@ export async function maybeLoadRustEngine(
       nativeLlm,
       nativeTools,
     });
-    if (override !== undefined) {
-      rustRunTurnOverride = override;
-      // Engine selection is otherwise invisible; record it so a session can
-      // always be attributed to napi/stdio Rust or the JS fallback.
-      log.info('rust agent engine active', {
-        mode: getRustEngineMode(),
-        nativeTools,
-        nativeLlm: nativeLlm !== undefined,
-        multiLlm: providers !== undefined,
-      });
-    } else {
-      log.warn('rust agent engine unavailable (no napi addon or binary) — using the JS loop');
+    if (override === undefined) {
+      throw new Error(
+        '[kimi-agent] Rust engine unavailable (no napi addon or binary found). ' +
+          'Reinstall or rebuild the kimi-agent package; the deprecated JS engine ' +
+          'is no longer a fallback.',
+      );
     }
+    rustRunTurnOverride = override;
+    // Engine selection is otherwise invisible; record it so a session can
+    // always be attributed to the Rust engine.
+    log.info('rust agent engine active', {
+      mode: getRustEngineMode(),
+      nativeTools,
+      nativeLlm: nativeLlm !== undefined,
+      multiLlm: providers !== undefined,
+    });
     return rustRunTurnOverride;
   } catch (error) {
-    // Rust adapter not available — fall back to JS engine, but say so: a
-    // silent fallback here previously made the active engine unknowable.
-    log.warn('rust agent engine failed to load — using the JS loop', { error: String(error) });
-    return undefined;
+    if (error instanceof Error && error.message.startsWith('[kimi-agent]')) {
+      throw error;
+    }
+    throw new Error(
+      `[kimi-agent] Rust engine failed to load: ${String(error)}`, { cause: error },
+    );
   }
 }

@@ -256,8 +256,8 @@ async function runServerInProcess(
   const logger = createServerLogger({ level: options.logLevel });
   // Rust agent engine bridge: kap-server runs in-process, so this one
   // registration covers every session agent it creates. Each agent resolves
-  // the engine lazily at its first turn and falls back to the JS loop when
-  // `agent.engine` is not "rust".
+  // the engine lazily at its first turn; a failure throws — the JS engine
+  // was removed with the v1/v2 migration.
   registerRustEngineV2();
   const v2 = await startServer({
     host: options.host,
