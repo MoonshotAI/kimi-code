@@ -351,7 +351,7 @@ function makeCore(
           onDidArchiveSession: () => ({ dispose: () => {} }),
           get: (sid: string) => {
             const lifecycle = sessions.get(sid);
-            if (lifecycle === undefined) return undefined;
+            if (lifecycle === undefined) return;
             const sessionAccessor = {
               get: (t: unknown) => {
                 if (t === IAgentLifecycleService) return lifecycle;
@@ -359,7 +359,7 @@ function makeCore(
                 if (t === ISessionActivityView) return lifecycle.workView;
                 // Minimal metadata read for the transcript binding's descriptor pass.
                 if (t === ISessionMetadata) return { read: async () => ({ agents: metaAgents }) };
-                return undefined;
+                return;
               },
             };
             return { id: sid, kind: 1, accessor: sessionAccessor, dispose: () => {} };
@@ -1873,7 +1873,7 @@ describe('SessionEventBroadcaster', () => {
       const ids = transcriptEnvelopes(view.envelopes)
         .filter((e) => e.type === 'transcript.reset')
         .map((e) => (e.payload as { agent_id: string }).agent_id)
-        .sort();
+        .toSorted();
       expect(ids).toEqual(['main', 'sub-1']);
     });
 
@@ -2449,5 +2449,86 @@ describe('SessionEventBroadcaster', () => {
 
       expect(transcriptEnvelopes(view.envelopes)).toHaveLength(0);
     });
+
+  describe('rust-engine frame fan-out', () => {
+    it('fans out rust frames to session subscribers without advancing seq', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      const { target, envelopes } = collectingTarget();
+      await bc.subscribe('s1', target);
+
+      bc.broadcastRustFrame('s1', {
+        type: 'agent.turn.started',
+        agent_id: 'main',
+        turn_id: 't1',
+      });
+      bc.broadcastRustFrame('s1', {
+        type: 'assistant.delta',
+        agent_id: 'main',
+        delta: 'Hi',
+      });
+
+      expect(envelopes).toHaveLength(2);
+      // Rust frames are volatile and stamped with the current watermark
+      // (0 — no journal exists for a Rust session) — never advancing seq.
+      expect(envelopes[0]).toMatchObject({
+        type: 'event',
+        volatile: true,
+        seq: 0,
+        session_id: 's1',
+        payload: { type: 'agent.turn.started', agent_id: 'main', turn_id: 't1' },
+      });
+      expect(envelopes[1]!.payload).toMatchObject({
+        type: 'assistant.delta',
+        agent_id: 'main',
+        delta: 'Hi',
+      });
+      expect((await bc.getCursor('s1')).seq).toBe(0);
+    });
+
+    it('is a no-op for sessions with no subscribers', async () => {
+      const { target, envelopes } = collectingTarget();
+      await bc.subscribe('s1', target);
+      bc.broadcastRustFrame('other', {
+        type: 'agent.turn.started',
+        agent_id: 'main',
+      });
+      expect(envelopes).toHaveLength(0);
+    });
+
+    it('reaches global targets even without a session subscription', async () => {
+      const { target, envelopes } = collectingTarget();
+      bc.addGlobalTarget(target);
+      bc.broadcastRustFrame('s1', {
+        type: 'agent.turn.ended',
+        agent_id: 'main',
+      });
+      expect(envelopes).toHaveLength(1);
+      expect(envelopes[0]!.session_id).toBe('s1');
+      bc.removeGlobalTarget(target);
+    });
+
+    it('rides the current durable watermark when the session has one', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      const { target, envelopes } = collectingTarget();
+      await bc.subscribe('s1', target);
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 1 })); // durable seq 1 + trailing work_changed seq 2
+      await bc.getCursor('s1');
+      const before = envelopes.length;
+      bc.broadcastRustFrame('s1', {
+        type: 'agent.turn.started',
+        agent_id: 'main',
+        turn_id: 't2',
+      });
+      const rust = envelopes[before]!;
+      expect(rust.seq).toBe(2); // rides the watermark, does not advance it
+      expect(rust.volatile).toBe(true);
+      expect((await bc.getCursor('s1')).seq).toBe(2);
+    });
+  });
   });
 });

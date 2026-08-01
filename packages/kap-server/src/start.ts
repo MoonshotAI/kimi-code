@@ -81,7 +81,8 @@ import { createTokenStore } from './services/auth/tokenStore';
  */
 async function maybeCreateRustSessionService(
   logger: ServerLogger,
-): Promise<RustSessionService | undefined> {
+  broadcaster: SessionEventBroadcaster,
+): Promise<RustSessionService> {
   try {
     // The session-owned surface (`session/*` RPC) is stdio-only — force the
     // binary transport so a present napi addon cannot shadow it.
@@ -94,23 +95,30 @@ async function maybeCreateRustSessionService(
       homedir: process.cwd(),
     });
     if (probe === null) {
-      logger.info('Rust engine unavailable — serving web sessions from the v2 engine');
-      return undefined;
+      throw new Error(
+        '[kimi-agent] Rust engine binary unavailable — web sessions cannot start. ' +
+          'Reinstall or rebuild the kimi-agent package.',
+      );
     }
     probe.close?.();
     logger.info('Rust engine online — web sessions run on the engine');
     return new RustSessionService(mod, {
-      onFrame: (_sessionId, _frame) => {
-        // WS frame fan-out lands here (Rust events → v1 frames); the HTTP
-        // surface (create/prompt/cancel/approvals) is live without it.
+      onFrame: (sessionId, frame) => {
+        // WS frame fan-out: Rust engine events are projected onto v1 frames
+        // and pushed to the session's live WS subscribers (volatile, stamped
+        // with the current watermark — they never advance the journal seq).
+        broadcaster.broadcastRustFrame(sessionId, frame);
       },
     });
   } catch (error) {
-    logger.warn(
-      { err: error instanceof Error ? error.message : String(error) },
-      'Rust engine adapter unavailable — serving web sessions from the v2 engine',
+    if (error instanceof Error && error.message.startsWith('[kimi-agent]')) {
+      throw error;
+    }
+    throw new Error(
+      `[kimi-agent] Rust engine adapter failed to load: ${
+        error instanceof Error ? error.message : String(error)
+      }`, { cause: error },
     );
-    return undefined;
   }
 }
 
@@ -336,16 +344,17 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
 
   const connectionRegistry = new ConnectionRegistry();
   const transcriptService = new TranscriptService({ homeDir, core, logger });
-  // Rust-engine session backend (web sessions bound to engine-owned sessions).
-  // Best-effort: when the engine is unavailable the v2-backed routes serve
-  // instead, so a missing binary never breaks `kimi web` startup.
-  const rustSession = await maybeCreateRustSessionService(logger);
   const broadcaster = new SessionEventBroadcaster({
     eventsDir: join(homeDir, 'server', 'events'),
     core,
     logger,
     transcriptService,
   });
+  // Rust-engine session backend (web sessions bound to engine-owned sessions).
+  // The Rust engine is the only engine — a missing binary fails startup loudly
+  // instead of silently serving from the v2-backed JS routes.
+  const rustSession = await maybeCreateRustSessionService(logger, broadcaster);
+
   const fsWatchBridge = new FsWatchBridge({ core, logger });
 
   const snapshotReader = new SnapshotReader({

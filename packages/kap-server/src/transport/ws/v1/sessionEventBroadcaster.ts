@@ -258,10 +258,43 @@ export class SessionEventBroadcaster {
   addGlobalTarget(target: BroadcastTarget): void {
     this.globalTargets.add(target);
   }
-
   /** Drop a closed connection from the global fan-out set. Idempotent. */
   removeGlobalTarget(target: BroadcastTarget): void {
     this.globalTargets.delete(target);
+  }
+
+  /**
+   * Fan out a Rust-engine projected v1 frame to a session's subscribers.
+   *
+   * Rust-engine sessions (`RustSessionService`) produce their own event
+   * stream that never touches the v2 event bus, so their frames cannot ride
+   * the normal `onAgentEvent` journal path. This is the WS bridge for that
+   * stream: the frame is wrapped in a volatile envelope stamped with the
+   * session's current durable watermark (never advancing `seq`) and sent to
+   * every target subscribed to the session plus every global target.
+   *
+   * A session with no live subscribers is a no-op — the REST surface
+   * (`session/prompt` etc.) still works, only the live push is skipped.
+   */
+  broadcastRustFrame(sessionId: string, frame: Record<string, unknown>): void {
+    const state = this.sessions.get(sessionId);
+    const envelope: EventEnvelope = {
+      type: 'event',
+      seq: state?.journal.seq ?? 0,
+      epoch: state?.journal.epoch,
+      volatile: true,
+      session_id: sessionId,
+      timestamp: new Date().toISOString(),
+      payload: frame,
+    };
+    if (state !== undefined) {
+      for (const target of state.targets.keys()) {
+        target.send(envelope);
+      }
+    }
+    for (const target of this.globalTargets) {
+      target.send(envelope);
+    }
   }
 
   /**
@@ -755,7 +788,7 @@ export class SessionEventBroadcaster {
   }
 
   private ensureState(sessionId: string): Promise<SessionState | undefined> {
-    if (this.closed) return Promise.resolve(undefined);
+    if (this.closed) return Promise.resolve();
     const existing = this.sessions.get(sessionId);
     if (existing !== undefined) return Promise.resolve(existing);
     let pending = this.pendingStates.get(sessionId);
