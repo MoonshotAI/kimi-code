@@ -31,6 +31,7 @@ import AgentTool from '../src/components/chat/tool-calls/AgentTool.vue';
 import EditTool from '../src/components/chat/tool-calls/EditTool.vue';
 import GenericTool from '../src/components/chat/tool-calls/GenericTool.vue';
 import type { ToolCall } from '../src/types';
+import { markdownRenderPlan } from '../src/lib/markdownPerformance';
 import {
   clearTrace,
   installClientErrorCapture,
@@ -861,5 +862,26 @@ describe('keepLiveSubagents', () => {
     const [merged] = keepLiveSubagents(rest, [live]);
     expect(merged?.outputPreview).toBe('final result');
     expect(merged?.outputBytes).toBe(200);
+  });
+});
+
+describe('markdownRenderPlan', () => {
+  it('keeps shiki for ordinary short fences', () => {
+    const plan = markdownRenderPlan('```text\nhello\n```\n');
+    expect(plan.codeRenderer).toBe('shiki');
+    expect(plan.codeFenceCount).toBe(1);
+  });
+
+  it('uses pre when a single code line is extremely long', () => {
+    const longLine = 'x'.repeat(512);
+    const plan = markdownRenderPlan(`\`\`\`text\n${longLine}\n\`\`\`\n`);
+    expect(plan.codeRenderer).toBe('pre');
+    expect(plan.codeFenceCount).toBe(1);
+  });
+
+  it('uses pre for a heavy single fence by character count', () => {
+    const body = `${'line\n'.repeat(2000)}${'y'.repeat(20_000)}`;
+    const plan = markdownRenderPlan(`\`\`\`js\n${body}\n\`\`\`\n`);
+    expect(plan.codeRenderer).toBe('pre');
   });
 });

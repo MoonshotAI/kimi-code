@@ -679,6 +679,10 @@ function copyDiff(code: string, idx: number) {
 .md :deep(.code-editor-container) {
   line-height: 1.65;
   --diffs-gap-block: var(--space-3);
+  /* Long lines must scroll inside the block; otherwise stream-diffs can overflow
+     the chat column and force a broken plain fallback path (#2495). */
+  max-width: 100%;
+  overflow-x: auto;
 }
 .md :deep(.code-editor-container diffs-container) {
   --diffs-line-height: 1.65em;
