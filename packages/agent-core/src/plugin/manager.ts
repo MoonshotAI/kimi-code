@@ -134,18 +134,12 @@ export class PluginManager {
         github,
         parsed,
       });
-      // Persist before publishing the in-memory map: if writeInstalled fails we
-      // must not leave this.records pointing at a tree that the catch rolls back.
-      const previousRecords = this.records;
+      // Persist from a candidate map, then publish it. Never leave this.records
+      // pointing at a tree that the outer catch rolls back on write failure.
       const next = new Map(this.records);
       next.set(id, record);
+      await this.persist(next);
       this.records = next;
-      try {
-        await this.persist();
-      } catch (error) {
-        this.records = previousRecords;
-        throw error;
-      }
       await discardPreviousManagedRoot(managedCopy.previousRoot);
       managedCopy = undefined;
       return record;
@@ -337,8 +331,8 @@ export class PluginManager {
     return record === undefined ? undefined : recordToInfo(record);
   }
 
-  private async persist(): Promise<void> {
-    const installed: InstalledRecord[] = [...this.records.values()].map((record) => ({
+  private async persist(records: ReadonlyMap<string, PluginRecord> = this.records): Promise<void> {
+    const installed: InstalledRecord[] = [...records.values()].map((record) => ({
       id: record.id,
       root: record.root,
       source: record.source,
