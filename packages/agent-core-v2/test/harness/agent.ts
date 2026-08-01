@@ -6,6 +6,7 @@ import { createControlledPromise } from '@antfu/utils';
 import { expect, vi } from 'vitest';
 
 import { toDisposable } from '#/_base/di/lifecycle';
+import { Error2, ErrorCodes } from '#/errors';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { Emitter, Event } from '#/_base/event';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -2211,7 +2212,7 @@ function createWorkspaceContextStub(
     assertAllowed: (absPath: string, op: PathAccessOperation) => {
       const target = isAbsolute(absPath) ? resolve(absPath) : resolve(workDir, absPath);
       if (!isWithin(target)) {
-        throw new Error(`Path outside workspace (${op}): ${target}`);
+        throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `Path outside workspace (${op}): ${target}`);
       }
       return target;
     },

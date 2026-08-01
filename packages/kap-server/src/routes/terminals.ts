@@ -241,15 +241,10 @@ function sendMappedError(
       case ErrorCodes.TERMINAL_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.TERMINAL_NOT_FOUND, err.message, requestId, err.stack));
         return;
+      case ErrorCodes.FS_PATH_ESCAPES:
+        reply.send(errEnvelope(ErrorCode.FS_PATH_ESCAPES_SESSION, err.message, requestId, err.stack));
+        return;
     }
-  }
-  // `ISessionWorkspaceContext.assertAllowed` throws a plain (uncoded) Error when a cwd
-  // escapes the workspace — map it to the same wire code v1 uses for path
-  // escapes. TODO: push a coded error into `assertAllowed` so this branch can
-  // be folded into the `isError2` switch above.
-  if (err instanceof Error && err.message.startsWith('Path outside workspace')) {
-    reply.send(errEnvelope(ErrorCode.FS_PATH_ESCAPES_SESSION, err.message, requestId, err.stack));
-    return;
   }
   throw err;
 }
