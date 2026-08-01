@@ -136,6 +136,7 @@ export const sessionStatusResponseSchema = z.object({
   busy: z.boolean(),
   model: z.string().optional(),
   thinking_level: z.string(),
+  priority: z.boolean(),
   permission: z.string(),
   plan_mode: z.boolean(),
   swarm_mode: z.boolean(),

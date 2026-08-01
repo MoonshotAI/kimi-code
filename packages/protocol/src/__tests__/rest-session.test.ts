@@ -382,6 +382,7 @@ describe('sessionStatusResponseSchema', () => {
       busy: true,
       model: 'moonshot-v1-128k',
       thinking_level: 'on',
+      priority: true,
       permission: 'ask',
       plan_mode: true,
       swarm_mode: false,
@@ -391,6 +392,7 @@ describe('sessionStatusResponseSchema', () => {
     });
     expect(parsed.busy).toBe(true);
     expect(parsed.model).toBe('moonshot-v1-128k');
+    expect(parsed.priority).toBe(true);
     expect(parsed.plan_mode).toBe(true);
     expect(parsed.context_usage).toBe(0.008);
   });
@@ -399,6 +401,7 @@ describe('sessionStatusResponseSchema', () => {
     const parsed = sessionStatusResponseSchema.parse({
       busy: false,
       thinking_level: 'off',
+      priority: false,
       permission: 'auto',
       plan_mode: false,
       swarm_mode: false,
@@ -533,6 +536,7 @@ describe('undoSessionResponseSchema', () => {
         busy: true,
         model: 'kimi-k2',
         thinking_level: 'auto',
+        priority: false,
         permission: 'manual',
         plan_mode: false,
         swarm_mode: false,

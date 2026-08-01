@@ -340,7 +340,7 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.data.busy).toBe(false);
     expect(body.data.main_turn_active).toBe(false);
     expect(body.data.pending_interaction).toBe('none');
-    expect(body.data.agent_config).toEqual({ model: '' });
+    expect(body.data.agent_config).toEqual({ model: '', priority: false });
     expect(body.data.permission_rules).toEqual([]);
     expect(body.data.message_count).toBe(0);
     expect(body.data.last_seq).toBe(0);

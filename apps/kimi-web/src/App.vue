@@ -17,6 +17,7 @@ import LoginDialog from './components/dialogs/LoginDialog.vue';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
 import AddWorkspaceDialog from './components/dialogs/AddWorkspaceDialog.vue';
 import ConfirmDialogHost from './components/dialogs/ConfirmDialogHost.vue';
+import PriorityDialog from './components/dialogs/PriorityDialog.vue';
 import StatusPanel from './components/chat/StatusPanel.vue';
 import WarningToasts from './components/WarningToasts.vue';
 import MobileTopBar from './components/mobile/MobileTopBar.vue';
@@ -318,6 +319,8 @@ const showProviders = ref(false);
 const showLogin = ref(false);
 const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
+const showPriorityDialog = ref(false);
+const prioritySaving = ref(false);
 const showSettings = ref(false);
 
 type SubmitPayload = {
@@ -342,6 +345,7 @@ const anyOverlayOpen = computed<boolean>(
     showLogin.value ||
     showAddWorkspace.value ||
     showStatusPanel.value ||
+    showPriorityDialog.value ||
     showSettings.value ||
     showOnboarding.value ||
     showMobileSwitcher.value ||
@@ -566,6 +570,9 @@ function handleCommand(cmd: string): void {
       // No popover anchor from a slash command — step to the next level.
       client.setThinking(nextThinkingLevel(client.thinking.value));
       break;
+    case '/priority':
+      showPriorityDialog.value = true;
+      break;
     case '/status':
       showStatusPanel.value = true;
       break;
@@ -592,6 +599,17 @@ function handleCommand(cmd: string): void {
       }
       break;
     }
+  }
+}
+
+async function applyPriority(value: { main: boolean; subagents: boolean }): Promise<void> {
+  prioritySaving.value = true;
+  try {
+    if (await client.setPriorities(value.main, value.subagents)) {
+      showPriorityDialog.value = false;
+    }
+  } finally {
+    prioritySaving.value = false;
   }
 }
 
@@ -791,6 +809,7 @@ function openPr(url: string): void {
       :activation-badges="client.activationBadges.value"
       :status="client.status.value"
       :thinking="client.thinking.value"
+      :priority="client.priority.value"
       :plan-mode="client.planMode.value"
       :swarm-mode="client.swarmMode.value"
       :goal-mode="client.goalMode.value"
@@ -1037,10 +1056,21 @@ function openPr(url: string): void {
       v-if="showStatusPanel"
       :status="client.status.value"
       :thinking="statusPanelThinking"
+      :priority="client.priority.value"
       :plan-mode="client.planMode.value"
       :swarm-mode="client.swarmMode.value"
       :cost-usd="client.sessionCost.value"
       @close="showStatusPanel = false"
+    />
+
+    <PriorityDialog
+      v-if="showPriorityDialog"
+      :open="showPriorityDialog"
+      :main-priority="client.priority.value"
+      :subagent-priority="client.subagentPriority.value"
+      :saving="prioritySaving"
+      @update:open="showPriorityDialog = $event"
+      @apply="applyPriority($event)"
     />
 
     <!-- Add Workspace overlay (daemon folder browser + paste-path fallback) -->
@@ -1103,6 +1133,7 @@ function openPr(url: string): void {
       v-model="showMobileSettings"
       :status="client.status.value"
       :thinking="client.thinking.value"
+      :priority="client.priority.value"
       :models="client.models.value"
       :plan-mode="client.planMode.value"
       :swarm-mode="client.swarmMode.value"

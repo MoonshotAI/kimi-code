@@ -30,5 +30,6 @@ export default {
   quickStartPlaceholder: 'Type a message to start a new conversation…',
   thinkingSuffix: ' · thinking',
   thinkingSuffixEffort: ' · {level}',
+  prioritySuffix: ' · priority',
 
 } as const;

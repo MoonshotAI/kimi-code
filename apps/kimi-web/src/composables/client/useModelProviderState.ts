@@ -65,6 +65,8 @@ export interface PersistSessionProfilePatch {
   goalObjective?: string;
   goalControl?: 'pause' | 'resume' | 'cancel';
   thinking?: string;
+  priority?: boolean;
+  subagentPriority?: boolean;
 }
 
 export interface UseModelProviderStateDeps {

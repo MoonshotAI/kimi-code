@@ -103,6 +103,7 @@ describe('Session legacy status (best-effort runtime state)', () => {
         modelAlias: 'removed-model',
         modelCapabilities: UNKNOWN_CAPABILITY,
         thinkingLevel: 'high',
+        priority: true,
         systemPrompt: '',
       }),
       getModel: () => 'removed-model',
@@ -153,6 +154,7 @@ describe('Session legacy status (best-effort runtime state)', () => {
       busy: false,
       model: 'removed-model',
       thinking_level: 'high',
+      priority: true,
       max_context_tokens: 0,
     });
   });
@@ -337,5 +339,58 @@ describe('Session legacy status (best-effort runtime state)', () => {
     });
 
     expect(broadcastPermissionMode).toHaveBeenCalledWith('yolo');
+  });
+
+  it('applies independent main and subagent priority controls', async () => {
+    const setMainPriority = vi.fn();
+    const setSubagentPriority = vi.fn();
+    const child: IAgentScopeHandle = {
+      id: 'child-1',
+      kind: LifecycleScope.Agent,
+      accessor: accessor([
+        [IAgentProfileService, { _serviceBrand: undefined, setPriority: setSubagentPriority }],
+      ]),
+      dispose: () => {},
+    };
+    let agents: IAgentLifecycleService;
+    const main: IAgentScopeHandle = {
+      id: 'main',
+      kind: LifecycleScope.Agent,
+      accessor: accessor([
+        [IAgentProfileService, { _serviceBrand: undefined, setPriority: setMainPriority }],
+        [IAgentLifecycleService, { list: () => [main, child] }],
+      ]),
+      dispose: () => {},
+    };
+    agents = {
+      create: () => Promise.resolve(main),
+      whenReady: () => Promise.resolve(main),
+      list: () => [main, child],
+    } as unknown as IAgentLifecycleService;
+    const session: ISessionScopeHandle = {
+      id: 'session-priority',
+      kind: LifecycleScope.Session,
+      accessor: accessor([
+        [IAgentLifecycleService, agents],
+        [
+          ISessionMetadata,
+          {
+            read: () =>
+              Promise.resolve({ id: 'session-priority', createdAt: 0, updatedAt: 0, archived: false }),
+          },
+        ],
+        [ISessionContext, { workspaceId: 'ws-test', cwd: '/workspace' }],
+      ]),
+      dispose: () => {},
+    };
+    stubSessionChain(ix, session);
+    ix.set(ISessionLegacyService, new SyncDescriptor(SessionLegacyService));
+
+    await ix.get(ISessionLegacyService).updateProfile('session-priority', {
+      agent_config: { priority: true, subagent_priority: false },
+    });
+
+    expect(setMainPriority).toHaveBeenCalledWith(true);
+    expect(setSubagentPriority).toHaveBeenCalledWith(false);
   });
 });

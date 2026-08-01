@@ -8,11 +8,19 @@ export const providerConfigResponseSchema = z.object({
 });
 export type ProviderConfigResponse = z.infer<typeof providerConfigResponseSchema>;
 
+export const secondaryModelConfigSchema = z.object({
+  model: z.string().optional(),
+  default_effort: z.string().optional(),
+  priority: z.boolean().optional(),
+}).catchall(z.unknown());
+export type SecondaryModelConfig = z.infer<typeof secondaryModelConfigSchema>;
+
 export const configResponseSchema = z.object({
   providers: z.record(z.string(), providerConfigResponseSchema).default({}),
   default_provider: z.string().optional(),
   default_model: z.string().optional(),
   models: z.record(z.string(), z.unknown()).optional(),
+  secondary_model: secondaryModelConfigSchema.optional(),
   thinking: z.unknown().optional(),
   plan_mode: z.boolean().optional(),
   yolo: z.boolean().optional(),
@@ -36,6 +44,7 @@ export const patchConfigRequestSchema = z.object({
   default_provider: z.string().optional(),
   default_model: z.string().optional(),
   models: z.record(z.string(), z.unknown()).optional(),
+  secondary_model: secondaryModelConfigSchema.optional(),
   thinking: z.unknown().optional(),
   plan_mode: z.boolean().optional(),
   yolo: z.boolean().optional(),

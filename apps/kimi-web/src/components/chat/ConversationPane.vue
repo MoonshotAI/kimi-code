@@ -31,6 +31,7 @@ const props = defineProps<{
   activationBadges?: ActivationBadges;
   status: ConversationStatus;
   thinking?: ThinkingLevel;
+  priority?: boolean;
   planMode?: boolean;
   swarmMode?: boolean;
   goalMode?: boolean;
@@ -1376,6 +1377,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
               :upload-image="uploadImage"
               :status="status"
               :thinking="thinking"
+              :priority="priority"
               :plan-mode="planMode"
               :swarm-mode="swarmMode"
               :goal-mode="goalMode"
@@ -1452,6 +1454,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
         :upload-image="uploadImage"
         :status="status"
         :thinking="thinking"
+        :priority="priority"
         :plan-mode="planMode"
         :swarm-mode="swarmMode"
         :goal-mode="goalMode"

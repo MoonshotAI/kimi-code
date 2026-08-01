@@ -120,6 +120,32 @@ describe('ConfigState model capabilities', () => {
     });
   });
 
+  it('publishes disabled priority after the active tier is turned off', () => {
+    kimiConfig = {
+      providers: {
+        kimi: {
+          type: 'kimi',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.test/v1',
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: 'kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+          supportEfforts: ['low', 'high'],
+        },
+      },
+    };
+    profile.update({ modelAlias: 'kimi-code/kimi-for-coding', priority: true });
+
+    profile.setPriority(false);
+
+    const statuses = ctx.allEvents.filter((entry) => entry.event === 'agent.status.updated');
+    expect(statuses.at(-1)?.args).toMatchObject({ priority: false });
+  });
+
   it('tracks thinking_toggle with the effort payload when effort changes', () => {
     kimiConfig = {
       providers: {

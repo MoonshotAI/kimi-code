@@ -112,6 +112,16 @@ export class SessionLegacyService implements ISessionLegacyService {
     if (agentConfig.thinking !== undefined) {
       profile.setThinking(agentConfig.thinking);
     }
+    if (agentConfig.priority !== undefined) {
+      profile.setPriority(agentConfig.priority);
+    }
+    if (agentConfig.subagent_priority !== undefined) {
+      for (const child of agent.accessor.get(IAgentLifecycleService).list()) {
+        if (child.id !== agent.id) {
+          child.accessor.get(IAgentProfileService).setPriority(agentConfig.subagent_priority);
+        }
+      }
+    }
     if (agentConfig.permission_mode !== undefined) {
       agent.accessor
         .get(IAgentLifecycleService)
@@ -192,6 +202,7 @@ export class SessionLegacyService implements ISessionLegacyService {
       busy: this.readBusy(sessionId),
       model: model === '' ? undefined : model,
       thinking_level: model === '' ? '' : profile.getEffectiveThinkingLevel(),
+      priority: profile.data().priority === true,
       permission: permission.mode,
       plan_mode: planData !== null,
       swarm_mode: swarm.isActive,

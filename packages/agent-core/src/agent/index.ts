@@ -735,7 +735,7 @@ export class Agent {
     void this.rpc?.emitEvent?.(event);
   }
 
-  emitStatusUpdated(includeThinkingEffort = false): void {
+  emitStatusUpdated(includeThinkingEffort = false, includePriority = false): void {
     if (this.records.restoring) return;
     if (!this.config.hasModel) return;
 
@@ -753,7 +753,10 @@ export class Agent {
       type: 'agent.status.updated',
       model,
       thinkingEffort: includeThinkingEffort ? this.config.thinkingEffort : undefined,
-      priority: this.config.priority ? true : undefined,
+      priority:
+        includePriority || this.config.priority
+          ? this.config.priority
+          : undefined,
       contextTokens,
       maxContextTokens,
       contextUsage,

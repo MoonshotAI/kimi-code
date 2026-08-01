@@ -261,7 +261,7 @@ export interface SessionUsage {
 export interface SessionStatus {
   readonly model?: string;
   readonly thinkingEffort: string;
-  readonly priority?: boolean;
+  readonly priority: boolean;
   readonly permission: PermissionMode;
   readonly planMode: boolean;
   readonly swarmMode?: boolean | undefined;

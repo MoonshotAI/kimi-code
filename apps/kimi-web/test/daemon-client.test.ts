@@ -76,6 +76,59 @@ function createApi(): DaemonKimiWebApi {
   });
 }
 
+describe('DaemonKimiWebApi priority controls', () => {
+  beforeEach(() => {
+    vi.stubGlobal('location', { search: '?debug=1' });
+    vi.stubGlobal('fetch', vi.fn());
+    clearTrace();
+  });
+
+  afterEach(() => {
+    clearTrace();
+    vi.unstubAllGlobals();
+  });
+
+  it('maps runtime priority and sends independent main/subagent profile controls', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(envelope({
+        model: 'example/kimi-k3',
+        thinking_level: 'high',
+        priority: true,
+        permission: 'manual',
+        plan_mode: false,
+        swarm_mode: false,
+        context_tokens: 12,
+        max_context_tokens: 100,
+        context_usage: 0.12,
+      }))
+      .mockResolvedValueOnce(envelope({
+        id: 's1',
+        title: '',
+        created_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-01-01T00:00:00.000Z',
+        busy: false,
+        archived: false,
+        metadata: { cwd: '/workspace' },
+        agent_config: { model: '' },
+        usage: {},
+        permission_rules: [],
+        message_count: 0,
+        last_seq: 0,
+      }));
+
+    const api = createApi();
+    await expect(api.getSessionStatus('s1')).resolves.toMatchObject({ priority: true });
+    await api.updateSession('s1', { priority: false, subagentPriority: true });
+
+    expect(vi.mocked(fetch).mock.calls[1]?.[1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({
+        agent_config: { priority: false, subagent_priority: true },
+      }),
+    });
+  });
+});
+
 describe('DaemonKimiWebApi.exportSession', () => {
   beforeEach(() => {
     vi.stubGlobal('location', { search: '?debug=1' });

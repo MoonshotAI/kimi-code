@@ -205,6 +205,8 @@ export interface PersistSessionProfilePatch {
   goalObjective?: string;
   goalControl?: 'pause' | 'resume' | 'cancel';
   thinking?: string;
+  priority?: boolean;
+  subagentPriority?: boolean;
 }
 
 export interface UseWorkspaceStateDeps {
@@ -253,7 +255,7 @@ export interface UseWorkspaceStateDeps {
   saveSwarmModeToStorage: () => void;
   saveGoalModeToStorage: () => void;
   /** Staged mode toggles for the not-yet-created draft session. */
-  draftModes: { planMode: boolean; swarmMode: boolean; goalMode: boolean };
+  draftModes: { planMode: boolean; swarmMode: boolean; goalMode: boolean; priority: boolean };
   saveUnread: (changes: Record<string, boolean>) => void;
   saveActiveWorkspaceToStorage: (id: string) => void;
   saveHiddenWorkspacesToStorage: (roots: string[]) => void;
@@ -1139,9 +1141,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       rawState.goalModeBySession = { ...rawState.goalModeBySession, [sid]: true };
       saveGoalModeToStorage();
     }
+    if (draftModes.priority) {
+      rawState.priorityBySession = { ...rawState.priorityBySession, [sid]: true };
+      await persistSessionProfile({ priority: true }, sid);
+    }
     draftModes.planMode = false;
     draftModes.swarmMode = false;
     draftModes.goalMode = false;
+    draftModes.priority = false;
     return sid;
   }
 

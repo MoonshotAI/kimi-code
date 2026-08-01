@@ -17,7 +17,7 @@
 | `/provider` | — | 打开交互式供应商管理器，查看、添加和删除已配置的供应商。详见[平台与模型 — `/provider` 与供应商管理](../configuration/providers.md#provider-—-交互式供应商管理) | 是 |
 | `/model` | — | 切换当前会话使用的 LLM 模型 | 是 |
 | `/secondary_model` | — | 配置子 Agent 使用的第二模型（写入 [`[secondary_model]`](../configuration/config-files.md#secondary-model) 配置并在当前会话立即生效）。需开启 `secondary-model` 实验功能 | 是 |
-| `/priority` | — | 打开选择器，分别为主 Agent 与子 Agent 配置供应商的 priority service tier（仅主 Agent、仅子 Agent、两者或两者都不启用）。两者默认均关闭，无需配置次主力模型。启用后，底部状态栏会在显示的 thinking effort 后附加 `priority`（例如 `模型 thinking: high · priority`）；`/status` 保留 thinking effort 详情，子 Agent 的模型显示也会附加 `priority`。priority 可能提高费用；具体价格、速度和可靠性效果取决于供应商 | 是 |
+| `/priority` | — | 在 TUI 或 Web UI 中打开选择器，分别为主 Agent 与子 Agent 配置供应商的 priority service tier（仅主 Agent、仅子 Agent、两者或两者都不启用）。两者默认均关闭，无需配置次主力模型。启用后，模型状态显示会在 thinking effort 后附加 `priority`（例如 `模型 thinking: high · priority`）；`/status` 保留 thinking effort 详情，子 Agent 的模型显示也会附加 `priority`。priority 可能提高费用；具体价格、速度和可靠性效果取决于供应商 | 是 |
 | `/settings` | `/config` | 打开 TUI 内的设置面板 | 是 |
 | `/experiments` | `/experimental` | 打开实验功能面板 | 是 |
 | `/permission` | — | 选择权限模式 | 是 |

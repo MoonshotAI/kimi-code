@@ -419,6 +419,8 @@ export class DaemonKimiWebApi implements KimiWebApi {
       goalObjective?: string;
       goalControl?: 'pause' | 'resume' | 'cancel';
       thinking?: string;
+      priority?: boolean;
+      subagentPriority?: boolean;
     },
   ): Promise<AppSession> {
     const body: Record<string, unknown> = {};
@@ -432,6 +434,8 @@ export class DaemonKimiWebApi implements KimiWebApi {
     if (input.goalObjective !== undefined) agentConfig['goal_objective'] = input.goalObjective;
     if (input.goalControl !== undefined) agentConfig['goal_control'] = input.goalControl;
     if (input.thinking !== undefined) agentConfig['thinking'] = input.thinking;
+    if (input.priority !== undefined) agentConfig['priority'] = input.priority;
+    if (input.subagentPriority !== undefined) agentConfig['subagent_priority'] = input.subagentPriority;
     if (Object.keys(agentConfig).length > 0) body['agent_config'] = agentConfig;
     const data = await this.http.post<WireSession>(
       `/sessions/${encodeURIComponent(sessionId)}/profile`,
@@ -453,6 +457,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return {
       model: data.model && data.model.length > 0 ? data.model : null,
       thinkingEffort: data.thinking_level,
+      priority: data.priority === true,
       permission: data.permission,
       planMode: data.plan_mode === true,
       swarmMode: data.swarm_mode === true,
@@ -1265,6 +1270,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       defaultProvider: 'default_provider',
       defaultModel: 'default_model',
       models: 'models',
+      secondaryModel: 'secondary_model',
       thinking: 'thinking',
       planMode: 'plan_mode',
       yolo: 'yolo',

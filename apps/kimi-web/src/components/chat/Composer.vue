@@ -51,6 +51,7 @@ const props = withDefaults(defineProps<{
   /** Status data (model, context, permission) — drives the bottom toolbar. */
   status?: ConversationStatus;
   thinking?: ThinkingLevel;
+  priority?: boolean;
   planMode?: boolean;
   swarmMode?: boolean;
   goalMode?: boolean;
@@ -1114,6 +1115,7 @@ function selectModel(modelId: string): void {
           >
             <b>{{ status.model }}</b>
             <span v-if="thinkingSuffix" class="think-suffix">{{ thinkingSuffix }}</span>
+            <span v-if="priority" class="think-suffix">{{ t('composer.prioritySuffix') }}</span>
             <Icon class="cv" name="chevron-down" size="sm" />
           </span>
           <Tooltip v-if="running" :text="t('composer.interruptTitle')">

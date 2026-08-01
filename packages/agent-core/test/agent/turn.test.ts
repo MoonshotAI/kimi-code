@@ -1807,6 +1807,19 @@ describe('Agent turn flow', () => {
     expect(status?.args).toMatchObject({ priority: true });
   });
 
+  it('publishes disabled priority after the active tier is turned off', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.agent.config.update({ priority: true });
+
+    ctx.agent.config.update({ priority: false });
+
+    const status = ctx.allEvents.findLast(
+      (entry) => entry.event === 'agent.status.updated',
+    );
+    expect(status?.args).toMatchObject({ priority: false });
+  });
+
   it('logs changed LLM config when same-size system prompt content changes', async () => {
     const { logger, entries } = captureLogs();
     const ctx = testAgent({ log: logger });

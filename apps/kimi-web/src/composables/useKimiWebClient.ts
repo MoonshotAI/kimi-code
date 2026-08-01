@@ -311,6 +311,8 @@ export interface ExtendedState extends KimiClientState {
    *  localStorage pick: a session keeps the level it actually ran with, so
    *  switching sessions never leaks one session's pick into another. */
   thinkingBySession: Record<string, ThinkingLevel>;
+  /** Main-agent priority service tier, keyed by session id. */
+  priorityBySession: Record<string, boolean>;
   /** Plan-mode toggle per session. Bound to a session (not global) so toggling
    *  it in one session does not affect another. */
   planModeBySession: Record<string, boolean>;
@@ -393,6 +395,7 @@ const rawState: ExtendedState = reactive({
   // map below starts empty and is fed by /status folds.
   thinking: undefined,
   thinkingBySession: {},
+  priorityBySession: {},
   planModeBySession: loadModeMapFromStorage(PLAN_MODE_STORAGE_KEY),
   swarmModeBySession: loadModeMapFromStorage(SWARM_MODE_STORAGE_KEY),
   goalModeBySession: loadModeMapFromStorage(GOAL_MODE_STORAGE_KEY),
@@ -434,10 +437,11 @@ const rawState: ExtendedState = reactive({
 // first prompt is sent (see startSessionAndSendPrompt), then cleared. Not
 // persisted — the draft is ephemeral.
 // ---------------------------------------------------------------------------
-const draftModes = reactive<{ planMode: boolean; swarmMode: boolean; goalMode: boolean }>({
+const draftModes = reactive<{ planMode: boolean; swarmMode: boolean; goalMode: boolean; priority: boolean }>({
   planMode: false,
   swarmMode: false,
   goalMode: false,
+  priority: false,
 });
 
 // ---------------------------------------------------------------------------
@@ -620,6 +624,7 @@ function forgetSession(sessionId: string): void {
   delete rawState.swarmModeBySession[sessionId];
   delete rawState.goalModeBySession[sessionId];
   delete rawState.thinkingBySession[sessionId];
+  delete rawState.priorityBySession[sessionId];
   savePlanModeToStorage();
   saveSwarmModeToStorage();
   saveGoalModeToStorage();
@@ -675,6 +680,10 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
       [sessionId]: st.thinkingEffort as ThinkingLevel,
     };
   }
+  rawState.priorityBySession = {
+    ...rawState.priorityBySession,
+    [sessionId]: st.priority,
+  };
 }
 
 /**
@@ -729,6 +738,8 @@ function persistSessionProfile(patch: {
   goalObjective?: string;
   goalControl?: 'pause' | 'resume' | 'cancel';
   thinking?: string;
+  priority?: boolean;
+  subagentPriority?: boolean;
 }, sessionId?: string): Promise<boolean> {
   const sid = sessionId ?? rawState.activeSessionId;
   if (!sid) return Promise.resolve(false);
@@ -742,6 +753,38 @@ function persistSessionProfile(patch: {
       pushOperationFailure('persistSessionProfile', err, { sessionId: sid });
       return false;
     });
+}
+
+/** Apply independent priority choices for the active/draft main agent and all
+ * subagents. The global secondary-model write lands first so the subsequent
+ * session-profile call can live-apply that persisted value to running
+ * subagents on both engines. */
+async function setPriorities(main: boolean, subagents: boolean): Promise<boolean> {
+  const sid = rawState.activeSessionId;
+  const existingSecondary = rawState.config?.secondaryModel ?? {};
+  try {
+    const api = getKimiWebApi();
+    const nextConfig = await api.setConfig({
+      secondaryModel: { ...existingSecondary, priority: subagents },
+    });
+    rawState.config = nextConfig;
+    rawState.defaultModel = nextConfig.defaultModel ?? null;
+
+    if (!sid) {
+      draftModes.priority = main;
+      return true;
+    }
+
+    await api.updateSession(sid, {
+      priority: main,
+      subagentPriority: subagents,
+    });
+    await refreshSessionStatus(sid);
+    return true;
+  } catch (err) {
+    pushOperationFailure('setPriorities', err, { sessionId: sid });
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -865,6 +908,12 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
       rawState.thinkingBySession = {
         ...rawState.thinkingBySession,
         [event.sessionId]: event.thinking as ThinkingLevel,
+      };
+    }
+    if (event.priority !== undefined) {
+      rawState.priorityBySession = {
+        ...rawState.priorityBySession,
+        [event.sessionId]: event.priority,
       };
     }
   }
@@ -2059,6 +2108,13 @@ function clearDangerousBypassAuth(): void {
 
 const permission = computed<PermissionMode>(() => rawState.permission);
 const thinking = computed<ThinkingLevel | undefined>(() => rawState.thinking);
+const priority = computed<boolean>(() => {
+  const sid = rawState.activeSessionId;
+  return sid ? (rawState.priorityBySession[sid] ?? false) : draftModes.priority;
+});
+const subagentPriority = computed<boolean>(
+  () => rawState.config?.secondaryModel?.priority === true,
+);
 // Mode toggles reflect the ACTIVE session (or the draft when no session is
 // open). Each session keeps its own value in the *BySession maps above.
 const planMode = computed<boolean>(() => {
@@ -2808,6 +2864,8 @@ export function useKimiWebClient() {
     connectIssue,
     permission,
     thinking,
+    priority,
+    subagentPriority,
     planMode,
     swarmMode,
     goalMode,
@@ -2954,6 +3012,7 @@ export function useKimiWebClient() {
     // Config state + actions
     config,
     updateConfig: workspaceState.updateConfig,
+    setPriorities,
 
     // Auth actions
     checkAuth: workspaceState.checkAuth,

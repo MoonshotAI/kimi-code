@@ -760,11 +760,23 @@ export function toAppConfig(wire: WireConfig): AppConfig {
       hasApiKey: provider.has_api_key,
     };
   }
+  const secondaryModel = wire.secondary_model;
+  const secondaryModelRest = secondaryModel === undefined
+    ? undefined
+    : Object.fromEntries(
+        Object.entries(secondaryModel).filter(([key]) => key !== 'default_effort'),
+      );
   return {
     providers,
     defaultProvider: wire.default_provider,
     defaultModel: wire.default_model,
     models: wire.models,
+    secondaryModel: secondaryModel === undefined
+      ? undefined
+      : {
+          ...secondaryModelRest,
+          defaultEffort: secondaryModel.default_effort,
+        },
     thinking: wire.thinking as { enabled?: boolean; effort?: string } | undefined,
     planMode: wire.plan_mode,
     yolo: wire.yolo,

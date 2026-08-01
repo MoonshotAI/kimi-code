@@ -238,6 +238,9 @@ export function toAgentMember(task: AppTask): AgentMember {
     text: task.text,
     suspendedReason: task.suspendedReason,
     swarmIndex: task.swarmIndex,
+    model: task.model,
+    thinking: task.thinking,
+    priority: task.priority,
   };
 }
 

@@ -96,6 +96,7 @@ export interface PromptAbortResult {
 export interface AgentStatePatch {
   model?: string;
   thinking?: string;
+  priority?: boolean;
   permission_mode?: string;
   plan_mode?: boolean;
   swarm_mode?: boolean;
@@ -341,6 +342,7 @@ export interface SyntheticPromptSteeredEvent {
 export interface AgentStateSnapshot {
   model?: string;
   thinking?: string;
+  priority?: boolean;
   permissionMode?: string;
   planMode?: boolean;
   swarmMode?: boolean;
@@ -361,6 +363,7 @@ export interface PromptDispatchLogEntry {
   readonly kind:
     | 'setModel'
     | 'setThinking'
+    | 'setPriority'
     | 'setPermission'
     | 'enterPlan'
     | 'cancelPlan'

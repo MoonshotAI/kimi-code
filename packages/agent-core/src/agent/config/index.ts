@@ -120,7 +120,10 @@ export class ConfigState {
     if (thinkingEffort !== undefined || changed.modelAlias !== undefined) {
       this.agent.warnAboutCurrentAnthropicThinkingEffort();
     }
-    this.agent.emitStatusUpdated(thinkingEffort !== undefined);
+    this.agent.emitStatusUpdated(
+      thinkingEffort !== undefined,
+      changed.priority !== undefined,
+    );
   }
 
   setThinkingEffort(effort: ThinkingEffort): void {

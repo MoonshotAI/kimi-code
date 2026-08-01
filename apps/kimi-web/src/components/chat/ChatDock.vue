@@ -30,6 +30,7 @@ const props = defineProps<{
   uploadImage?: (file: Blob, name?: string) => Promise<{ fileId: string; name: string; mediaType: string } | null>;
   status: ConversationStatus;
   thinking?: ThinkingLevel;
+  priority?: boolean;
   planMode?: boolean;
   swarmMode?: boolean;
   goalMode?: boolean;
@@ -273,6 +274,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
       :upload-image="uploadImage"
       :status="status"
       :thinking="thinking"
+      :priority="priority"
       :plan-mode="planMode"
       :swarm-mode="swarmMode"
       :goal-mode="goalMode"

@@ -157,6 +157,23 @@ describe('SessionEventWiring status snapshot fold', () => {
     expect(events[1]).not.toHaveProperty('model');
   });
 
+  it('folds disabled priority into status events when the authoritative profile is off', () => {
+    const sub = new FakeAgentHandle('agent-1');
+    bindStatusServices(sub, 'sub-model', false);
+    const { sink, events } = collectingSink();
+    const wiring = new SessionEventWiring(makeSession([sub]), sink);
+    try {
+      sub.bus.emit({ type: 'agent.status.updated', priority: true });
+    } finally {
+      wiring.dispose();
+    }
+
+    expect(events[0]).toMatchObject({
+      type: 'agent.status.updated',
+      priority: false,
+    });
+  });
+
   it('resolves the secondary derived model id to a display string', () => {
     const sub = new FakeAgentHandle('agent-1');
     bindStatusServices(sub, SECONDARY_DERIVED_MODEL_ID);

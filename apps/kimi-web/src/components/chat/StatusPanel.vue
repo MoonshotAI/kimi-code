@@ -14,6 +14,7 @@ const { t } = useI18n();
 const props = defineProps<{
   status: ConversationStatus;
   thinking: ThinkingLevel;
+  priority: boolean;
   planMode: boolean;
   swarmMode?: boolean;
   /** Cumulative session cost in USD, when known (>= 0). */
@@ -79,6 +80,10 @@ const costText = computed(() =>
       <div class="row">
         <dt>{{ t('status.statusThinking') }}</dt>
         <dd>{{ thinking }}</dd>
+      </div>
+      <div class="row">
+        <dt>{{ t('status.statusServiceTier') }}</dt>
+        <dd>{{ priority ? t('commands.priority.label') : t('commands.priority.off') }}</dd>
       </div>
       <div class="row">
         <dt>{{ t('status.statusPermission') }}</dt>

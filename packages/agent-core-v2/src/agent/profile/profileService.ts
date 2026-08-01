@@ -627,6 +627,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     }
     this.emitStatusUpdated(
       changed.modelAlias !== undefined || changed.thinkingLevel !== undefined,
+      changed.priority !== undefined,
     );
   }
 
@@ -663,7 +664,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.wire.dispatch(setActiveTools({ names: [...names] }));
   }
 
-  private emitStatusUpdated(includeThinkingEffort = false): void {
+  private emitStatusUpdated(includeThinkingEffort = false, includePriority = false): void {
     const custom = this.optionsValue.emitStatusUpdated;
     if (custom !== undefined) {
       custom();
@@ -676,7 +677,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       thinkingEffort: includeThinkingEffort
         ? this.getEffectiveThinkingLevel()
         : undefined,
-      priority: this.profileState.priority ? true : undefined,
+      priority:
+        includePriority || this.profileState.priority
+          ? this.profileState.priority
+          : undefined,
       maxContextTokens:
         this.getModelCapabilities().max_input_tokens ??
         this.getModelCapabilities().max_context_tokens,
@@ -684,7 +688,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   republishStatus(): void {
-    this.emitStatusUpdated(true);
+    this.emitStatusUpdated(true, true);
   }
 
   private get profileState(): ProfileModelState {

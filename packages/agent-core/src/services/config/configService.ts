@@ -54,6 +54,7 @@ function toConfigResponse(config: KimiConfig): ConfigResponse {
     default_provider: config.defaultProvider,
     default_model: config.defaultModel,
     models: config.models,
+    secondary_model: convertKeysCamelToSnake(config.secondaryModel) as ConfigResponse['secondary_model'],
     thinking: config.thinking,
     plan_mode: config.planMode,
     yolo: config.yolo,
@@ -98,8 +99,26 @@ function convertKeysSnakeToCamel(obj: unknown): unknown {
   return obj;
 }
 
+function convertKeysCamelToSnake(obj: unknown): unknown {
+  if (Array.isArray(obj)) {
+    return obj.map(convertKeysCamelToSnake);
+  }
+  if (obj !== null && typeof obj === 'object') {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[camelToSnake(key)] = convertKeysCamelToSnake(value);
+    }
+    return result;
+  }
+  return obj;
+}
+
 function snakeToCamel(str: string): string {
   return str.replaceAll(/_([a-z])/g, (_, ch: string) => ch.toUpperCase());
+}
+
+function camelToSnake(str: string): string {
+  return str.replaceAll(/[A-Z]/g, (ch) => `_${ch.toLowerCase()}`);
 }
 
 registerSingleton(IConfigService, ConfigService, InstantiationType.Delayed);

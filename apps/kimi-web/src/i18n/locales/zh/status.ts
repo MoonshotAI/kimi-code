@@ -49,6 +49,7 @@ export default {
   statusPanelClose: '关闭',
   statusModel: '模型',
   statusThinking: '思考强度',
+  statusServiceTier: '服务层级',
   statusPermission: '权限',
   statusPlanMode: '计划模式',
   statusSwarmMode: 'Swarm 模式',

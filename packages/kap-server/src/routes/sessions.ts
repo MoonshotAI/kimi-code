@@ -1111,7 +1111,7 @@ export function toWireSession(
     archived: fields.archived,
     last_prompt: fields.lastPrompt,
     metadata: buildWireMetadata(fields.custom, cwd),
-    agent_config: { model: '' },
+    agent_config: { model: '', priority: false },
     usage: emptySessionUsage(),
     permission_rules: [],
     message_count: 0,

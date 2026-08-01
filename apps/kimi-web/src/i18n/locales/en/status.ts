@@ -50,6 +50,7 @@ export default {
   statusPanelClose: 'Close',
   statusModel: 'Model',
   statusThinking: 'Thinking',
+  statusServiceTier: 'Service tier',
   statusPermission: 'Permission',
   statusPlanMode: 'Plan mode',
   statusSwarmMode: 'Swarm mode',

@@ -130,6 +130,9 @@ export interface AgentMember {
   text?: string;
   suspendedReason?: string;
   swarmIndex?: number;
+  model?: string;
+  thinking?: string;
+  priority?: boolean;
 }
 
 export type DiffKind = 'ctx' | 'add' | 'rem';

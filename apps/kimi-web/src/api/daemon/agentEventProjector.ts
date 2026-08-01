@@ -277,6 +277,18 @@ function projectSubagentProgress(
   payload: Record<string, unknown>,
   sideChannelAgents: ReadonlySet<string>,
 ): AppEvent[] {
+  if (rawType === 'agent.status.updated') {
+    const previous = state.subagentMeta.get(subagentId);
+    const task = patchSubagent(state, sessionId, subagentId, {
+      model: stringField(payload, 'model') ?? previous?.model,
+      thinking: stringField(payload, 'thinkingEffort') ?? previous?.thinking,
+      priority:
+        typeof payload['priority'] === 'boolean'
+          ? payload['priority']
+          : previous?.priority,
+    });
+    return task ? [{ type: 'taskCreated', sessionId, task }] : [];
+  }
   // Side-channel agents (e.g. BTW side chat) stream their own transcript via
   // agentDelta events; don't pollute the main task output with generic step
   // placeholders like "Started a step".
@@ -968,6 +980,7 @@ export function createAgentProjector(): AgentProjector {
             typeof p?.thinkingEffort === 'string' && p.thinkingEffort.length > 0
               ? p.thinkingEffort
               : undefined,
+          priority: p?.priority === true ? true : p?.priority === false ? false : undefined,
         });
         break;
       }

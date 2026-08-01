@@ -339,6 +339,7 @@ export class SessionService extends Disposable implements ISessionService {
       const patch: AgentStatePatch = {};
       if (ac.model !== undefined && ac.model !== '') patch.model = ac.model;
       if (ac.thinking !== undefined) patch.thinking = ac.thinking;
+      if (ac.priority !== undefined) patch.priority = ac.priority;
       if (ac.permission_mode !== undefined) patch.permission_mode = ac.permission_mode;
       if (ac.plan_mode !== undefined) patch.plan_mode = ac.plan_mode;
       if (ac.swarm_mode !== undefined) patch.swarm_mode = ac.swarm_mode;
@@ -347,6 +348,7 @@ export class SessionService extends Disposable implements ISessionService {
       if (
         patch.model !== undefined ||
         patch.thinking !== undefined ||
+        patch.priority !== undefined ||
         patch.permission_mode !== undefined ||
         patch.plan_mode !== undefined ||
         patch.swarm_mode !== undefined ||
@@ -354,6 +356,9 @@ export class SessionService extends Disposable implements ISessionService {
         patch.goal_control !== undefined
       ) {
         await this.promptService.applyAgentState(id, patch, 'meta');
+      }
+      if (ac.subagent_priority !== undefined) {
+        await this.core.rpc.applyPersistedSecondaryModel({ sessionId: id });
       }
     }
 
@@ -483,6 +488,7 @@ export class SessionService extends Disposable implements ISessionService {
       busy: this._computeWorkFacts(id).busy,
       model: config.modelAlias ?? config.provider?.model,
       thinking_level: config.thinkingEffort,
+      priority: config.priority === true,
       permission: permission.mode,
       plan_mode: plan !== null,
       swarm_mode: agentState?.swarmMode ?? false,

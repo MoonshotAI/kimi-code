@@ -89,6 +89,8 @@ export interface WireSession {
     // Runtime controls — optional on read (the daemon may not backfill them;
     // live values come from GET /sessions/{id}/status).
     thinking?: string;
+    priority?: boolean;
+    subagent_priority?: boolean;
     permission_mode?: string;
     plan_mode?: boolean;
     swarm_mode?: boolean;
@@ -105,6 +107,7 @@ export interface WireSession {
 export interface WireSessionRuntimeStatus {
   model?: string;
   thinking_level: string;
+  priority?: boolean;
   permission: string;
   plan_mode: boolean;
   swarm_mode: boolean;
@@ -405,6 +408,12 @@ export interface WireConfig {
   default_provider?: string;
   default_model?: string;
   models?: Record<string, unknown>;
+  secondary_model?: {
+    model?: string;
+    default_effort?: string;
+    priority?: boolean;
+    [key: string]: unknown;
+  };
   thinking?: unknown;
   plan_mode?: boolean;
   yolo?: boolean;

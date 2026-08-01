@@ -28,6 +28,13 @@ const progressLines = computed(() =>
 // The subagent's concatenated live output (assistant deltas). Trim trailing
 // whitespace for display; grows in real time as deltas stream in.
 const liveText = computed(() => (props.member.text ?? '').trimEnd());
+const modelStatus = computed(() => {
+  if (!props.member.model) return '';
+  const parts = [props.member.model];
+  if (props.member.thinking) parts.push(props.member.thinking);
+  if (props.member.priority) parts.push(t('commands.priority.label'));
+  return parts.join(' · ');
+});
 
 interface ProgressGroup {
   key: string;
@@ -118,6 +125,7 @@ watch(
     </PanelHeader>
     <div ref="bodyEl" class="ap-body">
       <div v-if="member.subagentType" class="ap-type">{{ member.subagentType }}</div>
+      <div v-if="modelStatus" class="ap-type">{{ modelStatus }}</div>
       <div v-if="member.suspendedReason" class="ap-reason">{{ member.suspendedReason }}</div>
       <div v-if="member.prompt" class="ap-field">
         <span class="ap-field-label">Task</span>

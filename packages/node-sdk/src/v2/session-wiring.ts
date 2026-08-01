@@ -297,7 +297,7 @@ function withStatusSnapshot(agent: IAgentScopeHandle, event: DomainEvent): Domai
     contextTokens,
     maxContextTokens,
     model: displayModelAlias(agent, profile.getModel()),
-    priority: profile.data().priority === true ? true : undefined,
+    priority: profile.data().priority ?? false,
   } as unknown as DomainEvent;
 }
 

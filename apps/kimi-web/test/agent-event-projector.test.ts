@@ -190,6 +190,35 @@ describe('classifyFrame cron.fired', () => {
 // sessionWorkChanged per transition — when it did, every turn end fired
 // turn-end consumers (completion notification, sound) twice.
 describe('session status single-sourcing', () => {
+  it('projects priority for main-agent and subagent status displays', () => {
+    const projector = createAgentProjector();
+    const mainEvents = projector.project(
+      'agent.status.updated',
+      { agentId: 'main', model: 'kimi-k3', thinkingEffort: 'high', priority: true },
+      's1',
+    );
+    expect(mainEvents).toContainEqual(
+      expect.objectContaining({ type: 'sessionUsageUpdated', priority: true }),
+    );
+
+    const subagentEvents = projector.project(
+      'agent.status.updated',
+      { agentId: 'sub-1', model: 'kimi-k3', thinkingEffort: 'low', priority: true },
+      's1',
+    );
+    expect(subagentEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'taskCreated',
+        task: expect.objectContaining({
+          id: 'sub-1',
+          model: 'kimi-k3',
+          thinking: 'low',
+          priority: true,
+        }),
+      }),
+    );
+  });
+
   it('turn.started projects no sessionWorkChanged', () => {
     const projector = createAgentProjector();
     const events = projector.project('turn.started', { turnId: 1 }, 's1');

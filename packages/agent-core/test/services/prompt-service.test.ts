@@ -1092,6 +1092,7 @@ describe('PromptService stateless controls — bootstrap + shadow', () => {
     expect(snap).toEqual({
       model: 'kimi-code/k2',
       thinking: 'medium',
+      priority: false,
       permissionMode: 'yolo',
       planMode: true,
       swarmMode: false,

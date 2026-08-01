@@ -55,6 +55,8 @@ export const sessionAgentConfigSchema = z.object({
   tools: z.array(z.string()).optional(),
   mcp_servers: z.array(z.string()).optional(),
   thinking: promptThinkingSchema.optional(),
+  priority: z.boolean().optional(),
+  subagent_priority: z.boolean().optional(),
   permission_mode: promptPermissionModeSchema.optional(),
   plan_mode: z.boolean().optional(),
   swarm_mode: z.boolean().optional(),

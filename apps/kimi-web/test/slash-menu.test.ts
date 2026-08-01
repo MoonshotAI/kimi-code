@@ -65,6 +65,12 @@ describe('useSlashMenu — update', () => {
     expect(slash.items.value.map((item) => item.name)).toContain('/export');
   });
 
+  it('offers the priority service-tier command', () => {
+    const { slash } = setup('/pri');
+    slash.update();
+    expect(slash.items.value.map((item) => item.name)).toEqual(['/priority']);
+  });
+
   it('closes when nothing matches', () => {
     const { slash } = setup('/zzzznotacommand');
     slash.update();

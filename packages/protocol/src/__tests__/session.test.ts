@@ -184,6 +184,16 @@ describe('sessionUpdateSchema', () => {
     ).toEqual({ agent_config: { model: 'moonshot-v1-256k' } });
   });
 
+  it('parses independent main and subagent priority controls', () => {
+    expect(
+      sessionUpdateSchema.parse({
+        agent_config: { priority: true, subagent_priority: false },
+      }),
+    ).toEqual({
+      agent_config: { priority: true, subagent_priority: false },
+    });
+  });
+
   it('parses a runtime-controls patch (thinking + permission_mode + plan_mode)', () => {
     const parsed = sessionUpdateSchema.parse({
       agent_config: {

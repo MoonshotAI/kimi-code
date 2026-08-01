@@ -54,6 +54,7 @@ function hasAnyAgentStateField(patch: AgentStatePatch): boolean {
   return (
     patch.model !== undefined ||
     patch.thinking !== undefined ||
+    patch.priority !== undefined ||
     patch.permission_mode !== undefined ||
     patch.plan_mode !== undefined ||
     patch.swarm_mode !== undefined ||
@@ -614,6 +615,7 @@ export class PromptService
     // narrow cast lets diff comparisons stay typed without forcing
     // protocol to import from agent-core.
     snapshot.thinking = config.thinkingEffort as PromptThinking;
+    snapshot.priority = config.priority === true;
     snapshot.permissionMode = permission.mode;
     snapshot.planMode = plan !== null;
     snapshot.swarmMode = swarmMode;
@@ -658,6 +660,12 @@ export class PromptService
       await this.core.rpc.setThinking(payload);
       shadow.thinking = patch.thinking;
       this._recordDispatch(sid, 'setThinking', payload, promptId, source);
+    }
+    if (patch.priority !== undefined && patch.priority !== shadow.priority) {
+      const payload = { sessionId: sid, agentId, enabled: patch.priority };
+      await this.core.rpc.setPriority(payload);
+      shadow.priority = patch.priority;
+      this._recordDispatch(sid, 'setPriority', payload, promptId, source);
     }
     if (
       patch.permission_mode !== undefined &&

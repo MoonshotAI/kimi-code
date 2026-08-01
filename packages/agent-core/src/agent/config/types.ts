@@ -8,7 +8,7 @@ export interface AgentConfigData {
   profileName?: string;
   subagentNames?: readonly string[];
   thinkingEffort: string;
-  priority?: boolean;
+  priority: boolean;
   systemPrompt: string;
 }
 

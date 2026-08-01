@@ -33,6 +33,7 @@ const props = withDefaults(
     modelValue: boolean;
     status: ConversationStatus;
     thinking?: ThinkingLevel;
+    priority?: boolean;
     planMode?: boolean;
     swarmMode?: boolean;
     colorScheme?: ColorScheme;
@@ -248,7 +249,9 @@ watch(
     <button type="button" class="srow" @click="onPickModel">
       <span class="srow-main">
         <span class="srow-label">{{ t('status.statusModel') }}</span>
-        <span class="srow-sub">{{ status.model }}</span>
+        <span class="srow-sub">
+          {{ status.model }}<template v-if="priority"> · {{ t('commands.priority.label') }}</template>
+        </span>
       </span>
       <span class="chev">›</span>
     </button>
