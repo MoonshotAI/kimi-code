@@ -11,6 +11,18 @@
 - Updated dependencies [[`40172c7`](https://github.com/MoonshotAI/kimi-code/commit/40172c7ca96ca981b043b793588dd32e898979fa)]:
   - @moonshot-ai/kimi-code-oauth@0.3.0
 
+## 0.2.1
+
+### Minor Changes
+
+- [`588b632a`](https://github.com/MoonshotAI/kimi-code/commit/588b632a) - **sessionFs: add `write` action for file writing.** New `fsWriteRequestSchema` / `fsWriteResponseSchema` schemas and `write()` method on `ISessionFsService`, backed by `IHostFileSystem.writeText`, with path-confinement and error handling (permission denied, is-directory, parent-not-found). Changed files:
+  - `packages/agent-core-v2/src/session/sessionFs/fs.ts`
+  - `packages/agent-core-v2/src/session/sessionFs/fsService.ts`
+
+- [`588b632a`](https://github.com/MoonshotAI/kimi-code/commit/588b632a) - **IGitService: add `listBranches` and `checkout` methods.** `listBranches(cwd)` returns local branch names via `git branch --format=%(refname:short)`. `checkout(cwd, branch)` runs `git checkout` and throws a coded `GIT_UNAVAILABLE` error on failure. Changed files:
+  - `packages/agent-core-v2/src/app/git/git.ts`
+  - `packages/agent-core-v2/src/app/git/gitService.ts`
+
 ## 0.2.0
 
 ### Minor Changes
