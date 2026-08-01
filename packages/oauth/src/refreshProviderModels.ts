@@ -18,10 +18,12 @@ import {
 import { isManagedKimiCodeBaseUrl } from './managed-usage';
 import {
   applyOpenPlatformConfig,
+  fetchGenericOpenAIModels,
   fetchOpenPlatformModels,
   filterModelsByPrefix,
   getOpenPlatformById,
   isOpenPlatformId,
+  type OpenPlatformDefinition,
 } from './open-platform';
 import { isRecord } from './utils';
 
@@ -598,6 +600,86 @@ export async function refreshProviderModels(
           // The v1 `removeProvider` RPC clears `defaultProvider` when it points
           // at this provider; the clone still holds the original value, so
           // write it back — a refresh must not silently drop the fallback.
+          defaultProvider: next['defaultProvider'],
+        });
+        changed.push({
+          providerId,
+          providerName: providerId,
+          added,
+          removed,
+        });
+      }
+    } catch (error) {
+      failed.push({
+        provider: providerId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 2.6. Generic OpenAI-compatible providers (user-configured, non-Kimi)
+  // ---------------------------------------------------------------------------
+  // A hand-configured provider with type 'openai' (or any non-'kimi' / non-
+  // 'anthropic' type that talks a standard Chat Completions API) gets its model
+  // list refreshed from `{baseUrl}/models` using OpenAI-compatible semantics.
+  // Custom registries are detected first so a provider carrying a `source`
+  // pointing at a models.dev-style api.json is routed to branch 3.
+  for (const providerId of Object.keys(config.providers)) {
+    if (isOpenPlatformId(providerId)) continue;
+    if (targetId !== undefined && targetId !== providerId) continue;
+    const provider = readProvider(config, providerId);
+    if (provider === undefined) continue;
+    if (provider.type === 'kimi') continue; // handled by branch 2.5
+    if (provider.oauth !== undefined) continue;
+    if (readCustomRegistrySource(provider) !== undefined) continue;
+    // Only refresh providers whose type suggests a standard API endpoint.
+    if (provider.type !== 'openai' && provider.type !== 'openai_responses') continue;
+    if (provider.baseUrl === undefined) continue;
+    const apiKey = resolveProviderApiKey(provider);
+    if (apiKey === undefined) continue;
+
+    try {
+      const platform: OpenPlatformDefinition = {
+        id: providerId,
+        name: providerId,
+        baseUrl: provider.baseUrl,
+        providerType: provider.type,
+      };
+      const models = await fetchGenericOpenAIModels(platform, apiKey);
+      if (models.length === 0) continue;
+
+      const selectedModelId = pickDefaultModel(config, providerId, models);
+      const selectedModel = models.find((m) => m.id === selectedModelId);
+      if (selectedModel === undefined) continue;
+      const next = structuredClone(config);
+      applyOpenPlatformConfig(next, {
+        platform,
+        models,
+        selectedModel,
+        thinking: false,
+        apiKey,
+      });
+      const aliasPrefix = `${providerId}/`;
+      const refreshedAliasKeys = providerRefreshAliasKeys(config, next, providerId, aliasPrefix);
+      restoreProviderAliases(next, preserveUserProviderAliases(config, providerId, refreshedAliasKeys));
+      restoreDefaultSelection(next, config.defaultModel, config.thinking?.enabled);
+      clampDanglingDefault(next);
+      clearDefaultThinkingWhenDefaultRemoved(next, config.defaultModel);
+
+      if (providerModelsEqual(config, next, providerId, refreshedAliasKeys)) {
+        unchanged.push(providerId);
+      } else {
+        const { added, removed } = computeChanges(
+          collectModelIdsForAliases(config, refreshedAliasKeys),
+          collectModelIdsForAliases(next, refreshedAliasKeys),
+        );
+        await host.removeProvider(providerId);
+        config = await host.setConfig({
+          providers: next.providers,
+          models: next.models,
+          defaultModel: next.defaultModel,
+          thinking: next.thinking,
           defaultProvider: next['defaultProvider'],
         });
         changed.push({

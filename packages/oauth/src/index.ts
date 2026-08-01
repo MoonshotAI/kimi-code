@@ -136,6 +136,7 @@ export type {
 export {
   applyOpenPlatformConfig,
   capabilitiesForModel,
+  fetchGenericOpenAIModels,
   fetchOpenPlatformModels,
   filterModelsByPrefix,
   getOpenPlatformById,
