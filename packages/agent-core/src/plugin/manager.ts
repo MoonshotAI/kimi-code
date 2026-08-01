@@ -134,8 +134,18 @@ export class PluginManager {
         github,
         parsed,
       });
-      this.records.set(id, record);
-      await this.persist();
+      // Persist before publishing the in-memory map: if writeInstalled fails we
+      // must not leave this.records pointing at a tree that the catch rolls back.
+      const previousRecords = this.records;
+      const next = new Map(this.records);
+      next.set(id, record);
+      this.records = next;
+      try {
+        await this.persist();
+      } catch (error) {
+        this.records = previousRecords;
+        throw error;
+      }
       await discardPreviousManagedRoot(managedCopy.previousRoot);
       managedCopy = undefined;
       return record;

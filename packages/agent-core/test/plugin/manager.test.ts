@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import yazl from 'yazl';
 
 import { PluginManager } from '../../src/plugin/manager';
+import * as pluginStore from '../../src/plugin/store';
 
 async function makeKimiHome(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'kimi-home-'));
@@ -330,6 +331,23 @@ describe('PluginManager', () => {
     const managedDir = path.join(home, 'plugins', 'managed');
     const leftover = (await readdir(managedDir)).filter((name) => name.includes('-previous'));
     expect(leftover).toEqual([]);
+  });
+
+  it('install() does not publish in-memory records when persistence fails', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('demo', { version: '1.0.0' });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+    expect(manager.get('demo')?.manifest?.version).toBe('1.0.0');
+
+    const updatedRoot = await makePlugin('demo', { version: '2.0.0' });
+    const persist = vi.spyOn(pluginStore, 'writeInstalled').mockRejectedValueOnce(new Error('disk full'));
+    await expect(manager.install(updatedRoot)).rejects.toThrow(/disk full/);
+    persist.mockRestore();
+
+    expect(manager.get('demo')?.manifest?.version).toBe('1.0.0');
+    expect(manager.list()).toHaveLength(1);
   });
 
   it('keeps a plugin in error state instead of losing it on a broken manifest', async () => {
