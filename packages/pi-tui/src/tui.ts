@@ -1515,11 +1515,127 @@ export class TUI extends Container {
 		}
 
 		// Differential rendering can only touch what was actually visible.
-		// If the first changed line is above the previous viewport, we need a full redraw.
+		// A change above the viewport must NOT trigger the destructive full
+		// redraw: ESC[2J/ESC[3J wipes scrollback and yanks the user's scroll
+		// position to the bottom (e.g. a subagent status row ticking above
+		// the visible window during streaming). Handle it non-destructively:
+		// in-place edits are clamped to the visible window, and a length
+		// change above the window re-anchors the viewport (the screen already
+		// shows the shifted content) with only the mismatched window rows
+		// repainted in place — no scrolling, no ESC[3J. Scrollback keeps
+		// stale bytes for the changed above-window rows (they cannot be
+		// edited without clearing), and a shrink may later re-commit a
+		// bounded span the rewind overlaps — both accepted trade-offs for
+		// preserving the user's scroll position.
 		if (firstChanged < prevViewportTop) {
-			logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
-			fullRender(true);
-			return;
+			// Content collapsed to at/above the window top (e.g. /clear,
+			// compaction): nothing sensible to anchor to — reset destructively.
+			if (newLines.length <= prevViewportTop) {
+				logRedraw(
+					`content collapsed above viewport (newLines=${newLines.length} <= viewportTop=${prevViewportTop})`,
+				);
+				fullRender(true);
+				return;
+			}
+
+			const delta = newLines.length - this.previousLines.length;
+			if (delta === 0) {
+				// In-place edits above the window: clamp the diff to the
+				// visible viewport; skip painting when nothing visible changed.
+				let visibleFirstChanged = -1;
+				for (let i = prevViewportTop; i <= lastChanged; i++) {
+					const oldLine = i < this.previousLines.length ? this.previousLines[i]! : "";
+					const newLine = i < newLines.length ? newLines[i]! : "";
+					if (oldLine !== newLine) {
+						visibleFirstChanged = i;
+						break;
+					}
+				}
+				if (visibleFirstChanged === -1) {
+					logRedraw(`all changes above viewport (firstChanged=${firstChanged} < ${prevViewportTop})`);
+					this.positionHardwareCursor(cursorPos, newLines.length);
+					this.previousViewportTop = prevViewportTop;
+					this.previousHeight = height;
+					this.previousLines = newLines;
+					this.previousRawLines = rawLines;
+					this.previousLineImageIds = lineImageIds;
+					this.previousKittyImageIds = this.unionKittyImageIds(lineImageIds);
+					this.previousWidth = width;
+					return;
+				}
+				logRedraw(`clamped firstChanged ${firstChanged} -> ${visibleFirstChanged} (viewportTop=${prevViewportTop})`);
+				firstChanged = visibleFirstChanged;
+			} else {
+				// Length change at/above the window: the window content shifted
+				// by delta rows. The terminal already displays the shifted rows,
+				// so re-anchor the viewport and repaint only the window rows
+				// whose content actually differs — in place, with no scrolling.
+				const newViewportTop = prevViewportTop + delta;
+				if (newViewportTop < 0 || newViewportTop >= newLines.length) {
+					logRedraw(
+						`viewport shift out of range (viewportTop=${prevViewportTop} + delta=${delta}, newLines=${newLines.length})`,
+					);
+					fullRender(true);
+					return;
+				}
+				// Kitty image placements need multi-row handling; keep the
+				// destructive fallback for that rare combination.
+				let imageInRange = false;
+				for (
+					let i = Math.min(prevViewportTop, newViewportTop);
+					i < Math.max(this.previousLines.length, newLines.length);
+					i++
+				) {
+					if (
+						(i < this.previousLines.length && (this.previousLineImageIds[i] ?? EMPTY_IMAGE_IDS).length > 0) ||
+						(i < newLines.length && (lineImageIds[i] ?? EMPTY_IMAGE_IDS).length > 0)
+					) {
+						imageInRange = true;
+						break;
+					}
+				}
+				if (imageInRange) {
+					logRedraw(`above-viewport length change with kitty image`);
+					fullRender(true);
+					return;
+				}
+				logRedraw(
+					`re-anchor after above-viewport length change (${this.previousLines.length} -> ${newLines.length}, viewportTop ${prevViewportTop} -> ${newViewportTop})`,
+				);
+				// Logical rows shift with the anchor while the physical cursor
+				// stays put, so the cursor's logical row moves by delta too.
+				let repaintCursorRow = hardwareCursorRow + delta;
+				let repaintBuffer = "\x1b[?2026h"; // Begin synchronized output
+				for (let r = 0; r < height; r++) {
+					const newIndex = newViewportTop + r;
+					const oldIndex = prevViewportTop + r;
+					const newLine = newIndex < newLines.length ? newLines[newIndex]! : "";
+					const oldLine = oldIndex < this.previousLines.length ? this.previousLines[oldIndex]! : "";
+					if (newLine === oldLine) continue;
+					const move = newIndex - repaintCursorRow;
+					if (move > 0) repaintBuffer += `\x1b[${move}B`;
+					else if (move < 0) repaintBuffer += `\x1b[${-move}A`;
+					repaintBuffer += "\r\x1b[2K";
+					repaintBuffer += newLine;
+					repaintCursorRow = newIndex;
+				}
+				repaintBuffer += "\x1b[?2026l"; // End synchronized output
+				this.terminal.write(repaintBuffer);
+				prevViewportTop = newViewportTop;
+				viewportTop = newViewportTop;
+				this.cursorRow = Math.max(0, newLines.length - 1);
+				this.hardwareCursorRow = repaintCursorRow;
+				this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length);
+				this.positionHardwareCursor(cursorPos, newLines.length);
+				this.previousViewportTop = newViewportTop;
+				this.previousHeight = height;
+				this.previousLines = newLines;
+				this.previousRawLines = rawLines;
+				this.previousLineImageIds = lineImageIds;
+				this.previousKittyImageIds = this.unionKittyImageIds(lineImageIds);
+				this.previousWidth = width;
+				return;
+			}
 		}
 
 		// Render from first changed line to end
