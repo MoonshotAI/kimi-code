@@ -1,35 +1,15 @@
 <!-- apps/desktop/src/renderer/components/settings/DockIconPicker.vue -->
 <!-- macOS Dock icon appearance picker: tile options in a radiogroup (desktop-only). -->
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useAppearance } from '@moonshot-ai/web-core';
 import BrandLogo from '../onboarding/BrandLogo.vue';
-import { canQueryOsAppearance, getOsAppearance, onOsAppearanceChanged, type DockIconChoice } from '../../lib/dockIconChoice';
+import type { DockIconChoice } from '../../lib/dockIconChoice';
 
 const props = defineProps<{ modelValue: DockIconChoice }>();
 const emit = defineEmits<{ 'update:modelValue': [value: DockIconChoice] }>();
 
 const { t } = useI18n();
-const { colorScheme } = useAppearance();
-
-// Auto previews the real OS appearance from the main process (fallback: app theme).
-const osDark = ref<boolean | null>(null);
-let offOsAppearance: (() => void) | undefined;
-const systemDark = ref(false);
-let darkMq: MediaQueryList | null = null;
-function syncSystemDark(): void {
-  systemDark.value = darkMq?.matches ?? false;
-}
-const effectiveDark = computed(() => {
-  if (osDark.value !== null) return osDark.value;
-  return colorScheme.value === 'dark' || (colorScheme.value === 'system' && systemDark.value);
-});
-
-function variantFor(value: DockIconChoice): 'light' | 'dark' {
-  if (value === 'auto') return effectiveDark.value ? 'dark' : 'light';
-  return value;
-}
 
 // WAI-ARIA radio-group keyboard model (roving tabindex; arrows wrap).
 function onGroupKeydown(event: KeyboardEvent): void {
@@ -47,10 +27,10 @@ function onGroupKeydown(event: KeyboardEvent): void {
   itemRefs.value[next]?.focus();
 }
 
+// Each tile previews the BrandLogo variant the choice itself selects.
 const options: ReadonlyArray<{ value: DockIconChoice; labelKey: string }> = [
-  { value: 'light', labelKey: 'settings.appIconLight' },
-  { value: 'dark', labelKey: 'settings.appIconDark' },
-  { value: 'auto', labelKey: 'settings.appIconAuto' },
+  { value: 'light', labelKey: 'settings.appIconDefault' },
+  { value: 'dark', labelKey: 'settings.appIconBlack' },
 ];
 
 // Sliding selection indicator (SegmentedControl-style measured pill).
@@ -79,21 +59,7 @@ async function updateIndicator(): Promise<void> {
 
 watch(() => props.modelValue, updateIndicator, { immediate: true });
 
-let unmounted = false;
-onMounted(async () => {
-  darkMq = window.matchMedia('(prefers-color-scheme: dark)');
-  syncSystemDark();
-  darkMq.addEventListener('change', syncSystemDark);
-  if (canQueryOsAppearance()) {
-    const value = await getOsAppearance();
-    // The dialog may close while the IPC is in flight — don't subscribe
-    // anything after this async gap once unmounted.
-    if (unmounted) return;
-    if (value !== null) osDark.value = value === 'dark';
-    offOsAppearance = onOsAppearanceChanged((appearance) => {
-      osDark.value = appearance === 'dark';
-    });
-  }
+onMounted(() => {
   resizeObserver = new ResizeObserver(() => updateIndicator());
   if (root.value) resizeObserver.observe(root.value);
   for (const item of itemRefs.value) resizeObserver.observe(item);
@@ -101,9 +67,6 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
-  unmounted = true;
-  darkMq?.removeEventListener('change', syncSystemDark);
-  offOsAppearance?.();
   resizeObserver?.disconnect();
 });
 </script>
@@ -130,7 +93,7 @@ onBeforeUnmount(() => {
       @click="emit('update:modelValue', opt.value)"
     >
       <span class="dip-tile" aria-hidden="true">
-        <BrandLogo :size="31" :variant="variantFor(opt.value)" />
+        <BrandLogo :size="31" :variant="opt.value" />
       </span>
       <span class="dip-label">{{ t(opt.labelKey) }}</span>
     </button>

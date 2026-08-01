@@ -22,7 +22,7 @@ import { asJumpListWorkspaces, setJumpListLocale, updateJumpList } from './jump-
 import { popupWindowsMenu, setMenuLocale, setMenuShortcuts, setMenuSuspended, setTerminalMenuFocus, onTerminalMenuFocus } from './menu';
 import { setGlobalShortcut, setGlobalShortcutSuspended, setGlobalShortcutTerminalFocus } from './shortcuts';
 import { isVibrancyEnabled, markOnboarded, setVibrancyEnabled } from './ui-state';
-import { isDockIconChoice, osAppearance, setDockIconChoice } from './dock-icon';
+import { isDockIconChoice, setDockIconChoice } from './dock-icon';
 import { log, redactUrlForLog } from './log';
 import { createRendererLogWriter } from './renderer-log';
 import {
@@ -68,11 +68,10 @@ export function registerIpcHandlers(): void {
       nativeTheme.themeSource = scheme;
     }
   });
-  // Dock tile preference from the settings UI (light/dark/auto; dock-icon.ts).
+  // Dock tile preference from the settings UI (light/dark; dock-icon.ts).
   ipcMain.on(IPC.dockIconChoice, (_event, choice: unknown) => {
     if (isDockIconChoice(choice)) setDockIconChoice(choice);
   });
-  ipcMain.handle(IPC.osAppearance, () => osAppearance());
   ipcMain.handle(IPC.openExternal, (_event, url: string) =>
     // The rejection still propagates to the renderer's invoke promise; log it
     // main-side too so packaged builds keep a record (renderer console is

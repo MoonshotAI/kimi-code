@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { isOnboarded, isUpdateAutoDownloadEnabled, isVibrancyEnabled, loadUiState, markFirstLaunchReported, markOnboarded, setUpdateAutoDownloadEnabled, setVibrancyEnabled, shouldReportFirstLaunch } from '../../src/main/ui-state';
+import { isOnboarded, isUpdateAutoDownloadEnabled, isVibrancyEnabled, getDockIconChoice, loadUiState, markFirstLaunchReported, markOnboarded, saveDockIconChoice, setUpdateAutoDownloadEnabled, setVibrancyEnabled, shouldReportFirstLaunch } from '../../src/main/ui-state';
 
 describe('ui-state persistence', () => {
   let dir: string;
@@ -96,5 +96,24 @@ describe('ui-state persistence', () => {
     // Idempotent: marking again keeps the flag and other keys.
     markFirstLaunchReported(file);
     expect(shouldReportFirstLaunch(file)).toBe(false);
+  });
+
+  it('treats a missing or invalid dockIconChoice as undefined', () => {
+    expect(getDockIconChoice(file)).toBeUndefined();
+    writeFileSync(file, 'not json', 'utf-8');
+    expect(getDockIconChoice(file)).toBeUndefined();
+    writeFileSync(file, '{"dockIconChoice":"auto"}', 'utf-8'); // retired value
+    expect(getDockIconChoice(file)).toBeUndefined();
+    writeFileSync(file, '{"dockIconChoice":"blue"}', 'utf-8');
+    expect(getDockIconChoice(file)).toBeUndefined();
+  });
+
+  it('saveDockIconChoice round-trips and preserves other keys', () => {
+    writeFileSync(file, '{"onboarded":true}', 'utf-8');
+    saveDockIconChoice('dark', file);
+    expect(getDockIconChoice(file)).toBe('dark');
+    expect(loadUiState(file)).toEqual({ onboarded: true, dockIconChoice: 'dark' });
+    saveDockIconChoice('light', file);
+    expect(getDockIconChoice(file)).toBe('light');
   });
 });

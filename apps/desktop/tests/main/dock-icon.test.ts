@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { join } from 'node:path';
-import { dockIconPath, initDockIcon, isDockIconChoice, resolveDockIconDark } from '../../src/main/dock-icon';
+import { dockIconPath, initDockIcon, isDockIconChoice } from '../../src/main/dock-icon';
 
 describe('dockIconPath', () => {
   it('uses the light tile in light mode', () => {
@@ -23,29 +23,17 @@ describe('dockIconPath', () => {
 });
 
 describe('isDockIconChoice', () => {
-  it('accepts the three settings values', () => {
+  it('accepts the two settings values', () => {
     expect(isDockIconChoice('light')).toBe(true);
     expect(isDockIconChoice('dark')).toBe(true);
-    expect(isDockIconChoice('auto')).toBe(true);
   });
 
-  it('rejects anything else', () => {
+  it('rejects anything else, including the retired auto', () => {
+    expect(isDockIconChoice('auto')).toBe(false);
     expect(isDockIconChoice('system')).toBe(false);
     expect(isDockIconChoice('')).toBe(false);
     expect(isDockIconChoice(1)).toBe(false);
     expect(isDockIconChoice(null)).toBe(false);
-  });
-});
-
-describe('resolveDockIconDark', () => {
-  it('fixed choices ignore the OS appearance', () => {
-    expect(resolveDockIconDark('light', true)).toBe(false);
-    expect(resolveDockIconDark('dark', false)).toBe(true);
-  });
-
-  it('auto follows the OS appearance', () => {
-    expect(resolveDockIconDark('auto', true)).toBe(true);
-    expect(resolveDockIconDark('auto', false)).toBe(false);
   });
 });
 

@@ -89,8 +89,7 @@ vi.mock('../../src/main/ui-state', () => ({
   setVibrancyEnabled: mocks.setVibrancyEnabled,
 }));
 vi.mock('../../src/main/dock-icon', () => ({
-  isDockIconChoice: vi.fn((value: unknown) => value === 'light' || value === 'dark' || value === 'auto'),
-  osAppearance: vi.fn(() => 'light'),
+  isDockIconChoice: vi.fn((value: unknown) => value === 'light' || value === 'dark'),
   setDockIconChoice: mocks.setDockIconChoice,
 }));
 vi.mock('../../src/main/log', () => ({

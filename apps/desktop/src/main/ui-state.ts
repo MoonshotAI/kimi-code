@@ -16,6 +16,11 @@ export interface UiState {
   /** macOS frosted-sidebar material (window vibrancy). Default ON — only an
       explicit false disables (see window.ts vibrancyWindowOptions). */
   vibrancy?: boolean;
+  /** macOS Dock tile choice ('light' | 'dark'). The renderer's localStorage is
+      the source of truth, but it only arrives over IPC after the window boots
+      — this main-side copy seeds the very first tile at launch so a 'dark'
+      user never sees the light tile flash by (dock-icon.ts). */
+  dockIconChoice?: 'light' | 'dark';
   /** Auto-download updates in the background (updater.ts). Absent = disabled
       (opt-in via settings → advanced). */
   updateAutoDownload?: boolean;
@@ -72,6 +77,16 @@ export function isVibrancyEnabled(file?: string): boolean {
 
 export function setVibrancyEnabled(enabled: boolean, file: string = defaultStateFile()): void {
   writeUiState({ vibrancy: enabled }, file);
+}
+
+/** Saved Dock tile choice; undefined when never chosen (or unreadable). */
+export function getDockIconChoice(file?: string): 'light' | 'dark' | undefined {
+  const value = loadUiState(file).dockIconChoice;
+  return value === 'light' || value === 'dark' ? value : undefined;
+}
+
+export function saveDockIconChoice(choice: 'light' | 'dark', file: string = defaultStateFile()): void {
+  writeUiState({ dockIconChoice: choice }, file);
 }
 
 /** Product-level first launch: true until the first_launch telemetry event is

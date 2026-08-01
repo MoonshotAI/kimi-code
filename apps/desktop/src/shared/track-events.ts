@@ -36,7 +36,7 @@ const settingsChangedPropertiesSchema = z.discriminatedUnion('key', [
   z.object({ key: z.literal('vibrancy'), value: z.enum(['on', 'off']), ...settingsSourcePanel }),
   z.object({ key: z.literal('notifications'), value: z.enum(['on', 'off']), ...settingsSourcePanel }),
   z.object({ key: z.literal('open-in-default'), value: shortStringSchema, ...settingsSourcePanel }),
-  z.object({ key: z.literal('dock-icon'), value: z.enum(['light', 'dark', 'auto']), ...settingsSourcePanel }),
+  z.object({ key: z.literal('dock-icon'), value: z.enum(['light', 'dark']), ...settingsSourcePanel }),
   z.object({ key: z.literal('update-auto-download'), value: z.enum(['on', 'off']), ...settingsSourcePanel }),
 ]);
 

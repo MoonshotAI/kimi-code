@@ -545,6 +545,13 @@ function archiveTime(iso: string): string {
                 @update:model-value="emit('setColorScheme', $event as ColorScheme)"
               />
             </div>
+            <div class="row language-row">
+              <span class="rlabel">
+                {{ t('sidebar.language') }}
+                <span class="hint">{{ t('settings.languageHint') }}</span>
+              </span>
+              <LanguageSwitcher />
+            </div>
             <div class="row font-size-row">
               <span class="rlabel">
                 {{ t('settings.uiFontSize') }}
@@ -561,13 +568,6 @@ function archiveTime(iso: string): string {
                 :aria-label="t('settings.uiFontSize')"
                 @update:model-value="emit('setFontScale', $event as FontScale)"
               />
-            </div>
-            <div class="row language-row">
-              <span class="rlabel">
-                {{ t('sidebar.language') }}
-                <span class="hint">{{ t('settings.languageHint') }}</span>
-              </span>
-              <LanguageSwitcher />
             </div>
             </div>
           </section>

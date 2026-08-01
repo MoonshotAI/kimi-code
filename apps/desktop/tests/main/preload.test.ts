@@ -46,8 +46,6 @@ const WHITELIST = [
   'onUpdateStatus',
   'openExternal',
   'openInApp',
-  'getOsAppearance',
-  'onOsAppearanceChanged',
   'setDockIconChoice',
   'setGlobalShortcut',
   'setGlobalShortcutSuspended',
@@ -179,17 +177,6 @@ describe('kimiDesktop preload bridge', () => {
     expect(send).toHaveBeenCalledWith('kimi:dock-icon-choice', 'dark');
     exposed.setDockIconChoice('bogus');
     expect(send).toHaveBeenCalledTimes(9); // invalid choice ignored
-
-    invoke.mockResolvedValueOnce('dark');
-    await expect(exposed.getOsAppearance()).resolves.toBe('dark');
-    expect(invoke).toHaveBeenCalledWith('kimi:os-appearance');
-    invoke.mockResolvedValueOnce('junk');
-    await expect(exposed.getOsAppearance()).resolves.toBe('light'); // malformed → light
-
-    const offOs = exposed.onOsAppearanceChanged(() => {});
-    expect(on).toHaveBeenCalledWith('kimi:os-appearance-changed', expect.any(Function));
-    offOs();
-    expect(removeListener).toHaveBeenCalledWith('kimi:os-appearance-changed', expect.any(Function));
 
     // Jump List: validated workspace lists forward; junk is ignored.
     const workspaces = [{ name: 'kimi', root: '/work/kimi' }];

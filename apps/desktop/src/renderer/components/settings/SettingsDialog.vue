@@ -629,12 +629,12 @@ function archiveTime(iso: string): string {
                 @update:model-value="onColorScheme($event as ColorScheme)"
               />
             </div>
-            <div v-if="showDockIconRow" class="row">
+            <div class="row language-row">
               <span class="rlabel">
-                {{ t('settings.appIcon') }}
-                <span class="hint">{{ t('settings.appIconHint') }}</span>
+                {{ t('sidebar.language') }}
+                <span class="hint">{{ t('settings.languageHint') }}</span>
               </span>
-              <DockIconPicker :model-value="dockIconChoice" @update:model-value="onDockIconChange" />
+              <LanguageSwitcher />
             </div>
             <div class="row font-size-row">
               <span class="rlabel">
@@ -664,26 +664,12 @@ function archiveTime(iso: string): string {
                 @update:model-value="onVibrancyChange"
               />
             </div>
-            <div class="row language-row">
+            <div v-if="showDockIconRow" class="row">
               <span class="rlabel">
-                {{ t('sidebar.language') }}
-                <span class="hint">{{ t('settings.languageHint') }}</span>
+                {{ t('settings.appIcon') }}
+                <span class="hint">{{ t('settings.appIconHint') }}</span>
               </span>
-              <LanguageSwitcher />
-            </div>
-            <div v-if="openInAppOptions" class="row">
-              <span class="rlabel">
-                {{ t('settings.defaultOpenInApp') }}
-                <span class="hint">{{ t('settings.defaultOpenInAppHint') }}</span>
-              </span>
-              <div class="select-wrap">
-                <Select
-                  :model-value="openInSelectValue"
-                  :options="openInAppOptions"
-                  :aria-label="t('settings.defaultOpenInApp')"
-                  @update:model-value="onDefaultOpenInChange"
-                />
-              </div>
+              <DockIconPicker :model-value="dockIconChoice" @update:model-value="onDockIconChange" />
             </div>
             </div>
           </section>
@@ -714,6 +700,30 @@ function archiveTime(iso: string): string {
                 :label="t('settings.notifySound')"
                 @update:model-value="emit('setNotifySound', $event)"
               />
+            </div>
+            </div>
+          </section>
+
+          <!-- Desktop-only: default "open in <app>" target lives outside
+               Appearance — it's an integration preference, not a visual one.
+               The whole section hides without the bridge (web) or an empty
+               catalog (non-macOS), same rule the row used to have. -->
+          <section v-if="openInAppOptions" class="sec">
+            <h3 class="sec-title">{{ t('settings.openWith') }}</h3>
+            <div class="settings-group">
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.defaultOpenInApp') }}
+                <span class="hint">{{ t('settings.defaultOpenInAppHint') }}</span>
+              </span>
+              <div class="select-wrap">
+                <Select
+                  :model-value="openInSelectValue"
+                  :options="openInAppOptions"
+                  :aria-label="t('settings.defaultOpenInApp')"
+                  @update:model-value="onDefaultOpenInChange"
+                />
+              </div>
             </div>
             </div>
           </section>

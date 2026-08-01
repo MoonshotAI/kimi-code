@@ -24,8 +24,6 @@ export const IPC = {
   trayAttention: 'kimi:tray-attention',
   traySelectSession: 'kimi:tray-select-session',
   dockIconChoice: 'kimi:dock-icon-choice',
-  osAppearance: 'kimi:os-appearance',
-  osAppearanceChanged: 'kimi:os-appearance-changed',
   locale: 'kimi:locale',
   menuShortcut: 'kimi:menu-shortcut',
   menuSuspend: 'kimi:menu-suspend',
@@ -70,6 +68,5 @@ export type RendererEventChannel =
   | typeof IPC.updateStatus
   | typeof IPC.traySelectSession
   | typeof IPC.launchAction
-  | typeof IPC.osAppearanceChanged
   | typeof IPC.terminalOutput
   | typeof IPC.terminalExit;

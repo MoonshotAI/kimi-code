@@ -164,8 +164,9 @@ export function main(): void {
         });
       }
     });
-    // Dock icon follows the effective appearance (dark/light tile swap);
-    // packaged builds additionally keep the static .icns for Finder etc.
+    // Dock icon applies the user's tile preference (seeded from ui-state.json
+    // so the first tile is right); packaged builds additionally keep the
+    // static .icns for Finder etc.
     initDockIcon();
     registerRendererProtocol(rendererDistRoot);
     // No startup global-shortcut registration: the renderer replays the saved
