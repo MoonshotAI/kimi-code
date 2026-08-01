@@ -157,6 +157,14 @@ export class AcpSession {
   private readonly pendingPromptAborts = new Set<{ aborted: boolean }>();
 
   /**
+   * Number of {@link runTurnBody} invocations that have not yet settled.
+   * Used by {@link steer} to decide whether `_session/steering` can inject
+   * into a live ACP-owned turn. Compression-only windows (tracked by
+   * {@link pendingPromptAborts}) do not count — there is no turn yet.
+   */
+  private activePromptDepth = 0;
+
+  /**
    * The most recent command palette advertised to the ACP client. Used by
    * `/help` so the response matches the client's `available_commands_update`
    * snapshot, including dynamically discovered skill commands.
@@ -768,6 +776,39 @@ export class AcpSession {
   }
 
   /**
+   * Inject content into the turn currently owned by an in-flight ACP
+   * `session/prompt`, via SDK {@link Session.steer}.
+   *
+   * Wire contract (`_session/steering`, advertised by
+   * `InitializeResponse._meta.steering.supported`):
+   *  - `{ outcome: "injected" }` when a turn is running.
+   *  - `invalidRequest` when idle — content is left unconsumed so the
+   *    host can submit it as a normal `session/prompt`. Kimi does **not**
+   *    return claude-agent-acp's `startedNewTurn` (that path starts a
+   *    detached turn whose lifecycle no ACP request owns; see #2370).
+   *    SDK `Session.steer()` would launch a new turn when idle, so we
+   *    deliberately gate on {@link activePromptDepth} rather than calling
+   *    it blindly.
+   */
+  async steer(blocks: readonly ContentBlock[]): Promise<{ outcome: 'injected' }> {
+    if (this.activePromptDepth === 0) {
+      throw RequestError.invalidRequest(
+        { reason: 'no_active_turn' },
+        'No turn is running; submit the message via session/prompt instead',
+      );
+    }
+    const parts = acpBlocksToPromptParts(blocks);
+    if (parts.length === 0) {
+      throw RequestError.invalidParams(
+        undefined,
+        'steering prompt must contain at least one usable content block',
+      );
+    }
+    await this.session.steer(parts);
+    return { outcome: 'injected' };
+  }
+
+  /**
    * Run an ACP `session/prompt` against the underlying SDK session.
    *
    * Error mapping (Phase 11.1):
@@ -989,6 +1030,10 @@ export class AcpSession {
     conn: AgentSideConnection,
     kick: () => Promise<unknown>,
   ): Promise<PromptResponse> {
+    // Count this prompt so `_session/steering` can inject while the ACP
+    // request still owns the turn. Decremented in `finally` so every
+    // settle path (success, cancel, reject) clears the gate.
+    this.activePromptDepth += 1;
     return new Promise<PromptResponse>((resolve, reject) => {
       let settled = false;
       const isFromMainAgent = (event: { agentId?: string }): boolean =>
@@ -1279,6 +1324,8 @@ export class AcpSession {
         unsub();
         reject(mapPromptError(err, sessionId));
       });
+    }).finally(() => {
+      this.activePromptDepth -= 1;
     });
   }
 

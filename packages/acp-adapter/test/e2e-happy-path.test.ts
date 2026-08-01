@@ -187,6 +187,8 @@ describe('AcpServer end-to-end happy path', () => {
       type: 'terminal',
       args: ['--login'],
     });
+    // Mid-turn steering (issue #2370): hosts detect via top-level `_meta`.
+    expect(response._meta).toEqual({ steering: { supported: true } });
   });
 
   it('drives the full happy path: initialize → newSession → prompt(end_turn)', async () => {
