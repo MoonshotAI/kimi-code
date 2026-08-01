@@ -6,6 +6,9 @@ settings:
 
 catalogs:
   default:
+    pathe:
+      specifier: ^2.0.3
+      version: 2.0.3
     zod:
       specifier: 4.3.6
       version: 4.3.6
@@ -101,6 +104,9 @@ importers:
       '@moonshot-ai/i18n-shared':
         specifier: workspace:^
         version: link:../../packages/i18n-shared
+      '@moonshot-ai/kaos':
+        specifier: workspace:^
+        version: link:../../packages/kaos
       '@moonshot-ai/kap-server':
         specifier: workspace:^
         version: link:../../packages/kap-server
@@ -882,6 +888,9 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../agent-core-v2
+      '@moonshot-ai/kimi-agent':
+        specifier: workspace:^
+        version: link:../kimi-agent
       '@moonshot-ai/kimi-i18n':
         specifier: workspace:^
         version: link:../i18n
@@ -921,6 +930,16 @@ importers:
         version: 4.21.0
 
   packages/kimi-agent:
+    dependencies:
+      '@moonshot-ai/kimi-i18n':
+        specifier: workspace:*
+        version: link:../i18n
+      pathe:
+        specifier: 'catalog:'
+        version: 2.0.3
+      zod:
+        specifier: 'catalog:'
+        version: 4.3.6
     devDependencies:
       '@moonshot-ai/agent-core':
         specifier: workspace:*
