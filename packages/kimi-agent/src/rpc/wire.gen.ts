@@ -262,6 +262,36 @@ export interface PluginGetParams {
   id: string;
 }
 
+export interface SessionExportParams {
+  /** Session id to export. */
+  session_id: string;
+  homedir?: string | undefined;
+  web_log?: string | undefined;
+}
+
+export interface SessionFsParams {
+  /** Session id (identity for the host). */
+  session_id: string;
+  /** Action: `read` or `list` (globs are resolved against the workspace root via the native toolset). */
+  action: string;
+  path?: string | undefined;
+  line_offset?: number | undefined;
+  n_lines?: number | undefined;
+  query?: string | undefined;
+  limit?: number | undefined;
+}
+
+export interface SessionListToolsParams {
+  /** Session id (identity for the host). */
+  session_id: string;
+  /** Workspace root (session workdir) — sandbox for the native toolset. */
+  homedir?: string | undefined;
+}
+
+export interface ConfigSetParams {
+  patch: unknown;
+}
+
 export interface SessionInitParams {
   session_id: string;
 }
