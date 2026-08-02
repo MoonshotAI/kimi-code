@@ -1100,6 +1100,24 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return { path: data.path, diff: data.diff };
   }
 
+  // POST /sessions/{id}:git-branches → { branches: string[] }
+  // POST /sessions/{id}:git-checkout body { branch } → { branch: string }
+  async listBranches(sessionId: string): Promise<string[]> {
+    const data = await this.http.post<{ branches: string[] }>(
+      `/sessions/${encodeURIComponent(sessionId)}:git-branches`,
+      {},
+    );
+    return data.branches ?? [];
+  }
+
+  async switchBranch(sessionId: string, branch: string): Promise<{ branch: string }> {
+    const data = await this.http.post<{ branch: string }>(
+      `/sessions/${encodeURIComponent(sessionId)}:git-checkout`,
+      { branch },
+    );
+    return { branch: data.branch };
+  }
+
   getFileDownloadUrl(sessionId: string, path: string): string {
     const encodedPath = path.split('/').map((part) => encodeURIComponent(part)).join('/');
     return buildRestUrl(

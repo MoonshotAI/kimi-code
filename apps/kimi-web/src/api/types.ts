@@ -790,6 +790,10 @@ export interface KimiWebApi {
   grepFiles(sessionId: string, input: { pattern: string; regex?: boolean; caseSensitive?: boolean }): Promise<{ files: Array<{ path: string; matches: Array<{ line: number; col: number; text: string; before: string[]; after: string[] }> }>; filesScanned: number; truncated: boolean; elapsedMs: number }>;
   getGitStatus(sessionId: string, paths?: string[]): Promise<{ branch: string; ahead: number; behind: number; entries: Record<string, string>; additions: number; deletions: number; pullRequest: { number: number; state: string; url: string } | null }>;
   getFileDiff(sessionId: string, path: string): Promise<{ path: string; diff: string }>;
+  /** List local git branches for the session's cwd — POST /sessions/{id} action=git-branches. */
+  listBranches(sessionId: string): Promise<string[]>;
+  /** Switch the session's cwd to an existing branch — POST /sessions/{id} action=git-checkout. */
+  switchBranch(sessionId: string, branch: string): Promise<{ branch: string }>;
   getFileDownloadUrl(sessionId: string, path: string): string;
   openFile(sessionId: string, input: { path: string; line?: number }): Promise<{ opened: true }>;
   revealFile(sessionId: string, input: { path: string }): Promise<{ revealed: true }>;

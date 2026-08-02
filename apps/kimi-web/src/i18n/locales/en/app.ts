@@ -6,5 +6,6 @@ export default {
   authPageLogin: 'Sign in',
   connecting: 'Connecting…',
   connectRetrying: 'Cannot reach the server — retrying…',
+  backendNotRunning: 'The backend server is not running — start it with pnpm dev:server, then reload',
   internalBuildBanner: 'Internal testing only',
 } as const;

@@ -11,7 +11,7 @@ import { reactive, type ComputedRef, type Ref } from 'vue';
 import { getKimiWebApi } from '../../api';
 import { i18n } from '../../i18n';
 import { useConfirmDialog } from '../useConfirmDialog';
-import { isDaemonApiError } from '../../api/errors';
+import { isDaemonApiError, isDaemonNetworkError } from '../../api/errors';
 import { SERVER_AUTH_UNAUTHORIZED_CODE } from '../../api/daemon/http';
 import { isPlaceholderSessionUsage } from '../../api/daemon/mappers';
 import type {
@@ -442,6 +442,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         // The ServerAuthDialog explains this one — nothing to surface.
         connectIssue.value = null;
         return 'server-auth-required';
+      }
+      // The daemon is unreachable (fetch/parse failed, e.g. the backend is not
+      // running and the proxy returns an HTML error page). Surface a clear
+      // "backend not started" hint instead of the raw transport message, which
+      // would mention the /auth path and read like an auth problem.
+      if (isDaemonNetworkError(err)) {
+        connectIssue.value = t('app.backendNotRunning');
+        return 'retry';
       }
       // Surface the reason on the splash so "cannot connect" is diagnosable
       // instead of an unexplained spinner.
