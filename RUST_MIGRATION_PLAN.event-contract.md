@@ -173,15 +173,29 @@
 - 更新 `RUST_MIGRATION_PLAN.md` / `RUST_WORK_LOG.md` / 记忆文件。
 - 删除 dead 代码：`event-translate.ts` 已删；CLI/ACP 中删除的 case 分支；`#/events` 若有不再用的 re-export。
 
-## 6. 待定决策（实施前需定）
+## 6. 待定决策（已全部定案 2026-08-02）
 
-- **6.1 `llm.delta` 是否补 turn_id**：默认**不补**（接受引擎形状）。若消费方（TUI 渲染）需要 turn 归属，
-  可选：引擎在 loop 层给 delta 注入 `turn_id`（改动大，需改 LLM 流上下文）——默认不做，记为此选项。
-- **6.2 `goal.updated` 的 snapshot 形状**：翻译层现在做 snake→camel 深度映射（`mapGoalSnapshot`）。
-  删除翻译层后，snapshot 要么引擎直接产出 camelCase（需改 agent.rs + 重建引擎），要么消费方接受
-  snake_case snapshot。默认**消费方接受引擎原样 snapshot**（若字段够用）；若不够，改引擎。
-- **6.3 死事件删除的确认方式**：删除 §3.3 事件前，逐一 grep 消费方（CLI/ACP）确认无活分支引用。
-- **6.4 `session.shell.output` 发射点**：引擎发射点待核实（agent.rs 未直接见），实施时先定位。
+- **6.1 `llm.delta` 是否补 turn_id：** 定案——**不补**。CLI 的 `streamingUI` turn 上下文由
+  `turn.started`（带 `turn_id`）通过 `'turnId' in event` 通用钩子维护（session-event-handler.ts:255），
+  `handleAssistantDelta`/`handleThinkingDelta` 只读 `event.delta` 文本、不依赖事件自带 turnId。
+  引擎 wire 原样透传，消费方接受。
+- **6.2 `goal.updated` snapshot 形状：** 定案——**引擎直接产出 camelCase GoalSnapshot**
+  （`packages/kimi-agent/src/goal/mod.rs` 的 `GoalSnapshot`/`GoalBudgetReport` 加
+  `#[serde(rename_all = "camelCase")]`）。理由：CLI goal 渲染有 78 处 camelCase 字段消费
+  （goal box 核心 UI），改 snake_case 影响最大；引擎加 rename_all 后 snapshot wire 直接是
+  SDK 契约形状，消费方不变、无翻译。**需 rebuild 引擎**。风险点：UpdateGoal 等 goal 工具的
+  输入参数若反序列化 snake_case 输入会受影响——实施阶段一核实（若受影响，对该输入单独处理，
+  不让工具输入跟随 GoalSnapshot 的 rename）。
+- **6.3 死事件删除方式：** 定案——删除前**逐一 grep 消费方**确认无活分支。初查结论：
+  `turn.step.*`/`tool.progress`/`tool.call.delta`/`tool.list.updated`/`shell.started` 在
+  node-sdk 与 kimi-agent **无发射点**（agent-core 遗留），CLI 的 case 分支与 handler 在引擎
+  模式下不触发。删除顺序：① protocol 契约 → ② node-sdk（case 引用清理）→ ③ CLI/ACP 的
+  case 分支 + handler 函数（删函数前 grep 确认无其他引用）。
+- **6.4 `session.shell.output` 发射点：** 定案——已定位 `packages/kimi-agent/src/main.rs:1508`，
+  引擎确实发射，契约保留。
+- **6.5（补充）宿主合成事件字段统一 snake_case：** 定案——`config.update`/`permission.set_mode`/
+  `session.meta.updated`/`turn.steer`/`session.closed` 的字段改 snake_case（`model_alias` 等）。
+  已确认 CLI TUI 与 ACP adapter **不消费这些事件**（仅测试消费），改 snake_case 无阻力。
 
 ## 7. 风险与注意
 
