@@ -3,9 +3,9 @@ import {
   readConfigFile,
   readConfigFileForUpdate,
   writeConfigFile,
-  type KimiConfig,
-  type OAuthRef,
-} from '@moonshot-ai/agent-core';
+} from '#/legacy/config';
+import type { KimiConfig } from '#/legacy/config-schema';
+import type { OAuthRef } from '#/legacy/config-schema';
 import {
   applyManagedKimiCodeConfig,
   applyManagedKimiCodeLogoutConfig,

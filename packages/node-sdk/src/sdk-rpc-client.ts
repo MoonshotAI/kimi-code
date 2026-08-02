@@ -1,162 +1,52 @@
-import {
-  createRPC,
-  ensureConfigFile,
-  getRootLogger,
-  KimiCore,
-  noopTelemetryClient,
-  resolveConfigPath,
-  resolveKimiHome,
-  resolveLoggingConfig,
-  type CoreAPI,
-  type OAuthTokenProviderResolver,
-  type RPCMethods,
-  type SDKAPI,
-  type TelemetryClient,
-} from '@moonshot-ai/agent-core';
-import type { Kaos } from '@moonshot-ai/kaos';
-import { assertKimiHostIdentity, createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
+/**
+ * SDK harness assembly — the Rust engine is the only engine.
+ *
+ * `createKimiHarness` wires the SDK harness to `RustRpcClient`, which talks
+ * to the Rust agent engine (`@moonshot-ai/kimi-agent/rust-loop`) directly.
+ * The KimiCore-backed `SDKRpcClient` is gone with the TS engine.
+ *
+ * NOTE (packaging): `@moonshot-ai/kimi-agent` is a private workspace package;
+ * publishing `@moonshot-ai/kimi-code-sdk` requires the rust-loop bridge to be
+ * published or vendored — tracked as a release-planning follow-up.
+ */
+import * as rustLoop from '@moonshot-ai/kimi-agent/rust-loop';
 
 import { KimiAuthFacade } from '#/auth';
 import { KimiHarness } from '#/kimi-harness';
-import { ClientAPI, SDKRpcClientBase } from '#/rpc';
-import type {
-  CreateSessionOptions,
-  KimiHarnessOptions,
-  KimiHostIdentity,
-  OAuthRefreshOutcome,
-  ResumeSessionInput,
-  ResumedSessionSummary,
-  SessionSummary,
-} from '#/types';
+import type { KimiHarnessOptions } from '#/types';
+import { resolveConfigPath, resolveKimiHome } from '#/legacy/config';
 
-export interface SDKRpcClientOptions {
-  readonly homeDir?: string;
-  readonly configPath?: string;
-  readonly identity?: KimiHostIdentity;
-  readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver;
-  readonly skillDirs?: readonly string[];
-  readonly telemetry?: TelemetryClient;
-  readonly onOAuthRefresh?: (outcome: OAuthRefreshOutcome) => void;
-  /**
-   * Host UI mode (`'print'` for `kimi -p`, `'cli'` for the TUI, ...). Forwarded
-   * to the v1 core, which applies print-mode config defaults when it is
-   * `'print'`.
-   */
-  readonly uiMode?: string;
-  /**
-   * Optional override for the turn loop runner. When set, every session created
-   * by this client will use the provided function instead of the built-in JS
-   * turn loop. Used by the Rust agent engine (kimi-agent).
-   */
-  readonly runTurnOverride?: import('@moonshot-ai/agent-core').RunTurnOverride;
-}
-
-export class SDKRpcClient extends SDKRpcClientBase {
-  readonly homeDir: string;
-  readonly configPath: string;
-  readonly identity: KimiHostIdentity | undefined;
-  readonly telemetry: TelemetryClient;
-  readonly auth: KimiAuthFacade;
-  readonly core: KimiCore;
-
-  private readonly ready: Promise<RPCMethods<CoreAPI>>;
-
-  constructor(options: SDKRpcClientOptions = {}) {
-    super();
-    this.identity =
-      options.identity === undefined ? undefined : assertKimiHostIdentity(options.identity);
-    this.homeDir = resolveKimiHome(options.homeDir);
-    this.configPath = resolveConfigPath({
-      homeDir: this.homeDir,
-      configPath: options.configPath,
-    });
-    this.telemetry = options.telemetry ?? noopTelemetryClient;
-    this.auth = new KimiAuthFacade({
-      homeDir: this.homeDir,
-      configPath: this.configPath,
-      identity: this.identity,
-      onRefresh: options.onOAuthRefresh,
-    });
-
-    void getRootLogger().configure(resolveLoggingConfig({ homeDir: this.homeDir }));
-
-    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
-    this.core = new KimiCore(coreRpc, {
-      homeDir: options.homeDir,
-      configPath: this.configPath,
-      kimiRequestHeaders: this.createKimiRequestHeaders(),
-      resolveOAuthTokenProvider:
-        options.resolveOAuthTokenProvider ?? this.auth.resolveOAuthTokenProvider,
-      skillDirs: options.skillDirs,
-      telemetry: this.telemetry,
-      appVersion: this.identity?.version,
-      uiMode: options.uiMode,
-      runTurnOverride: options.runTurnOverride,
-    });
-    this.ready = sdkRpc(new ClientAPI(this));
-  }
-
-  async ensureConfigFile(): Promise<void> {
-    await ensureConfigFile(this.configPath);
-  }
-
-  async close(): Promise<void> {
-    try {
-      await getRootLogger().flush();
-    } catch {
-      // never let logger flush block process exit
-    }
-  }
-
-  protected async getRpc(): Promise<RPCMethods<CoreAPI>> {
-    return this.ready;
-  }
-
-  override async createSessionWithKaos(
-    input: CreateSessionOptions,
-    kaos: Kaos,
-    persistenceKaos?: Kaos,
-  ): Promise<SessionSummary> {
-    const { planMode, ...coreInput } = input;
-    const summary = await this.core.createSessionWithOverrides(coreInput, { kaos, persistenceKaos });
-    if (planMode) {
-      await this.setPlanMode({ sessionId: summary.id, enabled: true });
-    }
-    return summary;
-  }
-
-  override async resumeSessionWithKaos(
-    input: ResumeSessionInput,
-    kaos: Kaos,
-    persistenceKaos?: Kaos,
-  ): Promise<ResumedSessionSummary> {
-    return this.core.resumeSessionWithOverrides(
-      { ...input, sessionId: input.id },
-      { kaos, persistenceKaos },
-    );
-  }
-
-  private createKimiRequestHeaders(): Record<string, string> | undefined {
-    if (this.identity === undefined) return undefined;
-    return createKimiDefaultHeaders({
-      homeDir: this.homeDir,
-      ...this.identity,
-    });
-  }
-}
+import { RustRpcClient, type RustLoopApi } from './rust/rpc-client';
 
 export function createKimiHarness(options: KimiHarnessOptions): KimiHarness {
-  const rpc = new SDKRpcClient(options);
+  const homeDir = resolveKimiHome(options.homeDir);
+  const configPath = resolveConfigPath({
+    homeDir,
+    configPath: options.configPath,
+  });
+  const rpc = new RustRpcClient({
+    rustLoop: rustLoop as unknown as RustLoopApi,
+    homeDir,
+    configPath,
+    identity: options.identity,
+  });
+  const auth = new KimiAuthFacade({
+    homeDir,
+    configPath,
+    identity: options.identity,
+    onRefresh: options.onOAuthRefresh,
+  });
   return new KimiHarness(rpc, {
     identity: rpc.identity,
     uiMode: options.uiMode,
     homeDir: rpc.homeDir,
     configPath: rpc.configPath,
-    auth: rpc.auth,
+    auth,
     telemetry: rpc.telemetry,
     ensureConfigFile: () => rpc.ensureConfigFile(),
     onClose: () => rpc.close(),
-    imageLimits: rpc.core.imageLimits,
+    // The Rust engine owns image handling; no client-side ingestion limits.
+    imageLimits: undefined,
     sessionStartedProperties: options.sessionStartedProperties,
   });
 }

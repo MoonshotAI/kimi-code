@@ -25,7 +25,7 @@ import {
 } from '#/tui/controllers/editor-keyboard';
 import { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 import { parseImageMeta } from '#/utils/image/image-mime';
-import { ImageLimits, type KimiHarness } from '@moonshot-ai/kimi-code-sdk';
+import type { ImageLimits, KimiHarness } from '@moonshot-ai/kimi-code-sdk';
 
 // vitest hoists vi.mock/vi.hoisted above the imports above, so the mock still
 // applies to the editor-keyboard module that pulls in readClipboardMedia.
@@ -162,7 +162,7 @@ describe('clipboard image paste compression', () => {
     readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: big, mimeType: 'image/png' });
 
     const { store, pasteImage } = createPasteHarness({
-      imageLimits: new ImageLimits(process.env, { maxEdgePx: 800 }),
+      imageLimits: { maxEdgePx: 800 },
     });
     await pasteImage();
 

@@ -1,0 +1,68 @@
+/**
+ * Experimental feature flag types — local mirror of the retired
+ * `agent-core/flags` surface (type-only). The SDK hosts the flag registry
+ * shape so consumers (CLI/TUI) can render the experiments panel without
+ * importing agent-core.
+ *
+ * These types are copied verbatim from `agent-core/src/flags/*`; they describe
+ * a stable wire contract, so the mirror is a documentation/type concern, not
+ * runtime logic.
+ */
+
+/** Which layer consumes a flag — documentation/grouping only; not used in resolution. */
+export type FlagSurface = 'core' | 'tui' | 'both';
+
+/** Shape of a registry entry (id is a loose string so `as const satisfies` can validate it). */
+export interface FlagDefinitionInput {
+  readonly id: string;
+  /** @deprecated Use titleKey for i18n. Prefer titleKey for new flags. */
+  readonly title?: string;
+  /** @deprecated Use descKey for i18n. Prefer descKey for new flags. */
+  readonly description?: string;
+  /** i18n key for the flag title. Takes precedence over title if both are set. */
+  readonly titleKey?: string;
+  /** i18n key for the flag description. Takes precedence over description if both are set. */
+  readonly descKey?: string;
+  /** Full environment variable name, e.g. `KIMI_CODE_EXPERIMENTAL_MY_FEATURE`. Read directly by the resolver. */
+  readonly env: string;
+  readonly default: boolean;
+  readonly surface: FlagSurface;
+}
+
+/** FlagId-typed view so consumers can fetch a definition by its literal id. */
+export type FlagDefinition = FlagDefinitionInput & { readonly id: string };
+
+/** Loose flag id (the literal union collapsed to `string` for the wire). */
+export type FlagId = string;
+
+/** Resolved enabled-state of every experimental flag (flag id → enabled); used for the SDK snapshot. */
+export type ExperimentalFlagMap = Record<string, boolean>;
+
+/** User config overrides for experimental flags (flag id → enabled). */
+export type ExperimentalFlagConfig = Partial<Record<string, boolean>>;
+
+export type ExperimentalFlagSource = 'master-env' | 'env' | 'config' | 'default';
+
+export interface ExperimentalFeatureState {
+  /** Feature id. Typed as `string` because this is a runtime snapshot that
+   *  crosses the SDK/RPC boundary and must remain usable even when no flags are
+   *  registered (in which case the internal `FlagId` union collapses to `never`). */
+  readonly id: string;
+  readonly title: string;
+  readonly description: string;
+  readonly surface: FlagSurface;
+  readonly env: string;
+  readonly defaultEnabled: boolean;
+  readonly enabled: boolean;
+  readonly source: ExperimentalFlagSource;
+  readonly configValue?: boolean;
+}
+
+export interface ExperimentalFlagResolver {
+  enabled(id: string): boolean;
+  snapshot(): ExperimentalFlagMap;
+  enabledIds(): readonly string[];
+  explain(id: string): ExperimentalFeatureState | undefined;
+  explainAll(): readonly ExperimentalFeatureState[];
+  setConfigOverrides(overrides: ExperimentalFlagConfig | undefined): void;
+}

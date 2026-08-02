@@ -1,11 +1,7 @@
 import type { Kaos } from '@moonshot-ai/kaos';
-import {
-  ErrorCodes,
-  KimiError,
-  ImageLimits,
-  withTelemetryContext,
-  type ExperimentalFeatureState,
-} from '@moonshot-ai/agent-core';
+
+import { ErrorCodes, KimiError } from '#/legacy/errors';
+import type { TelemetryClient, TelemetryContextPatch, TelemetryProperties } from '#/types';
 
 import { Session } from '#/session';
 import type { KimiAuthFacade } from '#/auth';
@@ -29,11 +25,44 @@ import type {
   ReloadSessionInput,
   SessionSummary,
   SkillSummary,
-  TelemetryClient,
-  TelemetryContextPatch,
-  TelemetryProperties,
   TestMcpServerOptions,
 } from '#/types';
+
+/**
+ * Owner-scoped [image] limits for prompt-ingestion compression. The retired
+ * agent-core class is gone; hosts pass an opaque limits object (or none).
+ */
+export interface ImageLimits {
+  readonly maxEdgePx?: number | undefined;
+  readonly readByteBudget?: number | undefined;
+  readonly [key: string]: unknown;
+}
+
+// Re-export the flag types (local mirror) so harness consumers get the same
+// shape the retired agent-core exported.
+export type {
+  ExperimentalFeatureState,
+  ExperimentalFlagMap,
+  ExperimentalFlagSource,
+  FlagDefinition,
+  FlagDefinitionInput,
+  FlagId,
+  FlagSurface,
+} from '#/legacy/flags';
+import type { ExperimentalFeatureState } from '#/legacy/flags';
+
+/** Bind a context patch onto every track/setContext call of a telemetry
+ *  client (local port of the retired agent-core helper). */
+export function withTelemetryContext(
+  telemetry: TelemetryClient,
+  ctx: TelemetryContextPatch,
+): TelemetryClient {
+  return {
+    ...telemetry,
+    setContext: (patch) => telemetry.setContext?.({ ...ctx, ...patch }),
+    track: (event, properties) => telemetry.track(event, { ...ctx, ...properties }),
+  };
+}
 
 export interface KimiHarnessRuntimeOptions {
   readonly identity?: KimiHostIdentity;

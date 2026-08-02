@@ -22,9 +22,11 @@ import type { CoreAPI, ProtocolEvent, RPCMethods } from '@moonshot-ai/agent-core
 import { SDKRpcClientBase } from '#/rpc';
 import type {
   KimiConfig,
+  KimiHostIdentity,
   ListSessionsOptions,
   ResumedSessionSummary,
   SessionSummary,
+  TelemetryClient,
 } from '#/types';
 
 import { SessionEventTranslator } from './event-translate';
@@ -32,7 +34,7 @@ import {
   mapContextMessage,
   mapMcpServer,
   mapSkill,
-  mapStatus,
+  mapUsage,
   nativeUnavailable,
   promptText,
 } from './wire';
@@ -137,13 +139,19 @@ export interface RustRpcClientOptions {
   readonly rustLoop: RustLoopApi;
   readonly homeDir?: string;
   readonly configPath?: string;
-  readonly identity?: { readonly version?: string } | undefined;
+  readonly identity?: KimiHostIdentity | undefined;
   readonly skillDirs?: readonly string[];
   readonly resolveOAuthTokenProvider?: unknown;
-  readonly telemetry?: unknown;
+  readonly telemetry?: TelemetryClient;
   readonly onOAuthRefresh?: unknown;
   readonly uiMode?: string;
 }
+
+/** A no-op telemetry client (default when the host supplies none). */
+const noopTelemetryClient: TelemetryClient = {
+  track: () => {},
+  setContext: () => {},
+};
 
 /** Map an engine session record onto the SDK `SessionSummary`. */
 function mapSessionRecord(
@@ -170,7 +178,8 @@ function parseTime(value: string | undefined, fallback: number): number {
 export class RustRpcClient extends SDKRpcClientBase {
   readonly homeDir: string;
   readonly configPath: string;
-  readonly identity: { readonly version?: string } | undefined;
+  readonly identity: KimiHostIdentity | undefined;
+  readonly telemetry: TelemetryClient;
 
   private readonly rustLoop: RustLoopApi;
   /** Per-session wire→SDK translators (streaming deltas carry no turn id). */
@@ -183,6 +192,7 @@ export class RustRpcClient extends SDKRpcClientBase {
     this.homeDir = options.homeDir ?? '';
     this.configPath = options.configPath ?? '';
     this.identity = options.identity;
+    this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.rustLoop.installSessionHostHandlers({
       onEvent: (raw) => this.dispatchEngineEvent(raw),
       authorizeTool: (raw) => this.authorizeTool(raw),
@@ -291,14 +301,10 @@ export class RustRpcClient extends SDKRpcClientBase {
       steer: async ({ sessionId, input }: any) => {
         await r.sessionSteer(sessionId, [{ type: 'text', text: promptText(input) }]);
       },
-      swarm: async ({ sessionId, input }: any) => {
-        await r.sessionSetSwarmMode(sessionId, true, 'user');
-        await r.sessionPrompt(sessionId, [{ type: 'text', text: promptText(input) }]);
-      },
       cancel: async ({ sessionId }: any) => {
         await r.sessionCancel(sessionId);
       },
-      init: async ({ sessionId }: any) => {
+      generateAgentsMd: async ({ sessionId }: any) => {
         await r.sessionActivateSkill(sessionId, 'init');
       },
       setModel: async ({ sessionId, model }: any) => {
@@ -313,18 +319,42 @@ export class RustRpcClient extends SDKRpcClientBase {
         await (r as unknown as { permissionSetMode?(mode: string): Promise<unknown> })
           .permissionSetMode?.(mode);
       },
-      setPlanMode: async ({ sessionId, enabled }: any) => {
-        await r.sessionSetPlanMode(sessionId, enabled);
+      enterPlan: async ({ sessionId }: any) => {
+        await r.sessionSetPlanMode(sessionId, true);
       },
-      setSwarmMode: async ({ sessionId, enabled, trigger }: any) => {
-        await r.sessionSetSwarmMode(sessionId, enabled, trigger);
+      cancelPlan: async ({ sessionId }: any) => {
+        await r.sessionSetPlanMode(sessionId, false);
       },
+      clearPlan: async ({ sessionId }: any) => {
+        await r.sessionClearPlan(sessionId);
+      },
+      enterSwarm: async ({ sessionId, trigger }: any) => {
+        await r.sessionSetSwarmMode(sessionId, true, trigger);
+      },
+      exitSwarm: async ({ sessionId }: any) => {
+        await r.sessionSetSwarmMode(sessionId, false, 'exit');
+      },
+      getSwarmMode: async ({ sessionId }: any) => {
+        const status = await r.sessionGetStatus(sessionId);
+        return status?.swarm_mode ?? false;
+      },
+      beginCompaction: async ({ sessionId }: any) => {
+        await r.sessionCompact(sessionId);
+      },
+      cancelCompaction: async () => nativeUnavailable('cancelCompaction'),
+      registerTool: async () => {},
+      unregisterTool: async () => {},
+      setActiveTools: async () => {},
+      getTools: async () => [] as never,
       addAdditionalDir: async ({ id, path, persist }: any) => {
         const result = await r.sessionAddAdditionalDir(id, path, persist ?? true);
         return { additionalDirs: result?.additional_dirs ?? [] };
       },
       updateSessionMetadata: async ({ sessionId, patch }: any) => {
         await r.sessionUpdateMetadata(sessionId, patch);
+      },
+      renameSession: async ({ sessionId, title }: any) => {
+        await r.sessionUpdateMetadata(sessionId, { title });
       },
       runShellCommand: async ({ sessionId, command, commandId }: any) => {
         const result = await r.sessionRunShell(sessionId, command, undefined, commandId);
@@ -342,18 +372,45 @@ export class RustRpcClient extends SDKRpcClientBase {
         const result = await r.sessionStartBtw(sessionId);
         return result?.btw_id ?? '';
       },
-      endBtw: async ({ sessionId }: any) => {
-        await r.sessionEndBtw(sessionId);
-      },
 
       // ── State reads ────────────────────────────────────────────────────
-      getStatus: async ({ sessionId }: any) => {
+      getConfig: async ({ sessionId }: any) => {
         const status = await r.sessionGetStatus(sessionId);
         if (status === null) throw new Error('Session not found');
-        return mapStatus(status);
+        return {
+          modelAlias: status.model ?? undefined,
+          provider: status.model !== undefined ? { model: status.model } : undefined,
+          thinkingEffort: status.thinking_effort,
+          modelCapabilities: {
+            max_context_tokens: status.max_context_tokens,
+            max_input_tokens: status.max_context_tokens,
+          },
+          planMode: status.plan_mode,
+          swarmMode: status.swarm_mode,
+        } as never;
+      },
+      getPermission: async ({ sessionId }: any) => {
+        const status = await r.sessionGetStatus(sessionId);
+        return { mode: status?.permission ?? 'manual' } as never;
+      },
+      getModel: async ({ sessionId }: any) => {
+        const status = await r.sessionGetStatus(sessionId);
+        return status?.model ?? '';
+      },
+      getSessionMetadata: async ({ sessionId }: any) => {
+        const status = await r.sessionGetStatus(sessionId);
+        return {
+          createdAt: '0',
+          updatedAt: '0',
+          title: sessionId,
+          isCustomTitle: false,
+          custom: {},
+          agents: {},
+          ...(status?.model !== undefined ? { model: status.model } : {}),
+        } as never;
       },
       getUsage: async ({ sessionId }: any) => {
-        return (await r.sessionGetUsage(sessionId)) as never;
+        return mapUsage(await r.sessionGetUsage(sessionId)) as never;
       },
       getSessionWarnings: async ({ sessionId }: any) => {
         const result = await r.sessionGetWarnings(sessionId);
@@ -378,7 +435,7 @@ export class RustRpcClient extends SDKRpcClientBase {
       },
       getContext: async ({ sessionId }: any) => {
         const raw = await r.sessionGetContext(sessionId);
-        return this.mapContext(raw);
+        return this.mapContext(raw) as never;
       },
       clearContext: async ({ sessionId }: any) => {
         await r.sessionClearContext(sessionId);
@@ -389,17 +446,8 @@ export class RustRpcClient extends SDKRpcClientBase {
       undoHistory: async ({ sessionId, count }: any) => {
         await r.sessionUndoHistory(sessionId, count ?? 1);
       },
-      compact: async ({ sessionId, instruction }: any) => {
-        await r.sessionCompact(sessionId, instruction);
-      },
-      cancelCompaction: async () => {
-        nativeUnavailable('cancelCompaction');
-      },
       getPlan: async ({ sessionId }: any) => {
         return (await r.sessionGetPlan(sessionId)) as never;
-      },
-      clearPlan: async ({ sessionId }: any) => {
-        await r.sessionClearPlan(sessionId);
       },
       createGoal: async ({ sessionId, objective, replace }: any) => {
         return (await r.sessionGoalCreate(sessionId, objective, replace ?? false)) as never;
@@ -420,18 +468,18 @@ export class RustRpcClient extends SDKRpcClientBase {
         const result = await r.cronList();
         return { tasks: result?.tasks ?? [] } as never;
       },
-      listBackgroundTasks: async () => {
+      getBackground: async () => {
         const result = await r.bgList();
         return (result?.tasks ?? []) as never;
       },
-      getBackgroundTaskOutput: async ({ taskId }: any) => {
+      getBackgroundOutput: async ({ taskId }: any) => {
         const result = await r.bgOutput(taskId);
         return (result?.output ?? '') as never;
       },
-      stopBackgroundTask: async ({ taskId }: any) => {
+      stopBackground: async ({ taskId }: any) => {
         await r.bgStop(taskId);
       },
-      detachBackgroundTask: async ({ taskId }: any) => {
+      detachBackground: async ({ taskId }: any) => {
         await r.bgDetach(taskId);
       },
       waitForBackgroundTasksOnPrint: async () => {},
@@ -513,13 +561,14 @@ export class RustRpcClient extends SDKRpcClientBase {
   }
 
   private mapContext(raw: unknown): unknown {
-    if (raw === null || typeof raw !== 'object') return { messages: [] };
+    if (raw === null || typeof raw !== 'object') return { messages: [], tokenCount: 0 };
     const obj = raw as Record<string, unknown>;
     const messages = Array.isArray(obj['messages'])
       ? (obj['messages'] as Record<string, unknown>[]).map(mapContextMessage)
       : [];
     return {
       messages,
+      tokenCount: typeof obj['token_count'] === 'number' ? obj['token_count'] : 0,
       ...(obj['projectRoot'] !== undefined ? { projectRoot: obj['projectRoot'] } : {}),
       ...(obj['cwd'] !== undefined ? { cwd: obj['cwd'] } : {}),
       ...(obj['additionalDirs'] !== undefined ? { additionalDirs: obj['additionalDirs'] } : {}),

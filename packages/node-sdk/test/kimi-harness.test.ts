@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createKimiHarness, ImageLimits, KimiHarness, SDKRpcClientBase } from '#/index';
+import { createKimiHarness, KimiHarness, SDKRpcClientBase, type ImageLimits } from '#/index';
 
 import { recordingTelemetry } from './telemetry';
 import { TEST_IDENTITY } from './test-identity';
@@ -44,11 +44,9 @@ read_byte_budget = 65536
 
     const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
     try {
-      // The core was constructed in-process; its owner-scoped [image] limits
-      // must be readable on the harness for prompt-ingestion paths.
-      expect(harness.imageLimits).toBeInstanceOf(ImageLimits);
-      expect(harness.imageLimits?.maxEdgePx()).toBe(1200);
-      expect(harness.imageLimits?.readByteBudget()).toBe(65536);
+      // The Rust engine owns image handling; the SDK harness carries no
+      // client-side ingestion limits under the native engine.
+      expect(harness.imageLimits).toBeUndefined();
     } finally {
       await harness.close();
     }
@@ -60,16 +58,14 @@ read_byte_budget = 65536
 
     const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
     try {
-      expect(harness.imageLimits).toBeInstanceOf(ImageLimits);
-      expect(harness.imageLimits?.maxEdgePx()).toBe(2000);
-      expect(harness.imageLimits?.readByteBudget()).toBe(256 * 1024);
+      expect(harness.imageLimits).toBeUndefined();
     } finally {
       await harness.close();
     }
   });
 
   it('a hand-built harness returns the injected ImageLimits as-is', () => {
-    const limits = new ImageLimits(process.env, { maxEdgePx: 900 });
+    const limits: ImageLimits = { maxEdgePx: 900, readByteBudget: 65536 };
     const harness = new KimiHarness(new StubRpc(), {
       homeDir: '/tmp/home',
       configPath: '/tmp/config.toml',
@@ -81,6 +77,6 @@ read_byte_budget = 65536
     });
 
     expect(harness.imageLimits).toBe(limits);
-    expect(harness.imageLimits?.maxEdgePx()).toBe(900);
+    expect(harness.imageLimits?.maxEdgePx).toBe(900);
   });
 });

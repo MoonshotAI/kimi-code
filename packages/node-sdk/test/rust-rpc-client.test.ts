@@ -45,7 +45,8 @@ function fakeRustLoop(overrides: Partial<RustLoopApi> = {}): RustLoopApi & {
     sessionListMcpServers: async () => ({ servers: [] }),
     sessionGetUsage: async () => ({}),
     sessionGetWarnings: async () => ({ warnings: [] }),
-    sessionGetContext: async () => ({ messages: [] }),
+    sessionGetContext: async () => ({ messages: [], token_count: 100 }),
+    sessionGetPlan: async () => null,
     cronList: async () => ({ tasks: [] }),
     bgList: async () => ({ tasks: [] }),
     pluginList: async () => ({ plugins: [] }),
@@ -68,8 +69,7 @@ describe('RustRpcClient', () => {
   it('maps the engine status onto the SDK shape', async () => {
     const rust = fakeRustLoop();
     const client = new RustRpcClient({ rustLoop: rust });
-    const rpc = await client['getRpc']();
-    const status = await rpc.getStatus({ sessionId: 'ses_1' });
+    const status = await client.getStatus({ sessionId: 'ses_1' });
     expect(status.model).toBe('kimi-k2');
     expect(status.thinkingEffort).toBe('medium');
     expect(status.permission).toBe('auto');
@@ -131,11 +131,10 @@ describe('RustRpcClient', () => {
   it('prompts the engine with the session id and text parts', async () => {
     const rust = fakeRustLoop();
     const client = new RustRpcClient({ rustLoop: rust });
-    const rpc = await client['getRpc']();
-    await rpc.prompt({ sessionId: 'ses_1', input: 'say hi' });
-    expect(rust.calls['sessionPrompt']).toBeUndefined(); // record() not used for prompt
-    // sessionPrompt is the async fn; verify via the injected spy instead.
-    const calls = (rust as unknown as { promptCalls?: unknown[] })['promptCalls'];
-    expect(calls).toBeUndefined();
+    // The base-class prompt surface is fire-and-forget (void); the assertion
+    // is that the engine sessionPrompt call path resolves without throwing.
+    await expect(
+      client.prompt({ sessionId: 'ses_1', input: [{ type: 'text', text: 'say hi' }] }),
+    ).resolves.toBeUndefined();
   });
 });

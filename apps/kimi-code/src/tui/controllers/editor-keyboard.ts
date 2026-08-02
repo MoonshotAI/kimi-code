@@ -460,7 +460,7 @@ export class EditorKeyboardController {
     // paste so a config reload applies immediately); hosts without a harness
     // use the env/built-in default.
     const compressed = await compressImageForModel(media.bytes, meta.mime, {
-      maxEdge: this.host.harness?.imageLimits?.maxEdgePx(),
+      maxEdge: this.host.harness?.imageLimits?.maxEdgePx,
       telemetry: {
         client: {
           track: (event, properties) =>

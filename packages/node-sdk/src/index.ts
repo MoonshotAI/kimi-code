@@ -2,7 +2,7 @@ export { KimiHarness } from '#/kimi-harness';
 export type { KimiHarnessRuntimeOptions } from '#/kimi-harness';
 export { Session } from '#/session';
 export { KimiAuthFacade } from '#/auth';
-export { createKimiHarness, SDKRpcClient, type SDKRpcClientOptions } from '#/sdk-rpc-client';
+export { createKimiHarness } from '#/sdk-rpc-client';
 export {
   createKimiConfigRpc,
   KimiConfigRpcClient,
@@ -102,7 +102,7 @@ export {
   IMAGE_BYTE_BUDGET,
   MAX_IMAGE_EDGE_PX,
 } from '@moonshot-ai/agent-core';
-export { ImageLimits } from '@moonshot-ai/agent-core';
+export type { ImageLimits } from '#/kimi-harness';
 export type {
   CompressImageOptions,
   CompressImageResult,
@@ -121,7 +121,7 @@ export type {
   FlagDefinitionInput,
   FlagId,
   FlagSurface,
-} from '@moonshot-ai/agent-core';
+} from '#/legacy/flags';
 
 export type {
   KimiAuthCompleteFeedbackUploadInput,
