@@ -93,12 +93,6 @@ class LocalProcess implements KaosProcess {
     this._exitPromise = new Promise<number>((resolve, reject) => {
       child.on('exit', (code: number | null) => {
         this._exitCode = code ?? -1;
-      });
-      // `exit` can fire before stdout/stderr finish closing. Resolve only on
-      // `close` so callers that await wait() can consume every buffered chunk
-      // before releasing the process streams.
-      child.on('close', (code: number | null) => {
-        this._exitCode ??= code ?? -1;
         resolve(this._exitCode);
       });
       child.on('error', (error: Error) => {

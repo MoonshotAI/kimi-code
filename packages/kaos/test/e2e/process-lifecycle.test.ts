@@ -5,7 +5,7 @@
  * Run: pnpm exec vitest run packages/kaos/test/e2e/process-lifecycle.test.ts
  */
 
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -20,19 +20,6 @@ async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
     chunks.push(Buffer.from(chunk as Buffer));
   }
   return Buffer.concat(chunks);
-}
-
-async function waitForProcessExit(pid: number): Promise<void> {
-  for (let attempt = 0; attempt < 1_000; attempt++) {
-    try {
-      process.kill(pid, 0);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return;
-      throw error;
-    }
-    await new Promise<void>((resolve) => setImmediate(resolve));
-  }
-  throw new Error(`Process ${String(pid)} did not exit`);
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────
@@ -113,57 +100,17 @@ describe('e2e: process lifecycle', () => {
       expect(proc.exitCode).toBe(42);
     });
 
-    it.skipIf(process.platform === 'win32')(
-      'waits for inherited stdout after the direct child exits so late output remains readable',
-      async () => {
-        const releasePath = join(tempDir, 'release-grandchild');
-        const grandchildCode = `
-          const { existsSync, watch } = require('node:fs');
-          const { dirname } = require('node:path');
-          const releasePath = ${JSON.stringify(releasePath)};
-          const watcher = watch(dirname(releasePath), () => {
-            if (!existsSync(releasePath)) return;
-            watcher.close();
-            process.stdout.end('late output\\n');
-          });
-          process.send('ready');
-        `;
-        const parentCode = `
-          const { spawn } = require('node:child_process');
-          const child = spawn(process.execPath, ['-e', ${JSON.stringify(grandchildCode)}], {
-            stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
-          });
-          child.once('message', () => {
-            child.disconnect();
-            child.unref();
-            process.stderr.write('parent exiting\\n');
-          });
-        `;
-        const proc = await kaos.exec('node', '-e', parentCode);
-        const parentExiting = new Promise<void>((resolve) => {
-          proc.stderr.once('data', () => {
-            resolve();
-          });
-        });
-        const stdoutPromise = streamToBuffer(proc.stdout);
-        let waitResolved = false;
-        const waitPromise = proc.wait().then((exitCode) => {
-          waitResolved = true;
-          return exitCode;
-        });
+    it('allows wait-before-read when stdout exceeds the prefetch limit', async () => {
+      const outputBytes = 1024 * 1024;
+      const proc = await kaos.exec(
+        'node',
+        '-e',
+        `process.stdout.write(Buffer.alloc(${String(outputBytes)}, 0x61))`,
+      );
 
-        await parentExiting;
-        await waitForProcessExit(proc.pid);
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        const waitResolvedBeforeStreamClose = waitResolved;
-
-        await writeFile(releasePath, 'release');
-
-        await expect(waitPromise).resolves.toBe(0);
-        await expect(stdoutPromise).resolves.toEqual(Buffer.from('late output\n'));
-        expect(waitResolvedBeforeStreamClose).toBe(false);
-      },
-    );
+      await expect(proc.wait()).resolves.toBe(0);
+      await expect(streamToBuffer(proc.stdout)).resolves.toHaveLength(outputBytes);
+    });
   });
 
   describe('long-running process → kill', () => {
