@@ -19,6 +19,8 @@
  */
 import type { SdkRpcSurface } from '../rpc';
 import type { Event } from '../events';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'pathe';
 
 import { SDKRpcClientBase } from '#/rpc';
 import { ErrorCodes, KimiError } from '#/legacy/errors';
@@ -136,6 +138,11 @@ export interface RustLoopApi {
   sessionSave(sessionId: string): Promise<{ ok: boolean } | null>;
   sessionLoad(sessionId: string): Promise<{ found: boolean } | null>;
   sessionDelete(sessionId: string): Promise<{ deleted: boolean } | null>;
+  sessionFork(input: {
+    sessionId: string;
+    forkId: string;
+    title?: string;
+  }): Promise<{ forked: boolean } | null>;
   sessionDelete(sessionId: string): Promise<{ deleted: boolean } | null>;
   cronList(): Promise<{ tasks: unknown[] } | null>;
   bgList(): Promise<{ tasks: unknown[] } | null>;
@@ -396,7 +403,26 @@ export class RustRpcClient extends SDKRpcClientBase {
         const summary = await this.sessionSummaryFor(sessionId);
         return this.resumedSummary(summary, status);
       },
-      forkSession: async () => nativeUnavailable('forkSession'),
+      forkSession: async ({ sessionId, id, title, workDir }: any) => {
+        const result = await r.sessionFork({ sessionId, forkId: id ?? `${sessionId}_fork`, title });
+        if (!result || !result.forked) {
+          throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `Session not found: ${sessionId}`);
+        }
+        const forkId = id ?? `${sessionId}_fork`;
+        const now = Date.now();
+        const summary: SessionSummary = {
+          id: forkId,
+          workDir: workDir ?? this.workDirs.get(sessionId) ?? '',
+          sessionDir: workDir ?? this.workDirs.get(sessionId) ?? '',
+          title,
+          createdAt: now,
+          updatedAt: now,
+          metadata: {},
+        };
+        if (summary.workDir.length > 0) this.workDirs.set(forkId, summary.workDir);
+        this.translators.set(forkId, new SessionEventTranslator(forkId, 'main'));
+        return summary;
+      },
       archiveSession: async () => nativeUnavailable('archiveSession'),
       deleteSession: async ({ sessionId }: any) => {
         const result = await r.sessionDelete(sessionId);
@@ -480,7 +506,22 @@ export class RustRpcClient extends SDKRpcClientBase {
         await r.sessionUpdateMetadata(sessionId, patch);
       },
       renameSession: async ({ sessionId, title }: any) => {
+        // Missing sessions are unknown to the engine agent map ("no agent for
+        // session"); surface the SDK's session.not_found contract instead.
+        if (!this.sessionSummaries.has(sessionId)) {
+          throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `Session not found: ${sessionId}`, {
+            details: { sessionId },
+          });
+        }
         await r.sessionUpdateMetadata(sessionId, { title });
+        const summary = this.sessionSummaries.get(sessionId);
+        if (summary !== undefined) {
+          this.sessionSummaries.set(sessionId, { ...summary, title });
+          await this.patchSessionStateFile(summary.sessionDir, {
+            title,
+            isCustomTitle: true,
+          }).catch(() => {});
+        }
         this.emitSynthetic(sessionId, { type: 'session.renamed', title });
       },
       runShellCommand: async ({ sessionId, command, commandId }: any) => {
@@ -679,6 +720,23 @@ export class RustRpcClient extends SDKRpcClientBase {
       activatePluginCommand: async () => nativeUnavailable('activatePluginCommand'),
     };
     return impl as unknown as SdkRpcSurface;
+  }
+
+  private async patchSessionStateFile(
+    sessionDir: string | undefined,
+    patch: Record<string, unknown>,
+  ): Promise<void> {
+    if (sessionDir === undefined || sessionDir.length === 0) return;
+    const statePath = join(sessionDir, 'state.json');
+    let state: Record<string, unknown>;
+    try {
+      state = JSON.parse(await readFile(statePath, 'utf-8')) as Record<string, unknown>;
+    } catch {
+      // No host-side state.json (Rust engine persists sessions in its own
+      // store); nothing to sync.
+      return;
+    }
+    await writeFile(statePath, `${JSON.stringify({ ...state, ...patch }, null, 2)}\n`);
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────
