@@ -30,6 +30,7 @@ import type {
 } from '#/types';
 
 import { SessionEventTranslator } from './event-translate';
+import { WireEventWriter } from './wire-writer';
 import {
   mapContextMessage,
   mapMcpServer,
@@ -184,6 +185,8 @@ export class RustRpcClient extends SDKRpcClientBase {
   private readonly rustLoop: RustLoopApi;
   /** Per-session wire→SDK translators (streaming deltas carry no turn id). */
   private readonly translators = new Map<string, SessionEventTranslator>();
+  /** Per-session v1-compatible wire event history (host-side). */
+  private readonly wireWriters = new Map<string, WireEventWriter>();
   private readonly ready: Promise<RPCMethods<CoreAPI>>;
 
   constructor(options: RustRpcClientOptions) {
@@ -208,7 +211,31 @@ export class RustRpcClient extends SDKRpcClientBase {
     const translator = this.translators.get(sessionId);
     if (translator === undefined) return;
     const translated = translator.translate(raw);
-    if (translated !== null) this.receiveEvent(translated as unknown as ProtocolEvent);
+    if (translated !== null) {
+      this.receiveEvent(translated as unknown as ProtocolEvent);
+      void this.appendWireEvent(sessionId, translated);
+    }
+  }
+
+  /** Record a synthesized host event to the session's wire history (and the
+   *  SDK event bus), matching the retired KimiCore's wire surface. */
+  private emitSynthetic(
+    sessionId: string,
+    event: { type: string; [key: string]: unknown },
+  ): void {
+    this.receiveEvent(event as unknown as ProtocolEvent);
+    void this.appendWireEvent(sessionId, event);
+  }
+
+  private async appendWireEvent(
+    sessionId: string,
+    event: unknown,
+  ): Promise<void> {
+    try {
+      await this.wireWriters.get(sessionId)?.append(event as never);
+    } catch {
+      // Wire history is best-effort; never fail the operation for it.
+    }
   }
 
   private async authorizeTool(raw: unknown): Promise<{ block: boolean; resolved: boolean }> {
@@ -263,11 +290,20 @@ export class RustRpcClient extends SDKRpcClientBase {
           additionalDirs: additionalDirs ?? [],
         };
         this.translators.set(sessionId, new SessionEventTranslator(sessionId, 'main'));
+        if (this.homeDir.length > 0) {
+          try {
+            this.wireWriters.set(sessionId, await WireEventWriter.create(this.homeDir, sessionId));
+          } catch {
+            // No wire history without a home dir; operations still work.
+          }
+        }
         return summary;
       },
       closeSession: async ({ sessionId }: any) => {
         await r.sessionSave(sessionId);
+        this.emitSynthetic(sessionId, { type: 'session.closed', sessionId });
         this.translators.delete(sessionId);
+        this.wireWriters.delete(sessionId);
         this.clearSessionHandlers(sessionId);
       },
       listSessions: async ({ workDir }: ListSessionsOptions) => {
@@ -300,6 +336,10 @@ export class RustRpcClient extends SDKRpcClientBase {
       },
       steer: async ({ sessionId, input }: any) => {
         await r.sessionSteer(sessionId, [{ type: 'text', text: promptText(input) }]);
+        this.emitSynthetic(sessionId, {
+          type: 'turn.steer',
+          input: [{ type: 'text', text: promptText(input) }],
+        });
       },
       cancel: async ({ sessionId }: any) => {
         await r.sessionCancel(sessionId);
@@ -309,15 +349,21 @@ export class RustRpcClient extends SDKRpcClientBase {
       },
       setModel: async ({ sessionId, model }: any) => {
         await r.sessionSetModel(sessionId, model);
+        this.emitSynthetic(sessionId, { type: 'config.update', modelAlias: model });
       },
       setThinking: async ({ sessionId, effort }: any) => {
         await r.sessionSetThinking(sessionId, effort ?? null);
+        this.emitSynthetic(sessionId, {
+          type: 'config.update',
+          thinkingEffort: effort ?? null,
+        });
       },
-      setPermission: async ({ mode }: any) => {
+      setPermission: async ({ sessionId, mode }: any) => {
         // The engine gate mode is process-wide; a per-session value is
         // approximated by the last-set mode (documented limitation).
         await (r as unknown as { permissionSetMode?(mode: string): Promise<unknown> })
           .permissionSetMode?.(mode);
+        this.emitSynthetic(sessionId, { type: 'permission.set_mode', mode });
       },
       enterPlan: async ({ sessionId }: any) => {
         await r.sessionSetPlanMode(sessionId, true);
@@ -355,6 +401,7 @@ export class RustRpcClient extends SDKRpcClientBase {
       },
       renameSession: async ({ sessionId, title }: any) => {
         await r.sessionUpdateMetadata(sessionId, { title });
+        this.emitSynthetic(sessionId, { type: 'session.renamed', title });
       },
       runShellCommand: async ({ sessionId, command, commandId }: any) => {
         const result = await r.sessionRunShell(sessionId, command, undefined, commandId);
@@ -491,10 +538,14 @@ export class RustRpcClient extends SDKRpcClientBase {
       },
       getExperimentalFeatures: async () => [] as never,
       getKimiConfig: async () => {
-        return ((await r.configGet()) ?? {}) as KimiConfig;
+        const config = await r.configGet();
+        return (config ?? { providers: {}, models: {} }) as KimiConfig;
       },
-      setKimiConfig: async ({ patch }: any) => {
-        return ((await r.configSet(patch)) ?? {}) as KimiConfig;
+      setKimiConfig: async (patch: any) => {
+        await r.configSet(patch);
+        // The engine merges + persists; re-read to return the full config.
+        const config = await r.configGet();
+        return (config ?? {}) as KimiConfig;
       },
       removeKimiProvider: async () => nativeUnavailable('removeKimiProvider'),
       getConfigDiagnostics: async () => ({ warnings: [] }) as never,

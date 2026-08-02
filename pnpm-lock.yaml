@@ -1036,6 +1036,9 @@ importers:
       '@moonshot-ai/kimi-i18n':
         specifier: workspace:^
         version: link:../i18n
+      '@moonshot-ai/kimi-native-tools':
+        specifier: workspace:^
+        version: link:../kimi-native-tools
       '@moonshot-ai/protocol':
         specifier: workspace:^
         version: link:../protocol
@@ -1049,6 +1052,9 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@jsquash/webp':
+        specifier: ^1.5.0
+        version: 1.5.0
       '@moonshot-ai/agent-core':
         specifier: workspace:^
         version: link:../agent-core

@@ -57,11 +57,7 @@ export function withTelemetryContext(
   telemetry: TelemetryClient,
   ctx: TelemetryContextPatch,
 ): TelemetryClient {
-  return {
-    ...telemetry,
-    setContext: (patch) => telemetry.setContext?.({ ...ctx, ...patch }),
-    track: (event, properties) => telemetry.track(event, { ...ctx, ...properties }),
-  };
+  return telemetry.withContext?.(ctx) ?? telemetry;
 }
 
 export interface KimiHarnessRuntimeOptions {
@@ -340,7 +336,7 @@ export class KimiHarness {
         options.signal,
       );
     } catch (error) {
-      await this.rpc.cancelGlobalMcpServerAuth(started.flowId).catch(() => undefined);
+      await this.rpc.cancelGlobalMcpServerAuth(started.flowId).catch(() => {});
       throw error;
     }
   }
