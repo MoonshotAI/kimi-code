@@ -239,7 +239,8 @@ export abstract class SDKRpcClientBase {
   async createSession(input: CreateSessionOptions): Promise<SessionSummary> {
     const rpc = await this.getRpc();
     const { planMode, ...coreInput } = input;
-    const summary = await rpc.createSession(coreInput);
+    const workDir = requiredWorkDir('createSession', coreInput.workDir);
+    const summary = await rpc.createSession({ ...coreInput, workDir });
     if (planMode) {
       await rpc.enterPlan({
         sessionId: summary.id,
@@ -1004,4 +1005,13 @@ export class ClientAPI implements SDKAPI {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Validate that a session create/workspace operation carries a non-blank
+ *  workDir, mirroring the retired agent-core contract (`request.work_dir_required`). */
+function requiredWorkDir(operation: string, value: string | undefined): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new KimiError(ErrorCodes.REQUEST_WORK_DIR_REQUIRED, `${operation} requires workDir`);
+  }
+  return value;
 }

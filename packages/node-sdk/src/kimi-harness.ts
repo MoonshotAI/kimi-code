@@ -1,6 +1,7 @@
 import type { Kaos } from '@moonshot-ai/kaos';
 
 import { ErrorCodes, KimiError } from '#/legacy/errors';
+import { GlobalMcpConfigStore } from '#/legacy/global-mcp-config';
 import type { TelemetryClient, TelemetryContextPatch, TelemetryProperties } from '#/types';
 
 import { Session } from '#/session';
@@ -305,19 +306,19 @@ export class KimiHarness {
 
   /** User-global MCP entries from `<KIMI_CODE_HOME>/mcp.json` only. */
   async listMcpServers(): Promise<readonly McpServerConfig[]> {
-    return this.rpc.listGlobalMcpServers();
+    return new GlobalMcpConfigStore(this.homeDir).list();
   }
 
   async addMcpServer(server: McpServerConfig): Promise<readonly McpServerConfig[]> {
-    return this.rpc.addGlobalMcpServer(server);
+    return new GlobalMcpConfigStore(this.homeDir).add(server);
   }
 
   async updateMcpServer(server: McpServerConfig): Promise<readonly McpServerConfig[]> {
-    return this.rpc.updateGlobalMcpServer(server);
+    return new GlobalMcpConfigStore(this.homeDir).update(server);
   }
 
   async removeMcpServer(name: string): Promise<readonly McpServerConfig[]> {
-    return this.rpc.removeGlobalMcpServer(name);
+    return new GlobalMcpConfigStore(this.homeDir).remove(name);
   }
 
   async authenticateMcpServer(
