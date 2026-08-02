@@ -1030,6 +1030,9 @@ importers:
       '@antfu/utils':
         specifier: ^9.3.0
         version: 9.3.0
+      '@moonshot-ai/kimi-agent':
+        specifier: workspace:*
+        version: link:../kimi-agent
       '@moonshot-ai/kimi-i18n':
         specifier: workspace:^
         version: link:../i18n
