@@ -208,9 +208,21 @@
 
 ## 8. 进度追踪
 
-- [ ] 阶段 1：protocol 契约重写 + node-sdk 删翻译层
+- [x] **阶段 1：protocol 契约重写 + node-sdk 删翻译层**（2026-08-02，commit `1418021b5`）
+  - 引擎 `GoalSnapshot`/`GoalBudgetReport` serde camelCase、`GoalStatus` lowercase（rebuild 成功）。
+  - protocol 会话域 `AgentEvent` 重写为引擎 snake_case 形状 + 宿主合成事件 + 删 dead 事件
+    （turn.step.*/tool.progress/tool.call.delta/tool.list.updated/shell.started/completed），
+    同步 zod schema + VOLATILE_EVENT_TYPES。
+  - node-sdk：rpc-client/controller 透传引擎事件（只补 sessionId/agentId），合成事件 snake_case，
+    event-translate.ts 标记 deprecated（因 CLI 仍 import `mapGoalSnapshot` 暂留）。
+  - examples 与 config/auth-facade 测试迁移到本地/新形状。
+  - 验证：引擎 build ✓、protocol typecheck ✓、node-sdk src/examples typecheck ✓、49 非事件测试绿。
 - [ ] 阶段 2：CLI TUI 消费适配
 - [ ] 阶段 3：ACP adapter 消费适配
 - [ ] 阶段 4：kap-server 简化
 - [ ] 阶段 5：测试重写
-- [ ] 阶段 6：全量验证 + 收尾
+- [ ] 阶段 6：全量验证 + 收尾（删除 event-translate.ts、dead 接口/schema 清理）
+
+> 注意（2026-08-02）：工作区有协作者并行的 session/fork + cancellation + llmStep 改动
+> （kimi-agent turn_loop/agent.rs/types.rs、node-sdk types.ts/sdk-rpc-client.ts、session-cancel
+> 测试等）——与本专项无关，未提交，勿动。
