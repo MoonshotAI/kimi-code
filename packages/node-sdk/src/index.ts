@@ -145,11 +145,14 @@ export type * from '#/types';
 // The session engine (print-mode pilot + TUI native sessions) assembles MCP
 // servers, hooks, and the system prompt on the host. These entry points are
 // forwarded so apps never import @moonshot-ai/agent-core directly.
-export { loadMcpServers } from '@moonshot-ai/agent-core/mcp/config-loader';
+export { loadMcpServers } from '#/legacy/mcp-config-loader';
 // The schema entry type (mcp.json server entries) — aliased to avoid
 // clashing with the SDK's `McpServerConfig` (= GlobalMcpServerConfig, name-keyed).
-export type { McpServerConfig as McpServerConfigEntry } from '@moonshot-ai/agent-core/config/schema';
-export { PluginManager } from '@moonshot-ai/agent-core/plugin/manager';
+export type { McpServerConfig as McpServerConfigEntry } from '#/legacy/config-schema';
+export { PluginManager, type SkillRoot } from '#/legacy/plugin/manager';
+export type { HookDef, HookEventType } from '#/legacy/plugin/hooks';
+// The profile subsystem (prepareSystemPromptContext / DEFAULT_AGENT_PROFILES)
+// is still forwarded from agent-core — ported in a follow-up.
 export { prepareSystemPromptContext } from '@moonshot-ai/agent-core/profile/context';
 export { DEFAULT_AGENT_PROFILES } from '@moonshot-ai/agent-core/profile/default';
 export type {
