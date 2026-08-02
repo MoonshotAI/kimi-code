@@ -100,6 +100,24 @@ export interface SearchHit {
 export interface SearchOptions {
   op?: 'AND' | 'OR';
   limit?: number;
+  /**
+   * Max posting entries visited (decoded + merged) across all query terms.
+   * Terms are decoded most-selective-first and a term whose list would
+   * overflow the remaining budget contributes only its leading prefix, so an
+   * exhausted budget yields a SUBSET of the full matches — never false hits.
+   * Detect the shortfall via `searchBounded`'s `truncated` flag; plain
+   * `search` keeps returning just the (possibly partial) hits.
+   */
+  maxVisits?: number;
+}
+
+/** `search` outcome with its work accounting (see SearchOptions.maxVisits). */
+export interface BoundedSearchResult {
+  readonly hits: SearchHit[];
+  /** Posting entries actually visited across all query terms. */
+  readonly visits: number;
+  /** True when `maxVisits` cut one or more postings lists short. */
+  readonly truncated: boolean;
 }
 
 /** Staged text-index rebuild (see TextIndex.beginBuild): feed docs with
@@ -499,10 +517,40 @@ export class TextIndex {
     this.N--;
   }
 
-  /** Decoded base postings for a term (disk, cached; or memory). May still
-   *  contain tombstoned docIDs — callers filter via `removed`. */
-  private readBase(term: string): ReadonlyMap<number, number> {
-    if (this.memBase) return this.memBase.get(term) ?? EMPTY_MAP;
+  /**
+   * Decoded base postings for a term (disk, cached; or memory), budgeted:
+   * with `maxEntries`, a list longer than the budget is capped to its leading
+   * (lowest-docID) prefix and flagged `capped`. A capped read never populates
+   * the LRU cache, so a later uncapped query still decodes the full list.
+   * May still contain tombstoned docIDs — callers filter via `removed`.
+   */
+  private readBaseBounded(
+    term: string,
+    maxEntries: number | undefined,
+  ): { map: ReadonlyMap<number, number>; capped: boolean } {
+    if (this.memBase) {
+      const m = this.memBase.get(term);
+      if (m === undefined || maxEntries === undefined || m.size <= maxEntries) {
+        return { map: m ?? EMPTY_MAP, capped: false };
+      }
+      const out = new Map<number, number>();
+      let i = 0;
+      for (const [id, f] of m) {
+        if (i++ >= maxEntries) break;
+        out.set(id, f);
+      }
+      return { map: out, capped: true };
+    }
+
+    const entry = this.postings.get(term);
+    if (entry !== undefined && maxEntries !== undefined && entry.df > maxEntries) {
+      // Over budget before decoding even starts: cap the decode itself and
+      // skip the cache (a partial list must never be cached as complete).
+      const arr = this.pf ? this.pf.read(entry, maxEntries) : [];
+      const m = new Map<number, number>();
+      for (const [id, f] of arr) m.set(id, f);
+      return { map: m, capped: true };
+    }
 
     let arr = this.cache.get(term);
     if (arr) {
@@ -510,7 +558,6 @@ export class TextIndex {
       this.cache.delete(term);
       this.cache.set(term, arr);
     } else {
-      const entry = this.postings.get(term);
       arr = entry && this.pf ? this.pf.read(entry) : [];
       if (this.cacheTerms > 0) {
         this.cache.set(term, arr);
@@ -522,16 +569,45 @@ export class TextIndex {
     }
     const m = new Map<number, number>();
     for (const [id, f] of arr) m.set(id, f);
-    return m;
+    return { map: m, capped: false };
   }
 
-  /** Live postings for a term = (base ∪ delta) minus tombstones. */
-  private livePostings(term: string): Map<number, number> {
+  /**
+   * Live postings for a term = (base ∪ delta) minus tombstones, budgeted: at
+   * most `maxEntries` entries are visited (base first, then delta); `capped`
+   * flags a shortfall and `visited` reports the decoded/merged entry count
+   * feeding the query-level budget accounting.
+   */
+  private livePostingsBounded(
+    term: string,
+    maxEntries: number | undefined,
+  ): { map: Map<number, number>; capped: boolean; visited: number } {
     const out = new Map<number, number>();
-    for (const [id, f] of this.readBase(term)) if (!this.removed.has(id)) out.set(id, f);
+    let capped = false;
+    const base = this.readBaseBounded(term, maxEntries);
+    if (base.capped) capped = true;
+    for (const [id, f] of base.map) if (!this.removed.has(id)) out.set(id, f);
+    let visited = base.map.size;
     const d = this.delta.get(term);
-    if (d) for (const [id, f] of d) if (!this.removed.has(id)) out.set(id, f);
-    return out;
+    if (d) {
+      for (const [id, f] of d) {
+        if (maxEntries !== undefined && visited >= maxEntries) {
+          capped = true;
+          break;
+        }
+        visited++;
+        if (!this.removed.has(id)) out.set(id, f);
+      }
+    }
+    return { map: out, capped, visited };
+  }
+
+  /** Estimated document frequency without decoding the list: the on-disk
+   *  dictionary carries df, the memory base and delta know their size. */
+  private estimatedDf(term: string): number {
+    let n = this.memBase ? (this.memBase.get(term)?.size ?? 0) : (this.postings.get(term)?.df ?? 0);
+    n += this.delta.get(term)?.size ?? 0;
+    return n;
   }
 
   private idf(df: number): number {
@@ -539,13 +615,35 @@ export class TextIndex {
   }
 
   search(query: string, opts: SearchOptions = {}): SearchHit[] {
+    return this.searchBounded(query, opts).hits;
+  }
+
+  searchBounded(query: string, opts: SearchOptions = {}): BoundedSearchResult {
     const qtokens = [...new Set(this.queryTokenizer(query))];
-    if (!qtokens.length) return [];
+    if (!qtokens.length) return { hits: [], visits: 0, truncated: false };
     const op = opts.op ?? 'AND';
     const limit = opts.limit ?? 50;
 
+    // Decode the most selective terms first: under a visit budget the hot
+    // terms are the ones that get prefix-capped, and AND-intersection starts
+    // from the smallest candidate set either way. Order never changes the
+    // unbudgeted result.
+    const terms = qtokens
+      .map((t) => ({ t, df: this.estimatedDf(t) }))
+      .sort((a, b) => a.df - b.df);
+
+    let remaining = opts.maxVisits ?? Number.POSITIVE_INFINITY;
+    let visits = 0;
+    let truncated = false;
     const termMaps = new Map<string, Map<number, number>>();
-    for (const t of qtokens) termMaps.set(t, this.livePostings(t));
+    for (const { t } of terms) {
+      const cap = remaining === Number.POSITIVE_INFINITY ? undefined : Math.max(0, remaining);
+      const live = this.livePostingsBounded(t, cap);
+      termMaps.set(t, live.map);
+      visits += live.visited;
+      remaining -= live.visited;
+      if (live.capped) truncated = true;
+    }
 
     let candidates: Set<number>;
     if (op === 'OR') {
@@ -553,7 +651,7 @@ export class TextIndex {
       for (const m of termMaps.values()) for (const id of m.keys()) candidates.add(id);
     } else {
       const lists = [...termMaps.values()];
-      if (lists.some((m) => m.size === 0)) return [];
+      if (lists.some((m) => m.size === 0)) return { hits: [], visits, truncated };
       lists.sort((a, b) => a.size - b.size);
       candidates = new Set(lists[0]!.keys());
       for (let i = 1; i < lists.length && candidates.size; i++) {
@@ -574,7 +672,7 @@ export class TextIndex {
         if (key !== undefined) top.offer({ key, score });
       }
     }
-    return top.sorted();
+    return { hits: top.sorted(), visits, truncated };
   }
 
   /** Close the underlying postings file. */

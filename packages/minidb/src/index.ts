@@ -1420,14 +1420,29 @@ export class MiniDb<V = unknown> {
     return ok;
   }
 
-  search(name: string, q: string, opts: { op?: 'AND' | 'OR'; limit?: number } = {}): { key: string; value: V | undefined; score: number }[] {
+  search(name: string, q: string, opts: { op?: 'AND' | 'OR'; limit?: number; maxVisits?: number } = {}): { key: string; value: V | undefined; score: number }[] {
+    return this.searchBounded(name, q, opts).hits;
+  }
+
+  /**
+   * `search` with work accounting: `opts.maxVisits` bounds how many posting
+   * entries the index visits (see TextIndex.searchBounded); the result
+   * reports the visits and whether the budget truncated the candidate set
+   * (hits are then a subset of the full matches, never false hits).
+   */
+  searchBounded(
+    name: string,
+    q: string,
+    opts: { op?: 'AND' | 'OR'; limit?: number; maxVisits?: number } = {},
+  ): { hits: { key: string; value: V; score: number }[]; visits: number; truncated: boolean } {
     this.ensureOpen();
     const ti = this.text.get(name);
     if (!ti) throw new Error(`no such text index: ${name}`);
-    return ti
-      .search(q, opts)
+    const res = ti.searchBounded(q, opts);
+    const hits = res.hits
       .map(({ key, score }) => ({ key: fromKStr(key), value: this.decode(this.store.get(key)), score }))
       .filter((r): r is { key: string; value: V; score: number } => r.value !== undefined);
+    return { hits, visits: res.visits, truncated: res.truncated };
   }
 
   private indexPredicates(filter?: Record<string, unknown>): { field: string; cond: unknown }[] {

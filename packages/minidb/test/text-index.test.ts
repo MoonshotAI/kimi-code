@@ -670,3 +670,117 @@ test('TextIndex: overwrite/remove prune the delta via the doc reverse map', () =
   assert.equal(ti.termCount(), 1, 'only mango remains');
   ti.close();
 });
+
+
+// ---- query-time postings budget (maxVisits / searchBounded) ---------------
+
+test('TextIndex: maxVisits truncates a hot term and reports visits (disk-backed)', async () => {
+  const dir = await tmpDir();
+  try {
+    const ti = new TextIndex({ postingsPath: path.join(dir, 't.postings') });
+    const entries: { key: string; value: { bio: string } }[] = [];
+    for (let i = 0; i < 500; i++) entries.push({ key: `k${String(i).padStart(4, '0')}`, value: { bio: 'x pad' } });
+    await ti.build(entries);
+
+    const full = ti.searchBounded('x', { limit: 1_000 });
+    assert.equal(full.hits.length, 500);
+    assert.equal(full.truncated, false);
+    assert.ok(full.visits >= 500);
+
+    const bounded = ti.searchBounded('x', { limit: 1_000, maxVisits: 100 });
+    assert.equal(bounded.truncated, true, 'the budget cut the hot list short');
+    assert.ok(bounded.visits <= 100, `visits stay within the budget, got ${bounded.visits}`);
+    assert.ok(bounded.hits.length > 0 && bounded.hits.length <= 100);
+    // A truncated result is a SUBSET of the full matches — never false hits.
+    const fullKeys = new Set(full.hits.map((h) => h.key));
+    for (const h of bounded.hits) assert.ok(fullKeys.has(h.key), `${h.key} is a real match`);
+
+    // The same options through plain search() keep returning just the hits.
+    assert.deepEqual(
+      ti.search('x', { limit: 1_000, maxVisits: 100 }).map((h) => h.key),
+      bounded.hits.map((h) => h.key),
+    );
+    // Unbudgeted callers are unaffected, and a capped read never poisoned the
+    // postings cache with a partial list.
+    assert.equal(ti.search('x', { limit: 1_000 }).length, 500);
+    ti.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('TextIndex: maxVisits caps the memory base the same way', async () => {
+  const ti = new TextIndex(); // memory base
+  for (let i = 0; i < 200; i++) ti.add(`k${String(i).padStart(4, '0')}`, { bio: 'x pad' });
+
+  const bounded = ti.searchBounded('x', { limit: 1_000, maxVisits: 50 });
+  assert.equal(bounded.truncated, true);
+  assert.ok(bounded.visits <= 50);
+  assert.ok(bounded.hits.length > 0 && bounded.hits.length <= 50);
+  assert.equal(ti.search('x', { limit: 1_000 }).length, 200, 'unbudgeted search unaffected');
+  ti.close();
+});
+
+test('TextIndex: AND under a budget yields a subset with complete per-doc scores', async () => {
+  const dir = await tmpDir();
+  try {
+    const ti = new TextIndex({ postingsPath: path.join(dir, 't.postings') });
+    const entries: { key: string; value: { bio: string } }[] = [];
+    // 'hot' appears in 500 docs, 'rare' in 3 of them.
+    for (let i = 0; i < 500; i++) {
+      const rare = i < 3 ? ' rare' : '';
+      entries.push({ key: `k${String(i).padStart(4, '0')}`, value: { bio: `hot pad${rare}` } });
+    }
+    await ti.build(entries);
+
+    const full = ti.searchBounded('hot rare', { limit: 1_000 });
+    assert.equal(full.hits.length, 3);
+
+    // The budget is exhausted by the hot term, but the selective term decodes
+    // first; the intersection can only shrink — a subset, never false hits.
+    // (Scores under a truncated budget are approximate: idf is computed from
+    // the decoded list, whose df the cap shrinks. The `truncated` flag is
+    // what tells the caller not to trust completeness.)
+    const bounded = ti.searchBounded('hot rare', { limit: 1_000, maxVisits: 60 });
+    assert.equal(bounded.truncated, true);
+    const fullKeys = new Set(full.hits.map((h) => h.key));
+    assert.ok(bounded.hits.length <= full.hits.length);
+    for (const h of bounded.hits) {
+      assert.ok(fullKeys.has(h.key), `${h.key} is a true AND match`);
+      assert.ok(h.score > 0);
+    }
+
+    // A zero budget cannot assemble any AND candidate set: empty + flagged.
+    const zero = ti.searchBounded('hot rare', { limit: 1_000, maxVisits: 0 });
+    assert.equal(zero.truncated, true);
+    assert.equal(zero.hits.length, 0);
+    ti.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('MiniDb: searchBounded surfaces values, visits and the truncated flag', async () => {
+  const dir = await tmpDir();
+  try {
+    const db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no' });
+    await db.createTextIndex('body', { fields: ['bio'] });
+    for (let i = 0; i < 300; i++) {
+      await db.set(`k${String(i).padStart(4, '0')}`, { bio: 'x pad', n: i });
+    }
+
+    const bounded = db.searchBounded('body', 'x', { limit: 1_000, maxVisits: 80 });
+    assert.equal(bounded.truncated, true);
+    assert.ok(bounded.visits <= 80);
+    assert.ok(bounded.hits.length > 0 && bounded.hits.length <= 80);
+    for (const h of bounded.hits) assert.equal(typeof h.value.n, 'number', 'hits carry decoded values');
+
+    const full = db.search('body', 'x', { limit: 1_000 });
+    assert.equal(full.length, 300);
+    const fullKeys = new Set(full.map((h) => h.key));
+    for (const h of bounded.hits) assert.ok(fullKeys.has(h.key));
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

@@ -71,13 +71,19 @@ export function encodePostingList(entries: readonly (readonly [number, number])[
   return Buffer.from(bytes);
 }
 
-/** Decode a payload back into [docID, freq] pairs (ascending docID). */
-export function decodePostingList(buf: Buffer): [number, number][] {
+/**
+ * Decode a payload back into [docID, freq] pairs (ascending docID). With
+ * `maxEntries`, only that many leading pairs are decoded (docIDs ascend, so
+ * this is the lowest-docID prefix): a query-time work budget can stop the
+ * decode of a hot term's list early instead of always paying its full length.
+ */
+export function decodePostingList(buf: Buffer, maxEntries?: number): [number, number][] {
   const cur = { i: 0 };
   const count = decodeVarint(buf, cur);
-  const out = Array.from<[number, number]>({ length: count });
+  const n = maxEntries === undefined ? count : Math.min(count, maxEntries);
+  const out = Array.from<[number, number]>({ length: n });
   let prev = 0;
-  for (let k = 0; k < count; k++) {
+  for (let k = 0; k < n; k++) {
     const d = decodeVarint(buf, cur);
     const freq = decodeVarint(buf, cur);
     prev += d;
@@ -175,8 +181,10 @@ export class PostingsFile {
     return this.fd !== null;
   }
 
-  /** Read + decode one term's postings record by dictionary pointer. */
-  read(entry: PostingEntry): [number, number][] {
+  /** Read + decode one term's postings record by dictionary pointer. With
+   *  `maxEntries`, only the leading (lowest-docID) part of the list is
+   *  decoded — see decodePostingList. */
+  read(entry: PostingEntry, maxEntries?: number): [number, number][] {
     if (this.fd === null) throw new Error('postings file is closed');
     const buf = Buffer.alloc(entry.len);
     let got = 0;
@@ -186,7 +194,7 @@ export class PostingsFile {
       got += r;
     }
     const rec = decodeRecord(buf);
-    return decodePostingList(rec.payload);
+    return decodePostingList(rec.payload, maxEntries);
   }
 
   close(): void {
