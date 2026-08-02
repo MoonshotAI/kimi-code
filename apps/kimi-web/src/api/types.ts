@@ -599,7 +599,8 @@ export interface KimiEventConnection {
 
 // ---------------------------------------------------------------------------
 // Model + Provider (app-facing, camelCase)
-// PRESUMED — not in current daemon docs; isolated in adapter, swap when backend defines them.
+// Implemented in kap-server (modelCatalog routes: /providers, /providers/{id},
+// /providers:refresh, /providers:refresh_oauth). Adapter-isolated for swap-friendliness.
 // ---------------------------------------------------------------------------
 
 export interface AppModel {
@@ -677,6 +678,29 @@ export interface AppConfig {
   experimental?: Record<string, boolean>;
   telemetry?: boolean;
   raw?: Record<string, unknown>;
+}
+
+/** camelCase App form of `WireMcpServerConfig` (snake_case on the wire). */
+export type AppMcpTransport = 'stdio' | 'http' | 'sse';
+
+export interface AppMcpServerConfig {
+  transport?: AppMcpTransport;
+  // stdio fields
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  executor?: 'local' | 'kaos';
+  // http / sse fields
+  url?: string;
+  headers?: Record<string, string>;
+  bearerTokenEnvVar?: string;
+  // common fields
+  enabled?: boolean;
+  startupTimeoutMs?: number;
+  toolTimeoutMs?: number;
+  enabledTools?: string[];
+  disabledTools?: string[];
 }
 
 /** A session-scoped skill the user can invoke from the slash menu. */
@@ -768,7 +792,8 @@ export interface KimiWebApi {
   browseFs(path?: string): Promise<FsBrowseResult>;
   getFsHome(): Promise<{ home: string; recentRoots: string[] }>;
 
-  // PRESUMED — not in current daemon docs; isolated in adapter, swap when backend defines them.
+  // Implemented in kap-server (modelCatalog routes: /providers, /providers/{id},
+// /providers:refresh, /providers:refresh_oauth). Adapter-isolated for swap-friendliness.
   listModels(): Promise<AppModel[]>;
   listProviders(): Promise<AppProvider[]>;
   addProvider(input: { type: string; apiKey?: string; baseUrl?: string; defaultModel?: string }): Promise<AppProvider>;
@@ -787,6 +812,14 @@ export interface KimiWebApi {
   // Config — REAL endpoints
   getConfig(): Promise<AppConfig>;
   setConfig(patch: Partial<AppConfig>): Promise<AppConfig>;
+
+  // MCP server config — REAL endpoints (user-level mcp.json management)
+  /** List MCP servers configured at the user level (<kimi-home>/mcp.json). */
+  listMcpServers(): Promise<Record<string, AppMcpServerConfig>>;
+  /** Upsert a user-level MCP server entry by name. Returns the updated full map. */
+  upsertMcpServer(name: string, config: AppMcpServerConfig): Promise<Record<string, AppMcpServerConfig>>;
+  /** Remove a user-level MCP server entry by name. */
+  deleteMcpServer(name: string): Promise<void>;
 
   // Auth — REAL endpoints
   getAuth(): Promise<{

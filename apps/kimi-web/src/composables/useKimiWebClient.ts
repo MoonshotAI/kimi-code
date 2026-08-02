@@ -57,6 +57,7 @@ import type {
   AppApprovalRequest,
   AppConfig,
   AppGoal,
+  AppMcpServerConfig,
   AppNotice,
   AppNoticeDetail,
   AppMessage,
@@ -377,6 +378,13 @@ export interface ExtendedState extends KimiClientState {
   sessionsInitialCountByWorkspace: Record<string, number>;
   /** True once every session has been loaded (after a search-triggered full drain). */
   sessionsFullyLoaded: boolean;
+  /** User-level MCP server configurations (mirror of <kimi-home>/mcp.json).
+   *  Loaded on demand by Settings → Extensions; undefined until first load. */
+  mcpServers: Record<string, import('../api/types').AppMcpServerConfig> | undefined;
+  /** True while a list/upsert/delete MCP request is in flight. */
+  mcpServersLoading: boolean;
+  /** True when the last MCP list/load failed (drives Settings error state). */
+  mcpServersLoadError: boolean;
 }
 
 const rawState: ExtendedState = reactive({
@@ -424,6 +432,9 @@ const rawState: ExtendedState = reactive({
   sessionsCursorByWorkspace: {},
   sessionsInitialCountByWorkspace: {},
   sessionsFullyLoaded: false,
+  mcpServers: undefined,
+  mcpServersLoading: false,
+  mcpServersLoadError: false,
 });
 
 // ---------------------------------------------------------------------------
@@ -2265,6 +2276,13 @@ const defaultModel = computed<string | null>(() => rawState.defaultModel);
 const managedProviderStatus = computed<string | null>(() => rawState.managedProviderStatus);
 const config = computed<AppConfig | null>(() => rawState.config);
 
+// MCP server config (user-level mcp.json) — undefined until first load.
+const mcpServers = computed<Record<string, AppMcpServerConfig> | undefined>(
+  () => rawState.mcpServers,
+);
+const mcpServersLoading = computed<boolean>(() => rawState.mcpServersLoading);
+const mcpServersLoadError = computed<boolean>(() => rawState.mcpServersLoadError);
+
 /** path → status map for quick badge lookup in the file tree */
 const changesByPath = computed<Record<string, string>>(() => {
   const sid = rawState.activeSessionId;
@@ -2955,6 +2973,14 @@ export function useKimiWebClient() {
     // Config state + actions
     config,
     updateConfig: workspaceState.updateConfig,
+
+    // MCP server config (user-level mcp.json) — Settings → Extensions
+    mcpServers,
+    mcpServersLoading,
+    mcpServersLoadError,
+    loadMcpServers: workspaceState.loadMcpServers,
+    upsertMcpServer: workspaceState.upsertMcpServer,
+    deleteMcpServer: workspaceState.deleteMcpServer,
 
     // Auth actions
     checkAuth: workspaceState.checkAuth,

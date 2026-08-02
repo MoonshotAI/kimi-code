@@ -423,6 +423,42 @@ export interface WireConfig {
 }
 
 // ---------------------------------------------------------------------------
+// MCP server config wire DTOs
+// REAL endpoint: /api/v1/mcp/config/servers (user-level mcp.json management).
+// Wire form is snake_case; mappers convert to camelCase AppMcpServerConfig.
+// ---------------------------------------------------------------------------
+
+export type WireMcpTransport = 'stdio' | 'http' | 'sse';
+
+export interface WireMcpServerConfig {
+  transport?: WireMcpTransport;
+  // stdio fields
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  executor?: 'local' | 'kaos';
+  // http / sse fields
+  url?: string;
+  headers?: Record<string, string>;
+  bearer_token_env_var?: string;
+  // common fields
+  enabled?: boolean;
+  startup_timeout_ms?: number;
+  tool_timeout_ms?: number;
+  enabled_tools?: string[];
+  disabled_tools?: string[];
+}
+
+export interface WireListMcpServersResponse {
+  servers: Record<string, WireMcpServerConfig>;
+}
+
+export interface WireMcpServerNameParam {
+  name: string;
+}
+
+// ---------------------------------------------------------------------------
 // Auth wire DTOs — REAL endpoints (GET /api/v1/auth, POST/GET/DELETE /api/v1/oauth/login, POST /api/v1/oauth/logout)
 // ---------------------------------------------------------------------------
 

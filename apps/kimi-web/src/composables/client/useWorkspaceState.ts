@@ -2753,6 +2753,95 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
+  // -------------------------------------------------------------------------
+  // MCP server configuration (user-level mcp.json management).
+  // Loaded on demand by Settings → Extensions. The daemon is the single source
+  // of truth: every action re-reads the full map so concurrent edits from
+  // another client are reflected immediately, never overwritten from a stale
+  // cache. rawState.mcpServers stays undefined until the first successful load
+  // so the Settings UI can distinguish "never loaded" from "loaded empty".
+  // -------------------------------------------------------------------------
+
+  /** Load the user-level MCP server map from the daemon. Idempotent refresh —
+   *  safe to call repeatedly from Settings open / manual reload. Defensive:
+   *  surfaces failures via pushOperationFailure and flips mcpServersLoadError
+   *  so the Settings UI can show a retry affordance instead of a blank list. */
+  async function loadMcpServers(): Promise<void> {
+    rawState.mcpServersLoading = true;
+    try {
+      const api = getKimiWebApi();
+      const result = await api.listMcpServers();
+      rawState.mcpServers = result;
+      rawState.mcpServersLoadError = false;
+    } catch (err) {
+      // Keep any previously-loaded map so a transient failure doesn't blank
+      // the Settings list; only flip the error flag for the inline retry.
+      if (rawState.mcpServers === undefined) rawState.mcpServers = {};
+      rawState.mcpServersLoadError = true;
+      pushOperationFailure('loadMcpServers', err);
+    } finally {
+      rawState.mcpServersLoading = false;
+    }
+  }
+
+  /** Upsert one MCP server entry by name. The daemon returns the full updated
+   *  map, which is folded into rawState.mcpServers so Settings re-renders from
+   *  authoritative state. Resolves true on success, false on failure (already
+   *  surfaced via pushOperationFailure) so the form can keep its draft. */
+  async function upsertMcpServer(
+    name: string,
+    config: import('../../api/types').AppMcpServerConfig,
+  ): Promise<boolean> {
+    const trimmed = name.trim();
+    if (!trimmed) return false;
+    rawState.mcpServersLoading = true;
+    try {
+      const api = getKimiWebApi();
+      const result = await api.upsertMcpServer(trimmed, config);
+      rawState.mcpServers = result;
+      rawState.mcpServersLoadError = false;
+      return true;
+    } catch (err) {
+      pushOperationFailure('upsertMcpServer', err);
+      return false;
+    } finally {
+      rawState.mcpServersLoading = false;
+    }
+  }
+
+  /** Remove one MCP server entry by name. Re-reads the full map (the daemon
+   *  deletes and returns void, so we re-list to keep the local mirror honest).
+   *  Resolves true on success, false on failure (already surfaced). */
+  async function deleteMcpServer(name: string): Promise<boolean> {
+    rawState.mcpServersLoading = true;
+    try {
+      const api = getKimiWebApi();
+      await api.deleteMcpServer(name);
+      // Drop the entry locally first so the UI updates immediately, then
+      // re-list to pick up any concurrent edits from another client.
+      if (rawState.mcpServers !== undefined) {
+        const next = { ...rawState.mcpServers };
+        delete next[name];
+        rawState.mcpServers = next;
+      }
+      try {
+        rawState.mcpServers = await api.listMcpServers();
+        rawState.mcpServersLoadError = false;
+      } catch (err) {
+        // The delete succeeded but the re-list failed — keep the locally-
+        // dropped entry and mark the error so Settings offers a manual reload.
+        rawState.mcpServersLoadError = true;
+        pushOperationFailure('loadMcpServers', err);
+      }
+      return true;
+    } catch (err) {
+      pushOperationFailure('deleteMcpServer', err);
+      return false;
+    } finally {
+      rawState.mcpServersLoading = false;
+    }
+  }
+
   return {
     loadFileDiff,
     clearFileDiff,
@@ -2833,6 +2922,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     searchFiles,
     loadOlderMessages,
     refreshSessionSidecars,
+    // MCP server config (user-level mcp.json)
+    loadMcpServers,
+    upsertMcpServer,
+    deleteMcpServer,
     /** True while any empty-composer first prompt is being created + submitted
      *  (the window covered by startingFirstPromptWorkspaces). Drives the
      *  empty-session "starting conversation…" loading state. Intentionally

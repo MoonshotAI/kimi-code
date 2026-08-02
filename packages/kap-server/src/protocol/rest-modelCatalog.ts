@@ -185,6 +185,25 @@ export const replaceProviderResponseSchema = z.object({
 export type ReplaceProviderResponse = z.infer<typeof replaceProviderResponseSchema>;
 
 // ---------------------------------------------------------------------------
+// PATCH /v1/providers/{provider_id} — partial provider edit
+// ---------------------------------------------------------------------------
+
+/**
+ * The web client's "edit one field" payload: every field is optional, absent
+ * means "keep the stored value". `models` is intentionally absent — a partial
+ * patch never rebuilds the alias set (use PUT for that). `api_key` keeps the
+ * tri-state semantics of PUT: omitted preserves, `""` clears, else replaces.
+ * `new_id` is not supported here — rename is a full-replace concern (PUT).
+ */
+export const patchProviderRequestSchema = z.object({
+  type: providerWireTypeSchema.optional(),
+  api_key: z.string().optional(),
+  base_url: z.string().trim().optional(),
+  default_model: z.string().min(1).optional(),
+});
+export type PatchProviderRequest = z.infer<typeof patchProviderRequestSchema>;
+
+// ---------------------------------------------------------------------------
 // GET /v1/catalog/providers[{catalog_id}] — models.dev directory (proxied)
 // ---------------------------------------------------------------------------
 

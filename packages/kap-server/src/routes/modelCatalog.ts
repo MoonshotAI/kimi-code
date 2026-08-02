@@ -87,6 +87,7 @@ import {
   providerCollectionActionBodySchema,
   replaceProviderRequestSchema,
   replaceProviderResponseSchema,
+  patchProviderRequestSchema,
   type ProviderCollectionActionBody,
 } from '../protocol/rest-modelCatalog';
 import { parseActionSuffix } from './action-suffix';
@@ -109,6 +110,14 @@ interface ModelCatalogRouteHost {
     ) => Promise<void> | void,
   ): unknown;
   put(
+    path: string,
+    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
+    handler: (
+      req: { id: string; body: unknown; params: unknown },
+      reply: { send(payload: unknown): unknown },
+    ) => Promise<void> | void,
+  ): unknown;
+  patch(
     path: string,
     options: { preHandler: unknown[]; schema?: Record<string, unknown> },
     handler: (
@@ -575,6 +584,83 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     replaceProviderRoute.path,
     replaceProviderRoute.options,
     replaceProviderRoute.handler as Parameters<ModelCatalogRouteHost['put']>[2],
+  );
+
+  const patchProviderRoute = defineRoute(
+    {
+      method: 'PATCH',
+      path: '/providers/{provider_id}',
+      params: providerIdParamSchema,
+      body: patchProviderRequestSchema,
+      success: { data: replaceProviderResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.PROVIDER_OAUTH_MANAGED]: {},
+        [ErrorCode.PROVIDER_NOT_FOUND]: {},
+      },
+      description:
+        'Partially update a provider: every body field is optional, absent means "keep the stored value". ' +
+        'Model aliases are never rebuilt here — use PUT for that. `api_key` is tri-state (omitted keeps, "" clears, else replaces). ' +
+        'Rename is not supported (use PUT with `new_id`). Answers 200 with `{provider}`. OAuth-managed providers are rejected.',
+      tags: ['providers'],
+      operationId: 'patchProvider',
+    },
+    async (req, reply) => {
+      await enqueueProviderWrite(async () => {
+        const config = await loadConfig(core);
+        const { provider_id } = req.params;
+        const providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
+        const target = providers[provider_id];
+        if (target === undefined) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.PROVIDER_NOT_FOUND,
+              `provider ${provider_id} does not exist`,
+              req.id,
+            ),
+          );
+          return;
+        }
+        if (target.oauth !== undefined) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.PROVIDER_OAUTH_MANAGED,
+              `provider ${provider_id} is managed by OAuth login; use POST /oauth/logout instead`,
+              req.id,
+            ),
+          );
+          return;
+        }
+
+        // Partial merge: start from the stored record, overlay only the fields
+        // the body carries. Absent = keep (unlike PUT, which clears). The
+        // explicit `undefined` assignments below are only for fields the body
+        // actually carries — a missing key must NOT touch the stored value.
+        const provider: ProviderConfig = { ...target };
+        if (req.body.type !== undefined) provider.type = req.body.type;
+        // api_key tri-state: undefined (absent) keeps, "" clears, else replaces.
+        if (req.body.api_key !== undefined) provider.apiKey = req.body.api_key;
+        if (req.body.base_url !== undefined) provider.baseUrl = req.body.base_url;
+        if (req.body.default_model !== undefined) {
+          // The provider-level default references the model alias id
+          // (`<id>/<model>`), the same form create/replace persists.
+          provider.defaultModel = `${provider_id}/${req.body.default_model}`;
+        }
+
+        const nextProviders = { ...providers, [provider_id]: provider };
+        await config.replace(PROVIDERS_SECTION, nextProviders);
+        // Models section is intentionally untouched — a partial patch never
+        // rebuilds the alias set.
+
+        const saved = await core.accessor.get(IModelCatalog).getProvider(provider_id);
+        reply.send(okEnvelope({ provider: saved }, req.id));
+      });
+    },
+  );
+  app.patch(
+    patchProviderRoute.path,
+    patchProviderRoute.options,
+    patchProviderRoute.handler as Parameters<ModelCatalogRouteHost['patch']>[2],
   );
 
   const refreshProvidersRoute = defineRoute(

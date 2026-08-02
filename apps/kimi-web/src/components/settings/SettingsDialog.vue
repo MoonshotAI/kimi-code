@@ -12,7 +12,7 @@ import LanguageSwitcher from './LanguageSwitcher.vue';
 import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
 import type { Accent, ColorScheme } from '../../composables/useKimiWebClient';
-import type { AppConfig, AppModel } from '../../api/types';
+import type { AppConfig, AppModel, AppMcpServerConfig, AppMcpTransport } from '../../api/types';
 import Dialog from '../ui/Dialog.vue';
 import Switch from '../ui/Switch.vue';
 import Button from '../ui/Button.vue';
@@ -73,13 +73,15 @@ const emit = defineEmits<{
   close: [];
 }>();
 
-type SettingsTab = 'general' | 'agent' | 'account' | 'advanced' | 'archived';
+type SettingsTab = 'general' | 'agent' | 'mcp' | 'skills' | 'account' | 'advanced' | 'archived';
 
 const activeTab = ref<SettingsTab>('general');
 
 const tabs: { id: SettingsTab; labelKey: string }[] = [
   { id: 'general', labelKey: 'settings.tabs.general' },
   { id: 'agent', labelKey: 'settings.tabs.agent' },
+  { id: 'mcp', labelKey: 'settings.tabs.mcp' },
+  { id: 'skills', labelKey: 'settings.tabs.skills' },
   { id: 'account', labelKey: 'settings.tabs.account' },
   { id: 'advanced', labelKey: 'settings.tabs.advanced' },
   { id: 'archived', labelKey: 'settings.tabs.archived' },
@@ -270,6 +272,13 @@ watch(activeTab, (tab) => {
   if (tab === 'archived' && !archivedLoaded.value) {
     void loadAllArchived();
   }
+  if (
+    tab === 'mcp' &&
+    client.mcpServers.value === undefined &&
+    !client.mcpServersLoading.value
+  ) {
+    void client.loadMcpServers();
+  }
 });
 
 const archiveWorkspaces = computed<string[]>(() => {
@@ -322,6 +331,212 @@ function archiveTime(iso: string): string {
   const pad = (n: number): string => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+// ---------------------------------------------------------------------------
+// Extensions tab — MCP server CRUD (user-level mcp.json via kap-server) +
+// read-only skills directory (auto-discovered for the current session /
+// workspace). MCP state and actions live on the shared client composable;
+// only the edit form state is local to this dialog.
+// ---------------------------------------------------------------------------
+interface McpEnvRow { key: string; value: string }
+interface McpFormState {
+  mode: 'add' | 'edit';
+  originalName: string;
+  name: string;
+  transport: AppMcpTransport;
+  command: string;
+  argsText: string;
+  env: McpEnvRow[];
+  url: string;
+  headers: McpEnvRow[];
+  enabled: boolean;
+  toolTimeoutSec: string;
+}
+
+const mcpForm = ref<McpFormState | null>(null);
+const mcpSaving = ref(false);
+const mcpFormError = ref<string>('');
+
+const mcpTransports: AppMcpTransport[] = ['stdio', 'http', 'sse'];
+
+const mcpServerEntries = computed<Array<{ name: string; config: AppMcpServerConfig }>>(() => {
+  const map = client.mcpServers.value;
+  if (!map) return [];
+  return Object.entries(map)
+    .map(([name, config]) => ({ name, config }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+});
+
+const mcpServersCount = computed<number>(() => Object.keys(client.mcpServers.value ?? {}).length);
+
+function startAddMcp(): void {
+  mcpForm.value = {
+    mode: 'add',
+    originalName: '',
+    name: '',
+    transport: 'stdio',
+    command: '',
+    argsText: '',
+    env: [],
+    url: '',
+    headers: [],
+    enabled: true,
+    toolTimeoutSec: '',
+  };
+  mcpFormError.value = '';
+}
+
+function startEditMcp(name: string, config: AppMcpServerConfig): void {
+  mcpForm.value = {
+    mode: 'edit',
+    originalName: name,
+    name,
+    transport: config.transport ?? 'stdio',
+    command: config.command ?? '',
+    argsText: (config.args ?? []).join('\n'),
+    env: Object.entries(config.env ?? {}).map(([key, value]) => ({ key, value })),
+    url: config.url ?? '',
+    headers: Object.entries(config.headers ?? {}).map(([key, value]) => ({ key, value })),
+    enabled: config.enabled !== false,
+    toolTimeoutSec: config.toolTimeoutMs ? String(Math.round(config.toolTimeoutMs / 1000)) : '',
+  };
+  mcpFormError.value = '';
+}
+
+function cancelMcpForm(): void {
+  mcpForm.value = null;
+  mcpFormError.value = '';
+}
+
+function addMcpEnvRow(): void {
+  mcpForm.value?.env.push({ key: '', value: '' });
+}
+function removeMcpEnvRow(i: number): void {
+  mcpForm.value?.env.splice(i, 1);
+}
+function addMcpHeaderRow(): void {
+  mcpForm.value?.headers.push({ key: '', value: '' });
+}
+function removeMcpHeaderRow(i: number): void {
+  mcpForm.value?.headers.splice(i, 1);
+}
+
+async function saveMcpForm(): Promise<void> {
+  const form = mcpForm.value;
+  if (!form) return;
+  const name = form.name.trim();
+  if (!name) {
+    mcpFormError.value = t('settings.mcpNameRequired');
+    return;
+  }
+  const existing = client.mcpServers.value ?? {};
+  if (form.mode === 'add' && existing[name]) {
+    mcpFormError.value = t('settings.mcpNameExists');
+    return;
+  }
+  if (form.mode === 'edit' && form.originalName !== name && existing[name]) {
+    mcpFormError.value = t('settings.mcpNameExists');
+    return;
+  }
+
+  const config: AppMcpServerConfig = {
+    transport: form.transport,
+    enabled: form.enabled,
+  };
+  if (form.transport === 'stdio') {
+    if (form.command.trim()) config.command = form.command.trim();
+    const args = form.argsText
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (args.length) config.args = args;
+    const env: Record<string, string> = {};
+    for (const row of form.env) {
+      const k = row.key.trim();
+      if (k) env[k] = row.value;
+    }
+    if (Object.keys(env).length) config.env = env;
+  } else {
+    if (form.url.trim()) config.url = form.url.trim();
+    const headers: Record<string, string> = {};
+    for (const row of form.headers) {
+      const k = row.key.trim();
+      if (k) headers[k] = row.value;
+    }
+    if (Object.keys(headers).length) config.headers = headers;
+  }
+  if (form.toolTimeoutSec.trim()) {
+    const sec = Number(form.toolTimeoutSec);
+    if (Number.isFinite(sec) && sec > 0) config.toolTimeoutMs = Math.round(sec * 1000);
+  }
+
+  mcpSaving.value = true;
+  mcpFormError.value = '';
+  try {
+    // Rename: delete the old entry first, then upsert under the new name.
+    if (form.mode === 'edit' && form.originalName !== name) {
+      await client.deleteMcpServer(form.originalName);
+    }
+    const ok = await client.upsertMcpServer(name, config);
+    if (ok) {
+      mcpForm.value = null;
+    } else {
+      mcpFormError.value = t('settings.mcpLoadError');
+    }
+  } catch (err) {
+    mcpFormError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    mcpSaving.value = false;
+  }
+}
+
+async function removeMcp(name: string): Promise<void> {
+  if (!window.confirm(t('settings.mcpDeleteConfirm'))) return;
+  await client.deleteMcpServer(name);
+}
+
+function mcpTransportLabel(transport: AppMcpTransport | undefined): string {
+  if (transport === 'http') return t('settings.mcpTransportHttp');
+  if (transport === 'sse') return t('settings.mcpTransportSse');
+  return t('settings.mcpTransportStdio');
+}
+
+// Skills directory — read-only listing grouped by source. client.skills is the
+// computed that mirrors the active session's skills (or the workspace's before
+// a session exists).
+const skillGroups = computed<Array<{ source: string; label: string; items: Array<{ name: string; description: string }> }>>(() => {
+  const groups = new Map<string, Array<{ name: string; description: string }>>();
+  for (const skill of client.skills.value) {
+    const list = groups.get(skill.source) ?? [];
+    list.push({ name: skill.name, description: skill.description });
+    groups.set(skill.source, list);
+  }
+  const order = ['builtin', 'project', 'plugin', 'user'];
+  const result: Array<{ source: string; label: string; items: Array<{ name: string; description: string }> }> = [];
+  for (const source of order) {
+    const items = groups.get(source);
+    if (!items || items.length === 0) continue;
+    items.sort((a, b) => a.name.localeCompare(b.name));
+    result.push({ source, label: skillSourceLabel(source), items });
+  }
+  // Any unknown sources, appended after the known ones.
+  for (const [source, items] of groups) {
+    if (order.includes(source)) continue;
+    items.sort((a, b) => a.name.localeCompare(b.name));
+    result.push({ source, label: skillSourceLabel(source), items });
+  }
+  return result;
+});
+
+function skillSourceLabel(source: string): string {
+  if (source === 'builtin') return t('settings.skillsSourceBuiltin');
+  if (source === 'project') return t('settings.skillsSourceProject');
+  if (source === 'plugin') return t('settings.skillsSourcePlugin');
+  if (source === 'user') return t('settings.skillSourceUser');
+  return source;
+}
+
+const skillsCount = computed<number>(() => client.skills.value.length);
 </script>
 
 <template>
@@ -556,6 +771,187 @@ function archiveTime(iso: string): string {
 
             <div v-else class="empty-config">
               {{ t('settings.configUnavailable') }}
+            </div>
+          </section>
+        </section>
+
+        <!-- MCP servers (CRUD against user-level mcp.json) -->
+        <section v-show="activeTab === 'mcp'" class="panel">
+          <div class="panel-head">
+            <div class="panel-kicker">{{ t('settings.tabs.mcp') }}</div>
+            <h4 class="panel-title">
+              {{ t('settings.mcpTitle') }}
+              <span class="ext-count">{{ t('settings.mcpServersCount', { count: mcpServersCount }) }}</span>
+            </h4>
+            <p class="panel-desc">{{ t('settings.mcpDesc') }}</p>
+          </div>
+
+          <!-- MCP servers -->
+          <section class="sec">
+            <!-- Load error banner -->
+            <div v-if="client.mcpServersLoadError.value" class="ext-error">
+              {{ t('settings.mcpLoadError') }}
+            </div>
+
+            <!-- Loading skeleton -->
+            <div v-if="client.mcpServersLoading.value && client.mcpServers.value === undefined" class="archive-empty">
+              {{ t('settings.archivedLoading') }}
+            </div>
+
+            <!-- Server list -->
+            <template v-else>
+              <div v-if="mcpServerEntries.length > 0" class="ext-list">
+                <div v-for="entry in mcpServerEntries" :key="entry.name" class="ext-card">
+                  <div class="ext-card-head">
+                    <div class="ext-card-name">
+                      <span class="ext-name">{{ entry.name }}</span>
+                      <span class="ext-badge">{{ mcpTransportLabel(entry.config.transport) }}</span>
+                      <span v-if="entry.config.enabled === false" class="ext-badge ext-badge-muted">{{ t('settings.mcpEnabled') }}: off</span>
+                    </div>
+                    <div class="ext-card-actions">
+                      <Button variant="secondary" size="sm" :disabled="mcpForm !== null" @click="startEditMcp(entry.name, entry.config)">{{ t('settings.mcpEditBtn') }}</Button>
+                      <Button variant="danger-soft" size="sm" :disabled="mcpForm !== null" @click="removeMcp(entry.name)">{{ t('settings.mcpDeleteBtn') }}</Button>
+                    </div>
+                  </div>
+                  <div class="ext-card-body">
+                    <template v-if="entry.config.transport === 'http' || entry.config.transport === 'sse'">
+                      <div class="ext-field"><span class="ext-field-label">{{ t('settings.mcpUrl') }}</span><span class="ext-field-value mono">{{ entry.config.url || '—' }}</span></div>
+                    </template>
+                    <template v-else>
+                      <div class="ext-field"><span class="ext-field-label">{{ t('settings.mcpCommand') }}</span><span class="ext-field-value mono">{{ entry.config.command || '—' }}</span></div>
+                      <div v-if="entry.config.args && entry.config.args.length" class="ext-field"><span class="ext-field-label">{{ t('settings.mcpArgs') }}</span><span class="ext-field-value mono">{{ entry.config.args.join(' ') }}</span></div>
+                    </template>
+                  </div>
+                </div>
+              </div>
+              <div v-else-if="!mcpForm" class="archive-empty">
+                {{ t('settings.mcpNoServers') }}
+              </div>
+            </template>
+
+            <!-- Add button (hidden while editing) -->
+            <div v-if="!mcpForm" class="ext-add-row">
+              <Button variant="primary" size="sm" :disabled="client.mcpServers.value === undefined" @click="startAddMcp">{{ t('settings.mcpAddBtn') }}</Button>
+            </div>
+
+            <!-- Inline add/edit form -->
+            <div v-if="mcpForm" class="ext-form">
+              <div class="ext-form-head">
+                <span class="ext-form-title">{{ mcpForm.mode === 'add' ? t('settings.mcpAddBtn') : t('settings.mcpServerForm') }}</span>
+              </div>
+
+              <div class="ext-form-row">
+                <label class="ext-field-label">{{ t('settings.mcpServerName') }}</label>
+                <input v-model="mcpForm.name" class="ext-input" :placeholder="t('settings.mcpAddPlaceholder')" :aria-label="t('settings.mcpServerName')" />
+              </div>
+
+              <div class="ext-form-row">
+                <label class="ext-field-label">{{ t('settings.mcpTransport') }}</label>
+                <SegmentedControl
+                  :model-value="mcpForm.transport"
+                  :options="mcpTransports.map((tr) => ({ value: tr, label: t('settings.mcpTransport' + (tr === 'stdio' ? 'Stdio' : tr === 'http' ? 'Http' : 'Sse')) }))"
+                  @update:model-value="mcpForm!.transport = $event as AppMcpTransport"
+                />
+              </div>
+              <div class="ext-form-hint">{{ t('settings.mcpTransportHint') }}</div>
+
+              <!-- stdio fields -->
+              <template v-if="mcpForm.transport === 'stdio'">
+                <div class="ext-form-row">
+                  <label class="ext-field-label">{{ t('settings.mcpCommand') }}</label>
+                  <input v-model="mcpForm.command" class="ext-input" :placeholder="t('settings.mcpCommandPlaceholder')" :aria-label="t('settings.mcpCommand')" />
+                </div>
+                <div class="ext-form-row ext-form-row-stack">
+                  <label class="ext-field-label">{{ t('settings.mcpArgs') }}</label>
+                  <textarea v-model="mcpForm.argsText" class="ext-textarea" rows="3" :placeholder="t('settings.mcpArgPlaceholder')" :aria-label="t('settings.mcpArgs')"></textarea>
+                  <span class="ext-form-hint">{{ t('settings.mcpArgsHint') }}</span>
+                </div>
+                <div class="ext-form-row ext-form-row-stack">
+                  <div class="ext-kv-head">
+                    <label class="ext-field-label">{{ t('settings.mcpEnv') }}</label>
+                    <Button variant="ghost" size="sm" @click="addMcpEnvRow">{{ t('settings.mcpAddEnv') }}</Button>
+                  </div>
+                  <div v-if="mcpForm.env.length === 0" class="ext-form-hint">{{ t('settings.mcpEnvHint') }}</div>
+                  <div v-for="(row, i) in mcpForm.env" :key="i" class="ext-kv-row">
+                    <input v-model="row.key" class="ext-input ext-kv-key" :placeholder="t('settings.mcpEnvKey')" :aria-label="t('settings.mcpEnvKey')" />
+                    <input v-model="row.value" class="ext-input ext-kv-value" :placeholder="t('settings.mcpEnvValue')" :aria-label="t('settings.mcpEnvValue')" />
+                    <Button variant="ghost" size="sm" @click="removeMcpEnvRow(i)">×</Button>
+                  </div>
+                </div>
+              </template>
+
+              <!-- http / sse fields -->
+              <template v-else>
+                <div class="ext-form-row">
+                  <label class="ext-field-label">{{ t('settings.mcpUrl') }}</label>
+                  <input v-model="mcpForm.url" class="ext-input" :placeholder="t('settings.mcpUrlPlaceholder')" :aria-label="t('settings.mcpUrl')" />
+                </div>
+                <div class="ext-form-row ext-form-row-stack">
+                  <div class="ext-kv-head">
+                    <label class="ext-field-label">{{ t('settings.mcpHeaders') }}</label>
+                    <Button variant="ghost" size="sm" @click="addMcpHeaderRow">{{ t('settings.mcpAddHeader') }}</Button>
+                  </div>
+                  <div v-if="mcpForm.headers.length === 0" class="ext-form-hint">{{ t('settings.mcpHeadersHint') }}</div>
+                  <div v-for="(row, i) in mcpForm.headers" :key="i" class="ext-kv-row">
+                    <input v-model="row.key" class="ext-input ext-kv-key" :placeholder="t('settings.mcpHeaderKey')" :aria-label="t('settings.mcpHeaderKey')" />
+                    <input v-model="row.value" class="ext-input ext-kv-value" :placeholder="t('settings.mcpHeaderValue')" :aria-label="t('settings.mcpHeaderValue')" />
+                    <Button variant="ghost" size="sm" @click="removeMcpHeaderRow(i)">×</Button>
+                  </div>
+                </div>
+              </template>
+
+              <!-- common fields -->
+              <div class="ext-form-row">
+                <label class="ext-field-label">{{ t('settings.mcpToolTimeout') }}</label>
+                <input v-model="mcpForm.toolTimeoutSec" class="ext-input ext-input-num" type="number" min="0" step="1" :placeholder="''" :aria-label="t('settings.mcpToolTimeout')" />
+                <span class="ext-form-hint">{{ t('settings.mcpToolTimeoutHint') }}</span>
+              </div>
+
+              <div class="ext-form-row">
+                <label class="ext-field-label">{{ t('settings.mcpEnabled') }}</label>
+                <Switch :model-value="mcpForm.enabled" :label="t('settings.mcpEnabled')" @update:model-value="mcpForm!.enabled = $event" />
+              </div>
+
+              <div v-if="mcpFormError" class="ext-error ext-form-error">{{ mcpFormError }}</div>
+
+              <div class="ext-form-actions">
+                <Button variant="secondary" size="sm" :disabled="mcpSaving" @click="cancelMcpForm">{{ t('settings.mcpCancelBtn') }}</Button>
+                <Button variant="primary" size="sm" :disabled="mcpSaving" @click="saveMcpForm">{{ mcpSaving ? t('settings.mcpSaving') : t('settings.mcpSaveBtn') }}</Button>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <!-- Skills directory (read-only, auto-discovered) -->
+        <section v-show="activeTab === 'skills'" class="panel">
+          <div class="panel-head">
+            <div class="panel-kicker">{{ t('settings.tabs.skills') }}</div>
+            <h4 class="panel-title">
+              {{ t('settings.skillsTitle') }}
+              <span class="ext-count">{{ t('settings.skillsCount', { count: skillsCount }) }}</span>
+            </h4>
+            <p class="panel-desc">{{ t('settings.skillsDesc') }}</p>
+          </div>
+
+          <section class="sec">
+            <p class="ext-form-hint ext-skills-hint">{{ t('settings.skillsLoadHint') }}</p>
+
+            <div v-if="skillGroups.length === 0" class="archive-empty">{{ t('settings.skillsEmpty') }}</div>
+            <div v-else class="ext-list">
+              <div v-for="g in skillGroups" :key="g.source" class="ext-card">
+                <div class="ext-card-head">
+                  <div class="ext-card-name">
+                    <span class="ext-name">{{ g.label }}</span>
+                    <span class="ext-badge ext-badge-muted">{{ g.items.length }}</span>
+                  </div>
+                </div>
+                <div class="ext-card-body">
+                  <div v-for="item in g.items" :key="item.name" class="ext-skill-row">
+                    <span class="ext-skill-name mono">{{ item.name }}</span>
+                    <span v-if="item.description" class="ext-skill-desc">{{ item.description }}</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </section>
         </section>
@@ -843,4 +1239,60 @@ function archiveTime(iso: string): string {
    680px). Scoped to this dialog only. */
 :deep(.ui-dialog) { width: min(980px, 96vw); }
 :deep(.ui-dialog--fixed-height) { height: min(780px, calc(100vh - var(--space-8) * 2)); }
+
+/* MCP tab + Skills tab (shared card / form / badge styles) */
+.ext-count { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--color-text-faint); flex: none; margin-left: var(--space-2); vertical-align: middle; font-weight: var(--weight-regular); }
+.ext-error { margin-bottom: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--color-danger-soft, rgba(220, 38, 38, 0.08)); color: var(--color-danger, #dc2626); font-size: var(--text-sm); }
+.ext-list { display: flex; flex-direction: column; gap: var(--space-3); }
+.ext-card { border: 1px solid var(--color-line); border-radius: var(--radius-lg); background: var(--color-bg); overflow: hidden; }
+.ext-card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-line); }
+.ext-card-name { display: flex; align-items: center; gap: var(--space-2); min-width: 0; flex-wrap: wrap; }
+.ext-name { font-family: var(--font-ui); font-size: var(--text-base); font-weight: var(--weight-medium); color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext-badge { flex: none; padding: 2px 8px; border-radius: 9999px; background: var(--color-accent-soft); color: var(--color-accent); font-size: var(--text-xs); font-weight: var(--weight-medium); font-family: var(--font-mono); }
+.ext-badge-muted { background: var(--color-surface-sunken); color: var(--color-text-muted); }
+.ext-card-actions { display: flex; gap: var(--space-2); flex: none; }
+.ext-card-body { padding: var(--space-3) var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
+.ext-field { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; }
+.ext-field-label { flex: none; width: 88px; font-family: var(--font-ui); font-size: var(--text-xs); color: var(--color-text-faint); text-transform: uppercase; letter-spacing: 0.04em; }
+.ext-field-value { font-size: var(--text-sm); color: var(--color-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext-field-value.mono { font-family: var(--font-mono); font-size: var(--text-xs); }
+.ext-add-row { margin-top: var(--space-3); }
+
+.ext-form { margin-top: var(--space-4); padding: var(--space-4); border: 1px solid var(--color-accent); border-radius: var(--radius-lg); background: var(--color-surface-raised); display: flex; flex-direction: column; gap: var(--space-3); }
+.ext-form-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-1); }
+.ext-form-title { font-family: var(--font-ui); font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--color-text); }
+.ext-form-row { display: flex; align-items: center; gap: var(--space-3); }
+.ext-form-row-stack { flex-direction: column; align-items: stretch; gap: var(--space-2); }
+.ext-form-hint { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--color-text-faint); }
+.ext-form-error { margin-top: var(--space-1); }
+.ext-input { flex: 1; min-width: 0; height: 36px; padding: 0 var(--space-3); border: 1px solid var(--color-line); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-text); font-family: var(--font-ui); font-size: var(--text-sm); transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
+.ext-input:hover { border-color: var(--color-line-strong); }
+.ext-input:focus { outline: none; border-color: var(--color-accent); box-shadow: var(--p-focus-ring); }
+.ext-input.mono, .ext-input-num { font-family: var(--font-mono); }
+.ext-input-num { flex: none; width: 96px; }
+.ext-textarea { flex: 1; min-width: 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--color-line); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-text); font-family: var(--font-mono); font-size: var(--text-xs); line-height: var(--leading-normal); resize: vertical; transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
+.ext-textarea:hover { border-color: var(--color-line-strong); }
+.ext-textarea:focus { outline: none; border-color: var(--color-accent); box-shadow: var(--p-focus-ring); }
+.ext-kv-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.ext-kv-row { display: flex; align-items: center; gap: var(--space-2); }
+.ext-kv-key { flex: 0 0 160px; }
+.ext-kv-value { flex: 1; }
+.ext-form-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+
+.ext-skills-hint { margin: 0 0 var(--space-2); font-family: var(--font-ui); font-size: var(--text-sm); color: var(--color-text-muted); max-width: 560px; line-height: var(--leading-normal); }
+.ext-skill-row { display: flex; align-items: baseline; gap: var(--space-3); padding: var(--space-1) 0; border-top: 1px solid var(--color-line); }
+.ext-skill-row:first-child { border-top: none; }
+.ext-skill-name { flex: none; max-width: 240px; font-size: var(--text-xs); color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext-skill-desc { font-family: var(--font-ui); font-size: var(--text-sm); color: var(--color-text-muted); min-width: 0; }
+
+@media (max-width: 640px) {
+  .ext-card-head { flex-direction: column; align-items: stretch; }
+  .ext-card-actions { justify-content: flex-end; }
+  .ext-form-row { flex-direction: column; align-items: stretch; }
+  .ext-input-num { width: 100%; }
+  .ext-kv-key { flex: 1; }
+  .ext-kv-row { flex-wrap: wrap; }
+  .ext-field { flex-direction: column; gap: var(--space-1); }
+  .ext-field-label { width: auto; }
+}
 </style>

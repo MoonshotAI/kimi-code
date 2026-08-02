@@ -7,6 +7,7 @@ import { traceKeyEvent } from '../../debug/trace';
 import type {
   AppConfig,
   AppGoal,
+  AppMcpServerConfig,
   AppMessage,
   AppMessageRole,
   AppModel,
@@ -65,7 +66,9 @@ import type {
   WireFsEntry,
   WireFsHomeResult,
   WireGoalSnapshot,
+  WireListMcpServersResponse,
   WireMessage,
+  WireMcpServerConfig,
   WireModel,
   WireOAuthCancelResult,
   WireOAuthLoginPollResult,
@@ -1207,7 +1210,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
   }
 
   async listProviders(): Promise<AppProvider[]> {
-    // PRESUMED endpoint: GET /v1/providers → { items: WireProvider[] }
+    // GET /v1/providers → { items: WireProvider[] } (kap-server modelCatalog)
     const data = await this.http.get<{ items: WireProvider[] }>('/providers');
     return data.items.map(toAppProvider);
   }
@@ -1218,7 +1221,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     baseUrl?: string;
     defaultModel?: string;
   }): Promise<AppProvider> {
-    // PRESUMED endpoint: POST /v1/providers → WireProvider
+    // POST /v1/providers → WireProvider (kap-server modelCatalog)
     const body: Record<string, unknown> = { type: input.type };
     if (input.apiKey !== undefined) body['api_key'] = input.apiKey;
     if (input.baseUrl !== undefined) body['base_url'] = input.baseUrl;
@@ -1233,7 +1236,8 @@ export class DaemonKimiWebApi implements KimiWebApi {
     baseUrl?: string;
     defaultModel?: string;
   }): Promise<AppProvider> {
-    // PRESUMED endpoint: PATCH /v1/providers/{id} → WireProvider
+    // PATCH /v1/providers/{id} → WireProvider (kap-server modelCatalog, partial
+    // merge — absent fields keep their stored value, models untouched).
     const body: Record<string, unknown> = {};
     if (input.type !== undefined) body['type'] = input.type;
     if (input.apiKey !== undefined) body['api_key'] = input.apiKey;
@@ -1244,7 +1248,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
   }
 
   async deleteProvider(id: string): Promise<{ deleted: true }> {
-    // PRESUMED endpoint: DELETE /v1/providers/{id} → { deleted: true }
+    // DELETE /v1/providers/{id} → 204 (kap-server modelCatalog)
     return this.http.delete<{ deleted: true }>(`/providers/${encodeURIComponent(id)}`);
   }
 
@@ -1305,6 +1309,31 @@ export class DaemonKimiWebApi implements KimiWebApi {
     }
     const data = await this.http.post<WireConfig>('/config', wirePatch);
     return toAppConfig(data);
+  }
+
+  // -------------------------------------------------------------------------
+  // MCP server config — REAL endpoints (user-level mcp.json management)
+  // -------------------------------------------------------------------------
+
+  async listMcpServers(): Promise<Record<string, AppMcpServerConfig>> {
+    const data = await this.http.get<WireListMcpServersResponse>('/mcp/config/servers');
+    return toAppMcpServerMap(data.servers);
+  }
+
+  async upsertMcpServer(
+    name: string,
+    config: AppMcpServerConfig,
+  ): Promise<Record<string, AppMcpServerConfig>> {
+    const wire = toWireMcpServerConfig(config);
+    const data = await this.http.post<WireListMcpServersResponse>(
+      `/mcp/config/servers/${encodeURIComponent(name)}`,
+      wire,
+    );
+    return toAppMcpServerMap(data.servers);
+  }
+
+  async deleteMcpServer(name: string): Promise<void> {
+    await this.http.delete<unknown>(`/mcp/config/servers/${encodeURIComponent(name)}`);
   }
 
   // -------------------------------------------------------------------------
@@ -1574,5 +1603,58 @@ function toProviderRefreshResult(data: WireProviderRefreshResult): ProviderRefre
     })),
     unchanged: data.unchanged,
     failed: data.failed,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// MCP server config mappers — snake_case wire ↔ camelCase AppMcpServerConfig.
+// Only the leaf keys differ; transport is preserved as the discriminator.
+// ---------------------------------------------------------------------------
+
+function toAppMcpServerMap(
+  wire: Record<string, WireMcpServerConfig>,
+): Record<string, AppMcpServerConfig> {
+  const out: Record<string, AppMcpServerConfig> = {};
+  for (const [name, cfg] of Object.entries(wire)) {
+    out[name] = toAppMcpServerConfig(cfg);
+  }
+  return out;
+}
+
+function toAppMcpServerConfig(wire: WireMcpServerConfig): AppMcpServerConfig {
+  return {
+    transport: wire.transport,
+    command: wire.command,
+    args: wire.args,
+    env: wire.env,
+    cwd: wire.cwd,
+    executor: wire.executor,
+    url: wire.url,
+    headers: wire.headers,
+    bearerTokenEnvVar: wire.bearer_token_env_var,
+    enabled: wire.enabled,
+    startupTimeoutMs: wire.startup_timeout_ms,
+    toolTimeoutMs: wire.tool_timeout_ms,
+    enabledTools: wire.enabled_tools,
+    disabledTools: wire.disabled_tools,
+  };
+}
+
+function toWireMcpServerConfig(app: AppMcpServerConfig): WireMcpServerConfig {
+  return {
+    transport: app.transport,
+    command: app.command,
+    args: app.args,
+    env: app.env,
+    cwd: app.cwd,
+    executor: app.executor,
+    url: app.url,
+    headers: app.headers,
+    bearer_token_env_var: app.bearerTokenEnvVar,
+    enabled: app.enabled,
+    startup_timeout_ms: app.startupTimeoutMs,
+    tool_timeout_ms: app.toolTimeoutMs,
+    enabled_tools: app.enabledTools,
+    disabled_tools: app.disabledTools,
   };
 }
