@@ -224,10 +224,31 @@
     event-translate.ts 标记 deprecated（因 CLI 仍 import `mapGoalSnapshot` 暂留）。
   - examples 与 config/auth-facade 测试迁移到本地/新形状。
   - 验证：引擎 build ✓、protocol typecheck ✓、node-sdk src/examples typecheck ✓、49 非事件测试绿。
-- [ ] 阶段 2：CLI TUI 消费适配
-- [ ] 阶段 3：ACP adapter 消费适配
-- [ ] 阶段 4：kap-server 简化
-- [ ] 阶段 5：测试重写
+- [x] **阶段 2：CLI TUI 消费适配**（2026-08-03，commit `c2c7dcabd`/`d373568be`/`9ee500dc8`）
+  - src 6 文件全部适配引擎形状：run-prompt（llm.delta part/session.turn.*/session.tool.*，删
+    turn.step.*/tool.progress/subagent.*/compaction.* dead 分支，turn-id 守卫改 agentId-only）、
+    session-engine/btw-panel/workflow-panel（session.tool.*/llm.delta/session.hook.result）、
+    subagent-event-handler（删 routeChildAgentEvent + lifecycle 链 ~350 行——引擎无 agent 维度、
+    subagent.* 已删，子代理可见性移到工具级 AgentSwarm 进度）。
+  - 测试 7 文件重写（kimi-tui-message-flow/goal-queue/activity-pane/session-engine/
+    native-session-adapter/message-replay/real-llm-smoke），220/220 通过。
+- [x] **阶段 3：ACP adapter 消费适配**（2026-08-03，commit `7f0d94ef9`）
+  - session.ts：compaction 只监听 `session.compaction.started`（完成 = compact() resolve）；
+    runTurnBody 消费 session.turn.*/llm.delta/session.tool.*；删 tool.call.delta/tool.progress
+    + lazy-create 机制；turn.ended 按 stop_reason 映射（EndTurn/Aborted/Filtered）；
+    authRequired payload 分支删（turn.ended 无 error）。
+  - events-map.ts/approval.ts/convert.ts：去 turnId 前缀 wire id、display 字段清理。
+  - 321/321 测试通过；acp-adapter typecheck 120→0。
+- [x] **阶段 4：kap-server 简化**（2026-08-03，commit `9ee500dc8`）
+  - projectRustEvent 删 `session.compaction.completed` dead 分支（引擎不发射）。
+- [x] **阶段 5：测试重写**（2026-08-03，commit `9ee500dc8`）
+  - node-sdk 4 文件（session-event-types/prompt-events/cancel/skills）重写为 30 成员引擎
+    AgentEvent 联合；**node-sdk typecheck 0 错误**。
+- [ ] 阶段 6：全量验证 + 收尾（**event-translate.ts 已删**（commit `9ee500dc8`，native-session
+  goal 透传替代 mapGoalSnapshot）；剩余：node-sdk vitest 43 个运行时失败——B 群契约差异
+  （local-logging export 9 / session-context 6 / plan-compact 5 / auth-facade 2 /
+  rust-rpc-client 2 / prompt-events 若干），引擎 session 存储为 SQLite 无文件目录树，
+  SDK exportSession 需切引擎 `session/export` RPC）
 - [ ] 阶段 6：全量验证 + 收尾（删除 event-translate.ts、dead 接口/schema 清理）
 
 > 注意（2026-08-02）：工作区有协作者并行的 session/fork + cancellation + llmStep 改动
