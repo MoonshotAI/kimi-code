@@ -2,6 +2,68 @@
 
 本文档记录 kimi-code 项目的全局更改历史。各子包独立 CHANGELOG 见对应目录。
 
+## 2026-08-02
+
+### feat: MCP 服务器配置管理 — 用户级 mcp.json 可视化 CRUD
+
+在 Web 设置面板新增独立「MCP」导航 tab，对用户级 `<kimi-home>/mcp.json` 实现端到端可视化管理（列表 / 新增 / 编辑 / 删除），前端表单支持 stdio / HTTP / SSE 三种传输模式，可编辑命令、参数、环境变量、请求头、启用开关与超时。
+
+| 层级 | 文件 | 改动 |
+|---|---|---|
+| Protocol | `packages/kap-server/src/protocol/rest-mcp.ts` | 新增 `wireMcpServerConfigSchema` 等 wire schema，snake_case ↔ camelCase 预处理 |
+| Route | `packages/kap-server/src/routes/mcp.ts` | 新增 `GET/POST/DELETE /mcp/config/servers`，读写 `<kimi-home>/mcp.json` |
+| Route | `packages/kap-server/src/routes/registerApiV1Routes.ts` | 注册 MCP 路由 |
+| Test | `packages/kap-server/test/mcp.test.ts` | 新增端到端测试 |
+| Wire | `apps/kimi-web/src/api/daemon/wire.ts` | 新增 `WireMcpServerConfig` 等 wire 类型 |
+| Client | `apps/kimi-web/src/api/daemon/client.ts` | 实现 `listMcpServers` / `upsertMcpServer` / `deleteMcpServer` |
+| Type | `apps/kimi-web/src/api/types.ts` | 新增 `AppMcpServerConfig` + `KimiWebApi` 三个 MCP 方法 |
+| State | `apps/kimi-web/src/composables/client/useWorkspaceState.ts` | 新增 MCP 状态与 `loadMcpServers`/`upsertMcpServer`/`deleteMcpServer` |
+| State | `apps/kimi-web/src/composables/useKimiWebClient.ts` | 暴露 MCP 状态与动作 |
+| UI | `apps/kimi-web/src/components/settings/SettingsDialog.vue` | 新增 MCP tab：列表 + 内联表单 + 重名校验 + 重命名支持 |
+| i18n | `apps/kimi-web/src/i18n/locales/{en,zh}/settings.ts` | 新增 MCP 表单全套文案 |
+
+### fix: provider PATCH 路由修复 — 前后端契约闭合
+
+kimi-web `updateProvider` 调 `PATCH /providers/{id}` 但 kap-server 仅注册 PUT（且 PUT 要求全量字段），运行时断裂。新增 PATCH 部分更新路由，与既有 PUT 全量替换语义互补。
+
+| 层级 | 文件 | 改动 |
+|---|---|---|
+| Protocol | `packages/kap-server/src/protocol/rest-modelCatalog.ts` | 新增 `patchProviderRequestSchema`（全可选，无 models） |
+| Route | `packages/kap-server/src/routes/modelCatalog.ts` | 新增 `PATCH /providers/{provider_id}`：部分合并，保留 models，不支持重命名 |
+| Cleanup | `apps/kimi-web/src/api/types.ts` / `client.ts` | 清理过时 `PRESUMED` 注释（kap-server 已实现） |
+
+### feat: 设置面板导航重构 — 提供商/偏好/引导独立导航
+
+将提供商管理从独立弹窗改为设置面板内嵌 tab；「通用」重命名为「偏好」并加入引导区；删除冗余「账户」tab。
+
+| 改动 | 说明 |
+|---|---|
+| `general` → `preferences` | 偏好 tab：外观 + 通知 + 引导（重新打开首次运行向导） |
+| 新增 `providers` tab | 内嵌 `ProviderManager`（`embedded` prop 去掉 Dialog 外壳），CRUD 直接在 tab 内完成 |
+| 删除 `account` tab | 账号模型标签移入「高级」tab；登录/登出在 bypass-auth 下已失效，引导按钮已移入偏好 |
+| 导航顺序 | 偏好 → Agent → 提供商 → MCP → 技能 → 高级 → 已归档 |
+
+| 层级 | 文件 | 改动 |
+|---|---|---|
+| UI | `apps/kimi-web/src/components/settings/ProviderManager.vue` | 新增 `embedded` prop，`<component :is>` 避免内容重复 |
+| UI | `apps/kimi-web/src/components/settings/SettingsDialog.vue` | tab 重构 + providers tab 内嵌 + 偏好加引导 + 删除 account |
+| i18n | `apps/kimi-web/src/i18n/locales/{en,zh}/settings.ts` | 新增 `onboardingSection` / `onboardingHint` |
+
+### feat: 用户级 Skill 管理 REST 路由 — SKILL.md 可视化 CRUD 后端
+
+新增用户级技能的后端管理接口（与 MCP 配置管理同模式），读写 `<kimi-home>/skills/<name>/SKILL.md`。name 限制 `^[a-zA-Z0-9_-]+$` 防路径逃逸。前端集成待后续补充。
+
+| 层级 | 文件 | 改动 |
+|---|---|---|
+| Protocol | `packages/kap-server/src/protocol/rest-user-skill.ts` | 新增 `userSkillDescriptorSchema` / `listUserSkillsResponseSchema` / `upsertUserSkillRequestSchema` / `userSkillNameParamSchema` |
+| Route | `packages/kap-server/src/routes/skills.ts` | 新增 `GET/POST/DELETE /skills/config/user-skills`，基于 `IHostFileSystem` 读写 SKILL.md，复用 `parseSkillText` 解析 frontmatter |
+
+### docs: 二开版本同步官方提交指南
+
+新建 `二开版本同步官方提交指南.md`，记录当前二开相对官方 `e22479a6` 的 11 个叠加 commit、改动文件冲突风险分级、标准 rebase 同步流程、关键接缝区合并原则与回滚方案。
+
+---
+
 ## 2026-07-31
 
 ### feat: 彻底移除 Kimi 登录认证 — 任何功能直接可用

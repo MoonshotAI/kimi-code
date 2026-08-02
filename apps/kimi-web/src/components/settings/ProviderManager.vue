@@ -27,6 +27,10 @@ const props = defineProps<{
   loading?: boolean;
   /** If true, providers could not be fetched (daemon 404 / unsupported) */
   unavailable?: boolean;
+  /** When true, render the inner content without the Dialog overlay (for
+   *  embedding inside a Settings tab). When false (default), keep the modal
+   *  Dialog behavior used by App.vue's standalone provider-manager flow. */
+  embedded?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -153,8 +157,12 @@ function statusLabel(status: AppProvider['status']): string {
 </script>
 
 <template>
-  <Dialog :open="true" :close-on-esc="false" :title="t('providers.title')" size="xl" height="fixed" @close="emit('close')">
-    <div ref="dialogRef" class="pm">
+  <component
+    :is="embedded ? 'div' : Dialog"
+    v-bind="embedded ? {} : { open: true, closeOnEsc: false, title: t('providers.title'), size: 'xl', height: 'fixed' }"
+    v-on="embedded ? {} : { close: () => emit('close') }"
+  >
+    <div ref="dialogRef" class="pm" :class="{ 'pm-embedded': embedded }">
       <!-- Provider list -->
       <div class="prov-list">
         <!-- Loading state -->
@@ -258,13 +266,16 @@ function statusLabel(status: AppProvider['status']): string {
       </div>
 
       <!-- Footer -->
-      <div class="footer-hint">{{ t('providers.escClose') }}</div>
+      <div v-if="!embedded" class="footer-hint">{{ t('providers.escClose') }}</div>
     </div>
-  </Dialog>
+  </component>
 </template>
 
 <style scoped>
 .pm { display: flex; flex-direction: column; gap: var(--space-4); }
+/* Embedded (inside a Settings tab): no Dialog chrome, cap the list height so
+   long provider rosters scroll within the panel instead of stretching it. */
+.pm-embedded .prov-list { max-height: 50vh; overflow-y: auto; }
 
 /* Provider list */
 .prov-list {

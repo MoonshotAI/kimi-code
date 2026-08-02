@@ -69,6 +69,8 @@
  * imports.
  */
 
+import { join } from 'node:path';
+
 import {
   BUILTIN_SKILLS,
   ErrorCodes,
@@ -77,6 +79,7 @@ import {
   IBootstrapService,
   IConfigService,
   IEventService,
+  IHostFileSystem,
   IPluginService,
   ISessionIndex,
   ISessionMetadata,
@@ -85,6 +88,7 @@ import {
   IWorkspaceService,
   InMemorySkillCatalog,
   isError2,
+  parseSkillText,
   resumeSessionById,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   SKILL_SOURCE_PRIORITY,
@@ -93,6 +97,7 @@ import {
   projectRoots,
   promptMetadataTextFromSkill,
   userRoots,
+  type HostDirEntry,
   type ISessionScopeHandle,
   type Scope,
   type SkillDefinition,
@@ -111,6 +116,15 @@ import {
   activateSkillResultSchema,
   listSkillsResponseSchema,
 } from '../protocol/rest-skill';
+import {
+  listUserSkillsResponseSchema,
+  upsertUserSkillRequestSchema,
+  userSkillDescriptorSchema,
+  userSkillNameParamSchema,
+  type WireUpsertUserSkillRequest,
+  type WireUserSkill,
+  type WireUserSkillNameParam,
+} from '../protocol/rest-user-skill';
 import { workspaceIdParamSchema } from '../protocol/rest-workspace';
 import type { SkillDescriptor } from '../protocol/skill';
 import { parseActionSuffix } from './action-suffix';
@@ -129,6 +143,14 @@ interface SkillsRouteHost {
     options: { preHandler: unknown[]; schema?: Record<string, unknown> },
     handler: (
       req: { id: string; body: unknown; params: unknown },
+      reply: { send(payload: unknown): unknown },
+    ) => Promise<void> | void,
+  ): unknown;
+  delete(
+    path: string,
+    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
+    handler: (
+      req: { id: string; params: unknown },
       reply: { send(payload: unknown): unknown },
     ) => Promise<void> | void,
   ): unknown;
@@ -313,6 +335,160 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
     activateSkillRoute.options,
     activateSkillRoute.handler as Parameters<SkillsRouteHost['post']>[2],
   );
+
+  // -------------------------------------------------------------------------
+  // User-level SKILL.md management (config surface).
+  //
+  // Mirrors the `/mcp/config/servers` pattern: list/upsert/delete user-level
+  // skills stored as `<kimi-home>/skills/<name>/SKILL.md`. Only the user-brand
+  // directory is editable here — builtin/project/extra/plugin sources are
+  // read-only from this surface. The skill `name` is constrained to
+  // `/^[a-zA-Z0-9_-]+$/` (same as MCP server names) so it cannot escape the
+  // `<kimi-home>/skills/<name>/` directory layout.
+  // -------------------------------------------------------------------------
+
+  const hostFs = core.accessor.get(IHostFileSystem);
+  const userSkillsBootstrap = core.accessor.get(IBootstrapService);
+  const userSkillsDir = join(userSkillsBootstrap.homeDir, 'skills');
+
+  // GET /skills/config/user-skills ----------------------------------------
+  const listUserSkillsRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/skills/config/user-skills',
+      success: { data: listUserSkillsResponseSchema },
+      errors: {
+        [ErrorCode.PERSISTENCE_FAILURE]: {},
+      },
+      description: 'List user-level skills at <kimi-home>/skills/<name>/SKILL.md',
+      tags: ['skills'],
+      operationId: 'listUserSkills',
+    },
+    async (req, reply) => {
+      const skills = await readUserSkills(hostFs, userSkillsDir, req.id, reply);
+      if (skills === undefined) return; // error already sent
+      reply.send(okEnvelope({ skills }, req.id));
+    },
+  );
+  app.get(
+    listUserSkillsRoute.path,
+    listUserSkillsRoute.options,
+    listUserSkillsRoute.handler as Parameters<SkillsRouteHost['get']>[2],
+  );
+
+  // POST /skills/config/user-skills/{name} --------------------------------
+  const upsertUserSkillRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/skills/config/user-skills/{name}',
+      body: upsertUserSkillRequestSchema,
+      params: userSkillNameParamSchema,
+      success: { data: userSkillDescriptorSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.PERSISTENCE_FAILURE]: {},
+      },
+      description: 'Create or update a user-level skill (upsert)',
+      tags: ['skills'],
+      operationId: 'upsertUserSkill',
+    },
+    async (req, reply) => {
+      const { name } = req.params as WireUserSkillNameParam;
+      const { description, content } = req.body as WireUpsertUserSkillRequest;
+
+      const skillDir = join(userSkillsDir, name);
+      const skillMdPath = join(skillDir, 'SKILL.md');
+      const fileText = serializeSkillMd(name, description, content);
+
+      try {
+        await hostFs.mkdir(skillDir, { recursive: true });
+        await hostFs.writeText(skillMdPath, fileText);
+      } catch (err) {
+        reply.send(
+          errEnvelope(
+            ErrorCode.PERSISTENCE_FAILURE,
+            `failed to write ${skillMdPath}: ${describeError(err)}`,
+            req.id,
+            err instanceof Error ? err.stack : undefined,
+          ),
+        );
+        return;
+      }
+      requestLog(req)?.info({ name }, 'user skill upserted');
+      reply.send(okEnvelope({ name, description, content }, req.id));
+    },
+  );
+  app.post(
+    upsertUserSkillRoute.path,
+    upsertUserSkillRoute.options,
+    upsertUserSkillRoute.handler as Parameters<SkillsRouteHost['post']>[2],
+  );
+
+  // DELETE /skills/config/user-skills/{name} ------------------------------
+  const deleteUserSkillRoute = defineRoute(
+    {
+      method: 'DELETE',
+      path: '/skills/config/user-skills/{name}',
+      params: userSkillNameParamSchema,
+      success: { data: z.object({}).optional() },
+      errors: {
+        [ErrorCode.SKILL_NOT_FOUND]: {},
+        [ErrorCode.PERSISTENCE_FAILURE]: {},
+      },
+      description: 'Remove a user-level skill directory',
+      tags: ['skills'],
+      operationId: 'deleteUserSkill',
+    },
+    async (req, reply) => {
+      const { name } = req.params as WireUserSkillNameParam;
+      const skillDir = join(userSkillsDir, name);
+      const skillMdPath = join(skillDir, 'SKILL.md');
+
+      // `hostFs.remove` uses `force: true` (no error on missing path), so
+      // stat first to distinguish 40415 skill.not_found from a successful
+      // delete of a pre-existing skill.
+      try {
+        await hostFs.stat(skillMdPath);
+      } catch (err) {
+        if (isError2(err) && err.code === ErrorCodes.OS_FS_NOT_FOUND) {
+          reply.send(
+            errEnvelope(ErrorCode.SKILL_NOT_FOUND, `skill ${name} does not exist`, req.id),
+          );
+          return;
+        }
+        reply.send(
+          errEnvelope(
+            ErrorCode.PERSISTENCE_FAILURE,
+            `failed to stat ${skillMdPath}: ${describeError(err)}`,
+            req.id,
+            err instanceof Error ? err.stack : undefined,
+          ),
+        );
+        return;
+      }
+
+      try {
+        await hostFs.remove(skillDir);
+      } catch (err) {
+        reply.send(
+          errEnvelope(
+            ErrorCode.PERSISTENCE_FAILURE,
+            `failed to remove ${skillDir}: ${describeError(err)}`,
+            req.id,
+            err instanceof Error ? err.stack : undefined,
+          ),
+        );
+        return;
+      }
+      requestLog(req)?.info({ name }, 'user skill deleted');
+      reply.send(okEnvelope({}, req.id));
+    },
+  );
+  app.delete(
+    deleteUserSkillRoute.path,
+    deleteUserSkillRoute.options,
+    deleteUserSkillRoute.handler as Parameters<SkillsRouteHost['delete']>[2],
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -425,4 +601,83 @@ function sendMappedError(
     }
   }
   throw err;
+}
+
+// ---------------------------------------------------------------------------
+// User-level SKILL.md helpers (config surface — see route block above).
+//
+// `readUserSkills` scans `<skillsDir>/*/SKILL.md`, parses each via the shared
+// `parseSkillText` (the same primitive `fileSkillDiscovery` uses), and skips
+// malformed entries silently — the listing only returns valid skills. A
+// missing `<skillsDir>` is treated as an empty list (no user skills yet).
+//
+// `serializeSkillMd` writes the canonical directory-form SKILL.md: frontmatter
+// `name` + `description` (both required by `parseSkillText` for the directory
+// form) followed by the markdown body. Values are JSON-quoted so any special
+// characters (newlines, colons, quotes) survive the YAML round-trip.
+// ---------------------------------------------------------------------------
+
+async function readUserSkills(
+  hostFs: IHostFileSystem,
+  skillsDir: string,
+  requestId: string,
+  reply: { send(payload: unknown): unknown },
+): Promise<readonly WireUserSkill[] | undefined> {
+  let entries: readonly HostDirEntry[];
+  try {
+    entries = await hostFs.readdir(skillsDir);
+  } catch (err) {
+    if (isError2(err) && err.code === ErrorCodes.OS_FS_NOT_FOUND) {
+      return []; // no user skills directory yet
+    }
+    reply.send(
+      errEnvelope(
+        ErrorCode.PERSISTENCE_FAILURE,
+        `failed to read ${skillsDir}: ${describeError(err)}`,
+        requestId,
+        err instanceof Error ? err.stack : undefined,
+      ),
+    );
+    return undefined;
+  }
+
+  const skills: WireUserSkill[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory) continue;
+    const skillMdPath = join(skillsDir, entry.name, 'SKILL.md');
+    let text: string;
+    try {
+      text = await hostFs.readText(skillMdPath);
+    } catch (err) {
+      // No SKILL.md in this subdir (or unreadable) — skip; the listing only
+      // returns parseable directory-form skills.
+      continue;
+    }
+    try {
+      const parsed = parseSkillText({
+        text,
+        skillMdPath,
+        skillDirName: entry.name,
+        source: 'user',
+      });
+      skills.push({
+        name: parsed.name,
+        description: parsed.description,
+        content: parsed.content,
+      });
+    } catch {
+      // Malformed SKILL.md — skip, matching fileSkillDiscovery's behavior.
+      continue;
+    }
+  }
+  return skills;
+}
+
+function serializeSkillMd(name: string, description: string, content: string): string {
+  const frontmatter = `---\nname: ${JSON.stringify(name)}\ndescription: ${JSON.stringify(description)}\n---\n\n`;
+  return `${frontmatter}${content}\n`;
+}
+
+function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

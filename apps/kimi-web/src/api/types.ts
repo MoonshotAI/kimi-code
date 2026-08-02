@@ -711,6 +711,14 @@ export interface AppSkill {
   source: string;
 }
 
+/** A user-authored skill stored at `<kimi-home>/skills/<name>/SKILL.md`. */
+export interface AppUserSkill {
+  name: string;
+  description: string;
+  /** Markdown body (everything after the frontmatter close fence). */
+  content: string;
+}
+
 // ---------------------------------------------------------------------------
 // KimiWebApi — the app-facing interface
 // ---------------------------------------------------------------------------
@@ -762,6 +770,12 @@ export interface KimiWebApi {
   /** List skills for a workspace (no session required) — GET /workspaces/{id}/skills. */
   listSkillsForWorkspace(workspaceId: string): Promise<AppSkill[]>;
   activateSkill(sessionId: string, skillName: string, args?: string): Promise<{ activated: true; skillName: string }>;
+  /** List user-level skills at <kimi-home>/skills/<name>/SKILL.md. */
+  listUserSkills(): Promise<AppUserSkill[]>;
+  /** Create or update a user-level skill (upsert). */
+  upsertUserSkill(name: string, input: { description: string; content: string }): Promise<AppUserSkill>;
+  /** Remove a user-level skill directory. */
+  deleteUserSkill(name: string): Promise<void>;
   listTasks(sessionId: string, status?: AppTaskStatus): Promise<AppTask[]>;
   getTask(sessionId: string, taskId: string, input?: { withOutput?: boolean; outputBytes?: number }): Promise<AppTask>;
   cancelTask(sessionId: string, taskId: string): Promise<{ cancelled: true }>;

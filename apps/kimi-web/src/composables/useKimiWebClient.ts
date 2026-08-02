@@ -2957,6 +2957,14 @@ export function useKimiWebClient() {
     loadProviders: modelProvider.loadProviders,
     skills,
     activateSkill: modelProvider.activateSkill,
+
+    // User skill CRUD (Settings → Skills) — <kimi-home>/skills/<name>/SKILL.md
+    userSkills: modelProvider.userSkills,
+    userSkillsLoading: modelProvider.userSkillsLoading,
+    userSkillsError: modelProvider.userSkillsError,
+    loadUserSkills: modelProvider.loadUserSkills,
+    upsertUserSkill: modelProvider.upsertUserSkill,
+    deleteUserSkill: modelProvider.deleteUserSkill,
     setModel: modelProvider.setModel,
     toggleStarModel: modelProvider.toggleStarModel,
     addProvider: modelProvider.addProvider,

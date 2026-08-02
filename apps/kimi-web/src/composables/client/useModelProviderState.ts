@@ -13,6 +13,7 @@ import type {
   AppProvider,
   AppSession,
   AppSkill,
+  AppUserSkill,
   ThinkingLevel,
 } from '../../api/types';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
@@ -111,6 +112,11 @@ export function useModelProviderState(
   // Workspace-scoped skills, used to populate the `/` menu before a session exists
   // (onboarding composer). Keyed by workspace id; loaded once per workspace.
   const skillsByWorkspace = ref<Record<string, AppSkill[]>>({});
+  // User-authored skills (<kimi-home>/skills/<name>/SKILL.md). Loaded on demand
+  // by Settings → Skills; undefined until first load, empty array after.
+  const userSkills = ref<AppUserSkill[] | undefined>(undefined);
+  const userSkillsLoading = ref(false);
+  const userSkillsError = ref(false);
   const providers = ref<AppProvider[]>([]);
 
   // Model picked while in the "new session draft" state (onboarding composer —
@@ -276,6 +282,52 @@ export function useModelProviderState(
     } catch {
       // Side data; an older daemon without /workspaces/{id}/skills just yields
       // no slash-skills for the onboarding composer.
+    }
+  }
+
+  async function loadUserSkills(): Promise<void> {
+    userSkillsLoading.value = true;
+    userSkillsError.value = false;
+    try {
+      const api = getKimiWebApi();
+      userSkills.value = await api.listUserSkills();
+    } catch (err) {
+      userSkillsError.value = true;
+      pushOperationFailure('loadUserSkills', err);
+    } finally {
+      userSkillsLoading.value = false;
+    }
+  }
+
+  async function upsertUserSkill(
+    name: string,
+    input: { description: string; content: string },
+  ): Promise<boolean> {
+    try {
+      const api = getKimiWebApi();
+      const skill = await api.upsertUserSkill(name, input);
+      const idx = userSkills.value?.findIndex((s) => s.name === name) ?? -1;
+      if (idx >= 0 && userSkills.value) {
+        userSkills.value = userSkills.value.map((s, i) => (i === idx ? skill : s));
+      } else {
+        userSkills.value = [...(userSkills.value ?? []), skill];
+      }
+      return true;
+    } catch (err) {
+      pushOperationFailure('upsertUserSkill', err);
+      return false;
+    }
+  }
+
+  async function deleteUserSkill(name: string): Promise<boolean> {
+    try {
+      const api = getKimiWebApi();
+      await api.deleteUserSkill(name);
+      userSkills.value = (userSkills.value ?? []).filter((s) => s.name !== name);
+      return true;
+    } catch (err) {
+      pushOperationFailure('deleteUserSkill', err);
+      return false;
     }
   }
 
@@ -576,9 +628,15 @@ export function useModelProviderState(
     draftModel,
     skillsBySession,
     skillsByWorkspace,
+    userSkills,
+    userSkillsLoading,
+    userSkillsError,
     // actions
     loadSkillsForSession,
     loadSkillsForWorkspace,
+    loadUserSkills,
+    upsertUserSkill,
+    deleteUserSkill,
     loadModels,
     loadProviders,
     setModel,

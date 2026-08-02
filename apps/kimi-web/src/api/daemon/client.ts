@@ -15,6 +15,7 @@ import type {
   ProviderRefreshResult,
   AppSession,
   AppSkill,
+  AppUserSkill,
   AppSessionCursor,
   AppSessionRuntimeStatus,
   AppSessionSnapshot,
@@ -187,6 +188,12 @@ interface WireSkillDescriptor {
   source: string;
   type?: string;
   disable_model_invocation?: boolean;
+}
+
+interface WireUserSkill {
+  name: string;
+  description: string;
+  content: string;
 }
 
 interface WireArchiveResult {
@@ -900,6 +907,33 @@ export class DaemonKimiWebApi implements KimiWebApi {
       args !== undefined && args.length > 0 ? { args } : {},
     );
     return { activated: data.activated, skillName: data.skill_name };
+  }
+
+  // User-level SKILL.md management (config surface)
+  // GET    /skills/config/user-skills             → { skills: WireUserSkill[] }
+  // POST   /skills/config/user-skills/{name}      body { description, content } → WireUserSkill
+  // DELETE /skills/config/user-skills/{name}      → {}
+
+  async listUserSkills(): Promise<AppUserSkill[]> {
+    const data = await this.http.get<{ skills: WireUserSkill[] }>(
+      `/skills/config/user-skills`,
+    );
+    return data.skills ?? [];
+  }
+
+  async upsertUserSkill(
+    name: string,
+    input: { description: string; content: string },
+  ): Promise<AppUserSkill> {
+    const data = await this.http.post<WireUserSkill>(
+      `/skills/config/user-skills/${encodeURIComponent(name)}`,
+      { description: input.description, content: input.content },
+    );
+    return { name: data.name, description: data.description, content: data.content };
+  }
+
+  async deleteUserSkill(name: string): Promise<void> {
+    await this.http.delete(`/skills/config/user-skills/${encodeURIComponent(name)}`);
   }
 
   // -------------------------------------------------------------------------
