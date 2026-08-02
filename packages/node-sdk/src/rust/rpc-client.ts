@@ -79,6 +79,7 @@ export interface RustLoopApi {
     skills?: unknown[];
     hooks?: unknown[];
     workspaceTrusted?: boolean;
+    llmStep?: (req: unknown) => Promise<unknown>;
   }): Promise<{ session_id: string } | null>;
   sessionList(): Promise<{ sessions: EngineSessionRecord[] } | null>;
   sessionGetStatus(sessionId: string): Promise<EngineSessionStatus | null>;
@@ -645,7 +646,13 @@ export class RustRpcClient extends SDKRpcClientBase {
         return (result?.output ?? '') as never;
       },
       stopBackground: async ({ taskId }: any) => {
-        await r.bgStop(taskId);
+        // Stopping an unknown task is a no-op (v1 semantics), not an error.
+        try {
+          await r.bgStop(taskId);
+        } catch (error) {
+          if (isTaskNotFound(error)) return;
+          throw error;
+        }
       },
       detachBackground: async ({ taskId }: any) => {
         await r.bgDetach(taskId);
@@ -806,4 +813,8 @@ export class RustRpcClient extends SDKRpcClientBase {
   protected async getRpc(): Promise<SdkRpcSurface> {
     return this.ready;
   }
+}
+
+function isTaskNotFound(error: unknown): boolean {
+  return /task .* not found/i.test(error instanceof Error ? error.message : String(error));
 }
