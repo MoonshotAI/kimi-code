@@ -186,9 +186,6 @@ importers:
 
   apps/kimi-inspect:
     dependencies:
-      '@moonshot-ai/agent-core-v2':
-        specifier: workspace:^
-        version: link:../../packages/agent-core-v2
       '@moonshot-ai/transcript':
         specifier: workspace:^
         version: link:../../packages/transcript
@@ -308,9 +305,6 @@ importers:
       '@hono/node-server':
         specifier: '>=2.0.5'
         version: 2.0.11(hono@4.12.32)
-      '@moonshot-ai/agent-core':
-        specifier: workspace:^
-        version: link:../../../packages/agent-core
       '@moonshot-ai/kosong':
         specifier: workspace:^
         version: link:../../../packages/kosong
@@ -564,15 +558,15 @@ importers:
       '@agentclientprotocol/sdk':
         specifier: ^0.23.0
         version: 0.23.0(zod@4.3.6)
-      '@moonshot-ai/agent-core':
-        specifier: workspace:^
-        version: link:../agent-core
       '@moonshot-ai/kaos':
         specifier: workspace:^
         version: link:../kaos
       '@moonshot-ai/kimi-code-sdk':
         specifier: workspace:^
         version: link:../node-sdk
+      '@moonshot-ai/kosong':
+        specifier: workspace:^
+        version: link:../kosong
     devDependencies:
       jimp:
         specifier: ^1.6.1
@@ -885,9 +879,6 @@ importers:
       '@fastify/swagger':
         specifier: ^9.7.0
         version: 9.7.0
-      '@moonshot-ai/agent-core-v2':
-        specifier: workspace:^
-        version: link:../agent-core-v2
       '@moonshot-ai/kimi-agent':
         specifier: workspace:^
         version: link:../kimi-agent
@@ -1039,6 +1030,12 @@ importers:
       '@antfu/utils':
         specifier: ^9.3.0
         version: 9.3.0
+      '@moonshot-ai/kimi-i18n':
+        specifier: workspace:^
+        version: link:../i18n
+      '@moonshot-ai/protocol':
+        specifier: workspace:^
+        version: link:../protocol
       smol-toml:
         specifier: ^1.6.1
         version: 1.6.1
@@ -1067,6 +1064,9 @@ importers:
       jimp:
         specifier: ^1.6.1
         version: 1.6.1
+      pathe:
+        specifier: ^2.0.3
+        version: 2.0.3
 
   packages/oauth:
     dependencies:

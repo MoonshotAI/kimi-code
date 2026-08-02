@@ -1781,11 +1781,15 @@ fn native_read_media_file_inlines_the_image_for_the_model() {
 }
 
 /// A minimal stdio MCP server (node): one `echo` tool returning `echo:<value>`.
+/// Legacy-era: rejects `server/discover` so the client falls back to the
+/// initialize handshake.
 const MCP_ECHO_SERVER: &str = r#"
 const rl = require('node:readline').createInterface({ input: process.stdin });
 rl.on('line', (line) => {
   let m; try { m = JSON.parse(line); } catch { return; }
-  if (m.method === 'initialize') {
+  if (m.method === 'server/discover') {
+    process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:m.id, error:{ code:-32601, message:'Method not found' } })+'\n');
+  } else if (m.method === 'initialize') {
     process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:m.id, result:{ protocolVersion:m.params.protocolVersion, capabilities:{}, serverInfo:{name:'scripted',version:'1.0.0'} } })+'\n');
   } else if (m.method === 'tools/list') {
     process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:m.id, result:{ tools:[{name:'echo',description:'Echo',inputSchema:{type:'object'}}] } })+'\n');
