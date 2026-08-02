@@ -26,6 +26,16 @@ import {
   KIMI_CODE_UPDATE_STATE_FILE_NAME,
 } from '#/constant/app';
 
+function expandHomeDir(path: string): string {
+  if (path === '~') {
+    return homedir();
+  }
+  if (path.startsWith('~/') || path.startsWith('~\\')) {
+    return join(homedir(), path.slice(2));
+  }
+  return path;
+}
+
 /**
  * Return the root data directory for Kimi Code.
  *
@@ -34,7 +44,7 @@ import {
 export function getDataDir(): string {
   const envDir = process.env[KIMI_CODE_HOME_ENV];
   if (envDir) {
-    return envDir;
+    return expandHomeDir(envDir);
   }
   return join(homedir(), KIMI_CODE_DATA_DIR_NAME);
 }
