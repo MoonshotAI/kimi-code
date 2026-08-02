@@ -31,6 +31,14 @@ describe('default agent profiles', () => {
     expect(prompt).toContain('/workspace');
   });
 
+  it('keeps a static time reminder without the dynamic timestamp', () => {
+    const prompt = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt(promptContext) ?? '';
+
+    expect(prompt).not.toContain(promptContext.now);
+    expect(prompt).toContain('## Date and Time');
+    expect(prompt).toContain('get it fresh from the environment');
+  });
+
   it('keeps static instructions before dynamic prompt context', () => {
     const prompt = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt(promptContext) ?? '';
 
