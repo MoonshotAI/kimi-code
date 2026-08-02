@@ -41,17 +41,69 @@ function getPath(doc: unknown, path: string): unknown {
 
 export class CompoundIndexManager {
   readonly indexes = new Map<string, CompoundEntry>();
+  /** In-flight createCompoundIndex transactions (plan 10's staged → persist →
+   *  publish), same discipline as IndexManager.staged: invisible to every
+   *  query path until the sidecar persist succeeds and publish() moves the
+   *  entry into the live map. */
+  private readonly staged = new Map<string, CompoundEntry>();
 
-  create(name: string, def: CompoundIndexDef): void {
-    if (this.indexes.has(name)) throw new Error(`compound index "${name}" already exists`);
+  private static entry(def: CompoundIndexDef): CompoundEntry {
     const orderType = def.orderType ?? 'number';
     const full: Required<CompoundIndexDef> = { groupBy: def.groupBy, orderBy: def.orderBy, orderType };
     const cmp = orderType === 'string' ? (cmpString as Comparator<unknown>) : (cmpNumber as Comparator<unknown>);
-    this.indexes.set(name, { def: full, cmp, groups: new Map(), byPk: new Map() });
+    return { def: full, cmp, groups: new Map(), byPk: new Map() };
+  }
+
+  create(name: string, def: CompoundIndexDef): void {
+    if (this.indexes.has(name)) throw new Error(`compound index "${name}" already exists`);
+    this.indexes.set(name, CompoundIndexManager.entry(def));
+  }
+
+  /** Stage a new compound index definition off to the side (see `staged`). */
+  stage(name: string, def: CompoundIndexDef): void {
+    if (this.indexes.has(name) || this.staged.has(name)) throw new Error(`compound index "${name}" already exists`);
+    this.staged.set(name, CompoundIndexManager.entry(def));
+  }
+
+  /** Rebuild ONE staged index from entries of { key, value, dt }. Touches
+   *  nothing live, so a failure midway leaves every published index intact. */
+  rebuildStaged(name: string, entries: Iterable<{ key: string | Buffer; value: unknown; dt?: Record<string, number> | null }>): void {
+    const entry = this.staged.get(name);
+    if (!entry) throw new Error(`no staged compound index: ${name}`);
+    for (const { key, value, dt } of entries) {
+      this.addToEntry(entry, typeof key === 'string' ? key : Buffer.from(key).toString('binary'), value, dt ?? null);
+    }
+  }
+
+  /** The staged definition in its persisted (CompoundIndexInfo) shape. */
+  stagedInfo(name: string): CompoundIndexInfo {
+    const e = this.staged.get(name);
+    if (!e) throw new Error(`no staged compound index: ${name}`);
+    return { name, groupBy: e.def.groupBy, orderBy: e.def.orderBy, orderType: e.def.orderType };
+  }
+
+  /** Move a staged index into the live registry (its sidecar persist already
+   *  succeeded). */
+  publish(name: string): void {
+    const entry = this.staged.get(name);
+    if (!entry) throw new Error(`no staged compound index: ${name}`);
+    this.staged.delete(name);
+    this.indexes.set(name, entry);
+  }
+
+  /** Drop a staged index without publishing it (the create failed). */
+  discardStaged(name: string): void {
+    this.staged.delete(name);
   }
 
   drop(name: string): boolean {
     return this.indexes.delete(name);
+  }
+
+  /** Live + staged count (a staged entry must be fed by the write paths
+   *  exactly like a live one; see `staged`). */
+  get size(): number {
+    return this.indexes.size + this.staged.size;
   }
 
   list(): CompoundIndexInfo[] {
@@ -111,19 +163,25 @@ export class CompoundIndexManager {
     }
   }
 
-  /** Add/update a document across all compound indexes. */
+  /** Add/update a document across all compound indexes — live AND staged (a
+   *  staged entry is kept exactly as current as the live ones, so publish()
+   *  is a bare map move; see `staged`). */
   add(pk: string, doc: unknown, dt: Record<string, number> | null): void {
     for (const entry of this.indexes.values()) this.addToEntry(entry, pk, doc, dt);
+    for (const entry of this.staged.values()) this.addToEntry(entry, pk, doc, dt);
   }
 
   remove(pk: string, _doc?: unknown, _dt?: Record<string, number> | null): void {
-    for (const entry of this.indexes.values()) {
-      const prev = entry.byPk.get(pk);
-      if (prev) {
-        const oldList = entry.groups.get(prev.group);
-        if (oldList) oldList.delete(prev.order, pk);
-        entry.byPk.delete(pk);
-      }
+    for (const entry of this.indexes.values()) CompoundIndexManager.removeFromEntry(entry, pk);
+    for (const entry of this.staged.values()) CompoundIndexManager.removeFromEntry(entry, pk);
+  }
+
+  private static removeFromEntry(entry: CompoundEntry, pk: string): void {
+    const prev = entry.byPk.get(pk);
+    if (prev) {
+      const oldList = entry.groups.get(prev.group);
+      if (oldList) oldList.delete(prev.order, pk);
+      entry.byPk.delete(pk);
     }
   }
 

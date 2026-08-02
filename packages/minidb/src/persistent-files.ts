@@ -53,11 +53,23 @@ export function isPersistentFile(name: string): boolean {
   );
 }
 
-/** Atomic-write temp siblings a crashed previous run may have left behind
- *  (a compaction's snapshot/WAL temps, sidecar-definition temps). Only the
- *  sole writer may delete them at open — a read-only opener must never touch
- *  a live writer's in-flight temps. */
+/** Atomic-write temp siblings a crashed previous run may have left behind:
+ *  a compaction's snapshot/WAL temps (fixed names), plus sidecar-definition
+ *  temps from before sidecar writes gained unique suffixes. Current sidecar
+ *  writes use `<file>.tmp-<pid>-<seq>` names, matched by isStaleTmpFile
+ *  instead. Only the sole writer may delete them at open — a read-only
+ *  opener must never touch a live writer's in-flight temps. */
 export const STALE_TMP_FILES: readonly string[] = [SNAPSHOT_FILE, WAL_FILE, ...SIDECAR_FILES].map((f) => `${f}.tmp`);
+
+/** Is `name` a unique-suffixed atomic-write temp (`<file>.tmp-<pid>-<seq>`)
+ *  of one of the primary/sidecar files, orphaned by a crash between the tmp
+ *  write and the rename? Whitelisted per known file so a LockFile's
+ *  `db.lock.tmp-*` — possibly in flight in ANOTHER process right now — is
+ *  never matched. Same deletion discipline as STALE_TMP_FILES: only the sole
+ *  writer at open. */
+export function isStaleTmpFile(name: string): boolean {
+  return [SNAPSHOT_FILE, WAL_FILE, ...SIDECAR_FILES].some((f) => name.startsWith(`${f}.tmp-`));
+}
 
 /** A failed postings rebuild orphans `db.text-*.postings.tmp` (its atomic
  *  rename never ran). Postings are pure derived state, so such temps are

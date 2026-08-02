@@ -15,7 +15,7 @@ import { WAL } from './wal.js';
 import type { WalPoison } from './wal.js';
 import { ValueReader } from './value-reader.js';
 import { recover, catchUpWal, frameToOps } from './recovery.js';
-import { compact, shouldCompact } from './compaction.js';
+import { compact, shouldCompact, fsyncDir } from './compaction.js';
 import {
   SNAPSHOT_FILE,
   WAL_FILE,
@@ -25,6 +25,7 @@ import {
   SIDECAR_FILES,
   STALE_TMP_FILES,
   STALE_POSTINGS_TMP_PATTERN,
+  isStaleTmpFile,
   isPersistentFile,
 } from './persistent-files.js';
 import { IndexManager, UniqueViolationError } from './index-manager.js';
@@ -34,6 +35,7 @@ import { createNgramTokenizer } from './trigram.js';
 import { CompoundIndexManager } from './compound-index.js';
 import { getPath, match, project } from './query.js';
 import { LockFile, LockError } from './lockfile.js';
+import { createSerializer } from './serialize.js';
 import { encodeFrame, encodeBatchOps, scanBatchOpRefs, HEADER_SIZE, TYPE_SET, TYPE_DEL, TYPE_BATCH } from './codec.js';
 import type { BatchOp as EncodedBatchOp, FrameRef } from './codec.js';
 import type { FsyncPolicy } from './wal.js';
@@ -144,12 +146,33 @@ async function fileSize(file: string): Promise<number> {
   }
 }
 
-/** Write a small metadata file atomically (tmp + rename), so a crash cannot
- *  leave a torn definition file that would force openers into error/rebuild. */
-async function writeFileAtomic(file: string, data: string): Promise<void> {
-  const tmp = `${file}.tmp`;
-  await fs.writeFile(tmp, data, 'utf8');
-  await fs.rename(tmp, file);
+// Distinct tmp name per write (`tmp-${pid}-${seq}`, the lockfile sidecarSeq
+// pattern): the per-sidecar mutation chains are the real serialization fix,
+// unique tmps are defense in depth — no write can ever rename (or strand)
+// another in-flight write's tmp, and a crashed predecessor's leftovers match
+// the open-time isStaleTmpFile cleanup.
+let sidecarTmpSeq = 0;
+
+/** Write a small metadata file atomically (unique tmp + rename + strict
+ *  directory fsync), so a crash cannot leave a torn definition file that
+ *  would force openers into error/rebuild — and a successful return means
+ *  the rename is crash-durable (the stage-9 strict fsyncDir mode; a platform
+ *  without directory fsync degrades via fsyncDir itself). A strict fsync
+ *  failure propagates even though the renamed bytes may already be visible:
+ *  persist = crash-durable by definition, so the caller treats the mutation
+ *  as failed and keeps its previous in-memory state (the same ambiguity rule
+ *  as a WAL commit-point failure). */
+async function writeFileAtomic(file: string, data: string, opts: { stats?: { dirFsyncUnsupported?: boolean } } = {}): Promise<void> {
+  const tmp = `${file}.tmp-${process.pid}-${++sidecarTmpSeq}`;
+  try {
+    await fs.writeFile(tmp, data, 'utf8');
+    await fs.rename(tmp, file);
+  } finally {
+    // A successful rename already moved the tmp away (this rm is a no-op); a
+    // failed write/rename must not strand it.
+    await fs.rm(tmp, { force: true }).catch(() => {});
+  }
+  await fsyncDir(path.dirname(file), { strict: true, stats: opts.stats });
 }
 
 async function resolveValueMode(mode: ValueModeSetting, dir: string, maxMemoryBytes: number | null): Promise<ValueMode> {
@@ -281,6 +304,13 @@ export class MiniDb<V = unknown> {
   readonly compound = new CompoundIndexManager();
   private readonly text = new Map<string, TextIndex>();
   private textDefs: TextIndexDef[] = [];
+  /** Names staged for drop by dropTextIndex (plan 10's "mark staged-drop,
+   *  persist, then remove from live"). A compaction's postings rebuild
+   *  (rebuildTextPostings) skips them: without the mark, a build starting in
+   *  the drop's persist window could commit AFTER the drop's close+rm —
+   *  re-creating the postings file as an orphan and leaking the reopened
+   *  handle. */
+  private readonly textDrops = new Set<string>();
 
   private codec!: ValueCodec<V>;
   private codecName: ValueCodecName = 'buffer';
@@ -313,7 +343,23 @@ export class MiniDb<V = unknown> {
   maxMemoryBytes: number | null = null;
   maxMemoryPolicy: 'reject' | 'evict-lru' = 'reject';
   private access = new Set<string>(); // pk, insertion-ordered by last touch (Map/Set iteration order): front = LRU
-  private uniqueWriteLock: Promise<void> = Promise.resolve();
+  /** Serializes write ops while any unique index exists (check-then-apply must
+   *  be atomic against other writers). Shared promise-chain pattern — see
+   *  serialize.ts. */
+  private readonly serializeUniqueWrites = createSerializer();
+  /** Per-sidecar mutation chains (one promise-chain mutex per index-definition
+   *  sidecar file, plan 10): a create/drop runs its whole staged → persist →
+   *  publish sequence under its sidecar's chain, so concurrent mutations of
+   *  the SAME definition file can never interleave (before this, two
+   *  concurrent creates shared one fixed .tmp — one renamed the other's tmp
+   *  away — and a persist failure diverged the live registry from disk).
+   *  Different sidecar types do NOT block each other, and the data write path
+   *  (set/batch/del) never touches these chains. The in-chain rebuild is a
+   *  full Store walk: index changes are rare admin operations, so holding the
+   *  chain across the walk is the accepted trade-off. */
+  private readonly secondaryDefChain = createSerializer();
+  private readonly compoundDefChain = createSerializer();
+  private readonly textDefChain = createSerializer();
   /** Serializes in-place WAL recoveries (poison → truncate → resume), the same
    *  promise-chain style as uniqueWriteLock. Never rejects (a failed recovery
    *  lands in writeDisabled instead). */
@@ -468,11 +514,18 @@ export class MiniDb<V = unknown> {
       for (const tmp of STALE_TMP_FILES) {
         await fs.rm(path.join(db.dir, tmp), { force: true });
       }
-      // A failed postings rebuild orphans `db.text-*.postings.tmp` (its atomic
-      // rename never ran). Postings are pure derived state — rebuilt from the
-      // Store on open and after compaction — so such temps are always safe to
-      // delete, for any index name.
       for (const f of await fs.readdir(db.dir)) {
+        // Unique-suffixed sidecar temps (`<file>.tmp-<pid>-<seq>`) orphaned by
+        // a crashed writeFileAtomic — whitelisted per known file so a live
+        // LockFile's db.lock.tmp-* is never matched (isStaleTmpFile).
+        if (isStaleTmpFile(f)) {
+          await fs.rm(path.join(db.dir, f), { force: true });
+          continue;
+        }
+        // A failed postings rebuild orphans `db.text-*.postings.tmp` (its atomic
+        // rename never ran). Postings are pure derived state — rebuilt from the
+        // Store on open and after compaction — so such temps are always safe to
+        // delete, for any index name.
         if (STALE_POSTINGS_TMP_PATTERN.test(f)) await fs.rm(path.join(db.dir, f), { force: true });
       }
     }
@@ -657,7 +710,13 @@ export class MiniDb<V = unknown> {
    *  fresh base, so a compaction landing right after open must not redo the
    *  exact same (expensive) pass. */
   private async rebuildTextPostings(): Promise<void> {
-    for (const ti of this.text.values()) {
+    for (const [name, ti] of this.text) {
+      // Skip indexes staged for drop (see textDrops): their postings are
+      // about to be removed, and a build committing after the drop's
+      // close+rm would re-create the file as an orphan and leak the reopened
+      // handle. The mark check and ti.build()'s synchronous beginBuild() are
+      // one tick apart at most — see dropTextIndex for why that is safe.
+      if (this.textDrops.has(name)) continue;
       if (ti.needsRebuild()) await ti.build(this.textRecords());
     }
   }
@@ -729,8 +788,12 @@ export class MiniDb<V = unknown> {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
   }
-  private async persistIndexDefinitions(): Promise<void> {
-    await writeFileAtomic(this.indexPath, JSON.stringify(this.indexes.list()));
+  /** Persist the given secondary-index definition list. The CONTENT is the
+   *  caller's transaction decision (live list ± the mutation), never an
+   *  implicit snapshot of the registry — a create persists live+staged BEFORE
+   *  publishing, a drop persists live-minus BEFORE removing. */
+  private async persistIndexDefinitions(defs: IndexInfo[]): Promise<void> {
+    await writeFileAtomic(this.indexPath, JSON.stringify(defs), { stats: this.stats });
   }
   private async loadTextIndexDefinitions(): Promise<void> {
     try {
@@ -752,8 +815,10 @@ export class MiniDb<V = unknown> {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
   }
-  private async persistTextIndexDefinitions(): Promise<void> {
-    await writeFileAtomic(this.textIndexPath, JSON.stringify(this.textDefs));
+  /** Persist the given text-index definition list (same transaction-content
+   *  rule as persistIndexDefinitions). */
+  private async persistTextIndexDefinitions(defs: TextIndexDef[]): Promise<void> {
+    await writeFileAtomic(this.textIndexPath, JSON.stringify(defs), { stats: this.stats });
   }
   private async loadCompoundIndexDefinitions(): Promise<void> {
     try {
@@ -765,8 +830,10 @@ export class MiniDb<V = unknown> {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
   }
-  private async persistCompoundIndexDefinitions(): Promise<void> {
-    await writeFileAtomic(this.compoundIndexPath, JSON.stringify(this.compound.list()));
+  /** Persist the given compound-index definition list (same
+   *  transaction-content rule as persistIndexDefinitions). */
+  private async persistCompoundIndexDefinitions(defs: CompoundIndexInfo[]): Promise<void> {
+    await writeFileAtomic(this.compoundIndexPath, JSON.stringify(defs), { stats: this.stats });
   }
 
   /** Drop every derived index entry for a key that just expired in the Store. */
@@ -774,7 +841,7 @@ export class MiniDb<V = unknown> {
     this.access.delete(k);
     this.dt.del(k);
     this.compound.remove(k);
-    if (this.indexes.indexes.size) this.indexes.remove(k, undefined);
+    if (this.indexes.size) this.indexes.remove(k, undefined);
     for (const ti of this.text.values()) ti.remove(k);
   }
 
@@ -794,22 +861,10 @@ export class MiniDb<V = unknown> {
   }
 
   private hasUniqueIndexes(): boolean {
-    for (const idx of this.indexes.indexes.values()) if (idx.unique) return true;
-    return false;
-  }
-
-  private async withUniqueWriteLock<T>(fn: () => Promise<T>): Promise<T> {
-    const prev = this.uniqueWriteLock;
-    let release!: () => void;
-    this.uniqueWriteLock = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await prev;
-    try {
-      return await fn();
-    } finally {
-      release();
-    }
+    // Staged included: while a unique create is in its persist window the
+    // staged index is fully built and writes must already be checked against
+    // it (and serialized via serializeUniqueWrites) — see IndexManager.staged.
+    return this.indexes.hasUnique();
   }
 
   /**
@@ -1192,7 +1247,7 @@ export class MiniDb<V = unknown> {
       // still-poisoned WAL. Null (and zero-cost) when no recovery is running.
       const recoveryGate = this.walRecoveryGate();
       if (recoveryGate) await recoveryGate;
-      if (this.indexes.indexes.size && this.indexable(value)) this.indexes.checkUnique(op.pk, value);
+      if (this.indexes.size && this.indexable(value)) this.indexes.checkUnique(op.pk, value);
       const frame = encodeFrame({ type: TYPE_SET, key: op.key, value: op.value, meta: op.meta, expireAt: op.expireAt });
       const wal = this.wal;
       const appended = wal.appendLoc(frame);
@@ -1257,7 +1312,7 @@ export class MiniDb<V = unknown> {
       this.maybeAutoCompact();
     };
 
-    if (this.hasUniqueIndexes()) await this.withUniqueWriteLock(() => this.retryOnWalSeal(commit));
+    if (this.hasUniqueIndexes()) await this.serializeUniqueWrites(() => this.retryOnWalSeal(commit));
     else await this.retryOnWalSeal(commit);
   }
 
@@ -1323,7 +1378,7 @@ export class MiniDb<V = unknown> {
     const commit = async (): Promise<void> => {
       const recoveryGate = this.walRecoveryGate();
       if (recoveryGate) await recoveryGate;
-      if (this.indexes.indexes.size) {
+      if (this.indexes.size) {
         this.indexes.checkUniqueBatch(
           prepared.map((o) => ({
             pk: o.pk,
@@ -1403,7 +1458,7 @@ export class MiniDb<V = unknown> {
       this.maybeAutoCompact();
     };
 
-    if (this.hasUniqueIndexes()) await this.withUniqueWriteLock(() => this.retryOnWalSeal(commit));
+    if (this.hasUniqueIndexes()) await this.serializeUniqueWrites(() => this.retryOnWalSeal(commit));
     else await this.retryOnWalSeal(commit);
   }
 
@@ -1456,7 +1511,7 @@ export class MiniDb<V = unknown> {
       this.store.set(op.key, op.value!, op.expireAt, op.dtNorm);
       this.dt.set(op.pk, op.dtNorm);
       this.compound.add(op.pk, op.valueDecoded, op.dtNorm);
-      if (this.indexes.indexes.size) {
+      if (this.indexes.size) {
         if (this.indexable(oldDoc)) this.indexes.remove(op.pk, oldDoc);
         if (this.indexable(op.valueDecoded)) this.indexes.add(op.pk, op.valueDecoded);
       }
@@ -1470,7 +1525,7 @@ export class MiniDb<V = unknown> {
         this.access.delete(op.pk);
         this.dt.del(op.pk);
         this.compound.remove(op.pk);
-        if (this.indexes.indexes.size && this.indexable(oldDoc)) this.indexes.remove(op.pk, oldDoc);
+        if (this.indexes.size && this.indexable(oldDoc)) this.indexes.remove(op.pk, oldDoc);
         for (const ti of this.text.values()) ti.remove(op.pk);
       }
     }
@@ -1498,7 +1553,7 @@ export class MiniDb<V = unknown> {
    *  rollback: put the key back to `prev` across the store and every derived
    *  index (TTL/access/dt/secondary/compound/text). */
   private restoreGroupKey(pk: string, prev: StoreRecord | undefined): void {
-    if (this.indexes.indexes.size) this.indexes.remove(pk, undefined);
+    if (this.indexes.size) this.indexes.remove(pk, undefined);
     for (const ti of this.text.values()) ti.remove(pk);
     this.dt.del(pk);
     this.compound.remove(pk);
@@ -1532,13 +1587,13 @@ export class MiniDb<V = unknown> {
     // Old doc for derived-index removal; decoded before the overwrite, like
     // applyOp. This get also lazy-reaps an expired old record, whose onExpire
     // hook then removes its derived entries for us.
-    const oldDoc = this.indexes.indexes.size ? this.decode(this.store.get(pk)) : undefined;
+    const oldDoc = this.indexes.size ? this.decode(this.store.get(pk)) : undefined;
     if (op.type === TYPE_DEL) {
       if (!this.store.del(pk)) return;
       this.access.delete(pk);
       this.dt.del(pk);
       this.compound.remove(pk);
-      if (this.indexes.indexes.size && this.indexable(oldDoc)) this.indexes.remove(pk, oldDoc);
+      if (this.indexes.size && this.indexable(oldDoc)) this.indexes.remove(pk, oldDoc);
       for (const ti of this.text.values()) ti.remove(pk);
       return;
     }
@@ -1553,10 +1608,10 @@ export class MiniDb<V = unknown> {
     this.dt.set(pk, op.dt);
     // Values are only decoded when a value-derived index exists (all of them
     // require the json codec): with none, recovery never copies them either.
-    if (this.indexes.indexes.size || this.text.size || this.compound.list().length) {
+    if (this.indexes.size || this.text.size || this.compound.size) {
       const doc = this.decode(buf)!;
       this.compound.add(pk, doc, op.dt);
-      if (this.indexes.indexes.size) {
+      if (this.indexes.size) {
         if (this.indexable(oldDoc)) this.indexes.remove(pk, oldDoc);
         if (this.indexable(doc)) this.indexes.add(pk, doc);
       }
@@ -1710,24 +1765,37 @@ export class MiniDb<V = unknown> {
     this.ensureOpen();
     this.ensureWritable();
     if (this.codecName !== 'json') throw new Error('secondary indexes require valueCodec: "json"');
-    this.indexes.create(name, opts);
-    this.indexes.rebuild(this._liveRecordsRaw());
-    try {
-      // A unique index must not be created over data that already violates it.
-      this.indexes.assertUniqueValid(name);
-    } catch (e) {
-      this.indexes.drop(name);
-      this.indexes.rebuild(this._liveRecordsRaw());
-      throw e;
-    }
-    await this.persistIndexDefinitions();
+    // Serialized staged → persist → publish (see secondaryDefChain): the
+    // definition is staged off to the side, rebuilt there, persisted as part
+    // of the sidecar content, and only then published into the live registry.
+    // Any failure discards the staged index — the live registry and the
+    // sidecar keep their previous state, so a retry cannot hit a phantom
+    // "already exists".
+    await this.secondaryDefChain(async () => {
+      this.indexes.stage(name, opts);
+      try {
+        this.indexes.rebuildStaged(name, this._liveRecordsRaw());
+        // A unique index must not be created over data that already violates it.
+        this.indexes.assertUniqueValid(name);
+        await this.persistIndexDefinitions([...this.indexes.list(), this.indexes.stagedInfo(name)]);
+      } catch (e) {
+        this.indexes.discardStaged(name);
+        throw e;
+      }
+      this.indexes.publish(name);
+    });
   }
   async dropIndex(name: string): Promise<boolean> {
     this.ensureOpen();
     this.ensureWritable();
-    const ok = this.indexes.drop(name);
-    await this.persistIndexDefinitions();
-    return ok;
+    return this.secondaryDefChain(async () => {
+      // Persist FIRST (content without the definition), remove from the live
+      // registry only after the sidecar is durable: a persist failure leaves
+      // the index fully usable instead of diverging memory from disk (which a
+      // reopen would have resurrected).
+      await this.persistIndexDefinitions(this.indexes.list().filter((i) => i.name !== name));
+      return this.indexes.drop(name);
+    });
   }
   listIndexes(): IndexInfo[] {
     return this.indexes.list();
@@ -1753,17 +1821,30 @@ export class MiniDb<V = unknown> {
     this.ensureOpen();
     this.ensureWritable();
     if (this.codecName !== 'json') throw new Error('compound indexes require valueCodec: "json"');
-    this.compound.create(name, def);
-    this.compound.rebuild(this.liveRecords());
-    await this.persistCompoundIndexDefinitions();
+    // Serialized staged → persist → publish, the same discipline as
+    // createIndex (see compoundDefChain).
+    await this.compoundDefChain(async () => {
+      this.compound.stage(name, def);
+      try {
+        this.compound.rebuildStaged(name, this.liveRecords());
+        await this.persistCompoundIndexDefinitions([...this.compound.list(), this.compound.stagedInfo(name)]);
+      } catch (e) {
+        this.compound.discardStaged(name);
+        throw e;
+      }
+      this.compound.publish(name);
+    });
   }
 
   async dropCompoundIndex(name: string): Promise<boolean> {
     this.ensureOpen();
     this.ensureWritable();
-    const ok = this.compound.drop(name);
-    await this.persistCompoundIndexDefinitions();
-    return ok;
+    return this.compoundDefChain(async () => {
+      // Persist FIRST (content without the definition), remove from live only
+      // after the sidecar is durable (see dropIndex).
+      await this.persistCompoundIndexDefinitions(this.compound.list().filter((i) => i.name !== name));
+      return this.compound.drop(name);
+    });
   }
 
   listCompoundIndexes(): CompoundIndexInfo[] {
@@ -1799,52 +1880,68 @@ export class MiniDb<V = unknown> {
     this.ensureOpen();
     this.ensureWritable();
     if (this.codecName !== 'json') throw new Error('text indexes require valueCodec: "json"');
-    if (this.text.has(name)) throw new Error(`text index "${name}" already exists`);
-    const ti = new TextIndex({ fields, ...textIndexTokenizers(tokenizer), postingsPath: this.textPostingsPath(name) });
-    const def: TextIndexDef = { name, fields: fields ?? null, tokenizer };
-    // Register BEFORE building: the build yields to the event loop, and
-    // registering makes concurrent writes feed the index's build queue, which
-    // the build replays onto the new base — so the finished index reflects
-    // every write whenever it landed. Until the build completes, searches on
-    // the index see only its post-registration delta. A failed build unwinds
-    // the registration, so a retry cannot hit a phantom "already exists".
-    this.text.set(name, ti);
-    try {
-      await ti.build(this.textRecords());
-    } catch (e) {
-      this.text.delete(name);
-      ti.close();
-      throw e;
-    }
-    this.textDefs.push(def);
-    try {
-      await this.persistTextIndexDefinitions();
-    } catch (e) {
-      // Unwind so the in-memory state and the definition sidecar (which does
-      // not name this index) do not diverge; drop the derived postings file
-      // with it, exactly like dropTextIndex would.
-      this.text.delete(name);
-      this.textDefs = this.textDefs.filter((d) => d.name !== name);
-      ti.close();
-      await fs.rm(this.textPostingsPath(name), { force: true }).catch(() => {});
-      throw e;
-    }
+    await this.textDefChain(async () => {
+      if (this.text.has(name)) throw new Error(`text index "${name}" already exists`);
+      const ti = new TextIndex({ fields, ...textIndexTokenizers(tokenizer), postingsPath: this.textPostingsPath(name) });
+      // The staged definition: joins the persisted set (publish) only after
+      // the sidecar is durable.
+      const def: TextIndexDef = { name, fields: fields ?? null, tokenizer };
+      // Register BEFORE building: the build yields to the event loop, and
+      // registering makes concurrent writes feed the index's build queue, which
+      // the build replays onto the new base — so the finished index reflects
+      // every write whenever it landed. Until the build completes, searches on
+      // the index see only its post-registration delta. Any failure below
+      // discards the staged index, so a retry cannot hit a phantom
+      // "already exists".
+      this.text.set(name, ti);
+      try {
+        await ti.build(this.textRecords());
+        await this.persistTextIndexDefinitions([...this.textDefs, def]);
+      } catch (e) {
+        // Discard the staged index so the in-memory state and the definition
+        // sidecar (which does not name this index) do not diverge; drop the
+        // derived postings file with it, exactly like dropTextIndex would.
+        this.text.delete(name);
+        ti.close();
+        await fs.rm(this.textPostingsPath(name), { force: true }).catch(() => {});
+        throw e;
+      }
+      this.textDefs.push(def);
+    });
   }
   async dropTextIndex(name: string): Promise<boolean> {
     this.ensureOpen();
     this.ensureWritable();
-    const ti = this.text.get(name);
-    // Dropping mid-build would orphan the in-flight postings write (the file
-    // is removed while the build is still producing it).
-    if (ti?.building) throw new Error(`text index "${name}" is still building`);
-    const ok = this.text.delete(name);
-    if (ti) {
-      ti.close();
-      await fs.rm(this.textPostingsPath(name), { force: true }).catch(() => {});
-    }
-    this.textDefs = this.textDefs.filter((d) => d.name !== name);
-    await this.persistTextIndexDefinitions();
-    return ok;
+    return this.textDefChain(async () => {
+      const ti = this.text.get(name);
+      // Dropping mid-build would orphan the in-flight postings write (the file
+      // is removed while the build is still producing it). The build can only
+      // be a compaction's postings rebuild — createTextIndex builds under this
+      // same chain.
+      if (ti?.building) throw new Error(`text index "${name}" is still building`);
+      // Mark staged-drop BEFORE the persist window: a compaction's postings
+      // rebuild checks the mark and skips this index (see textDrops), so no
+      // build can start while the persist below is in flight. The marking is
+      // synchronous with the building check above, so a build is either
+      // already running (caught there) or can never start (blocked here).
+      this.textDrops.add(name);
+      try {
+        // Persist FIRST (content without the definition), remove from live and
+        // release the resources only after the sidecar is durable: a persist
+        // failure leaves the index fully usable (see dropIndex).
+        const nextDefs = this.textDefs.filter((d) => d.name !== name);
+        await this.persistTextIndexDefinitions(nextDefs);
+        const ok = this.text.delete(name);
+        if (ti) {
+          ti.close();
+          await fs.rm(this.textPostingsPath(name), { force: true }).catch(() => {});
+        }
+        this.textDefs = nextDefs;
+        return ok;
+      } finally {
+        this.textDrops.delete(name);
+      }
+    });
   }
 
   search(name: string, q: string, opts: { op?: 'AND' | 'OR'; limit?: number; maxVisits?: number } = {}): { key: string; value: V | undefined; score: number }[] {

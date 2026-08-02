@@ -19,6 +19,7 @@ import fsSync from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { renameReplace } from './rename-replace.js';
+import { createSerializer } from './serialize.js';
 
 export class LockError extends Error {
   readonly code = 'ELOCKED';
@@ -77,27 +78,14 @@ export class LockFile {
    *  carried by every file this instance publishes (lock/bid/watch), and the
    *  sole ownership criterion (`mine`). Null before the first acquire(). */
   private token: string | null = null;
-  /** Serializes acquire/renew/release (the withUniqueWriteLock pattern): each
-   *  op's whole read-check-write completes before the next one starts, so a
-   *  renew already in flight finishes before a release unlinks. */
-  private opChain: Promise<void> = Promise.resolve();
+  /** Serializes acquire/renew/release (the shared promise-chain pattern of
+   *  serialize.ts): each op's whole read-check-write completes before the next
+   *  one starts, so a renew already in flight finishes before a release
+   *  unlinks. */
+  private readonly serialized = createSerializer();
 
   constructor(path: string) {
     this.path = path;
-  }
-
-  private async serialized<T>(fn: () => Promise<T>): Promise<T> {
-    const prev = this.opChain;
-    let done!: () => void;
-    this.opChain = new Promise<void>((resolve) => {
-      done = resolve;
-    });
-    await prev;
-    try {
-      return await fn();
-    } finally {
-      done();
-    }
   }
 
   /** File body for every file this instance publishes (lock, bid, watch). */

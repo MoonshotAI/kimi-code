@@ -784,3 +784,159 @@ test('MiniDb: searchBounded surfaces values, visits and the truncated flag', asy
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+
+// ---- plan 10: sidecar mutation serialization + staged → persist → publish --
+
+/** White-box handle on the private persistTextIndexDefinitions, to inject a
+ *  sidecar-write failure at the exact transaction point. */
+function stubTextPersist(db: MiniDb, impl: (defs: { name: string }[]) => Promise<void>): () => void {
+  const priv = db as unknown as { persistTextIndexDefinitions: (defs: { name: string }[]) => Promise<void> };
+  const saved = priv.persistTextIndexDefinitions;
+  priv.persistTextIndexDefinitions = impl;
+  return () => {
+    priv.persistTextIndexDefinitions = saved;
+  };
+}
+
+async function textSidecarNames(dir: string): Promise<string[]> {
+  try {
+    return (JSON.parse(await fs.readFile(path.join(dir, 'db.textindexes.json'), 'utf8')) as { name: string }[])
+      .map((d) => d.name)
+      .sort();
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw e;
+  }
+}
+
+test('MiniDb: concurrent createTextIndex calls are serialized; memory == sidecar == reopen', async () => {
+  const dir = await tmpDir();
+  let db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+  try {
+    await db.set('a', { title: 'hello world', body: 'full text body' });
+    const results = await Promise.allSettled([
+      db.createTextIndex('title', { fields: ['title'] }),
+      db.createTextIndex('body', { fields: ['body'] }),
+      db.dropTextIndex('neverThere'),
+    ]);
+    assert.deepEqual(
+      results.map((r) => (r.status === 'rejected' ? String(r.reason) : r.status)),
+      ['fulfilled', 'fulfilled', 'fulfilled'],
+    );
+    assert.deepEqual(await textSidecarNames(dir), ['body', 'title']);
+    // Both builds (registered before building) saw the pre-existing document.
+    assert.deepEqual(db.search('title', 'hello').map((r) => r.key), ['a']);
+    assert.deepEqual(db.search('body', 'text').map((r) => r.key), ['a']);
+    await db.close();
+    db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+    assert.deepEqual(await textSidecarNames(dir), ['body', 'title']);
+    assert.deepEqual(db.search('title', 'hello').map((r) => r.key), ['a']);
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('MiniDb: createTextIndex persist failure: no phantom, postings removed, original error rethrown, retry succeeds', async () => {
+  const dir = await tmpDir();
+  const db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+  try {
+    await db.set('a', { text: 'hello world' });
+    const boom = new Error('injected sidecar write failure');
+    const restore = stubTextPersist(db, async () => {
+      throw boom;
+    });
+    await assert.rejects(db.createTextIndex('body', { fields: ['text'] }), (e) => e === boom);
+    restore();
+    // No phantom: the index is gone from memory and from the sidecar, and its
+    // derived postings file was removed (exactly like dropTextIndex would).
+    assert.throws(() => db.search('body', 'hello'), /no such text index/);
+    assert.deepEqual(await textSidecarNames(dir), []);
+    assert.deepEqual(
+      (await fs.readdir(dir)).filter((f) => f.includes('postings')),
+      [],
+    );
+    // Retry succeeds — no phantom "already exists".
+    await db.createTextIndex('body', { fields: ['text'] });
+    assert.deepEqual(db.search('body', 'hello').map((r) => r.key), ['a']);
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('MiniDb: dropTextIndex persist failure: the index stays searchable and the sidecar is unchanged', async () => {
+  const dir = await tmpDir();
+  const db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+  try {
+    await db.createTextIndex('body', { fields: ['text'] });
+    await db.set('a', { text: 'hello world' });
+    const before = await fs.readFile(path.join(dir, 'db.textindexes.json'), 'utf8');
+    const boom = new Error('injected sidecar write failure');
+    const restore = stubTextPersist(db, async () => {
+      throw boom;
+    });
+    await assert.rejects(db.dropTextIndex('body'), (e) => e === boom);
+    restore();
+    // The index is still live: searchable, and its postings file intact.
+    assert.deepEqual(db.search('body', 'hello').map((r) => r.key), ['a']);
+    assert.equal(await fs.readFile(path.join(dir, 'db.textindexes.json'), 'utf8'), before);
+    // A later successful drop persists fine.
+    assert.equal(await db.dropTextIndex('body'), true);
+    assert.deepEqual(await textSidecarNames(dir), []);
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+
+test('MiniDb: dropTextIndex persist window: a compaction postings rebuild skips the dropping index (no orphan, no leaked handle)', async () => {
+  const dir = await tmpDir();
+  const db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+  try {
+    await db.createTextIndex('body', { fields: ['text'] });
+    // Dirty the index so it is a postings-rebuild candidate.
+    await db.set('a', { text: 'hello world' });
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const inPersist = new Promise<void>((r) => (entered = r));
+    // Park INSIDE the persist, then let the real write through: the drop
+    // completes end-to-end, only delayed.
+    const privPersist = db as unknown as { persistTextIndexDefinitions(defs: { name: string }[]): Promise<void> };
+    const original = privPersist.persistTextIndexDefinitions;
+    const restore = stubTextPersist(db, async (defs) => {
+      entered();
+      await gate;
+      await original.call(db, defs);
+    });
+    const drop = db.dropTextIndex('body');
+    // The drop is parked inside its persist, the index marked staged-drop.
+    await inPersist;
+    const priv = db as unknown as {
+      rebuildTextPostings(): Promise<void>;
+      text: Map<string, TextIndex>;
+    };
+    const ti = priv.text.get('body')!;
+    assert.equal(ti.needsRebuild(), true, 'setup: the index is a rebuild candidate');
+    // A background compaction's postings rebuild lands in the window. The
+    // build (if started) sets ti.building synchronously, so this assertion is
+    // not timing-dependent.
+    const rebuild = priv.rebuildTextPostings();
+    assert.equal(ti.building, false, 'a dropping index must not start a postings build');
+    release();
+    assert.equal(await drop, true);
+    await rebuild;
+    restore();
+    // No late build commit: no orphan postings file re-created after the
+    // drop's close+rm, and no live handle left on the dropped index.
+    assert.deepEqual((await fs.readdir(dir)).filter((f) => f.includes('postings')), []);
+    assert.equal((ti as unknown as { pf: unknown }).pf, null);
+    assert.deepEqual(await textSidecarNames(dir), []);
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
