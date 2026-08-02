@@ -4,6 +4,17 @@
 
 ## 2026-08-02
 
+### feat: 用户级 Skill 可视化 CRUD — 单个技能创建/编辑/删除
+
+补齐「用户级 Skill 管理 REST 路由」的前端集成（此前仅后端就绪，标注「前端集成待后续补充」）。在设置面板「技能」tab 新增「用户自定义技能」区块，对 `<kimi-home>/skills/<name>/SKILL.md` 实现端到端可视化增删改：列表展示、内联表单（名称/描述/内容）、改名支持（先删旧再建新）、懒加载与 loading/error 状态。
+
+| 层级 | 文件 | 改动 |
+|---|---|---|
+| State | `apps/kimi-web/src/composables/client/useModelProviderState.ts` | 新增 `userSkills`/`userSkillsLoading`/`userSkillsError` 状态与 `loadUserSkills`/`upsertUserSkill`/`deleteUserSkill` 动作 |
+| State | `apps/kimi-web/src/composables/useKimiWebClient.ts` | 暴露用户技能状态与动作 |
+| UI | `apps/kimi-web/src/components/settings/SettingsDialog.vue` | 技能 tab 新增「用户自定义技能」区块：列表 + 内联表单 + 同名校验 + 改名（删旧建新）+ 懒加载 |
+| i18n | `apps/kimi-web/src/i18n/locales/{en,zh}/settings.ts` | 新增 14 个文案 key（按钮、标签、占位符、错误提示） |
+
 ### feat: MCP 服务器配置管理 — 用户级 mcp.json 可视化 CRUD
 
 在 Web 设置面板新增独立「MCP」导航 tab，对用户级 `<kimi-home>/mcp.json` 实现端到端可视化管理（列表 / 新增 / 编辑 / 删除），前端表单支持 stdio / HTTP / SSE 三种传输模式，可编辑命令、参数、环境变量、请求头、启用开关与超时。

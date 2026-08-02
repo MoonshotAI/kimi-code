@@ -287,6 +287,13 @@ watch(activeTab, (tab) => {
   ) {
     void client.loadMcpServers();
   }
+  if (
+    tab === 'skills' &&
+    client.userSkills.value === undefined &&
+    !client.userSkillsLoading.value
+  ) {
+    void client.loadUserSkills();
+  }
 });
 
 const archiveWorkspaces = computed<string[]>(() => {
@@ -784,6 +791,94 @@ function removeSkillDirImmediate(path: string): void {
   const next = skillDirList.value.filter((p) => p !== path);
   emit('updateConfig', { extraSkillDirs: next });
 }
+
+// 用户自定义技能（<kimi-home>/skills/<name>/SKILL.md）的增删改。后端 REST
+// 路由已就绪：GET/POST/DELETE /api/v1/skills。这里维护一个内联表单状态：
+// skillFormMode = 'idle' | 'create' | 'edit'，编辑态记录 originalName 以便
+// 改名（先删旧再建新，因为后端 upsert 以 name 为键）。
+type SkillFormMode = 'idle' | 'create' | 'edit';
+const skillFormMode = ref<SkillFormMode>('idle');
+const skillFormOriginalName = ref<string>('');
+const skillFormName = ref<string>('');
+const skillFormDescription = ref<string>('');
+const skillFormContent = ref<string>('');
+const skillFormError = ref<string>('');
+const skillFormSaving = ref<boolean>(false);
+
+function startCreateUserSkill(): void {
+  skillFormMode.value = 'create';
+  skillFormOriginalName.value = '';
+  skillFormName.value = '';
+  skillFormDescription.value = '';
+  skillFormContent.value = '';
+  skillFormError.value = '';
+}
+
+function startEditUserSkill(skill: { name: string; description: string; content: string }): void {
+  skillFormMode.value = 'edit';
+  skillFormOriginalName.value = skill.name;
+  skillFormName.value = skill.name;
+  skillFormDescription.value = skill.description;
+  skillFormContent.value = skill.content;
+  skillFormError.value = '';
+}
+
+function cancelUserSkillForm(): void {
+  skillFormMode.value = 'idle';
+  skillFormOriginalName.value = '';
+  skillFormName.value = '';
+  skillFormDescription.value = '';
+  skillFormContent.value = '';
+  skillFormError.value = '';
+}
+
+async function saveUserSkillForm(): Promise<void> {
+  const name = skillFormName.value.trim();
+  if (!name) {
+    skillFormError.value = t('settings.skillEmptyName');
+    return;
+  }
+  // 同名校验：编辑态下若未改名则跳过；改名或新建时检查是否已存在同名技能。
+  const existing = client.userSkills.value ?? [];
+  const isRename = skillFormMode.value === 'edit' && name !== skillFormOriginalName.value;
+  if (skillFormMode.value === 'create' || isRename) {
+    if (existing.some((s) => s.name === name)) {
+      skillFormError.value = t('settings.skillDuplicateName');
+      return;
+    }
+  }
+  skillFormSaving.value = true;
+  skillFormError.value = '';
+  try {
+    // 改名场景：后端 upsert 以 name 为键，无法原地改名，需先删旧再建新。
+    if (isRename) {
+      const deleted = await client.deleteUserSkill(skillFormOriginalName.value);
+      if (!deleted) {
+        skillFormError.value = t('settings.skillSaving');
+        return;
+      }
+    }
+    const ok = await client.upsertUserSkill(name, {
+      description: skillFormDescription.value.trim(),
+      content: skillFormContent.value,
+    });
+    if (!ok) {
+      skillFormError.value = t('settings.skillSaving');
+      return;
+    }
+    cancelUserSkillForm();
+  } finally {
+    skillFormSaving.value = false;
+  }
+}
+
+async function removeUserSkill(name: string): Promise<void> {
+  await client.deleteUserSkill(name);
+}
+
+function reloadUserSkills(): void {
+  void client.loadUserSkills();
+}
 </script>
 
 <template>
@@ -1223,6 +1318,76 @@ function removeSkillDirImmediate(path: string): void {
             </h4>
             <p class="panel-desc">{{ t('settings.skillsDesc') }}</p>
           </div>
+
+          <!-- 用户自定义技能（单个技能 CRUD） -->
+          <section class="sec">
+            <div class="sec-head-row">
+              <h3 class="sec-title">{{ t('settings.skillUserSkills') }}</h3>
+              <div v-if="skillFormMode === 'idle'" class="sec-head-actions">
+                <Button variant="secondary" size="sm" :disabled="client.userSkillsLoading.value" @click="reloadUserSkills">{{ t('settings.skillRefreshBtn') }}</Button>
+                <Button variant="primary" size="sm" @click="startCreateUserSkill">{{ t('settings.skillCreateBtn') }}</Button>
+              </div>
+            </div>
+
+            <div v-if="client.userSkillsLoading.value && client.userSkills.value === undefined" class="archive-empty">
+              {{ t('settings.archivedLoading') }}
+            </div>
+            <div v-else-if="client.userSkillsError.value" class="archive-empty">
+              {{ t('settings.skillsLoadFailed') }}
+              <Button variant="secondary" size="sm" @click="reloadUserSkills">{{ t('settings.skillRefreshBtn') }}</Button>
+            </div>
+
+            <template v-else>
+              <!-- 技能列表 -->
+              <div v-if="(client.userSkills.value ?? []).length > 0" class="ext-list">
+                <div v-for="skill in client.userSkills.value" :key="skill.name" class="ext-card">
+                  <div class="ext-card-head">
+                    <div class="ext-card-name">
+                      <span class="ext-name mono">{{ skill.name }}</span>
+                      <span v-if="skill.description" class="ext-skill-desc">{{ skill.description }}</span>
+                    </div>
+                    <div class="ext-card-actions">
+                      <Button variant="secondary" size="sm" :disabled="skillFormMode !== 'idle'" @click="startEditUserSkill(skill)">{{ t('settings.skillEditBtn') }}</Button>
+                      <Button variant="danger-soft" size="sm" :disabled="skillFormMode !== 'idle'" @click="removeUserSkill(skill.name)">{{ t('settings.skillDeleteBtn') }}</Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div v-else-if="skillFormMode === 'idle'" class="archive-empty">{{ t('settings.skillNoUserSkills') }}</div>
+
+              <!-- 新增/编辑表单 -->
+              <div v-if="skillFormMode !== 'idle'" class="ext-form ext-user-skill-form">
+                <div class="ext-form-row">
+                  <label class="ext-field-label">{{ t('settings.skillNameLabel') }}</label>
+                  <Input
+                    v-model="skillFormName"
+                    :placeholder="t('settings.skillNamePlaceholder')"
+                  />
+                </div>
+                <div class="ext-form-row">
+                  <label class="ext-field-label">{{ t('settings.skillDesc') }}</label>
+                  <Input
+                    v-model="skillFormDescription"
+                    :placeholder="t('settings.skillDescPlaceholder')"
+                  />
+                </div>
+                <div class="ext-form-row ext-form-row-stack">
+                  <label class="ext-field-label">{{ t('settings.skillContentLabel') }}</label>
+                  <textarea
+                    v-model="skillFormContent"
+                    class="ext-textarea"
+                    rows="8"
+                    :placeholder="t('settings.skillContentPlaceholder')"
+                  />
+                </div>
+                <div v-if="skillFormError" class="ext-error ext-form-error">{{ skillFormError }}</div>
+                <div class="ext-form-actions">
+                  <Button variant="secondary" size="sm" :disabled="skillFormSaving" @click="cancelUserSkillForm">{{ t('settings.skillCancelBtn') }}</Button>
+                  <Button variant="primary" size="sm" :disabled="skillFormSaving" @click="saveUserSkillForm">{{ skillFormSaving ? t('settings.skillSaving') : t('settings.skillSaveBtn') }}</Button>
+                </div>
+              </div>
+            </template>
+          </section>
 
           <!-- 用户技能目录（extraSkillDirs）：增删改 -->
           <section class="sec">
