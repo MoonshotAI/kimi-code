@@ -1030,6 +1030,9 @@ importers:
       '@antfu/utils':
         specifier: ^9.3.0
         version: 9.3.0
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.3.6)
       '@moonshot-ai/kimi-agent':
         specifier: workspace:*
         version: link:../kimi-agent

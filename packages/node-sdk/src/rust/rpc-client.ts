@@ -22,6 +22,14 @@ import type { Event } from '../events';
 
 import { SDKRpcClientBase } from '#/rpc';
 import { ErrorCodes, KimiError } from '#/legacy/errors';
+import { GlobalMcpConfigStore } from '#/legacy/global-mcp-config';
+import {
+  beginGlobalMcpServerAuthHost,
+  cancelGlobalMcpServerAuthHost,
+  completeGlobalMcpServerAuthHost,
+  resetGlobalMcpServerAuthHost,
+  testGlobalMcpServerHost,
+} from '#/legacy/mcp-host';
 import { ensureConfigFile as legacyEnsureConfigFile, readConfigFile, writeConfigFile } from '#/legacy/config';
 import type {
   KimiConfig,
@@ -629,15 +637,31 @@ export class RustRpcClient extends SDKRpcClientBase {
       },
       removeKimiProvider: async () => nativeUnavailable('removeKimiProvider'),
       getConfigDiagnostics: async () => ({ warnings: [] }) as never,
-      listGlobalMcpServers: async () => nativeUnavailable('listGlobalMcpServers'),
-      addGlobalMcpServer: async () => nativeUnavailable('addGlobalMcpServer'),
-      updateGlobalMcpServer: async () => nativeUnavailable('updateGlobalMcpServer'),
-      removeGlobalMcpServer: async () => nativeUnavailable('removeGlobalMcpServer'),
-      beginGlobalMcpServerAuth: async () => nativeUnavailable('beginGlobalMcpServerAuth'),
-      completeGlobalMcpServerAuth: async () => nativeUnavailable('completeGlobalMcpServerAuth'),
-      cancelGlobalMcpServerAuth: async () => nativeUnavailable('cancelGlobalMcpServerAuth'),
-      resetGlobalMcpServerAuth: async () => nativeUnavailable('resetGlobalMcpServerAuth'),
-      testGlobalMcpServer: async () => nativeUnavailable('testGlobalMcpServer'),
+      listGlobalMcpServers: async () => new GlobalMcpConfigStore(this.homeDir).list(),
+      addGlobalMcpServer: async ({ server }: any) =>
+        new GlobalMcpConfigStore(this.homeDir).add(server),
+      updateGlobalMcpServer: async ({ server }: any) =>
+        new GlobalMcpConfigStore(this.homeDir).update(server),
+      removeGlobalMcpServer: async ({ name }: any) =>
+        new GlobalMcpConfigStore(this.homeDir).remove(name),
+      beginGlobalMcpServerAuth: async ({ name }: any) => {
+        const server = await new GlobalMcpConfigStore(this.homeDir).get(name);
+        return beginGlobalMcpServerAuthHost(server);
+      },
+      completeGlobalMcpServerAuth: async ({ flowId }: any) => {
+        completeGlobalMcpServerAuthHost(flowId);
+      },
+      cancelGlobalMcpServerAuth: async ({ flowId }: any) => {
+        cancelGlobalMcpServerAuthHost(flowId);
+      },
+      resetGlobalMcpServerAuth: async ({ name }: any) => {
+        const server = await new GlobalMcpConfigStore(this.homeDir).get(name);
+        resetGlobalMcpServerAuthHost(server);
+      },
+      testGlobalMcpServer: async ({ name }: any) => {
+        const server = await new GlobalMcpConfigStore(this.homeDir).get(name);
+        return testGlobalMcpServerHost(server);
+      },
       listWorkspaceSkills: async () => [],
       listPlugins: async () => {
         const result = await r.pluginList();

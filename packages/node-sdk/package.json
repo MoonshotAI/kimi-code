@@ -62,6 +62,7 @@
     "@moonshot-ai/kimi-i18n": "workspace:^",
     "@moonshot-ai/kimi-native-tools": "workspace:^",
     "@moonshot-ai/protocol": "workspace:^",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "js-yaml": "^4.1.1",
     "smol-toml": "^1.6.1",
     "yazl": "^3.3.1",
