@@ -1,5 +1,13 @@
 # Rust 迁移工作记录（交接用，勿提交）
 
+> **✅ 2026-08-02 node-sdk 解绑——harness 切 Rust + 核心本地化（已提交 4 个 commit）**：
+> - **createKimiHarness 已切 RustRpcClient**：SDKRpcClient/KimiCore 进程内路径删除（`sdk-rpc-client.ts` 重写为 Rust-backed 装配，注入 rust-loop + KimiAuthFacade）
+> - **本地化**：ImageLimits（opaque 接口）、ExperimentalFeature flags（`legacy/flags.ts` 镜像）、withTelemetryContext（`kimi-harness.ts`）、log family（转引 `@moonshot-ai/kimi-agent/runtime` logging-core）、effectiveModelAlias/loadRuntimeConfigSafe/resolveConfigPath（`legacy/config.ts`）、limitAgentReplayByTurns（`legacy/replay.ts` 移植）、errors（`legacy/errors.ts`）
+> - **CLI 清理**：run-prompt/run-shell/acp 移除 maybeLoadRustEngine + runTurnOverride 桥接（Rust 引擎自跑 loop）；`rust-engine.ts` 删 maybeLoadRustEngine + extractMultiLlmProviders 死代码
+> - **消费方对齐**：editor-keyboard/acp-adapter 的 ImageLimits.maxEdgePx 从方法改 number；message-replay 用 SDK 的 replay 端口
+> - 验证：node-sdk/kimi-code typecheck 0 错误，SDK 9 测试 + CLI 55 测试绿
+> - **剩余（专项）**：① image compression 移植（~940 行 + wasm native-tools，CLI 粘贴路径依赖 6 个函数）；② loadMcpServers/PluginManager/prepareSystemPromptContext/DEFAULT_AGENT_PROFILES 移植；③ types.ts 40+ 类型 + rpc.ts CoreAPI 类型系统镜像；④ SDK 集成测试迁移（~105 用例）；⑤ klient Rust 传输；⑥ 物理隔离 agent-core/agent-core-v2
+
 > **✅ 2026-08-02 引擎化测试语义适配收官（kap-server 377 全绿，未提交）**：
 > - **引擎缺口修复**：
 >   - `session/list_tools` 误用 `SessionFsParams`（要求 action）→ 新增 `SessionListToolsParams`（`src/rpc/types.rs`），`GET /tools` 从 50001 恢复正常
