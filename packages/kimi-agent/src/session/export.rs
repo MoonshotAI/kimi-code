@@ -9,8 +9,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::persistence::record_store::RecordStore;
 
-/// Export manifest — metadata about the exported session.
+/// Export manifest — metadata about the exported session. Field names are
+/// camelCase to match the v1 export manifest wire shape (`sessionId`,
+/// `webLogPath`, …).
 #[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExportManifest {
     pub version: u32,
     pub created_at: String,
@@ -19,6 +22,9 @@ pub struct ExportManifest {
     pub turn_count: u32,
     pub os: String,
     pub kimi_version: String,
+    /// Archive-relative path of the web log entry, when one was supplied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub web_log_path: Option<String>,
 }
 
 /// Build an export manifest for the given session.
@@ -35,6 +41,7 @@ pub fn build_manifest(session_id: &str, turn_count: u32) -> ExportManifest {
         turn_count,
         os: std::env::consts::OS.to_string(),
         kimi_version: env!("CARGO_PKG_VERSION").to_string(),
+        web_log_path: None,
     }
 }
 
@@ -68,6 +75,17 @@ pub fn export_session(
     session_dir: &Path,
     record_store: &RecordStore,
 ) -> Result<Vec<u8>, String> {
+    export_session_with_web_log(session_id, session_dir, record_store, None)
+}
+
+/// Export with an optional client-supplied web JSONL log (`web_log`), archived
+/// as `logs/kimi-web.jsonl` with a matching manifest `webLogPath` entry.
+pub fn export_session_with_web_log(
+    session_id: &str,
+    session_dir: &Path,
+    record_store: &RecordStore,
+    web_log: Option<&str>,
+) -> Result<Vec<u8>, String> {
     let zip_buf = std::io::Cursor::new(Vec::new());
     let mut zip = zip::ZipWriter::new(zip_buf);
 
@@ -76,7 +94,10 @@ pub fn export_session(
 
     // 1. Add manifest
     let scan = wire_scan(record_store, session_id);
-    let manifest = build_manifest(session_id, scan.record_count as u32);
+    let mut manifest = build_manifest(session_id, scan.record_count as u32);
+    if web_log.is_some() {
+        manifest.web_log_path = Some("logs/kimi-web.jsonl".to_string());
+    }
     let manifest_json = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
     zip.start_file("manifest.json", options).map_err(|e| e.to_string())?;
     zip.write_all(manifest_json.as_bytes()).map_err(|e| e.to_string())?;
@@ -86,6 +107,12 @@ pub fn export_session(
     let records_json = serde_json::to_string_pretty(&records).map_err(|e| e.to_string())?;
     zip.start_file("wire.json", options).map_err(|e| e.to_string())?;
     zip.write_all(records_json.as_bytes()).map_err(|e| e.to_string())?;
+
+    // 2b. Add the client-supplied web log (when present)
+    if let Some(log) = web_log {
+        zip.start_file("logs/kimi-web.jsonl", options).map_err(|e| e.to_string())?;
+        zip.write_all(log.as_bytes()).map_err(|e| e.to_string())?;
+    }
 
     // 3. Add session files from the session directory
     if session_dir.exists() {
@@ -97,12 +124,19 @@ pub fn export_session(
 }
 
 /// Recursively add a directory's contents to a zip archive.
+///
+/// Bounded: skips heavy/generated subtrees (`node_modules`, `.git`, `target`)
+/// and caps per-file size so a large workspace cannot stall the export RPC or
+/// blow the response envelope.
 fn add_dir_to_zip<W: Write + Seek>(
     zip: &mut zip::ZipWriter<W>,
     base: &Path,
     dir: &Path,
     options: &zip::write::FileOptions,
 ) -> Result<(), String> {
+    // Per-file cap (64 MiB) protects against vendored binaries dominating the
+    // archive; the record/context payloads are already bounded upstream.
+    const MAX_EXPORT_FILE_BYTES: u64 = 64 * 1024 * 1024;
     let entries = std::fs::read_dir(dir).map_err(|e| format!("read dir {dir:?}: {e}"))?;
     for entry in entries {
         let entry = entry.map_err(|e| e.to_string())?;
@@ -113,11 +147,22 @@ fn add_dir_to_zip<W: Write + Seek>(
             .to_string_lossy()
             .to_string();
 
+        // Skip heavy/generated subtrees that dominate repo archives without
+        // contributing session state.
+        let name = entry.file_name().to_string_lossy().to_string();
+        if matches!(name.as_str(), "node_modules" | ".git" | "target" | "dist" | ".next") {
+            continue;
+        }
+
         if path.is_dir() {
             zip.add_directory(&format!("{relative}/"), *options)
                 .map_err(|e| e.to_string())?;
             add_dir_to_zip(zip, base, &path, options)?;
         } else if path.is_file() {
+            let meta = std::fs::metadata(&path).map_err(|e| format!("stat {path:?}: {e}"))?;
+            if meta.len() > MAX_EXPORT_FILE_BYTES {
+                continue;
+            }
             zip.start_file(&relative, *options)
                 .map_err(|e| e.to_string())?;
             let mut file = std::fs::File::open(&path).map_err(|e| e.to_string())?;

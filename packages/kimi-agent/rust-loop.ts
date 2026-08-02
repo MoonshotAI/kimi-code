@@ -55,6 +55,11 @@ import type {
   ToolExecuteResponse,
 } from './src/rpc/wire.gen';
 
+// Re-export the LLM wire types hosts use to register stub/proxy handlers
+// (`llmStep`, `setLlmChatHandler`) — the session surface is host-proxy for
+// non-native-LLM turns, so consumers type their callbacks against these.
+export type { LlmChatRequest, LlmChatResponse };
+
 // Project root: packages/kimi-agent/rust-loop.ts → ../../ (project root)
 const projectRoot = resolve(import.meta.dirname, '..', '..');
 
@@ -2485,6 +2490,30 @@ export async function sessionListMcpServers(
   return agentCall('session/list_mcp_servers', { session_id: sessionId });
 }
 
+/** Engine-side task record (serde snake_case; `task/list` returns a flat
+ *  array of these — the process/agent/question variants are folded into the
+ *  single base shape via `TaskInfoBase`). */
+export interface EngineTaskInfo {
+  task_id: string;
+  description: string;
+  status: 'running' | 'completed' | 'failed' | 'timed_out' | 'killed' | 'lost';
+  kind: string;
+  started_at: number;
+  ended_at?: number | null;
+  detached: boolean;
+  stop_reason?: string | null;
+  terminal_notification_suppressed: boolean;
+  timeout_ms?: number | null;
+  agent_id?: string | null;
+}
+
+/** Global background-task roster (SDK `listTasks` parity). The engine's
+ *  `task/list` is process-wide, not per-session; the host projects it onto
+ *  the v1 per-session wire shape. */
+export async function sessionTaskList(): Promise<EngineTaskInfo[] | null> {
+  return agentCall('task/list', {});
+}
+
 /** Engine-side registered skill (serde snake_case). */
 export interface EngineSkillSummary {
   name: string;
@@ -2667,6 +2696,22 @@ export interface SessionClient {
   startBtw?(): Promise<string | null>;
   /** Destroy the active side-question subagent. */
   endBtw?(): Promise<boolean>;
+  /** Engine session status (SDK `Session.getStatus` parity). */
+  getStatus?(): Promise<EngineSessionStatus | null>;
+  /** Cumulative usage snapshot (SDK `getUsage` parity). */
+  getUsage?(): Promise<EngineSessionUsage | null>;
+  /** Session warnings, e.g. failed MCP servers (SDK `getSessionWarnings` parity). */
+  getWarnings?(): Promise<{ warnings: EngineSessionWarning[] } | null>;
+  /** Active goal snapshot, if any (SDK `getGoal` parity). */
+  goalGet?(): ReturnType<typeof sessionGoalGet>;
+  /** Per-server MCP views (SDK `listMcpServers` parity). */
+  listMcpServers?(): Promise<{ servers: EngineMcpServerInfo[] } | null>;
+  /** Registered skills for the session (SDK `listSkills` parity). */
+  listSkills?(): Promise<{ skills: EngineSkillSummary[] } | null>;
+  /** Global background-task roster (SDK `listTasks` parity). */
+  taskList?(): Promise<EngineTaskInfo[] | null>;
+  /** Manually compact the session context; requires a native-LLM summarizer. */
+  compact?(instruction?: string): ReturnType<typeof sessionCompact>;
   /** Release this client's host-callback registration (multi-session hosts). */
   close?(): void;
 }
@@ -2755,6 +2800,14 @@ export async function createSessionClient(
     load: async () => (await sessionLoad(sessionId))?.found ?? false,
     startBtw: async () => (await sessionStartBtw(sessionId))?.btw_id ?? null,
     endBtw: async () => (await sessionEndBtw(sessionId))?.ended ?? false,
+    getStatus: async () => sessionGetStatus(sessionId),
+    getUsage: async () => sessionGetUsage(sessionId),
+    getWarnings: async () => sessionGetWarnings(sessionId),
+    goalGet: async () => sessionGoalGet(sessionId),
+    listMcpServers: async () => sessionListMcpServers(sessionId),
+    listSkills: async () => sessionListSkills(sessionId),
+    taskList: async () => sessionTaskList(),
+    compact: async (instruction) => sessionCompact(sessionId, instruction),
     close: () => {
       agent.unregisterSessionHandlers(sessionId);
     },
@@ -2896,6 +2949,55 @@ export async function pluginList(): Promise<{ plugins: EnginePluginSummary[] } |
  *  the plugin is unknown. */
 export async function pluginGet(id: string): Promise<EnginePluginInfo | null> {
   return agentCall('plugin/get', { id });
+}
+
+/** Read the engine's parsed global config (stage 2a: kap-server Rust
+ *  migration). Secrets are NOT redacted — the host projects + redacts for
+ *  the wire. */
+export async function configGet(): Promise<Record<string, unknown> | null> {
+  return agentCall('config/get', {});
+}
+
+/** Merge a camelCase KimiConfig patch into the on-disk config (stage 2e). */
+export async function configSet(
+  patch: Record<string, unknown>,
+): Promise<{ ok: boolean; path?: string } | null> {
+  return agentCall('config/set', { patch });
+}
+
+/** Export a session as a zip diagnostic archive (stage 2c). Returns the zip
+ *  base64-encoded; null when the export failed. An optional bounded web
+ *  JSONL log is archived as `logs/kimi-web.jsonl`. */
+export async function sessionExport(
+  sessionId: string,
+  homedir?: string,
+  webLog?: string,
+): Promise<{ session_id: string; zip_base64: string } | null> {
+  return agentCall('session/export', { session_id: sessionId, homedir, web_log: webLog });
+}
+
+/** Read-class filesystem action against the session workspace root (stage
+ *  2d): `read` (path + optional line_offset/n_lines), `list` (glob), or
+ *  `search` (query + limit). */
+export async function sessionFs(input: {
+  session_id: string;
+  action: 'read' | 'list' | 'search';
+  homedir?: string;
+  path?: string;
+  line_offset?: number;
+  n_lines?: number;
+  query?: string;
+  limit?: number;
+}): Promise<{ action: string; content: string; is_error: boolean } | null> {
+  return agentCall('session/fs', input);
+}
+
+/** Native tool definitions for the session workspace (stage 3d). */
+export async function sessionListTools(
+  sessionId: string,
+  homedir?: string,
+): Promise<{ tools: Array<{ name: string; description: string; input_schema: unknown }> } | null> {
+  return agentCall('session/list_tools', { session_id: sessionId, homedir });
 }
 
 /** Register a background task. Returns null if the Rust engine is not available. */

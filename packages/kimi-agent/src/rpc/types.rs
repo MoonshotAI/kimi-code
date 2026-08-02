@@ -269,6 +269,30 @@ pub mod methods {
     /// List tracked tasks (live + restored ghosts) — the engine side of the
     /// host's task registry surface.
     pub const TASK_LIST: &str = "task/list";
+
+    // ── Config domain methods ───────────────────────────────────────────────────
+    /// Read the global Kimi configuration (the engine's parsed `config.toml`).
+    /// Secrets are NOT redacted here — the host projects and redacts for the
+    /// wire. Stage 2a of the kap-server Rust migration.
+    pub const CONFIG_GET: &str = "config/get";
+    /// Merge a patch into the global configuration and write it back to disk
+    /// (camelCase KimiConfig shape, `None` fields keep the base value).
+    pub const CONFIG_SET: &str = "config/set";
+
+    // ── Session export ──────────────────────────────────────────────────────────
+    /// Export a session as a zip diagnostic archive (manifest + wire records +
+    /// session files), returned base64-encoded. Stage 2c.
+    pub const SESSION_EXPORT: &str = "session/export";
+
+    // ── Session fs ──────────────────────────────────────────────────────────────
+    /// Read-class filesystem action against the session workspace root
+    /// (read/list/stat via the native toolset). Stage 2d.
+    pub const SESSION_FS: &str = "session/fs";
+
+    // ── Session tools ───────────────────────────────────────────────────────────
+    /// Native tool definitions for the session workspace (engine built-ins).
+    /// Stage 3d of the kap-server Rust migration (web `/tools` list).
+    pub const SESSION_LIST_TOOLS: &str = "session/list_tools";
 }
 
 // ── Message content blocks (multimodal) ─────────────────────────────────
@@ -560,6 +584,61 @@ pub struct SessionReconnectMcpParams {
 #[derive(Debug, Deserialize)]
 pub struct PluginGetParams {
     pub id: String,
+}
+
+/// Input for session/export (stage 2c: kap-server Rust migration).
+#[derive(Debug, Deserialize)]
+pub struct SessionExportParams {    /// Session id to export.
+    pub session_id: String,
+    /// Session files directory to bundle (defaults to the process cwd when
+    /// absent — the engine's session workdir convention).
+    #[serde(default)]
+    pub homedir: Option<String>,
+    /// Bounded Web JSONL log supplied by the client (kap-server `/export`
+    /// `web_log`); archived as `logs/kimi-web.jsonl` with a manifest entry.
+    #[serde(default)]
+    pub web_log: Option<String>,
+}
+
+/// Input for session/fs (stage 2d: read-class filesystem actions).
+#[derive(Debug, Deserialize)]
+pub struct SessionFsParams {    /// Session id (identity for the host).
+    pub session_id: String,
+    /// Action: `read` or `list` (globs are resolved against the workspace
+    /// root via the native toolset).
+    pub action: String,
+    /// Workspace root (session workdir) — sandbox for the native toolset.
+    pub homedir: Option<String>,    /// Target path (read) or glob pattern (list).
+    pub path: Option<String>,
+    /// Read window (line_offset/n_lines for `read`).
+    #[serde(default)]
+    pub line_offset: Option<i64>,
+    #[serde(default)]
+    pub n_lines: Option<u32>,
+    /// Search query + limit (for `search`).
+    #[serde(default)]
+    pub query: Option<String>,
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+/// Input for session/list_tools (stage 3d). Unlike session/fs this carries no
+/// action — the engine answers with its native toolset + goal tools for the
+/// session workspace.
+#[derive(Debug, Deserialize)]
+pub struct SessionListToolsParams {
+    /// Session id (identity for the host).
+    pub session_id: String,
+    /// Workspace root (session workdir) — sandbox for the native toolset.
+    pub homedir: Option<String>,
+}
+
+/// Input for config/set (stage 2e: kap-server Rust migration). The patch is
+/// a partial camelCase `KimiConfig`; fields absent (or `null`) keep the base
+/// value during the merge.
+#[derive(Debug, Deserialize)]
+pub struct ConfigSetParams {
+    pub patch: serde_json::Value,
 }
 
 /// Input for session/init (generate AGENTS.md via an init subagent).

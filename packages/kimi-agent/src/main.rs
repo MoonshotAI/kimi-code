@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use base64::Engine as _;
 use clap::Parser;
 
 use kimi_agent::{
@@ -74,6 +75,59 @@ fn open_session_store() -> anyhow::Result<kimi_agent::persistence::SqliteStore> 
             kimi_agent::persistence::SqliteStore::open(&path)
         }
         _ => kimi_agent::persistence::SqliteStore::in_memory(),
+    }
+}
+
+/// Strip null-valued `providers` / `models` entries from a `config/set`
+/// patch, applying them as deletes against `base` before the merge. Returns
+/// the remaining patch (null entries removed) for the normal deep-merge.
+fn strip_null_deletes(
+    patch: serde_json::Value,
+    base: &mut kimi_agent::config::types::KimiConfig,
+) -> kimi_agent::config::types::KimiConfig {
+    if let Some(patch_obj) = patch.as_object() {
+        for (section, _) in [("providers", "providers"), ("models", "model_aliases")] {
+            if let Some(section_val) = patch_obj.get(section).and_then(|v| v.as_object()) {
+                let deletes: Vec<&String> = section_val
+                    .iter()
+                    .filter(|(_, v)| v.is_null())
+                    .map(|(k, _)| k)
+                    .collect();
+                if !deletes.is_empty() {
+                    match section {
+                        "providers" => {
+                            if let Some(map) = base.providers.as_mut() {
+                                for key in deletes {
+                                    map.remove(key);
+                                }
+                            }
+                        }
+                        _ => {
+                            if let Some(map) = base.model_aliases.as_mut() {
+                                for key in deletes {
+                                    map.remove(key);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // The null entries would fail `KimiConfig` deserialization, so rebuild the
+    // patch without them before the merge.
+    match patch {
+        serde_json::Value::Object(mut obj) => {
+            for section in ["providers", "models"] {
+                if let Some(section_val) = obj.get_mut(section).and_then(|v| v.as_object_mut()) {
+                    section_val.retain(|_, v| !v.is_null());
+                }
+            }
+            serde_json::from_value(serde_json::Value::Object(obj))
+                .unwrap_or_else(|_| kimi_agent::config::types::KimiConfig::empty())
+        }
+        other => serde_json::from_value(other)
+            .unwrap_or_else(|_| kimi_agent::config::types::KimiConfig::empty()),
     }
 }
 
@@ -1916,6 +1970,181 @@ async fn main() -> anyhow::Result<()> {
             let tasks = service.list(false, None);
             serde_json::to_value(&tasks)
                 .map_err(|e| types::JsonRpcError::internal_error(format!("Serialize error: {e}")))
+        })
+    });
+
+    // ── Config domain ─────────────────────────────────────────────────────────
+    // Stage 2a of the kap-server Rust migration: expose the engine's parsed
+    // config so the web `/config` route can serve without the v2 config
+    // service. Secrets are NOT redacted here — the host projects + redacts.
+    RpcServer::register_arc(&server, types::methods::CONFIG_GET, move |_| {
+        Box::pin(async move {
+            match kimi_agent::config::loader::load_config_with_env() {
+                Ok(config) => serde_json::to_value(&config)
+                    .map_err(|e| types::JsonRpcError::internal_error(format!("Serialize error: {e}"))),
+                Err(error) => Err(types::JsonRpcError::internal_error(format!(
+                    "config load: {error}"
+                ))),
+            }
+        })
+    });
+
+    // ── Config set (stage 2e) ────────────────────────────────────────────────
+    // Merge a camelCase KimiConfig patch into the on-disk config and write it
+    // back (TOML). `None` fields keep the base value during the merge.
+    RpcServer::register_arc(&server, types::methods::CONFIG_SET, move |params| {
+        Box::pin(async move {
+            let input: types::ConfigSetParams = serde_json::from_value(params)
+                .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+            let mut base = kimi_agent::config::loader::load_config_with_env()
+                .map_err(|e| types::JsonRpcError::internal_error(format!("config load: {e}")))?;
+            // Null-valued entries in the patch's `providers` / `models`
+            // sections are delete markers (the v1 write surface removes
+            // whole sections — merge is insert/update only, so deletes need
+            // an explicit channel). Stripping them before the merge lets the
+            // remaining non-null patch flow through the normal deep-merge.
+            let patch = strip_null_deletes(input.patch, &mut base);
+            let merged = kimi_agent::config::merge::merge_configs(base, patch);
+            let toml_str = kimi_agent::config::toml::serialize_config(&merged)
+                .map_err(|e| types::JsonRpcError::internal_error(format!("serialize: {e}")))?;
+            let path = kimi_agent::config::loader::find_config_paths()
+                .into_iter()
+                .next()
+                .ok_or_else(|| types::JsonRpcError::internal_error("no config path found".into()))?;
+            std::fs::write(&path, toml_str)
+                .map_err(|e| types::JsonRpcError::internal_error(format!("write: {e}")))?;
+            Ok(serde_json::json!({ "ok": true, "path": path.display().to_string() }))
+        })
+    });
+
+    // ── Session export ────────────────────────────────────────────────────────
+    // Stage 2c: zip the session's wire records + files for the web
+    // `/sessions/:id/export` endpoint. Opens the session store per call
+    // (low frequency; SQLite handles concurrent readers).
+    RpcServer::register_arc(&server, types::methods::SESSION_EXPORT, move |params| {
+        Box::pin(async move {
+            let input: types::SessionExportParams = serde_json::from_value(params)
+                .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+            let store = open_session_store()
+                .map_err(|e| types::JsonRpcError::internal_error(format!("open store: {e}")))?;
+            let record_store = kimi_agent::persistence::RecordStore::new(store);
+            let session_dir = input
+                .homedir
+                .clone()
+                .map(std::path::PathBuf::from)
+                .or_else(|| std::env::current_dir().ok())
+                .unwrap_or_default();
+            let zip_bytes = kimi_agent::session::export::export_session_with_web_log(
+                &input.session_id,
+                &session_dir,
+                &record_store,
+                input.web_log.as_deref(),
+            )
+            .map_err(|e| types::JsonRpcError::internal_error(format!("export: {e}")))?;
+            Ok(serde_json::json!({
+                "session_id": input.session_id,
+                "zip_base64": base64::engine::general_purpose::STANDARD.encode(&zip_bytes),
+            }))
+        })
+    });
+
+    // ── Session fs (stage 2d) ────────────────────────────────────────────────
+    // Read-class filesystem actions (read/list) resolved against the session
+    // workspace root via the native toolset. Write-class actions stay with
+    // the host's permission-gated path.
+    RpcServer::register_arc(&server, types::methods::SESSION_FS, move |params| {
+        Box::pin(async move {
+            let input: types::SessionFsParams = serde_json::from_value(params)
+                .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+            let root = input.homedir.clone().unwrap_or_default();
+            let toolset = kimi_agent::tools::NativeToolset::new(&root)
+                .ok_or_else(|| types::JsonRpcError::internal_error("fs: bad workspace root".into()))?;
+            let mut args = serde_json::Map::new();
+            if let Some(path) = input.path.clone() {
+                args.insert("path".to_string(), serde_json::Value::String(path));
+            }
+            if let Some(offset) = input.line_offset {
+                args.insert("line_offset".to_string(), serde_json::json!(offset));
+            }
+            if let Some(n) = input.n_lines {
+                args.insert("n_lines".to_string(), serde_json::json!(n));
+            }
+            let tool_name = match input.action.as_str() {
+                "read" => "Read",
+                "list" => "Glob",
+                "search" => "FsSearch",
+                other => {
+                    return Err(types::JsonRpcError::internal_error(format!(
+                        "fs: unsupported action {other}"
+                    )))
+                }
+            };
+            if let Some(query) = input.query.clone() {
+                args.insert("query".to_string(), serde_json::Value::String(query));
+            }
+            if let Some(limit) = input.limit {
+                args.insert("limit".to_string(), serde_json::json!(limit));
+            }
+            let result = toolset
+                .execute(tool_name, &serde_json::Value::Object(args))
+                .unwrap_or_else(|| {
+                    // `None` means the tool refused the target (directory,
+                    // binary, oversized, sandbox escape). That is a
+                    // host-visible tool failure, not an RPC failure: surface
+                    // it as an in-band `is_error` result so the v1 wire maps
+                    // it to the filesystem error envelope.
+                    kimi_agent::turn_loop::types::ExecutableToolResult {
+                        content: format!("fs: {tool_name} refused the path"),
+                        is_error: true,
+                        is_prediction: false,
+                        stop_turn: false,
+                        media: vec![],
+                    }
+                });
+            Ok(serde_json::json!({
+                "action": input.action,
+                "content": result.content,
+                "is_error": result.is_error,
+            }))
+        })
+    });
+
+    // ── Session tools (stage 3d) ────────────────────────────────────────────
+    // Native tool definitions for the session workspace — the engine side of
+    // the web `GET /tools` list (v2's registry is agent-scoped; the engine
+    // answers from its own toolset + goal tools).
+    RpcServer::register_arc(&server, types::methods::SESSION_LIST_TOOLS, move |params| {
+        Box::pin(async move {
+            let input: types::SessionListToolsParams = serde_json::from_value(params)
+                .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+            let root = input.homedir.clone().unwrap_or_default();
+            let mut defs: Vec<serde_json::Value> = kimi_agent::tools::NativeToolset::new(&root)
+                .map(|ts| {
+                    ts.tool_definitions()
+                        .into_iter()
+                        .map(|td| {
+                            serde_json::json!({
+                                "name": td.name,
+                                "description": td.description,
+                                "input_schema": td.input_schema,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            // Goal tools advertised with an active goal (mirror agent.rs).
+            defs.extend(
+                kimi_agent::agent::agent::goal_tool_definitions()
+                    .into_iter()
+                    .map(|td| {
+                        serde_json::json!({
+                            "name": td.name,
+                            "description": td.description,
+                            "input_schema": td.input_schema,
+                        })
+                    }),
+            );
+            Ok(serde_json::json!({ "tools": defs }))
         })
     });
 

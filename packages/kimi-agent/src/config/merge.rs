@@ -51,10 +51,31 @@ fn merge_providers(
         (None, Some(o)) => Some(o),
         (Some(mut b), Some(o)) => {
             for (key, val) in o {
-                b.insert(key, val);
+                let merged = merge_provider(b.get(&key), val);
+                b.insert(key, merged);
             }
             Some(b)
         }
+    }
+}
+
+/// Field-level merge for a provider: override fields win, base fields persist
+/// for everything the override omitted (the v1 write surface's "PUT without
+/// api_key keeps the stored key" deep-merge semantics).
+fn merge_provider(base: Option<&ProviderConfig>, overrides: ProviderConfig) -> ProviderConfig {
+    let Some(base) = base else {
+        return overrides;
+    };
+    ProviderConfig {
+        provider: overrides.provider.or_else(|| base.provider.clone()),
+        api_key: overrides.api_key.or_else(|| base.api_key.clone()),
+        base_url: overrides.base_url.or_else(|| base.base_url.clone()),
+        model: overrides.model.or_else(|| base.model.clone()),
+        max_tokens: overrides.max_tokens.or(base.max_tokens),
+        oauth: overrides.oauth.or_else(|| base.oauth.clone()),
+        custom_headers: overrides.custom_headers.or_else(|| base.custom_headers.clone()),
+        env: overrides.env.or_else(|| base.env.clone()),
+        source: overrides.source.or_else(|| base.source.clone()),
     }
 }
 
