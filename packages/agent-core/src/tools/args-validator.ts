@@ -78,10 +78,73 @@ export function compileToolArgsValidator(schema: Record<string, unknown>): ToolA
   return ajvFor(schema).compile(schema) as ToolArgsValidator;
 }
 
+const TYPE_MISMATCH_RE = /^must be (integer|number|boolean|array|object)$/;
+
+function coerceStringValue(value: string): JsonType {
+  const trimmed = value.trim();
+  if (trimmed === '') return value;
+  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+    try {
+      return JSON.parse(trimmed) as JsonType;
+    } catch {
+      return value;
+    }
+  }
+  if (trimmed === 'true') return true;
+  if (trimmed === 'false') return false;
+  const num = Number(trimmed);
+  return Number.isFinite(num) ? num : value;
+}
+
+function setAtPath(obj: JsonObject, path: string, value: JsonType): void {
+  const keys = path.split('/').filter(Boolean);
+  if (keys.length === 0) return;
+  let current: unknown = obj;
+  for (let i = 0; i < keys.length - 1; i++) {
+    const key = keys[i]!.replace(/~1/g, '/').replace(/~0/g, '~');
+    if (typeof current !== 'object' || current === null) return;
+    current = (current as Record<string, unknown>)[key];
+  }
+  if (typeof current === 'object' && current !== null) {
+    const lastKey = keys[keys.length - 1]!.replace(/~1/g, '/').replace(/~0/g, '~');
+    (current as Record<string, unknown>)[lastKey] = value;
+  }
+}
+
+function getAtPath(obj: JsonObject, path: string): unknown {
+  const keys = path.split('/').filter(Boolean);
+  let current: unknown = obj;
+  for (const key of keys) {
+    if (typeof current !== 'object' || current === null) return undefined;
+    current = (current as Record<string, unknown>)[key.replace(/~1/g, '/').replace(/~0/g, '~')];
+  }
+  return current;
+}
+
 export function validateToolArgs(validator: ToolArgsValidator, args: JsonType): string | null {
-  const valid = validator(args);
-  if (valid) {
+  if (validator(args)) {
     return null;
+  }
+
+  if (typeof args === 'object' && args !== null) {
+    const typeErrors = (validator.errors ?? []).filter(
+      (e) => e.keyword === 'type' && TYPE_MISMATCH_RE.test(e.message ?? ''),
+    );
+    let mutated = false;
+    for (const error of typeErrors) {
+      const value = getAtPath(args as JsonObject, error.instancePath);
+      if (typeof value !== 'string') continue;
+      const coerced = coerceStringValue(value);
+      if (coerced !== value) {
+        setAtPath(args as JsonObject, error.instancePath, coerced);
+        mutated = true;
+      }
+    }
+    if (mutated) {
+      if (validator(args)) {
+        return null;
+      }
+    }
   }
 
   const errors = validator.errors ?? [];
