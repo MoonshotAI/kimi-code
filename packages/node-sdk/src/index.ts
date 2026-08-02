@@ -57,30 +57,30 @@ export {
   toKimiErrorPayload,
 } from '#/legacy/errors';
 
-// Diagnostic logging — public surface only.
-// RootLogger / getRootLogger / LoggingConfig stay inside agent-core.
+// Diagnostic logging — public surface only, forwarded from the kimi-agent
+// runtime shim (the retired agent-core logging implementation lives there).
 export {
   flushDiagnosticLogs,
   flushDiagnosticLogsSync,
   log,
   redact,
   resolveGlobalLogPath,
-  resolveKimiHome,
-} from '@moonshot-ai/agent-core';
-export type { LogContext, LogLevel, LogPayload, Logger } from '@moonshot-ai/agent-core';
+} from '@moonshot-ai/kimi-agent/runtime';
+export type { LogContext, LogLevel, LogPayload, Logger } from '@moonshot-ai/kimi-agent/runtime';
+export { resolveKimiHome } from '#/legacy/config';
 
 // Host-side config helpers — safe config reader + config path resolution, used
 // by hosts (e.g. the CLI's server telemetry bootstrap) that need to inspect
 // config without spinning up a full KimiCore.
-export { effectiveModelAlias, loadRuntimeConfigSafe, resolveConfigPath } from '@moonshot-ai/agent-core';
-export { limitAgentReplayByTurns } from '@moonshot-ai/agent-core';
+export { effectiveModelAlias, loadRuntimeConfigSafe, resolveConfigPath } from '#/legacy/config';
+export { limitAgentReplayByTurns } from '#/legacy/replay';
 
 // Rust engine override — hosts wire the Rust agent engine via this hook.
-export type { RunTurnOverride } from '@moonshot-ai/agent-core';
+export type { RunTurnOverride } from '@moonshot-ai/kimi-agent/contract';
 
 // Process-wide HTTP proxy bootstrap — installed once at CLI startup so all
 // outbound fetch honors HTTP_PROXY / HTTPS_PROXY / NO_PROXY.
-export { installGlobalProxyDispatcher } from '@moonshot-ai/agent-core';
+export { installGlobalProxyDispatcher } from '@moonshot-ai/kimi-agent/runtime';
 
 // Image compression — ingestion sites (e.g. the CLI's clipboard paste, the ACP
 // adapter) shrink oversized images while constructing the content part, before

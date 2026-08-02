@@ -32,7 +32,6 @@ import { resolveOutputFormat } from './options';
 import type { CLIOptions, PromptOutputFormat } from './options';
 import { PromptJsonWriter, PromptTranscriptWriter, writeResumeHint } from './prompt-render';
 import type { PromptHarness, PromptSession } from './prompt-session';
-import { maybeLoadRustEngine } from './rust-engine';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
 
@@ -229,12 +228,10 @@ export async function runPrompt(
 async function createPromptHarness(
   options: Parameters<typeof createKimiHarness>[0],
 ): Promise<PromptHarness> {
-  // The v2 engine is dispatched earlier in `runPrompt` (see the
-  // `isKimiV2Enabled()` branch) and never reaches here; this is the v1 path.
-  // Wire the Rust agent engine — the only engine since the v1/v2 migration.
-  // A load failure throws here instead of degrading to the JS loop.
-  const runTurnOverride = await maybeLoadRustEngine(options.homeDir, options.configPath);
-  return createKimiHarness({ ...options, runTurnOverride });
+  // The Rust engine owns the turn loop inside the SDK harness; no host-side
+  // runTurnOverride bridge is needed. A missing engine binary surfaces as an
+  // error when the harness first drives a turn, not a silent JS fallback.
+  return createKimiHarness(options);
 }
 
 async function runHeadlessGoal(

@@ -50,14 +50,11 @@ export function registerAcpCommand(parent: Command): void {
       }
       const { ACP_BUILTIN_SLASH_COMMANDS, runAcpServer } = await import('@moonshot-ai/acp-adapter');
       const identity = createKimiCodeHostIdentity();
-      // ACP sessions run real turns, so they get the same engine selection as
-      // the TUI and print paths: Rust by default, JS on opt-out or load failure.
-      const { maybeLoadRustEngine } = await import('#/cli/rust-engine');
-      const runTurnOverride = await maybeLoadRustEngine();
+      // ACP sessions run real turns; the SDK harness drives the Rust engine
+      // (no host-side runTurnOverride bridge needed).
       const harness = createKimiHarness({
         identity,
         uiMode: 'acp',
-        runTurnOverride,
       });
       // Forward `KIMI_CODE_HOME` (if set) into `authMethods[0].env` so the
       // `kimi login` subprocess clients spawn for terminal-auth writes its

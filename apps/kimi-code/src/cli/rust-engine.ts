@@ -13,10 +13,8 @@
  */
 import {
   loadRuntimeConfigSafe,
-  log,
   resolveConfigPath,
   resolveKimiHome,
-  type RunTurnOverride,
 } from '@moonshot-ai/kimi-code-sdk';
 import {
   DEFAULT_AGENT_PROFILES,
@@ -27,12 +25,6 @@ import {
 import type { McpServerConfigEntry } from '@moonshot-ai/kimi-code-sdk';
 import { LocalKaos } from '@moonshot-ai/kaos';
 import type { HookDefInput, McpServerInput } from '@moonshot-ai/kimi-agent/rust-loop';
-
-interface LlmProviderDef {
-  name: string;
-  model: string;
-  system_prompt: string;
-}
 
 interface NativeLlmDef {
   protocol: 'openai' | 'anthropic' | 'google';
@@ -60,50 +52,6 @@ interface RustEngineConfig {
     nativeLlmProvider?: string;
     nativeTools?: boolean;
   };
-}
-
-let rustRunTurnOverride: RunTurnOverride | undefined;
-
-/**
- * Extract MultiLLM provider definitions from the kimi config.
- * Uses `config.agent.multiLlm` to select which providers to include.
- */
-function extractMultiLlmProviders(
-  config: RustEngineConfig,
-  defaultSystemPrompt?: string,
-): LlmProviderDef[] | undefined {
-  const providerNames = config.agent?.multiLlm;
-  if (!providerNames || providerNames.length === 0) return undefined;
-  if (!config.providers) return undefined;
-
-  const providers: LlmProviderDef[] = [];
-
-  for (const name of providerNames) {
-    const providerConfig = config.providers[name];
-    if (!providerConfig) continue;
-
-    // Resolve the model: use provider's defaultModel, or find the first model
-    // alias that references this provider
-    let model = providerConfig.defaultModel;
-    let systemPrompt = defaultSystemPrompt ?? '';
-    if (config.models) {
-      const alias = Object.entries(config.models).find(([, m]) => m.provider === name);
-      if (alias) {
-        model ??= alias[1].model;
-        // Per-model system prompt wins over the default when present.
-        if (alias[1].systemPrompt) systemPrompt = alias[1].systemPrompt;
-      }
-    }
-    model ??= 'default';
-
-    providers.push({
-      name,
-      model,
-      system_prompt: systemPrompt,
-    });
-  }
-
-  return providers.length > 0 ? providers : undefined;
 }
 
 /**
@@ -362,90 +310,4 @@ function resolveNativeLlm(
     api_key: provider.apiKey,
     model,
   };
-}
-
-/**
- * Wire the Rust agent engine. The Rust engine is the ONLY engine since the
- * v1/v2 migration reached parity — there is no JS fallback. Any failure to
- * load or construct the Rust adapter throws with a clear message instead of
- * silently degrading to the deprecated JS loop.
- *
- * When `agent.multiLlm` is configured, extracts matching providers
- * and passes them to the Rust engine for concurrent MultiLLM execution.
- *
- * @returns The `runTurnOverride` function.
- * @throws When the Rust engine cannot be loaded — the caller reports it.
- */
-export async function maybeLoadRustEngine(
-  homeDir?: string,
-  configPath?: string,
-): Promise<RunTurnOverride> {
-  // Lazy-init: once loaded, cache the result
-  if (rustRunTurnOverride !== undefined) return rustRunTurnOverride;
-
-  const resolvedHome = resolveKimiHome(homeDir);
-  const resolvedConfig = resolveConfigPath({ homeDir: resolvedHome, configPath });
-  const loaded = loadRuntimeConfigSafe(resolvedConfig);
-  // A missing config file is normal (defaults apply); the engine still
-  // defaults to Rust. A present-but-broken config surfaces via its own
-  // validation errors — neither case degrades to the JS engine.
-  const agentConfig = loaded.config.agent;
-  const engine = agentConfig?.engine ?? 'rust';
-  if (engine !== 'rust') {
-    throw new Error(
-      '[kimi-agent] agent.engine must be "rust" — the JS engine was removed with the ' +
-        'v1/v2 migration. Remove the setting (it defaults to "rust").',
-    );
-  }
-
-  // Extract MultiLLM providers and native execution options when configured
-  const providers = extractMultiLlmProviders(loaded.config);
-  const nativeLlm = extractNativeLlm(loaded.config);
-  // Default-on for the Rust engine: in-process Read/Grep/Glob are sandboxed to
-  // the workspace root and fall back to the JS host for anything outside it,
-  // so opting out (`nativeTools = false`) is the exception, not the rule.
-  const nativeTools = agentConfig?.nativeTools !== false;
-
-  // Dynamic import of the Rust adapter via the workspace package.
-  try {
-    const { createRunTurnOverride, getRustEngineMode } = await import(
-      '@moonshot-ai/kimi-agent/rust-loop'
-    );
-    if (typeof createRunTurnOverride !== 'function') {
-      throw new TypeError(
-        '[kimi-agent] rust-loop adapter has no createRunTurnOverride export — ' +
-          'the kimi-agent package is broken or stale.',
-      );
-    }
-    // The workspace root anchors the Read-prediction fast-path and the
-    // native tool sandbox; the session working directory is the workspace.
-    const override = createRunTurnOverride(providers ?? undefined, process.cwd(), {
-      nativeLlm,
-      nativeTools,
-    });
-    if (override === undefined) {
-      throw new Error(
-        '[kimi-agent] Rust engine unavailable (no napi addon or binary found). ' +
-          'Reinstall or rebuild the kimi-agent package; the deprecated JS engine ' +
-          'is no longer a fallback.',
-      );
-    }
-    rustRunTurnOverride = override;
-    // Engine selection is otherwise invisible; record it so a session can
-    // always be attributed to the Rust engine.
-    log.info('rust agent engine active', {
-      mode: getRustEngineMode(),
-      nativeTools,
-      nativeLlm: nativeLlm !== undefined,
-      multiLlm: providers !== undefined,
-    });
-    return rustRunTurnOverride;
-  } catch (error) {
-    if (error instanceof Error && error.message.startsWith('[kimi-agent]')) {
-      throw error;
-    }
-    throw new Error(
-      `[kimi-agent] Rust engine failed to load: ${String(error)}`, { cause: error },
-    );
-  }
 }

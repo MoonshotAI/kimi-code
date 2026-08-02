@@ -94,12 +94,6 @@ export interface KimiHarnessOptions {
   readonly telemetry?: TelemetryClient | undefined;
   readonly onOAuthRefresh?: ((outcome: OAuthRefreshOutcome) => void) | undefined;
   readonly sessionStartedProperties?: TelemetryProperties;
-  /**
-   * Optional override for the turn loop runner. When set, every session created
-   * by this harness will use the provided function instead of the built-in JS
-   * turn loop. Used by the Rust agent engine (kimi-agent).
-   */
-  readonly runTurnOverride?: import('@moonshot-ai/agent-core').RunTurnOverride;
 }
 
 export interface CreateSessionOptions {

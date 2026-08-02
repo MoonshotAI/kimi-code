@@ -31,7 +31,6 @@ import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
 
 import type { CLIOptions } from './options';
-import { maybeLoadRustEngine } from './rust-engine';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
 
@@ -63,16 +62,13 @@ export async function runShell(
     withContext: withTelemetryContext,
     setContext: setTelemetryContext,
   };
-  // Wire the Rust agent engine for interactive sessions, mirroring the print
-  // path (run-prompt.ts). A load failure throws — the JS engine was removed
-  // with the v1/v2 migration.
-  const runTurnOverride = await maybeLoadRustEngine(telemetryBootstrap.homeDir);
+  // The Rust engine owns the turn loop inside the SDK harness; no host-side
+  // runTurnOverride bridge is needed.
   const harness = createKimiHarness({
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
     skillDirs: opts.skillsDirs,
     telemetry: telemetryClient,
-    runTurnOverride,
     onOAuthRefresh: (outcome) => {
       if (outcome.success) {
         track('oauth_refresh', { outcome: 'success' });
