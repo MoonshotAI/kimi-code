@@ -7,12 +7,34 @@
 // The per-frame interpretation (expiry drop, batch unrolling, value refs, dt
 // meta) lives in frameToOps so that open-time recovery and read-replica WAL
 // catch-up (catchUpWal) can never drift apart.
+//
+// GENERATION PAIRING (stat-pairing — a TRANSITIONAL implementation; stage
+// 5's generations/ manifest replaces it with a generation-id comparison,
+// with the replacement confined to recoverPass/sameGeneration and the
+// attachValueReader hook below). MiniDb's disk state is a compound document:
+// a compaction rotation swaps db.snapshot and db.wal in two renames, and a
+// read-only opener that scans the two files unpaired can combine the OLD
+// snapshot with the NEW truncated WAL — silently losing the data the
+// snapshot had absorbed, and (in disk mode) reading values back through
+// offsets that point into the wrong inode (review #15). recover() therefore
+// runs bounded passes: each pass fingerprints both files (dev/ino/size of
+// the opened fd BEFORE scanning it, a path re-stat AFTER the last read), and
+// any generation switch — an inode change, a size shrink, a file appearing
+// or disappearing mid-pass — discards the pass's whole result and retries
+// with exponential backoff. A WAL that merely GREW on the same inode is safe
+// (append-only; the extra frames are a natural staleness window that
+// catch-up covers). Exhausting the retries throws
+// RecoveryGenerationChurnError. The writer's own open walks the same code
+// path but is naturally stable (it holds the write lock, and compaction only
+// starts after recovery completes), so it costs two extra stat calls and
+// changes zero behavior.
 
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
 import { scanFrameRefsFd, scanBatchOpRefs, TYPE_SET, TYPE_DEL, TYPE_BATCH, MAGIC } from './codec.js';
 import type { FrameRef } from './codec.js';
+import { SNAPSHOT_FILE, WAL_FILE } from './persistent-files.js';
 import type { Store, ValueLoc, ValueRef } from './store.js';
 
 export type RecoveryMode = 'resync' | 'strict';
@@ -35,6 +57,13 @@ export interface RecoveryInfo {
   /** dev/ino of the WAL inode recovery scanned (both 0 when there was none). */
   walDev: number;
   walIno: number;
+  /** dev/ino of the snapshot inode recovery scanned (both 0 when there was
+   *  none). */
+  snapshotDev: number;
+  snapshotIno: number;
+  /** Generation-churn retries recovery needed before it paired a consistent
+   *  snapshot/WAL set (0 on a stable directory — see the file header). */
+  generationRetries: number;
 }
 
 function readAtSync(fd: number, off: number, len: number): Buffer {
@@ -130,29 +159,143 @@ function applyFrames(frames: FrameRef[], file: ValueLoc['file'], fd: number, sto
   }
 }
 
+/** dev/ino/size identity of one persistent file at one moment. */
+interface FileIdentity {
+  dev: number;
+  ino: number;
+  size: number;
+}
+
+/** The inode pair one consistent recovery pass actually scanned, handed to
+ *  the disk-mode ValueReader attach check. null = the file did not exist. */
+export interface GenerationAnchors {
+  snapshot: { dev: number; ino: number } | null;
+  wal: { dev: number; ino: number } | null;
+}
+
+/** Thrown when recovery kept detecting snapshot/WAL generation switches
+ *  across every bounded retry — the writer is rotating files faster than a
+ *  consistent pair can be scanned. Callers with a refresh loop (kap-server's
+ *  readonly degrade path, the cluster shard reader) treat it as transient. */
+export class RecoveryGenerationChurnError extends Error {
+  readonly code = 'RECOVERY_GENERATION_CHURN';
+  constructor(readonly attempts: number) {
+    super(`recovery: snapshot/WAL generation kept changing across ${attempts} attempt(s)`);
+    this.name = 'RecoveryGenerationChurnError';
+  }
+}
+
+const GENERATION_RETRY_BASE_MS = 5;
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+function statIdentity(p: string): FileIdentity | null {
+  try {
+    const st = fsSync.statSync(p);
+    return { dev: st.dev, ino: st.ino, size: st.size };
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw e;
+  }
+}
+
+/** The pairing rule (see the file header): the file a pass scanned must still
+ *  be the file at its path after the pass's last read — same dev+ino, and a
+ *  size that never dropped below `sizeFloor` (append-only growth on the same
+ *  inode is safe: the extra bytes are a staleness window catch-up covers).
+ *  A null↔non-null transition (the file appeared or vanished mid-pass) cannot
+ *  be verified and is treated as a generation switch. */
+function sameGeneration(scanned: FileIdentity | null, after: FileIdentity | null, sizeFloor: number): boolean {
+  if (scanned === null || after === null) return scanned === null && after === null;
+  if (scanned.dev !== after.dev || scanned.ino !== after.ino) return false;
+  return after.size >= sizeFloor;
+}
+
+/** Discard every record a churned pass applied, restoring the (always
+ *  initially empty) Store for the next pass. del() keeps the bytes/expiry
+ *  accounting consistent; stale TTL-heap entries are reaped lazily by their
+ *  seq guard. (Map iteration survives deletion mid-iteration.) */
+function resetStore(store: Store): void {
+  for (const k of store.map.keys()) store.del(k);
+}
+
 export async function recover({
   dir,
   store,
   mode = 'resync',
   truncate = true,
   valueMode = 'memory',
+  maxGenerationRetries = 4,
+  attachValueReader,
 }: {
   dir: string;
   store: Store;
   mode?: RecoveryMode;
   truncate?: boolean;
   valueMode?: ValueMode;
+  /** Bounded retries when a pass detects a generation switch (default 4,
+   *  exponential backoff from 5 ms). Exhaustion throws
+   *  RecoveryGenerationChurnError. */
+  maxGenerationRetries?: number;
+  /** Disk-mode ValueReader attach point: called with the verified inode pair
+   *  of an otherwise-consistent pass; must attach the reader to the current
+   *  paths and report whether ITS handles are those same inodes. A false
+   *  return discards the pass and retries the whole recovery — closing the
+   *  "old offsets read a new file" window between recovery's final forensics
+   *  and the reader attach. */
+  attachValueReader?: (anchors: GenerationAnchors) => boolean;
 }): Promise<RecoveryInfo> {
-  const snapPath = path.join(dir, 'db.snapshot');
-  const walPath = path.join(dir, 'db.wal');
+  const snapPath = path.join(dir, SNAPSHOT_FILE);
+  const walPath = path.join(dir, WAL_FILE);
+  let delay = GENERATION_RETRY_BASE_MS;
+  for (let attempt = 0; ; attempt++) {
+    const pass = await recoverPass({ snapPath, walPath, store, mode, truncate, valueMode });
+    if (pass.consistent && (!attachValueReader || attachValueReader(pass.anchors))) {
+      pass.info.generationRetries = attempt;
+      return pass.info;
+    }
+    // Generation churn: discard EVERY record this pass applied before
+    // retrying, so no partial application state leaks into a later pass (or
+    // survives inside the thrown error).
+    resetStore(store);
+    if (attempt >= maxGenerationRetries) throw new RecoveryGenerationChurnError(attempt + 1);
+    await sleep(delay);
+    delay *= 2;
+  }
+}
 
+type RecoverPassResult = { consistent: false } | { consistent: true; info: RecoveryInfo; anchors: GenerationAnchors };
+
+/** One recovery pass: scan + apply the snapshot then the WAL, recording the
+ *  identity of each opened fd BEFORE scanning it (forensics round 1), then
+ *  re-stat both paths AFTER the last read (round 2) and apply the pairing
+ *  rule. Returns the recovered state plus the scanned inode anchors when the
+ *  pass is generation-consistent; the caller retries otherwise. */
+async function recoverPass({
+  snapPath,
+  walPath,
+  store,
+  mode,
+  truncate,
+  valueMode,
+}: {
+  snapPath: string;
+  walPath: string;
+  store: Store;
+  mode: RecoveryMode;
+  truncate: boolean;
+  valueMode: ValueMode;
+}): Promise<RecoverPassResult> {
   let snapshotFrames = 0;
   let snapshotBytes = 0;
   let snapshotCorrupt: [number, number][] = [];
+  let snapScanned: FileIdentity | null = null;
   if (fsSync.existsSync(snapPath)) {
     const fd = fsSync.openSync(snapPath, 'r');
     try {
-      snapshotBytes = fsSync.fstatSync(fd).size;
+      const st = fsSync.fstatSync(fd);
+      snapScanned = { dev: st.dev, ino: st.ino, size: st.size };
+      snapshotBytes = st.size;
       const r = scanFrameRefsFd(fd, { onCorrupt: mode });
       applyFrames(r.frames, 'snapshot', fd, store, valueMode);
       snapshotFrames = r.frames.length;
@@ -167,24 +310,25 @@ export async function recover({
   let walCorrupt: [number, number][] = [];
   let truncatedWal = false;
   let walScanEnd = 0;
-  let walDev = 0;
-  let walIno = 0;
+  let walScanned: FileIdentity | null = null;
+  // The size this pass itself leaves the WAL at: a torn-tail truncation is
+  // our own write, so the post-scan re-stat is compared against this floor,
+  // not against the pre-scan size.
+  let walSizeFloor = 0;
   if (fsSync.existsSync(walPath)) {
     const fd = fsSync.openSync(walPath, 'r');
-    let walSize = 0;
     try {
       const st = fsSync.fstatSync(fd);
-      walSize = st.size;
+      walScanned = { dev: st.dev, ino: st.ino, size: st.size };
+      walSizeFloor = st.size;
       walBytes = st.size;
-      walDev = st.dev;
-      walIno = st.ino;
       const r = scanFrameRefsFd(fd, { onCorrupt: mode });
       applyFrames(r.frames, 'wal', fd, store, valueMode);
       walFrames = r.frames.length;
       walCorrupt = r.corruptRanges;
       walScanEnd = r.eofOffset;
       const last = r.corruptRanges[r.corruptRanges.length - 1];
-      if (last && last[1] === walSize) {
+      if (last && last[1] === st.size) {
         // A torn/corrupt tail is normally truncated so the next writer appends
         // cleanly. In read-only mode (truncate = false) we must never mutate the
         // database files: a read-only opener racing a live writer could otherwise
@@ -192,6 +336,7 @@ export async function recover({
         if (truncate) {
           await fs.truncate(walPath, last[0]);
           truncatedWal = true;
+          walSizeFloor = last[0];
         }
       }
     } finally {
@@ -199,18 +344,34 @@ export async function recover({
     }
   }
 
+  // Forensics round 2: re-stat both paths after every byte was read.
+  const snapAfter = statIdentity(snapPath);
+  const walAfter = statIdentity(walPath);
+  if (!sameGeneration(snapScanned, snapAfter, snapScanned?.size ?? 0)) return { consistent: false };
+  if (!sameGeneration(walScanned, walAfter, walSizeFloor)) return { consistent: false };
+
   return {
-    snapshotFrames,
-    walFrames,
-    snapshotBytes,
-    walBytes,
-    truncatedWal,
-    corruptRanges: walCorrupt,
-    snapshotCorruptRanges: snapshotCorrupt,
-    lostBytes: [...walCorrupt, ...snapshotCorrupt].reduce((a, [s, e]) => a + (e - s), 0),
-    walScanEnd,
-    walDev,
-    walIno,
+    consistent: true,
+    info: {
+      snapshotFrames,
+      walFrames,
+      snapshotBytes,
+      walBytes,
+      truncatedWal,
+      corruptRanges: walCorrupt,
+      snapshotCorruptRanges: snapshotCorrupt,
+      lostBytes: [...walCorrupt, ...snapshotCorrupt].reduce((a, [s, e]) => a + (e - s), 0),
+      walScanEnd,
+      walDev: walScanned?.dev ?? 0,
+      walIno: walScanned?.ino ?? 0,
+      snapshotDev: snapScanned?.dev ?? 0,
+      snapshotIno: snapScanned?.ino ?? 0,
+      generationRetries: 0, // recover() overwrites with the real attempt count
+    },
+    anchors: {
+      snapshot: snapScanned ? { dev: snapScanned.dev, ino: snapScanned.ino } : null,
+      wal: walScanned ? { dev: walScanned.dev, ino: walScanned.ino } : null,
+    },
   };
 }
 

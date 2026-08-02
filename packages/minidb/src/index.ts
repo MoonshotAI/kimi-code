@@ -16,6 +16,17 @@ import type { WalPoison } from './wal.js';
 import { ValueReader } from './value-reader.js';
 import { recover, catchUpWal, frameToOps } from './recovery.js';
 import { compact, shouldCompact } from './compaction.js';
+import {
+  SNAPSHOT_FILE,
+  WAL_FILE,
+  SECONDARY_INDEXES_FILE,
+  COMPOUND_INDEXES_FILE,
+  TEXT_INDEXES_FILE,
+  SIDECAR_FILES,
+  STALE_TMP_FILES,
+  STALE_POSTINGS_TMP_PATTERN,
+  isPersistentFile,
+} from './persistent-files.js';
 import { IndexManager, UniqueViolationError } from './index-manager.js';
 import { DtIndex } from './dt-index.js';
 import { TextIndex, type TextIndexOptions, type TextIndexBuild } from './text-index.js';
@@ -144,7 +155,7 @@ async function writeFileAtomic(file: string, data: string): Promise<void> {
 async function resolveValueMode(mode: ValueModeSetting, dir: string, maxMemoryBytes: number | null): Promise<ValueMode> {
   if (mode !== 'auto') return mode;
   if (maxMemoryBytes === null) return 'memory';
-  const total = (await fileSize(path.join(dir, 'db.snapshot'))) + (await fileSize(path.join(dir, 'db.wal')));
+  const total = (await fileSize(path.join(dir, SNAPSHOT_FILE))) + (await fileSize(path.join(dir, WAL_FILE)));
   return total > maxMemoryBytes ? 'disk' : 'memory';
 }
 
@@ -385,6 +396,10 @@ export class MiniDb<V = unknown> {
     compactionPostingsDurationMs: 0,
     /** Cumulative time write ops spent parked on a compaction rotation. */
     compactionRotationPauseMs: 0,
+    /** Set once a rotation's directory fsync reported EINVAL/ENOTSUP: this
+     *  platform cannot make renames durable via the directory, so rotation
+     *  durability is knowingly degraded (warned once), never silently. */
+    dirFsyncUnsupported: false,
     /** Candidate keys iterated / values decoded / rows fed to a sort in query(). */
     queryCandidates: 0,
     queryDecoded: 0,
@@ -407,10 +422,10 @@ export class MiniDb<V = unknown> {
     if (!opts || !opts.dir) throw new TypeError('MiniDb.open: opts.dir is required');
     const db = new MiniDb<V>();
     db.dir = opts.dir;
-    db.walPath = path.join(db.dir, 'db.wal');
-    db.indexPath = path.join(db.dir, 'db.indexes.json');
-    db.textIndexPath = path.join(db.dir, 'db.textindexes.json');
-    db.compoundIndexPath = path.join(db.dir, 'db.compound-indexes.json');
+    db.walPath = path.join(db.dir, WAL_FILE);
+    db.indexPath = path.join(db.dir, SECONDARY_INDEXES_FILE);
+    db.textIndexPath = path.join(db.dir, TEXT_INDEXES_FILE);
+    db.compoundIndexPath = path.join(db.dir, COMPOUND_INDEXES_FILE);
     db.fsyncPolicy = opts.fsyncPolicy ?? 'everysec';
     db.syncIntervalMs = opts.syncIntervalMs ?? 1000;
     db.codecName = opts.valueCodec ?? 'buffer';
@@ -445,17 +460,12 @@ export class MiniDb<V = unknown> {
     }
 
     // Remove stale temp files left behind by an interrupted previous run (a
-    // compaction's snapshot/WAL temps, sidecar-definition temps). Only the
-    // sole writer may delete them — a read-only opener must never touch a live
-    // writer's in-flight temps.
+    // compaction's snapshot/WAL temps, sidecar-definition temps — the atomic
+    // write siblings of every persistent file, derived from the authoritative
+    // module). Only the sole writer may delete them — a read-only opener must
+    // never touch a live writer's in-flight temps.
     if (!db.readOnly) {
-      for (const tmp of [
-        'db.snapshot.tmp',
-        'db.wal.tmp',
-        'db.indexes.json.tmp',
-        'db.textindexes.json.tmp',
-        'db.compound-indexes.json.tmp',
-      ]) {
+      for (const tmp of STALE_TMP_FILES) {
         await fs.rm(path.join(db.dir, tmp), { force: true });
       }
       // A failed postings rebuild orphans `db.text-*.postings.tmp` (its atomic
@@ -463,7 +473,7 @@ export class MiniDb<V = unknown> {
       // Store on open and after compaction — so such temps are always safe to
       // delete, for any index name.
       for (const f of await fs.readdir(db.dir)) {
-        if (/^db\.text-.*\.postings\.tmp$/.test(f)) await fs.rm(path.join(db.dir, f), { force: true });
+        if (STALE_POSTINGS_TMP_PATTERN.test(f)) await fs.rm(path.join(db.dir, f), { force: true });
       }
     }
 
@@ -490,6 +500,39 @@ export class MiniDb<V = unknown> {
         mode: opts.recovery ?? 'resync',
         truncate: !db.readOnly,
         valueMode: db.valueMode,
+        // Disk-backed values need the positioned reader attached to the SAME
+        // inodes recovery scanned; recovery's generation pairing re-verifies
+        // the attach and retries the whole pass when a rotation landed in
+        // between (see the pairing note in recovery.ts). In valueMode
+        // 'memory' no record ever carries a disk loc, so opening the files
+        // would only hold handles for no benefit (on Windows those idle
+        // handles would additionally block compaction's rename-over-path
+        // rotation — rename over an open destination is EPERM there).
+        attachValueReader:
+          db.valueMode === 'disk'
+            ? (anchors) => {
+                const reader = new ValueReader(db.dir);
+                // open() can throw after attaching only one side (e.g. EMFILE
+                // on the WAL with the snapshot already open). This reader is
+                // never published to db.valueReader, so the open() failure
+                // cleanup cannot reach it — close it here or leak the fd.
+                let ids: ReturnType<ValueReader['open']>;
+                try {
+                  ids = reader.open();
+                } catch (e) {
+                  reader.close();
+                  throw e;
+                }
+                const sameInode = (a: { dev: number; ino: number } | null, i: { dev: number; ino: number } | null): boolean =>
+                  a === null ? i === null : i !== null && i.dev === a.dev && i.ino === a.ino;
+                if (sameInode(anchors.snapshot, ids.snapshot) && sameInode(anchors.wal, ids.wal)) {
+                  db.valueReader = reader;
+                  return true;
+                }
+                reader.close();
+                return false;
+              }
+            : undefined,
       });
       db.stats.recoveryDurationMs += performance.now() - recT0;
       db.stats.recoveryBytes += db.recoveryInfo.snapshotBytes + db.recoveryInfo.walBytes;
@@ -498,15 +541,6 @@ export class MiniDb<V = unknown> {
       // re-sync its size bookkeeping so later appends (and their disk-mode
       // value pointers) are computed against the real, truncated file size.
       if (db.recoveryInfo.truncatedWal) await db.wal.refreshSize();
-      // Disk-backed values need the positioned reader; in valueMode 'memory'
-      // no record ever carries a disk loc, so opening the files would only
-      // hold handles for no benefit. (On Windows those idle handles would
-      // additionally block compaction's rename-over-path rotation — rename
-      // over an open destination is EPERM there.)
-      if (db.valueMode === 'disk') {
-        db.valueReader = new ValueReader(db.dir);
-        db.valueReader.open();
-      }
       db.seedAccessFromStore();
 
       await db.loadIndexDefinitions();
@@ -569,7 +603,7 @@ export class MiniDb<V = unknown> {
         // (e.g. a corrupt frame meta), the retry fails the same way and the
         // full rebuild below runs anyway.
         try {
-          for (const f of ['db.indexes.json', 'db.textindexes.json', 'db.compound-indexes.json']) {
+          for (const f of SIDECAR_FILES) {
             await fs.rm(path.join(opts.dir, f), { force: true });
             await fs.rm(path.join(opts.dir, `${f}.tmp`), { force: true });
           }
@@ -2119,10 +2153,7 @@ export class MiniDb<V = unknown> {
 
   private async persistentFiles(): Promise<string[]> {
     const names = await fs.readdir(this.dir);
-    return names.filter((n) =>
-      /^db\.(snapshot|wal|indexes\.json|compound-indexes\.json|textindexes\.json)$/.test(n) ||
-      /^db\.text-.*\.postings$/.test(n),
-    );
+    return names.filter(isPersistentFile);
   }
 
   private async copyIfExists(name: string, destDir: string): Promise<boolean> {
@@ -2192,11 +2223,7 @@ export class MiniDb<V = unknown> {
 
     const names = await fs.readdir(srcDir);
     for (const name of names) {
-      if (
-        /^db\.(snapshot|wal|indexes\.json|compound-indexes\.json|textindexes\.json)$/.test(name) ||
-        /^db\.text-.*\.postings$/.test(name) ||
-        name === 'backup.manifest.json'
-      ) {
+      if (isPersistentFile(name) || name === 'backup.manifest.json') {
         await fs.copyFile(path.join(srcDir, name), path.join(destDir, name));
       }
     }

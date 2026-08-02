@@ -42,7 +42,12 @@
 // whole old WAL on top of the new snapshot is idempotent for pre-fence frames
 // and correct for post-fence frames, so the state is still consistent. The
 // reverse order (WAL first) would pair an old snapshot with a truncated new WAL
-// and lose pre-fence data.
+// and lose pre-fence data. The argument only holds when each rename is durable
+// before the next one lands, so the rotation's directory fsyncs are STRICT: a
+// failed dir fsync aborts the rotation (rolling back through the catch in
+// runCompaction) rather than silently weakening the invariant. Platforms that
+// cannot fsync a directory degrade explicitly instead — a one-time warning and
+// stats.dirFsyncUnsupported = true.
 
 import fs from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
@@ -78,6 +83,10 @@ export interface CompactionTarget {
     compactionDurationMs?: number;
     compactionSnapshotDurationMs?: number;
     compactionRotationDurationMs?: number;
+    /** Set (once) when a directory fsync reported EINVAL/ENOTSUP: this
+     *  platform cannot make renames durable via the directory, so rotation
+     *  durability is knowingly degraded (warned once) rather than aborted. */
+    dirFsyncUnsupported?: boolean;
   };
   /** Reader for disk-backed values; reopened after snapshot/WAL rotation so
    *  remapped value pointers read from the new files. On Windows it is also
@@ -109,13 +118,31 @@ const rotateReplace = (src: string, dst: string): Promise<void> => renameReplace
 const MAX_PRECOPY_PASSES = 5;
 const CONVERGE_RATIO = 0.7;
 
-export async function fsyncDir(dir: string): Promise<void> {
+export async function fsyncDir(
+  dir: string,
+  opts: { strict?: boolean; stats?: { dirFsyncUnsupported?: boolean } } = {},
+): Promise<void> {
   let fh: FileHandle | null = null;
   try {
     fh = await fs.open(dir, 'r');
     await fh.sync();
-  } catch {
-    /* best-effort */
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    // Some platforms cannot fsync a directory at all. That is a permanent
+    // environment property, not a rotation fault: degrade explicitly — warn
+    // once and mark stats.dirFsyncUnsupported — and continue without it, in
+    // BOTH modes.
+    if (code === 'EINVAL' || code === 'ENOTSUP') {
+      if (opts.stats && !opts.stats.dirFsyncUnsupported) {
+        opts.stats.dirFsyncUnsupported = true;
+        console.warn(`minidb: directory fsync unsupported on this platform (${code}); rotation durability is degraded`);
+      }
+      return;
+    }
+    // Strict mode (the rotation path): a failed directory fsync breaks the
+    // rename-durability invariant, so the caller must abort — never swallow.
+    if (opts.strict) throw e;
+    /* best-effort otherwise */
   } finally {
     if (fh) await fh.close().catch(() => {});
   }
@@ -300,11 +327,15 @@ async function runCompaction(db: CompactionTarget): Promise<void> {
     if (process.platform === 'win32') db.valueReader?.close?.();
 
     // Snapshot first, then WAL — see the crash-safety note in the file header.
+    // That argument assumes each rename is durable before the next one lands,
+    // so the directory fsyncs here are STRICT: a failure aborts the rotation
+    // (the catch below rolls back) instead of silently weakening the
+    // invariant. Platforms without directory fsync degrade via fsyncDir itself.
     await rotateReplace(tmp, snap);
-    await fsyncDir(db.dir);
+    await fsyncDir(db.dir, { strict: true, stats: db.stats });
     await rotateReplace(walTmp, db.walPath);
     rotated = true;
-    await fsyncDir(db.dir);
+    await fsyncDir(db.dir, { strict: true, stats: db.stats });
 
     const fresh = new WAL(db.walPath, { fsyncPolicy: db.fsyncPolicy, syncIntervalMs: db.syncIntervalMs, stats: db.stats });
     db.wal = fresh;

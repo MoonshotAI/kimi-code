@@ -10,8 +10,10 @@
 // Readers: read-only MiniDb instances used for keys whose shard this process
 // does not currently hold. A MiniDb reader replays snapshot+WAL only at open
 // time and would go stale afterwards, so every reader use is guarded by a
-// cheap file fingerprint (mtime+size of the shard's WAL, snapshot and index
-// definition files). A change refreshes the reader first:
+// cheap file fingerprint (dev:ino:size:mtimeMs of the shard's WAL, snapshot
+// and every index-definition sidecar — FINGERPRINT_FILES, derived from the
+// authoritative persistent-files module so a newly added file can never be
+// missed). A change refreshes the reader first:
 //  - when only the WAL changed as pure appends on the same inode (tracked by
 //    a {dev, ino, size} watermark), the appended frames are scanned and
 //    applied incrementally (MiniDb.catchUpFromWal) — O(delta);
@@ -25,6 +27,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { MiniDb } from '../index.js';
 import { LockError } from '../lockfile.js';
+import { FINGERPRINT_FILES } from '../persistent-files.js';
 import { ShardHandle } from './shard.js';
 import type { ShardOpenOptions } from './shard.js';
 import { sleep } from './utils.js';
@@ -69,16 +72,14 @@ interface ReaderEntry {
 async function statFingerprint(file: string): Promise<string> {
   try {
     const s = await fs.stat(file);
-    return `${s.mtimeMs}:${s.size}`;
+    // dev:ino:size:mtimeMs — sidecars are replaced by rename (tmp + rename),
+    // so the inode eliminates the "same size, same mtime alias" window a
+    // size+mtime fingerprint would leave open.
+    return `${s.dev}:${s.ino}:${s.size}:${s.mtimeMs}`;
   } catch {
     return '-';
   }
 }
-
-/** Cheap change detector for a shard directory. WAL appends change size (and
- *  usually mtime); compaction swaps both snapshot and WAL; index definition
- *  changes rewrite their JSON files. */
-const FINGERPRINT_FILES = ['db.wal', 'db.snapshot', 'db.indexes.json', 'db.textindexes.json'] as const;
 
 async function shardFingerprint(dir: string): Promise<string[]> {
   return Promise.all(FINGERPRINT_FILES.map((f) => statFingerprint(path.join(dir, f))));
@@ -296,10 +297,21 @@ export class ShardLockPool {
       return cached;
     }
     if (cached) {
-      // Something in the shard changed. When the change is confined to WAL
-      // appends on the same inode, apply just those frames instead of paying
-      // for a full replay (fallback: a clean full reopen below).
-      if (parts[1] === cached.fpParts[1] && parts[2] === cached.fpParts[2] && parts[3] === cached.fpParts[3]) {
+      // Something in the shard changed. When the change is confined to the
+      // WAL (parts[0]) — i.e. the snapshot and EVERY sidecar are unchanged —
+      // it can only be WAL appends on the same inode, so apply just those
+      // frames instead of paying for a full replay (fallback: a clean full
+      // reopen below). A compound/secondary/text definition change lands on
+      // this reopen path too: it rewrites its sidecar, which the fingerprint
+      // tracks.
+      let walOnly = true;
+      for (let i = 1; i < parts.length; i++) {
+        if (parts[i] !== cached.fpParts[i]) {
+          walOnly = false;
+          break;
+        }
+      }
+      if (walOnly) {
         if (await this.tryCatchUpReader(cached, dir, parts)) return cached;
       }
       // A change the watermark cannot advance over (rotation, truncation,

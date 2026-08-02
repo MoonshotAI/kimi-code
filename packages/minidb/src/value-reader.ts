@@ -20,9 +20,21 @@ export class ValueReader {
     this.walPath = path.join(dir, 'db.wal');
   }
 
-  open(): void {
+  /** Open both files (null-safe per side) and return the dev/ino identity of
+   *  each attached handle (null = the file does not exist). Recovery's
+   *  generation pairing compares these against the inodes it scanned, so a
+   *  rotation landing between the scan and this attach is detected instead of
+   *  serving old offsets from a new file. */
+  open(): { snapshot: { dev: number; ino: number } | null; wal: { dev: number; ino: number } | null } {
     this.snapshotFd = this.openIfExists(this.snapshotPath);
     this.walFd = this.openIfExists(this.walPath);
+    return { snapshot: this.ident(this.snapshotFd), wal: this.ident(this.walFd) };
+  }
+
+  private ident(fd: number | null): { dev: number; ino: number } | null {
+    if (fd === null) return null;
+    const st = fs.fstatSync(fd);
+    return { dev: st.dev, ino: st.ino };
   }
 
   private openIfExists(file: string): number | null {

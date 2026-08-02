@@ -6,8 +6,11 @@
 //
 // The later sections cover compaction ROTATION failures end-to-end (through a
 // real MiniDb on a real temp dir): a throw at wal.close(), at the WAL rename,
-// or at the new WAL's open() must not wedge the database — the seal is
-// one-way, so recovery swaps in a fresh WAL on db.walPath.
+// at the new WAL's open(), or at the rotation's STRICT directory fsyncs must
+// not wedge the database — the seal is one-way, so recovery swaps in a fresh
+// WAL on db.walPath. A dir-fsync failure additionally must ABORT the rotation
+// (it breaks the rename-durability invariant), leaving the disk on one of the
+// crash-safe snapshot/WAL pairings.
 //
 // NOTE: each test resets the module registry and re-mocks node:fs/promises so a
 // fresh import of compaction.ts picks up that test's mocked fs.
@@ -95,7 +98,7 @@ test('copyFileRange tolerates a destination close() failure (best-effort close)'
   await expect(copyFileRange('/tmp/src', '/tmp/dst', 0, 0)).resolves.toBeUndefined();
 });
 
-test('fsyncDir swallows a sync() failure and still closes the handle', async () => {
+test('fsyncDir strict mode propagates a sync() failure and still closes the handle', async () => {
   let closed = false;
   mockFsPromises(async () => ({
     sync: async () => {
@@ -106,8 +109,47 @@ test('fsyncDir swallows a sync() failure and still closes the handle', async () 
     },
   }));
   const { fsyncDir } = await import('../src/compaction.js');
-  await fsyncDir('/tmp/whatever');
+  await assert.rejects(fsyncDir('/tmp/whatever', { strict: true }), /sync failed/);
   assert.equal(closed, true, 'close() is called even after sync() throws');
+});
+
+test('fsyncDir degrades an unsupported directory fsync explicitly: warn once, mark stats, continue', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    mockFsPromises(async () => ({
+      sync: async () => {
+        throw Object.assign(new Error('invalid argument'), { code: 'EINVAL' });
+      },
+      close: async () => {},
+    }));
+    const { fsyncDir } = await import('../src/compaction.js');
+    const stats: { dirFsyncUnsupported?: boolean } = {};
+    // Even strict mode does NOT reject on EINVAL/ENOTSUP: the platform simply
+    // cannot fsync directories, so the downgrade is made observable instead.
+    await fsyncDir('/tmp/whatever', { strict: true, stats });
+    assert.equal(stats.dirFsyncUnsupported, true);
+    assert.equal(warn.mock.calls.length, 1);
+    // One-shot: the flag is already set, so later calls stay silent.
+    await fsyncDir('/tmp/whatever', { strict: true, stats });
+    assert.equal(warn.mock.calls.length, 1);
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+test('fsyncDir non-strict mode keeps swallowing ordinary failures (legacy callers)', async () => {
+  let closed = false;
+  mockFsPromises(async () => ({
+    sync: async () => {
+      throw new Error('sync failed');
+    },
+    close: async () => {
+      closed = true;
+    },
+  }));
+  const { fsyncDir } = await import('../src/compaction.js');
+  await expect(fsyncDir('/tmp/whatever')).resolves.toBeUndefined();
+  assert.equal(closed, true);
 });
 
 
@@ -135,6 +177,29 @@ function mockFsWithFaults(faults: {
     return fs.open(p, flags as string | number | undefined, mode as never);
   }) as typeof fs.open;
   const mocked = { ...fs, rename, open };
+  vi.doMock('node:fs/promises', () => ({ ...mocked, default: mocked }));
+}
+
+// Passthrough node:fs/promises mock that breaks the sync() of the db
+// DIRECTORY handle on the chosen open calls — the rotation's two fsyncDir
+// calls are the only directory syncs in the system, so counting directory
+// opens targets "the first/second dir fsync of the first compaction"
+// deterministically.
+function mockFsWithDirSyncFault(dir: string, failOnCalls: ReadonlySet<number>): void {
+  let dirOpens = 0;
+  const open = (async (p: PathLike, flags?: string | number, mode?: string | number) => {
+    const h = await fs.open(p, flags as string | number | undefined, mode as never);
+    if (String(p) === dir && flags === 'r') {
+      dirOpens++;
+      if (failOnCalls.has(dirOpens)) {
+        h.sync = async () => {
+          throw Object.assign(new Error('injected dir fsync failure'), { code: 'EIO' });
+        };
+      }
+    }
+    return h;
+  }) as typeof fs.open;
+  const mocked = { ...fs, open };
   vi.doMock('node:fs/promises', () => ({ ...mocked, default: mocked }));
 }
 
@@ -325,6 +390,101 @@ test('rotation: a new-WAL open() failure after the renames leaves the db writabl
     await db.close();
 
     db = await MiniDb.open<string>(opts);
+    assert.equal(db.size, N + 1);
+    assert.equal(db.get('k0'), 'v0');
+    assert.equal(db.get(`k${N - 1}`), `v${N - 1}`);
+    assert.equal(db.get('post'), 'still-writable');
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('rotation: the first directory fsync failure aborts the rotation; rollback + consistent disk pairing', async () => {
+  const dir = await tmpDir();
+  // Fail the rotation's FIRST dir fsync (after the snapshot rename, before
+  // the WAL rename).
+  mockFsWithDirSyncFault(dir, new Set([1]));
+  const { MiniDb } = await import('../src/index.js');
+  try {
+    let db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', compactThresholdBytes: 1 << 30 });
+    const N = 200;
+    for (let i = 0; i < N; i++) await db.set(`k${i}`, `v${i}`);
+
+    // The strict fsyncDir turns the failure into an abort, not a swallow.
+    await assert.rejects(db.compact(), /injected dir fsync failure/);
+    assert.equal(db.stats.compactions, 0);
+    assert.equal(db.stats.compactErrors, 1);
+    assert.match(String(db.lastCompactError), /injected dir fsync failure/);
+    assert.notEqual(db.stats.dirFsyncUnsupported, true, 'an I/O error is not the platform-degrade path');
+
+    // The abort went through the existing rollback: the write path is back.
+    await db.set('post', 'still-writable');
+    assert.equal(db.get('k0'), 'v0');
+    assert.equal(db.get('post'), 'still-writable');
+
+    // The rotation died right after the snapshot rename: the disk holds the
+    // NEW snapshot paired with the OLD full WAL — the crash-safe intermediate
+    // pairing, which a fresh open recovers completely.
+    const probe = await MiniDb.open<string>({ dir, valueCodec: 'string', readOnly: true });
+    assert.equal(probe.size, N + 1, 'new snapshot + old full WAL is a consistent complete pairing');
+    assert.equal(probe.get('k0'), 'v0');
+    assert.equal(probe.get('post'), 'still-writable');
+    await probe.close();
+
+    // The fault was one-shot: an explicit retry compacts cleanly.
+    await db.compact();
+    assert.equal(db.stats.compactions, 1);
+    assert.equal(db.stats.compactErrors, 1);
+    assert.equal(db.lastCompactError, null);
+    await db.close();
+
+    db = await MiniDb.open<string>({ dir, valueCodec: 'string' });
+    assert.equal(db.size, N + 1);
+    assert.equal(db.get(`k${N - 1}`), `v${N - 1}`);
+    assert.equal(db.get('post'), 'still-writable');
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('rotation: the second directory fsync failure aborts after both renames; rollback + consistent disk pairing', async () => {
+  const dir = await tmpDir();
+  // Fail the rotation's SECOND dir fsync (after the WAL rename — the new
+  // layout is already on disk).
+  mockFsWithDirSyncFault(dir, new Set([2]));
+  const { MiniDb } = await import('../src/index.js');
+  try {
+    let db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', compactThresholdBytes: 1 << 30 });
+    const N = 200;
+    for (let i = 0; i < N; i++) await db.set(`k${i}`, `v${i}`);
+
+    await assert.rejects(db.compact(), /injected dir fsync failure/);
+    assert.equal(db.stats.compactions, 0);
+    assert.equal(db.stats.compactErrors, 1);
+    assert.match(String(db.lastCompactError), /injected dir fsync failure/);
+
+    // The write path recovered through the rotation-failure rollback.
+    await db.set('post', 'still-writable');
+    assert.equal(db.get('k0'), 'v0');
+    assert.equal(db.get('post'), 'still-writable');
+
+    // Both renames had landed when the second fsync failed: the disk holds
+    // the NEW snapshot + NEW WAL — the complete new generation.
+    const probe = await MiniDb.open<string>({ dir, valueCodec: 'string', readOnly: true });
+    assert.equal(probe.size, N + 1, 'new snapshot + new WAL is the complete new generation');
+    assert.equal(probe.get(`k${N - 1}`), `v${N - 1}`);
+    assert.equal(probe.get('post'), 'still-writable');
+    await probe.close();
+
+    await db.compact();
+    assert.equal(db.stats.compactions, 1);
+    assert.equal(db.stats.compactErrors, 1);
+    assert.equal(db.lastCompactError, null);
+    await db.close();
+
+    db = await MiniDb.open<string>({ dir, valueCodec: 'string' });
     assert.equal(db.size, N + 1);
     assert.equal(db.get('k0'), 'v0');
     assert.equal(db.get(`k${N - 1}`), `v${N - 1}`);
