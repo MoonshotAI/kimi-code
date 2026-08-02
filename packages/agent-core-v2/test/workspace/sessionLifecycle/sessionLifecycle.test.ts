@@ -287,9 +287,11 @@ function persistentWorkspaceStub(): IWorkspaceService {
 function sessionIndexStub(): ISessionIndex {
   return {
     _serviceBrand: undefined,
-    list: () => Promise.resolve({ items: [], total: 0, hasMore: false }),
+    prepare: () => Promise.resolve({ state: 'uninitialized', degradedCount: 0 }),
+    status: () => ({ state: 'uninitialized', degradedCount: 0 }),
+    listRecent: () => Promise.resolve({ items: [] }),
     get: () => Promise.resolve(undefined),
-    countActive: () => Promise.resolve(0),
+    count: () => Promise.resolve(0),
     remove: () => Promise.resolve(),
   };
 }
@@ -309,9 +311,11 @@ function sessionIndexWithSummary(
   };
   return {
     _serviceBrand: undefined,
-    list: () => Promise.resolve({ items: [summary], total: 1, hasMore: false }),
+    prepare: () => Promise.resolve({ state: 'uninitialized', degradedCount: 0 }),
+    status: () => ({ state: 'uninitialized', degradedCount: 0 }),
+    listRecent: () => Promise.resolve({ items: [summary] }),
     get: (id) => Promise.resolve(id === sessionId ? summary : undefined),
-    countActive: () => Promise.resolve(1),
+    count: () => Promise.resolve(1),
     remove: () => Promise.resolve(),
   };
 }

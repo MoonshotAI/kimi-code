@@ -39,12 +39,14 @@ function makeBootstrap(home: string): IBootstrapService {
   } as unknown as IBootstrapService;
 }
 
-function makeSessionIndex(list: ISessionIndex['list']): ISessionIndex {
+function makeSessionIndex(list: ISessionIndex['listRecent']): ISessionIndex {
   return {
     _serviceBrand: undefined,
-    list,
+    prepare: async () => ({ state: 'uninitialized', degradedCount: 0 }),
+    status: () => ({ state: 'uninitialized', degradedCount: 0 }),
+    listRecent: list,
     get: async () => undefined,
-    countActive: async () => 0,
+    count: async () => 0,
     remove: async () => {},
   };
 }
@@ -946,9 +948,11 @@ describe('GlobalSearchService', () => {
       const byId = new Map(summaries.map((s) => [s.id, s]));
       return {
         _serviceBrand: undefined,
-        list: async () => ({ items: summaries, nextCursor: undefined }),
+        prepare: async () => ({ state: 'uninitialized', degradedCount: 0 }),
+        status: () => ({ state: 'uninitialized', degradedCount: 0 }),
+        listRecent: async () => ({ items: summaries, nextCursor: undefined }),
         get: async (id) => byId.get(id),
-        countActive: async () => summaries.length,
+        count: async () => summaries.length,
         remove: async () => {},
       };
     }

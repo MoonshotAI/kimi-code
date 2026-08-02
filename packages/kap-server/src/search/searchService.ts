@@ -762,7 +762,7 @@ export class GlobalSearchService implements IGlobalSearchService {
     const out: SessionSummary[] = [];
     let cursor: string | undefined;
     do {
-      const page = await this.sessionIndex.list({ cursor, limit: SESSION_PAGE_SIZE });
+      const page = await this.sessionIndex.listRecent({ before: cursor, limit: SESSION_PAGE_SIZE });
       out.push(...page.items);
       cursor = page.nextCursor;
     } while (cursor !== undefined);

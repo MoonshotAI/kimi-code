@@ -330,8 +330,7 @@ async function resolveNativeSession(
   };
 
   if (opts.session !== undefined) {
-    const page = await index.list({});
-    const target = page.items.find((summary) => summary.id === opts.session);
+    const target = await index.get(opts.session);
     if (target === undefined) {
       throw new Error(`Session "${opts.session}" not found.`);
     }
@@ -358,7 +357,7 @@ async function resolveNativeSession(
   }
 
   if (opts.continue) {
-    const page = await index.list({});
+    const page = await index.listRecent({});
     const previous = page.items.find((summary) => summary.cwd === workDir);
     if (previous !== undefined) {
       const session = await resumeById(previous.id);
