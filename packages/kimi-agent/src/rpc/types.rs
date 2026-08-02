@@ -94,6 +94,10 @@ pub mod methods {
     /// Destroy a session's agent + side agent, firing SessionEnd hooks. The
     /// persisted record (if any) is left intact for later `session/load`.
     pub const SESSION_DESTROY: &str = "session/destroy";
+    /// Permanently delete a session's persisted record (SDK `deleteSession`).
+    /// Unlike `session/destroy`, this removes the persisted record, not just
+    /// the in-memory agent.
+    pub const SESSION_DELETE: &str = "session/delete";
     pub const SESSION_SAVE: &str = "session/save";
     pub const SESSION_LOAD: &str = "session/load";
     pub const SESSION_LIST: &str = "session/list";

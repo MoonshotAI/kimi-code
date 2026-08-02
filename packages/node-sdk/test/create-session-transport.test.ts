@@ -408,24 +408,12 @@ describe('KimiHarness.createSession transport link', () => {
       expect(session.workDir).toBe(toPosix(workDir));
       await expect(session.getStatus()).resolves.toMatchObject({ model: 'kimi-test-model' });
       expect(harness.sessions.get(session.id)).toBe(session);
-      const configEvent = await waitForAgentWireEvent(
-        homeDir,
-        session.id,
-        'config.update',
-        (event) => event['modelAlias'] === 'kimi-test-model',
-      );
-      expect(configEvent).toMatchObject({
-        type: 'config.update',
-        modelAlias: 'kimi-test-model',
-      });
-      expect(configEvent).not.toHaveProperty('provider');
 
+      // Rust semantics: the engine owns session storage; the SDK lists
+      // sessions from the engine and does not materialize v1 session files.
       const summaries = await harness.listSessions({ workDir });
       const summary = summaries.find((item) => item.id === session.id);
-      expect(summary?.sessionDir).not.toBe(join(homeDir, 'sessions', session.id));
-      expect(summary?.sessionDir).toContain(toPosix(join(homeDir, 'sessions')));
-      expect(existsSync(join(summary!.sessionDir, 'state.json'))).toBe(true);
-      expect(await readFile(join(homeDir, 'session_index.jsonl'), 'utf-8')).toContain(session.id);
+      expect(summary?.workDir).toBe(toPosix(workDir));
 
       const summariesById = await harness.listSessions({ sessionId: session.id });
       expect(summariesById).toHaveLength(1);
@@ -472,17 +460,6 @@ effort = "medium"
       expect(session.id).toBe('ses_alias_model');
       await expect(session.getStatus()).resolves.toMatchObject({ model: 'alias-model' });
       expect(harness.sessions.get(session.id)).toBe(session);
-      const configEvent = await waitForAgentWireEvent(
-        homeDir,
-        session.id,
-        'config.update',
-        (event) => event['modelAlias'] === 'alias-model',
-      );
-      expect(configEvent).toMatchObject({
-        type: 'config.update',
-        modelAlias: 'alias-model',
-      });
-      expect(configEvent).not.toHaveProperty('provider');
     } finally {
       await harness.close();
     }
@@ -682,27 +659,8 @@ effort = "medium"
       });
 
       await expect(
-        waitForAgentWireEvent(
-          homeDir,
-          session.id,
-          'config.update',
-          (event) => event['thinkingEffort'] === 'low',
-        ),
-      ).resolves.toMatchObject({
-        type: 'config.update',
-        thinkingEffort: 'low',
-      });
-      await expect(
-        waitForAgentWireEvent(
-          homeDir,
-          session.id,
-          'permission.set_mode',
-          (event) => event['mode'] === 'auto',
-        ),
-      ).resolves.toMatchObject({
-        type: 'permission.set_mode',
-        mode: 'auto',
-      });
+        session.getStatus(),
+      ).resolves.toMatchObject({ permission: 'auto' });
     } finally {
       await harness.close();
     }
@@ -724,17 +682,6 @@ effort = "medium"
       });
 
       await expect(session.getStatus()).resolves.toMatchObject({ permission: 'auto' });
-      await expect(
-        waitForAgentWireEvent(
-          homeDir,
-          session.id,
-          'permission.set_mode',
-          (event) => event['mode'] === 'auto',
-        ),
-      ).resolves.toMatchObject({
-        type: 'permission.set_mode',
-        mode: 'auto',
-      });
 
       const explicit = await harness.createSession({
         id: 'ses_default_permission_explicit_override',

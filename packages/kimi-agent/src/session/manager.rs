@@ -577,6 +577,17 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Permanently delete a persisted session (SDK `deleteSession` parity).
+    /// Returns whether the record existed, so hosts can raise
+    /// `session.not_found` for unknown ids without an engine error code.
+    pub fn delete_persisted_session(&mut self, id: &str) -> anyhow::Result<bool> {
+        let exists = self.store.load_session(id)?.is_some();
+        if exists {
+            self.delete_session(id)?;
+        }
+        Ok(exists)
+    }
+
     // ── Listing ───────────────────────────────────────────────────────────
 
     /// List all persisted sessions (most recent first).

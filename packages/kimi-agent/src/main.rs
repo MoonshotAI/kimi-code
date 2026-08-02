@@ -1669,6 +1669,24 @@ async fn main() -> anyhow::Result<()> {
         })
     });
 
+    // Permanently delete a session (SDK deleteSession parity): removes the
+    // persisted record from the store, not just the in-memory agent. Reports
+    // `deleted: false` for an unknown id so the host can raise
+    // `session.not_found` without depending on engine error codes.
+    let mgr = session_manager.clone();
+    RpcServer::register_arc(&server, types::methods::SESSION_DELETE, move |params| {
+        let mgr = mgr.clone();
+        Box::pin(async move {
+            let input: types::SessionIdParams = serde_json::from_value(params)
+                .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+            let mut manager = mgr.lock().await;
+            let deleted = manager
+                .delete_persisted_session(&input.session_id)
+                .map_err(|e| types::JsonRpcError::internal_error(e.to_string()))?;
+            Ok(serde_json::json!({ "deleted": deleted }))
+        })
+    });
+
     let mgr = session_manager.clone();
     RpcServer::register_arc(&server, types::methods::SESSION_LOAD, move |params| {
         let mgr = mgr.clone();

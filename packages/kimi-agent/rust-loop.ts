@@ -2976,6 +2976,13 @@ export async function sessionExport(
   return agentCall('session/export', { session_id: sessionId, homedir, web_log: webLog });
 }
 
+/** Permanently delete a persisted session (SDK `deleteSession` parity).
+ *  Resolves `{ deleted: true }` when the record existed, `{ deleted: false }`
+ *  for an unknown id (the host maps that to `session.not_found`). */
+export async function sessionDelete(sessionId: string): Promise<{ deleted: boolean } | null> {
+  return agentCall('session/delete', { session_id: sessionId });
+}
+
 /** Read-class filesystem action against the session workspace root (stage
  *  2d): `read` (path + optional line_offset/n_lines), `list` (glob), or
  *  `search` (query + limit). */
