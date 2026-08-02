@@ -4465,7 +4465,7 @@ describe("Editor mouse selection", () => {
 		assert.strictEqual(editor.getText(), "abcDEF\nGHI\nJKLmno");
 	});
 
-	it("replaces a selection with typing as one undo unit", () => {
+	it("replaces a selection with multi-character typing as one undo unit", () => {
 		const editor = new Editor(createTestTUI(), defaultEditorTheme);
 		editor.setText("hello world");
 		editor.beginSelection({ line: 0, col: 6 });
@@ -4473,7 +4473,9 @@ describe("Editor mouse selection", () => {
 		editor.finishSelection();
 
 		editor.handleInput("X");
-		assert.strictEqual(editor.getText(), "hello X");
+		editor.handleInput("Y");
+		editor.handleInput("Z");
+		assert.strictEqual(editor.getText(), "hello XYZ");
 		editor.handleInput("\x1b[45;5u");
 		assert.strictEqual(editor.getText(), "hello world");
 	});

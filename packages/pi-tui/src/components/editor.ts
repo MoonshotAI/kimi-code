@@ -1417,7 +1417,7 @@ export class Editor implements Component, Focusable {
 		if (replacingSelection) {
 			this.pushUndoSnapshot();
 			this.deleteSelection(false, false);
-			this.lastAction = null;
+			this.lastAction = skipUndoCoalescing ? null : "type-word";
 		}
 
 		// Undo coalescing (fish-style):
