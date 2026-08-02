@@ -7,7 +7,7 @@
  * or the controller is disposed.
  */
 
-import type { Event, ToolCallStartedEvent, ToolResultEvent } from '@moonshot-ai/kimi-code-sdk';
+import type { EngineToolSettledEvent, EngineToolStartedEvent, Event } from '@moonshot-ai/kimi-code-sdk';
 
 import type { WorkflowPanelComponent, WorkflowRunData } from '../components/chrome/workflow-panel';
 import type { TuiSession } from '../tui-session';
@@ -56,27 +56,27 @@ export class WorkflowPanelController {
 
   private handleEvent(event: Event): void {
     switch (event.type) {
-      case 'tool.call.started':
-        this.handleToolCall(event as ToolCallStartedEvent);
+      case 'session.tool.started':
+        this.handleToolCall(event);
         break;
-      case 'tool.result':
-        this.handleToolResult(event as ToolResultEvent);
+      case 'session.tool.settled':
+        this.handleToolResult(event);
         break;
     }
   }
 
-  private handleToolCall(event: ToolCallStartedEvent): void {
+  private handleToolCall(event: EngineToolStartedEvent): void {
     // Only care about the Workflow tool.
-    if (event.name !== 'Workflow') return;
+    if (event.tool_name !== 'Workflow') return;
 
     // Try to extract the operation and run_id from the args.
     // The args are a JSON string at this point.
     let args: Record<string, unknown> = {};
     try {
-      if (typeof event.args === 'string') {
-        args = JSON.parse(event.args) as Record<string, unknown>;
+      if (typeof event.arguments === 'string') {
+        args = JSON.parse(event.arguments) as Record<string, unknown>;
       } else {
-        args = event.args as Record<string, unknown>;
+        args = event.arguments as Record<string, unknown>;
       }
     } catch {
       return;
@@ -87,17 +87,17 @@ export class WorkflowPanelController {
       // A new workflow run started — we don't have the runId yet, so
       // we'll capture it when the result comes back.
       const name = (args['name'] as string) ?? 'inline';
-      this.pendingRuns.set(event.toolCallId, { name, runId: '' });
+      this.pendingRuns.set(event.tool_call_id, { name, runId: '' });
     } else if (operation === 'status' || operation === 'wait') {
       // Status/wait operations may return updated status; we handle them
       // in the result handler.
     }
   }
 
-  private handleToolResult(event: ToolResultEvent): void {
+  private handleToolResult(event: EngineToolSettledEvent): void {
     // Check if this is a Workflow tool result.
     // We look for run_id: and status: patterns in the output.
-    const output = event.output;
+    const output = event.content;
     if (typeof output !== 'string') return;
 
     // Try to extract run_id from the output.
@@ -122,12 +122,12 @@ export class WorkflowPanelController {
     const elapsedSec = elapsedMatch ? parseFloat(elapsedMatch[1]!) : 0;
 
     // Check if this result is from a "run" operation (we have a pending entry).
-    const pending = this.pendingRuns.get(event.toolCallId);
+    const pending = this.pendingRuns.get(event.tool_call_id);
     const name = pending?.name ?? 'workflow';
 
     // Clean up pending entry.
     if (pending) {
-      this.pendingRuns.delete(event.toolCallId);
+      this.pendingRuns.delete(event.tool_call_id);
     }
 
     // Build the run data.

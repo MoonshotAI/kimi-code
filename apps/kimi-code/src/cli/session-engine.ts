@@ -51,16 +51,19 @@ export function formatSessionPrintEvent(
   toolNames: Map<string, string>,
 ): { stdout?: string; stderr?: string } {
   switch (event.type) {
-    case 'assistant.delta':
-      return { stdout: event.delta };
-    case 'tool.call.started': {
-      toolNames.set(event.toolCallId, event.name);
-      return { stderr: `[tool] ${event.name}${previewToolArgs(event.args)}\n` };
+    case 'llm.delta': {
+      const part = event.part;
+      if (part.type !== 'text' || part.text === undefined) return {};
+      return { stdout: part.text };
     }
-    case 'tool.result': {
-      const name = toolNames.get(event.toolCallId) ?? event.toolCallId;
-      if (event.isError) {
-        const firstLine = String(event.output).split('\n')[0]?.slice(0, 200) ?? '';
+    case 'session.tool.started': {
+      toolNames.set(event.tool_call_id, event.tool_name);
+      return { stderr: `[tool] ${event.tool_name}${previewToolArgs(event.arguments)}\n` };
+    }
+    case 'session.tool.settled': {
+      const name = toolNames.get(event.tool_call_id) ?? event.tool_call_id;
+      if (event.is_error) {
+        const firstLine = String(event.content).split('\n')[0]?.slice(0, 200) ?? '';
         return { stderr: `[tool] ${name} failed: ${firstLine}\n` };
       }
       return { stderr: `[tool] ${name} ok\n` };

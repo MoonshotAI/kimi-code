@@ -250,10 +250,10 @@ async function runHeadlessGoal(
   let completedSnapshot: GoalSnapshot | null = null;
   const unsubscribeGoalEvents = session.onEvent((event) => {
     if (
-      event.type === 'goal.updated' &&
+      event.type === 'session.goal.updated' &&
       event.agentId === 'main' &&
-      event.change?.kind === 'completion' &&
-      event.snapshot !== null
+      event.snapshot !== null &&
+      event.snapshot.status === 'complete'
     ) {
       completedSnapshot = event.snapshot;
     }
@@ -550,16 +550,16 @@ function runPromptTurnImpl(
         finish(new Error(`${event.code}: ${event.message}`));
         return;
       }
-      if (event.type === 'turn.started') {
+      if (event.type === 'session.turn.started') {
         if (event.agentId !== PROMPT_MAIN_AGENT_ID) {
           return;
         }
-        activeTurnId = event.turnId;
+        activeTurnId = event.turn_id;
         activeAgentId = event.agentId;
         return;
       }
       if (
-        event.type === 'goal.updated' &&
+        event.type === 'session.goal.updated' &&
         event.agentId === PROMPT_MAIN_AGENT_ID &&
         activeTurnId === undefined &&
         event.snapshot !== null &&
@@ -571,48 +571,31 @@ function runPromptTurnImpl(
       if (
         activeTurnId === undefined ||
         activeAgentId === undefined ||
-        !hasTurnId(event) ||
-        event.turnId !== activeTurnId ||
         event.agentId !== activeAgentId
       ) {
         return;
       }
       switch (event.type) {
-        case 'turn.step.started':
-        case 'turn.step.interrupted':
-          outputWriter.flushAssistant();
-          return;
-        case 'turn.step.retrying':
-          outputWriter.discardAssistant();
-          outputWriter.writeRetrying(event);
-          return;
-        case 'assistant.delta':
-          outputWriter.writeAssistantDelta(event.delta);
-          return;
-        case 'hook.result':
-          outputWriter.writeHookResult(event);
-          return;
-        case 'thinking.delta':
-          outputWriter.writeThinkingDelta(event.delta);
-          return;
-        case 'tool.call.started':
-          outputWriter.writeToolCall(event.toolCallId, event.name, event.args);
-          return;
-        case 'tool.call.delta':
-          outputWriter.writeToolCallDelta(event.toolCallId, event.name, event.argumentsPart);
-          return;
-        case 'tool.result':
-          outputWriter.writeToolResult(event.toolCallId, event.output);
-          return;
-        case 'tool.progress':
-          if (event.update.text !== undefined && event.update.text.length > 0) {
-            stderr.write(
-              event.update.text.endsWith('\n') ? event.update.text : `${event.update.text}\n`,
-            );
+        case 'llm.delta': {
+          const part = event.part;
+          if (part.type === 'text' && part.text !== undefined) {
+            outputWriter.writeAssistantDelta(part.text);
+          } else if (part.type === 'think' && part.think !== undefined) {
+            outputWriter.writeThinkingDelta(part.think);
           }
           return;
-        case 'turn.ended':
-          if (event.reason === 'completed') {
+        }
+        case 'session.hook.result':
+          outputWriter.writeHookResult(event);
+          return;
+        case 'session.tool.started':
+          outputWriter.writeToolCall(event.tool_call_id, event.tool_name, event.arguments);
+          return;
+        case 'session.tool.settled':
+          outputWriter.writeToolResult(event.tool_call_id, event.content);
+          return;
+        case 'session.turn.ended':
+          if (event.stop_reason === 'EndTurn') {
             outputWriter.flushAssistant();
             activeTurnId = undefined;
             activeAgentId = undefined;
@@ -621,25 +604,6 @@ function runPromptTurnImpl(
           }
           finish(new Error(formatTurnEndedFailure(event)));
           return;
-        case 'agent.status.updated':
-        case 'background.task.started':
-        case 'background.task.terminated':
-        case 'compaction.blocked':
-        case 'compaction.cancelled':
-        case 'compaction.completed':
-        case 'compaction.started':
-        case 'cron.fired':
-        case 'goal.updated':
-        case 'mcp.server.status':
-        case 'session.meta.updated':
-        case 'skill.activated':
-        case 'subagent.completed':
-        case 'subagent.failed':
-        case 'subagent.spawned':
-        case 'subagent.started':
-        case 'subagent.suspended':
-        case 'tool.list.updated':
-        case 'turn.step.completed':
         case 'warning':
           return;
       }
@@ -672,17 +636,12 @@ function runPromptTurnImpl(
   });
 }
 
-function hasTurnId(event: Event): event is Event & { readonly turnId: number } {
-  return 'turnId' in event;
-}
-
-function formatTurnEndedFailure(event: Extract<Event, { type: 'turn.ended' }>): string {
-  if (event.error?.code === 'provider.filtered') {
+function formatTurnEndedFailure(event: Extract<Event, { type: 'session.turn.ended' }>): string {
+  if (event.stop_reason === 'Aborted') {
+    return t('tui.statusMessages.promptTurnInterrupted');
+  }
+  if (event.stop_reason === 'Filtered') {
     return t('tui.statusMessages.policyBlocked');
   }
-  if (event.error !== undefined) return `${event.error.code}: ${event.error.message}`;
-  if (event.reason === 'blocked') {
-    return t('tui.statusMessages.promptBlocked');
-  }
-  return t('tui.statusMessages.promptTurnEnded', { reason: event.reason });
+  return t('tui.statusMessages.promptTurnEnded', { reason: event.stop_reason });
 }

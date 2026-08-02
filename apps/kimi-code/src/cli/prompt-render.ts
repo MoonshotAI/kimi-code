@@ -19,7 +19,7 @@ import { t } from '#/i18n';
  * definition.
  */
 interface HookResultEventLike {
-  readonly hookEvent: string;
+  readonly hook_event: string;
   readonly content: string;
   readonly blocked?: boolean;
 }
@@ -336,7 +336,7 @@ function formatHookResultPlain(event: HookResultEventLike): string {
 }
 
 function formatHookResultTitle(event: HookResultEventLike): string {
-  return `${event.hookEvent} hook${event.blocked === true ? ' blocked' : ''}`;
+  return `${event.hook_event} hook${event.blocked === true ? ' blocked' : ''}`;
 }
 
 function formatHookResultBody(event: HookResultEventLike): string {

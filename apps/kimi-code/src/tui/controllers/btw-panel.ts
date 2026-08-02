@@ -3,7 +3,6 @@ import { Spacer } from '@moonshot-ai/pi-tui';
 import type {
   Event,
   KimiHarness,
-  TurnEndedEvent,
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { NativeSession } from '#/cli/native-session';
@@ -114,26 +113,32 @@ export class BtwPanelController {
     if (panel === undefined) return false;
 
     switch (event.type) {
-      case 'assistant.delta':
-        panel.appendAnswer(event.delta);
-        this.host.state.ui.requestRender();
+      case 'llm.delta': {
+        const part = event.part;
+        if (part.type === 'text' && part.text !== undefined) {
+          panel.appendAnswer(part.text);
+          this.host.state.ui.requestRender();
+        } else if (part.type === 'think' && part.think !== undefined) {
+          panel.appendThinking(part.think);
+          this.host.state.ui.requestRender();
+        }
         return true;
-      case 'thinking.delta':
-        panel.appendThinking(event.delta);
-        this.host.state.ui.requestRender();
-        return true;
-      case 'hook.result':
+      }
+      case 'session.hook.result':
         panel.appendAnswer(formatHookResultPlain(event));
         this.host.state.ui.requestRender();
         return true;
-      case 'turn.ended':
-        if (event.reason === 'completed') {
-          panel.markDone();
+      case 'session.turn.ended': {
+        if (event.stop_reason === 'Aborted') {
+          panel.markFailed(t('tui.statusMessages.btwInterrupted'));
+        } else if (event.stop_reason === 'Filtered') {
+          panel.markFailed(t('tui.statusMessages.btwFiltered'));
         } else {
-          panel.markFailed(formatBtwTurnEnd(event));
+          panel.markDone();
         }
         this.host.state.ui.requestRender();
         return true;
+      }
       default:
         return true;
     }
@@ -220,20 +225,4 @@ export class BtwPanelController {
   private withInteractiveAgent<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
     return this.host.harness.withInteractiveAgent(agentId, fn);
   }
-}
-
-function formatBtwTurnEnd(event: TurnEndedEvent): string {
-  if (event.reason === 'cancelled') {
-    return t("tui.statusMessages.btwInterrupted");
-  }
-  if (event.error?.code === 'provider.filtered') {
-    return t("tui.statusMessages.btwFiltered");
-  }
-  if (event.error !== undefined) {
-    return `[${event.error.code}] ${event.error.message}`;
-  }
-  if (event.reason === 'blocked') {
-    return t('tui.statusMessages.promptBlocked');
-  }
-  return `BTW turn ended with reason: ${event.reason}`;
 }
