@@ -11,7 +11,7 @@ import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createKimiHarnessV2,
@@ -31,6 +31,7 @@ import { recordingTelemetry, type TelemetryRecord } from './telemetry';
 const tempDirs: string[] = [];
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const dir of tempDirs.splice(0)) {
     await rm(dir, { recursive: true, force: true });
   }
@@ -73,6 +74,27 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
         expect(typeof feature.enabled).toBe('boolean');
         expect(typeof feature.defaultEnabled).toBe('boolean');
       }
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('registers terminal mouse input in the v2 feature catalog', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TERMINAL_MOUSE_INPUT', '1');
+    const { harness } = await makeHarness();
+    try {
+      const feature = (await harness.getExperimentalFeatures()).find(
+        ({ id }) => id === 'terminal_mouse_input',
+      );
+      expect(feature).toMatchObject({
+        id: 'terminal_mouse_input',
+        title: 'Terminal mouse input',
+        env: 'KIMI_CODE_EXPERIMENTAL_TERMINAL_MOUSE_INPUT',
+        surface: 'tui',
+        defaultEnabled: false,
+        enabled: true,
+        source: 'env',
+      });
     } finally {
       await harness.close();
     }

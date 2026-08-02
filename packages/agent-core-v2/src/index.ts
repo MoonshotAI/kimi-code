@@ -3,6 +3,8 @@
  * layer) so importing the package loads all scoped-registry registrations.
  */
 
+import '#/app/terminalMouseInput/flag';
+
 export * from '#/_base/di/descriptors';
 export * from '#/_base/di/errors';
 export * from '#/_base/di/graph';
