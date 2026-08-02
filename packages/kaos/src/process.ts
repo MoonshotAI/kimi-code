@@ -18,7 +18,7 @@ export interface KaosProcess {
   readonly pid: number;
   /** Exit code if the process has already terminated, otherwise `null`. */
   readonly exitCode: number | null;
-  /** Wait for the process to exit and return its exit code. */
+  /** Wait for the process to exit and its output streams to close, then return its exit code. */
   wait(): Promise<number>;
   /** Send a signal to the process (defaults to `SIGTERM`). */
   kill(signal?: NodeJS.Signals): Promise<void>;
