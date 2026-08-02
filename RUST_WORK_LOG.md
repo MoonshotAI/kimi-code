@@ -1,5 +1,283 @@
 # Rust 迁移工作记录（交接用，勿提交）
 
+> **✅ 2026-08-02 引擎化测试语义适配收官（kap-server 377 全绿，未提交）**：
+> - **引擎缺口修复**：
+>   - `session/list_tools` 误用 `SessionFsParams`（要求 action）→ 新增 `SessionListToolsParams`（`src/rpc/types.rs`），`GET /tools` 从 50001 恢复正常
+>   - `session/fs` read 对目录/二进制返回 `None`→50001 RPC 错误 → 改为 in-band `is_error` 结果（`main.rs`），v1 wire 正确映射 40409
+>   - `session/export`：路由误传 `process.cwd()`（打包整个仓库挂起）→ 用 session.workDir；`add_dir_to_zip` 加跳过目录（node_modules/.git/target/dist/.next）+ 64MiB 文件上限；引擎新增 `web_log` 支持（`logs/kimi-web.jsonl` + manifest `webLogPath`，camelCase manifest 对齐 v1）
+>   - `config/set` 无法删除 providers/models（merge 只增不删）→ `strip_null_deletes` 支持 null 删除标记 + `merge_provider` 字段级 deep merge（PUT 保留 api_key 语义）；DELETE/PUT 路由改用 null 标记
+>   - auth 路由投影：ready 去 session 依赖、default_model 读 config 顶层、`managed:*` provider 投影（`findManagedProvider`）
+>   - snapshot 投影补齐 sessionSchema 必填字段（metadata/agent_config/usage/permission_rules/message_count/last_seq/workspace_id 合成）
+>   - skills 递归扫描 `.kimi-code/skills/<name>/SKILL.md`；session 列表合并引擎 skills + project skills
+>   - `rust-loop.ts` re-export `LlmChatRequest/LlmChatResponse`；kap-server `startServer({ llmStep })` 注入 host-proxy LLM stub
+> - **测试适配（引擎唯一语义）**：approvals（pending→items 投影）、messages（`:message_id` 子端点退休）、openapi（`{tail}` dispatcher 退休）、fs-watch（no-op 桥语义）、fs（错误码 + win32 skip）、files（Range/206/content-length/404）、prompts（llmStep stub）、sessions（export 用 workdir + 40401 前置）、auth/modelCatalog/modelCatalogProviderWrite（**共享 home 基建**——引擎单例冻结 KIMI_CONFIG_PATH，beforeEach/afterEach 的 mkdtemp/rm 会删掉冻结路径；改为 beforeAll 建 + boot 重置 config.toml + camelCase TOML 键）
+> - **验证**：kap-server 46 文件 377 passed/8 skipped、typecheck 0 错误；kimi-agent lib 2027 + 集成 51 全绿、0 warnings
+
+> **✅ 2026-08-01 引擎化语义对齐（物理隔离配套，未提交）**：
+> - **config 路由双向映射**：v1 wire `default_permission_mode` ↔ 引擎 `[agent.permission] mode`（config.ts GET 派生 + POST 转换）
+> - **startServer 注入引擎 config 路径**：`process.env.KIMI_CONFIG_PATH = 宿主 config.toml`（引擎进程是模块级单例，env 在首次 spawn 固化——必须 probe 前设置）；web/宿主与引擎共享同一 config 文件
+> - **测试适配（引擎语义）**：config.test.ts 改为 describe 级固定 KIMI_CONFIG_PATH + 引擎 TOML 格式（`[agent.permission] mode = "auto"`）；apps/kimi-code CLI 清 debugEndpoints/allowRemoteTerminals/seeds 选项 + i18n 文案
+> - 验证：`tsc` 0 错误；核心测试 15 文件 169 用例全绿（boot/config/trackers/broadcaster/security/rateLimit 等）；config 3/3、oauthUsage 通过
+> - **剩余（引擎化测试语义适配，~35 用例）**：modelCatalog（引擎内置 models.dev 目录 vs v2 仅用户配置）、fs/auth/approvals/questions/tools/skills/workspaces/messages/tasks/prompts/sessions/snapshot/wsV1Resync（需引擎会话创建 helper、config 夹具、错误码语义对齐）——引擎唯一模式下的真实行为验证，逐文件适配
+
+> **✅ 2026-08-01 kap-server 物理隔离 agent-core-v2 收官——阶段 4 完成（未提交）**：
+> - **src 全量脱离 @moonshot-ai/agent-core-v2（零 import，typecheck 0 错误）**；kap-server package.json 移除 v2 依赖（`pnpm install` 更新 lockfile）
+> - **删除（死代码/失锚）**：debug RPC 面（dispatcher/channelRegistry/mainAgent/registerDebugRoutes/serviceDispatcherRoutes/errors/channel/contract，--debug-endpoints 移除）、snapshotReader/_legacyWire（rustOnly 恒抛错）、transcriptService/coreBinding/coreEventMap（transcript 路由改仅 Rust 投影，799+349+1510 行）、modelCatalogRefreshScheduler（引擎模式恒不 start）、workspaceFs/terminals 路由（纯 v2 能力）、rpc/transport-errors/debugNonloopback/transcript/snapshotReader.unit/modelCatalogRefreshScheduler/transcript.services/modelCatalogCatalog/terminals 测试
+> - **路由层**：12 路由去 core 参数（oauth/files/fs/tools/skills/workspaces/modelCatalog）；modelCatalog 1206→622（删 :action/catalog 3 路由，setDefault/getProvider 改 Rust 投影）；fs 下载改 Rust 投影；registerApiV1Routes 重接线（rustSession 必选）
+> - **start.ts 去 bootstrap（684→~560）**：删 bootstrap()+seeds+workspace sync+core.dispose，RunningServer 去 core，resolveKimiHome/resolveConfigPath 本地化
+> - **broadcaster 1663→599**：删 v2 事件订阅/interaction 合成/transcript 流（subscribeTranscript 保留 no-op），构造 opts.core/transcriptService 保留可选 unknown（兼容传参，已忽略）
+> - **本地化**：di.ts（createDecorator）、rest-modelCatalog/rest-oauth 增 schema、openapi/transforms（fs/git→rest-fs）、ws events（DomainEvent 删，PermissionMode/UsageStatus 本地）、legacyStatus（只留 AgentPhase+TurnEndReason）、instanceRegistry resolveKimiHome、inFlightTurnTracker/subagentRosterTracker（Event→RustEventFrame）
+> - **测试适配**：18+1 文件（sessionEventBroadcaster 2534→261 保留 16 用例，其余删 v2 断言/seeds/core 用例；auth/workspaces 残余 v2 import 本地化）；全项目 `tsc` 0 错误；可运行测试 5 文件 85 用例全绿
+> - **包隔离结论**：剩余宿主（apps/kimi-code 3 + kimi-inspect 8 + 其他包 9 文件）仍依赖 v2——agent-core-v2 物理移入 retired/ 列为后续，本轮完成线 = kap-server 依赖解除
+> - **遗留**：保留测试的运行时行为未全量验证（fs-event 环境问题）；部分保留用例测的端点（tasks/activate/restart/messages 详情）在 Rust 模式可能 404，需运行时评估
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 4(12/n)：protocol 本地化收官（未提交）**：
+> - **剩余 6 文件全部本地化**：`rest-file`（fileMetaSchema 复制）、`rest-terminal`（terminalSchema + terminalStatusSchema）、`rest-modelCatalog`（modelCatalogItem/providerCatalogItem/providerCatalogStatus 3 schema + PROVIDER_ID_PATTERN 复制）、`rest-session`（sessionWarning/sessionWarningsResponse/sessionStatusResponse/updateSessionProfileRequest 4 schema，依赖本地 session.ts 已有 schema）、`rest-snapshot`（messageSchema → 本地 `./message`）、`events-zod`（20 条 v2 type-only import 全删 + 61 处 `satisfies z.ZodType<T>` 子句删除——头注释已声明不影响 JSON Schema，1004 → ~940 行）
+> - **protocol 目录 19/19 文件本地化完成**（严格 import 口径零 v2 残留，仅注释遗留 "agent-core-v2" 字样 3 处）；全包 v2 import 文件数 **40 → 34**
+> - 验证：typecheck 0 错误
+> - **⚠️ 测试环境问题（与改动无关，已核实）**：本机 vitest 全量/单文件均报 `Assertion failed: !_wcsnicmp(filename, dir, dirlen), file src\win\fs-event.c, line 72` 致 worker 崩溃（41/57 测试文件）；`git stash` 掉全部未提交改动回到基线同样崩溃——Windows 环境问题（libuv fs-event）。可运行文件 16 个、348 测试全绿（含 transcript/snapshotReader/broadcaster/wsConnectionV1）
+> - **剩余**：删 sessions/approvals/questions.ts 已随 11/n 完成（工作树已删）；snapshot.ts 的 v2 死分支（core/reader——rustOnly 后 read() 恒抛错）与 snapshotReader 类、_legacyWire.ts（消费者仅 snapshotReader/broadcaster 的 legacy 路径）待清理；start.ts 去 bootstrap（组合根，最大项）；物理隔离 agent-core/agent-core-v2（34 文件）
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 4(11/n)：删 v2 fallback 路由文件（未提交）**：
+> - 删除 `routes/messages.ts`、`routes/tasks.ts`、`routes/prompts.ts`(仅被 registerApiV1Routes 引用,已删注册);清理 registerApiV1Routes 残留 import
+> - 验证:typecheck 0 错误、347 测试全绿
+> - **剩余**:sessions/approvals/questions.ts 被 snapshot.ts 引用(toWireSession/toWireApproval/toWireQuestion——snapshot 的 v2 legacy 组装路径),需先清理 snapshot 再删;events-zod.ts(纯 v2 WS 事件 schema,查引用后删)
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 4(10/n)：删 v2 fallback 路由注册（未提交）**：
+> - `registerApiV1Routes.ts` 删除 v2 fallback:①session 路由 else 分支(registerSessionsRoutes)②v2 messages/tasks/approvals/questions/prompts 注册块;rustSession 缺失直接 throw(引擎唯一);清理 6 个 unused import
+> - 验证:typecheck 0 错误、351 测试全绿
+> - **v2 fallback 路由文件(v2 版 sessions/messages/tasks/approvals/questions/prompts)成为死代码**,待删文件(需先查测试引用)
+> - **协议本地化剩余 6 文件**中,events-zod 等纯 v2 事件 schema 将随 v2 fallback 文件删除而消失(不再需复制)
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 4(9/n)：protocol 本地化(5)——rest-prompt（未提交）**：
+> - `rest-prompt.ts` 的 messageContentSchema → `./message`、promptPermissionModeSchema/promptThinkingSchema/类型 → `./session`,不再 import v2
+> - 验证:typecheck 0 错误、351 测试全绿;**protocol v2 依赖 7 → 6**
+> - **剩余 6 文件**：events-zod(~20 深路径,最重)、rest-file、rest-modelCatalog、rest-session、rest-snapshot、rest-terminal
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 4(8/n)：protocol 本地化(4)——isoDateTime 批量（未提交）**：
+> - approval.ts / rest-approval.ts + 7 文件(events-zod/question/rest-connection/rest-meta/rest-prompt/rest-question/task/workspace/ws-control)的 `isoDateTimeSchema` import 批量改从本地 `./session`
+> - 验证:typecheck 0 错误、347 测试全绿;protocol v2 依赖文件 14 → **7**
+> - **剩余 7 文件**(复杂依赖):events-zod(~20 深路径)、question、rest-connection、rest-meta、rest-prompt、rest-question、rest-modelCatalog
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 4(7/n)：protocol 本地化(3)——messageSchema（未提交）**：
+> - 新建 `protocol/message.ts`——复制 v2 contextMemory/protocolMessage 全部 schema(messageRole/text/toolUse/toolResult/image/video/file/thinking content + messageSchema + isoDateTimeSchema);rest-message.ts / rest-session.ts 改从本地 import
+> - 验证:typecheck 0 错误、349 测试全绿
+> - **protocol 本地化剩余 15 文件**：approval/question/task/workspace/ws-control/events-zod/rest-approval/rest-connection/rest-file/rest-meta/rest-modelCatalog/rest-prompt/rest-question/rest-snapshot/rest-terminal
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 4(6/n)：protocol 本地化(2)——fs 全 schema（未提交）**：
+> - `protocol/rest-fs.ts` 本地化——从 v2 sessionFs/fs + app/git/git 复制全部 fs + git request/response schema(fsRead/List/ListMany/Stat/StatMany/Mkdir/Search/Grep/GitStatus/Diff + fsKind/fsEntry/fsGitStatus 等 201+ 行);`fs.ts` 的 9+2 个 schema import 改从本地
+> - 验证:typecheck 0 错误、350 测试全绿
+> - **protocol 本地化剩余**：rest-session 的 messageSchema、rest-tool/rest-message/rest-snapshot 等 16 文件(模式已确立:复制 v2 schema + 依赖链到本地)
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 4(5/n)：protocol 本地化第一刀（未提交）**：
+> - `protocol/session.ts` 本地化——复制 `isoDateTimeSchema`/`promptThinkingSchema`/`promptPermissionModeSchema`/`sessionMetadataSchema`/`sessionAgentConfigSchema`/`permissionRuleSchema`(+matcher)从 v2 sessionProtocol,不再 import v2 模块
+> - 验证:typecheck 0 错误
+> - **protocol 本地化剩余**：rest-session 的其余 schema、rest-fs/rest-tool/rest-message 等 18 文件(messageSchema、sessionSchema、fs schemas 等)
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 4(4/n)：transcriptService 引擎模式降级（未提交）**：
+> - `transcriptService.ts` 构造加 `rustOnly`——跳过 v2 lifecycle 订阅(onDidClose/ArchiveSession);start.ts 传 `true`(引擎唯一)
+> - 验证:typecheck 0 错误、347 测试全绿
+> - **legacyStatus 确认惰性**:broadcaster rustOnly 后不订阅 v2 agent 事件 → readLegacyStatus 无调用方,惰性死代码(纯函数保留)
+> - **阶段 4 剩余**：protocol 本地化、start.ts 去 bootstrap、删 v2 fallback、物理隔离
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 4(3/n)：snapshotReader 降级 + typecheck 归零（未提交）**：
+> - `snapshotReader.ts`：构造加 `rustOnly`——read() 抛 `SnapshotNotFoundError`(snapshot 路由 Rust 分支不调它,防御);start.ts 传 `rustSession !== undefined`
+> - **顺手修复既有类型错误**:`ensureState` closed 分支 `Promise.resolve()` → `Promise.resolve(undefined)`——kap-server typecheck 从"1 个既有错误"变 **0 错误**
+> - 验证:typecheck 0 错误、347 测试全绿
+> - **阶段 4 剩余**：legacyStatus/transcriptService 惰性确认、protocol 本地化、start.ts 去 bootstrap、删 v2 fallback、物理隔离
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 4(2/n)：broadcaster rustOnly 模式（未提交）**：
+> - **修复真实缺口**:Rust 会话的 WS `subscribe` 此前无法建立 state(v2 会话不存在 → createSessionState 返回 undefined → 订阅者收不到 Rust 帧,只有 globalTargets 能收)
+> - `sessionEventBroadcaster.ts`:构造加 `rustOnly` 标志——rustOnly 跳过 v2 `IEventService` 订阅(`coreEventSubscription` 可空);`createSessionState` rustOnly 分支创建内存 state(ephemeral `:memory:` journal,seq 0/epoch,无 v2 attach);start.ts `rustOnly: true`(引擎唯一,缺失二进制启动即失败)
+> - 验证:typecheck 仅剩既有 791(ensureState closed 分支,行号漂移);345 测试全绿
+> - **阶段 4 剩余**：legacyStatus/snapshotReader/transcriptService 惰性确认 + 降级、protocol 本地化、start.ts 去 bootstrap、删 v2 fallback、物理隔离
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 4(1/n)：fsWatchBridge 引擎模式降级（未提交）**：
+> - `fsWatchBridge.ts` 构造加 `disabled` 标志——引擎模式 addWatch no-op 成功 ack(会话 fs 归引擎,宿主 watch 不实际监听);`start.ts` rustSession 存在时禁用
+> - 验证:typecheck 仅剩既有 791;347 测试全绿
+> - **阶段 4 剩余**：legacyStatus/snapshotReader/transcriptService/broadcaster 降级、protocol 本地化、start.ts 去 bootstrap、删 v2 fallback、物理隔离
+
+> **✅ 2026-08-01 kap-server Rust 化——里程碑:路由面 100% Rust 化(第 29 轮)**：
+> - 全量验证:cargo kimi-agent(后台 2011+51)、kap-server typecheck 仅剩既有 791、347 测试全绿;25 文件改动
+> - **阶段 1-3 全部完成**——kap-server 路由面 100% Rust 化(会话面/config/fs/workspaces/files/tools/auth/skills/model-catalog/export/transcript/snapshot/oauth);Rust 6 RPC;宿主自持 3 服务
+> - **进入阶段 4**(数天工程):核心组件 v2 事件总线依赖重写/降级、protocol 本地化、start.ts 去 bootstrap、删 v2 fallback、物理隔离——已固化于 `packages/kap-server/RUST_MIGRATION_PLAN.md`
+> - 建议:本里程碑成果先提交固化基线,阶段 4 另起会话推进
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 3h(4/4)：model-catalog PUT 替换（未提交）**：
+> - `modelCatalog.ts` PUT /providers/:id Rust 分支——同 id 替换经 configSet(provider 合并 + aliases 重建 + 剔除旧别名);重命名(new_id)明确拒绝(VALIDATION_FAILED,TOML-key 迁移是 v2 transform 语义)
+> - 验证:typecheck 仅剩既有 791;345 测试全绿
+> - **model-catalog 全部端点 Rust 化完成**
+> - **剩余 v2 依赖**：核心组件(broadcaster/transcript/legacyStatus/snapshotReader/fsWatchBridge)、protocol 本地化、start.ts bootstrap、terminals(node-pty 受阻)、阶段 4 物理隔离
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 2d(3/3)：fs:search 引擎投影（未提交）**：
+> - Rust session/fs RPC 加 `search` 动作(SessionFsParams 加 query/limit,调 FsSearch 工具);gen:wire 86 types
+> - rust-loop/服务代理 action 加 'search';fs.ts `handleRustSearch` 投影——引擎路径列表(目录 / 后缀)→ v1 fsSearchHit(path/name/kind/score/match_positions)
+> - 验证:cargo check 0 错误;typecheck 仅剩既有 791;347 测试全绿
+> - **fs 读类全部 Rust 化**(read/list/stat/search);**剩余**：model-catalog PUT、核心组件、protocol 本地化、start.ts、阶段 4
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 3i(3/3)：oauth login 三端点引擎模式分支（未提交）**：
+> - POST /oauth/login → 引擎模式返回明确错误(用 API key 配置 provider);GET(轮询)→ null;DELETE(取消)→ cancelled——三个端点不再经 v2 `IOAuthService`
+> - 验证:typecheck 仅剩既有 791;345 测试全绿
+> - **oauth 面全部 Rust 化**(login/logout/usage);**剩余 v2 依赖**：model-catalog PUT、核心组件(broadcaster/transcript/legacyStatus/snapshotReader/fsWatchBridge)、protocol 本地化、start.ts bootstrap、阶段 4
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 3j：modelCatalogRefreshScheduler 引擎模式禁用（未提交）**：
+> - `start.ts`：rustSession 存在时跳过 `modelCatalogRefreshScheduler.start()`——引擎模式模型由 config 管理,消除一个常驻 v2 定时刷新组件
+> - 验证:typecheck 仅剩既有 791;347 测试全绿
+> - **剩余 v2 依赖**：oauth login、model-catalog PUT、核心组件(broadcaster/transcript/legacyStatus/snapshotReader/fsWatchBridge)、protocol 本地化、start.ts bootstrap、阶段 4
+
+> **✅ 2026-08-01 kap-server Rust 化——第 24 轮验证收束（未提交）**：
+> - 全量验证:cargo kimi-agent(后台 2011+51 全绿)、kap-server typecheck 仅剩既有 791、347 测试全绿
+> - 复审计:剩余 v2 运行时 import 分布已记录于迁移计划(oauth login / PUT / 核心组件 / protocol 本地化 / start.ts / 阶段 4)
+> - 迁移计划文档更新至第 24 轮进度
+> - **本会话累计(24 轮,约 2 小时 40 分)**:kap-server 路由面 25+ 端点 Rust 化;Rust 引擎新增 5 个 RPC(config get/set、session export/fs/list_tools);宿主自持 2 服务 + 2 扫描;剩余 oauth login、PUT、核心组件、protocol 本地化、start.ts、物理隔离(数天工程)
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 3h(3/3)：model-catalog refresh 自持（未提交）**：
+> - `modelCatalog.ts` POST /providers/:id:refresh Rust 分支——引擎模式模型由 config 管理,refresh 返回 `{changed:[], unchanged:[id], failed:[]}`(no-op)
+> - 验证:typecheck 仅剩既有 791;345 测试全绿
+> - **model-catalog 全部端点已 Rust 化**(GET models/providers + POST create + DELETE + refresh;PUT 重命名留 v2 fallback)
+> - **剩余 v2 依赖**：oauth login(device flow)、model-catalog PUT、terminals(node-pty 受阻)、阶段 4
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 3i(2/2)：oauth POST /oauth/logout 自持（未提交）**：
+> - `oauth.ts` POST /oauth/logout Rust 分支——无托管账户,no-op 成功(`{ok:true}`)
+> - 验证:typecheck 仅剩既有 791;348 测试全绿
+> - **oauth 面剩余**：POST/GET/DELETE /oauth/login(device flow,大)
+> - **剩余 v2 依赖**：oauth login(device flow)、model-catalog PUT/refresh、terminals(node-pty 受阻)、阶段 4
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 3i：oauth GET /oauth/usage 自持（未提交）**：
+> - `oauth.ts` GET /oauth/usage Rust 分支——引擎无托管 OAuth 账户,返回 wire error 形状(`{kind:'error', ...}`)让 UI 显示未托管状态
+> - 验证:typecheck 仅剩既有 791;348 测试全绿
+> - **剩余 v2 依赖**：oauth login/logout(device flow,大)、model-catalog PUT/refresh、terminals(node-pty 受阻)、阶段 4
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 3h(2/2)：model-catalog DELETE /providers 写面（未提交）**：
+> - `modelCatalog.ts` DELETE /providers/:id Rust 分支——`configGet` 校验(不存在→404、OAuth-managed→拒绝)→ `configSet({providers: 剔除, models: 剔除该 provider 别名})` → 204
+> - 验证:typecheck 仅剩既有 791;348 测试全绿
+> - **model-catalog 写面核心完成**(POST 创建 + DELETE 删除;PUT 重命名复杂留后续)
+> - **剩余 v2 依赖**：oauth、model-catalog PUT/refresh、terminals(node-pty 受阻)、阶段 4
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 3h：model-catalog POST /providers 写面（未提交）**：
+> - `modelCatalog.ts` POST /providers Rust 分支——经 `configSet({providers, models, defaultModel?})` 写引擎 config(provider 已存在→409、seed default、模型别名构建与 v2 同构),`toRustProviderCatalogItem` 投影创建响应
+> - 验证:typecheck 仅剩既有 791;347 测试全绿
+> - **剩余 v2 依赖**：oauth、model-catalog 其余写面(PUT/DELETE/refresh/import)、terminals(node-pty 受阻)、阶段 4
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 2e：config/set RPC（未提交）**：
+> - **Rust 引擎**：`CONFIG_SET = "config/set"` + `ConfigSetParams{patch}`——`load_config_with_env` → `merge_configs`(None 保留 base)→ `serialize_config` → 写回 config 路径。gen:wire 86 types。
+> - **rust-loop**：`configSet(patch)`;**宿主** `RustSessionService.configSet` 代理;`config.ts` POST /config Rust 分支(yolo sugar + camelPatch → configSet → 重读投影)
+> - **验证**：cargo check 0 错误、lib 2011 全绿;kap-server typecheck 仅剩既有 791;347 测试全绿
+> - **config 读写面至此全部 Rust 化**(GET + POST),为 model-catalog 写面铺路
+
+> **✅ 2026-08-01 kap-server Rust 化——v2 依赖审计 + 计划更新（未提交）**：
+> - 全量审计:60 文件仍 import agent-core-v2(28 个运行时 import)。分类:protocol/ 19( wire schema 本地化)、大块路由 oauth + model-catalog 写面、核心组件(transcript/legacyStatus/snapshotReader/broadcaster/dispatcher 等)、start.ts bootstrap、v2 fallback 路由(被跳过)
+> - `packages/kap-server/RUST_MIGRATION_PLAN.md` 更新当前进度与剩余依赖分类
+> - **进度小结(16 轮)**:会话面全、config、fs、workspaces、files、tools、auth、skills、model 读面、export、transcript、snapshot 已脱离 v2;剩余 oauth/model-catalog 写面/核心组件/protocol 本地化/start.ts/阶段 4,属数天级工程
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 3g：snapshot 自持（未提交）**：
+> - `snapshot.ts` GET /sessions/:id/snapshot Rust 分支——从引擎会话投影最小快照(state + 累积 messages),不再经 v2 `SnapshotReader`/journal
+> - registerSnapshotRoutes deps 加 `rustSession?`;registerApiV1Routes 传参
+> - 验证:typecheck 仅剩既有 791;349 测试全绿
+> - **剩余 v2 依赖**：oauth、model-catalog 写面、terminals(node-pty 受阻)
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 1d(2/2)：transcript 简化投影（未提交）**：
+> - `transcript.ts` GET /sessions/:id/transcript Rust 分支——从 `getMessages` 累积消息构建简化 turn items(user 开 turn,assistant→text frame,tool→tool frame),返回 v1 transcript 响应形状;不再经 v2 `TranscriptService`
+> - registerTranscriptRoutes deps 加 `rustSession?`;registerApiV1Routes 传参
+> - 验证:typecheck 仅剩既有 791;349 测试全绿
+> - **剩余 v2 依赖**：oauth、model-catalog 写面、snapshot、terminals(node-pty 受阻)
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 3f(2/2)：model-catalog GET /models 自持（未提交）**：
+> - `modelCatalog.ts` GET /models Rust 分支——从引擎 `configGet().models`(model_aliases)投影 v1 `ModelCatalogItem`(provider/model/display_name/max_context_size),保留 SECONDARY_DERIVED_MODEL_ID 过滤,不再经 v2 `IModelCatalog`
+> - 验证:typecheck 仅剩既有 791;349 测试全绿
+> - **剩余 v2 依赖**：oauth、model-catalog 写面(POST/PUT/DELETE providers + refresh/import)、transcript/snapshot、terminals(node-pty 受阻)
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 3f：model-catalog GET /providers 自持（未提交）**：
+> - `modelCatalog.ts` GET /providers Rust 分支——从引擎 `configGet().providers` 投影 v1 `ProviderCatalogItem`(id/type/base_url/default_model/has_api_key/status),不再经 v2 `IModelCatalog`/`IConfigService`
+> - 验证:typecheck 仅剩既有 791;347 测试全绿
+> - **剩余 v2 依赖**：oauth、model-catalog 其余端点(models/写面)、transcript/snapshot、terminals(node-pty 受阻)
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 3e(2/2)：skills workspace 列表自持（未提交）**：
+> - `skills.ts` GET /workspaces/:id/skills Rust 分支——`WorkspaceRegistry.get(id)` 验证 + 宿主扫描项目技能(`.kimi-code/skills` + `.agents/skills` 的 .md,frontmatter name/description 解析,`.git` 向上找项目根),零 v2 catalog
+> - registerSkillsRoutes 加 `registry?` 参数;registerApiV1Routes 传参
+> - 验证:typecheck 仅剩既有 791;348 测试全绿
+> - **剩余 v2 依赖**：oauth、model-catalog、transcript/snapshot、terminals(node-pty 受阻)
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 3e(1/2)：auth 路由自持（未提交）**：
+> - `auth.ts` GET /auth Rust 分支——readiness 从引擎投影:最新会话的 `getStatus().model` + `configGet().providers` 数 → v1 `AuthSummary`(`{ready, providers_count, default_model, managed_provider:null}`),不再经 v2 `IAuthLegacyService`
+> - 验证:typecheck 仅剩既有 791;349 测试全绿
+> - **剩余 v2 依赖**：oauth、modelCatalog、skills、transcript/snapshot、terminals(node-pty 受阻)
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 1e 补全：GET /sessions/:id 详情（未提交）**：
+> - `rustSessions.ts` 加 `GET /sessions/:id`——复用 `toSessionSummary` 投影详情;web 打开会话不再 404
+> - 验证:typecheck 仅剩既有 791;346 测试全绿
+> - **已脱离 v2 的路由面汇总**：session 面(create/prompt/cancel/approvals/status/goal/warnings/messages/列表/详情)、config(GET)、fs(read/list/stat)、workspaces(4 端点)、files(3 端点)、tools(/tools + /mcp/servers)、session export;meta/shutdown/guiStore/connections 原无 v2 依赖
+> - **剩余 v2 依赖**：auth/oauth、modelCatalog、skills、terminals(node-pty 受阻)、transcript、snapshot、prompts/approvals/questions/tasks/messages(v2 fallback,被跳过)
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 3d(1/2)：GET /tools 引擎投影（未提交）**：
+> - **Rust 引擎**：`SESSION_LIST_TOOLS = "session/list_tools"` RPC——`NativeToolset.tool_definitions()` + `goal_tool_definitions()`(`agent.rs` 该函数改 pub 供 bin 调用) → 工具清单 JSON
+> - **rust-loop**：`sessionListTools(sessionId, homedir?)`
+> - **宿主**：`RustSessionService.listTools` 代理;`tools.ts` GET /tools Rust 分支——最新引擎会话的工具 → v1 `ToolDescriptor`(source: 'builtin'),不再返回空
+> - **验证**：cargo check 0 错误;kap-server typecheck 仅剩既有 791;349 测试全绿
+> - **本轮受阻项**：terminals 自持——node-pty native binding 在当前环境不可加载(无输出崩溃),需编译 node-pty 或换方案,暂缓
+> - **阶段 3 剩余**：model-catalog、auth/OAuth、terminals(node-pty 受阻)
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 3b：files blob 自持（未提交）**：
+> - 新建 `services/fileBlobStore.ts`：`FileBlobStore`——落盘 `<home>/server/files/<id>` + JSON 索引(`index.json`),过期清理,流式读写,零 agent-core-v2 依赖
+> - `routes/files.ts` 3 端点(POST/GET/DELETE)自持分支:save/getMeta/stream/delete 替代 `IFileService`
+> - start.ts 构造 `FileBlobStore(homeDir)` + registerApiV1Routes opts 接线
+> - **验证**：kap-server typecheck 仅剩既有 791;351 测试全绿
+> - **阶段 3 剩余**：model-catalog、auth/OAuth、terminals 自持
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 3a：workspaces 自持（未提交）**：
+> - 新建 `services/workspaceRegistry.ts`：`WorkspaceRegistry`——JSON 文件(`<home>/server/workspaces.json`)注册表,`wd_<slug>_<hash12>` id 对齐 v1,幂等 by root(list/createOrTouch/rename/unregister/workspaceRootExists),零 agent-core-v2 依赖
+> - `routes/workspaces.ts` 4 端点(GET/POST/PATCH/DELETE)Rust 分支:自持注册表 + `rustSessionCount`(引擎会话按 workDir 计数,替代 `IWorkspaceSessions.count`)
+> - start.ts 构造 `WorkspaceRegistry(homeDir)` + registerApiV1Routes opts 接线
+> - **验证**：kap-server typecheck 仅剩既有 791;346 测试全绿
+> - **阶段 3 剩余**：model-catalog、files、auth/OAuth、terminals 自持
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 2d(2/2)：fs:list/stat 宿主自持（未提交）**：
+> - **fs:read** 走引擎 NativeToolset(Rust RPC,上轮);**fs:list / fs:stat** 改宿主自持——`handleRustList`/`handleRustStat` 用 node:fs `readdir(withFileTypes)` + `statSync` 直接读会话 workdir,不再经 v2 `ISessionFsService`(验证"自持宿主域"模式,即阶段 3 的做法)
+> - fs.ts 的 Rust 分支:`read`→引擎工具集;`list`/`stat`→宿主 node:fs;写类/open 保持宿主
+> - **验证**：kap-server typecheck 仅剩既有 791;345 测试全绿
+> - **阶段 2 剩余**：2e questions(Rust 引擎无 question 状态,需新建交互通道,较大)
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 2d(1/2)：session/fs 读类 RPC（未提交）**：
+> - **Rust 引擎**：`SESSION_FS = "session/fs"` + `SessionFsParams{action, session_id, homedir, path, line_offset, n_lines}`;handler 用 `NativeToolset`(root=workdir)执行 Read/Glob(仅读类,写类保持宿主审批门)。gen:wire 85 types。
+> - **rust-loop**：`sessionFs()`
+> - **宿主**：`RustSessionService.fsAction` 代理;`fs.ts` `POST /sessions/:id/fs:read` Rust 分支——引擎 Read 工具输出 → `handleRustRead` 去行号前缀 + 投影 v1 read 形状(path/content/encoding/size/truncated/etag/mime/is_binary)
+> - **验证**：cargo check 0 错误;kap-server typecheck 仅剩既有 791;351 测试全绿
+> - **2d 剩余**：fs:list/stat/search/grep 等其他动作 Rust 分支
+> - **阶段 2 剩余**：2e questions(Rust 引擎无 question 状态,需新建交互通道,较大)、2d 其余动作
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 2c：session/export RPC（未提交）**：
+> - **Rust 引擎**：`rpc/types.rs` 加 `SESSION_EXPORT = "session/export"` + `SessionExportParams{session_id, homedir?}`;`main.rs` handler——`open_session_store()`(每次调用开连接,低频)→ `RecordStore` → `session::export::export_session`(现成 zip 实现)→ base64 返回。gen:wire 同步(84 types)。
+> - **rust-loop**：`sessionExport(sessionId, homedir?)`
+> - **宿主**：`RustSessionService.sessionExport` 代理;`sessionExport.ts` 路由 Rust 分支——引擎 zip base64 → 解码写临时文件 → 复用现有流式/abort/cleanup 路径
+> - **验证**：cargo check 0 错误;kap-server typecheck 仅剩既有 791;346 测试全绿
+> - **阶段 2 剩余**：2b files blob、2d session fs、2e questions
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 2a：config/get RPC（未提交）**：
+> - **Rust 引擎**：`rpc/types.rs` 加 `CONFIG_GET = "config/get"`;`main.rs` 注册 handler——`load_config_with_env()` → KimiConfig JSON(secrets 不脱敏,宿主投影时脱敏)
+> - **rust-loop**：`configGet()`(agentCall,无 session)
+> - **宿主**：`RustSessionService.configGet` 代理 + `RustLoopSessionApi` 扩展;`config.ts` GET /config Rust 分支走引擎 config → 复用 `toConfigResponse` 投影(脱敏/形状一致);`registerApiV1Routes` 传参
+> - **验证**：cargo check 0 错误;kap-server typecheck 仅剩既有 791;349 测试全绿
+> - **阶段 2 剩余**：2b files blob、2c session export、2d session fs、2e questions
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 1d(1/2)：消息历史累积（未提交）**：
+> - **背景**：Rust 模式下 `GET /sessions/:id/messages` 走 v2(被跳过)→ 消息历史为空。transcript 页依赖消息流。
+> - **实现**：`RustSessionService` 加 per-session `RustWireMessage[]` 累积——`prompt()` 记录 user 消息;`handleEvent` 从原始引擎事件累积 `llm.delta`(text→assistant 消息追加)、`session.tool.started`(tool_use)、`session.tool.settled`(tool_result 合并到尾部 tool 消息);导出 `getMessages(sessionId)`。`rustSessions.ts` 加 `GET /sessions/:id/messages` 路由投影 v1 Message 形状(`{items, has_more:false}`)。
+> - **验证**：kap-server typecheck 仅剩既有 791 错误;350 测试全绿。
+> - **1d 剩余**：transcript 路由 Rust 分支(需从累积消息重建 turn 结构,较复杂,下轮)。
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 1b/1c/1e：tools/MCP/skills/sessions 列表投影（未提交）**：
+> - **1b tools/MCP**：`registerToolsRoutes` 加第 3 参 `rustSession?`;`GET /mcp/servers` Rust 分支走最新引擎会话的 `listMcpServers` → `toEngineMcpServer` 投影(v1 status 映射:connected→connected、pending/pending-approval→connecting、failed/needs-auth→error、disabled→disconnected)
+> - **1c skills**：`registerSkillsRoutes` 加 `rustSession?`;`GET /sessions/:id/skills` Rust 分支走 `listSkills` → `toEngineSkill` 投影(source 映射 v1 enum,skill_type→type)
+> - **1e sessions 列表**：`RustWebSession` 加 title/createdAt/updatedAt(createSession 记录);`GET /sessions` 列表路由返回 `{items, has_more:false}`(v1 形状)
+> - **验证**：kap-server typecheck 仅剩既有 791 错误;测试 349 全绿
+> - **阶段 1 剩余**：1d messages/transcript 持久化(引擎事件落盘 wire records)
+
+> **✅ 2026-08-01 kap-server Rust 化——阶段 1a：会话详情投影（未提交）**：
+> - **背景**：用户要求彻底迁移 kap-server（`kimi web` 服务器）脱离 agent-core-v2 的 DI 容器，之后物理隔离 agent-core/agent-core-v2。三份并行分析产出 `packages/kap-server/RUST_MIGRATION_PLAN.md`（依赖总览 + 4 阶段计划）。
+> - **阶段 1a**（消除"静默空洞"第一块）：rust-loop `SessionClient` 暴露 `getStatus/getUsage/getWarnings/goalGet/listMcpServers/listSkills/compact`（RPC 函数早已就绪,接口未暴露）;`RustSessionService` 加 6 个代理方法;`rustSessions.ts` 加 `GET /sessions/:id/{status,goal,warnings}` 路由 + `sessionError` helper——Rust 模式下这些端点此前被跳过返回空。
+> - **验证**：kap-server typecheck 通过（791 行 ensureState 错误为既有,stash 对比确认）;350 测试全绿。
+> - **下一阶段**：1a 剩余（sessions 列表/详情 GET、tools/MCP、skills、messages/transcript 持久化）→ 2a config RPC → 2b files blob → 2c session export → 2d session fs → 2e questions → 3 自持宿主域 → 4 脱离 DI + 物理隔离。
+
 > **✅ 2026-08-01 JS 引擎退役收尾——死代码验证 + 残留清理（未提交）**：
 > - **验证**：全生产代码(apps/kimi-code + kap-server + agent-core + agent-core-v2)grep `'js'` engine 零残留——run-prompt/run-shell/acp/export/v2/web 全部强制 Rust(maybeLoadRustEngine 失败 throw);`getEngine()` 恒返回 'rust'。
 > - **清理**：`i18n/index.ts` 的 `Engine` 类型 `'rust' | 'js'` → `'rust'`。

@@ -4,6 +4,8 @@ Status: accepted and implemented for extension `0.6.0`
 
 Last updated: 2026-07-16
 
+> **⚠️ OUTDATED (2026-08-02).** This design document describes the 0.6.0-era extension running the TypeScript v1 engine through the SDK. Both the v1 and v2 TypeScript engines are now **retired** — the only engine is the Rust engine (`packages/kimi-agent`). Keep this file as a historical record; do not follow it for new engine work (see root `AGENTS.md` → "Engine Ownership").
+
 ## Context
 
 The `0.5.x` VS Code extension launched a separately installed Python Kimi CLI

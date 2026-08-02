@@ -30,10 +30,11 @@ This is a TypeScript monorepo built for agent-assisted development. This file is
 
 | Layer | Technology |
 |-------|-----------|
-| Primary language | **TypeScript** 6.0.2 (strict mode) |
+| **Engine (source of truth)** | **Rust** — `kimi-agent` / `kimi-native-tools` / `kimi-shared` (see "Engine Ownership" below) |
+| Host / UI language | **TypeScript** 6.0.2 (strict mode) — restricted to the host whitelist (see "Engine Ownership") |
 | Module system | ESM (`"type": "module"` in every package) |
 | Runtime | **Node.js** >= 24.15.0 (`.nvmrc`: 24.15.0) |
-| Native code | **Rust** (via napi-rs for Node addon, pure Rust CLI tools) |
+| Native addon | **Rust** via napi-rs (`kimi-native-tools`), SEA via `kimi-build` |
 | Web UI (peer) | **Vue 3** + **Vite** |
 | VS Code extension | **React 19** + **TailwindCSS 4** + **shadcn/ui** |
 
@@ -61,6 +62,30 @@ This is a TypeScript monorepo built for agent-assisted development. This file is
 | **sherif** 1.11.1 | Monorepo correctness checker |
 | **publint** + **attw** | Package publishing lint and type-checking |
 | **tsgo** (TypeScript native-preview) | CI typechecking |
+
+---
+
+## Engine Ownership — Rust is the source of truth
+
+> **Status (2026-08-02):** the JS agent engines (`agent-core`, `agent-core-v2`) are **retired**. The only engine is the Rust engine (`packages/kimi-agent`). `schema.ts` `engine` enum is `'rust'` only — no JS fallback. The end state of this project is **all engine functionality in Rust and the TS engine code deleted**; the repo is still mid-migration on that path.
+
+### Where new code goes
+
+- **Engine functionality (session loop, tools, context, goal, plan, approval, permission, MCP, skill, records, compaction …) → Rust only**, in `packages/kimi-agent/src/`, `packages/kimi-native-tools/src/`, or `packages/kimi-shared/src/`. Follow the module map in `packages/kimi-agent/GAP_ANALYSIS.md`. Add `cargo test` coverage and keep `cargo test -p kimi-agent` green (0 warnings).
+- **RPC/wire types are generated**: change the Rust type in `src/rpc/types.rs`, then run `pnpm gen:wire` and commit the generated `src/rpc/wire.gen.ts`. Never hand-edit `wire.gen.ts`.
+- **Do NOT implement or modify engine behavior in TypeScript.** `packages/agent-core/` and `packages/agent-core-v2/` are **frozen** — the JS engine loop is retired and unreachable. Their code is kept only because host packages still reference types/tools/host services; physical deletion happens after hosts unbind. Do not extend them.
+
+### TS side is allowed only for the host layer (whitelist)
+
+| Scope | Files | Reason |
+|-------|-------|--------|
+| Rust bridge / adapter | `packages/kimi-agent/rust-loop.ts`, `apps/kimi-code/src/cli/rust-engine.ts`, `apps/kimi-code/src/cli/v2/rust-engine-v2.ts`, `apps/kimi-code/src/cli/native-session.ts` | glue host ↔ Rust RPC |
+| Server host layer | `packages/kap-server/` (routes, `rustSessions.ts`, `RustSessionService`) | REST/WS projection over Rust RPC |
+| Generated files | `packages/kimi-agent/src/rpc/wire.gen.ts` | regenerated via `pnpm gen:wire`, never hand-edited |
+| CLI / TUI / Web / VS Code shells | `apps/*` UI + i18n | pure UI, no engine logic |
+| Test adaptation | TS tests asserting against the Rust engine | keep host behavior verified |
+
+Before writing any TS change, ask: *is this engine functionality?* If yes → implement in Rust. If it is host/UI → TS is fine.
 
 ---
 
@@ -491,6 +516,7 @@ PR titles are enforced by the `pr-title-checker` workflow.
 
 ## Working Principles
 
+- **Engine-first rule**: agent engine functionality is written in **Rust**, never TypeScript. If the feature belongs to the engine domain (session loop, tools, context, goal, plan, permission, approvals, …), modify `packages/kimi-agent` (or `kimi-native-tools` / `kimi-shared`) and add `cargo test` coverage — even if an equivalent TS implementation already exists in `agent-core` / `agent-core-v2` (those are retired and must not be extended). See "Engine Ownership" above.
 - Think from first principles. Start from real requirements, code facts, and verification results; if the goal is unclear, discuss it with the user first.
 - Treat code, not documentation, as the source of truth. Unless the user explicitly says otherwise, do not read ordinary Markdown just to understand the implementation.
 - Before making code changes, read the relevant code and the most recent constraints, and follow the nearest `AGENTS.md` in the directory tree.

@@ -3,7 +3,7 @@
 生成日期: 2026-07-26（末次更新: 2026-08-01 — 对齐 Phase 0-5 完成后实测）
 数据来源: `packages/kimi-agent/src/` (88,634 行 Rust, 233 文件, 1,836 `#[test]` 属性，2026-08-01 实测) vs `packages/agent-core/src/` (72,546 行 TS) vs `packages/agent-core-v2/src/` (96,735 行 TS)
 
-> **📌 本文件为模块映射明细；进度权威见仓库根 `RUST_MIGRATION_PLAN.md`（当前状态 2026-08-01：`cargo test -p kimi-agent` = 2003 lib 全绿、0 warnings）。**
+> **📌 本文件为模块映射明细；进度权威见仓库根 `RUST_MIGRATION_PLAN.md`（当前状态 2026-08-01：`cargo test -p kimi-agent` = 2011 lib 全绿、0 warnings）。**
 
 ---
 
@@ -112,7 +112,7 @@
 ### 4.2 Rust 集成测试（cargo test）
 `tests/stdio_rpc_integration.rs` 共 **51 个集成测试**（真实 `kimi-agent-cli` 二进制 + SSE stub / 零 host 回调），覆盖：cron 生命周期与跨会话恢复、bg 任务（register/list/output/settle/restart 恢复）、session（destroy/load 重建、startBtw 侧问、init 生成 AGENTS.md）、hooks 事件面、approval 面、AgentSwarm / SwarmDiscussion 子代理编排、git status、memory 持久化等。
 
-**当前状态（2026-08-01 实测）**：`cargo test -p kimi-agent` = **2003 lib 全绿、0 warnings**；工作区各 crate 合计约 **2,800+ 测试**（kimi-agent 2003 + 集成 51 + native-tools 631 + kimi-shared 35 + kosong/native 89）。需要 Rust 工具链与 Node.js >=24.15.0（本机实测 v24.18.0）。
+**当前状态（2026-08-01 实测）**：`cargo test -p kimi-agent` = **2011 lib 全绿、0 warnings**；工作区各 crate 合计约 **2,800+ 测试**（kimi-agent 2011 + 集成 51 + native-tools 617 + kimi-shared 47 + kosong/native 89）。需要 Rust 工具链与 Node.js >=24.15.0（本机实测 v24.18.0）。
 
 | 等级 | 含义 | 模块数 | 备注 |
 |------|------|--------|------|
@@ -200,7 +200,7 @@ kimi -p <prompt>
 | v1 模块覆盖率 | **100%**（15/15，含 discussion） |
 | v2 功能域覆盖率 | **100% 可迁移域**（42/45；git / memory 07-31 补齐；media / externalHooks / plugin 设计上留 host） |
 | 核心执行路径 | **100%** |
-| 单元测试 | **1,836 `#[test]` 属性**（src 实测）；cargo 口径 2003 lib 全绿、0 warnings（2026-08-01 实测） |
+| 单元测试 | **1,836 `#[test]` 属性**（src 实测）；cargo 口径 2011 lib 全绿、0 warnings（2026-08-01 实测） |
 | 集成测试 | **51**（`tests/stdio_rpc_integration.rs`，真实二进制） |
 | 引擎规模 | 88,634 行 / 233 文件（kimi-agent/src，2026-08-01 实测） |
 
@@ -215,8 +215,8 @@ Rust 引擎不是"把全部 TS 翻译成 Rust"，而是**选择性重写**：
 ### 剩余工作（代码之外）
 
 代码覆盖已到位；剩余是**接入与收尾**（详见 `RUST_MIGRATION_PLAN.md`「待办」）：
-- 上游 0.31.1+ 同步（见 `上游更新/` 目录的 A/B/C 分区逐项评估）
+- 上游 0.31.1+ 同步（见 `上游更新/` 目录的 A/B/C 分区逐项评估；A 表 25 项已全部定案，剩余 C3 插件通知待核对）
 - Bash 命令策略审批强化
-- goal/compaction/permission 双实现合并进 kimi-shared（当前仅 pkce + sensitive 第一批）
-- `pnpm gen:wire` 接入 CI 漂移检查
-- web session 的 WS frame fan-out（onFrame）待接（HTTP 面已通）
+- goal/compaction/permission 双实现合并进 kimi-shared（当前 pkce + sensitive / line_endings + tokens 两批，第三批待做）
+- ~~`pnpm gen:wire` 接入 CI 漂移检查~~ ✅ 已上线（commit `50bc82db2`，wire-contract job）
+- ~~web session 的 WS frame fan-out（onFrame）待接~~ ✅ 已接（commit `eb8d0f783`，HTTP + WS 事件面全通）

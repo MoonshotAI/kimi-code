@@ -1,6 +1,8 @@
 # agent-core-v2 Agent Guide
 
-> New agent engine built on the DI Scope architecture — work-in-progress port of `packages/agent-core`. Design: `plan/PLAN.md`. Porting status: `GAP_ANALYSIS.md`.
+> **⚠️ RETIRED (2026-08-02).** The JS engine is retired — the only engine is the Rust engine (`packages/kimi-agent`); `schema.ts` `engine` is `'rust'` only, no JS fallback. **Do not add or modify engine behavior in this package.** It is kept only because host packages still reference its types/tools/host services; physical deletion follows once hosts unbind. Engine functionality belongs in Rust — see root `AGENTS.md` → "Engine Ownership". The guide below documents the (now frozen) architecture.
+
+> (Historical note) This was the planned v2 engine built on the DI Scope architecture as a port of `packages/agent-core`. It is now **frozen and retired** — see the RETIRED notice above. `plan/PLAN.md` and the former porting status are historical records only.
 
 ## Examples
 
@@ -12,7 +14,7 @@ Domain-slice scenarios that used to live in `examples/<name>.example.ts` are now
 
 - **Header only, external role only.** Comments live solely in the top-of-file `/** */` block — never beside functions, methods, or statements. Say what the module exposes and the responsibility it owns; the code is the source of truth for how it works, so do not narrate implementation steps, enumerate every export, or note porting / skeleton status.
 - **Identity line first.** Start with `` `<domain>` domain (Ln) — <one-line role>. `` Keep an existing `(cross-cutting)` label as-is. Write the role as a responsibility ("drives the turn lifecycle"), not a symbol list ("turn driver + context + loop runner").
-- **Impl files add collaborators + scope; contract files add the public contract + scope.** For impls, list every imported cross-domain collaborator as a role ("persists records through `records`") — declared dependencies count even if not yet wired in this WIP port; infrastructure imports (`_base/**`) are not collaborators. Read scope from `registerScopedService(LifecycleScope.X, …)`.
+- **Impl files add collaborators + scope; contract files add the public contract + scope.** For impls, list every imported cross-domain collaborator as a role ("persists records through `records`") — declared dependencies count even if not yet wired in the (now frozen) port; infrastructure imports (`_base/**`) are not collaborators. Read scope from `registerScopedService(LifecycleScope.X, …)`.
 
 ### Examples
 

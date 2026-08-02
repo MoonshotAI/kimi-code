@@ -1,5 +1,7 @@
 # In-process services (`packages/agent-core/src/services`)
 
+> **⚠️ RETIRED (2026-08-02).** `agent-core` is the retired JS engine — frozen. Do not add or modify engine behavior here; engine functionality is implemented in Rust (`packages/kimi-agent` / `kimi-native-tools` / `kimi-shared`). See root `AGENTS.md` → "Engine Ownership".
+
 In-process service layer for the kimi-code server, now hosted inside
 `@moonshot-ai/agent-core` (merged from the former `@moonshot-ai/services`
 package). Every public member follows the VSCode platform-service convention

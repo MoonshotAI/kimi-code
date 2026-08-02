@@ -2,7 +2,7 @@
 
 Rust-native implementations of the core Kimi Code tools: `Read`, `Write`, `Edit`, `Grep`, `Glob`, and `Bash`.
 
-This package is consumed by `@moonshot-ai/agent-core` and is bundled into the Kimi Code CLI. The native module is gated behind the `KIMI_CODE_EXPERIMENTAL_NATIVE_TOOLS` flag and falls back to the TypeScript implementations when disabled or unavailable.
+This package is the Rust-native implementation layer of the Kimi Code engine — consumed by the Rust engine (`@moonshot-ai/kimi-agent`) and bundled into the Kimi Code CLI. With `engine = "rust"` (the only engine, see root `AGENTS.md` → "Engine Ownership"), native tools are enabled by default under the Rust engine; the legacy `KIMI_CODE_EXPERIMENTAL_NATIVE_TOOLS` flag gating and TypeScript fallbacks from the pre-Rust era are obsolete.
 
 ## Building
 
