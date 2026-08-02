@@ -148,7 +148,7 @@ describe('Session.prompt events', () => {
         events.push(event);
       });
 
-      let done = waitForEvent(session, (event) => event.type === 'turn.ended');
+      let done = waitForEvent(session, (event) => event.type === 'session.turn.ended');
       await session.prompt('use api_key=secret-value for the request');
       await done;
 
@@ -169,7 +169,7 @@ describe('Session.prompt events', () => {
       );
 
       events.length = 0;
-      done = waitForEvent(session, (event) => event.type === 'turn.ended');
+      done = waitForEvent(session, (event) => event.type === 'session.turn.ended');
       await session.prompt('second prompt');
       await done;
 
@@ -187,7 +187,7 @@ describe('Session.prompt events', () => {
       );
 
       events.length = 0;
-      done = waitForEvent(session, (event) => event.type === 'turn.ended');
+      done = waitForEvent(session, (event) => event.type === 'session.turn.ended');
       await session.prompt([{ type: 'image_url', imageUrl: { url: 'https://example.com/a.png' } }]);
       await done;
       unsubscribe();
@@ -220,7 +220,7 @@ describe('Session.prompt events', () => {
       await configureFakeProvider(harness);
       const session = await harness.createSession({ id: 'ses_prompt_events', workDir });
       const events: Event[] = [];
-      const done = waitForEvent(session, (event) => event.type === 'turn.ended');
+      const done = waitForEvent(session, (event) => event.type === 'session.turn.ended');
       const unsubscribe = session.onEvent((event) => {
         events.push(event);
       });
@@ -229,21 +229,22 @@ describe('Session.prompt events', () => {
       await done;
       unsubscribe();
 
-      expect(events.some((event) => event.type === 'turn.started')).toBe(true);
+      expect(events.some((event) => event.type === 'session.turn.started')).toBe(true);
       expect(events).toContainEqual(
         expect.objectContaining({
-          type: 'assistant.delta',
+          type: 'llm.delta',
           sessionId: session.id,
-          turnId: 0,
-          delta: 'hello from fake provider',
+          agentId: 'main',
+          part: { type: 'text', text: 'hello from fake provider' },
         }),
       );
       expect(events).toContainEqual(
         expect.objectContaining({
-          type: 'turn.ended',
+          type: 'session.turn.ended',
           sessionId: session.id,
-          turnId: 0,
-          reason: 'completed',
+          agentId: 'main',
+          turn_id: 0,
+          stop_reason: 'EndTurn',
         }),
       );
       expect(fakeProviderState.calls[0]?.systemPrompt).toContain('You are Kimi Code CLI');
@@ -277,7 +278,7 @@ describe('Session.prompt events', () => {
         unsubscribedEvents.push(event);
       });
       unsubscribe();
-      const done = waitForEvent(session, (event) => event.type === 'turn.ended');
+      const done = waitForEvent(session, (event) => event.type === 'session.turn.ended');
 
       await session.prompt([{ type: 'text', text: 'hello' }]);
       await done;
@@ -288,7 +289,7 @@ describe('Session.prompt events', () => {
     }
   });
 
-  it('runs init through generateAgentsMd RPC as a subagent system trigger without prompt metadata updates', async () => {
+  it('runs init through the generateAgentsMd RPC without prompt metadata updates', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
@@ -307,22 +308,10 @@ describe('Session.prompt events', () => {
       await session.init();
       unsubscribe();
 
-      const spawned = events.find((event) => event.type === 'subagent.spawned');
-      expect(spawned).toMatchObject({
-        type: 'subagent.spawned',
-        sessionId: session.id,
-        agentId: 'main',
-        subagentName: 'coder',
-        parentToolCallId: 'generate-agents-md',
-      });
-      expect(events).toContainEqual(
-        expect.objectContaining({
-          type: 'turn.started',
-          sessionId: session.id,
-          agentId: spawned?.type === 'subagent.spawned' ? spawned.subagentId : undefined,
-          origin: { kind: 'system_trigger', name: 'subagent' },
-        }),
-      );
+      // init spawns a one-shot child agent internally; the legacy
+      // `subagent.spawned` event surface was removed with the
+      // protocol-toward-engine rewrite, so only the RPC/history side effects
+      // below are asserted.
       expect(events).not.toContainEqual(
         expect.objectContaining({
           type: 'session.meta.updated',
@@ -347,41 +336,6 @@ describe('Session.prompt events', () => {
     }
   });
 
-  it('includes persisted subagent replay only when resume explicitly requests it', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
-
-    try {
-      await configureFakeProvider(harness);
-      const session = await harness.createSession({ id: 'ses_subagent_replay', workDir });
-      const events: Event[] = [];
-      const unsubscribe = session.onEvent((event) => events.push(event));
-      await session.init();
-      unsubscribe();
-      const spawned = events.find((event) => event.type === 'subagent.spawned');
-      if (spawned?.type !== 'subagent.spawned') throw new Error('Expected persisted subagent');
-      await session.close();
-
-      const defaultResume = await harness.resumeSession({ id: session.id });
-      expect(defaultResume.getResumeState()?.agents).not.toHaveProperty(spawned.subagentId);
-      await defaultResume.close();
-
-      const fullResume = await harness.resumeSession({
-        id: session.id,
-        includeSubagents: true,
-      });
-      expect(fullResume.getResumeState()?.agents[spawned.subagentId]?.replay).toContainEqual(
-        expect.objectContaining({
-          type: 'message',
-          message: expect.objectContaining({ role: 'assistant' }),
-        }),
-      );
-    } finally {
-      await harness.close();
-    }
-  });
-
   it('starts btw through RPC as a forked subagent without prompt metadata updates', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
@@ -398,7 +352,7 @@ describe('Session.prompt events', () => {
         events.push(event);
       });
 
-      let done = waitForEvent(session, (event) => event.type === 'turn.ended');
+      let done = waitForEvent(session, (event) => event.type === 'session.turn.ended');
       await session.prompt('main task context');
       await done;
 
@@ -406,7 +360,7 @@ describe('Session.prompt events', () => {
       events.length = 0;
       done = waitForEvent(
         session,
-        (event) => event.type === 'turn.ended' && event.agentId !== 'main',
+        (event) => event.type === 'session.turn.ended' && event.agentId !== 'main',
       );
 
       const agentId = await session.startBtw();
@@ -418,23 +372,16 @@ describe('Session.prompt events', () => {
       expect(harness.interactiveAgentId).toBe('main');
 
       const started = events.find(
-        (event) =>
-          event.type === 'turn.started' &&
-          event.agentId === agentId &&
-          event.origin.kind === 'user',
+        (event) => event.type === 'session.turn.started' && event.agentId === agentId,
       );
       expect(events).toContainEqual(
         expect.objectContaining({
-          type: 'turn.started',
+          type: 'session.turn.started',
           sessionId: session.id,
           agentId,
-          origin: { kind: 'user' },
         }),
       );
       expect(started?.agentId).not.toBe('main');
-      expect(events).not.toContainEqual(expect.objectContaining({ type: 'subagent.spawned' }));
-      expect(events).not.toContainEqual(expect.objectContaining({ type: 'subagent.completed' }));
-      expect(events).not.toContainEqual(expect.objectContaining({ type: 'subagent.failed' }));
       expect(events).not.toContainEqual(
         expect.objectContaining({
           type: 'session.meta.updated',
@@ -577,12 +524,15 @@ describe('Session.prompt events', () => {
       await runPrompt(source, 'kept prompt', 'kept answer');
       await runPrompt(source, 'future prompt', 'future answer');
       const fork = await harness.forkSession({ id: source.id, turnIndex: 0 });
-      const started = waitForEvent(fork, (event) => event.type === 'turn.started');
-      const ended = waitForEvent(fork, (event) => event.type === 'turn.ended');
+      const started = waitForEvent(fork, (event) => event.type === 'session.turn.started');
+      const ended = waitForEvent(fork, (event) => event.type === 'session.turn.ended');
 
       await fork.prompt('branch continuation');
 
-      await expect(started).resolves.toMatchObject({ type: 'turn.started', turnId: 1 });
+      await expect(started).resolves.toMatchObject({
+        type: 'session.turn.started',
+        turn_id: 1,
+      });
       await ended;
     } finally {
       await harness.close();
@@ -683,7 +633,7 @@ async function runPrompt(
   response: string,
 ): Promise<void> {
   fakeProviderState.responseText = response;
-  const done = waitForEvent(session, (event) => event.type === 'turn.ended');
+  const done = waitForEvent(session, (event) => event.type === 'session.turn.ended');
   await session.prompt(input);
   await done;
 }

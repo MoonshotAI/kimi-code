@@ -124,7 +124,7 @@ describe('Session skills', () => {
     }
   });
 
-  it('activates a skill through core and emits the public skill event', async () => {
+  it('activates a skill through core and emits engine turn events', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-work-');
     await writeSkill(workDir, 'review', [
@@ -143,46 +143,24 @@ describe('Session skills', () => {
       const unsubscribe = session.onEvent((event) => {
         events.push(event);
       });
-      const activated = waitForSDKEvent(session, (event) => event.type === 'skill.activated');
-      const metaUpdated = waitForSDKEvent(
-        session,
-        (event) => event.type === 'session.meta.updated',
-      );
-      const ended = waitForSDKEvent(session, (event) => event.type === 'turn.ended');
+      // The engine signals activation by running a turn over the seeded skill
+      // prompt (`session.turn.started`/`session.turn.ended`); the legacy
+      // `skill.activated` event is no longer part of the public contract.
+      const started = waitForSDKEvent(session, (event) => event.type === 'session.turn.started');
+      const ended = waitForSDKEvent(session, (event) => event.type === 'session.turn.ended');
 
       await session.activateSkill(' review ', ' src/app.ts ');
-      const activatedEvent = await activated;
-      const metaEvent = await metaUpdated;
+      const startedEvent = await started;
       await ended;
       unsubscribe();
 
-      expect(activatedEvent).toMatchObject({
-        type: 'skill.activated',
+      expect(startedEvent).toMatchObject({
+        type: 'session.turn.started',
         sessionId: session.id,
         agentId: 'main',
-        skillName: 'review',
-        skillArgs: 'src/app.ts',
-        trigger: 'user-slash',
-        skillSource: 'project',
       });
-      expect(JSON.stringify(activatedEvent)).not.toContain('Review the requested file.');
-      expect(events.findIndex((event) => event.type === 'skill.activated')).toBeGreaterThanOrEqual(
-        0,
-      );
-      expect(events.findIndex((event) => event.type === 'turn.started')).toBeGreaterThan(
-        events.findIndex((event) => event.type === 'skill.activated'),
-      );
-      expect(metaEvent).toMatchObject({
-        type: 'session.meta.updated',
-        sessionId: session.id,
-        agentId: 'main',
-        title: '/review src/app.ts',
-        patch: {
-          title: '/review src/app.ts',
-          isCustomTitle: false,
-          lastPrompt: '/review src/app.ts',
-        },
-      });
+      expect(events).toContainEqual(expect.objectContaining({ type: 'session.turn.ended' }));
+      expect(JSON.stringify(events)).not.toContain('Review the requested file.');
 
       const statePath = join(session.summary!.sessionDir, 'state.json');
       const state = JSON.parse(await readFile(statePath, 'utf-8')) as Record<string, unknown>;

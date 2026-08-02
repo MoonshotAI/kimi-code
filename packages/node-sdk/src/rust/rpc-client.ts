@@ -8,7 +8,7 @@
  * they call the same CoreAPI RPC shape; only the wire beneath them differs.
  *
  * Wire translation: engine snake_case records → SDK camelCase shapes via
- * `./wire`; engine `host/event` → SDK `Event` via `./event-translate`.
+ * `./wire`; engine `host/event` → SDK `Event` passed through verbatim.
  * Engine sessions are process-wide with `session_id` routing, so one client
  * supports many sessions; host handlers are installed once on the engine
  * singleton.

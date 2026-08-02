@@ -8,22 +8,18 @@ import type {
   ToolKind,
 } from '@agentclientprotocol/sdk';
 import type {
-  AssistantDeltaEvent,
-  ThinkingDeltaEvent,
-  ToolCallDeltaEvent,
-  ToolCallStartedEvent,
+  EngineToolSettledEvent,
+  EngineToolStartedEvent,
   ToolInputDisplay,
-  ToolProgressEvent,
-  ToolResultEvent,
-  TurnEndReason,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import { displayBlockToAcpContent, toolResultToAcpContent } from './convert';
+import { toolResultToAcpContent } from './convert';
 import type { AcpStopReason } from './types';
 
 /**
  * Build an ACP `session/update` notification with an
- * `agent_message_chunk` payload from an SDK `assistant.delta` event.
+ * `agent_message_chunk` payload from a text delta part of the engine's
+ * `llm.delta` event.
  *
  * Verified against `node_modules/.../sdk/dist/schema/types.gen.d.ts`:
  *  - `SessionNotification` has `{ sessionId, update }` (camelCase),
@@ -33,13 +29,13 @@ import type { AcpStopReason } from './types';
  */
 export function assistantDeltaToSessionUpdate(
   sessionId: string,
-  event: AssistantDeltaEvent,
+  text: string,
 ): SessionNotification {
   return {
     sessionId,
     update: {
       sessionUpdate: 'agent_message_chunk',
-      content: { type: 'text', text: event.delta },
+      content: { type: 'text', text },
     },
   };
 }

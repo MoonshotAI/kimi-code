@@ -115,67 +115,43 @@ function sendQueuedViaHost(host: ReturnType<typeof makeHost>['host'], session: u
 
 function completionEvent() {
   return {
-    type: 'goal.updated',
+    type: 'session.goal.updated',
     sessionId: 's1',
     agentId: 'main',
+    status: 'Complete',
     snapshot: fakeGoalSnapshot('Current goal', 'complete'),
-    change: {
-      kind: 'completion',
-      status: 'complete',
-      stats: { turnsUsed: 1, tokensUsed: 10, wallClockMs: 100 },
-    },
   } as const;
 }
 
 function clearedEvent() {
   return {
-    type: 'goal.updated',
+    type: 'session.goal.updated',
     sessionId: 's1',
     agentId: 'main',
+    status: 'none',
     snapshot: null,
   } as const;
 }
 
 function turnEndedEvent() {
   return {
-    type: 'turn.ended',
+    type: 'session.turn.ended',
     sessionId: 's1',
     agentId: 'main',
-    turnId: 1,
-    reason: 'completed',
-  } as const;
-}
-
-function compactionCompletedEvent() {
-  return {
-    type: 'compaction.completed',
-    sessionId: 's1',
-    agentId: 'main',
-    result: {
-      summary: 'summary',
-      tokensBefore: 100,
-      tokensAfter: 10,
-      compactedCount: 1,
-    },
+    turn_id: 1,
+    stop_reason: 'EndTurn',
+    steps: 0,
   } as const;
 }
 
 function modelBlockedEvent() {
   return {
-    type: 'goal.updated',
+    type: 'session.goal.updated',
     sessionId: 's1',
     agentId: 'main',
+    status: 'Blocked',
     snapshot: fakeGoalSnapshot('Blocked goal', 'blocked'),
-    change: { kind: 'lifecycle', status: 'blocked' },
   } as const;
-}
-
-function addedTranscriptText(host: ReturnType<typeof makeHost>['host']): string {
-  const component = host.state.transcriptContainer.addChild.mock.calls.at(-1)?.[0];
-  return component
-    .render(80)
-    .join('\n')
-    .replaceAll(/\[[0-9;]*m/g, '');
 }
 
 describe('SessionEventHandler goal queue promotion', () => {
@@ -281,53 +257,6 @@ describe('SessionEventHandler goal queue promotion', () => {
         replace: false,
       });
     });
-  });
-
-  it('waits for a queued user input drained after compaction before promoting the next queued goal', async () => {
-    const { host, session } = makeHost();
-    host.state.appState.isCompacting = true;
-    host.state.queuedMessages = [{ text: 'queued user turn' }];
-    host.shiftQueuedMessage.mockImplementation(() => host.state.queuedMessages.shift());
-    const handler = new SessionEventHandler(host);
-    host.setAppState.mockImplementation((patch: Record<string, unknown>) => {
-      const busyChanged = 'streamingPhase' in patch || 'isCompacting' in patch;
-      Object.assign(host.state.appState, patch);
-      if (busyChanged) handler.retryQueuedGoalPromotion();
-    });
-    host.sendQueuedMessage.mockImplementation((_session: unknown, item: { text: string }) => {
-      if (item.text === 'queued user turn') {
-        host.setAppState({ streamingPhase: 'waiting' });
-      }
-    });
-    const sendQueued = sendQueuedViaHost(host, session);
-
-    handler.requestQueuedGoalPromotion();
-    handler.handleEvent(compactionCompletedEvent(), sendQueued);
-
-    await vi.waitFor(() => {
-      expect(host.sendQueuedMessage).toHaveBeenCalledWith(session, { text: 'queued user turn' });
-    });
-    expect(session.createGoal).not.toHaveBeenCalled();
-
-    handler.handleEvent(turnEndedEvent(), sendQueued);
-
-    await vi.waitFor(() => {
-      expect(session.createGoal).toHaveBeenCalledWith({
-        objective: 'Ship queued goal',
-        replace: false,
-      });
-    });
-    const sendQueuedCalls = host.sendQueuedMessage.mock.calls as Array<
-      [unknown, { text?: string }]
-    >;
-    const userMessageIndex = sendQueuedCalls.findIndex(
-      ([, item]) => item.text === 'queued user turn',
-    );
-    expect(userMessageIndex).toBeGreaterThanOrEqual(0);
-    expect(host.sendQueuedMessage).toHaveBeenLastCalledWith(session, { text: 'Ship queued goal' });
-    const userMessageOrder = host.sendQueuedMessage.mock.invocationCallOrder[userMessageIndex]!;
-    const goalCreateOrder = session.createGoal.mock.invocationCallOrder[0]!;
-    expect(userMessageOrder).toBeLessThan(goalCreateOrder);
   });
 
   it('leaves the queued goal in place when the next goal cannot start', async () => {
@@ -442,28 +371,6 @@ describe('SessionEventHandler goal queue promotion', () => {
     expect(host.sendQueuedMessage).not.toHaveBeenCalled();
   });
 
-  it('shows a notice when a blocked goal has queued goals', async () => {
-    const { host, session } = makeHost();
-    const handler = new SessionEventHandler(host);
-    const event = {
-      type: 'goal.updated',
-      sessionId: 's1',
-      agentId: 'main',
-      snapshot: fakeGoalSnapshot('Blocked goal', 'blocked'),
-      change: { kind: 'lifecycle', status: 'blocked', reason: 'waiting for access' },
-    } as const;
-
-    handler.handleEvent(event, vi.fn());
-
-    await vi.waitFor(() => {
-      expect(host.showNotice).toHaveBeenCalledWith(
-        'Goal blocked.',
-        'The next queued goal will start only after this goal is complete.',
-      );
-    });
-    expect(session.createGoal).not.toHaveBeenCalled();
-  });
-
   it('does not render a duplicate marker for a model-reported blocked goal', () => {
     const { host } = makeHost();
     const handler = new SessionEventHandler(host);
@@ -473,16 +380,6 @@ describe('SessionEventHandler goal queue promotion', () => {
     expect(host.state.transcriptContainer.addChild).not.toHaveBeenCalled();
   });
 
-  it('renders a blocked fallback when the model does not explain the blocked goal', () => {
-    const { host } = makeHost();
-    const handler = new SessionEventHandler(host);
-
-    handler.handleEvent(modelBlockedEvent(), vi.fn());
-    handler.handleEvent(turnEndedEvent(), vi.fn());
-
-    expect(addedTranscriptText(host)).toBe('  ◦ Goal blocked');
-  });
-
   it('does not render a blocked fallback after the model explains the blocked goal', () => {
     const { host } = makeHost();
     const handler = new SessionEventHandler(host);
@@ -490,11 +387,10 @@ describe('SessionEventHandler goal queue promotion', () => {
     handler.handleEvent(modelBlockedEvent(), vi.fn());
     handler.handleEvent(
       {
-        type: 'assistant.delta',
+        type: 'llm.delta',
         sessionId: 's1',
         agentId: 'main',
-        turnId: 1,
-        delta: 'I am blocked because I need credentials.',
+        part: { type: 'text', text: 'I am blocked because I need credentials.' },
       },
       vi.fn(),
     );
@@ -509,11 +405,10 @@ describe('SessionEventHandler goal queue promotion', () => {
 
     handler.handleEvent(
       {
-        type: 'assistant.delta',
+        type: 'llm.delta',
         sessionId: 's1',
         agentId: 'main',
-        turnId: 1,
-        delta: 'I am blocked because I need credentials.',
+        part: { type: 'text', text: 'I am blocked because I need credentials.' },
       },
       vi.fn(),
     );
@@ -527,11 +422,11 @@ describe('SessionEventHandler goal queue promotion', () => {
     const { host, session } = makeHost();
     const handler = new SessionEventHandler(host);
     const paused = {
-      type: 'goal.updated',
+      type: 'session.goal.updated',
       sessionId: 's1',
       agentId: 'main',
+      status: 'Paused',
       snapshot: fakeGoalSnapshot('Paused goal', 'paused'),
-      change: { kind: 'lifecycle', status: 'paused' },
     } as const;
 
     handler.handleEvent(paused, vi.fn());

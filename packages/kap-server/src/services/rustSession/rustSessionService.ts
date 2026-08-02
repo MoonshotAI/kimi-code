@@ -206,13 +206,6 @@ export function projectRustEvent(event: EngineEvent): Record<string, unknown> | 
       };
     case 'session.compaction.started':
       return { type: 'compaction.started', agent_id: 'main', source: event['source'] };
-    case 'session.compaction.completed':
-      return {
-        type: 'compaction.completed',
-        agent_id: 'main',
-        tokens_before: event['tokens_before'],
-        tokens_after: event['tokens_after'],
-      };
     default:
       return null;
   }

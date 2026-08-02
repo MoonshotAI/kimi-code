@@ -39,8 +39,7 @@ class FakeClient implements SessionClientHandle {
   }
 }
 
-/** Raw engine wire event; the controller's translator maps it to an SDK
- *  `assistant.delta`. */
+/** Raw engine wire event; the SDK passes it through verbatim as `llm.delta`. */
 function rawTextDelta(text: string): unknown {
   return { type: 'llm.delta', part: { type: 'text', text } };
 }
@@ -58,8 +57,12 @@ describe('NativeSessionAdapter', () => {
 
     const a: string[] = [];
     const b: string[] = [];
-    const offA = adapter.onEvent((e) => e.type === 'assistant.delta' && a.push(e.delta));
-    adapter.onEvent((e) => e.type === 'assistant.delta' && b.push(e.delta));
+    const offA = adapter.onEvent(
+      (e) => e.type === 'llm.delta' && e.part.type === 'text' && a.push(e.part.text ?? ''),
+    );
+    adapter.onEvent(
+      (e) => e.type === 'llm.delta' && e.part.type === 'text' && b.push(e.part.text ?? ''),
+    );
 
     fake!.onEvent!(rawTextDelta('one'));
     offA(); // A unsubscribes

@@ -74,7 +74,6 @@ type SessionWarning = Awaited<ReturnType<Session['getSessionWarnings']>>[number]
 
 import { resolve } from 'pathe';
 
-import { mapGoalSnapshot } from '@moonshot-ai/kimi-code-sdk/rust';
 import type { TuiSession } from '#/tui/tui-session';
 
 import {
@@ -645,7 +644,9 @@ export class NativeSession implements TuiSession {
 
   async getGoal(): Promise<GoalToolResult> {
     const { goal } = await this.adapter.getGoal();
-    return { goal: mapGoalSnapshot(goal) };
+    // The engine serializes `GoalSnapshot` camelCase (serde rename_all), so
+    // the wire shape IS the SDK contract — no legacy snake→camel mapping.
+    return { goal: goal as GoalSnapshot | null };
   }
 
   async pauseGoal(): Promise<GoalSnapshot> {
@@ -661,11 +662,10 @@ export class NativeSession implements TuiSession {
   }
 
   private requireGoal(snapshot: unknown): GoalSnapshot {
-    const mapped = mapGoalSnapshot(snapshot);
-    if (mapped === null) {
+    if (snapshot === null || typeof snapshot !== 'object') {
       throw new Error('No active goal.');
     }
-    return mapped;
+    return snapshot as GoalSnapshot;
   }
 
   // ── Cron (engine-global CronManager) ──────────────────────────────────────

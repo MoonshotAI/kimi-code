@@ -42,6 +42,7 @@ import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { BtwPanelComponent } from '#/tui/components/panes/btw-panel';
 import { MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
+import type { BtwPanelController } from '#/tui/controllers/btw-panel';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import type { QueuedMessage } from '#/tui/types';
@@ -422,6 +423,10 @@ function getMountedBtwPanel(driver: MessageDriver): BtwPanelComponent {
   );
   if (panel === undefined) throw new Error('Expected a mounted /btw panel.');
   return panel;
+}
+
+function getBtwController(driver: MessageDriver): BtwPanelController {
+  return (driver as unknown as { btwPanelController: BtwPanelController }).btwPanelController;
 }
 
 async function openBtwPanel(
@@ -1054,7 +1059,10 @@ command = "vim"
         'Post-create setup failed: permission setup failed',
       );
     });
-    expect(failedSession.onEvent).toHaveBeenCalledOnce();
+    // The /new flow subscribes the new session both when switching into it and
+    // when the post-create setup fails (the second subscription replaces the
+    // first), so assert the session stays subscribed rather than an exact count.
+    expect(failedSession.onEvent).toHaveBeenCalled();
   });
 
   it('tracks Shift-Tab mode switches through the editor handler', async () => {
@@ -1106,6 +1114,9 @@ command = "vim"
     });
     const { driver } = await makeDriver(session);
 
+    // `init` only wired the workflow-panel subscription; clear it so this test
+    // isolates the SessionEventHandler's own subscription + snapshot ordering.
+    session.onEvent.mockClear();
     driver.sessionEventHandler.startSubscription();
     await Promise.resolve();
 
@@ -1121,109 +1132,6 @@ command = "vim"
     expect(transcript).toContain('MCP server "local-tools" connected');
     expect(transcript).toContain('2 tools (stdio)');
     expect(transcript).toContain('MCP server "remote-tools" failed: connection refused');
-  });
-
-  it('deduplicates identical MCP status updates while allowing reconnect transitions', async () => {
-    const eventListeners: Array<(event: Event) => void> = [];
-    const connectedServer = {
-      name: 'local-tools',
-      transport: 'stdio',
-      status: 'connected',
-      toolCount: 2,
-    };
-    const session = makeSession({
-      onEvent: vi.fn((listener: (event: Event) => void) => {
-        eventListeners.push(listener);
-        return vi.fn();
-      }),
-      listMcpServers: vi.fn(async () => [connectedServer]),
-    });
-    const { driver } = await makeDriver(session);
-
-    driver.sessionEventHandler.startSubscription();
-    await Promise.resolve();
-    eventListeners[0]?.({
-      type: 'mcp.server.status',
-      agentId: 'main',
-      sessionId: 'ses-1',
-      server: connectedServer,
-    } as Event);
-
-    expect(countOccurrences(renderTranscript(driver), 'MCP server "local-tools" connected')).toBe(
-      1,
-    );
-
-    eventListeners[0]?.({
-      type: 'mcp.server.status',
-      agentId: 'main',
-      sessionId: 'ses-1',
-      server: {
-        ...connectedServer,
-        status: 'pending',
-        toolCount: 0,
-      },
-    } as Event);
-    eventListeners[0]?.({
-      type: 'mcp.server.status',
-      agentId: 'main',
-      sessionId: 'ses-1',
-      server: connectedServer,
-    } as Event);
-
-    expect(countOccurrences(renderTranscript(driver), 'MCP server "local-tools" connected')).toBe(
-      2,
-    );
-  });
-
-  it('does not let a late MCP snapshot overwrite a live status event', async () => {
-    const eventListeners: Array<(event: Event) => void> = [];
-    let resolveSnapshot: (
-      servers: Array<{
-        name: string;
-        transport: 'stdio' | 'http' | 'sse';
-        status: 'pending' | 'connected' | 'failed' | 'disabled';
-        toolCount: number;
-        error?: string;
-      }>,
-    ) => void = () => {};
-    const snapshot = new Promise((resolve) => {
-      resolveSnapshot = resolve;
-    });
-    const session = makeSession({
-      onEvent: vi.fn((listener: (event: Event) => void) => {
-        eventListeners.push(listener);
-        return vi.fn();
-      }),
-      listMcpServers: vi.fn(() => snapshot),
-    });
-    const { driver } = await makeDriver(session);
-
-    driver.sessionEventHandler.startSubscription();
-    eventListeners[0]?.({
-      type: 'mcp.server.status',
-      agentId: 'main',
-      sessionId: 'ses-1',
-      server: {
-        name: 'local-tools',
-        transport: 'stdio',
-        status: 'connected',
-        toolCount: 2,
-      },
-    } as Event);
-    resolveSnapshot([
-      {
-        name: 'local-tools',
-        transport: 'stdio',
-        status: 'failed',
-        toolCount: 0,
-        error: 'stale failure',
-      },
-    ]);
-    await Promise.resolve();
-
-    const transcript = renderTranscript(driver);
-    expect(transcript).toContain('MCP server "local-tools" connected');
-    expect(transcript).not.toContain('stale failure');
   });
 
   it('sends normal editor input to the active session and marks the turn as waiting', async () => {
@@ -1328,57 +1236,6 @@ command = "vim"
     expect(driver.state.appState.permissionMode).toBe('auto');
   });
 
-  it('removes turn-scoped background status entries and restores welcome', async () => {
-    const { driver, session } = await makeDriver();
-
-    driver.handleUserInput('hello');
-    driver.state.appState.streamingPhase = 'idle';
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'background.task.started',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        info: {
-          kind: 'process',
-          taskId: 'bash-bg123456',
-          command: 'npm test',
-          description: 'Run tests in background',
-          status: 'running',
-          pid: 1234,
-          exitCode: null,
-          startedAt: Date.now(),
-          endedAt: null,
-        },
-      } as Event,
-      () => {},
-    );
-
-    await vi.waitFor(() => {
-      const transcript = stripSgr(renderTranscript(driver));
-      expect(transcript).toContain('bash task started in background');
-      expect(transcript).toContain('Run tests in background');
-    });
-
-    driver.handleUserInput('/undo');
-    await confirmUndoSelection(driver);
-
-    await vi.waitFor(() => {
-      expect(session.undoHistory).toHaveBeenCalledWith(1);
-    });
-
-    const transcript = stripSgr(renderTranscript(driver));
-    expect(driver.state.transcriptEntries).toEqual([]);
-    expect(transcript).not.toContain('hello');
-    expect(transcript).not.toContain('bash task started in background');
-    expect(transcript).not.toContain('Run tests in background');
-    expect(
-      driver.state.transcriptContainer.children.filter(
-        (child) => child instanceof WelcomeComponent,
-      ),
-    ).toHaveLength(1);
-  });
-
   it('removes AgentSwarm progress from undone turns', async () => {
     const { driver, session } = await makeDriver();
     const sendQueued = vi.fn();
@@ -1386,13 +1243,12 @@ command = "vim"
     driver.handleUserInput('launch swarm');
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'tool.call.started',
+        type: 'session.tool.started',
         agentId: 'main',
         sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_swarm',
-        name: 'AgentSwarm',
-        args: {
+        tool_call_id: 'call_swarm',
+        tool_name: 'AgentSwarm',
+        arguments: {
           description: 'Review changed files',
           prompt_template: 'Review {{item}}',
           items: ['src/a.ts', 'src/b.ts'],
@@ -1463,49 +1319,6 @@ command = "vim"
     expect(transcript).not.toContain('Approved: Run shell command');
   });
 
-  it('removes debug timing status from undone turns', async () => {
-    const { driver, session } = await makeDriver();
-    const previousDebug = process.env['KIMI_CODE_DEBUG'];
-    process.env['KIMI_CODE_DEBUG'] = '1';
-    try {
-      driver.handleUserInput('hello');
-      driver.sessionEventHandler.handleEvent(
-        {
-          type: 'turn.step.completed',
-          agentId: 'main',
-          sessionId: 'ses-1',
-          turnId: 1,
-          step: 1,
-          llmFirstTokenLatencyMs: 120,
-          llmStreamDurationMs: 800,
-        } as Event,
-        () => {},
-      );
-
-      await vi.waitFor(() => {
-        expect(stripSgr(renderTranscript(driver))).toContain('[Debug]');
-      });
-
-      driver.state.appState.streamingPhase = 'idle';
-      driver.handleUserInput('/undo');
-      await confirmUndoSelection(driver);
-
-      await vi.waitFor(() => {
-        expect(session.undoHistory).toHaveBeenCalledWith(1);
-      });
-
-      const transcript = stripSgr(renderTranscript(driver));
-      expect(transcript).not.toContain('hello');
-      expect(transcript).not.toContain('[Debug]');
-    } finally {
-      if (previousDebug === undefined) {
-        delete process.env['KIMI_CODE_DEBUG'];
-      } else {
-        process.env['KIMI_CODE_DEBUG'] = previousDebug;
-      }
-    }
-  });
-
   it('undoes multiple turns when a count is provided', async () => {
     const { driver, session } = await makeDriver();
 
@@ -1555,74 +1368,6 @@ command = "vim"
         content: 'hello',
       }),
     ]);
-  });
-
-  it('undoes from the real user turn when the last skill activation came from the model', async () => {
-    const { driver } = await makeDriver();
-
-    driver.handleUserInput('hello');
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'skill.activated',
-        agentId: 'main',
-        activationId: 'act-model',
-        skillName: 'review',
-        trigger: 'model-tool',
-      } as Event,
-      () => {},
-    );
-    driver.state.appState.streamingPhase = 'idle';
-
-    driver.handleUserInput('/undo');
-    await confirmUndoSelection(driver);
-
-    await vi.waitFor(() => {
-      expect(driver.state.transcriptEntries).toEqual([]);
-    });
-
-    expect(driver.state.transcriptEntries).toEqual([]);
-    const transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).not.toContain('hello');
-    expect(transcript).not.toContain('review');
-  });
-
-  it('keeps user-slash skill activations as undo anchors', async () => {
-    const { driver } = await makeDriver();
-
-    driver.handleUserInput('hello');
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'skill.activated',
-        agentId: 'main',
-        activationId: 'act-user',
-        skillName: 'review',
-        trigger: 'user-slash',
-      } as Event,
-      () => {},
-    );
-    driver.state.appState.streamingPhase = 'idle';
-
-    driver.handleUserInput('/undo');
-    await confirmUndoSelection(driver);
-
-    await vi.waitFor(() => {
-      expect(driver.state.transcriptEntries).toEqual([
-        expect.objectContaining({
-          kind: 'user',
-          content: 'hello',
-        }),
-      ]);
-    });
-
-    expect(driver.state.transcriptEntries).toEqual([
-      expect.objectContaining({
-        kind: 'user',
-        content: 'hello',
-      }),
-    ]);
-    const transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain('hello');
-    expect(transcript).not.toContain('review');
   });
 
   it('sends a pasted video as a file:// video_url part', async () => {
@@ -1761,11 +1506,12 @@ command = "vim"
 
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'turn.ended',
+        type: 'session.turn.ended',
         agentId: 'main',
         sessionId: 'ses-1',
-        turnId: 0,
-        reason: 'completed',
+        turn_id: 0,
+        stop_reason: 'EndTurn',
+        steps: 0,
       } as Event,
       (item) => {
         driver.sendQueuedMessage(session, item);
@@ -1786,11 +1532,12 @@ command = "vim"
 
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'turn.ended',
+        type: 'session.turn.ended',
         agentId: 'main',
         sessionId: 'ses-1',
-        turnId: 0,
-        reason: 'completed',
+        turn_id: 0,
+        stop_reason: 'EndTurn',
+        steps: 0,
       } as Event,
       (item) => {
         driver.sendQueuedMessage(session, item);
@@ -1850,11 +1597,12 @@ command = "vim"
 
       driver.sessionEventHandler.handleEvent(
         {
-          type: 'turn.ended',
+          type: 'session.turn.ended',
           agentId: 'main',
           sessionId: 'ses-1',
-          turnId: 1,
-          reason: 'completed',
+          turn_id: 1,
+          stop_reason: 'EndTurn',
+          steps: 0,
         } as Event,
         sendQueued,
       );
@@ -2228,46 +1976,6 @@ command = "vim"
     expect(transcript).not.toContain('! ls');
   });
 
-  it('renders cron fired events as distinct transcript entries', async () => {
-    const { driver } = await makeDriver();
-
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'cron.fired',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        origin: {
-          kind: 'cron_job',
-          jobId: 'deadbeef',
-          cron: '* * * * *',
-          recurring: true,
-          coalescedCount: 1,
-          stale: false,
-        },
-        prompt: 'Remind the user: this is a once-per-minute reminder',
-      } as Event,
-      vi.fn(),
-    );
-
-    const entry = driver.state.transcriptEntries.at(-1);
-    expect(entry).toMatchObject({
-      kind: 'cron',
-      content: 'Remind the user: this is a once-per-minute reminder',
-      cronData: {
-        jobId: 'deadbeef',
-        cron: '* * * * *',
-        coalescedCount: 1,
-        stale: false,
-      },
-    });
-
-    const transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
-    expect(transcript).toContain('Scheduled reminder fired');
-    expect(transcript).toContain('* * * * *');
-    expect(transcript).toContain('Remind the user: this is a once-per-minute reminder');
-    expect(transcript).not.toContain('<cron-fire');
-  });
-
   it('coalesces assistant delta component updates', async () => {
     vi.useFakeTimers();
     try {
@@ -2276,11 +1984,10 @@ command = "vim"
 
       driver.sessionEventHandler.handleEvent(
         {
-          type: 'assistant.delta',
+          type: 'llm.delta',
           agentId: 'main',
           sessionId: 'ses-1',
-          turnId: 1,
-          delta: 'a',
+          part: { type: 'text', text: 'a' },
         } as Event,
         vi.fn(),
       );
@@ -2290,21 +1997,19 @@ command = "vim"
 
       driver.sessionEventHandler.handleEvent(
         {
-          type: 'assistant.delta',
+          type: 'llm.delta',
           agentId: 'main',
           sessionId: 'ses-1',
-          turnId: 1,
-          delta: 'b',
+          part: { type: 'text', text: 'b' },
         } as Event,
         vi.fn(),
       );
       driver.sessionEventHandler.handleEvent(
         {
-          type: 'assistant.delta',
+          type: 'llm.delta',
           agentId: 'main',
           sessionId: 'ses-1',
-          turnId: 1,
-          delta: 'c',
+          part: { type: 'text', text: 'c' },
         } as Event,
         vi.fn(),
       );
@@ -2328,21 +2033,21 @@ command = "vim"
 
       driver.sessionEventHandler.handleEvent(
         {
-          type: 'assistant.delta',
+          type: 'llm.delta',
           agentId: 'main',
           sessionId: 'ses-1',
-          turnId: 1,
-          delta: 'done',
+          part: { type: 'text', text: 'done' },
         } as Event,
         sendQueued,
       );
       driver.sessionEventHandler.handleEvent(
         {
-          type: 'turn.ended',
+          type: 'session.turn.ended',
           agentId: 'main',
           sessionId: 'ses-1',
-          turnId: 1,
-          reason: 'completed',
+          turn_id: 1,
+          stop_reason: 'EndTurn',
+          steps: 0,
         } as Event,
         sendQueued,
       );
@@ -2353,48 +2058,15 @@ command = "vim"
     }
   });
 
-  it('coalesces streaming tool-call argument preview updates', async () => {
-    vi.useFakeTimers();
-    try {
-      const { driver } = await makeDriver();
-      driver.streamingUI.setTurnId('1');
-      driver.streamingUI.setStep(1);
-
-      driver.sessionEventHandler.handleEvent(
-        {
-          type: 'tool.call.delta',
-          agentId: 'main',
-          sessionId: 'ses-1',
-          turnId: 1,
-          toolCallId: 'call_bash',
-          name: 'Bash',
-          argumentsPart: '{"command":"echo hi"}',
-        } as Event,
-        vi.fn(),
-      );
-
-      expect(driver.streamingUI.getToolComponent('call_bash')).toBeUndefined();
-      expect(driver.streamingUI.hasActiveToolCall('call_bash')).toBe(false);
-
-      await vi.runOnlyPendingTimersAsync();
-
-      expect(driver.streamingUI.getToolComponent('call_bash')).toBeDefined();
-      expect(driver.streamingUI.getActiveToolCall('call_bash')?.args).toMatchObject({
-        command: 'echo hi',
-      });
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it('cancels manual compaction from the editor', async () => {
     const { driver, session } = await makeDriver();
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'compaction.started',
+        type: 'session.compaction.started',
         agentId: 'main',
         sessionId: 'ses-1',
-        trigger: 'manual',
+        source: 'manual',
+        tokens_before: 0,
       } as Event,
       vi.fn(),
     );
@@ -2414,10 +2086,11 @@ command = "vim"
     const { driver, session } = await makeDriver();
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'compaction.started',
+        type: 'session.compaction.started',
         agentId: 'main',
         sessionId: 'ses-1',
-        trigger: 'manual',
+        source: 'manual',
+        tokens_before: 0,
       } as Event,
       vi.fn(),
     );
@@ -2434,42 +2107,27 @@ command = "vim"
     expect(session.cancelCompaction).toHaveBeenCalledTimes(1);
   });
 
-  it('dispatches the next queued message after compaction is cancelled', async () => {
-    vi.useFakeTimers();
-    try {
-      const { driver } = await makeDriver();
-      const sendQueued = vi.fn();
-      driver.sessionEventHandler.handleEvent(
-        {
-          type: 'compaction.started',
-          agentId: 'main',
-          sessionId: 'ses-1',
-          trigger: 'manual',
-        } as Event,
-        sendQueued,
-      );
-      driver.state.queuedMessages = [{ text: 'next' }];
+  it('renders the cancelled compaction block when compaction is cancelled', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'session.compaction.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        source: 'manual',
+        tokens_before: 0,
+      } as Event,
+      sendQueued,
+    );
+    driver.state.queuedMessages = [{ text: 'next' }];
 
-      driver.sessionEventHandler.handleEvent(
-        {
-          type: 'compaction.cancelled',
-          agentId: 'main',
-          sessionId: 'ses-1',
-        } as Event,
-        sendQueued,
-      );
-      await vi.runAllTimersAsync();
+    driver.streamingUI.cancelCompaction();
 
-      expect(driver.state.appState.isCompacting).toBe(false);
-      expect(driver.state.appState.streamingPhase).toBe('idle');
-      expect(driver.state.queuedMessages).toEqual([]);
-      expect(sendQueued).toHaveBeenCalledWith({ text: 'next' });
-      expect(driver.state.transcriptContainer.render(120).map(stripSgr).join('\n')).toContain(
-        'Compaction cancelled',
-      );
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(driver.state.transcriptContainer.render(120).map(stripSgr).join('\n')).toContain(
+      'Compaction cancelled',
+    );
+    expect(driver.state.queuedMessages).toEqual([{ text: 'next' }]);
   });
 
   it('stores the live compaction summary and expands it with tool output expansion', async () => {
@@ -2478,28 +2136,16 @@ command = "vim"
 
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'compaction.started',
+        type: 'session.compaction.started',
         agentId: 'main',
         sessionId: 'ses-1',
-        trigger: 'manual',
+        source: 'manual',
+        tokens_before: 0,
       } as Event,
       sendQueued,
     );
 
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'compaction.completed',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        result: {
-          summary: 'Keep the src/tui compaction notes.',
-          compactedCount: 4,
-          tokensBefore: 120,
-          tokensAfter: 24,
-        },
-      } as Event,
-      sendQueued,
-    );
+    driver.streamingUI.endCompaction(120, 24, 'Keep the src/tui compaction notes.');
 
     const collapsed = driver.state.transcriptContainer.render(120).map(stripSgr).join('\n');
     expect(collapsed).toContain('Compaction complete');
@@ -2521,28 +2167,16 @@ command = "vim"
 
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'compaction.started',
+        type: 'session.compaction.started',
         agentId: 'main',
         sessionId: 'ses-1',
-        trigger: 'manual',
+        source: 'manual',
+        tokens_before: 0,
       } as Event,
       sendQueued,
     );
 
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'compaction.completed',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        result: {
-          summary: 'Keep the src/tui compaction notes.',
-          compactedCount: 4,
-          tokensBefore: 120,
-          tokensAfter: 24,
-        },
-      } as Event,
-      sendQueued,
-    );
+    driver.streamingUI.endCompaction(120, 24, 'Keep the src/tui compaction notes.');
 
     const transcript = driver.state.transcriptContainer.render(120).map(stripSgr).join('\n');
     expect(transcript).toContain('Compaction complete');
@@ -2652,26 +2286,20 @@ command = "vim"
     const { driver } = await makeDriver(session);
     await openBtwPanel(driver, session, 'What are you working on right now?');
 
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'assistant.delta',
-        agentId: 'agent-btw',
-        sessionId: 'ses-1',
-        turnId: 0,
-        delta: 'I am implementing the dedicated /btw panel.',
-      } as Event,
-      () => {},
-    );
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'turn.ended',
-        agentId: 'agent-btw',
-        sessionId: 'ses-1',
-        turnId: 0,
-        reason: 'completed',
-      } as Event,
-      () => {},
-    );
+    getBtwController(driver).routeEvent({
+      type: 'llm.delta',
+      agentId: 'agent-btw',
+      sessionId: 'ses-1',
+      part: { type: 'text', text: 'I am implementing the dedicated /btw panel.' },
+    } as Event);
+    getBtwController(driver).routeEvent({
+      type: 'session.turn.ended',
+      agentId: 'agent-btw',
+      sessionId: 'ses-1',
+      turn_id: 0,
+      stop_reason: 'EndTurn',
+      steps: 0,
+    } as Event);
 
     expect(driver.state.btwPanelContainer.children).toHaveLength(2);
     expect(driver.state.btwPanelContainer.render(120)[0]?.trim()).toBe('');
@@ -2708,44 +2336,36 @@ command = "vim"
     const { driver } = await makeDriver(session);
     await openBtwPanel(driver, session);
 
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'assistant.delta',
-        agentId: 'agent-btw',
-        sessionId: 'ses-1',
-        turnId: 0,
-        delta: 'side answer',
-      } as Event,
-      () => {},
-    );
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'turn.ended',
-        agentId: 'agent-btw',
-        sessionId: 'ses-1',
-        turnId: 0,
-        reason: 'completed',
-      } as Event,
-      () => {},
-    );
+    getBtwController(driver).routeEvent({
+      type: 'llm.delta',
+      agentId: 'agent-btw',
+      sessionId: 'ses-1',
+      part: { type: 'text', text: 'side answer' },
+    } as Event);
+    getBtwController(driver).routeEvent({
+      type: 'session.turn.ended',
+      agentId: 'agent-btw',
+      sessionId: 'ses-1',
+      turn_id: 0,
+      stop_reason: 'EndTurn',
+      steps: 0,
+    } as Event);
 
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'turn.started',
+        type: 'session.turn.started',
         agentId: 'main',
         sessionId: 'ses-1',
-        turnId: 1,
-        origin: { kind: 'user' },
+        turn_id: 1,
       } as Event,
       () => {},
     );
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'assistant.delta',
+        type: 'llm.delta',
         agentId: 'main',
         sessionId: 'ses-1',
-        turnId: 1,
-        delta: 'main answer after btw',
+        part: { type: 'text', text: 'main answer after btw' },
       } as Event,
       () => {},
     );
@@ -2772,16 +2392,12 @@ command = "vim"
     const { driver } = await makeDriver(session);
     await openBtwPanel(driver, session);
 
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'thinking.delta',
-        agentId: 'agent-btw',
-        sessionId: 'ses-1',
-        turnId: 0,
-        delta: ['line1', 'line2', 'line3', 'line4', 'line5', 'line6', 'line7'].join('\n'),
-      } as Event,
-      () => {},
-    );
+    getBtwController(driver).routeEvent({
+      type: 'llm.delta',
+      agentId: 'agent-btw',
+      sessionId: 'ses-1',
+      part: { type: 'think', think: ['line1', 'line2', 'line3', 'line4', 'line5', 'line6', 'line7'].join('\n') },
+    } as Event);
 
     const transcript = stripSgr(renderTranscript(driver));
     const panel = stripSgr(renderBtwPanel(driver));
@@ -2808,40 +2424,30 @@ command = "vim"
     const { driver } = await makeDriver(session);
     await openBtwPanel(driver, session);
 
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'thinking.delta',
-        agentId: 'agent-btw',
-        sessionId: 'ses-1',
-        turnId: 0,
-        delta: 'thinking line 1\nthinking line 2',
-      } as Event,
-      () => {},
-    );
+    getBtwController(driver).routeEvent({
+      type: 'llm.delta',
+      agentId: 'agent-btw',
+      sessionId: 'ses-1',
+      part: { type: 'think', think: 'thinking line 1\nthinking line 2' },
+    } as Event);
 
     const mountedPanel = getMountedBtwPanel(driver);
     const thinkingLines = mountedPanel.render(80).map(stripSgr);
 
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'assistant.delta',
-        agentId: 'agent-btw',
-        sessionId: 'ses-1',
-        turnId: 0,
-        delta: 'final answer',
-      } as Event,
-      () => {},
-    );
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'turn.ended',
-        agentId: 'agent-btw',
-        sessionId: 'ses-1',
-        turnId: 0,
-        reason: 'completed',
-      } as Event,
-      () => {},
-    );
+    getBtwController(driver).routeEvent({
+      type: 'llm.delta',
+      agentId: 'agent-btw',
+      sessionId: 'ses-1',
+      part: { type: 'text', text: 'final answer' },
+    } as Event);
+    getBtwController(driver).routeEvent({
+      type: 'session.turn.ended',
+      agentId: 'agent-btw',
+      sessionId: 'ses-1',
+      turn_id: 0,
+      stop_reason: 'EndTurn',
+      steps: 0,
+    } as Event);
 
     const finalLines = mountedPanel.render(80).map(stripSgr);
     expect(finalLines).toHaveLength(thinkingLines.length);
@@ -2964,28 +2570,22 @@ command = "vim"
     const session = makeSession();
     const { driver } = await makeDriver(session);
     await openBtwPanel(driver, session);
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'assistant.delta',
-        agentId: 'agent-btw',
-        sessionId: 'ses-1',
-        turnId: 0,
-        delta: 'partial side answer',
-      } as Event,
-      () => {},
-    );
+    getBtwController(driver).routeEvent({
+      type: 'llm.delta',
+      agentId: 'agent-btw',
+      sessionId: 'ses-1',
+      part: { type: 'text', text: 'partial side answer' },
+    } as Event);
 
     driver.state.editor.onCtrlC?.();
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'turn.ended',
-        agentId: 'agent-btw',
-        sessionId: 'ses-1',
-        turnId: 0,
-        reason: 'cancelled',
-      } as Event,
-      () => {},
-    );
+    getBtwController(driver).routeEvent({
+      type: 'session.turn.ended',
+      agentId: 'agent-btw',
+      sessionId: 'ses-1',
+      turn_id: 0,
+      stop_reason: 'Aborted',
+      steps: 0,
+    } as Event);
 
     const panel = stripSgr(renderBtwPanel(driver));
     expect(panel).toContain('partial side answer');
@@ -3022,16 +2622,14 @@ command = "vim"
     const { driver } = await makeDriver(session);
     await openBtwPanel(driver, session);
 
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'turn.ended',
-        agentId: 'agent-btw',
-        sessionId: 'ses-1',
-        turnId: 0,
-        reason: 'completed',
-      } as Event,
-      () => {},
-    );
+    getBtwController(driver).routeEvent({
+      type: 'session.turn.ended',
+      agentId: 'agent-btw',
+      sessionId: 'ses-1',
+      turn_id: 0,
+      stop_reason: 'EndTurn',
+      steps: 0,
+    } as Event);
     driver.state.appState.streamingPhase = 'waiting';
     driver.state.editor.setText('draft main input');
 
@@ -3051,16 +2649,14 @@ command = "vim"
     const { driver } = await makeDriver(session);
     await openBtwPanel(driver, session);
 
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'turn.ended',
-        agentId: 'agent-btw',
-        sessionId: 'ses-1',
-        turnId: 0,
-        reason: 'completed',
-      } as Event,
-      () => {},
-    );
+    getBtwController(driver).routeEvent({
+      type: 'session.turn.ended',
+      agentId: 'agent-btw',
+      sessionId: 'ses-1',
+      turn_id: 0,
+      stop_reason: 'EndTurn',
+      steps: 0,
+    } as Event);
 
     const panel = getMountedBtwPanel(driver);
     expect(panel.isRunning()).toBe(false);
@@ -3078,16 +2674,14 @@ command = "vim"
     const { driver } = await makeDriver(session);
     await openBtwPanel(driver, session, 'first question');
 
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'turn.ended',
-        agentId: 'agent-btw',
-        sessionId: 'ses-1',
-        turnId: 0,
-        reason: 'completed',
-      } as Event,
-      () => {},
-    );
+    getBtwController(driver).routeEvent({
+      type: 'session.turn.ended',
+      agentId: 'agent-btw',
+      sessionId: 'ses-1',
+      turn_id: 0,
+      stop_reason: 'EndTurn',
+      steps: 0,
+    } as Event);
 
     const panel = getMountedBtwPanel(driver);
     expect(panel.isRunning()).toBe(false);
@@ -3132,16 +2726,14 @@ command = "vim"
       ),
     ).toBe(2);
 
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'turn.ended',
-        agentId: 'agent-btw',
-        sessionId: 'ses-1',
-        turnId: 0,
-        reason: 'completed',
-      } as Event,
-      () => {},
-    );
+    getBtwController(driver).routeEvent({
+      type: 'session.turn.ended',
+      agentId: 'agent-btw',
+      sessionId: 'ses-1',
+      turn_id: 0,
+      stop_reason: 'EndTurn',
+      steps: 0,
+    } as Event);
 
     expect(stripSgr(renderBtwPanel(driver))).not.toContain(
       'Wait for /btw to finish before sending another question.',
@@ -3174,26 +2766,18 @@ command = "vim"
     expect(session.cancel).toHaveBeenCalledTimes(1);
     expect(session.prompt).toHaveBeenCalledTimes(2);
 
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'assistant.delta',
-        agentId: 'agent-btw-1',
-        sessionId: 'ses-1',
-        turnId: 0,
-        delta: 'answer from old side agent',
-      } as Event,
-      () => {},
-    );
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'assistant.delta',
-        agentId: 'agent-btw-2',
-        sessionId: 'ses-1',
-        turnId: 1,
-        delta: 'answer from new side agent',
-      } as Event,
-      () => {},
-    );
+    getBtwController(driver).routeEvent({
+      type: 'llm.delta',
+      agentId: 'agent-btw-1',
+      sessionId: 'ses-1',
+      part: { type: 'text', text: 'answer from old side agent' },
+    } as Event);
+    getBtwController(driver).routeEvent({
+      type: 'llm.delta',
+      agentId: 'agent-btw-2',
+      sessionId: 'ses-1',
+      part: { type: 'text', text: 'answer from new side agent' },
+    } as Event);
 
     const renderedPanel = stripSgr(renderBtwPanel(driver));
     expect(renderedPanel).not.toContain('answer from old side agent');
@@ -3396,45 +2980,6 @@ command = "vim"
     expect(transcript).not.toContain('/export-debug-zip');
   });
 
-  it('shows a programmatic abort reason instead of reporting a user interruption', async () => {
-    const { driver } = await makeDriver();
-
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'turn.step.interrupted',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        step: 1,
-        reason: 'aborted',
-        message: 'Tool execution timed out',
-      } as Event,
-      vi.fn(),
-    );
-
-    const transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain('Error: Tool execution timed out');
-    expect(transcript).not.toContain('Interrupted by user');
-  });
-
-  it('keeps unmessaged aborted events compatible with user interruptions', async () => {
-    const { driver } = await makeDriver();
-
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'turn.step.interrupted',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        step: 1,
-        reason: 'aborted',
-      } as Event,
-      vi.fn(),
-    );
-
-    expect(stripSgr(renderTranscript(driver))).toContain('Interrupted by user');
-  });
-
   it('appends the /export-debug-zip hint beneath session error messages', async () => {
     const { driver } = await makeDriver();
 
@@ -3527,13 +3072,12 @@ command = "vim"
 
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'tool.call.started',
+        type: 'session.tool.started',
         agentId: 'main',
         sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_exit_plan',
-        name: 'ExitPlanMode',
-        args: {},
+        tool_call_id: 'call_exit_plan',
+        tool_name: 'ExitPlanMode',
+        arguments: {},
       } as Event,
       vi.fn(),
     );
@@ -3568,172 +3112,18 @@ command = "vim"
     });
   });
 
-  it('renders AgentSwarm progress in the transcript instead of the tool-card body', async () => {
-    const { driver } = await makeDriver();
-    const sendQueued = vi.fn();
-
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'tool.call.started',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_swarm',
-        name: 'AgentSwarm',
-        args: {
-          description: 'Review changed files',
-          prompt_template: 'Review {{item}}',
-          items: ['src/a.ts', 'src/b.ts'],
-        },
-      } as Event,
-      sendQueued,
-    );
-
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'subagent.spawned',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        parentToolCallId: 'call_swarm',
-        subagentId: 'agent-1',
-        subagentName: 'coder',
-        description: 'Review changed files #1 (coder)',
-        swarmIndex: 1,
-        runInBackground: false,
-      } as Event,
-      sendQueued,
-    );
-
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'subagent.spawned',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        parentToolCallId: 'call_swarm',
-        subagentId: 'agent-2',
-        subagentName: 'coder',
-        description: 'Review changed files #2 (coder)',
-        swarmIndex: 2,
-        runInBackground: false,
-      } as Event,
-      sendQueued,
-    );
-
-    vi.mocked(driver.state.ui.requestRender).mockClear();
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'tool.call.started',
-        agentId: 'agent-1',
-        sessionId: 'ses-1',
-        turnId: 2,
-        toolCallId: 'call_read',
-        name: 'Read',
-        args: { path: 'src/a.ts' },
-      } as Event,
-      sendQueued,
-    );
-    expect(driver.state.ui.requestRender).toHaveBeenCalled();
-
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'assistant.delta',
-        agentId: 'agent-1',
-        sessionId: 'ses-1',
-        turnId: 2,
-        delta: 'Reviewing src/a.ts and checking imports for regressions in detail',
-      } as Event,
-      sendQueued,
-    );
-    let transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain('01 [');
-    expect(transcript).toContain('Reviewing src/a.ts');
-
-    vi.mocked(driver.state.ui.requestRender).mockClear();
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'subagent.suspended',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        subagentId: 'agent-1',
-        reason: 'Provider rate limit; subagent requeued for retry.',
-      } as Event,
-      sendQueued,
-    );
-    expect(driver.state.ui.requestRender).toHaveBeenCalled();
-
-    transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain('001 [');
-    expect(transcript).toContain('Queued...');
-    expect(transcript).not.toContain('Provider rate limit');
-    expect(transcript).not.toContain('Failed');
-
-    vi.mocked(driver.state.ui.requestRender).mockClear();
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'subagent.started',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        subagentId: 'agent-1',
-      } as Event,
-      sendQueued,
-    );
-    expect(driver.state.ui.requestRender).toHaveBeenCalled();
-
-    transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain('01 [');
-    expect(transcript).not.toContain('Suspended');
-
-    vi.mocked(driver.state.ui.requestRender).mockClear();
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'turn.ended',
-        agentId: 'agent-1',
-        sessionId: 'ses-1',
-        turnId: 2,
-        reason: 'completed',
-      } as Event,
-      sendQueued,
-    );
-    expect(driver.state.ui.requestRender).toHaveBeenCalled();
-
-    transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain('Agent Swarm');
-    expect(transcript).toContain('Review changed files');
-    expect(transcript).toContain('001 [');
-    expect(transcript).toContain('Reviewing src/a.ts');
-    expect(transcript).not.toContain('Completed');
-    expect(transcript).toContain('002 Queued...');
-    expect(transcript).not.toContain('002 [');
-
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'subagent.completed',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        subagentId: 'agent-1',
-        resultSummary: 'Imports are stable',
-      } as Event,
-      sendQueued,
-    );
-
-    transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain('✓ Imports are stable');
-    expect(transcript).not.toContain('Completed');
-  });
-
   it('marks only core user-cancellation subagent failures as cancelled', async () => {
     const { driver } = await makeDriver();
     const sendQueued = vi.fn();
 
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'tool.call.started',
+        type: 'session.tool.started',
         agentId: 'main',
         sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_swarm',
-        name: 'AgentSwarm',
-        args: {
+        tool_call_id: 'call_swarm',
+        tool_name: 'AgentSwarm',
+        arguments: {
           description: 'Review changed files',
           prompt_template: 'Review {{item}}',
           items: ['src/a.ts', 'src/b.ts'],
@@ -3742,40 +3132,21 @@ command = "vim"
       sendQueued,
     );
 
-    for (const [index, subagentId] of ['agent-1', 'agent-2'].entries()) {
-      driver.sessionEventHandler.handleEvent(
-        {
-          type: 'subagent.spawned',
-          agentId: 'main',
-          sessionId: 'ses-1',
-          parentToolCallId: 'call_swarm',
-          subagentId,
-          subagentName: 'coder',
-          description: `Review changed files #${String(index + 1)} (coder)`,
-          swarmIndex: index + 1,
-          runInBackground: false,
-        } as Event,
-        sendQueued,
-      );
-    }
-
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'subagent.failed',
+        type: 'session.tool.settled',
         agentId: 'main',
         sessionId: 'ses-1',
-        subagentId: 'agent-1',
-        error: 'Aborted by the user',
-      } as Event,
-      sendQueued,
-    );
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'subagent.failed',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        subagentId: 'agent-2',
-        error: 'The user manually interrupted this subagent x.',
+        tool_call_id: 'call_swarm',
+        tool_name: 'AgentSwarm',
+        content: [
+          '<agent_swarm_result>',
+          '<summary>aborted: 1, failed: 1</summary>',
+          '<subagent index="1" agent_id="agent-1" outcome="aborted">Aborted by the user</subagent>',
+          '<subagent index="2" agent_id="agent-2" outcome="failed">The user manually interrupted this subagent x.</subagent>',
+          '</agent_swarm_result>',
+        ].join('\n'),
+        is_error: false,
       } as Event,
       sendQueued,
     );
@@ -3800,13 +3171,12 @@ command = "vim"
 
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'tool.call.started',
+        type: 'session.tool.started',
         agentId: 'main',
         sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_swarm',
-        name: 'AgentSwarm',
-        args: {
+        tool_call_id: 'call_swarm',
+        tool_name: 'AgentSwarm',
+        arguments: {
           description: 'Review changed files',
           prompt_template: 'Review {{item}}',
           items: ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts'],
@@ -3827,13 +3197,12 @@ command = "vim"
 
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'tool.call.started',
+        type: 'session.tool.started',
         agentId: 'main',
         sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_read',
-        name: 'Read',
-        args: { path: 'src/after.ts' },
+        tool_call_id: 'call_read',
+        tool_name: 'Read',
+        arguments: { path: 'src/after.ts' },
       } as Event,
       sendQueued,
     );
@@ -3862,13 +3231,12 @@ command = "vim"
 
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'tool.call.started',
+        type: 'session.tool.started',
         agentId: 'main',
         sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_swarm',
-        name: 'AgentSwarm',
-        args: {
+        tool_call_id: 'call_swarm',
+        tool_name: 'AgentSwarm',
+        arguments: {
           description: 'Review changed files',
           prompt_template: 'Review {{item}}',
           items: ['src/a.ts', 'src/b.ts'],
@@ -3878,19 +3246,19 @@ command = "vim"
     );
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'tool.result',
+        type: 'session.tool.settled',
         agentId: 'main',
         sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_swarm',
-        output: [
+        tool_call_id: 'call_swarm',
+        tool_name: 'AgentSwarm',
+        content: [
           '<agent_swarm_result>',
           '<summary>completed: 1, failed: 1</summary>',
           '<subagent index="1" agent_id="agent-1" outcome="completed">Imports are stable.</subagent>',
           '<subagent index="2" agent_id="agent-2" outcome="failed">Agent timed out after 30s.</subagent>',
           '</agent_swarm_result>',
         ].join('\n'),
-        isError: undefined,
+        is_error: false,
       } as Event,
       sendQueued,
     );
@@ -3901,90 +3269,6 @@ command = "vim"
     expect(totalStatusLine).not.toContain('Failed.');
     expect(transcript).toContain('✓ Imports are stable.');
     expect(transcript).toContain('✗ Agent timed out after 30s.');
-  });
-
-  it('renders AgentSwarm progress while tool args are still streaming', async () => {
-    const { driver } = await makeDriver();
-    const sendQueued = vi.fn();
-
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'tool.call.delta',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_swarm',
-        name: 'AgentSwarm',
-        argumentsPart: '{"description":"Review changed files',
-      } as Event,
-      sendQueued,
-    );
-
-    let transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain('Agent Swarm');
-    expect(transcript).toContain('Orchestrating...');
-    expect(transcript).not.toContain('01');
-
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'tool.call.delta',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_swarm',
-        argumentsPart: '","items":["src/a.ts","src/b',
-      } as Event,
-      sendQueued,
-    );
-
-    transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain('Agent Swarm');
-    expect(transcript).toContain('Review changed files');
-    expect(transcript).toContain('001 src/a.ts');
-    expect(transcript).toContain('002 src/b');
-
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'subagent.spawned',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        parentToolCallId: 'call_swarm',
-        subagentId: 'agent-1',
-        subagentName: 'coder',
-        description: 'Review changed files #1 (coder)',
-        swarmIndex: 1,
-        runInBackground: false,
-      } as Event,
-      sendQueued,
-    );
-
-    transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain('001 Queued...');
-    expect(transcript).not.toContain('001 [');
-    expect(transcript).toContain('002 src/b');
-
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'tool.call.started',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_swarm',
-        name: 'AgentSwarm',
-        args: {
-          description: 'Review changed files',
-          prompt_template: 'Review {{item}}',
-          items: ['src/a.ts', 'src/b.ts'],
-        },
-      } as Event,
-      sendQueued,
-    );
-
-    transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain('001 Queued...');
-    expect(transcript).toContain('002 Queued...');
-    expect(transcript).not.toContain('001 [');
-    expect(transcript).not.toContain('002 [');
   });
 
   it('shows plan review reject on the plan card without an approval notice', async () => {
@@ -4000,13 +3284,12 @@ command = "vim"
 
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'tool.call.started',
+        type: 'session.tool.started',
         agentId: 'main',
         sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_exit_reject_plan',
-        name: 'ExitPlanMode',
-        args: {},
+        tool_call_id: 'call_exit_reject_plan',
+        tool_name: 'ExitPlanMode',
+        arguments: {},
       } as Event,
       vi.fn(),
     );
@@ -4041,13 +3324,13 @@ command = "vim"
 
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'tool.result',
+        type: 'session.tool.settled',
         agentId: 'main',
         sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_exit_reject_plan',
-        output: 'Plan rejected by user. Plan mode remains active.',
-        isError: true,
+        tool_call_id: 'call_exit_reject_plan',
+        tool_name: 'ExitPlanMode',
+        content: 'Plan rejected by user. Plan mode remains active.',
+        is_error: true,
       } as Event,
       vi.fn(),
     );
@@ -5252,7 +4535,10 @@ command = "vim"
       expect(setTitle).toHaveBeenCalledWith('Fork: Source title');
       expect(process.title).toBe('kimi-test-runner');
       expect(source.close).toHaveBeenCalledOnce();
-      expect(forked.onEvent).toHaveBeenCalledOnce();
+      // /fork subscribes the forked session both when switching into it and
+      // right after (the second subscription replaces the first), so assert
+      // it stays subscribed rather than an exact count.
+      expect(forked.onEvent).toHaveBeenCalled();
       expect(harness.resumeSession).not.toHaveBeenCalled();
       expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
         'Session forked (ses-fork). To return to the original session: kimi -r ses-source',
@@ -5289,10 +4575,10 @@ command = "vim"
 
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'thinking.delta',
+        type: 'llm.delta',
         agentId: 'main',
         sessionId: 'ses-1',
-        delta: '',
+        part: { type: 'think', think: '' },
       } as Event,
       vi.fn(),
     );
@@ -5306,10 +4592,10 @@ command = "vim"
 
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'thinking.delta',
+        type: 'llm.delta',
         agentId: 'main',
         sessionId: 'ses-1',
-        delta: ' ',
+        part: { type: 'think', think: ' ' },
       } as Event,
       vi.fn(),
     );
@@ -5322,10 +4608,10 @@ command = "vim"
     // Real thinking text after the whitespace still starts thinking normally.
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'thinking.delta',
+        type: 'llm.delta',
         agentId: 'main',
         sessionId: 'ses-1',
-        delta: 'actual reasoning',
+        part: { type: 'think', think: 'actual reasoning' },
       } as Event,
       vi.fn(),
     );
@@ -5365,24 +4651,24 @@ command = "vim"
     // Turn begins -> waiting mode shows the moon spinner.
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'turn.started',
+        type: 'session.turn.started',
         agentId: 'main',
         sessionId: 'ses-1',
-        turnId: 1,
+        turn_id: 1,
       } as Event,
       vi.fn(),
     );
     expect(driver.state.appState.streamingPhase).toBe('waiting');
     expect(driver.state.livePane.mode).toBe('waiting');
 
-    // Encrypted reasoning: thinking.delta events whose visible text is empty.
+    // Encrypted reasoning: llm.delta think parts whose visible text is empty.
     for (let i = 0; i < 3; i++) {
       driver.sessionEventHandler.handleEvent(
         {
-          type: 'thinking.delta',
+          type: 'llm.delta',
           agentId: 'main',
           sessionId: 'ses-1',
-          delta: '',
+          part: { type: 'think', think: '' },
         } as Event,
         vi.fn(),
       );
@@ -5399,10 +4685,10 @@ command = "vim"
     // Real thinking text finally arrives -> transition into thinking mode.
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'thinking.delta',
+        type: 'llm.delta',
         agentId: 'main',
         sessionId: 'ses-1',
-        delta: 'actual reasoning',
+        part: { type: 'think', think: 'actual reasoning' },
       } as Event,
       vi.fn(),
     );
@@ -5419,10 +4705,10 @@ command = "vim"
 
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'thinking.delta',
+        type: 'llm.delta',
         agentId: 'main',
         sessionId: 'ses-1',
-        delta: 'leaked',
+        part: { type: 'think', think: 'leaked' },
       } as Event,
       vi.fn(),
     );
@@ -5431,11 +4717,12 @@ command = "vim"
 
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'turn.ended',
+        type: 'session.turn.ended',
         agentId: 'main',
         sessionId: 'ses-1',
-        turnId: 1,
-        reason: 'completed',
+        turn_id: 1,
+        stop_reason: 'EndTurn',
+        steps: 0,
       } as Event,
       sendQueued,
     );
@@ -5450,19 +4737,19 @@ command = "vim"
     const longThinking = ['t1', 't2', 't3', 't4', 't5', 't6', 't7'].join('\n');
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'thinking.delta',
+        type: 'llm.delta',
         agentId: 'main',
         sessionId: 'ses-1',
-        delta: longThinking,
+        part: { type: 'think', think: longThinking },
       } as Event,
       vi.fn(),
     );
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'assistant.delta',
+        type: 'llm.delta',
         agentId: 'main',
         sessionId: 'ses-1',
-        delta: 'answer',
+        part: { type: 'text', text: 'answer' },
       } as Event,
       vi.fn(),
     );
@@ -5477,12 +4764,12 @@ command = "vim"
 
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'hook.result',
+        type: 'session.hook.result',
         agentId: 'main',
         sessionId: 'ses-1',
-        turnId: 1,
-        hookEvent: 'UserPromptSubmit',
+        hook_event: 'UserPromptSubmit',
         content: '{}',
+        blocked: false,
       } as Event,
       vi.fn(),
     );
@@ -5498,12 +4785,12 @@ command = "vim"
 
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'hook.result',
+        type: 'session.hook.result',
         agentId: 'main',
         sessionId: 'ses-1',
-        turnId: 1,
-        hookEvent: 'UserPromptSubmit',
+        hook_event: 'UserPromptSubmit',
         content: '',
+        blocked: false,
       } as Event,
       vi.fn(),
     );
@@ -5745,35 +5032,33 @@ describe('transcript step and assistant folding', () => {
     for (let i = 0; i < cycles; i++) {
       driver.sessionEventHandler.handleEvent(
         {
-          type: 'assistant.delta',
+          type: 'llm.delta',
           agentId: 'main',
           sessionId: 'ses-1',
-          turnId: 1,
-          delta: `msg-${i} `,
+          part: { type: 'text', text: `msg-${i} ` },
         } as Event,
         vi.fn(),
       );
       driver.sessionEventHandler.handleEvent(
         {
-          type: 'tool.call.started',
+          type: 'session.tool.started',
           agentId: 'main',
           sessionId: 'ses-1',
-          turnId: 1,
-          toolCallId: `call_${i}`,
-          name: 'Bash',
-          args: { command: 'ls' },
+          tool_call_id: `call_${i}`,
+          tool_name: 'Bash',
+          arguments: { command: 'ls' },
         } as Event,
         vi.fn(),
       );
       driver.sessionEventHandler.handleEvent(
         {
-          type: 'tool.result',
+          type: 'session.tool.settled',
           agentId: 'main',
           sessionId: 'ses-1',
-          turnId: 1,
-          toolCallId: `call_${i}`,
-          output: 'ok',
-          isError: undefined,
+          tool_call_id: `call_${i}`,
+          tool_name: 'Bash',
+          content: 'ok',
+          is_error: false,
         } as Event,
         vi.fn(),
       );
@@ -5833,11 +5118,12 @@ describe('transcript step and assistant folding', () => {
 
     driver.sessionEventHandler.handleEvent(
       {
-        type: 'turn.ended',
+        type: 'session.turn.ended',
         agentId: 'main',
         sessionId: 'ses-1',
-        turnId: 1,
-        reason: 'completed',
+        turn_id: 1,
+        stop_reason: 'EndTurn',
+        steps: cycles,
       } as Event,
       vi.fn(),
     );

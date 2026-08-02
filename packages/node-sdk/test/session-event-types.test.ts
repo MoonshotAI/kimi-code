@@ -1,56 +1,68 @@
 import { describe, expectTypeOf, it } from 'vitest';
 
+import type { GoalSnapshot } from '@moonshot-ai/protocol';
+
 import type { ApprovalRequest, ApprovalResponse, Event, QuestionRequest } from '#/index';
 
 type EventByType<T extends Event['type']> = Extract<Event, { readonly type: T }>;
 
 describe('Event public types', () => {
-  it('narrows assistant deltas by type', () => {
-    expectTypeOf<EventByType<'assistant.delta'>['delta']>().toEqualTypeOf<string>();
+  it('narrows engine turn lifecycle events by type', () => {
+    expectTypeOf<EventByType<'session.turn.started'>['turn_id']>().toEqualTypeOf<number>();
+    expectTypeOf<EventByType<'session.turn.ended'>['turn_id']>().toEqualTypeOf<number>();
+    expectTypeOf<EventByType<'session.turn.ended'>['stop_reason']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'session.turn.ended'>['steps']>().toEqualTypeOf<number>();
+  });
+
+  it('narrows llm stream events by type', () => {
+    expectTypeOf<EventByType<'llm.step.begin'>['model']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'llm.delta'>['part']['type']>().toEqualTypeOf<'text' | 'think'>();
+    expectTypeOf<EventByType<'llm.delta'>['part']['text']>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<EventByType<'llm.delta'>['part']['think']>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<EventByType<'llm.step.end'>['content']>().toEqualTypeOf<string>();
   });
 
   it('narrows hook results by type', () => {
-    expectTypeOf<EventByType<'hook.result'>['hookEvent']>().toEqualTypeOf<string>();
-    expectTypeOf<EventByType<'hook.result'>['content']>().toEqualTypeOf<string>();
-    expectTypeOf<EventByType<'hook.result'>['blocked']>().toEqualTypeOf<boolean | undefined>();
+    expectTypeOf<EventByType<'session.hook.result'>['hook_event']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'session.hook.result'>['content']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'session.hook.result'>['blocked']>().toEqualTypeOf<boolean>();
   });
 
   it('narrows tool calls by type', () => {
-    expectTypeOf<EventByType<'tool.call.started'>['toolCallId']>().toEqualTypeOf<string>();
-    expectTypeOf<EventByType<'tool.call.started'>['name']>().toEqualTypeOf<string>();
-    expectTypeOf<EventByType<'tool.call.started'>['args']>().toEqualTypeOf<unknown>();
+    expectTypeOf<EventByType<'session.tool.started'>['tool_call_id']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'session.tool.started'>['tool_name']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'session.tool.started'>['arguments']>().toEqualTypeOf<unknown>();
+    expectTypeOf<EventByType<'session.tool.settled'>['tool_call_id']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'session.tool.settled'>['content']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'session.tool.settled'>['is_error']>().toEqualTypeOf<boolean>();
   });
 
-  it('exposes LLM stream timing on step completion events', () => {
-    expectTypeOf<EventByType<'turn.step.completed'>['llmFirstTokenLatencyMs']>().toEqualTypeOf<
-      number | undefined
-    >();
-    expectTypeOf<EventByType<'turn.step.completed'>['llmStreamDurationMs']>().toEqualTypeOf<
-      number | undefined
-    >();
-    expectTypeOf<EventByType<'turn.step.completed'>['llmRequestBuildMs']>().toEqualTypeOf<
-      number | undefined
-    >();
-    expectTypeOf<EventByType<'turn.step.completed'>['llmServerFirstTokenMs']>().toEqualTypeOf<
-      number | undefined
-    >();
-    expectTypeOf<EventByType<'turn.step.completed'>['llmServerDecodeMs']>().toEqualTypeOf<
-      number | undefined
-    >();
-    expectTypeOf<EventByType<'turn.step.completed'>['llmClientConsumeMs']>().toEqualTypeOf<
-      number | undefined
-    >();
+  it('exposes usage accounting on engine usage events', () => {
+    expectTypeOf<EventByType<'session.usage.updated'>['turn_id']>().toEqualTypeOf<number>();
+    expectTypeOf<EventByType<'session.usage.updated'>['input_tokens']>().toEqualTypeOf<number>();
+    expectTypeOf<EventByType<'session.usage.updated'>['output_tokens']>().toEqualTypeOf<number>();
+    expectTypeOf<EventByType<'session.usage.updated'>['total_tokens']>().toEqualTypeOf<number>();
   });
 
-  it('narrows subagent lifecycle events by type', () => {
-    expectTypeOf<EventByType<'subagent.spawned'>['subagentId']>().toEqualTypeOf<string>();
-    expectTypeOf<EventByType<'subagent.spawned'>['runInBackground']>().toEqualTypeOf<boolean>();
-    expectTypeOf<EventByType<'subagent.suspended'>['reason']>().toEqualTypeOf<string>();
+  it('narrows task lifecycle events by type', () => {
+    expectTypeOf<EventByType<'session.task.started'>['task_id']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'session.task.started'>['description']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'session.task.started'>['kind']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'session.task.started'>['started_at_ms']>().toEqualTypeOf<number>();
+    expectTypeOf<EventByType<'session.task.terminated'>['task_id']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'session.task.terminated'>['status']>().toEqualTypeOf<string>();
   });
 
-  it('narrows cron fired events by type', () => {
-    expectTypeOf<EventByType<'cron.fired'>['prompt']>().toEqualTypeOf<string>();
-    expectTypeOf<EventByType<'cron.fired'>['origin']['kind']>().toEqualTypeOf<'cron_job'>();
+  it('narrows engine shell output and compaction events by type', () => {
+    expectTypeOf<EventByType<'session.shell.output'>['command_id']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'session.shell.output'>['chunk']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'session.compaction.started'>['source']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'session.compaction.started'>['tokens_before']>().toEqualTypeOf<number>();
+  });
+
+  it('narrows goal updates by type', () => {
+    expectTypeOf<EventByType<'session.goal.updated'>['status']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'session.goal.updated'>['snapshot']>().toEqualTypeOf<GoalSnapshot | null>();
   });
 
   it('exposes approval and question reverse-RPC requests', () => {
@@ -66,8 +78,9 @@ describe('Event public types', () => {
   it('covers every event in exhaustive switches', () => {
     function handle(event: Event): void {
       switch (event.type) {
+        case 'error':
+        case 'warning':
         case 'agent.status.updated':
-        case 'session.meta.updated':
         case 'event.session.created':
         case 'event.session.status_changed':
         case 'event.session.work_changed':
@@ -76,47 +89,25 @@ describe('Event public types', () => {
         case 'event.workspace.deleted':
         case 'event.config.changed':
         case 'event.model_catalog.changed':
-        case 'goal.updated':
-        case 'skill.activated':
-        case 'plugin_command.activated':
-        case 'error':
-        case 'warning':
-        case 'turn.started':
-        case 'turn.ended':
-        case 'turn.step.started':
-        case 'turn.step.completed':
-        case 'turn.step.retrying':
-        case 'turn.step.interrupted':
-        case 'assistant.delta':
-        case 'hook.result':
-        case 'thinking.delta':
-        case 'tool.call.delta':
-        case 'tool.call.started':
-        case 'tool.progress':
-        case 'shell.output':
-        case 'shell.started':
-        case 'shell.completed':
-        case 'tool.result':
-        case 'tool.list.updated':
-        case 'mcp.server.status':
-        case 'subagent.spawned':
-        case 'subagent.started':
-        case 'subagent.suspended':
-        case 'subagent.completed':
-        case 'subagent.failed':
-        case 'compaction.started':
-        case 'compaction.blocked':
-        case 'compaction.cancelled':
-        case 'compaction.completed':
-        case 'task.started':
-        case 'task.terminated':
-        case 'background.task.started':
-        case 'background.task.terminated':
-        case 'cron.fired':
-        case 'prompt.submitted':
-        case 'prompt.completed':
-        case 'prompt.aborted':
-        case 'prompt.steered':
+        case 'session.turn.started':
+        case 'session.turn.ended':
+        case 'llm.step.begin':
+        case 'llm.delta':
+        case 'llm.step.end':
+        case 'session.tool.started':
+        case 'session.tool.settled':
+        case 'session.goal.updated':
+        case 'session.task.started':
+        case 'session.task.terminated':
+        case 'session.usage.updated':
+        case 'session.hook.result':
+        case 'session.compaction.started':
+        case 'session.shell.output':
+        case 'session.meta.updated':
+        case 'config.update':
+        case 'permission.set_mode':
+        case 'turn.steer':
+        case 'session.closed':
           return;
         default:
           assertNever(event);

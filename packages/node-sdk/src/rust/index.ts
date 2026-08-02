@@ -6,7 +6,6 @@
  * host needs to drive a session-owned engine session through the SDK `Event`
  * union and approval seam, without touching the engine wire protocol.
  */
-export { SessionEventTranslator, mapGoalSnapshot } from './event-translate';
 export {
   SessionEngineController,
   type SessionClientFactory,

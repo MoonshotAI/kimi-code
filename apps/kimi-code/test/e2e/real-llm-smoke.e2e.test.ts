@@ -24,7 +24,7 @@ const DEFAULT_WORKDIR = '/tmp/kimi-e2e';
 const TURN_TIMEOUT_MS = 60_000;
 
 const ENABLED = process.env['KIMI_E2E_REAL'] === '1';
-type TurnEndedEvent = Extract<Event, { readonly type: 'turn.ended' }>;
+type TurnEndedEvent = Extract<Event, { readonly type: 'session.turn.ended' }>;
 
 describe.skipIf(!ENABLED)('SDK e2e — real LLM smoke', () => {
   test(
@@ -56,7 +56,7 @@ describe.skipIf(!ENABLED)('SDK e2e — real LLM smoke', () => {
           const off = session.onEvent((event) => {
             const payload = JSON.stringify(event).slice(0, 500);
             process.stdout.write(`[smoke][event:${event.type}] ${payload}\n`);
-            if (event.type === 'turn.ended') {
+            if (event.type === 'session.turn.ended') {
               off();
               resolve(event);
             }
@@ -67,11 +67,8 @@ describe.skipIf(!ENABLED)('SDK e2e — real LLM smoke', () => {
         process.stderr.write('[smoke] prompt dispatched\n');
 
         const event = await turnEnded;
-        process.stderr.write(`[smoke] turn.ended reason=${event.reason}\n`);
-        if (event.error !== undefined) {
-          process.stderr.write(`[smoke] error=${event.error.message}\n`);
-        }
-        expect(event.reason).toBe('completed');
+        process.stderr.write(`[smoke] session.turn.ended stop_reason=${event.stop_reason}\n`);
+        expect(event.stop_reason).toBe('EndTurn');
       } finally {
         await harness.close().catch(() => {});
       }

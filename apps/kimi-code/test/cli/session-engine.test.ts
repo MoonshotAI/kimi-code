@@ -30,7 +30,11 @@ describe('isSessionEngineEnabled (Track F: print default-on)', () => {
 
 describe('formatSessionPrintEvent', () => {
   it('renders assistant text to stdout', () => {
-    const event = { ...base, type: 'assistant.delta', turnId: 1, delta: 'hello' } as Event;
+    const event = {
+      ...base,
+      type: 'llm.delta',
+      part: { type: 'text' as const, text: 'hello' },
+    } as Event;
     const out = formatSessionPrintEvent(event, new Map());
     expect(out.stdout).toBe('hello');
     expect(out.stderr).toBeUndefined();
@@ -40,11 +44,10 @@ describe('formatSessionPrintEvent', () => {
     const toolNames = new Map<string, string>();
     const event = {
       ...base,
-      type: 'tool.call.started',
-      turnId: 1,
-      toolCallId: 'c1',
-      name: 'Read',
-      args: { path: 'a.txt' },
+      type: 'session.tool.started',
+      tool_call_id: 'c1',
+      tool_name: 'Read',
+      arguments: { path: 'a.txt' },
     } as Event;
     const out = formatSessionPrintEvent(event, toolNames);
     expect(out.stdout).toBeUndefined();
@@ -58,11 +61,11 @@ describe('formatSessionPrintEvent', () => {
     const toolNames = new Map<string, string>([['c1', 'Read']]);
     const event = {
       ...base,
-      type: 'tool.result',
-      turnId: 1,
-      toolCallId: 'c1',
-      output: 'file contents',
-      isError: false,
+      type: 'session.tool.settled',
+      tool_call_id: 'c1',
+      tool_name: 'Read',
+      content: 'file contents',
+      is_error: false,
     } as Event;
     const out = formatSessionPrintEvent(event, toolNames);
     expect(out.stderr).toBe('[tool] Read ok\n');
@@ -72,11 +75,11 @@ describe('formatSessionPrintEvent', () => {
     const toolNames = new Map<string, string>([['c2', 'Bash']]);
     const event = {
       ...base,
-      type: 'tool.result',
-      turnId: 1,
-      toolCallId: 'c2',
-      output: 'boom: permission denied\nstack trace line 2',
-      isError: true,
+      type: 'session.tool.settled',
+      tool_call_id: 'c2',
+      tool_name: 'Bash',
+      content: 'boom: permission denied\nstack trace line 2',
+      is_error: true,
     } as Event;
     const out = formatSessionPrintEvent(event, toolNames);
     expect(out.stderr).toContain('[tool] Bash failed: boom: permission denied');
@@ -84,7 +87,12 @@ describe('formatSessionPrintEvent', () => {
   });
 
   it('ignores events with no print representation (e.g. goal updates)', () => {
-    const event = { ...base, type: 'goal.updated', turnId: 1, status: 'active' } as unknown as Event;
+    const event = {
+      ...base,
+      type: 'session.goal.updated',
+      status: 'Active',
+      snapshot: null,
+    } as unknown as Event;
     const out = formatSessionPrintEvent(event, new Map());
     expect(out).toEqual({});
   });

@@ -19,7 +19,7 @@ afterEach(async () => {
 });
 
 describe('Session.cancel', () => {
-  it('cancels an active streaming turn and emits turn_ended(cancelled)', async () => {
+  it('cancels an active streaming turn and emits session.turn.ended(Aborted)', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-cancel-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-cancel-work-');
     await writeFakeModelConfig(homeDir);
@@ -31,8 +31,8 @@ describe('Session.cancel', () => {
       const unsubscribe = session.onEvent((event) => {
         events.push(event);
       });
-      const started = waitForSDKEvent(session, (event) => event.type === 'turn.started');
-      const ended = waitForSDKEvent(session, (event) => event.type === 'turn.ended');
+      const started = waitForSDKEvent(session, (event) => event.type === 'session.turn.started');
+      const ended = waitForSDKEvent(session, (event) => event.type === 'session.turn.ended');
 
       await session.prompt('start a turn that will be cancelled');
       const startedEvent = await started;
@@ -41,17 +41,17 @@ describe('Session.cancel', () => {
       unsubscribe();
 
       expect(startedEvent).toMatchObject({
-        type: 'turn.started',
+        type: 'session.turn.started',
         sessionId: session.id,
       });
       expect(endedEvent).toMatchObject({
-        type: 'turn.ended',
+        type: 'session.turn.ended',
         sessionId: session.id,
-        turnId: startedEvent.type === 'turn.started' ? startedEvent.turnId : undefined,
-        reason: 'cancelled',
+        turn_id: startedEvent.type === 'session.turn.started' ? startedEvent.turn_id : undefined,
+        stop_reason: 'Aborted',
       });
-      expect(events).toContainEqual(expect.objectContaining({ type: 'turn.started' }));
-      expect(events).toContainEqual(expect.objectContaining({ type: 'turn.ended' }));
+      expect(events).toContainEqual(expect.objectContaining({ type: 'session.turn.started' }));
+      expect(events).toContainEqual(expect.objectContaining({ type: 'session.turn.ended' }));
     } finally {
       await harness.close();
     }
@@ -107,8 +107,8 @@ describe('KimiHarness.forkSession', () => {
 
     try {
       const session = await harness.createSession({ id: 'ses_fork_active_turn', workDir });
-      const started = waitForSDKEvent(session, (event) => event.type === 'turn.started');
-      const ended = waitForSDKEvent(session, (event) => event.type === 'turn.ended');
+      const started = waitForSDKEvent(session, (event) => event.type === 'session.turn.started');
+      const ended = waitForSDKEvent(session, (event) => event.type === 'session.turn.ended');
 
       await session.prompt('keep this turn active');
       await started;

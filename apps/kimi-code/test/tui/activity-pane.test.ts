@@ -55,23 +55,13 @@ function makeDriverWithTerminalProgress(): {
 }
 
 function startSwarmProgress(driver: ActivityDriver, state: TUIState): AgentSwarmProgressComponent {
+  // Swarm progress is tool-driven in the engine-contract era: the progress
+  // component is created (and marked input-complete) by the AgentSwarm tool
+  // start; there are no `subagent.*` lifecycle events anymore.
   const handler = driver.sessionEventHandler.subAgentEventHandler;
   handler.handleAgentSwarmToolCallStarted('call_swarm', {
     description: 'Review changed files',
   });
-  handler.handleLifecycleEvent({
-    type: 'subagent.spawned',
-    subagentId: 'agent-1',
-    subagentName: 'coder',
-    parentToolCallId: 'call_swarm',
-    description: 'Review changed files #1 (coder)',
-    swarmIndex: 1,
-    runInBackground: false,
-  } as Parameters<typeof handler.handleLifecycleEvent>[0]);
-  handler.handleLifecycleEvent({
-    type: 'subagent.started',
-    subagentId: 'agent-1',
-  } as Parameters<typeof handler.handleLifecycleEvent>[0]);
 
   const progress = state.transcriptContainer.children.find(
     (child): child is AgentSwarmProgressComponent => child instanceof AgentSwarmProgressComponent,
