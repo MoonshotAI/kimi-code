@@ -457,7 +457,21 @@ export class SessionSubagentHost {
     const subagentNames = Object.keys(
       this.session.agentCatalog.delegatableSubagents(profile.name),
     );
-    child.useProfile(profile, context, this.session.options.kimiHomeDir, subagentNames);
+
+    // Apply global [tools].disabled to subagents too. #2534.
+    const toolsDisabled = this.session.readToolsDisabled();
+    const effectiveProfile =
+      toolsDisabled.length > 0
+        ? {
+            ...profile,
+            disallowedTools: [
+              ...(profile.disallowedTools ?? []),
+              ...toolsDisabled,
+            ],
+          }
+        : profile;
+
+    child.useProfile(effectiveProfile, context, this.session.options.kimiHomeDir, subagentNames);
     child.tools.inheritUserTools(parent.tools);
   }
 

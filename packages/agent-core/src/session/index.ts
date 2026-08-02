@@ -813,7 +813,7 @@ export class Session {
    * dedicated toolPolicy service), so unknown sections land in
    * `config.raw`. This extracts the disabled tool names safely. #2534.
    */
-  private readToolsDisabled(): string[] {
+  readToolsDisabled(): string[] {
     const raw = this.kimiConfig?.raw;
     if (!raw) return [];
     const toolsSection = raw['tools'];
