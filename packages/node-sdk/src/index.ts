@@ -151,10 +151,10 @@ export { loadMcpServers } from '#/legacy/mcp-config-loader';
 export type { McpServerConfig as McpServerConfigEntry } from '#/legacy/config-schema';
 export { PluginManager, type SkillRoot } from '#/legacy/plugin/manager';
 export type { HookDef, HookEventType } from '#/legacy/plugin/hooks';
-// The profile subsystem (prepareSystemPromptContext / DEFAULT_AGENT_PROFILES)
-// is still forwarded from agent-core — ported in a follow-up.
-export { prepareSystemPromptContext } from '@moonshot-ai/agent-core/profile/context';
-export { DEFAULT_AGENT_PROFILES } from '@moonshot-ai/agent-core/profile/default';
+// Profile subsystem (prepareSystemPromptContext / DEFAULT_AGENT_PROFILES),
+// ported to legacy/profile.
+export { prepareSystemPromptContext, loadAgentsMd } from '#/legacy/profile/context';
+export { DEFAULT_AGENT_PROFILES, DEFAULT_INIT_PROMPT } from '#/legacy/profile/default';
 export type {
   AgentContextData,
   AgentReplayRecord,
