@@ -17,18 +17,13 @@ export {
   toolResultToAcpContent,
 } from './convert';
 export {
-  acpToolCallId,
   assistantDeltaToSessionUpdate,
   inferToolKind,
   stringifyArgs,
   thinkingDeltaToSessionUpdate,
-  toolCallDeltaToSessionUpdate,
-  toolCallLazyCreateToSessionUpdate,
-  toolCallStartedUpgradeToSessionUpdate,
   toolCallStartToSessionUpdate,
-  toolProgressToSessionUpdate,
   toolResultToSessionUpdate,
-  turnEndReasonToStopReason,
+  turnStopReasonToAcpStopReason,
 } from './events-map';
 export type { AcpStopReason, AcpToolCallStatus, AcpToolKind } from './types';
 export { HideOutputMarker, isHideOutputMarker } from './marker';

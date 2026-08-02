@@ -41,19 +41,12 @@ import { buildSessionConfigOptions } from './config-options';
 import { listModelsFromHarness } from './model-catalog';
 import { acpBlocksToPromptParts, compressPromptImageParts } from './convert';
 import {
-  acpToolCallId,
   assistantDeltaToSessionUpdate,
   configOptionUpdateNotification,
-  planFromDisplayBlock,
-  stringifyArgs,
   thinkingDeltaToSessionUpdate,
-  toolCallDeltaToSessionUpdate,
-  toolCallLazyCreateToSessionUpdate,
-  toolCallStartedUpgradeToSessionUpdate,
   toolCallStartToSessionUpdate,
-  toolProgressToSessionUpdate,
   toolResultToSessionUpdate,
-  turnEndReasonToStopReason,
+  turnStopReasonToAcpStopReason,
 } from './events-map';
 import { acpModeToToggles, DEFAULT_MODE_ID, isAcpModeId, type AcpModeId } from './modes';
 import { outcomeToQuestionAnswer, questionItemToPermissionOptions } from './question';
@@ -82,17 +75,19 @@ export type TelemetryTrackFn = (
  */
 export class AcpSession {
   /**
-   * The most recently observed turnId from the underlying SDK event
-   * stream. Used by {@link handleApproval} to compose the prefixed ACP
-   * `toolCallId` (`${turnId}:${rawId}`) so the client can correlate the
-   * permission prompt with the tool card it has already rendered.
+   * The most recently observed `turn_id` from the underlying SDK event
+   * stream. Retained for {@link runTurnBody}'s turn-busy guard: the
+   * `initialActiveTurnId` snapshot lets the adapter tell whether a
+   * `session.turn.started` belongs to THIS prompt or to a pre-existing
+   * turn, so a `turn.agent_busy` error is only fatal when our own turn
+   * never started.
    *
-   * Updated inside the existing `onEvent` listener in {@link prompt}
-   * (any event carrying a numeric `turnId` advances the value), and
-   * reset to `undefined` on `turn.ended`. Approval flows are gated by
-   * the SDK on the active turn so a stale value is effectively
-   * unreachable in practice; the `undefined` fallback in
-   * `buildPermissionToolCallUpdate` exists for defence-in-depth.
+   * Updated inside the existing `onEvent` listener in {@link runTurnBody}
+   * (any event carrying a numeric `turn_id` advances the value), and
+   * reset to `undefined` on `session.turn.ended`. The retired
+   * `${turnId}:${toolCallId}` wire-id prefix is gone — the engine's
+   * `session.tool.*` events carry no `turn_id`, so approvals and tool
+   * cards now correlate on the raw `tool_call_id` verbatim.
    */
   private currentTurnId: number | undefined = undefined;
 
@@ -566,14 +561,14 @@ export class AcpSession {
    *  - role `user`         → `user_message_chunk` per text {@link ContentPart}.
    *  - role `assistant`    → `agent_message_chunk` / `agent_thought_chunk`
    *    per text/think content, plus a `tool_call` notification per
-   *    `toolCalls` entry. A monotonically increasing synthetic `turnId`
-   *    starts at 1 and bumps on each assistant message so the wire ids
-   *    (`${turnId}:${toolCallId}`) match the live emission scheme used
-   *    in {@link runPromptBody}.
+   *    `toolCalls` entry. The wire `toolCallId` is the raw SDK id
+   *    verbatim — the engine's `session.tool.*` events carry no
+   *    `turn_id`, so there is no `${turnId}:${toolCallId}` prefix to
+   *    synthesize (matches the live emission scheme in
+   *    {@link runTurnBody}).
    *  - role `tool`         → `tool_call_update` with `status: 'completed'`
-   *    (or `'failed'` if the SDK marked the message as an error).
-   *    `toolCallId` is looked up from the bookkeeping map populated when
-   *    the originating assistant message was replayed.
+   *    (or `'failed'` if the SDK marked the message as an error),
+   *    keyed on the raw SDK `toolCallId`.
    *
    * Tool calls whose result we never observe (interrupted turn,
    * truncated history) are emitted as `tool_call` only — they stay in
@@ -586,7 +581,7 @@ export class AcpSession {
    * Errors thrown by individual `sessionUpdate` calls are caught and
    * logged so a single transient push failure does not truncate the
    * whole replay. The method awaits every push (unlike the live
-   * `runPromptBody` fire-and-forget path) because replay is a one-shot
+   * `runTurnBody` fire-and-forget path) because replay is a one-shot
    * batch — completion ordering is what tells the caller (`loadSession`)
    * that the response is safe to return.
    */
@@ -608,24 +603,9 @@ export class AcpSession {
       return;
     }
 
-    let turnId = 0;
-    // Map from SDK toolCallId → owning synthetic turnId, populated when
-    // the assistant message that issued the call is replayed and read
-    // when the tool result lands. Lives for the duration of one replay.
-    const toolCallTurnIds = new Map<string, number>();
-
     for (const message of agent.context.history) {
       try {
-        await this.replayMessage(message, sessionId, conn, {
-          getTurnId: () => turnId,
-          beginAssistantTurn: () => {
-            turnId += 1;
-          },
-          recordToolCall: (toolCallId) => {
-            toolCallTurnIds.set(toolCallId, turnId);
-          },
-          lookupToolCallTurnId: (toolCallId) => toolCallTurnIds.get(toolCallId),
-        });
+        await this.replayMessage(message, sessionId, conn);
       } catch (err) {
         log.warn('acp: replayHistory failed to emit a message; continuing', {
           sessionId,
@@ -640,20 +620,14 @@ export class AcpSession {
    * Emit ACP session updates for a single historical {@link ContextMessage}.
    *
    * Factored out of {@link replayHistory} so the per-message dispatch
-   * stays small and the outer loop is just the turnId/tool-bookkeeping
-   * shell. Awaits every `sessionUpdate` so the replay completes in
-   * order (see {@link replayHistory} JSDoc for the rationale).
+   * stays small and the outer loop stays a plain walk. Awaits every
+   * `sessionUpdate` so the replay completes in order (see
+   * {@link replayHistory} JSDoc for the rationale).
    */
   private async replayMessage(
     message: ContextMessage,
     sessionId: string,
     conn: AgentSideConnection,
-    ctx: {
-      getTurnId: () => number;
-      beginAssistantTurn: () => void;
-      recordToolCall: (toolCallId: string) => void;
-      lookupToolCallTurnId: (toolCallId: string) => number | undefined;
-    },
   ): Promise<void> {
     switch (message.role) {
       case 'user':
@@ -670,32 +644,21 @@ export class AcpSession {
         }
         return;
       case 'assistant': {
-        ctx.beginAssistantTurn();
-        const turnId = ctx.getTurnId();
         for (const part of message.content) {
-          await this.replayAssistantContentPart(part, sessionId, conn, turnId);
+          await this.replayAssistantContentPart(part, sessionId, conn);
         }
         for (const toolCall of message.toolCalls ?? []) {
-          ctx.recordToolCall(toolCall.id);
-          await this.replaySyntheticToolCall(toolCall, sessionId, conn, turnId);
+          await this.replaySyntheticToolCall(toolCall, sessionId, conn);
         }
         return;
       }
       case 'tool': {
-        const rawToolCallId = message.toolCallId;
-        if (!rawToolCallId) {
+        const toolCallId = message.toolCallId;
+        if (!toolCallId) {
           // Tool result with no correlation id — log and skip rather
           // than crash. The on-disk session is the source of truth;
           // we cannot synthesize a missing id.
           log.warn('acp: replayHistory skipped tool message with no toolCallId', { sessionId });
-          return;
-        }
-        const turnId = ctx.lookupToolCallTurnId(rawToolCallId);
-        if (turnId === undefined) {
-          log.warn('acp: replayHistory found tool message with no matching call', {
-            sessionId,
-            toolCallId: rawToolCallId,
-          });
           return;
         }
         const isError = message.isError === true;
@@ -703,7 +666,7 @@ export class AcpSession {
           sessionId,
           update: {
             sessionUpdate: 'tool_call_update',
-            toolCallId: acpToolCallId(turnId, rawToolCallId),
+            toolCallId,
             status: isError ? 'failed' : 'completed',
             content: toolMessageContentToAcpToolCallContent(message.content),
           },
@@ -720,26 +683,13 @@ export class AcpSession {
     part: ContextMessage['content'][number],
     sessionId: string,
     conn: AgentSideConnection,
-    turnId: number,
   ): Promise<void> {
     if (part.type === 'text' && part.text) {
-      await conn.sessionUpdate(
-        assistantDeltaToSessionUpdate(sessionId, {
-          type: 'assistant.delta',
-          turnId,
-          delta: part.text,
-        }),
-      );
+      await conn.sessionUpdate(assistantDeltaToSessionUpdate(sessionId, part.text));
       return;
     }
     if (part.type === 'think' && part.think) {
-      await conn.sessionUpdate(
-        thinkingDeltaToSessionUpdate(sessionId, {
-          type: 'thinking.delta',
-          turnId,
-          delta: part.think,
-        }),
-      );
+      await conn.sessionUpdate(thinkingDeltaToSessionUpdate(sessionId, part.think));
       return;
     }
     // image_url / audio_url / video_url are skipped at this layer —
@@ -751,18 +701,16 @@ export class AcpSession {
     toolCall: NonNullable<ContextMessage['toolCalls']>[number],
     sessionId: string,
     conn: AgentSideConnection,
-    turnId: number,
   ): Promise<void> {
     const name = toolCall.name;
     const argsRaw = toolCall.arguments;
     const parsedArgs = parseToolCallArguments(argsRaw);
     await conn.sessionUpdate(
       toolCallStartToSessionUpdate(sessionId, {
-        type: 'tool.call.started',
-        turnId,
-        toolCallId: toolCall.id,
-        name,
-        args: parsedArgs,
+        type: 'session.tool.started',
+        tool_call_id: toolCall.id,
+        tool_name: name,
+        arguments: parsedArgs,
       }),
     );
   }
@@ -777,15 +725,15 @@ export class AcpSession {
    *  - Everything else becomes `RequestError.internalError(...)` with
    *    the stack/message logged to the agent log file but NOT exposed
    *    to the client (the JSON-RPC layer would otherwise leak details).
-   *  - Auth-coded failures may arrive on TWO paths: a `turn.ended`
-   *    event with `reason: 'failed'` and an `event.error` payload, OR
-   *    a synchronous `session.prompt(...)` rejection. Both are
-   *    routed through {@link mapPromptError} for parity.
+   *  - Auth-coded failures arrive as a `session.prompt(...)` rejection
+   *    (the engine's `session.turn.ended` carries only a `stop_reason`
+   *    string — no error payload) and are routed through
+   *    {@link mapPromptError}.
    *
-   * Subscribes to the session event stream; for every `assistant.delta`,
-   * pushes an `agent_message_chunk` `session/update` notification to the
-   * client. Resolves with the ACP `PromptResponse` (containing
-   * `stopReason`) when a `turn.ended` event arrives.
+   * Subscribes to the session event stream; for every `llm.delta` text
+   * part, pushes an `agent_message_chunk` `session/update` notification
+   * to the client. Resolves with the ACP `PromptResponse` (containing
+   * `stopReason`) when a `session.turn.ended` event arrives.
    *
    * Cleanup invariants:
    *  - The event subscription is unsubscribed on EVERY exit path
@@ -908,65 +856,31 @@ export class AcpSession {
   private async runCompactCommand(args: string): Promise<void> {
     const instruction = args.trim() || undefined;
     let started = false;
-    let settled = false;
     let unsubscribe: (() => void) | undefined;
-    // The agent-core compaction worker emits events in this order on
-    // failure: `compaction.cancelled` (from `markCanceled`) followed by
-    // `error` (unless the failure happened while blocked-by-turn, in
-    // which case `compact()` itself rejects). We resolve on whichever
-    // terminal event arrives first and ignore the rest, so a follow-up
-    // `error` after a cancelled never causes a double-settle.
-    const completion = new Promise<CompactionOutcome>((resolve, reject) => {
-      const settle = (action: () => void): void => {
-        if (settled) return;
-        settled = true;
-        action();
-      };
-      unsubscribe = this.session.onEvent((event: Event) => {
-        if (event.agentId !== undefined && event.agentId !== MAIN_AGENT_ID) return;
-        if (event.type === 'compaction.started') {
-          started = true;
-          void this.emitLocalCommandMessage(
-            instruction === undefined
-              ? 'Compacting conversation context…'
-              : `Compacting conversation context with instruction: ${instruction}`,
-          );
-          return;
-        }
-        if (event.type === 'compaction.completed') {
-          settle(() => resolve({ kind: 'completed', result: event.result }));
-          return;
-        }
-        if (event.type === 'compaction.cancelled') {
-          settle(() => resolve({ kind: 'cancelled' }));
-          return;
-        }
-        if (event.type === 'compaction.blocked') {
-          void this.emitLocalCommandMessage('Compaction is blocked by the current turn; retry when the turn is idle.');
-          return;
-        }
-        // Surface any error event the worker emits, even if it lands
-        // before `compaction.started` — that path is currently empty
-        // (begin() throws synchronously and rejects compact()), but
-        // dropping pre-start errors would silently hang the prompt if
-        // the worker is ever restructured.
-        if (event.type === 'error') {
-          settle(() => reject(new Error(event.message)));
-        }
-      });
+    // The engine's compaction worker emits `session.compaction.started`
+    // when the round begins and has no terminal event — completion is
+    // signalled by `compact()` resolving (the SDK returns `void`, so no
+    // result payload to surface). The subscription only records whether
+    // a compaction actually started; a rejected `compact()` is surfaced
+    // by `runBuiltInCommand`'s catch as `/compact failed: …`.
+    unsubscribe = this.session.onEvent((event: Event) => {
+      if (event.agentId !== undefined && event.agentId !== MAIN_AGENT_ID) return;
+      if (event.type === 'session.compaction.started') {
+        started = true;
+        void this.emitLocalCommandMessage(
+          instruction === undefined
+            ? 'Compacting conversation context…'
+            : `Compacting conversation context with instruction: ${instruction}`,
+        );
+      }
     });
     try {
       await this.session.compact({ instruction });
-      if (!started && !settled) {
+      if (!started) {
         await this.emitLocalCommandMessage('Compaction was not started.');
         return;
       }
-      const outcome = await completion;
-      if (outcome.kind === 'completed') {
-        await this.emitLocalCommandMessage(formatCompactionCompleted(outcome.result));
-      } else {
-        await this.emitLocalCommandMessage('Compaction cancelled.');
-      }
+      await this.emitLocalCommandMessage('Compaction complete.');
     } finally {
       unsubscribe?.();
     }
@@ -981,8 +895,8 @@ export class AcpSession {
    * activation internally calls `agent.turn.prompt(...)` after
    * injecting the `<kimi-skill-loaded>` block — see
    * `packages/agent-core/src/agent/skill/index.ts`), so the event
-   * subscription's `turn.started` / `turn.ended` semantics apply
-   * uniformly.
+   * subscription's `session.turn.started` / `session.turn.ended`
+   * semantics apply uniformly.
    */
   private runTurnBody(
     sessionId: string,
@@ -993,57 +907,27 @@ export class AcpSession {
       let settled = false;
       const isFromMainAgent = (event: { agentId?: string }): boolean =>
         event.agentId === undefined || event.agentId === MAIN_AGENT_ID;
-      // Per-tool-call streaming args accumulator. Lives in the Promise
-      // executor closure so each `prompt()` invocation gets its own
-      // map and no state leaks across concurrent or sequential turns.
-      // Keyed on the **SDK** `toolCallId` (not the ACP-prefixed one)
-      // because the SDK delta events only carry the raw id.
-      const argsByToolCall = new Map<string, { args: string }>();
-      // Set of **wire-level** (turn-prefixed) tool-call ids for which
-      // we have already sent the `tool_call` CREATE notification. The
-      // agent-core actually emits `tool.call.delta` events BEFORE
-      // `tool.call.started` (deltas come from the model's args stream;
-      // the started event comes from the loop dispatching the call
-      // afterwards). Without this set, the naive "started → tool_call,
-      // delta → tool_call_update" mapping puts updates on the wire
-      // ahead of the create, and clients such as Zed surface "Tool
-      // call not found" until the create eventually lands. We instead
-      // lazy-create the wire `tool_call` on the first delta and
-      // downgrade the eventual started event into a `tool_call_update`
-      // carrying the canonical title/kind/rawInput (and any
-      // `display`-derived diff).
-      //
-      // Keyed on the wire id (`${turnId}:${rawToolCallId}`) — not the
-      // raw SDK `toolCallId` — because providers may legitimately
-      // reuse the same raw id across turns within one prompt, and
-      // each turn produces a distinct wire-level tool call that needs
-      // its own CREATE.
-      const startedToolCalls = new Set<string>();
       const initialActiveTurnId = this.currentTurnId;
       let hasReceivedOwnTurnStarted = false;
       const unsub = this.session.onEvent((event) => {
         if (
-          event.type === 'turn.started' &&
+          event.type === 'session.turn.started' &&
           isFromMainAgent(event) &&
-          (initialActiveTurnId === undefined || event.turnId !== initialActiveTurnId)
+          (initialActiveTurnId === undefined || event.turn_id !== initialActiveTurnId)
         ) {
           hasReceivedOwnTurnStarted = true;
         }
-        // Track the active turn so `handleApproval` (registered once at
-        // construction, called via `setApprovalHandler`) can compose the
-        // prefixed `${turnId}:${toolCallId}` wire id that matches the
-        // tool card the client already rendered. This branch is purely
-        // additive: it runs before the existing dispatch and never
-        // returns, so the if-chain below behaves exactly as in Phase 4.
-        // Subagent turn events carry their own `turnId`; filtering on
-        // `agentId` keeps `currentTurnId` aligned with the parent turn
-        // that the approval prompt actually belongs to.
+        // Track the active turn so the busy-turn guard above can tell a
+        // `session.turn.started` belonging to THIS prompt apart from a
+        // pre-existing turn. Subagent turn events carry their own
+        // `turn_id`; filtering on `agentId` keeps `currentTurnId`
+        // aligned with the main-agent turn.
         if (
-          'turnId' in event &&
-          typeof event.turnId === 'number' &&
+          'turn_id' in event &&
+          typeof event.turn_id === 'number' &&
           isFromMainAgent(event)
         ) {
-          this.currentTurnId = event.turnId;
+          this.currentTurnId = event.turn_id;
         }
         if (event.type === 'error') {
           if (settled) return;
@@ -1051,8 +935,6 @@ export class AcpSession {
           if (event.code !== ErrorCodes.TURN_AGENT_BUSY) return;
           if (hasReceivedOwnTurnStarted) return;
           settled = true;
-          argsByToolCall.clear();
-          startedToolCalls.clear();
           this.currentTurnId = undefined;
           unsub();
           log.warn('acp: prompt rejected because another turn is active', {
@@ -1067,7 +949,7 @@ export class AcpSession {
           );
           return;
         }
-        if (event.type === 'assistant.delta') {
+        if (event.type === 'llm.delta') {
           if (!isFromMainAgent(event)) return;
           // `sessionUpdate` is itself async (it serializes onto the
           // ndjson stream). The text deltas form a strictly ordered
@@ -1075,201 +957,61 @@ export class AcpSession {
           // would force the next delta to wait for the previous flush.
           // Fire-and-forget keeps the stream pumping; we log push
           // failures rather than dropping them silently.
+          const part = event.part;
+          if (part.type === 'text' && part.text !== undefined) {
+            conn
+              .sessionUpdate(assistantDeltaToSessionUpdate(sessionId, part.text))
+              .catch((err) => {
+                log.warn('acp: failed to push agent_message_chunk', {
+                  sessionId,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              });
+          } else if (part.type === 'think' && part.think !== undefined) {
+            conn
+              .sessionUpdate(thinkingDeltaToSessionUpdate(sessionId, part.think))
+              .catch((err) => {
+                log.warn('acp: failed to push agent_thought_chunk', {
+                  sessionId,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              });
+          }
+          return;
+        }
+        if (event.type === 'session.tool.started') {
+          if (!isFromMainAgent(event)) return;
           conn
-            .sessionUpdate(assistantDeltaToSessionUpdate(sessionId, event))
+            .sessionUpdate(toolCallStartToSessionUpdate(sessionId, event))
             .catch((err) => {
-              log.warn('acp: failed to push agent_message_chunk', {
+              log.warn('acp: failed to push tool_call', {
                 sessionId,
+                toolCallId: event.tool_call_id,
                 error: err instanceof Error ? err.message : String(err),
               });
             });
           return;
         }
-        if (event.type === 'thinking.delta') {
-          if (!isFromMainAgent(event)) return;
-          conn
-            .sessionUpdate(thinkingDeltaToSessionUpdate(sessionId, event))
-            .catch((err) => {
-              log.warn('acp: failed to push agent_thought_chunk', {
-                sessionId,
-                error: err instanceof Error ? err.message : String(err),
-              });
-            });
-          return;
-        }
-        if (event.type === 'tool.call.started') {
-          if (!isFromMainAgent(event)) return;
-          // Seed the accumulator with the **stringified initial args**.
-          // The wire-level `tool_call_update` is REPLACE-content (not
-          // append) so each subsequent delta emits the cumulative args
-          // string; if we seeded with an empty string the first delta
-          // would silently drop the initial args from the rendered card.
-          argsByToolCall.set(event.toolCallId, { args: stringifyArgs(event.args) });
-          // Branch on whether a streaming delta already lazy-created
-          // the wire `tool_call` for this id:
-          //  - YES → we cannot send a second `tool_call` CREATE; emit a
-          //    `tool_call_update` (the "upgrade") so `title`/`kind`/
-          //    `rawInput`/`display`-derived diff land on the existing
-          //    card and `status` flips to `'in_progress'`.
-          //  - NO  → no prior deltas (e.g. provider doesn't stream args);
-          //    take the original path and emit the `tool_call` CREATE.
-          const startedWireId = acpToolCallId(event.turnId, event.toolCallId);
-          if (startedToolCalls.has(startedWireId)) {
-            conn
-              .sessionUpdate(toolCallStartedUpgradeToSessionUpdate(sessionId, event))
-              .catch((err) => {
-                log.warn('acp: failed to push tool_call_update (start upgrade)', {
-                  sessionId,
-                  toolCallId: event.toolCallId,
-                  error: err instanceof Error ? err.message : String(err),
-                });
-              });
-          } else {
-            startedToolCalls.add(startedWireId);
-            conn
-              .sessionUpdate(toolCallStartToSessionUpdate(sessionId, event))
-              .catch((err) => {
-                log.warn('acp: failed to push tool_call', {
-                  sessionId,
-                  toolCallId: event.toolCallId,
-                  error: err instanceof Error ? err.message : String(err),
-                });
-              });
-          }
-          // Phase 9.3: when the tool exposed a structured TodoList
-          // display, additionally fire a `plan` session_update so ACP
-          // clients can render the agent's evolving TODO list. Other
-          // display kinds (diff/file_io/command/…) are already folded
-          // into the tool_call card; only `todo_list` becomes a plan.
-          // The emission is fire-and-forget under the same idle-stream
-          // discipline as the assistant deltas above.
-          if (event.display) {
-            const planNote = planFromDisplayBlock(sessionId, event.turnId, event.display);
-            if (planNote !== null) {
-              conn.sessionUpdate(planNote).catch((err) => {
-                log.warn('acp: failed to push plan', {
-                  sessionId,
-                  error: err instanceof Error ? err.message : String(err),
-                });
-              });
-            }
-          }
-          return;
-        }
-        if (event.type === 'tool.call.delta') {
-          if (!isFromMainAgent(event)) return;
-          // The agent-core emits these args-stream deltas BEFORE the
-          // `tool.call.started` event (deltas come from the provider's
-          // streaming phase; started is dispatched afterwards). If we
-          // haven't yet sent a `tool_call` CREATE for this id, do so now
-          // from the delta — Zed otherwise sees a `tool_call_update`
-          // for an unknown id and surfaces "Tool call not found" until
-          // the start eventually lands.
-          const deltaWireId = acpToolCallId(event.turnId, event.toolCallId);
-          if (!startedToolCalls.has(deltaWireId)) {
-            const initial = event.argumentsPart ?? '';
-            argsByToolCall.set(event.toolCallId, { args: initial });
-            startedToolCalls.add(deltaWireId);
-            conn
-              .sessionUpdate(toolCallLazyCreateToSessionUpdate(sessionId, event))
-              .catch((err) => {
-                log.warn('acp: failed to push tool_call (lazy create from delta)', {
-                  sessionId,
-                  toolCallId: event.toolCallId,
-                  error: err instanceof Error ? err.message : String(err),
-                });
-              });
-            return;
-          }
-          // Subsequent delta — accumulate then emit an update with the
-          // cumulative args text (REPLACE-content semantics).
-          let acc = argsByToolCall.get(event.toolCallId);
-          if (!acc) {
-            acc = { args: '' };
-            argsByToolCall.set(event.toolCallId, acc);
-          }
-          conn
-            .sessionUpdate(toolCallDeltaToSessionUpdate(sessionId, event, acc))
-            .catch((err) => {
-              log.warn('acp: failed to push tool_call_update (delta)', {
-                sessionId,
-                toolCallId: event.toolCallId,
-                error: err instanceof Error ? err.message : String(err),
-              });
-            });
-          return;
-        }
-        if (event.type === 'tool.progress') {
-          if (!isFromMainAgent(event)) return;
-          const note = toolProgressToSessionUpdate(sessionId, event);
-          if (note === null) return;
-          conn.sessionUpdate(note).catch((err) => {
-            log.warn('acp: failed to push tool_call_update (progress)', {
-              sessionId,
-              toolCallId: event.toolCallId,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          });
-          return;
-        }
-        if (event.type === 'tool.result') {
+        if (event.type === 'session.tool.settled') {
           if (!isFromMainAgent(event)) return;
           conn
             .sessionUpdate(toolResultToSessionUpdate(sessionId, event))
             .catch((err) => {
               log.warn('acp: failed to push tool_call_update (result)', {
                 sessionId,
-                toolCallId: event.toolCallId,
+                toolCallId: event.tool_call_id,
                 error: err instanceof Error ? err.message : String(err),
               });
             });
           return;
         }
-        if (event.type === 'turn.ended') {
+        if (event.type === 'session.turn.ended') {
           if (settled) return;
           if (!isFromMainAgent(event)) return;
           settled = true;
-          if (event.reason === 'failed') {
-            // Failures bubble up via the SDK `error` payload. Phase 11.1
-            // upgrades the prior "log + resolve end_turn" behaviour to
-            // route auth-coded failures through `RequestError.authRequired()`
-            // so the client can trigger its re-auth UX. Other failure
-            // codes still resolve with `end_turn` (the spec discourages
-            // signaling errors through `stopReason`; the failure is
-            // observable in the log).
-            log.warn('acp: turn ended with failed reason', {
-              sessionId,
-              error: event.error,
-            });
-            argsByToolCall.clear();
-            startedToolCalls.clear();
-            this.currentTurnId = undefined;
-            unsub();
-            const authErr = authRequiredFromPayload(event.error);
-            if (authErr) {
-              reject(authErr);
-              return;
-            }
-          } else {
-            if (event.reason === 'blocked') {
-              // Provider safety and prompt hooks both map to ACP `refusal`
-              // (see turnEndReasonToStopReason); log them here too so the
-              // block stays observable in the agent logs, mirroring the
-              // `failed` branch above.
-              log.warn('acp: turn ended with blocked reason', {
-                reason: event.reason,
-                sessionId,
-              });
-            }
-            argsByToolCall.clear();
-            startedToolCalls.clear();
-            // Drop the turnId so a late-arriving approval (e.g. an SDK
-            // reverse-RPC racing the turn boundary) falls back to the raw
-            // SDK id rather than re-prefixing with a stale value.
-            this.currentTurnId = undefined;
-            unsub();
-          }
-          resolve({ stopReason: turnEndReasonToStopReason(event.reason, event.error) });
+          this.currentTurnId = undefined;
+          unsub();
+          resolve({ stopReason: turnStopReasonToAcpStopReason(event.stop_reason) });
         }
       });
 
@@ -1289,7 +1031,8 @@ export class AcpSession {
    * Flow:
    *  1. Build the wire-level {@link ToolCallUpdate} so the client can
    *     correlate the prompt with the tool card it already rendered
-   *     (uses the prefixed `${turnId}:${rawId}` form when available).
+   *     (uses the raw SDK `toolCallId` — the engine's `session.tool.*`
+   *     events carry no `turn_id`, so there is no prefix to compose).
    *  2. Forward to the client via `conn.requestPermission` with the
    *     three canonical options (`allow_once`, `allow_always`, `reject`).
    *  3. Map the response back to {@link ApprovalResponse} for the SDK.
@@ -1305,7 +1048,7 @@ export class AcpSession {
    * needs human authorization to proceed with a tool call.
    */
   private async handleApproval(req: ApprovalRequest): Promise<ApprovalResponse> {
-    const toolCall = buildPermissionToolCallUpdate(this.currentTurnId, req);
+    const toolCall = buildPermissionToolCallUpdate(req);
     const options = approvalRequestToPermissionOptions(req);
     // Phase 13.2 telemetry breadcrumb: how many discrete options does
     // the plan_review surface carry? PII-free (just a count), matches
@@ -1395,11 +1138,10 @@ export class AcpSession {
       this.emitTelemetry('question_degraded', { reason: 'multi_select' });
     }
     const options = questionItemToPermissionOptions(q, 0);
-    const rawToolCallId = req.toolCallId ?? 'ask-user';
-    const toolCallId =
-      this.currentTurnId !== undefined
-        ? acpToolCallId(this.currentTurnId, rawToolCallId)
-        : rawToolCallId;
+    // Raw SDK toolCallId verbatim (or the canonical 'ask-user'
+    // placeholder when the request carries none) — the engine's
+    // tool events carry no turn_id, so no `${turnId}:` prefix.
+    const toolCallId = req.toolCallId ?? 'ask-user';
     try {
       const response = await this.conn.requestPermission({
         sessionId: this.id,
@@ -1465,12 +1207,6 @@ export class AcpSession {
  * The kimi-cli Python reference performs the same mapping at
  * `kimi-cli/src/kimi_cli/acp/session.py:218-247`; this is the TS port.
  */
-type CompactionCompletedResult = Extract<Event, { type: 'compaction.completed' }>['result'];
-
-type CompactionOutcome =
-  | { readonly kind: 'completed'; readonly result: CompactionCompletedResult }
-  | { readonly kind: 'cancelled' };
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -1542,15 +1278,6 @@ function formatTasksReport(tasks: readonly BackgroundTaskInfo[]): string {
   ].join('\n');
 }
 
-function formatCompactionCompleted(result: CompactionCompletedResult): string {
-  return [
-    'Compaction completed.',
-    `- Messages compacted: ${result.compactedCount.toLocaleString('en-US')}`,
-    `- Tokens before: ${result.tokensBefore.toLocaleString('en-US')}`,
-    `- Tokens after: ${result.tokensAfter.toLocaleString('en-US')}`,
-  ].join('\n');
-}
-
 function formatTokenUsage(usage: NonNullable<SessionUsage['total']>): string {
   return [
     `input ${usage.inputOther.toLocaleString('en-US')}`,
@@ -1609,25 +1336,6 @@ function mapPromptError(err: unknown, sessionId: string): RequestError {
 }
 
 /**
- * Inspect a {@link KimiErrorPayload} (as carried on `turn.ended`
- * failed events) and return a `RequestError.authRequired()` if its
- * `code` is one of the auth-required codes; otherwise `undefined`.
- *
- * Kept separate from {@link authRequiredFromUnknown} because the
- * `turn.ended` event hands us a serialized payload (no class identity
- * to branch on) — we only need the `code` discriminator here.
- */
-function authRequiredFromPayload(
-  payload: { readonly code: unknown } | undefined,
-): RequestError | undefined {
-  if (!payload) return undefined;
-  if (isAuthErrorCode(payload.code)) {
-    return RequestError.authRequired();
-  }
-  return undefined;
-}
-
-/**
  * Type-narrowing predicate for the codes the adapter treats as
  * "the client must re-authenticate before retrying". Currently:
  *  - `auth.login_required` — Kimi Platform / OAuth login flow needed.
@@ -1658,10 +1366,11 @@ function authRequiredFromUnknown(err: unknown): RequestError | undefined {
 }
 
 /**
- * Identifier the agent-core session emits for the main (user-facing)
+ * Identifier the engine session emits for the main (user-facing)
  * agent. Subagents are issued generated ids by `Session.spawnAgent`;
- * filtering on this constant keeps `turn.ended` / `error` events from a
- * child agent from settling the parent's `session/prompt` promise.
+ * filtering on this constant keeps `session.turn.ended` / `error`
+ * events from a child agent from settling the parent's `session/prompt`
+ * promise.
  */
 const MAIN_AGENT_ID = 'main';
 

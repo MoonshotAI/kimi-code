@@ -7,7 +7,6 @@ import type {
 import type { ApprovalRequest, ApprovalResponse } from '@moonshot-ai/kimi-code-sdk';
 
 import { displayBlockToAcpContent } from './convert';
-import { acpToolCallId } from './events-map';
 
 /**
  * Canonical option ids surfaced to the ACP client.
@@ -228,14 +227,12 @@ function mapPlanReviewOptionId(
  * Build the ACP {@link ToolCallUpdate} that scopes a permission request
  * to a specific in-flight tool call.
  *
- * The `toolCallId` is the **prefixed** ACP wire id `${turnId}:${rawId}`
- * — matching the id format used by all other tool_call/tool_call_update
+ * The `toolCallId` is the raw SDK/engine `toolCallId` verbatim — matching
+ * the id format used by the `session.tool.started` → `tool_call`
  * notifications — so the client can correlate the approval prompt with
- * the tool card it already rendered. If `turnId` is `undefined` (the
- * `onEvent` listener has not yet observed any turn-scoped event), the
- * raw SDK id is used as a defensive fallback. In practice approvals
- * always fire **after** `tool.call.started`, so the fallback is
- * effectively unreachable; it exists so the handler never throws.
+ * the tool card it already rendered. (The retired agent-core emitted a
+ * `${turnId}:${rawId}` prefix; the engine's `session.tool.*` events carry
+ * no `turn_id`, so no prefix is composed anymore.)
  *
  * Content shape (Phase 5.2):
  *  - If `req.display` produces a diff-bearing entry via
@@ -253,12 +250,8 @@ function mapPlanReviewOptionId(
  *    surface in narrow notification UIs that cannot render the full
  *    diff card and matches the wording used by the Python reference.
  */
-export function buildPermissionToolCallUpdate(
-  turnId: number | undefined,
-  req: ApprovalRequest,
-): ToolCallUpdate {
-  const toolCallId =
-    turnId !== undefined ? acpToolCallId(turnId, req.toolCallId) : req.toolCallId;
+export function buildPermissionToolCallUpdate(req: ApprovalRequest): ToolCallUpdate {
+  const toolCallId = req.toolCallId;
   const content: ToolCallContent[] = [];
   // Diff entry first — diffs and file-io previews carry the most
   // context and should land at the top of the approval card. Phase 13.2

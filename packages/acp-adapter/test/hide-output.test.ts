@@ -6,10 +6,11 @@ import { HideOutputMarker, isHideOutputMarker } from '../src/marker';
 /**
  * Phase 4.3 — `HideOutputMarker` lets a tool implementation tell the
  * ACP adapter "I own my own UI surface, don't render my textual
- * output as a `tool_call_update` content entry". The chosen detection
- * mechanism (A) inspects `ToolResultEvent.output`: if `output` is an
- * array and any element matches the marker, the adapter returns an
- * empty content array.
+ * output as a `tool_call_update` content entry". With the engine's
+ * string-`content` contract the tool emits the marker serialized as
+ * JSON: if `session.tool.settled.content` equals
+ * `JSON.stringify(HideOutputMarker)`, the adapter returns an empty
+ * content array.
  */
 describe('HideOutputMarker', () => {
   it('isHideOutputMarker returns true for the exported marker (reference identity)', () => {
@@ -38,54 +39,27 @@ describe('HideOutputMarker', () => {
 });
 
 describe('toolResultToAcpContent + HideOutputMarker', () => {
-  it('returns [] when output array contains the marker (reference identity)', () => {
-    const content = toolResultToAcpContent({
-      type: 'tool.result',
-      turnId: 1,
-      toolCallId: 'tc',
-      output: [HideOutputMarker, 'fallback text we should NOT see'],
-    } as never);
+  it('returns [] when content is the serialized marker (reference identity)', () => {
+    const content = toolResultToAcpContent(JSON.stringify(HideOutputMarker));
     expect(content).toEqual([]);
   });
 
-  it('returns [] when output array contains a structural twin of the marker', () => {
-    const content = toolResultToAcpContent({
-      type: 'tool.result',
-      turnId: 1,
-      toolCallId: 'tc',
-      output: [{ __kind: 'acp-hide-output' }, 'fallback'],
-    } as never);
+  it('returns [] when content is the serialized structural twin of the marker', () => {
+    const content = toolResultToAcpContent(JSON.stringify({ __kind: 'acp-hide-output' }));
     expect(content).toEqual([]);
   });
 
-  it('returns content normally when output array does NOT contain the marker', () => {
-    const content = toolResultToAcpContent({
-      type: 'tool.result',
-      turnId: 1,
-      toolCallId: 'tc',
-      output: ['just', 'a', 'normal', 'array'],
-    } as never);
-    // Array outputs are JSON-stringified into a single text block.
-    expect(content).toEqual([
-      {
-        type: 'content',
-        content: { type: 'text', text: JSON.stringify(['just', 'a', 'normal', 'array']) },
-      },
-    ]);
+  it('returns content normally when content does NOT match the marker', () => {
+    const text = 'just a normal string';
+    const content = toolResultToAcpContent(text);
+    expect(content).toEqual([{ type: 'content', content: { type: 'text', text } }]);
   });
 
-  it('does NOT trigger on string output containing the marker tag as substring', () => {
-    // Reference / __kind identity ONLY — substring match would be a
-    // false-positive denial of legitimate stdout text.
+  it('does NOT trigger on content containing the marker tag as substring', () => {
+    // Exact JSON match ONLY — substring match would be a false-positive
+    // denial of legitimate stdout text.
     const text = 'stdout contains __kind:acp-hide-output literal somewhere';
-    const content = toolResultToAcpContent({
-      type: 'tool.result',
-      turnId: 1,
-      toolCallId: 'tc',
-      output: text,
-    } as never);
-    expect(content).toEqual([
-      { type: 'content', content: { type: 'text', text } },
-    ]);
+    const content = toolResultToAcpContent(text);
+    expect(content).toEqual([{ type: 'content', content: { type: 'text', text } }]);
   });
 });

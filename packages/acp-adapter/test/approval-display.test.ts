@@ -126,7 +126,6 @@ describe('buildPermissionToolCallUpdate (Phase 5.2 content shape)', () => {
 
   it('includes a diff entry + action summary when display.kind === "diff"', () => {
     const update = buildPermissionToolCallUpdate(
-      3,
       baseReq({
         kind: 'diff',
         path: '/tmp/x.ts',
@@ -134,7 +133,7 @@ describe('buildPermissionToolCallUpdate (Phase 5.2 content shape)', () => {
         after: 'new',
       }),
     );
-    expect(update.toolCallId).toBe('3:tc-1');
+    expect(update.toolCallId).toBe('tc-1');
     expect(update.title).toBe('Edit');
     expect(update.content).toHaveLength(2);
     const [diff, action] = update.content as [ToolCallContent, ToolCallContent];
@@ -152,7 +151,6 @@ describe('buildPermissionToolCallUpdate (Phase 5.2 content shape)', () => {
 
   it('includes a diff entry for file_io with both before+after (Edit/Write payload)', () => {
     const update = buildPermissionToolCallUpdate(
-      4,
       baseReq({
         kind: 'file_io',
         operation: 'edit',
@@ -173,7 +171,6 @@ describe('buildPermissionToolCallUpdate (Phase 5.2 content shape)', () => {
 
   it('emits only the action summary for non-diff display kinds (e.g. command)', () => {
     const update = buildPermissionToolCallUpdate(
-      5,
       {
         toolCallId: 'tc-cmd',
         toolName: 'Bash',
@@ -194,7 +191,6 @@ describe('buildPermissionToolCallUpdate (Phase 5.2 content shape)', () => {
     // the display block has only `content`, not `before`/`after`. The
     // approval prompt should fall back to the action summary alone.
     const update = buildPermissionToolCallUpdate(
-      6,
       {
         toolCallId: 'tc-read',
         toolName: 'Read',
@@ -309,13 +305,10 @@ describe('AcpSession ↔ requestPermission bridge (selectedLabel end-to-end)', (
     await new Promise((r) => setTimeout(r, 5));
 
     handle.emit({
-      type: 'tool.call.started',
+      type: 'session.turn.started',
       sessionId,
       agentId: 'main',
-      turnId,
-      toolCallId: 'edit-1',
-      name: 'Edit',
-      args: { path: '/tmp/x.ts' },
+      turn_id: turnId,
     } as Event);
 
     const decision = await handle.invokeHandler({
@@ -338,7 +331,7 @@ describe('AcpSession ↔ requestPermission bridge (selectedLabel end-to-end)', (
 
     expect(client.permissionRequests).toHaveLength(1);
     const req = client.permissionRequests[0]!;
-    expect(req.toolCall.toolCallId).toBe(`${turnId}:edit-1`);
+    expect(req.toolCall.toolCallId).toBe('edit-1');
     expect(req.toolCall.title).toBe('Edit');
     // Content carries the diff entry first then the action summary.
     expect(req.toolCall.content).toHaveLength(2);
@@ -355,11 +348,12 @@ describe('AcpSession ↔ requestPermission bridge (selectedLabel end-to-end)', (
     });
 
     handle.emit({
-      type: 'turn.ended',
+      type: 'session.turn.ended',
       sessionId,
       agentId: 'main',
-      turnId,
-      reason: 'completed',
+      turn_id: turnId,
+      stop_reason: 'EndTurn',
+      steps: 1,
     } as Event);
     handle.resolvePrompt();
     await pending;

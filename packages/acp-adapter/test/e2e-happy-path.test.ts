@@ -192,9 +192,26 @@ describe('AcpServer end-to-end happy path', () => {
   it('drives the full happy path: initialize → newSession → prompt(end_turn)', async () => {
     const sessionId = 'sess-e2e-happy';
     const { session, unsubscribeCount } = makeScriptedSession(sessionId, [
-      { type: 'assistant.delta', sessionId, agentId: 'main', turnId: 1, delta: 'echo ' } as Event,
-      { type: 'assistant.delta', sessionId, agentId: 'main', turnId: 1, delta: 'hi' } as Event,
-      { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      {
+        type: 'llm.delta',
+        sessionId,
+        agentId: 'main',
+        part: { type: 'text', text: 'echo ' },
+      } as Event,
+      {
+        type: 'llm.delta',
+        sessionId,
+        agentId: 'main',
+        part: { type: 'text', text: 'hi' },
+      } as Event,
+      {
+        type: 'session.turn.ended',
+        sessionId,
+        agentId: 'main',
+        turn_id: 1,
+        stop_reason: 'EndTurn',
+        steps: 1,
+      } as Event,
     ]);
     const harness = makeHarness(session);
 
@@ -263,8 +280,20 @@ describe('AcpServer end-to-end happy path', () => {
     // adapter; we assert the prompt resolves with `cancelled` and
     // does not throw.
     const { session } = makeScriptedSession(sessionId, [
-      { type: 'assistant.delta', sessionId, agentId: 'main', turnId: 1, delta: 'partial' } as Event,
-      { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'cancelled' } as Event,
+      {
+        type: 'llm.delta',
+        sessionId,
+        agentId: 'main',
+        part: { type: 'text', text: 'partial' },
+      } as Event,
+      {
+        type: 'session.turn.ended',
+        sessionId,
+        agentId: 'main',
+        turn_id: 1,
+        stop_reason: 'Aborted',
+        steps: 1,
+      } as Event,
     ]);
     const harness = makeHarness(session);
 

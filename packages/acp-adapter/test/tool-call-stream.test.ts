@@ -92,37 +92,26 @@ async function flushNdjson(): Promise<void> {
 }
 
 describe('AcpServer tool-call streaming', () => {
-  it('streams tool_call (start) → tool_call_update (delta x N) → end_turn for a single tool call', async () => {
+  it('emits a tool_call create for session.tool.started and resolves with end_turn', async () => {
     const sessionId = 'sess-tc-1';
-    const turnId = 1;
     const toolCallId = 'tc-abc';
     const session = makeScriptedSession(sessionId, [
       {
-        type: 'tool.call.started',
+        type: 'session.tool.started',
         sessionId,
         agentId: 'main',
-        turnId,
-        toolCallId,
-        name: 'Read',
-        args: { path: 'a' },
+        tool_call_id: toolCallId,
+        tool_name: 'Read',
+        arguments: { path: 'a' },
       } as Event,
       {
-        type: 'tool.call.delta',
+        type: 'session.turn.ended',
         sessionId,
         agentId: 'main',
-        turnId,
-        toolCallId,
-        argumentsPart: ', "lim',
+        turn_id: 1,
+        stop_reason: 'EndTurn',
+        steps: 1,
       } as Event,
-      {
-        type: 'tool.call.delta',
-        sessionId,
-        agentId: 'main',
-        turnId,
-        toolCallId,
-        argumentsPart: 'it": 5}',
-      } as Event,
-      { type: 'turn.ended', sessionId, agentId: 'main', turnId, reason: 'completed' } as Event,
     ]);
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
@@ -139,12 +128,12 @@ describe('AcpServer tool-call streaming', () => {
     expect(response.stopReason).toBe('end_turn');
     await flushNdjson();
 
-    expect(collecting.promptUpdates).toHaveLength(3);
-
-    // 1) tool_call (creation) with stringified initial args.
+    // The engine emits no args-streaming deltas — one `tool_call`
+    // CREATE per `session.tool.started`, keyed on the raw tool_call_id.
+    expect(collecting.promptUpdates).toHaveLength(1);
     expect(collecting.promptUpdates[0]?.update).toMatchObject({
       sessionUpdate: 'tool_call',
-      toolCallId: `${turnId}:${toolCallId}`,
+      toolCallId,
       title: 'Read',
       kind: 'read',
       status: 'in_progress',
@@ -156,55 +145,39 @@ describe('AcpServer tool-call streaming', () => {
         },
       ],
     });
-
-    // 2) first delta — cumulative args = initial + first part.
-    const firstCumulative = `${JSON.stringify({ path: 'a' })}, "lim`;
-    expect(collecting.promptUpdates[1]?.update).toMatchObject({
-      sessionUpdate: 'tool_call_update',
-      toolCallId: `${turnId}:${toolCallId}`,
-      status: 'in_progress',
-      content: [
-        { type: 'content', content: { type: 'text', text: firstCumulative } },
-      ],
-    });
-
-    // 3) second delta — cumulative args = initial + first + second.
-    const secondCumulative = `${firstCumulative}it": 5}`;
-    expect(collecting.promptUpdates[2]?.update).toMatchObject({
-      sessionUpdate: 'tool_call_update',
-      toolCallId: `${turnId}:${toolCallId}`,
-      status: 'in_progress',
-      content: [
-        { type: 'content', content: { type: 'text', text: secondCumulative } },
-      ],
-    });
   });
 
-  it('uses turn-prefixed toolCallId so identical SDK ids across turns do not collide', async () => {
-    // We script two consecutive `tool.call.started` events with the
-    // SAME SDK `toolCallId` but DIFFERENT `turnId` to assert the ACP
-    // wire ids are distinct.
-    const sessionId = 'sess-tc-collision';
+  it('passes the raw engine tool_call_id through verbatim (no turn prefix)', async () => {
+    // The engine's `session.tool.started` carries no `turn_id`, so the
+    // ACP wire id is the raw tool_call_id — two calls with the same id
+    // collide on the wire exactly as the engine emits them (the engine
+    // owns id uniqueness on its own stream).
+    const sessionId = 'sess-tc-raw';
     const session = makeScriptedSession(sessionId, [
       {
-        type: 'tool.call.started',
+        type: 'session.tool.started',
         sessionId,
         agentId: 'main',
-        turnId: 1,
-        toolCallId: 'X',
-        name: 'Bash',
-        args: { cmd: 'ls' },
+        tool_call_id: 'X',
+        tool_name: 'Bash',
+        arguments: { cmd: 'ls' },
       } as Event,
       {
-        type: 'tool.call.started',
+        type: 'session.tool.started',
         sessionId,
         agentId: 'main',
-        turnId: 2,
-        toolCallId: 'X',
-        name: 'Bash',
-        args: { cmd: 'pwd' },
+        tool_call_id: 'X',
+        tool_name: 'Bash',
+        arguments: { cmd: 'pwd' },
       } as Event,
-      { type: 'turn.ended', sessionId, agentId: 'main', turnId: 2, reason: 'completed' } as Event,
+      {
+        type: 'session.turn.ended',
+        sessionId,
+        agentId: 'main',
+        turn_id: 2,
+        stop_reason: 'EndTurn',
+        steps: 1,
+      } as Event,
     ]);
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
@@ -225,15 +198,26 @@ describe('AcpServer tool-call streaming', () => {
     );
     expect(startUpdates).toHaveLength(2);
     const ids = startUpdates.map((n) => (n.update as { toolCallId: string }).toolCallId);
-    expect(ids).toEqual(['1:X', '2:X']);
-    expect(ids[0]).not.toBe(ids[1]);
+    expect(ids).toEqual(['X', 'X']);
   });
 
-  it('emits agent_thought_chunk for thinking.delta events', async () => {
+  it('emits agent_thought_chunk for llm.delta think parts', async () => {
     const sessionId = 'sess-thinking';
     const session = makeScriptedSession(sessionId, [
-      { type: 'thinking.delta', sessionId, agentId: 'main', turnId: 1, delta: 'hmm' } as Event,
-      { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      {
+        type: 'llm.delta',
+        sessionId,
+        agentId: 'main',
+        part: { type: 'think', think: 'hmm' },
+      } as Event,
+      {
+        type: 'session.turn.ended',
+        sessionId,
+        agentId: 'main',
+        turn_id: 1,
+        stop_reason: 'EndTurn',
+        steps: 1,
+      } as Event,
     ]);
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
@@ -256,199 +240,29 @@ describe('AcpServer tool-call streaming', () => {
     });
   });
 
-  it('relays only `status` tool.progress updates as title-bearing tool_call_update', async () => {
-    const sessionId = 'sess-progress';
-    const turnId = 1;
-    const toolCallId = 'tc-prog';
-    const session = makeScriptedSession(sessionId, [
-      {
-        type: 'tool.call.started',
-        sessionId,
-        agentId: 'main',
-        turnId,
-        toolCallId,
-        name: 'Bash',
-        args: { cmd: 'pnpm test' },
-      } as Event,
-      {
-        type: 'tool.progress',
-        sessionId,
-        agentId: 'main',
-        turnId,
-        toolCallId,
-        update: { kind: 'stdout', text: 'should not stream' },
-      } as Event,
-      {
-        type: 'tool.progress',
-        sessionId,
-        agentId: 'main',
-        turnId,
-        toolCallId,
-        update: { kind: 'status', text: 'running test suite' },
-      } as Event,
-      { type: 'turn.ended', sessionId, agentId: 'main', turnId, reason: 'completed' } as Event,
-    ]);
-    const harness = {
-      auth: { status: async () => AUTHED_STATUS },
-      createSession: async () => session,
-    } as unknown as KimiHarness;
-
-    const { agentStream, clientStream } = makeInMemoryStreamPair();
-    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
-    const collecting = new CollectingClient();
-    const client = new ClientSideConnection(() => collecting, clientStream);
-
-    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
-    await client.prompt({ sessionId, prompt: [textBlock('go')] });
-    await flushNdjson();
-
-    // 1 start + 1 status (stdout is dropped) = 2 updates.
-    expect(collecting.promptUpdates).toHaveLength(2);
-    const second = collecting.promptUpdates[1]?.update as {
-      sessionUpdate: string;
-      title?: string;
-    };
-    expect(second.sessionUpdate).toBe('tool_call_update');
-    expect(second.title).toBe('running test suite');
-  });
-
-  it('lazy-creates tool_call on the first delta and upgrades on tool.call.started (production event order)', async () => {
-    // The agent-core actually emits `tool.call.delta` events DURING
-    // the provider's args-streaming phase and only fires
-    // `tool.call.started` afterwards. The adapter must therefore
-    // lazy-create the wire `tool_call` from the first delta, otherwise
-    // Zed sees `tool_call_update` notifications for an unknown id and
-    // surfaces "Tool call not found" until the start eventually lands.
-    // This test pins the production order delta → delta → started →
-    // result → end.
-    const sessionId = 'sess-tc-lazy';
-    const turnId = 1;
-    const toolCallId = 'tc-stream';
-    const session = makeScriptedSession(sessionId, [
-      {
-        type: 'tool.call.delta',
-        sessionId,
-        agentId: 'main',
-        turnId,
-        toolCallId,
-        name: 'Read',
-        argumentsPart: '{"path":',
-      } as Event,
-      {
-        type: 'tool.call.delta',
-        sessionId,
-        agentId: 'main',
-        turnId,
-        toolCallId,
-        argumentsPart: '"a"}',
-      } as Event,
-      {
-        type: 'tool.call.started',
-        sessionId,
-        agentId: 'main',
-        turnId,
-        toolCallId,
-        name: 'Read',
-        args: { path: 'a' },
-        description: 'Reading a',
-      } as Event,
-      {
-        type: 'tool.result',
-        sessionId,
-        agentId: 'main',
-        turnId,
-        toolCallId,
-        output: 'file content',
-        isError: false,
-      } as Event,
-      { type: 'turn.ended', sessionId, agentId: 'main', turnId, reason: 'completed' } as Event,
-    ]);
-    const harness = {
-      auth: { status: async () => AUTHED_STATUS },
-      createSession: async () => session,
-    } as unknown as KimiHarness;
-
-    const { agentStream, clientStream } = makeInMemoryStreamPair();
-    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
-    const collecting = new CollectingClient();
-    const client = new ClientSideConnection(() => collecting, clientStream);
-
-    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
-    const response = await client.prompt({ sessionId, prompt: [textBlock('go')] });
-    expect(response.stopReason).toBe('end_turn');
-    await flushNdjson();
-
-    // delta(lazy-create) + delta(cumulative) + started(upgrade) + result
-    expect(collecting.promptUpdates).toHaveLength(4);
-
-    // 1) Lazy create: `tool_call` MUST land before any update, with
-    // `name`-derived title and the first delta fragment as content.
-    expect(collecting.promptUpdates[0]?.update).toMatchObject({
-      sessionUpdate: 'tool_call',
-      toolCallId: `${turnId}:${toolCallId}`,
-      title: 'Read',
-      kind: 'read',
-      status: 'pending',
-      content: [
-        { type: 'content', content: { type: 'text', text: '{"path":' } },
-      ],
-    });
-
-    // 2) Second delta: cumulative args replace content.
-    expect(collecting.promptUpdates[1]?.update).toMatchObject({
-      sessionUpdate: 'tool_call_update',
-      toolCallId: `${turnId}:${toolCallId}`,
-      status: 'in_progress',
-      content: [
-        { type: 'content', content: { type: 'text', text: '{"path":"a"}' } },
-      ],
-    });
-
-    // 3) Start arrives after lazy-create: emitted as `tool_call_update`
-    // carrying the canonical title (from `description`), `rawInput`,
-    // and canonical stringified args. Status flips to `in_progress`.
-    expect(collecting.promptUpdates[2]?.update).toMatchObject({
-      sessionUpdate: 'tool_call_update',
-      toolCallId: `${turnId}:${toolCallId}`,
-      title: 'Reading a',
-      kind: 'read',
-      status: 'in_progress',
-      rawInput: { path: 'a' },
-      content: [
-        {
-          type: 'content',
-          content: { type: 'text', text: JSON.stringify({ path: 'a' }) },
-        },
-      ],
-    });
-
-    // 4) Result: terminal update.
-    expect(collecting.promptUpdates[3]?.update).toMatchObject({
-      sessionUpdate: 'tool_call_update',
-      toolCallId: `${turnId}:${toolCallId}`,
-      status: 'completed',
-    });
-  });
-
-  it('keeps the start-first path unchanged when no deltas precede tool.call.started', async () => {
-    // Some providers (or the synthetic / replay paths) emit
-    // `tool.call.started` without a preceding args stream. The adapter
-    // must still send a `tool_call` CREATE in that case and NOT an
-    // update — clients otherwise have no card to update.
+  it('emits a tool_call create for session.tool.started with no args stream preceding it', async () => {
+    // The engine emits `session.tool.started` directly — there is no
+    // args-streaming delta phase, so the CREATE is always the first
+    // (and only) wire notification for the call.
     const sessionId = 'sess-tc-startfirst';
-    const turnId = 1;
     const toolCallId = 'tc-start';
     const session = makeScriptedSession(sessionId, [
       {
-        type: 'tool.call.started',
+        type: 'session.tool.started',
         sessionId,
         agentId: 'main',
-        turnId,
-        toolCallId,
-        name: 'Read',
-        args: { path: 'a' },
+        tool_call_id: toolCallId,
+        tool_name: 'Read',
+        arguments: { path: 'a' },
       } as Event,
-      { type: 'turn.ended', sessionId, agentId: 'main', turnId, reason: 'completed' } as Event,
+      {
+        type: 'session.turn.ended',
+        sessionId,
+        agentId: 'main',
+        turn_id: 1,
+        stop_reason: 'EndTurn',
+        steps: 1,
+      } as Event,
     ]);
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
@@ -467,7 +281,7 @@ describe('AcpServer tool-call streaming', () => {
     expect(collecting.promptUpdates).toHaveLength(1);
     expect(collecting.promptUpdates[0]?.update).toMatchObject({
       sessionUpdate: 'tool_call',
-      toolCallId: `${turnId}:${toolCallId}`,
+      toolCallId,
       title: 'Read',
       status: 'in_progress',
       rawInput: { path: 'a' },

@@ -95,20 +95,20 @@ function makeReadingSession(
 
       for (const fn of listeners) {
         fn({
-          type: 'assistant.delta',
+          type: 'llm.delta',
           sessionId,
           agentId: 'main',
-          turnId: 1,
-          delta: content,
+          part: { type: 'text', text: content },
         } as Event);
       }
       for (const fn of listeners) {
         fn({
-          type: 'turn.ended',
+          type: 'session.turn.ended',
           sessionId,
           agentId: 'main',
-          turnId: 1,
-          reason: 'completed',
+          turn_id: 1,
+          stop_reason: 'EndTurn',
+          steps: 1,
         } as Event);
       }
     },
@@ -206,11 +206,12 @@ describe('end-to-end FS reverse-RPC', () => {
           prompt: async () => {
             for (const fn of listeners) {
               fn({
-                type: 'turn.ended',
+                type: 'session.turn.ended',
                 sessionId: capturedSessionId,
                 agentId: 'main',
-                turnId: 1,
-                reason: 'completed',
+                turn_id: 1,
+                stop_reason: 'EndTurn',
+                steps: 1,
               } as Event);
             }
           },

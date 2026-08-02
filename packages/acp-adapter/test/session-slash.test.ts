@@ -111,7 +111,14 @@ function makeFakeSession(
 const textBlock = (text: string): ContentBlock => ({ type: 'text', text });
 
 function endedTurn(sessionId: string): Event {
-  return { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'completed' } as Event;
+  return {
+    type: 'session.turn.ended',
+    sessionId,
+    agentId: 'main',
+    turn_id: 1,
+    stop_reason: 'EndTurn',
+    steps: 1,
+  } as Event;
 }
 
 /**

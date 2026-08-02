@@ -214,21 +214,15 @@ describe('buildPermissionToolCallUpdate (Phase 5.1 minimal shape)', () => {
     display: fakeDisplay,
   };
 
-  it('prefixes the toolCallId with the turnId when one is known', () => {
-    const update = buildPermissionToolCallUpdate(42, baseReq);
-    expect(update.toolCallId).toBe('42:abc');
-    expect(update.title).toBe('Bash');
-  });
-
-  it('falls back to the raw SDK toolCallId when no turnId is tracked yet', () => {
-    const update = buildPermissionToolCallUpdate(undefined, baseReq);
+  it('uses the raw SDK toolCallId on the wire (no turn prefix)', () => {
+    const update = buildPermissionToolCallUpdate(baseReq);
     expect(update.toolCallId).toBe('abc');
     expect(update.title).toBe('Bash');
   });
 });
 
 describe('AcpSession ↔ requestPermission bridge (end-to-end via wire)', () => {
-  it('emits a request_permission with options length 3 and prefixed toolCallId when the SDK invokes the registered handler, and resolves it to { decision: approved }', async () => {
+  it('emits a request_permission with options length 3 and the raw toolCallId when the SDK invokes the registered handler, and resolves it to { decision: approved }', async () => {
     const sessionId = 'sess-approval-wire';
     const turnId = 7;
     const handle = makeApprovalSession(sessionId);
@@ -260,16 +254,13 @@ describe('AcpSession ↔ requestPermission bridge (end-to-end via wire)', () => 
     // Wait one tick for prompt() to subscribe via onEvent.
     await new Promise((r) => setTimeout(r, 5));
 
-    // Fire a tool-call-started event so the adapter learns the
-    // current turnId (any event with `turnId` advances it).
+    // Fire a turn-started event so the adapter tracks the active
+    // turn_id (the busy-turn guard consumes it).
     handle.emit({
-      type: 'tool.call.started',
+      type: 'session.turn.started',
       sessionId,
       agentId: 'main',
-      turnId,
-      toolCallId: 'tc-1',
-      name: 'Bash',
-      args: { command: 'echo hi' },
+      turn_id: turnId,
     } as Event);
 
     // Now invoke the captured approval handler exactly as the SDK
@@ -295,17 +286,18 @@ describe('AcpSession ↔ requestPermission bridge (end-to-end via wire)', () => 
       APPROVE_ALWAYS_OPTION_ID,
       REJECT_OPTION_ID,
     ]);
-    expect(req.toolCall.toolCallId).toBe(`${turnId}:tc-1`);
+    expect(req.toolCall.toolCallId).toBe('tc-1');
     expect(req.toolCall.title).toBe('Bash');
 
     // Settle the parked prompt with a turn.ended so the test exits
     // cleanly.
     handle.emit({
-      type: 'turn.ended',
+      type: 'session.turn.ended',
       sessionId,
       agentId: 'main',
-      turnId,
-      reason: 'completed',
+      turn_id: turnId,
+      stop_reason: 'EndTurn',
+      steps: 1,
     } as Event);
     handle.resolvePrompt();
     await pending;
@@ -344,11 +336,12 @@ describe('AcpSession ↔ requestPermission bridge (end-to-end via wire)', () => 
     expect(decision).toEqual({ decision: 'rejected' });
 
     handle.emit({
-      type: 'turn.ended',
+      type: 'session.turn.ended',
       sessionId,
       agentId: 'main',
-      turnId: 1,
-      reason: 'completed',
+      turn_id: 1,
+      stop_reason: 'EndTurn',
+      steps: 1,
     } as Event);
     handle.resolvePrompt();
     await pending;

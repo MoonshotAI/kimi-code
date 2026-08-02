@@ -178,7 +178,7 @@ describe('AcpServer session/load replay', () => {
     });
   });
 
-  it('replays a turn with a tool call + tool result using ${turnId}:${toolCallId} ids', async () => {
+  it('replays a turn with a tool call + tool result using the raw SDK toolCallId', async () => {
     const sessionId = 'sess-with-tools';
     const history = [
       {
@@ -219,16 +219,18 @@ describe('AcpServer session/load replay', () => {
     expect(client.historyUpdates.length).toBe(4);
     expect(client.historyUpdates[0]?.update).toMatchObject({ sessionUpdate: 'user_message_chunk' });
     expect(client.historyUpdates[1]?.update).toMatchObject({ sessionUpdate: 'agent_message_chunk' });
-    // Synthetic turnId starts at 1 (first assistant message in history).
+    // The wire toolCallId is the raw SDK id verbatim — replay no longer
+    // synthesizes a `${turnId}:` prefix (the engine's tool events carry
+    // no turn_id).
     expect(client.historyUpdates[2]?.update).toMatchObject({
       sessionUpdate: 'tool_call',
-      toolCallId: '1:tc-abc',
+      toolCallId: 'tc-abc',
       title: 'Bash',
       status: 'in_progress',
     });
     expect(client.historyUpdates[3]?.update).toMatchObject({
       sessionUpdate: 'tool_call_update',
-      toolCallId: '1:tc-abc',
+      toolCallId: 'tc-abc',
       status: 'completed',
     });
   });

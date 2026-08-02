@@ -41,53 +41,33 @@ export function assistantDeltaToSessionUpdate(
 }
 
 /**
- * Map an SDK {@link TurnEndReason} to an ACP `stopReason`.
+ * Map an engine `session.turn.ended.stop_reason` string to an ACP
+ * `stopReason`.
  *
- * `completed` → `end_turn`: the model finished a clean turn.
- * `cancelled` → `cancelled`: the client/agent cancelled mid-turn.
- * `failed`    → `end_turn` *with* an out-of-band log: the SDK reports a
- *   step-level error via `TurnEndedEvent.error`. ACP's `StopReason` does
- *   not have a dedicated `failed` variant in this protocol version, and
- *   the spec discourages signaling errors through `stopReason` (errors
- *   belong on the JSON-RPC error channel). Returning `end_turn` keeps the
- *   client unblocked; the caller is expected to log the `error` payload
- *   separately so the failure is observable in the agent logs.
- * `failed` + `provider.filtered` → `refusal`: the provider's safety policy
- *   blocked the response. ACP's `refusal` stop reason is the native signal
- *   for a model/provider decline, so the client can render the block instead
- *   of mistaking it for a clean `end_turn`.
- * `blocked`   → `refusal`: a prompt hook blocked the turn before the model
- *   ran. ACP has no separate hook-blocked terminal state, so reuse the
- *   refusal channel instead of reporting a clean `end_turn`.
+ * The engine's stop-reason vocabulary (`EndTurn` / `MaxTokens` /
+ * `Filtered` / `Paused` / `Aborted`) is a plain string — the adapter is
+ * the translation boundary to ACP's `StopReason`:
+ *  - `EndTurn`    → `end_turn`: the model finished a clean turn.
+ *  - `Aborted`    → `cancelled`: the client/agent cancelled mid-turn.
+ *  - `Filtered`   → `refusal`: the provider's safety policy blocked the
+ *    response. ACP's `refusal` stop reason is the native signal for a
+ *    model/provider decline, so the client can render the block instead
+ *    of mistaking it for a clean `end_turn`.
+ *  - anything else (`MaxTokens` / `Paused` / future reasons) → `end_turn`:
+ *    ACP has no dedicated variant for them, and resolving keeps the
+ *    client unblocked.
  */
-export function turnEndReasonToStopReason(
-  reason: TurnEndReason,
-  error?: { readonly code: string },
-): AcpStopReason {
-  switch (reason) {
-    case 'completed':
+export function turnStopReasonToAcpStopReason(stopReason: string): AcpStopReason {
+  switch (stopReason) {
+    case 'EndTurn':
       return 'end_turn';
-    case 'cancelled':
+    case 'Aborted':
       return 'cancelled';
-    case 'failed':
-      if (error?.code === 'provider.filtered') return 'refusal';
-      return 'end_turn';
-    case 'blocked':
+    case 'Filtered':
       return 'refusal';
+    default:
+      return 'end_turn';
   }
-}
-
-/**
- * Build the ACP `toolCallId` for a wire-level tool call.
- *
- * Composes `${turnId}:${toolCallId}` so multiple turns within a single
- * session (which legitimately reuse the same model-assigned tool call
- * id when the model retries) do not collide on the ACP side. The SDK's
- * raw `toolCallId` remains the in-process accumulator key — only the
- * ACP wire id is prefixed (matches Python reference at `acp/session.py`).
- */
-export function acpToolCallId(turnId: number, toolCallId: string): string {
-  return `${turnId}:${toolCallId}`;
 }
 
 /**
@@ -129,10 +109,6 @@ export function inferToolKind(name: string): ToolKind {
  * never want a streaming push to crash the prompt loop, so we fall back
  * to `String(args)` — the client UI shows a degraded preview, the
  * turn keeps running.
- *
- * Exported because `session.ts` seeds the per-tool-call args accumulator
- * with the **initial** args stringification so subsequent
- * `tool.call.delta` fragments append correctly.
  */
 export function stringifyArgs(args: unknown): string {
   try {
@@ -143,247 +119,86 @@ export function stringifyArgs(args: unknown): string {
 }
 
 /**
- * Build the ACP `session/update` for the **initial** `tool_call` create
- * notification from an SDK `tool.call.started` event.
+ * Build the ACP `session/update` for the `tool_call` create notification
+ * from the engine's `session.tool.started` event.
  *
  * The wire shape is verified at `types.gen.d.ts:5396-5443`: `ToolCall`
  * has a required `title` plus optional `kind`/`status`/`content`/
  * `rawInput`. `sessionUpdate: 'tool_call'` is the discriminator (snake
  * literal, camel field — `types.gen.d.ts:4845`).
+ *
+ * The engine event carries no `turn_id`, so the ACP wire `toolCallId` is
+ * the raw engine `tool_call_id` verbatim (no `${turnId}:` prefix — the
+ * engine guarantees id uniqueness on its own stream). `title` is the
+ * tool name, `kind` is heuristic-mapped, and `rawInput`/`content` mirror
+ * the engine's `arguments` payload (omitted when absent).
  */
 export function toolCallStartToSessionUpdate(
   sessionId: string,
-  event: ToolCallStartedEvent,
+  event: EngineToolStartedEvent,
 ): SessionNotification {
-  const title = event.description ?? event.name;
-  const content: ToolCallContent[] = [
-    {
-      type: 'content',
-      content: { type: 'text', text: stringifyArgs(event.args) },
-    },
-  ];
-  // If the tool attached a diff-bearing display (kind: 'diff' or
-  // 'file_io' with both before/after set), prepend an inline diff
-  // entry so the client can render it alongside the textual args
-  // preview. Non-diff display kinds are skipped here (their
-  // information is already in the args text).
-  if (event.display) {
-    const diff = displayBlockToAcpContent(event.display);
-    if (diff !== null) {
-      content.unshift(diff);
-    }
-  }
+  const args = event.arguments;
+  const content: ToolCallContent[] =
+    args === undefined
+      ? []
+      : [{ type: 'content', content: { type: 'text', text: stringifyArgs(args) } }];
   return {
     sessionId,
     update: {
       sessionUpdate: 'tool_call',
-      toolCallId: acpToolCallId(event.turnId, event.toolCallId),
-      title,
-      kind: inferToolKind(event.name),
+      toolCallId: event.tool_call_id,
+      title: event.tool_name,
+      kind: inferToolKind(event.tool_name),
       status: 'in_progress',
-      rawInput: event.args,
+      rawInput: args,
       content,
     },
   };
 }
 
 /**
- * Build a `tool_call_update` for a streaming arguments delta.
- *
- * Mutates `accumulator.args` with the new fragment, then emits a wire
- * notification whose `content` is the cumulative args text (so each
- * update fully replaces the previous content array — that's the wire
- * semantics; `ToolCallUpdate.content` is REPLACE, not APPEND, see
- * `types.gen.d.ts:5520` "Replace the content collection").
- */
-export function toolCallDeltaToSessionUpdate(
-  sessionId: string,
-  event: ToolCallDeltaEvent,
-  accumulator: { args: string },
-): SessionNotification {
-  accumulator.args += event.argumentsPart ?? '';
-  return {
-    sessionId,
-    update: {
-      sessionUpdate: 'tool_call_update',
-      toolCallId: acpToolCallId(event.turnId, event.toolCallId),
-      status: 'in_progress',
-      content: [
-        {
-          type: 'content',
-          content: { type: 'text', text: accumulator.args },
-        },
-      ],
-    },
-  };
-}
-
-/**
- * Build the initial ACP `tool_call` (CREATE) notification from the
- * **first** `tool.call.delta` event for a given `toolCallId`.
- *
- * Background: the agent-core emits `tool.call.delta` events while the
- * provider streams the model's tool-call args, and only later emits
- * `tool.call.started` (after the streaming phase, when the call is
- * dispatched). The naive mapping — start → tool_call, delta → tool_call_update
- * — therefore lands updates on the wire *before* the create, which makes
- * Zed log "Tool call not found" until the start eventually arrives.
- * This helper lets the adapter lazy-create the wire tool_call from the
- * first delta so subsequent deltas have a legitimate parent to update.
- *
- * Trade-offs vs {@link toolCallStartToSessionUpdate}:
- *  - `title`: only `event.name` is available; `description` (from the
- *    started event) isn't known yet and gets filled in by the upgrade.
- *  - `kind`: inferred from `event.name`; falls back to `'other'` when
- *    the first delta omits the name (defensive — providers usually carry
- *    `name` on the first delta only).
- *  - `rawInput`: omitted; we don't have parsed args at this point. The
- *    upgrade sets it from `tool.call.started.event.args`.
- *  - `content`: seeded with the first `argumentsPart` so the rendered
- *    card starts to fill in immediately rather than flashing empty.
- *  - `status`: `'pending'` to convey "the model is still composing the
- *    call". The upgrade flips it to `'in_progress'`.
- */
-export function toolCallLazyCreateToSessionUpdate(
-  sessionId: string,
-  event: ToolCallDeltaEvent,
-): SessionNotification {
-  const name = event.name ?? 'tool';
-  return {
-    sessionId,
-    update: {
-      sessionUpdate: 'tool_call',
-      toolCallId: acpToolCallId(event.turnId, event.toolCallId),
-      title: name,
-      kind: event.name ? inferToolKind(event.name) : 'other',
-      status: 'pending',
-      content: [
-        {
-          type: 'content',
-          content: { type: 'text', text: event.argumentsPart ?? '' },
-        },
-      ],
-    },
-  };
-}
-
-/**
- * Build a `tool_call_update` that finalises a lazy-created tool call
- * once `tool.call.started` arrives.
- *
- * Used only when {@link toolCallLazyCreateToSessionUpdate} has already
- * emitted a `tool_call` for this `toolCallId` from a streaming delta —
- * we cannot send a second `tool_call` CREATE, so the canonical
- * metadata is delivered as an update instead. The fields are kept in
- * sync with {@link toolCallStartToSessionUpdate}: `title` prefers
- * `description`, `kind` is re-inferred from the canonical `name`,
- * `rawInput` carries the parsed args, and `content` mirrors the
- * start path (optional diff prepended + canonical args text).
- *
- * `status` flips to `'in_progress'`: streaming is done and execution is
- * imminent (or already underway by the time the client renders the
- * update).
- */
-export function toolCallStartedUpgradeToSessionUpdate(
-  sessionId: string,
-  event: ToolCallStartedEvent,
-): SessionNotification {
-  const title = event.description ?? event.name;
-  const content: ToolCallContent[] = [
-    {
-      type: 'content',
-      content: { type: 'text', text: stringifyArgs(event.args) },
-    },
-  ];
-  if (event.display) {
-    const diff = displayBlockToAcpContent(event.display);
-    if (diff !== null) {
-      content.unshift(diff);
-    }
-  }
-  return {
-    sessionId,
-    update: {
-      sessionUpdate: 'tool_call_update',
-      toolCallId: acpToolCallId(event.turnId, event.toolCallId),
-      title,
-      kind: inferToolKind(event.name),
-      status: 'in_progress',
-      rawInput: event.args,
-      content,
-    },
-  };
-}
-
-/**
- * Map an SDK `tool.progress` event to an ACP `tool_call_update`.
- *
- * Only `update.kind === 'status'` with non-empty `text` produces a wire
- * notification (used to refresh the tool card title as the tool reports
- * what it's currently doing). stdout/stderr/progress/custom updates
- * return `null` here — they're folded into the final `tool.result`
- * content in Phase 4.2 rather than streaming as title flickers.
- */
-export function toolProgressToSessionUpdate(
-  sessionId: string,
-  event: ToolProgressEvent,
-): SessionNotification | null {
-  if (event.update.kind === 'status' && event.update.text) {
-    return {
-      sessionId,
-      update: {
-        sessionUpdate: 'tool_call_update',
-        toolCallId: acpToolCallId(event.turnId, event.toolCallId),
-        title: event.update.text,
-      },
-    };
-  }
-  return null;
-}
-
-/**
- * Map a `thinking.delta` event to an `agent_thought_chunk` notification.
+ * Map a `thinking.delta` part of the engine's `llm.delta` event to an
+ * `agent_thought_chunk` notification.
  *
  * Mirrors `assistantDeltaToSessionUpdate` shape but uses the
  * `'agent_thought_chunk'` variant (`types.gen.d.ts:4845`).
  */
 export function thinkingDeltaToSessionUpdate(
   sessionId: string,
-  event: ThinkingDeltaEvent,
+  text: string,
 ): SessionNotification {
   return {
     sessionId,
     update: {
       sessionUpdate: 'agent_thought_chunk',
-      content: { type: 'text', text: event.delta },
+      content: { type: 'text', text },
     },
   };
 }
 
 /**
- * Map a `tool.result` event to the **terminal** `tool_call_update`
- * notification for that call.
+ * Map a `session.tool.settled` event to the **terminal**
+ * `tool_call_update` notification for that call.
  *
  * Wire shape (`types.gen.d.ts:5505-5547`): ToolCallUpdate is REPLACE
- * semantics for `content` — by the time the result arrives, the
- * adapter has been pushing cumulative-args `tool_call_update`s, so
- * the result's content array overwrites the streaming args preview
- * with the final tool output. `status` flips to `completed` (success)
- * or `failed` (`event.isError === true`). `rawOutput` preserves the
- * SDK's raw output for clients that want it.
+ * semantics for `content` — the result's content array overwrites the
+ * streaming args preview with the final tool output. `status` flips to
+ * `completed` (success) or `failed` (`event.is_error === true`).
+ * `rawOutput` preserves the engine's content string for clients that
+ * want it.
  */
 export function toolResultToSessionUpdate(
   sessionId: string,
-  event: ToolResultEvent,
+  event: EngineToolSettledEvent,
 ): SessionNotification {
   return {
     sessionId,
     update: {
       sessionUpdate: 'tool_call_update',
-      toolCallId: acpToolCallId(event.turnId, event.toolCallId),
-      status: event.isError ? 'failed' : 'completed',
-      content: toolResultToAcpContent(event),
-      rawOutput: event.output,
+      toolCallId: event.tool_call_id,
+      status: event.is_error ? 'failed' : 'completed',
+      content: toolResultToAcpContent(event.content),
+      rawOutput: event.content,
     },
   };
 }

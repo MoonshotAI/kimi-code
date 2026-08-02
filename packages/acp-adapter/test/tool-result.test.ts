@@ -88,63 +88,55 @@ async function flushNdjson(): Promise<void> {
 }
 
 describe('toolResultToAcpContent (unit)', () => {
-  it('returns a text content entry for a non-empty string output', () => {
-    const content = toolResultToAcpContent({
-      type: 'tool.result',
-      turnId: 1,
-      toolCallId: 'tc',
-      output: 'hello world',
-      isError: false,
-    } as never);
+  it('returns a text content entry for a non-empty string content', () => {
+    const content = toolResultToAcpContent('hello world');
     expect(content).toEqual([
       { type: 'content', content: { type: 'text', text: 'hello world' } },
     ]);
   });
 
-  it('JSON-stringifies object output', () => {
-    const content = toolResultToAcpContent({
-      type: 'tool.result',
-      turnId: 1,
-      toolCallId: 'tc',
-      output: { count: 3 },
-    } as never);
+  it('passes JSON-encoded content through as a single text entry', () => {
+    const content = toolResultToAcpContent('{"count":3}');
     expect(content).toEqual([
       { type: 'content', content: { type: 'text', text: '{"count":3}' } },
     ]);
   });
 
-  it('returns an empty array for empty / undefined / null output', () => {
-    expect(toolResultToAcpContent({ output: '' } as never)).toEqual([]);
-    expect(toolResultToAcpContent({ output: undefined } as never)).toEqual([]);
-    expect(toolResultToAcpContent({ output: null } as never)).toEqual([]);
+  it('returns an empty array for empty content', () => {
+    expect(toolResultToAcpContent('')).toEqual([]);
   });
 });
 
-describe('AcpServer tool.result → tool_call_update', () => {
+describe('AcpServer session.tool.settled → tool_call_update', () => {
   it('emits status=completed with text content for non-error string output', async () => {
     const sessionId = 'sess-tr-1';
-    const turnId = 1;
     const toolCallId = 'tc-1';
     const session = makeScriptedSession(sessionId, [
       {
-        type: 'tool.call.started',
+        type: 'session.tool.started',
         sessionId,
         agentId: 'main',
-        turnId,
-        toolCallId,
-        name: 'Bash',
-        args: { cmd: 'echo hi' },
+        tool_call_id: toolCallId,
+        tool_name: 'Bash',
+        arguments: { cmd: 'echo hi' },
       } as Event,
       {
-        type: 'tool.result',
+        type: 'session.tool.settled',
         sessionId,
         agentId: 'main',
-        turnId,
-        toolCallId,
-        output: 'hello world',
-        isError: false,
+        tool_call_id: toolCallId,
+        tool_name: 'Bash',
+        content: 'hello world',
+        is_error: false,
       } as Event,
-      { type: 'turn.ended', sessionId, agentId: 'main', turnId, reason: 'completed' } as Event,
+      {
+        type: 'session.turn.ended',
+        sessionId,
+        agentId: 'main',
+        turn_id: 1,
+        stop_reason: 'EndTurn',
+        steps: 1,
+      } as Event,
     ]);
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
@@ -159,11 +151,11 @@ describe('AcpServer tool.result → tool_call_update', () => {
     await client.prompt({ sessionId, prompt: [textBlock('go')] });
     await flushNdjson();
 
-    // 1 start + 1 result = 2 updates.
+    // 1 start + 1 settled = 2 updates.
     expect(collecting.promptUpdates).toHaveLength(2);
     expect(collecting.promptUpdates[1]?.update).toMatchObject({
       sessionUpdate: 'tool_call_update',
-      toolCallId: `${turnId}:${toolCallId}`,
+      toolCallId,
       status: 'completed',
       content: [
         { type: 'content', content: { type: 'text', text: 'hello world' } },
@@ -172,30 +164,35 @@ describe('AcpServer tool.result → tool_call_update', () => {
     });
   });
 
-  it('emits status=failed when isError is true', async () => {
+  it('emits status=failed when is_error is true', async () => {
     const sessionId = 'sess-tr-err';
-    const turnId = 1;
     const toolCallId = 'tc-err';
     const session = makeScriptedSession(sessionId, [
       {
-        type: 'tool.call.started',
+        type: 'session.tool.started',
         sessionId,
         agentId: 'main',
-        turnId,
-        toolCallId,
-        name: 'Bash',
-        args: { cmd: 'false' },
+        tool_call_id: toolCallId,
+        tool_name: 'Bash',
+        arguments: { cmd: 'false' },
       } as Event,
       {
-        type: 'tool.result',
+        type: 'session.tool.settled',
         sessionId,
         agentId: 'main',
-        turnId,
-        toolCallId,
-        output: 'oops',
-        isError: true,
+        tool_call_id: toolCallId,
+        tool_name: 'Bash',
+        content: 'oops',
+        is_error: true,
       } as Event,
-      { type: 'turn.ended', sessionId, agentId: 'main', turnId, reason: 'completed' } as Event,
+      {
+        type: 'session.turn.ended',
+        sessionId,
+        agentId: 'main',
+        turn_id: 1,
+        stop_reason: 'EndTurn',
+        steps: 1,
+      } as Event,
     ]);
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
@@ -219,30 +216,35 @@ describe('AcpServer tool.result → tool_call_update', () => {
     expect(last.status).toBe('failed');
   });
 
-  it('emits status=completed with empty content array for empty output', async () => {
+  it('emits status=completed with empty content array for empty content', async () => {
     const sessionId = 'sess-tr-empty';
-    const turnId = 1;
     const toolCallId = 'tc-empty';
     const session = makeScriptedSession(sessionId, [
       {
-        type: 'tool.call.started',
+        type: 'session.tool.started',
         sessionId,
         agentId: 'main',
-        turnId,
-        toolCallId,
-        name: 'Bash',
-        args: { cmd: 'true' },
+        tool_call_id: toolCallId,
+        tool_name: 'Bash',
+        arguments: { cmd: 'true' },
       } as Event,
       {
-        type: 'tool.result',
+        type: 'session.tool.settled',
         sessionId,
         agentId: 'main',
-        turnId,
-        toolCallId,
-        output: '',
-        isError: false,
+        tool_call_id: toolCallId,
+        tool_name: 'Bash',
+        content: '',
+        is_error: false,
       } as Event,
-      { type: 'turn.ended', sessionId, agentId: 'main', turnId, reason: 'completed' } as Event,
+      {
+        type: 'session.turn.ended',
+        sessionId,
+        agentId: 'main',
+        turn_id: 1,
+        stop_reason: 'EndTurn',
+        steps: 1,
+      } as Event,
     ]);
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
@@ -269,142 +271,5 @@ describe('AcpServer tool.result → tool_call_update', () => {
     expect(last.sessionUpdate).toBe('tool_call_update');
     expect(last.status).toBe('completed');
     expect(last.content).toEqual([]);
-  });
-});
-
-describe('AcpServer tool.call.started with diff display', () => {
-  it('prepends a diff ToolCallContent entry when display.kind === "diff"', async () => {
-    const sessionId = 'sess-diff-1';
-    const turnId = 1;
-    const toolCallId = 'tc-diff';
-    const session = makeScriptedSession(sessionId, [
-      {
-        type: 'tool.call.started',
-        sessionId,
-        agentId: 'main',
-        turnId,
-        toolCallId,
-        name: 'Edit',
-        args: { path: 'a.txt', oldText: 'foo', newText: 'bar' },
-        display: { kind: 'diff', path: 'a.txt', before: 'foo', after: 'bar' },
-      } as Event,
-      { type: 'turn.ended', sessionId, agentId: 'main', turnId, reason: 'completed' } as Event,
-    ]);
-    const harness = {
-      auth: { status: async () => AUTHED_STATUS },
-      createSession: async () => session,
-    } as unknown as KimiHarness;
-
-    const { agentStream, clientStream } = makeInMemoryStreamPair();
-    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
-    const collecting = new CollectingClient();
-    const client = new ClientSideConnection(() => collecting, clientStream);
-    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
-    await client.prompt({ sessionId, prompt: [textBlock('go')] });
-    await flushNdjson();
-
-    expect(collecting.promptUpdates).toHaveLength(1);
-    const update = collecting.promptUpdates[0]?.update as {
-      sessionUpdate: string;
-      kind: string;
-      content: Array<{ type: string; path?: string; oldText?: string; newText?: string }>;
-    };
-    expect(update.sessionUpdate).toBe('tool_call');
-    expect(update.kind).toBe('edit');
-    // Diff entry should be first, args text second.
-    expect(update.content[0]).toEqual({
-      type: 'diff',
-      path: 'a.txt',
-      oldText: 'foo',
-      newText: 'bar',
-    });
-    expect(update.content[1]).toMatchObject({
-      type: 'content',
-      content: { type: 'text' },
-    });
-  });
-
-  it('prepends a diff entry for file_io display with before+after (Edit/Write payload)', async () => {
-    const sessionId = 'sess-diff-2';
-    const turnId = 1;
-    const toolCallId = 'tc-fio';
-    const session = makeScriptedSession(sessionId, [
-      {
-        type: 'tool.call.started',
-        sessionId,
-        agentId: 'main',
-        turnId,
-        toolCallId,
-        name: 'Edit',
-        args: { path: 'b.txt' },
-        display: {
-          kind: 'file_io',
-          operation: 'edit',
-          path: 'b.txt',
-          before: 'alpha',
-          after: 'beta',
-        },
-      } as Event,
-      { type: 'turn.ended', sessionId, agentId: 'main', turnId, reason: 'completed' } as Event,
-    ]);
-    const harness = {
-      auth: { status: async () => AUTHED_STATUS },
-      createSession: async () => session,
-    } as unknown as KimiHarness;
-
-    const { agentStream, clientStream } = makeInMemoryStreamPair();
-    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
-    const collecting = new CollectingClient();
-    const client = new ClientSideConnection(() => collecting, clientStream);
-    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
-    await client.prompt({ sessionId, prompt: [textBlock('go')] });
-    await flushNdjson();
-
-    const update = collecting.promptUpdates[0]?.update as {
-      content: Array<{ type: string; path?: string; oldText?: string; newText?: string }>;
-    };
-    expect(update.content[0]).toEqual({
-      type: 'diff',
-      path: 'b.txt',
-      oldText: 'alpha',
-      newText: 'beta',
-    });
-  });
-
-  it('does NOT prepend a diff entry for non-diff display kinds (e.g. command)', async () => {
-    const sessionId = 'sess-diff-skip';
-    const turnId = 1;
-    const toolCallId = 'tc-cmd';
-    const session = makeScriptedSession(sessionId, [
-      {
-        type: 'tool.call.started',
-        sessionId,
-        agentId: 'main',
-        turnId,
-        toolCallId,
-        name: 'Bash',
-        args: { cmd: 'ls' },
-        display: { kind: 'command', command: 'ls' },
-      } as Event,
-      { type: 'turn.ended', sessionId, agentId: 'main', turnId, reason: 'completed' } as Event,
-    ]);
-    const harness = {
-      auth: { status: async () => AUTHED_STATUS },
-      createSession: async () => session,
-    } as unknown as KimiHarness;
-
-    const { agentStream, clientStream } = makeInMemoryStreamPair();
-    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
-    const collecting = new CollectingClient();
-    const client = new ClientSideConnection(() => collecting, clientStream);
-    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
-    await client.prompt({ sessionId, prompt: [textBlock('go')] });
-    await flushNdjson();
-
-    const update = collecting.promptUpdates[0]?.update as {
-      content: Array<{ type: string }>;
-    };
-    expect(update.content).toHaveLength(1);
-    expect(update.content[0]?.type).toBe('content');
   });
 });

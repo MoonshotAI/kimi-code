@@ -98,12 +98,29 @@ function makeScriptedSession(
 const textBlock = (text: string): ContentBlock => ({ type: 'text', text });
 
 describe('AcpServer session/prompt', () => {
-  it('streams two AssistantDelta events as agent_message_chunk updates and resolves with end_turn', async () => {
+  it('streams two llm.delta text parts as agent_message_chunk updates and resolves with end_turn', async () => {
     const sessionId = 'sess-A';
     const { session, unsubscribeCount } = makeScriptedSession(sessionId, [
-      { type: 'assistant.delta', sessionId, agentId: 'main', turnId: 1, delta: 'hel' } as Event,
-      { type: 'assistant.delta', sessionId, agentId: 'main', turnId: 1, delta: 'lo' } as Event,
-      { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      {
+        type: 'llm.delta',
+        sessionId,
+        agentId: 'main',
+        part: { type: 'text', text: 'hel' },
+      } as Event,
+      {
+        type: 'llm.delta',
+        sessionId,
+        agentId: 'main',
+        part: { type: 'text', text: 'lo' },
+      } as Event,
+      {
+        type: 'session.turn.ended',
+        sessionId,
+        agentId: 'main',
+        turn_id: 1,
+        stop_reason: 'EndTurn',
+        steps: 1,
+      } as Event,
     ]);
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
@@ -147,11 +164,23 @@ describe('AcpServer session/prompt', () => {
     expect(unsubscribeCount()).toBe(1);
   });
 
-  it('resolves with cancelled stopReason when turn.ended reason is cancelled', async () => {
+  it('resolves with cancelled stopReason when session.turn.ended is Aborted', async () => {
     const sessionId = 'sess-B';
     const { session, unsubscribeCount } = makeScriptedSession(sessionId, [
-      { type: 'assistant.delta', sessionId, agentId: 'main', turnId: 1, delta: 'partial' } as Event,
-      { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'cancelled' } as Event,
+      {
+        type: 'llm.delta',
+        sessionId,
+        agentId: 'main',
+        part: { type: 'text', text: 'partial' },
+      } as Event,
+      {
+        type: 'session.turn.ended',
+        sessionId,
+        agentId: 'main',
+        turn_id: 1,
+        stop_reason: 'Aborted',
+        steps: 1,
+      } as Event,
     ]);
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
@@ -271,7 +300,14 @@ describe('AcpServer session/prompt', () => {
     });
     void firstTurn.then(() => {
       for (const fn of listeners) {
-        fn({ type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'completed' } as Event);
+        fn({
+          type: 'session.turn.ended',
+          sessionId,
+          agentId: 'main',
+          turn_id: 1,
+          stop_reason: 'EndTurn',
+          steps: 1,
+        } as Event);
       }
     });
     const session = {
@@ -282,12 +318,11 @@ describe('AcpServer session/prompt', () => {
         if (promptCall === 1) {
           for (const fn of listeners) {
             fn({
-              type: 'turn.started',
+              type: 'session.turn.started',
               sessionId,
               agentId: 'main',
-              turnId: 1,
-              origin: { kind: 'user' },
-            } as unknown as Event);
+              turn_id: 1,
+            } as Event);
           }
           await firstTurn;
           return;
@@ -348,38 +383,66 @@ describe('AcpServer session/prompt', () => {
   it('ignores a subagent turn.ended and resolves on the main agent turn.ended', async () => {
     const sessionId = 'sess-subagent';
     const { session, unsubscribeCount } = makeScriptedSession(sessionId, [
-      { type: 'assistant.delta', sessionId, agentId: 'main', turnId: 1, delta: 'a' } as Event,
-      { type: 'assistant.delta', sessionId, agentId: 'sub-1', turnId: 99, delta: 'leak' } as Event,
-      { type: 'thinking.delta', sessionId, agentId: 'sub-1', turnId: 99, delta: 'leak' } as Event,
       {
-        type: 'tool.call.started',
+        type: 'llm.delta',
         sessionId,
-        agentId: 'sub-1',
-        turnId: 99,
-        toolCallId: 'sub-tool',
-        name: 'Shell',
-        args: { command: 'echo leak' },
+        agentId: 'main',
+        part: { type: 'text', text: 'a' },
       } as Event,
       {
-        type: 'tool.result',
+        type: 'llm.delta',
         sessionId,
         agentId: 'sub-1',
-        turnId: 99,
-        toolCallId: 'sub-tool',
-        output: 'leak',
+        part: { type: 'text', text: 'leak' },
+      } as Event,
+      {
+        type: 'llm.delta',
+        sessionId,
+        agentId: 'sub-1',
+        part: { type: 'think', think: 'leak' },
+      } as Event,
+      {
+        type: 'session.tool.started',
+        sessionId,
+        agentId: 'sub-1',
+        tool_call_id: 'sub-tool',
+        tool_name: 'Shell',
+        arguments: { command: 'echo leak' },
+      } as Event,
+      {
+        type: 'session.tool.settled',
+        sessionId,
+        agentId: 'sub-1',
+        tool_call_id: 'sub-tool',
+        tool_name: 'Shell',
+        content: 'leak',
+        is_error: false,
       } as Event,
       // A subagent finishes its own turn while the main turn is still
       // running. Pre-fix this would resolve the parent prompt with
       // `end_turn` and leak the listener; post-fix it must be ignored.
       {
-        type: 'turn.ended',
+        type: 'session.turn.ended',
         sessionId,
         agentId: 'sub-1',
-        turnId: 99,
-        reason: 'completed',
+        turn_id: 99,
+        stop_reason: 'EndTurn',
+        steps: 1,
       } as Event,
-      { type: 'assistant.delta', sessionId, agentId: 'main', turnId: 1, delta: 'b' } as Event,
-      { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      {
+        type: 'llm.delta',
+        sessionId,
+        agentId: 'main',
+        part: { type: 'text', text: 'b' },
+      } as Event,
+      {
+        type: 'session.turn.ended',
+        sessionId,
+        agentId: 'main',
+        turn_id: 1,
+        stop_reason: 'EndTurn',
+        steps: 1,
+      } as Event,
     ]);
     const harness = {
       auth: { status: async () => AUTHED_STATUS },

@@ -9,10 +9,9 @@ import {
   type PromptPart,
   type TelemetryClient,
   type ToolInputDisplay,
-  type ToolResultEvent,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import { isHideOutputMarker } from './marker';
+import { HideOutputMarker } from './marker';
 
 /**
  * Convert an array of ACP {@link ContentBlock}s into the SDK's
@@ -296,44 +295,25 @@ function composePlanContent(
 }
 
 /**
- * Convert a {@link ToolResultEvent}'s `output` into ACP
+ * Convert a `session.tool.settled` event's `content` string into ACP
  * {@link ToolCallContent} entries.
  *
- * Phase 4 keeps the mapping intentionally simple: a non-empty string is
- * passed through as a text block; objects/arrays are JSON-stringified
- * (best-effort — falls back to `String(value)` on circular structures).
- * Empty/undefined/null output yields an empty array — the caller still
- * emits a `tool_call_update` so the client sees the status transition
- * to completed/failed.
+ * The mapping stays intentionally simple: a non-empty string is passed
+ * through as a text block; empty content yields an empty array — the
+ * caller still emits a `tool_call_update` so the client sees the status
+ * transition to completed/failed.
  *
- * Diff content does NOT come from this function: `ToolResultEvent` has
- * no `display` field; diffs attach to `ToolCallStartedEvent.display`
- * and are emitted by `toolCallStartToSessionUpdate`.
+ * A tool that owns its own UI surface (e.g. terminal output relayed via
+ * a reverse-RPC channel) can suppress its textual tool-card entry by
+ * emitting the serialized {@link HideOutputMarker} as `content` — the
+ * string-content analogue of the retired array marker (the old engine
+ * shipped `output: [HideOutputMarker, ...]`; the new engine's content
+ * is a plain string, so the marker rides as its JSON encoding). Detected
+ * before any other processing so marker-bearing outputs never leak even
+ * a stringified preview.
  */
-export function toolResultToAcpContent(event: ToolResultEvent): ToolCallContent[] {
-  const out = event.output;
-  // Mechanism A — array output containing the HideOutputMarker tells
-  // the adapter to suppress this tool's textual content entirely
-  // (e.g. AcpTerminalTool emits via terminal/* reverse-RPC, so
-  // routing the bytes through tool_call_update would double-render
-  // in the client UI). Detected before any other processing so
-  // mark-bearing outputs never leak even a stringified preview.
-  if (Array.isArray(out) && out.some(isHideOutputMarker)) {
-    return [];
-  }
-  if (out === undefined || out === null) return [];
-  if (typeof out === 'string') {
-    if (out.length === 0) return [];
-    return [{ type: 'content', content: { type: 'text', text: out } }];
-  }
-  // Best-effort stringify for object/array outputs.
-  let text: string;
-  try {
-    text = JSON.stringify(out);
-  } catch {
-    // eslint-disable-next-line no-base-to-string
-    text = typeof out === 'object' && out !== null ? '[object]' : String(out);
-  }
-  if (!text) return [];
-  return [{ type: 'content', content: { type: 'text', text } }];
+export function toolResultToAcpContent(content: string): ToolCallContent[] {
+  if (content === JSON.stringify(HideOutputMarker)) return [];
+  if (content.length === 0) return [];
+  return [{ type: 'content', content: { type: 'text', text: content } }];
 }

@@ -23,8 +23,8 @@
  * The Python side cancels the prompt task directly (asyncio
  * `CancelledError`); in TS land cancellation is observable as a
  * `session/cancel` notification that the SDK turns into a
- * `turn.ended { reason: 'cancelled' }` event — so the test exercises
- * the path the harness will actually take.
+ * `session.turn.ended { stop_reason: 'Aborted' }` event — so the test
+ * exercises the path the harness will actually take.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -209,17 +209,14 @@ describe('AcpServer cancel ⇄ pending requestPermission', () => {
     // Yield once so the agent-side subscribes to events before we emit.
     await new Promise((r) => setTimeout(r, 5));
 
-    // Advance the turnId so `buildPermissionToolCallUpdate` uses the
-    // prefixed `${turnId}:${rawId}` form — proves the cancel test also
-    // covers the production wire id.
+    // Advance the tracked turnId — the wire id stays the raw SDK
+    // toolCallId (the engine's tool events carry no turn_id, so there
+    // is no `${turnId}:` prefix anymore).
     handle.emit({
-      type: 'tool.call.started',
+      type: 'session.turn.started',
       sessionId,
       agentId: 'main',
-      turnId,
-      toolCallId: 'tc-cancel',
-      name: 'Bash',
-      args: { command: 'rm -rf /' },
+      turn_id: turnId,
     } as Event);
 
     // Invoke the approval handler as the SDK reverse-RPC layer would.
@@ -238,7 +235,7 @@ describe('AcpServer cancel ⇄ pending requestPermission', () => {
     await client.received;
     expect(client.isPending()).toBe(true);
     expect(client.permissionRequests).toHaveLength(1);
-    expect(client.permissionRequests[0]!.toolCall.toolCallId).toBe(`${turnId}:tc-cancel`);
+    expect(client.permissionRequests[0]!.toolCall.toolCallId).toBe('tc-cancel');
 
     // The critical invariant: `session/cancel` (a notification) must
     // reach the SDK even though `requestPermission` is still parked at
@@ -260,13 +257,14 @@ describe('AcpServer cancel ⇄ pending requestPermission', () => {
 
     // Close out the parked prompt so the test exits cleanly. The
     // adapter resolves the prompt promise with `stopReason: 'cancelled'`
-    // when the SDK lands the `turn.ended` event below.
+    // when the SDK lands the `session.turn.ended` event below.
     handle.emit({
-      type: 'turn.ended',
+      type: 'session.turn.ended',
       sessionId,
       agentId: 'main',
-      turnId,
-      reason: 'cancelled',
+      turn_id: turnId,
+      stop_reason: 'Aborted',
+      steps: 1,
     } as Event);
     handle.resolvePrompt();
     const promptResp = await pending;
@@ -300,13 +298,10 @@ describe('AcpServer cancel ⇄ pending requestPermission', () => {
     await new Promise((r) => setTimeout(r, 5));
 
     handle.emit({
-      type: 'tool.call.started',
+      type: 'session.turn.started',
       sessionId,
       agentId: 'main',
-      turnId: 1,
-      toolCallId: 'tc-ind',
-      name: 'Bash',
-      args: { command: 'echo hi' },
+      turn_id: 1,
     } as Event);
 
     const approvalPromise = Promise.resolve(
@@ -332,11 +327,12 @@ describe('AcpServer cancel ⇄ pending requestPermission', () => {
     expect(decision.decision).toBe('approved');
 
     handle.emit({
-      type: 'turn.ended',
+      type: 'session.turn.ended',
       sessionId,
       agentId: 'main',
-      turnId: 1,
-      reason: 'cancelled',
+      turn_id: 1,
+      stop_reason: 'Aborted',
+      steps: 1,
     } as Event);
     handle.resolvePrompt();
     const promptResp = await pending;

@@ -18,12 +18,11 @@ import {
   ErrorCodes,
   KimiError,
   type Event,
-  type KimiErrorPayload,
   type KimiHarness,
   type Session,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import { turnEndReasonToStopReason } from '../src/events-map';
+import { turnStopReasonToAcpStopReason } from '../src/events-map';
 import { AcpServer } from '../src/server';
 import { AUTHED_STATUS } from './_helpers/harness-stubs';
 
@@ -62,8 +61,10 @@ interface ScriptedSession {
  * Build a fake `Session` whose `prompt()` either rejects with a
  * caller-supplied error OR fans out a pre-recorded event sequence
  * through any subscribed listener — covering the two distinct error
- * paths that {@link AcpSession.prompt} routes through
- * `mapPromptError` / `authRequiredFromPayload`.
+ * paths that {@link AcpSession.prompt} routes through `mapPromptError`:
+ * a synchronous rejection from `session.prompt(...)` (which carries
+ * auth-coded failures under the engine contract) and a streamed
+ * `session.turn.ended` `stop_reason`.
  */
 function makeScriptedSession(
   sessionId: string,
@@ -103,85 +104,20 @@ function makeHarnessWithSession(session: Session): KimiHarness {
 }
 
 describe('AcpServer error mapping', () => {
-  it('maps a turn.ended failed event with auth.login_required to authRequired (-32000)', async () => {
-    const sessionId = 'sess-auth-payload';
-    const errorPayload: KimiErrorPayload = {
-      code: ErrorCodes.AUTH_LOGIN_REQUIRED,
-      message: 'Login required',
-      retryable: false,
-    };
-    const { session } = makeScriptedSession(sessionId, {
-      script: [
-        {
-          type: 'turn.ended',
-          sessionId,
-          agentId: 'main',
-          turnId: 1,
-          reason: 'failed',
-          error: errorPayload,
-        } as Event,
-      ],
-    });
-
-    const { agentStream, clientStream } = makeInMemoryStreamPair();
-    new AgentSideConnection((c) => new AcpServer(makeHarnessWithSession(session), c), agentStream);
-    const client = new ClientSideConnection(() => new StubClient(), clientStream);
-
-    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
-    await expect(
-      client.prompt({ sessionId, prompt: [textBlock('hi')] }),
-    ).rejects.toMatchObject({ code: -32000 });
-  });
-
-  it('maps a turn.ended failed event with provider.auth_error to authRequired (-32000)', async () => {
-    const sessionId = 'sess-provider-auth';
-    const errorPayload: KimiErrorPayload = {
-      code: ErrorCodes.PROVIDER_AUTH_ERROR,
-      message: 'Provider returned 401',
-      retryable: false,
-    };
-    const { session } = makeScriptedSession(sessionId, {
-      script: [
-        {
-          type: 'turn.ended',
-          sessionId,
-          agentId: 'main',
-          turnId: 1,
-          reason: 'failed',
-          error: errorPayload,
-        } as Event,
-      ],
-    });
-
-    const { agentStream, clientStream } = makeInMemoryStreamPair();
-    new AgentSideConnection((c) => new AcpServer(makeHarnessWithSession(session), c), agentStream);
-    const client = new ClientSideConnection(() => new StubClient(), clientStream);
-
-    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
-    await expect(
-      client.prompt({ sessionId, prompt: [textBlock('hi')] }),
-    ).rejects.toMatchObject({ code: -32000 });
-  });
-
-  it('resolves with end_turn when turn.ended fails with a non-auth code (log-only path)', async () => {
-    // Non-auth failures stay on the existing log-and-resolve path so
-    // the client is unblocked. The error appears in the agent log;
-    // `stopReason` does not signal it (ACP spec discourages errors-via-stopReason).
-    const sessionId = 'sess-context-overflow';
-    const errorPayload: KimiErrorPayload = {
-      code: ErrorCodes.CONTEXT_OVERFLOW,
-      message: 'Context window exceeded',
-      retryable: true,
-    };
+  it('resolves with end_turn when session.turn.ended carries a non-terminal stop_reason (MaxTokens)', async () => {
+    // MaxTokens / Paused have no ACP `StopReason` variant — the adapter
+    // resolves `end_turn` so the client stays unblocked (ACP spec
+    // discourages signaling errors through `stopReason`).
+    const sessionId = 'sess-max-tokens';
     const { session, unsubscribeCount } = makeScriptedSession(sessionId, {
       script: [
         {
-          type: 'turn.ended',
+          type: 'session.turn.ended',
           sessionId,
           agentId: 'main',
-          turnId: 1,
-          reason: 'failed',
-          error: errorPayload,
+          turn_id: 1,
+          stop_reason: 'MaxTokens',
+          steps: 1,
         } as Event,
       ],
     });
@@ -243,11 +179,18 @@ describe('AcpServer error mapping', () => {
     expect(serialized).not.toContain('boom internal');
   });
 
-  it('still maps reason: cancelled to stop_reason: cancelled (Phase 3/4 regression guard)', async () => {
+  it('maps an Aborted stop_reason to ACP stopReason cancelled', async () => {
     const sessionId = 'sess-cancel-regression';
     const { session } = makeScriptedSession(sessionId, {
       script: [
-        { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'cancelled' } as Event,
+        {
+          type: 'session.turn.ended',
+          sessionId,
+          agentId: 'main',
+          turn_id: 1,
+          stop_reason: 'Aborted',
+          steps: 1,
+        } as Event,
       ],
     });
 
@@ -260,30 +203,29 @@ describe('AcpServer error mapping', () => {
     expect(response.stopReason).toBe('cancelled');
   });
 
-  it('maps blocked turn-end reasons to ACP stopReason refusal', () => {
-    // ACP has a native `refusal` stop reason that matches a provider safety
-    // block or prompt-hook block; mapping either to anything else (e.g.
-    // end_turn) would let the client mistake the block for a clean turn.
-    expect(turnEndReasonToStopReason('failed', { code: 'provider.filtered' })).toBe('refusal');
-    expect(turnEndReasonToStopReason('blocked')).toBe('refusal');
+  it('maps engine stop_reasons to ACP stopReason', () => {
+    // ACP has a native `refusal` stop reason that matches the engine's
+    // `Filtered` (provider safety block); mapping it to anything else
+    // (e.g. end_turn) would let the client mistake the block for a
+    // clean turn.
+    expect(turnStopReasonToAcpStopReason('EndTurn')).toBe('end_turn');
+    expect(turnStopReasonToAcpStopReason('MaxTokens')).toBe('end_turn');
+    expect(turnStopReasonToAcpStopReason('Paused')).toBe('end_turn');
+    expect(turnStopReasonToAcpStopReason('Aborted')).toBe('cancelled');
+    expect(turnStopReasonToAcpStopReason('Filtered')).toBe('refusal');
   });
 
-  it('resolves with refusal when turn.ended fails with provider.filtered', async () => {
+  it('resolves with refusal when session.turn.ended carries stop_reason Filtered', async () => {
     const sessionId = 'sess-filtered';
     const { session, unsubscribeCount } = makeScriptedSession(sessionId, {
       script: [
         {
-          type: 'turn.ended',
+          type: 'session.turn.ended',
           sessionId,
           agentId: 'main',
-          turnId: 1,
-          reason: 'failed',
-          error: {
-            code: 'provider.filtered',
-            message: 'Provider safety policy blocked the response.',
-            name: 'ProviderFilteredError',
-            retryable: false,
-          },
+          turn_id: 1,
+          stop_reason: 'Filtered',
+          steps: 1,
         } as Event,
       ],
     });
