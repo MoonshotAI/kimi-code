@@ -618,8 +618,14 @@ export class KimiTUI {
       // When the trust prompt already started the event loop, starting it
       // again would re-run pi-tui's terminal.start() — stacking a second
       // Kitty keyboard-protocol push (leaking CSI-u mode past exit) and
-      // duplicate stdin listeners.
-      if (!trustPromptStartedLoop) this.startEventLoop();
+      // duplicate stdin listeners. The prompt started before init() loaded the
+      // experimental-feature snapshot, so refresh mouse tracking once the main
+      // editor is mounted instead.
+      if (trustPromptStartedLoop) {
+        this.refreshTerminalMouseTracking();
+      } else {
+        this.startEventLoop();
+      }
       startupTrace('eventLoop:started');
       try {
         this.startBackgroundFdAutocomplete();

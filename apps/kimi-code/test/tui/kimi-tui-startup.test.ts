@@ -68,6 +68,17 @@ interface MigrateExitDriver extends StartupDriver {
   terminalFocusTrackingDispose?: () => void;
 }
 
+interface TrustPromptStartupDriver extends StartupDriver {
+  start(): Promise<void>;
+  registerSignalHandlers(): void;
+  maybeRunWorkspaceTrustPrompt(): Promise<boolean>;
+  initMainTui(): Promise<boolean>;
+  startEventLoop(): void;
+  refreshTerminalMouseTracking(): void;
+  startBackgroundFdAutocomplete(): void;
+  finishStartup(shouldReplayHistory: boolean): Promise<void>;
+}
+
 const MIGRATION_PLAN: MigrationPlan = {
   sourceHome: '/x/.kimi',
   hasConfig: false,
@@ -1934,6 +1945,38 @@ describe('KimiTUI startup', () => {
     });
     expect(driver.state.startupState).toBe('ready');
     expect(driver.state.appState.sessionId).toBe('');
+  });
+
+  it('refreshes terminal mouse tracking after the trust prompt starts the event loop', async () => {
+    const harness = makeHarness();
+    const driver = makeDriver(harness, {
+      ...makeStartupInput(),
+      engineV2: true,
+    }) as unknown as TrustPromptStartupDriver;
+    vi.spyOn(driver, 'registerSignalHandlers').mockImplementation(() => {});
+    const trustPrompt = vi
+      .spyOn(driver, 'maybeRunWorkspaceTrustPrompt')
+      .mockResolvedValue(true);
+    const initMainTui = vi.spyOn(driver, 'initMainTui').mockResolvedValue(false);
+    const startEventLoop = vi.spyOn(driver, 'startEventLoop').mockImplementation(() => {});
+    const refreshMouse = vi
+      .spyOn(driver, 'refreshTerminalMouseTracking')
+      .mockImplementation(() => {});
+    vi.spyOn(driver, 'startBackgroundFdAutocomplete').mockImplementation(() => {});
+    vi.spyOn(driver, 'finishStartup').mockResolvedValue();
+
+    await driver.start();
+
+    expect(trustPrompt).toHaveBeenCalledOnce();
+    expect(initMainTui).toHaveBeenCalledOnce();
+    expect(startEventLoop).not.toHaveBeenCalled();
+    expect(refreshMouse).toHaveBeenCalledOnce();
+    const initOrder = initMainTui.mock.invocationCallOrder[0];
+    const refreshOrder = refreshMouse.mock.invocationCallOrder[0];
+    if (initOrder === undefined || refreshOrder === undefined) {
+      throw new Error('expected startup and mouse refresh calls');
+    }
+    expect(initOrder).toBeLessThan(refreshOrder);
   });
 
   it('disposes terminal focus/theme tracking on the kimi migrate exit', async () => {
