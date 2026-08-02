@@ -390,6 +390,13 @@ async fn main() -> anyhow::Result<()> {
     // the manager lock — a cancel must never need that lock.
     let session_cancel: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> =
         Arc::new(Mutex::new(HashMap::new()));
+    // Per-session "turn in flight" flags, reachable without the manager lock:
+    // `session/prompt` runs the whole turn while holding the manager lock, so
+    // fork/compact must be able to reject a busy session WITHOUT taking that
+    // lock (otherwise they block behind the running turn for its full
+    // duration). Set before the turn starts, cleared after it settles.
+    let session_busy: Arc<Mutex<HashMap<String, bool>>> =
+        Arc::new(Mutex::new(HashMap::new()));
     // Shared steer queues per session, so `session/steer` can push while a
     // prompt is running (which holds the manager lock). Mirrors `session_cancel`.
     #[allow(clippy::type_complexity)]
@@ -589,8 +596,10 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let mgr = session_manager.clone();
+    let busy = session_busy.clone();
     RpcServer::register_arc(&server, types::methods::SESSION_PROMPT, move |params| {
         let mgr = mgr.clone();
+        let busy = busy.clone();
         Box::pin(async move {
             let input: types::SessionPromptParams = serde_json::from_value(params)
                 .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
@@ -617,11 +626,23 @@ async fn main() -> anyhow::Result<()> {
                     ))
                 })?,
             };
+            // Mark the session busy (lock-free map) so fork/compact can reject
+            // it immediately instead of blocking behind the manager lock for
+            // the whole turn. Cleared after the turn settles, error or not.
+            {
+                let mut busy = busy.lock().unwrap_or_else(|e| e.into_inner());
+                busy.insert(input.session_id.clone(), true);
+            }
             // Goal-aware driving: `run_prompt` runs continuation turns while
             // a goal stays active, exactly like the in-process driver.
             let result = agent.run_prompt(parts).await.map_err(|e| {
                 types::JsonRpcError::internal_error(format!("run_prompt failed: {e}"))
-            })?;
+            });
+            {
+                let mut busy = busy.lock().unwrap_or_else(|e| e.into_inner());
+                busy.remove(&input.session_id);
+            }
+            let result = result?;
             Ok(serde_json::json!({
                 "stop_reason": format!("{:?}", result.stop_reason),
                 "steps": result.steps,
@@ -1705,11 +1726,26 @@ async fn main() -> anyhow::Result<()> {
     // copies conversation + context, drops the goal state. Reports
     // `forked: false` for an unknown source.
     let mgr = session_manager.clone();
+    let busy = session_busy.clone();
     RpcServer::register_arc(&server, types::methods::SESSION_FORK, move |params| {
         let mgr = mgr.clone();
+        let busy = busy.clone();
         Box::pin(async move {
             let input: types::SessionForkParams = serde_json::from_value(params)
                 .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+            // Reject a busy session WITHOUT taking the manager lock: a running
+            // prompt holds it for the whole turn, so taking the lock here
+            // would block the fork for the turn's full duration instead of
+            // refusing promptly (the SDK maps this message to
+            // `session.fork_active_turn`).
+            {
+                let busy = busy.lock().unwrap_or_else(|e| e.into_inner());
+                if busy.get(&input.session_id).copied().unwrap_or(false) {
+                    return Err(types::JsonRpcError::internal_error(
+                        "session has an active turn; cancel it before forking".to_string(),
+                    ));
+                }
+            }
             let mut manager = mgr.lock().await;
             let forked = manager
                 .fork_session(&input.session_id, &input.fork_id, input.title.as_deref())

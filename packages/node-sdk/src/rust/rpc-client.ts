@@ -465,8 +465,22 @@ export class RustRpcClient extends SDKRpcClientBase {
         const status = await r.sessionGetStatus(sessionId);
         return status?.swarm_mode ?? false;
       },
-      beginCompaction: async ({ sessionId }: any) => {
-        await r.sessionCompact(sessionId);
+      beginCompaction: async ({ sessionId, instruction }: any) => {
+        try {
+          await r.sessionCompact(sessionId, instruction);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message.includes('No compaction delegate set')) {
+            // No native-LLM summarizer is configured; map to the SDK's
+            // `compaction.unable` contract instead of leaking the engine
+            // message (mirrors the forkSession active-turn mapping above).
+            throw new KimiError(
+              ErrorCodes.COMPACTION_UNABLE,
+              'Compaction is unavailable for this session',
+            );
+          }
+          throw error;
+        }
       },
       cancelCompaction: async () => nativeUnavailable('cancelCompaction'),
       registerTool: async () => {},

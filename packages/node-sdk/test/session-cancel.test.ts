@@ -34,10 +34,15 @@ describe('Session.cancel', () => {
       const started = waitForSDKEvent(session, (event) => event.type === 'session.turn.started');
       const ended = waitForSDKEvent(session, (event) => event.type === 'session.turn.ended');
 
-      await session.prompt('start a turn that will be cancelled');
+      // Fire-and-forget: with a hanging llmStep the prompt only settles when
+      // the turn ends, which is exactly what cancel() triggers below.
+      const promptPromise = session
+        .prompt('start a turn that will be cancelled')
+        .catch(() => undefined);
       const startedEvent = await started;
       await session.cancel();
       const endedEvent = await ended;
+      await promptPromise;
       unsubscribe();
 
       expect(startedEvent).toMatchObject({
@@ -110,7 +115,9 @@ describe('KimiHarness.forkSession', () => {
       const started = waitForSDKEvent(session, (event) => event.type === 'session.turn.started');
       const ended = waitForSDKEvent(session, (event) => event.type === 'session.turn.ended');
 
-      await session.prompt('keep this turn active');
+      // Fire-and-forget (same reasoning as above): cancel must race the
+      // hanging turn rather than await its completion.
+      const promptPromise = session.prompt('keep this turn active').catch(() => undefined);
       await started;
       try {
         await expect(
@@ -125,6 +132,7 @@ describe('KimiHarness.forkSession', () => {
       } finally {
         await session.cancel().catch(() => undefined);
         await ended.catch(() => undefined);
+        await promptPromise;
       }
     } finally {
       await harness.close();
