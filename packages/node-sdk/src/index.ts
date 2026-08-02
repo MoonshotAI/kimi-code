@@ -88,20 +88,23 @@ export { installGlobalProxyDispatcher } from '@moonshot-ai/kimi-agent/runtime';
 // Compression is never silent: buildImageCompressionCaption renders the note
 // placed next to a compressed image, and persistOriginalImage keeps the
 // pre-compression bytes readable (ReadMediaFile + region) for detail.
+// Local port of the retired agent-core image pipeline (legacy/image).
 export {
   buildImageCompressionCaption,
-  buildUnsupportedImageNotice,
   compressImageForModel,
   compressBase64ForModel,
+  extractImageCompressionCaptions,
   gateImageFormatParts,
+  IMAGE_BYTE_BUDGET,
+  MAX_IMAGE_EDGE_PX,
+} from '#/legacy/image/image-compress';
+export {
+  buildUnsupportedImageNotice,
   isModelAcceptedImageMime,
   normalizeImageMime,
   parseImageDataUrl,
-  persistOriginalImage,
-  sessionMediaOriginalsDir,
-  IMAGE_BYTE_BUDGET,
-  MAX_IMAGE_EDGE_PX,
-} from '@moonshot-ai/agent-core';
+} from '#/legacy/image/image-format-policy';
+export { persistOriginalImage, sessionMediaOriginalsDir } from '#/legacy/image/image-originals';
 export type { ImageLimits } from '#/kimi-harness';
 export type {
   CompressImageOptions,
@@ -109,7 +112,7 @@ export type {
   CompressBase64Result,
   ImageCompressionCaptionInput,
   ImageCompressionTelemetry,
-} from '@moonshot-ai/agent-core';
+} from '#/legacy/image/image-compress';
 
 // Experimental feature flags — types only. Resolved values come from
 // `KimiHarness.getExperimentalFeatures()` over RPC, not from a re-exported runtime value.

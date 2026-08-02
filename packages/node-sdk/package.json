@@ -60,12 +60,14 @@
     "@antfu/utils": "^9.3.0",
     "@moonshot-ai/kimi-agent": "workspace:*",
     "@moonshot-ai/kimi-i18n": "workspace:^",
+    "@moonshot-ai/kimi-native-tools": "workspace:^",
     "@moonshot-ai/protocol": "workspace:^",
     "smol-toml": "^1.6.1",
     "yazl": "^3.3.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@jsquash/webp": "^1.5.0",
     "@moonshot-ai/agent-core": "workspace:^",
     "@moonshot-ai/kaos": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
