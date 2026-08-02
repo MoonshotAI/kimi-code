@@ -597,21 +597,6 @@ export function useModelProviderState(
     }
   }
 
-  /** OAuth login is permanently removed — always returns null. */
-  async function startOAuthLogin(): Promise<null> {
-    return null;
-  }
-
-  /** Poll the singleton OAuth flow — always returns null. */
-  async function pollOAuthLogin(): Promise<null> {
-    return null;
-  }
-
-  /** Cancel the current OAuth flow — no-op. */
-  async function cancelOAuthLogin(): Promise<void> {
-    // no-op
-  }
-
   /** Persist and apply a new extended-thinking level (also pushed to the active
    *  session profile so the daemon's /status reflects it; still sent per-prompt). */
   function setThinking(level: ThinkingLevel): void {
@@ -650,9 +635,6 @@ export function useModelProviderState(
     deleteProvider,
     refreshProvider,
     refreshAllProviders,
-    startOAuthLogin,
-    pollOAuthLogin,
-    cancelOAuthLogin,
     setThinking,
   };
 }

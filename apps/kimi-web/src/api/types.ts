@@ -600,7 +600,7 @@ export interface KimiEventConnection {
 // ---------------------------------------------------------------------------
 // Model + Provider (app-facing, camelCase)
 // Implemented in kap-server (modelCatalog routes: /providers, /providers/{id},
-// /providers:refresh, /providers:refresh_oauth). Adapter-isolated for swap-friendliness.
+// /providers:refresh). Adapter-isolated for swap-friendliness.
 // ---------------------------------------------------------------------------
 
 export interface AppModel {
@@ -811,7 +811,7 @@ export interface KimiWebApi {
   getFsHome(): Promise<{ home: string; recentRoots: string[] }>;
 
   // Implemented in kap-server (modelCatalog routes: /providers, /providers/{id},
-// /providers:refresh, /providers:refresh_oauth). Adapter-isolated for swap-friendliness.
+// /providers:refresh). Adapter-isolated for swap-friendliness.
   listModels(): Promise<AppModel[]>;
   listProviders(): Promise<AppProvider[]>;
   addProvider(input: { type: string; apiKey?: string; baseUrl?: string; defaultModel?: string }): Promise<AppProvider>;
@@ -819,7 +819,6 @@ export interface KimiWebApi {
   deleteProvider(id: string): Promise<{ deleted: true }>;
   refreshProvider(id: string): Promise<ProviderRefreshResult>;
   refreshAllProviders(): Promise<ProviderRefreshResult>;
-  refreshOAuthProviderModels(): Promise<ProviderRefreshResult>;
 
   // File upload / download
   uploadFile(input: { file: Blob; name?: string }): Promise<{ id: string; name: string; mediaType: string; size: number }>;
@@ -846,31 +845,8 @@ export interface KimiWebApi {
     defaultModel: string | null;
     managedProvider: { status: string } | null;
   }>;
-  startOAuthLogin(): Promise<OAuthLoginStartResult>;
-  pollOAuthLogin(): Promise<{
-    flowId: string;
-    status: 'pending' | 'authenticated' | 'expired' | 'cancelled';
-    resolvedAt?: string;
-  } | null>;
-  cancelOAuthLogin(): Promise<{ cancelled: boolean; status: string }>;
   logout(): Promise<{ loggedOut: boolean }>;
 }
 
-/** Result of `startOAuthLogin()`, mirroring the wire discriminated union. */
-export type OAuthLoginStartResult =
-  | {
-      flowId: string;
-      provider: string;
-      status: 'pending';
-      verificationUri: string;
-      verificationUriComplete: string;
-      userCode: string;
-      expiresIn: number;
-      interval: number;
-      expiresAt: string;
-    }
-  | {
-      flowId: string;
-      provider: string;
-      status: 'authenticated';
-    };
+// ---------------------------------------------------------------------------
+// Model + Provider

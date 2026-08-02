@@ -2992,9 +2992,6 @@ export function useKimiWebClient() {
 
     // Auth actions
     checkAuth: workspaceState.checkAuth,
-    startOAuthLogin: modelProvider.startOAuthLogin,
-    pollOAuthLogin: modelProvider.pollOAuthLogin,
-    cancelOAuthLogin: modelProvider.cancelOAuthLogin,
     logout: workspaceState.logout,
   };
 }

@@ -38,8 +38,6 @@ const emit = defineEmits<{
   update: [id: string, input: { type?: string; apiKey?: string; baseUrl?: string; defaultModel?: string }];
   refresh: [id: string];
   delete: [id: string];
-  /** Open the login dialog for the given platform (OAuth flow) */
-  openLogin: [platform: string];
   close: [];
 }>();
 

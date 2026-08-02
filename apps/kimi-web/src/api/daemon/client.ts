@@ -29,7 +29,6 @@ import type {
   KimiEventConnection,
   KimiEventHandlers,
   KimiWebApi,
-  OAuthLoginStartResult,
   Page,
   PageRequest,
   PromptSubmission,
@@ -71,9 +70,6 @@ import type {
   WireMessage,
   WireMcpServerConfig,
   WireModel,
-  WireOAuthCancelResult,
-  WireOAuthLoginPollResult,
-  WireOAuthLoginStartResult,
   WirePage,
   WirePromptSubmitResult,
   WirePromptSteerResult,
@@ -1316,11 +1312,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return toProviderRefreshResult(data);
   }
 
-  async refreshOAuthProviderModels(): Promise<ProviderRefreshResult> {
-    const data = await this.http.post<WireProviderRefreshResult>('/providers:refresh_oauth');
-    return toProviderRefreshResult(data);
-  }
-
   // -------------------------------------------------------------------------
   // Config — REAL endpoints
   // -------------------------------------------------------------------------
@@ -1407,48 +1398,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
         ? { status: data.managed_provider.status }
         : null,
     };
-  }
-
-  async startOAuthLogin(): Promise<OAuthLoginStartResult> {
-    const data = await this.http.post<WireOAuthLoginStartResult>('/oauth/login', {});
-    if (data.status === 'authenticated') {
-      return {
-        flowId: data.flow_id,
-        provider: data.provider,
-        status: 'authenticated',
-      };
-    }
-    return {
-      flowId: data.flow_id,
-      provider: data.provider,
-      status: 'pending',
-      verificationUri: data.verification_uri,
-      verificationUriComplete: data.verification_uri_complete,
-      userCode: data.user_code,
-      expiresIn: data.expires_in,
-      interval: data.interval,
-      expiresAt: data.expires_at,
-    };
-  }
-
-  async pollOAuthLogin(): Promise<{
-    flowId: string;
-    status: 'pending' | 'authenticated' | 'expired' | 'cancelled';
-    resolvedAt?: string;
-  } | null> {
-    // data may be null if no flow is active
-    const data = await this.http.get<WireOAuthLoginPollResult | null>('/oauth/login');
-    if (!data) return null;
-    return {
-      flowId: data.flow_id,
-      status: data.status,
-      resolvedAt: data.resolved_at,
-    };
-  }
-
-  async cancelOAuthLogin(): Promise<{ cancelled: boolean; status: string }> {
-    const data = await this.http.delete<WireOAuthCancelResult>('/oauth/login');
-    return { cancelled: data.cancelled, status: data.status };
   }
 
   async logout(): Promise<{ loggedOut: boolean }> {

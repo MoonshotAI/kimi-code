@@ -4,6 +4,33 @@
 
 ## 2026-08-02
 
+### chore: 清理前端 OAuth 遗留死代码 — 移除设备码登录/轮询/取消全链路
+
+移除 kimi-web 中所有 OAuth 登录（设备码）流程的前端死代码。后端 OAuth 路由（`/oauth/login`、`/oauth/logout` 等）仍由 v2 `IOAuthService` 驱动，`logout`/`getAuth`/`managedProvider` 保持活跃不变。
+
+| 层级 | 文件 | 改动 |
+|---|---|---|
+| API | `apps/kimi-web/src/api/daemon/client.ts` | 移除 `refreshOAuthProviderModels`、`startOAuthLogin`/`pollOAuthLogin`/`cancelOAuthLogin` 方法及 `WireOAuth*`/`OAuthLoginStartResult` import |
+| Wire | `apps/kimi-web/src/api/daemon/wire.ts` | 移除 `WireOAuthLoginStart*`/`WireOAuthLoginPollResult`/`WireOAuthCancelResult`；保留 `WireAuthResult`/`WireManagedProvider`/`WireLogoutResult`（仍在使用） |
+| Type | `apps/kimi-web/src/api/types.ts` | 移除 `KimiWebApi` 接口中 4 个 OAuth 方法声明及 `OAuthLoginStartResult` 类型 |
+| UI | `apps/kimi-web/src/components/settings/ProviderManager.vue` | 移除 `openLogin` emit 声明（无宿主绑定） |
+| State | `apps/kimi-web/src/composables/client/useModelProviderState.ts` | 移除 `startOAuthLogin`/`pollOAuthLogin`/`cancelOAuthLogin` 三个 no-op 方法（标注 "permanently removed"）及导出 |
+| State | `apps/kimi-web/src/composables/useKimiWebClient.ts` | 移除三个 OAuth 方法转发 |
+| UI | `apps/kimi-web/src/components/dialogs/LoginDialog.vue` | 删除整个死文件（零引用） |
+
+### feat: ChatHeader 分支切换 UI + 后端未启动提示
+
+前端补齐顶部栏 Git 分支切换下拉菜单（后端 `:git-branches` / `:git-checkout` session actions 已就绪），并区分连接层错误与认证错误——后端未启动时显示明确的「后端未启动」提示，而非容易误导的认证报错。
+
+| 层级 | 文件 | 改动 |
+|---|---|---|
+| API | `apps/kimi-web/src/api/daemon/client.ts` | 新增 `listBranches` / `switchBranch`（`POST :git-branches` / `:git-checkout`） |
+| Type | `apps/kimi-web/src/api/types.ts` | `KimiWebApi` 新增 `listBranches` / `switchBranch` 方法签名 |
+| UI | `apps/kimi-web/src/components/chat/ChatHeader.vue` | 分支下拉菜单（Teleport 定位、加载/失败/切换中状态、切换成功触发 `git-refresh`） |
+| i18n | `apps/kimi-web/src/i18n/locales/{en,zh}/header.ts` | 新增 7 个分支切换文案 key |
+| State | `apps/kimi-web/src/composables/client/useWorkspaceState.ts` | `checkAuth` 区分 `DaemonNetworkError`，后端未启动时显示 `backendNotRunning` 而非原始传输报错 |
+| i18n | `apps/kimi-web/src/i18n/locales/{en,zh}/app.ts` | 新增 `backendNotRunning` 文案 |
+
 ### feat: 用户级 Skill 可视化 CRUD — 单个技能创建/编辑/删除
 
 补齐「用户级 Skill 管理 REST 路由」的前端集成（此前仅后端就绪，标注「前端集成待后续补充」）。在设置面板「技能」tab 新增「用户自定义技能」区块，对 `<kimi-home>/skills/<name>/SKILL.md` 实现端到端可视化增删改：列表展示、内联表单（名称/描述/内容）、改名支持（先删旧再建新）、懒加载与 loading/error 状态。
