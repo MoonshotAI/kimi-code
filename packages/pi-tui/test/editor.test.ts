@@ -1482,6 +1482,43 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.getText(), "hello world");
 		});
 
+		it("selected kills are available to yank for every kill command", () => {
+			for (const command of ["\x15", "\x0b", "\x17", "\x1bd"]) {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				editor.setText("alpha beta\ngamma delta");
+				editor.beginSelection({ line: 0, col: 6 });
+				editor.updateSelection({ line: 1, col: 5 });
+				editor.finishSelection();
+
+				editor.handleInput(command);
+				assert.strictEqual(editor.getText(), "alpha  delta");
+				editor.handleInput("\x19"); // Ctrl+Y
+				assert.strictEqual(editor.getText(), "alpha beta\ngamma delta");
+			}
+		});
+
+		it("selected kills preserve backward and forward accumulation order", () => {
+			const backward = new Editor(createTestTUI(), defaultEditorTheme);
+			backward.setText("one two three");
+			backward.beginSelection({ line: 0, col: 8 });
+			backward.updateSelection({ line: 0, col: 13 });
+			backward.finishSelection();
+			backward.handleInput("\x17"); // Ctrl+W kills selected "three"
+			backward.handleInput("\x17"); // Ctrl+W prepends "two "
+			backward.handleInput("\x19"); // Ctrl+Y
+			assert.strictEqual(backward.getText(), "one two three");
+
+			const forward = new Editor(createTestTUI(), defaultEditorTheme);
+			forward.setText("one two three");
+			forward.beginSelection({ line: 0, col: 0 });
+			forward.updateSelection({ line: 0, col: 3 });
+			forward.finishSelection();
+			forward.handleInput("\x1bd"); // Alt+D kills selected "one"
+			forward.handleInput("\x1bd"); // Alt+D appends " two"
+			forward.handleInput("\x19"); // Ctrl+Y
+			assert.strictEqual(forward.getText(), "one two three");
+		});
+
 		it("Ctrl+Y does nothing when kill ring is empty", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 

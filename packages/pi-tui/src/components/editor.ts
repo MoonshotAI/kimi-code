@@ -1315,6 +1315,16 @@ export class Editor implements Component, Focusable {
 		return true;
 	}
 
+	private killSelection(prepend: boolean): boolean {
+		const selectedText = this.getSelectedText();
+		if (selectedText === undefined) return false;
+		const accumulate = this.lastAction === "kill";
+		this.killRing.push(selectedText, { prepend, accumulate });
+		this.deleteSelection();
+		this.lastAction = "kill";
+		return true;
+	}
+
 	setText(text: string): void {
 		this.selection = undefined;
 		this.cancelAutocomplete();
@@ -1812,7 +1822,7 @@ export class Editor implements Component, Focusable {
 
 	private deleteToStartOfLine(): void {
 		this.exitHistoryBrowsing();
-		if (this.deleteSelection()) return;
+		if (this.killSelection(true)) return;
 
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
@@ -1848,7 +1858,7 @@ export class Editor implements Component, Focusable {
 
 	private deleteToEndOfLine(): void {
 		this.exitHistoryBrowsing();
-		if (this.deleteSelection()) return;
+		if (this.killSelection(false)) return;
 
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
@@ -1881,7 +1891,7 @@ export class Editor implements Component, Focusable {
 
 	private deleteWordBackwards(): void {
 		this.exitHistoryBrowsing();
-		if (this.deleteSelection()) return;
+		if (this.killSelection(true)) return;
 
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
@@ -1927,7 +1937,7 @@ export class Editor implements Component, Focusable {
 
 	private deleteWordForward(): void {
 		this.exitHistoryBrowsing();
-		if (this.deleteSelection()) return;
+		if (this.killSelection(false)) return;
 
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
