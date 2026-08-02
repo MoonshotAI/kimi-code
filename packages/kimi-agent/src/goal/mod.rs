@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 
 /// Lifecycle status of a goal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum GoalStatus {
     /// The goal is live and may run continuation turns.
     Active,
@@ -54,6 +55,7 @@ pub struct GoalBudgetLimits {
 
 /// Computed budget report.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GoalBudgetReport {
     pub token_budget: Option<u64>,
     pub turn_budget: Option<u32>,
@@ -69,6 +71,7 @@ pub struct GoalBudgetReport {
 
 /// Public snapshot of the current goal.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GoalSnapshot {
     pub goal_id: String,
     pub objective: String,

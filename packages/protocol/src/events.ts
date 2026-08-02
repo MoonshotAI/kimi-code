@@ -566,6 +566,135 @@ export interface ModelCatalogChangedEvent {
   readonly failed: readonly ProviderRefreshFailure[];
 }
 
+// ── Rust engine events (protocol-toward-engine) ──────────────────────────
+// The engine owns the session event stream (`host/event`, snake_case).
+// These are passed through by the SDK verbatim (only `sessionId`/`agentId`
+// routing fields are stamped by the host). Host-synthesized events at the
+// bottom of this block describe host-side actions the engine cannot emit.
+
+export interface EngineTurnStartedEvent {
+  readonly type: 'session.turn.started';
+  readonly turn_id: number;
+}
+
+export interface EngineTurnEndedEvent {
+  readonly type: 'session.turn.ended';
+  readonly turn_id: number;
+  readonly stop_reason: string;
+  readonly steps: number;
+}
+
+export interface EngineLlmStepBeginEvent {
+  readonly type: 'llm.step.begin';
+  readonly model: string;
+}
+
+export interface EngineLlmDeltaEvent {
+  readonly type: 'llm.delta';
+  readonly part: { readonly type: 'text' | 'think'; readonly text?: string; readonly think?: string };
+}
+
+export interface EngineLlmStepEndEvent {
+  readonly type: 'llm.step.end';
+  readonly content: string;
+  readonly usage?: { readonly input_tokens?: number; readonly output_tokens?: number };
+}
+
+export interface EngineToolStartedEvent {
+  readonly type: 'session.tool.started';
+  readonly tool_call_id: string;
+  readonly tool_name: string;
+  readonly arguments?: unknown;
+}
+
+export interface EngineToolSettledEvent {
+  readonly type: 'session.tool.settled';
+  readonly tool_call_id: string;
+  readonly tool_name: string;
+  readonly content: string;
+  readonly is_error: boolean;
+}
+
+/** `snapshot` is emitted by the engine as camelCase `GoalSnapshot` (serde
+ *  `rename_all = "camelCase"` on the Rust side) — the goal data contract is
+ *  the SDK's `GoalSnapshot`, only the event envelope follows the engine. */
+export interface EngineGoalUpdatedEvent {
+  readonly type: 'session.goal.updated';
+  readonly status: string;
+  readonly snapshot: GoalSnapshot | null;
+}
+
+export interface EngineTaskStartedEvent {
+  readonly type: 'session.task.started';
+  readonly task_id: string;
+  readonly description: string;
+  readonly kind: string;
+  readonly started_at_ms: number;
+}
+
+export interface EngineTaskTerminatedEvent {
+  readonly type: 'session.task.terminated';
+  readonly task_id: string;
+  readonly status: string;
+  readonly description: string;
+}
+
+export interface EngineUsageUpdatedEvent {
+  readonly type: 'session.usage.updated';
+  readonly turn_id: number;
+  readonly input_tokens: number;
+  readonly output_tokens: number;
+  readonly total_tokens: number;
+}
+
+export interface EngineHookResultEvent {
+  readonly type: 'session.hook.result';
+  readonly hook_event: string;
+  readonly content: string;
+  readonly blocked: boolean;
+}
+
+export interface EngineCompactionStartedEvent {
+  readonly type: 'session.compaction.started';
+  readonly source: string;
+  readonly tokens_before: number;
+}
+
+export interface EngineShellOutputEvent {
+  readonly type: 'session.shell.output';
+  readonly command_id: string;
+  readonly chunk: string;
+}
+
+// ── Host-synthesized events (snake_case, SDK emits these) ────────────────
+
+export interface HostSessionMetaUpdatedEvent {
+  readonly type: 'session.meta.updated';
+  readonly title?: string;
+  readonly patch?: Record<string, unknown>;
+}
+
+export interface HostConfigUpdateEvent {
+  readonly type: 'config.update';
+  readonly model_alias?: string;
+  readonly thinking_effort?: string;
+  readonly permission_mode?: string;
+}
+
+export interface HostPermissionSetModeEvent {
+  readonly type: 'permission.set_mode';
+  readonly mode: string;
+}
+
+export interface HostTurnSteerEvent {
+  readonly type: 'turn.steer';
+  readonly input: unknown;
+}
+
+export interface HostSessionClosedEvent {
+  readonly type: 'session.closed';
+}
+
 export interface GoalUpdatedEvent {
   readonly type: 'goal.updated';
   readonly snapshot: GoalSnapshot | null;
@@ -907,7 +1036,6 @@ export type AgentEvent =
   | ErrorEvent
   | WarningEvent
   | AgentStatusUpdatedEvent
-  | SessionMetaUpdatedEvent
   | SessionCreatedEvent
   | WorkspaceCreatedEvent
   | WorkspaceUpdatedEvent
@@ -916,45 +1044,28 @@ export type AgentEvent =
   | SessionStatusChangedEvent
   | ConfigChangedEvent
   | ModelCatalogChangedEvent
-  | GoalUpdatedEvent
-  | SkillActivatedEvent
-  | PluginCommandActivatedEvent
-  | TurnStartedEvent
-  | TurnEndedEvent
-  | TurnStepStartedEvent
-  | TurnStepCompletedEvent
-  | TurnStepRetryingEvent
-  | TurnStepInterruptedEvent
-  | AssistantDeltaEvent
-  | HookResultEvent
-  | ThinkingDeltaEvent
-  | ToolCallDeltaEvent
-  | ToolCallStartedEvent
-  | ToolProgressEvent
-  | ShellOutputEvent
-  | ShellStartedEvent
-  | ShellCompletedEvent
-  | ToolResultEvent
-  | ToolListUpdatedEvent
-  | McpServerStatusEvent
-  | SubagentSpawnedEvent
-  | SubagentStartedEvent
-  | SubagentSuspendedEvent
-  | SubagentCompletedEvent
-  | SubagentFailedEvent
-  | CompactionStartedEvent
-  | CompactionBlockedEvent
-  | CompactionCancelledEvent
-  | CompactionCompletedEvent
-  | TaskStartedEvent
-  | TaskTerminatedEvent
-  | BackgroundTaskStartedEvent
-  | BackgroundTaskTerminatedEvent
-  | CronFiredEvent
-  | PromptSubmittedEvent
-  | PromptCompletedEvent
-  | PromptAbortedEvent
-  | PromptSteeredEvent;
+  // Engine events (protocol-toward-engine): the Rust engine's snake_case
+  // `host/event` stream, passed through by the SDK verbatim.
+  | EngineTurnStartedEvent
+  | EngineTurnEndedEvent
+  | EngineLlmStepBeginEvent
+  | EngineLlmDeltaEvent
+  | EngineLlmStepEndEvent
+  | EngineToolStartedEvent
+  | EngineToolSettledEvent
+  | EngineGoalUpdatedEvent
+  | EngineTaskStartedEvent
+  | EngineTaskTerminatedEvent
+  | EngineUsageUpdatedEvent
+  | EngineHookResultEvent
+  | EngineCompactionStartedEvent
+  | EngineShellOutputEvent
+  // Host-synthesized events (snake_case).
+  | HostSessionMetaUpdatedEvent
+  | HostConfigUpdateEvent
+  | HostPermissionSetModeEvent
+  | HostTurnSteerEvent
+  | HostSessionClosedEvent;
 
 export type Event = AgentEvent & { agentId: string; sessionId: string };
 
@@ -1764,11 +1875,137 @@ export const mcpServerStatusEventSchema = z.object({
   server: mcpServerStatusPayloadSchema,
 }) satisfies z.ZodType<McpServerStatusEvent>;
 
+export const engineTurnStartedEventSchema = z.object({
+  type: z.literal('session.turn.started'),
+  turn_id: z.number(),
+}) satisfies z.ZodType<EngineTurnStartedEvent>;
+
+export const engineTurnEndedEventSchema = z.object({
+  type: z.literal('session.turn.ended'),
+  turn_id: z.number(),
+  stop_reason: z.string(),
+  steps: z.number(),
+}) satisfies z.ZodType<EngineTurnEndedEvent>;
+
+export const engineLlmStepBeginEventSchema = z.object({
+  type: z.literal('llm.step.begin'),
+  model: z.string(),
+}) satisfies z.ZodType<EngineLlmStepBeginEvent>;
+
+export const engineLlmDeltaEventSchema = z.object({
+  type: z.literal('llm.delta'),
+  part: z.object({
+    type: z.enum(['text', 'think']),
+    text: z.string().optional(),
+    think: z.string().optional(),
+  }),
+}) satisfies z.ZodType<EngineLlmDeltaEvent>;
+
+export const engineLlmStepEndEventSchema = z.object({
+  type: z.literal('llm.step.end'),
+  content: z.string(),
+  usage: z
+    .object({
+      input_tokens: z.number().optional(),
+      output_tokens: z.number().optional(),
+    })
+    .optional(),
+}) satisfies z.ZodType<EngineLlmStepEndEvent>;
+
+export const engineToolStartedEventSchema = z.object({
+  type: z.literal('session.tool.started'),
+  tool_call_id: z.string(),
+  tool_name: z.string(),
+  arguments: z.unknown().optional(),
+}) satisfies z.ZodType<EngineToolStartedEvent>;
+
+export const engineToolSettledEventSchema = z.object({
+  type: z.literal('session.tool.settled'),
+  tool_call_id: z.string(),
+  tool_name: z.string(),
+  content: z.string(),
+  is_error: z.boolean(),
+}) satisfies z.ZodType<EngineToolSettledEvent>;
+
+export const engineGoalUpdatedEventSchema = z.object({
+  type: z.literal('session.goal.updated'),
+  status: z.string(),
+  snapshot: goalSnapshotSchema.nullable(),
+}) satisfies z.ZodType<EngineGoalUpdatedEvent>;
+
+export const engineTaskStartedEventSchema = z.object({
+  type: z.literal('session.task.started'),
+  task_id: z.string(),
+  description: z.string(),
+  kind: z.string(),
+  started_at_ms: z.number(),
+}) satisfies z.ZodType<EngineTaskStartedEvent>;
+
+export const engineTaskTerminatedEventSchema = z.object({
+  type: z.literal('session.task.terminated'),
+  task_id: z.string(),
+  status: z.string(),
+  description: z.string(),
+}) satisfies z.ZodType<EngineTaskTerminatedEvent>;
+
+export const engineUsageUpdatedEventSchema = z.object({
+  type: z.literal('session.usage.updated'),
+  turn_id: z.number(),
+  input_tokens: z.number(),
+  output_tokens: z.number(),
+  total_tokens: z.number(),
+}) satisfies z.ZodType<EngineUsageUpdatedEvent>;
+
+export const engineHookResultEventSchema = z.object({
+  type: z.literal('session.hook.result'),
+  hook_event: z.string(),
+  content: z.string(),
+  blocked: z.boolean(),
+}) satisfies z.ZodType<EngineHookResultEvent>;
+
+export const engineCompactionStartedEventSchema = z.object({
+  type: z.literal('session.compaction.started'),
+  source: z.string(),
+  tokens_before: z.number(),
+}) satisfies z.ZodType<EngineCompactionStartedEvent>;
+
+export const engineShellOutputEventSchema = z.object({
+  type: z.literal('session.shell.output'),
+  command_id: z.string(),
+  chunk: z.string(),
+}) satisfies z.ZodType<EngineShellOutputEvent>;
+
+export const hostSessionMetaUpdatedEventSchema = z.object({
+  type: z.literal('session.meta.updated'),
+  title: z.string().optional(),
+  patch: z.record(z.string(), z.unknown()).optional(),
+}) satisfies z.ZodType<HostSessionMetaUpdatedEvent>;
+
+export const hostConfigUpdateEventSchema = z.object({
+  type: z.literal('config.update'),
+  model_alias: z.string().optional(),
+  thinking_effort: z.string().optional(),
+  permission_mode: z.string().optional(),
+}) satisfies z.ZodType<HostConfigUpdateEvent>;
+
+export const hostPermissionSetModeEventSchema = z.object({
+  type: z.literal('permission.set_mode'),
+  mode: z.string(),
+}) satisfies z.ZodType<HostPermissionSetModeEvent>;
+
+export const hostTurnSteerEventSchema = z.object({
+  type: z.literal('turn.steer'),
+  input: z.unknown(),
+}) satisfies z.ZodType<HostTurnSteerEvent>;
+
+export const hostSessionClosedEventSchema = z.object({
+  type: z.literal('session.closed'),
+}) satisfies z.ZodType<HostSessionClosedEvent>;
+
 export const agentEventSchema = z.discriminatedUnion('type', [
   errorEventSchema,
   warningEventSchema,
   agentStatusUpdatedEventSchema,
-  sessionMetaUpdatedEventSchema,
   sessionCreatedEventSchema,
   workspaceCreatedEventSchema,
   workspaceUpdatedEventSchema,
@@ -1777,45 +2014,25 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   sessionStatusChangedEventSchema,
   configChangedEventSchema,
   modelCatalogChangedEventSchema,
-  goalUpdatedEventSchema,
-  skillActivatedEventSchema,
-  pluginCommandActivatedEventSchema,
-  turnStartedEventSchema,
-  turnEndedEventSchema,
-  turnStepStartedEventSchema,
-  turnStepCompletedEventSchema,
-  turnStepRetryingEventSchema,
-  turnStepInterruptedEventSchema,
-  assistantDeltaEventSchema,
-  hookResultEventSchema,
-  thinkingDeltaEventSchema,
-  toolCallDeltaEventSchema,
-  toolCallStartedEventSchema,
-  toolProgressEventSchema,
-  shellOutputEventSchema,
-  shellStartedEventSchema,
-  shellCompletedEventSchema,
-  toolResultEventSchema,
-  toolListUpdatedEventSchema,
-  mcpServerStatusEventSchema,
-  subagentSpawnedEventSchema,
-  subagentStartedEventSchema,
-  subagentSuspendedEventSchema,
-  subagentCompletedEventSchema,
-  subagentFailedEventSchema,
-  compactionStartedEventSchema,
-  compactionBlockedEventSchema,
-  compactionCancelledEventSchema,
-  compactionCompletedEventSchema,
-  taskStartedEventSchema,
-  taskTerminatedEventSchema,
-  backgroundTaskStartedEventSchema,
-  backgroundTaskTerminatedEventSchema,
-  cronFiredEventSchema,
-  promptSubmittedEventSchema,
-  promptCompletedEventSchema,
-  promptAbortedEventSchema,
-  promptSteeredEventSchema,
+  engineTurnStartedEventSchema,
+  engineTurnEndedEventSchema,
+  engineLlmStepBeginEventSchema,
+  engineLlmDeltaEventSchema,
+  engineLlmStepEndEventSchema,
+  engineToolStartedEventSchema,
+  engineToolSettledEventSchema,
+  engineGoalUpdatedEventSchema,
+  engineTaskStartedEventSchema,
+  engineTaskTerminatedEventSchema,
+  engineUsageUpdatedEventSchema,
+  engineHookResultEventSchema,
+  engineCompactionStartedEventSchema,
+  engineShellOutputEventSchema,
+  hostSessionMetaUpdatedEventSchema,
+  hostConfigUpdateEventSchema,
+  hostPermissionSetModeEventSchema,
+  hostTurnSteerEventSchema,
+  hostSessionClosedEventSchema,
 ]) satisfies z.ZodType<AgentEvent>;
 
 export const eventSchema = agentEventSchema.and(
@@ -1844,14 +2061,10 @@ export const eventSchema = agentEventSchema.and(
  * this until Phase 4 removes it; do not add new consumers.
  */
 export const VOLATILE_EVENT_TYPES = [
-  'assistant.delta',
-  'thinking.delta',
-  'tool.call.delta',
-  'tool.progress',
-  'shell.output',
-  'shell.started',
-  'shell.completed',
-  'agent.status.updated',
+  'llm.delta',
+  'llm.step.begin',
+  'llm.step.end',
+  'session.shell.output',
 ] as const satisfies readonly AgentEvent['type'][];
 
 export type VolatileEventType = (typeof VOLATILE_EVENT_TYPES)[number];

@@ -17,7 +17,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createKimiHarness, ErrorCodes, KimiError } from '#/index';
 
-import { ProviderManager } from '../../agent-core/src/session/provider-manager';
 import { TEST_IDENTITY } from './test-identity';
 
 let homeDir: string;
@@ -247,11 +246,6 @@ oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.
     expect(config.models?.['kimi-code/kimi-for-coding']).toMatchObject({
       capabilities: ['thinking', 'image_in', 'video_in', 'tool_use'],
       displayName: 'Kimi for Coding',
-    });
-    expect(new ProviderManager({ config }).resolveProviderConfig(config.defaultModel!)).toMatchObject({
-      modelCapabilities: {
-        tool_use: true,
-      },
     });
     expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
       type: 'kimi',

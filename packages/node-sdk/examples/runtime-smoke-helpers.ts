@@ -137,23 +137,23 @@ function watchPromptStream(session: Session, waitForDelta: boolean): PromptStrea
       return;
     }
 
-    if (event.type === 'turn.started' && turnId === undefined) {
-      turnId = event.turnId;
-      started.resolve(event.turnId);
+    if (event.type === 'session.turn.started' && turnId === undefined) {
+      turnId = event.turn_id;
+      started.resolve(event.turn_id);
       return;
     }
 
-    if (turnId === undefined || !hasTurnId(event) || event.turnId !== turnId) {
+    if (turnId === undefined || !hasTurnId(event) || event.turn_id !== turnId) {
       return;
     }
 
-    if ((event.type === 'assistant.delta' || event.type === 'thinking.delta') && !sawDelta) {
+    if (event.type === 'llm.delta' && !sawDelta) {
       sawDelta = true;
       firstDelta?.resolve(event);
       return;
     }
 
-    if (event.type === 'turn.ended') {
+    if (event.type === 'session.turn.ended') {
       if (firstDelta !== undefined && !sawDelta) {
         firstDelta.reject(new Error('Turn ended before any streaming delta was emitted'));
       }
@@ -190,56 +190,47 @@ function createDeferred<T>(): Deferred<T> {
   };
 }
 
-function hasTurnId(event: Event): event is Event & { readonly turnId: number } {
-  return 'turnId' in event;
+function hasTurnId(event: Event): event is Event & { readonly turn_id: number } {
+  return 'turn_id' in event;
 }
 
 function logEvent(event: Event): void {
   switch (event.type) {
-    case 'turn.started':
-      process.stdout.write(`[turn ${String(event.turnId)} started]\n`);
+    case 'session.turn.started':
+      process.stdout.write(`[turn ${String(event.turn_id)} started]\n`);
       break;
-    case 'assistant.delta':
-      process.stdout.write(event.delta);
+    case 'llm.delta':
+      if (event.part.type === 'think') {
+        if (event.part.think) process.stderr.write(event.part.think);
+      } else if (event.part.text) {
+        process.stdout.write(event.part.text);
+      }
       break;
-    case 'hook.result':
-      process.stdout.write(`${event.hookEvent} hook\n\n${event.content.trim() || '(empty)'}\n`);
+    case 'session.hook.result':
+      process.stdout.write(`${event.hook_event} hook\n\n${event.content.trim() || '(empty)'}\n`);
       break;
-    case 'thinking.delta':
-      process.stderr.write(event.delta);
-      break;
-    case 'turn.ended':
-      process.stdout.write(`\n[turn ${String(event.turnId)} ended: ${event.reason}]\n`);
+    case 'session.turn.ended':
+      process.stdout.write(`\n[turn ${String(event.turn_id)} ended: ${event.stop_reason}]\n`);
       break;
     case 'error':
       process.stderr.write(`\nerror: ${event.code}: ${event.message}\n`);
       break;
     case 'agent.status.updated':
-    case 'cron.fired':
-    case 'goal.updated':
+    case 'session.tool.started':
+    case 'session.tool.settled':
+    case 'session.goal.updated':
+    case 'session.task.started':
+    case 'session.task.terminated':
+    case 'session.usage.updated':
+    case 'session.compaction.started':
+    case 'session.shell.output':
+    case 'llm.step.begin':
+    case 'llm.step.end':
     case 'session.meta.updated':
-    case 'skill.activated':
-    case 'turn.step.started':
-    case 'turn.step.completed':
-    case 'turn.step.retrying':
-    case 'turn.step.interrupted':
-    case 'tool.call.delta':
-    case 'tool.call.started':
-    case 'tool.progress':
-    case 'tool.result':
-    case 'tool.list.updated':
-    case 'mcp.server.status':
-    case 'subagent.spawned':
-    case 'subagent.started':
-    case 'subagent.completed':
-    case 'subagent.failed':
-    case 'subagent.suspended':
-    case 'compaction.started':
-    case 'compaction.blocked':
-    case 'compaction.cancelled':
-    case 'compaction.completed':
-    case 'background.task.started':
-    case 'background.task.terminated':
+    case 'config.update':
+    case 'permission.set_mode':
+    case 'turn.steer':
+    case 'session.closed':
     case 'warning':
       break;
   }

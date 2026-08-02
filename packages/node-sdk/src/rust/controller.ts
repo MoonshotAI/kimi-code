@@ -4,11 +4,11 @@
  *
  * This is the integration seam a thin-client host (the TUI, a headless
  * runner) plugs into: it owns the engine `SessionClient` (from
- * `@moonshot-ai/kimi-agent/rust-loop`), translates the engine's wire events
- * onto the SDK `Event` union via {@link SessionEventTranslator}, and bridges
- * the engine's tool-approval gate onto a host-supplied yes/no prompt. The
- * host stays ignorant of the engine wire protocol — it supplies two sinks
- * (emit an SDK event, ask for approval) and calls `prompt` / `cancel`.
+ * `@moonshot-ai/kimi-agent/rust-loop`), passes the engine's wire events
+ * through verbatim (protocol-toward-engine), and bridges the engine's
+ * tool-approval gate onto a host-supplied yes/no prompt. The host stays
+ * ignorant of the engine wire protocol — it supplies two sinks (emit an SDK
+ * event, ask for approval) and calls `prompt` / `cancel`.
  *
  * Dependency-injected on purpose: the `createClient` factory is the real
  * `rustLoop.createSessionClient` in production and a fake in tests, so the
@@ -18,8 +18,6 @@
  * SDK owns the engine-facing layer (2026-08-02).
  */
 import type { Event } from '#/events';
-
-import { SessionEventTranslator } from './event-translate';
 
 /** The engine tool-approval request the host is asked to decide on. */
 export interface ToolApprovalRequest {
@@ -112,7 +110,9 @@ export interface SessionPromptOutcome {
 
 export class SessionEngineController {
   private client: SessionClientHandle | null = null;
-  private translator: SessionEventTranslator | undefined;
+  /** Agent id stamped onto engine events (side-agent turns switch this for
+   *  the duration of their prompt; the wire carries no agent id). */
+  private currentAgentId = 'main';
 
   constructor(private readonly options: SessionEngineControllerOptions) {}
 
@@ -122,8 +122,7 @@ export class SessionEngineController {
    * host then falls back to its normal path.
    */
   async start(init: SessionEngineStartOptions): Promise<boolean> {
-    const translator = new SessionEventTranslator(init.sessionId, this.options.agentId ?? 'main');
-    this.translator = translator;
+    this.currentAgentId = this.options.agentId ?? 'main';
     this.client = await this.options.createClient({
       sessionId: init.sessionId,
       systemPrompt: init.systemPrompt,
@@ -134,8 +133,17 @@ export class SessionEngineController {
       permissionMode: init.permissionMode,
       onEvent: (raw) => {
         this.options.onRawEvent?.(raw);
-        const translated = translator.translate(raw);
-        if (translated !== null) this.options.emitEvent(translated);
+        // Protocol-toward-engine: pass the engine event through verbatim,
+        // stamping only the sessionId/agentId routing fields.
+        const event = (raw ?? {}) as { type?: string; session_id?: string | null };
+        const sessionId = event.session_id ?? init.sessionId;
+        if (sessionId.length === 0) return;
+        const { session_id: _drop, ...payload } = event;
+        this.options.emitEvent({
+          ...payload,
+          sessionId,
+          agentId: this.currentAgentId,
+        } as never);
       },
       lifecycle: {
         authorizeTool: (raw) => this.authorize(raw),
@@ -183,9 +191,9 @@ export class SessionEngineController {
     // Events for a side-agent turn arrive in-band during its prompt RPC but
     // carry no agent id on the wire; stamp them with the driving agent id
     // for the duration of the call, then restore the main-agent stamp.
-    let previousAgentId: string | undefined;
-    if (this.translator !== undefined && agentId !== undefined) {
-      previousAgentId = this.translator.setAgentId(agentId);
+    const previousAgentId = this.currentAgentId;
+    if (agentId !== undefined) {
+      this.currentAgentId = agentId;
     }
     try {
       const result = await this.client.prompt(text, agentId);
@@ -196,8 +204,8 @@ export class SessionEngineController {
         totalTokens: result.usage.total_tokens,
       };
     } finally {
-      if (previousAgentId !== undefined) {
-        this.translator?.setAgentId(previousAgentId);
+      if (agentId !== undefined) {
+        this.currentAgentId = previousAgentId;
       }
     }
   }

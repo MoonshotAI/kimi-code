@@ -120,44 +120,35 @@ describe('events / display re-exports', () => {
     expect(parsed.sessionId).toBe('sess_1');
   });
 
-  it('validates prompt.submitted events', () => {
+  it('validates engine turn events', () => {
     const parsed = eventSchema.parse({
-      type: 'prompt.submitted',
+      type: 'session.turn.ended',
       agentId: 'main',
       sessionId: 'sess_1',
-      promptId: 'prompt_1',
-      userMessageId: 'msg_1',
-      status: 'blocked',
-      content: [{ type: 'text', text: 'hello' }],
-      createdAt: '2026-06-11T00:00:00.000Z',
+      turn_id: 3,
+      stop_reason: 'EndTurn',
+      steps: 4,
     });
 
-    expect(parsed.type).toBe('prompt.submitted');
-    expect((parsed as { promptId: string }).promptId).toBe('prompt_1');
-    expect((parsed as { status: string }).status).toBe('blocked');
+    expect(parsed.type).toBe('session.turn.ended');
+    expect((parsed as { turn_id: number }).turn_id).toBe(3);
+    expect((parsed as { steps: number }).steps).toBe(4);
   });
 
-  it('preserves detached on task events', () => {
+  it('validates engine task events', () => {
     const parsed = eventSchema.parse({
-      type: 'task.started',
+      type: 'session.task.started',
       agentId: 'main',
       sessionId: 'sess_1',
-      info: {
-        kind: 'process',
-        taskId: 'bash-deadbeef',
-        description: 'Bash: sleep 10',
-        status: 'running',
-        detached: false,
-        startedAt: 1,
-        endedAt: null,
-        command: 'sleep 10',
-        pid: 123,
-        exitCode: null,
-      },
+      task_id: 'bash-deadbeef',
+      description: 'Bash: sleep 10',
+      kind: 'process',
+      started_at_ms: 1,
     });
 
-    expect(parsed.type).toBe('task.started');
-    expect((parsed as { info: { detached?: boolean } }).info.detached).toBe(false);
+    expect(parsed.type).toBe('session.task.started');
+    expect((parsed as { task_id: string }).task_id).toBe('bash-deadbeef');
+    expect((parsed as { kind: string }).kind).toBe('process');
   });
 
   it('validates event.session.created events', () => {

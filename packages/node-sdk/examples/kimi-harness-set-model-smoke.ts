@@ -23,7 +23,7 @@ async function main(): Promise<void> {
       'Reply with exactly one short sentence.',
     );
     const ended = await stream.ended;
-    if (ended.type !== 'turn.ended' || ended.reason !== 'completed') {
+    if (ended.type !== 'session.turn.ended' || ended.stop_reason !== 'EndTurn') {
       throw new Error(`Expected completed turn, got ${ended.type}`);
     }
 

@@ -10,7 +10,7 @@ import {
   parseConfigString,
   readConfigFile,
   writeConfigFile,
-} from '../../agent-core/src/config';
+} from '#/legacy/config';
 import { TEST_IDENTITY } from './test-identity';
 
 // node-sdk/agent-core normalize paths to forward slashes (pathe). Mirror that

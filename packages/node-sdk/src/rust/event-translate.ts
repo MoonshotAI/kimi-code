@@ -61,8 +61,13 @@ export class SessionEventTranslator {
   /**
    * Translate one engine event; null means "nothing to render" (unknown or
    * purely internal event types pass through silently).
+   *
+   * @deprecated The session event stream is now passed through verbatim
+   * (protocol-toward-engine); this translator is kept only because hosts still
+   * import `mapGoalSnapshot`. The shape-mapping branches below emit the legacy
+   * camelCase events and are no longer reachable from the SDK runtime.
    */
-  translate(raw: unknown): Event | null {
+  translate(raw: unknown): unknown {
     const event = raw as EngineWireEvent;
     const base = { sessionId: this.sessionId, agentId: this.agentId };
     switch (event.type) {

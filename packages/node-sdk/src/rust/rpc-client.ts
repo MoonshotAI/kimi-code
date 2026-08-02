@@ -42,8 +42,6 @@ import type {
   TelemetryClient,
 } from '#/types';
 
-import { SessionEventTranslator } from './event-translate';
-import { WireEventWriter } from './wire-writer';
 import {
   mapContextMessage,
   mapMcpServer,
@@ -66,6 +64,8 @@ export interface RustLoopApi {
   installSessionHostHandlers(handlers: {
     onEvent?: (event: unknown) => void;
     authorizeTool?: (req: unknown) => Promise<unknown>;
+    llmChat?: (req: unknown) => Promise<unknown>;
+    toolExecute?: (req: unknown) => Promise<unknown>;
   }): boolean;
   sessionCreate(options: {
     sessionId?: string;
@@ -167,6 +167,12 @@ export interface RustRpcClientOptions {
   readonly telemetry?: TelemetryClient;
   readonly onOAuthRefresh?: unknown;
   readonly uiMode?: string;
+  /**
+   * Host-proxy model step: answer one engine model request. When set, the
+   * engine runs turns against this callback instead of a native-LLM provider
+   * (the SDK's host-proxy path).
+   */
+  readonly llmStep?: (req: unknown) => Promise<unknown>;
 }
 
 /** A no-op telemetry client (default when the host supplies none). */
@@ -229,8 +235,7 @@ export class RustRpcClient extends SDKRpcClientBase {
   readonly telemetry: TelemetryClient;
 
   private readonly rustLoop: RustLoopApi;
-  /** Per-session wire→SDK translators (streaming deltas carry no turn id). */
-  private readonly translators = new Map<string, SessionEventTranslator>();
+  private readonly llmStep: ((req: unknown) => Promise<unknown>) | undefined;
   /** SDK-owned sessionId → workDir map (the engine's work_dir is only
    *  populated when the host routes it through; the SDK is the authority). */
   private readonly workDirs = new Map<string, string>();
@@ -238,8 +243,6 @@ export class RustRpcClient extends SDKRpcClientBase {
    *  process-global (shared across harnesses/tests), so listing must filter on
    *  what this client actually created rather than the whole store. */
   private readonly sessionSummaries = new Map<string, SessionSummary>();
-  /** Per-session v1-compatible wire event history (host-side). */
-  private readonly wireWriters = new Map<string, WireEventWriter>();
   private readonly ready: Promise<SdkRpcSurface>;
 
   constructor(options: RustRpcClientOptions) {
@@ -249,46 +252,29 @@ export class RustRpcClient extends SDKRpcClientBase {
     this.configPath = options.configPath ?? '';
     this.identity = options.identity;
     this.telemetry = options.telemetry ?? noopTelemetryClient;
+    this.llmStep = options.llmStep;
     this.rustLoop.installSessionHostHandlers({
       onEvent: (raw) => this.dispatchEngineEvent(raw),
       authorizeTool: (raw) => this.authorizeTool(raw),
+      // Host-proxy model step: without it the engine cannot run a turn
+      // unless a native-LLM provider is configured.
+      llmChat: options.llmStep ?? (() => Promise.reject(new Error('no llmStep provided'))),
     });
     this.ready = Promise.resolve(this.buildRpc());
   }
 
   // ── Event + approval plumbing ──────────────────────────────────────────
 
+  /** Pass an engine `host/event` through verbatim (protocol-toward-engine):
+   *  the engine emits the SDK event shape (snake_case) already, so the host
+   *  only stamps the `sessionId`/`agentId` routing fields. */
   private dispatchEngineEvent(raw: unknown): void {
     const event = (raw ?? {}) as { type?: string; session_id?: string | null };
     const sessionId = event.session_id ?? '';
     const translator = this.translators.get(sessionId);
     if (translator === undefined) return;
     const translated = translator.translate(raw);
-    if (translated !== null) {
-      this.receiveEvent(translated as unknown as Event);
-      void this.appendWireEvent(sessionId, translated);
-    }
-  }
-
-  /** Record a synthesized host event to the session's wire history (and the
-   *  SDK event bus), matching the retired KimiCore's wire surface. */
-  private emitSynthetic(
-    sessionId: string,
-    event: { type: string; [key: string]: unknown },
-  ): void {
-    this.receiveEvent(event as unknown as Event);
-    void this.appendWireEvent(sessionId, event);
-  }
-
-  private async appendWireEvent(
-    sessionId: string,
-    event: unknown,
-  ): Promise<void> {
-    try {
-      await this.wireWriters.get(sessionId)?.append(event as never);
-    } catch {
-      // Wire history is best-effort; never fail the operation for it.
-    }
+    if (translated !== null) this.receiveEvent(translated as unknown as ProtocolEvent);
   }
 
   private async authorizeTool(raw: unknown): Promise<{ block: boolean; resolved: boolean }> {
@@ -329,6 +315,7 @@ export class RustRpcClient extends SDKRpcClientBase {
           sessionId: id,
           homedir: this.homeDir,
           model: effectiveModel,
+          llmStep: this.llmStep,
         });
         if (created === null) {
           throw new Error('Rust engine unavailable: cannot create session');
@@ -358,21 +345,10 @@ export class RustRpcClient extends SDKRpcClientBase {
           additionalDirs: additionalDirs ?? [],
         };
         this.sessionSummaries.set(sessionId, summary);
-        this.translators.set(sessionId, new SessionEventTranslator(sessionId, 'main'));
-        if (this.homeDir.length > 0) {
-          try {
-            this.wireWriters.set(sessionId, await WireEventWriter.create(this.homeDir, sessionId));
-          } catch {
-            // No wire history without a home dir; operations still work.
-          }
-        }
         return summary;
       },
       closeSession: async ({ sessionId }: any) => {
         await r.sessionSave(sessionId);
-        this.emitSynthetic(sessionId, { type: 'session.closed', sessionId });
-        this.translators.delete(sessionId);
-        this.wireWriters.delete(sessionId);
         this.clearSessionHandlers(sessionId);
       },
       listSessions: async ({ workDir, sessionId }: ListSessionsOptions) => {
@@ -405,7 +381,19 @@ export class RustRpcClient extends SDKRpcClientBase {
         return this.resumedSummary(summary, status);
       },
       forkSession: async ({ sessionId, id, title, workDir }: any) => {
-        const result = await r.sessionFork({ sessionId, forkId: id ?? `${sessionId}_fork`, title });
+        let result: { forked: boolean } | null;
+        try {
+          result = await r.sessionFork({ sessionId, forkId: id ?? `${sessionId}_fork`, title });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message.includes('active turn')) {
+            throw new KimiError(
+              ErrorCodes.SESSION_FORK_ACTIVE_TURN,
+              'Cannot fork a session with an active turn',
+            );
+          }
+          throw error;
+        }
         if (!result || !result.forked) {
           throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `Session not found: ${sessionId}`);
         }
@@ -421,7 +409,6 @@ export class RustRpcClient extends SDKRpcClientBase {
           metadata: {},
         };
         if (summary.workDir.length > 0) this.workDirs.set(forkId, summary.workDir);
-        this.translators.set(forkId, new SessionEventTranslator(forkId, 'main'));
         return summary;
       },
       archiveSession: async () => nativeUnavailable('archiveSession'),
@@ -430,7 +417,6 @@ export class RustRpcClient extends SDKRpcClientBase {
         if (!result || !result.deleted) {
           throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `Session not found: ${sessionId}`);
         }
-        this.translators.delete(sessionId);
         this.workDirs.delete(sessionId);
         this.sessionSummaries.delete(sessionId);
         this.clearSessionHandlers(sessionId);
@@ -456,13 +442,13 @@ export class RustRpcClient extends SDKRpcClientBase {
       },
       setModel: async ({ sessionId, model }: any) => {
         await r.sessionSetModel(sessionId, model);
-        this.emitSynthetic(sessionId, { type: 'config.update', modelAlias: model });
+        this.emitSynthetic(sessionId, { type: 'config.update', model_alias: model });
       },
       setThinking: async ({ sessionId, effort }: any) => {
         await r.sessionSetThinking(sessionId, effort ?? null);
         this.emitSynthetic(sessionId, {
           type: 'config.update',
-          thinkingEffort: effort ?? null,
+          thinking_effort: effort ?? null,
         });
       },
       setPermission: async ({ sessionId, mode }: any) => {
@@ -523,7 +509,7 @@ export class RustRpcClient extends SDKRpcClientBase {
             isCustomTitle: true,
           }).catch(() => {});
         }
-        this.emitSynthetic(sessionId, { type: 'session.renamed', title });
+        this.emitSynthetic(sessionId, { type: 'session.meta.updated', title, patch: { title } });
       },
       runShellCommand: async ({ sessionId, command, commandId }: any) => {
         const result = await r.sessionRunShell(sessionId, command, undefined, commandId);
@@ -818,3 +804,6 @@ export class RustRpcClient extends SDKRpcClientBase {
 function isTaskNotFound(error: unknown): boolean {
   return /task .* not found/i.test(error instanceof Error ? error.message : String(error));
 }
+
+/** Default agent id stamped onto engine events (side-agent turns override it). */
+const MAIN_AGENT_ID = 'main';

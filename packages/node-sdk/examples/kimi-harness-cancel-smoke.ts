@@ -18,7 +18,7 @@ async function main(): Promise<void> {
 
     await session.cancel();
     const endedEvent = await stream.ended;
-    if (endedEvent.type !== 'turn.ended' || endedEvent.reason !== 'cancelled') {
+    if (endedEvent.type !== 'session.turn.ended' || endedEvent.stop_reason !== 'Aborted') {
       throw new Error(`Expected cancelled turn, got ${endedEvent.type}`);
     }
 

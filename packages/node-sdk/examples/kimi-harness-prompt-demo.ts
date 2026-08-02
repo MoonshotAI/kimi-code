@@ -44,7 +44,7 @@ async function runPrompt(session: Session, prompt: string): Promise<void> {
         activeTurnId = turnId;
       });
 
-      if (event.type === 'turn.ended' && event.turnId === activeTurnId) {
+      if (event.type === 'session.turn.ended' && event.turn_id === activeTurnId) {
         resolve();
         return;
       }
@@ -71,59 +71,42 @@ function handleEvent(
   setActiveTurnId: (turnId: number) => void,
 ): void {
   switch (event.type) {
-    case 'turn.started':
-      setActiveTurnId(event.turnId);
-      process.stdout.write(`[turn ${String(event.turnId)}]\n`);
+    case 'session.turn.started':
+      setActiveTurnId(event.turn_id);
+      process.stdout.write(`[turn ${String(event.turn_id)}]\n`);
       break;
-    case 'thinking.delta':
-      if (activeTurnId === undefined || event.turnId === activeTurnId) {
-        process.stderr.write(event.delta);
+    case 'llm.delta':
+      if (event.part.type === 'think') {
+        if (event.part.think) process.stderr.write(event.part.think);
+      } else if (event.part.text) {
+        process.stdout.write(event.part.text);
       }
       break;
-    case 'assistant.delta':
-      if (activeTurnId === undefined || event.turnId === activeTurnId) {
-        process.stdout.write(event.delta);
-      }
+    case 'session.hook.result':
+      process.stdout.write(`${event.hook_event} hook\n\n${event.content.trim() || '(empty)'}\n`);
       break;
-    case 'hook.result':
-      if (activeTurnId === undefined || event.turnId === activeTurnId) {
-        process.stdout.write(`${event.hookEvent} hook\n\n${event.content.trim() || '(empty)'}\n`);
-      }
-      break;
-    case 'turn.ended':
-      if (activeTurnId === undefined || event.turnId === activeTurnId) {
-        process.stdout.write(`\n\nstatus: ${event.reason}\n`);
-      }
+    case 'session.turn.ended':
+      process.stdout.write(`\n\nstatus: ${event.stop_reason}\n`);
       break;
     case 'error':
       process.stderr.write(`\nerror: ${event.code}: ${event.message}\n`);
       break;
     case 'agent.status.updated':
-    case 'cron.fired':
-    case 'goal.updated':
+    case 'session.tool.started':
+    case 'session.tool.settled':
+    case 'session.goal.updated':
+    case 'session.task.started':
+    case 'session.task.terminated':
+    case 'session.usage.updated':
+    case 'session.compaction.started':
+    case 'session.shell.output':
+    case 'llm.step.begin':
+    case 'llm.step.end':
     case 'session.meta.updated':
-    case 'skill.activated':
-    case 'turn.step.started':
-    case 'turn.step.completed':
-    case 'turn.step.retrying':
-    case 'turn.step.interrupted':
-    case 'tool.call.delta':
-    case 'tool.call.started':
-    case 'tool.progress':
-    case 'tool.result':
-    case 'tool.list.updated':
-    case 'mcp.server.status':
-    case 'subagent.spawned':
-    case 'subagent.started':
-    case 'subagent.completed':
-    case 'subagent.failed':
-    case 'subagent.suspended':
-    case 'compaction.started':
-    case 'compaction.blocked':
-    case 'compaction.cancelled':
-    case 'compaction.completed':
-    case 'background.task.started':
-    case 'background.task.terminated':
+    case 'config.update':
+    case 'permission.set_mode':
+    case 'turn.steer':
+    case 'session.closed':
     case 'warning':
       break;
   }
