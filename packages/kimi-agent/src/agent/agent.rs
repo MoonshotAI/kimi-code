@@ -249,7 +249,7 @@ fn handle_goal_tool(tool_name: String, args: serde_json::Value, goal_lock: &std:
     }
 }
 
-fn goal_tool_definitions() -> Vec<loop_types::ToolInfo> {
+pub fn goal_tool_definitions() -> Vec<loop_types::ToolInfo> {
     vec![
         loop_types::ToolInfo { name: "CreateGoal".into(), description: "Create or replace a goal".into(), input_schema: serde_json::json!({"type":"object","properties":{"objective":{"type":"string"},"completion_criterion":{"type":"string"},"replace":{"type":"boolean","default":false}},"required":["objective"]}) },
         loop_types::ToolInfo { name: "UpdateGoal".into(), description: "Mark the active goal complete or blocked. Only these two statuses are allowed; resuming is a user action. Complete requires every requirement to be done and verified; blocked requires the 3-turn blocked audit.".into(), input_schema: serde_json::json!({"type":"object","properties":{"status":{"type":"string","enum":["complete","blocked"]},"reason":{"type":"string"}},"required":["status"]}) },

@@ -20,10 +20,13 @@ use crate::mcp::connection_manager::{
     McpTransport, format_startup_error, is_unauthorized_like,
 };
 use crate::mcp::tool_naming::{build_mcp_tool_name, parse_mcp_tool_name};
-use crate::mcp::transport_http::MCPHttpTransport;
+use crate::mcp::transport_http::{ListenMessage, MCPHttpTransport};
 use crate::mcp::transport_sse::{MCPSseTransport, SseConnectOptions};
 use crate::mcp::transport_stdio::{MCPStdioTransport, StdioSpawnOptions};
-use crate::mcp::types::{MCPTool, MCPToolCallResult};
+use crate::mcp::types::{
+    LISTEN_TOOLS_LIST_CHANGED, MCPTool, MCPToolCallResult, McpProtocolMode,
+    NOTIFICATION_TOOLS_LIST_CHANGED,
+};
 
 /// Full launch spec for one MCP server: the decision-core subset plus the
 /// I/O fields the transports need.
@@ -145,6 +148,14 @@ pub struct McpRuntime {
     state: McpConnectionState,
     specs: HashMap<String, McpServerSpec>,
     connections: HashMap<String, McpConnection>,
+    /// The `ConnectAttempt` that last connected each server, retained so a
+    /// `subscriptions/listen`-driven tool refresh can re-report through the
+    /// same attempt (stale after a reconnect, which `is_current` guards).
+    attempts: HashMap<String, ConnectAttempt>,
+    /// Open `subscriptions/listen` streams per connected stateless HTTP
+    /// server. Stdio subscriptions live inside their transport (shared
+    /// channel) and are drained on poll.
+    listen_streams: HashMap<String, crate::mcp::transport_http::MCPListenStream>,
     /// Discovered tool definitions per connected server (unfiltered; the
     /// enabled set lives in the state machine).
     discovered: HashMap<String, Vec<MCPTool>>,
@@ -162,6 +173,8 @@ impl McpRuntime {
             state: McpConnectionState::new(oauth_available),
             specs: HashMap::new(),
             connections: HashMap::new(),
+            attempts: HashMap::new(),
+            listen_streams: HashMap::new(),
             discovered: HashMap::new(),
             default_cwd,
             client_version,
@@ -216,6 +229,7 @@ impl McpRuntime {
         self.drop_connection(name).await;
         self.specs.remove(name);
         self.discovered.remove(name);
+        self.attempts.remove(name);
         self.state.remove(name)
     }
 
@@ -250,11 +264,14 @@ impl McpRuntime {
     }
 
     /// Dispatch an `mcp__server__tool` call to the owning connection.
+    /// Polls `subscriptions/listen` events first so a server-side tool
+    /// change is reflected before the dispatch decision.
     pub async fn call_tool(
         &mut self,
         prefixed_name: &str,
         arguments: Option<serde_json::Value>,
     ) -> Result<MCPToolCallResult, String> {
+        self.poll_mcp_updates().await;
         let (server, tool) = parse_mcp_tool_name(prefixed_name)
             .ok_or_else(|| format!("Not an MCP tool name: {prefixed_name}"))?;
         let enabled = self
@@ -318,8 +335,10 @@ impl McpRuntime {
             Ok((connection, tools)) => {
                 let tool_names: Vec<String> = tools.iter().map(|t| t.name.clone()).collect();
                 if self.state.report_connected(name, attempt, tool_names) {
+                    self.attempts.insert(name.to_string(), attempt);
                     self.connections.insert(name.to_string(), connection);
                     self.discovered.insert(name.to_string(), tools);
+                    self.start_listen_for(name).await;
                 } else {
                     // Superseded by a newer attempt: close, keep the winner.
                     drop_connection_value(connection).await;
@@ -331,6 +350,166 @@ impl McpRuntime {
                     .report_failed(name, attempt, &message, unauthorized);
             }
         }
+    }
+
+    /// Collect `subscriptions/listen` events (HTTP streams and stdio queues)
+    /// and refresh the tool sets of servers that announced a tools-list
+    /// change. Also resyncs once when a listen stream closed, since the
+    /// server state may have moved on while the stream was down.
+    pub async fn poll_mcp_updates(&mut self) {
+        let mut changed: Vec<String> = Vec::new();
+        let mut closed: Vec<String> = Vec::new();
+        for (name, stream) in self.listen_streams.iter_mut() {
+            loop {
+                match stream.try_next() {
+                    Some(ListenMessage::Notification { method, .. })
+                        if method == NOTIFICATION_TOOLS_LIST_CHANGED
+                            && !changed.contains(name) =>
+                    {
+                        changed.push(name.clone());
+                    }
+                    Some(ListenMessage::Notification { .. }) => {}
+                    Some(ListenMessage::Closed { .. }) => {
+                        closed.push(name.clone());
+                        break;
+                    }
+                    None => break,
+                }
+            }
+        }
+        for name in closed {
+            // Dropping the stream aborts its reader task.
+            self.listen_streams.remove(&name);
+            if !changed.contains(&name) {
+                changed.push(name.clone());
+            }
+        }
+
+        // Stdio transports keep their subscription state; drain the queued
+        // notifications from each connection.
+        let names: Vec<String> = self.connections.keys().cloned().collect();
+        for name in names {
+            let Some(connection) = self.connections.remove(&name) else {
+                continue;
+            };
+            let mut connection = connection;
+            if let McpConnection::Stdio(transport) = &mut connection
+                && transport.mode() == Some(McpProtocolMode::Stateless2026)
+                && !changed.contains(&name)
+                && transport
+                    .drain_listen()
+                    .iter()
+                    .any(|(method, _)| method == NOTIFICATION_TOOLS_LIST_CHANGED)
+            {
+                changed.push(name.clone());
+            }            self.connections.insert(name, connection);
+        }
+
+        for name in changed {
+            self.refresh_tools(&name).await;
+        }
+    }
+
+    /// Re-discover a connected server's tools and re-report them through the
+    /// attempt that connected it (a `subscriptions/listen` change or a
+    /// re-sync after the stream closed). Failures keep the previous tool set.
+    async fn refresh_tools(&mut self, name: &str) {
+        let Some(attempt) = self.attempts.get(name).copied() else {
+            return;
+        };
+        let Some(connection) = self.connections.remove(name) else {
+            return;
+        };
+        let (connection, tools) = match connection {
+            McpConnection::Stdio(mut transport) => {
+                let result = tokio::task::spawn_blocking(move || {
+                    let tools = transport.list_tools().map(|r| r.tools);
+                    (transport, tools)
+                })
+                .await;
+                match result {
+                    Ok((transport, Ok(tools))) => (McpConnection::Stdio(transport), Some(tools)),
+                    Ok((transport, Err(_))) => (McpConnection::Stdio(transport), None),
+                    Err(join_error) => {
+                        // The transport was moved into the blocking closure and
+                        // is lost with the panic; mark the server failed so the
+                        // state machine no longer claims it is connected.
+                        eprintln!(
+                            "[kimi-agent] MCP {name}: tools refresh panicked: {join_error}"
+                        );
+                        self.state.report_failed(
+                            name,
+                            attempt,
+                            "MCP tools refresh panicked; reconnect the server",
+                            false,
+                        );
+                        self.discovered.remove(name);
+                        self.attempts.remove(name);
+                        return;
+                    }
+                }
+            }
+            McpConnection::Http(transport) => match transport.list_tools().await {
+                Ok(result) => (McpConnection::Http(transport), Some(result.tools)),
+                Err(_) => (McpConnection::Http(transport), None),
+            },
+            McpConnection::Sse(mut transport) => match transport.list_tools().await {
+                Ok(result) => (McpConnection::Sse(transport), Some(result.tools)),
+                Err(_) => (McpConnection::Sse(transport), None),
+            },
+        };
+        match tools {
+            Some(tools) => {
+                let tool_names: Vec<String> = tools.iter().map(|t| t.name.clone()).collect();
+                if self.state.report_connected(name, attempt, tool_names) {
+                    self.discovered.insert(name.to_string(), tools);
+                }
+            }
+            None => {
+                eprintln!(
+                    "[kimi-agent] MCP {name}: tools refresh failed; keeping the previous tool set"
+                );
+            }
+        }
+        self.connections.insert(name.to_string(), connection);
+    }
+
+    /// Open a `subscriptions/listen` subscription (tools-list changes) on a
+    /// connected stateless server. HTTP uses a long-lived stream; stdio
+    /// queues notifications on its shared channel. Failures are logged and
+    /// ignored — the server simply refreshes tools less eagerly.
+    async fn start_listen_for(&mut self, name: &str) {
+        let Some(connection) = self.connections.remove(name) else {
+            return;
+        };
+        let notifications = serde_json::json!({ LISTEN_TOOLS_LIST_CHANGED: true });
+        let connection = match connection {
+            McpConnection::Stdio(mut transport) => {
+                if transport.mode() == Some(McpProtocolMode::Stateless2026)
+                    && let Err(error) = transport.start_listen(&notifications)
+                {
+                    eprintln!("[kimi-agent] MCP {name}: failed to open subscriptions/listen: {error}");
+                }
+                McpConnection::Stdio(transport)
+            }
+            McpConnection::Http(transport) => {
+                if transport.mode() == Some(McpProtocolMode::Stateless2026) {
+                    match transport.start_listen(&notifications).await {
+                        Ok(stream) => {
+                            self.listen_streams.insert(name.to_string(), stream);
+                        }
+                        Err(error) => {
+                            eprintln!(
+                                "[kimi-agent] MCP {name}: failed to open subscriptions/listen: {error}"
+                            );
+                        }
+                    }
+                }
+                McpConnection::Http(transport)
+            }
+            other => other,
+        };
+        self.connections.insert(name.to_string(), connection);
     }
 
     async fn connect_stdio(
@@ -417,7 +596,9 @@ impl McpRuntime {
         if let Some(connection) = self.connections.remove(name) {
             drop_connection_value(connection).await;
         }
+        self.listen_streams.remove(name);
         self.discovered.remove(name);
+        self.attempts.remove(name);
     }
 }
 
@@ -532,14 +713,20 @@ mod tests {
     }
 
     /// The scripted stdio MCP server used by the transport tests, with two
-    /// tools so the enable-filter path is observable.
+    /// tools so the enable-filter path is observable. Legacy-era: rejects
+    /// `server/discover` so the client falls back to the initialize
+    /// handshake.
     const SCRIPTED_SERVER: &str = r#"
 const readline = require('node:readline');
 const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', (line) => {
   let msg;
   try { msg = JSON.parse(line); } catch { return; }
-  if (msg.method === 'initialize') {
+  if (msg.method === 'server/discover') {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: {
+      code: -32601, message: 'Method not found',
+    } }) + '\n');
+  } else if (msg.method === 'initialize') {
     process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
       protocolVersion: msg.params.protocolVersion,
       capabilities: {}, serverInfo: { name: 'scripted', version: '1.0.0' },
@@ -676,5 +863,122 @@ rl.on('line', (line) => {
             .await;
         assert_eq!(entry.status, McpServerStatus::Failed);
         assert!(entry.error.is_some());
+    }
+
+    /// A stateless (2026-07-28) stdio server that answers `server/discover`,
+    /// subscribes to `subscriptions/listen`, announces a tools-list change
+    /// shortly after, and grows its tool set between `tools/list` calls.
+    const LISTEN_SERVER: &str = r#"
+const readline = require('node:readline');
+const rl = readline.createInterface({ input: process.stdin });
+let listCount = 0;
+rl.on('line', (line) => {
+  let msg;
+  try { msg = JSON.parse(line); } catch { return; }
+  if (msg.method === 'server/discover') {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
+      protocolVersion: '2026-07-28',
+      capabilities: {}, serverInfo: { name: 'listen-server', version: '1.0.0' },
+      supportedProtocolVersions: ['2026-07-28'],
+    } }) + '\n');
+  } else if (msg.method === 'subscriptions/listen') {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/subscriptions/acknowledged',
+      params: { notifications: { toolsListChanged: true },
+        _meta: { 'io.modelcontextprotocol/subscriptionId': msg.id } } }) + '\n');
+    setTimeout(() => {
+      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/tools/list_changed',
+        params: { _meta: { 'io.modelcontextprotocol/subscriptionId': msg.id } } }) + '\n');
+    }, 50);
+  } else if (msg.method === 'tools/list') {
+    listCount += 1;
+    const tools = listCount === 1
+      ? [{ name: 'echo', description: 'Echo', inputSchema: { type: 'object' } }]
+      : [
+          { name: 'echo', description: 'Echo', inputSchema: { type: 'object' } },
+          { name: 'alpha', description: 'Added later', inputSchema: { type: 'object' } },
+        ];
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
+      resultType: 'complete', tools,
+    } }) + '\n');
+  } else if (msg.method === 'tools/call') {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
+      resultType: 'complete',
+      content: [{ type: 'text', text: msg.params.name + ':' + msg.params.arguments.value }],
+    } }) + '\n');
+  }
+});
+"#;
+
+    /// `subscriptions/listen`-driven tool refresh: after the server announces
+    /// a tools-list change, `poll_mcp_updates` re-discovers the tool set and
+    /// the new tool becomes dispatchable.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn listen_driven_tool_refresh_updates_discovered_tools() {
+        if !node_available() {
+            eprintln!("skipping: node not available");
+            return;
+        }
+        let mut runtime = McpRuntime::new(false, None, None);
+        let spec = McpServerSpec {
+            config: McpServerConfig {
+                startup_timeout_ms: Some(15_000),
+                tool_timeout_ms: Some(15_000),
+                ..Default::default()
+            },
+            command: Some("node".to_string()),
+            args: vec!["-e".to_string(), LISTEN_SERVER.to_string()],
+            ..Default::default()
+        };
+        let entry = runtime
+            .register("listen", spec, McpConfigSource::Other)
+            .await;
+        assert_eq!(
+            entry.status,
+            McpServerStatus::Connected,
+            "{:?}",
+            entry.error
+        );
+        assert_eq!(entry.tool_count, 1);
+
+        // Stdio delivers listen notifications inside request read loops, so
+        // pump the channel with calls, let the delayed notification land,
+        // then poll to trigger the refresh.
+        let _ = runtime
+            .call_tool(
+                "mcp__listen__echo",
+                Some(serde_json::json!({ "value": "x" })),
+            )
+            .await;
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        let _ = runtime
+            .call_tool(
+                "mcp__listen__echo",
+                Some(serde_json::json!({ "value": "x" })),
+            )
+            .await;
+        runtime.poll_mcp_updates().await;
+
+        let names: Vec<String> = runtime
+            .tool_definitions()
+            .iter()
+            .map(|definition| definition.name.clone())
+            .collect();
+        assert!(
+            names.contains(&"mcp__listen__echo".to_string()),
+            "echo missing: {names:?}"
+        );
+        assert!(
+            names.contains(&"mcp__listen__alpha".to_string()),
+            "refreshed tool missing: {names:?}"
+        );
+
+        let result = runtime
+            .call_tool(
+                "mcp__listen__alpha",
+                Some(serde_json::json!({ "value": "y" })),
+            )
+            .await
+            .expect("newly discovered tool must dispatch");
+        assert_eq!(mcp_content_to_text(&result.content), "alpha:y");
     }
 }

@@ -16,9 +16,7 @@ use std::time::Duration;
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 
-use crate::mcp::transport_stdio::{
-    DEFAULT_REQUEST_TIMEOUT_MS, MCP_CLIENT_NAME, MCP_PROTOCOL_VERSION,
-};
+use crate::mcp::transport_stdio::DEFAULT_REQUEST_TIMEOUT_MS;
 use crate::mcp::types::*;
 
 /// Options for connecting an MCP SSE server.
@@ -146,7 +144,7 @@ impl MCPSseTransport {
         };
 
         let params = serde_json::json!({
-            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "protocolVersion": MCP_LEGACY_PROTOCOL_VERSION,
             "capabilities": {},
             "clientInfo": {
                 "name": MCP_CLIENT_NAME,
@@ -435,7 +433,7 @@ server.listen(0, '127.0.0.1', () => {
                 },
             )
             .await?;
-            if transport.server_protocol_version() != Some(MCP_PROTOCOL_VERSION) {
+            if transport.server_protocol_version() != Some(MCP_LEGACY_PROTOCOL_VERSION) {
                 return Err("unexpected protocol version".to_string());
             }
             let tools = transport.list_tools().await?;

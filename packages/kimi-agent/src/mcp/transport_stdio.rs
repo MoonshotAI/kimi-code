@@ -1,9 +1,14 @@
 /// MCP stdio transport client.
 ///
 /// Mirrors the TS `packages/agent-core/src/mcp/client-stdio.ts` (which wraps
-/// the official MCP SDK): spawns the server as a child process, performs the
-/// `initialize` → `notifications/initialized` handshake, then speaks
+/// the official MCP SDK): spawns the server as a child process, then speaks
 /// line-delimited JSON-RPC over stdin/stdout.
+///
+/// Protocol negotiation (2026-07-28): `connect` first probes with
+/// `server/discover`; a server that supports `2026-07-28` runs stateless
+/// (no handshake, `_meta` protocol metadata on every request). Older servers
+/// answer the probe with `-32601`/`-32022` and the client falls back to the
+/// `initialize` → `notifications/initialized` handshake.
 ///
 /// Protocol correctness notes ported from the SDK client:
 /// - A dedicated reader thread owns stdout, so buffered bytes are never lost
@@ -15,7 +20,7 @@
 /// - The last few KB of the child's stderr are retained so connection
 ///   failures can carry a diagnostic tail (see
 ///   `connection_manager::format_startup_error`).
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -24,14 +29,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::mcp::types::*;
-
-/// Protocol revision offered in the `initialize` request. Servers negotiate
-/// down to their own revision; we accept whatever they answer with, matching
-/// the TS SDK client's behavior.
-pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
-
-/// Client identity sent in `initialize` (TS: `KIMI_MCP_CLIENT_NAME`).
-pub const MCP_CLIENT_NAME: &str = "kimi-code";
 
 /// Default per-request timeout (TS SDK: `DEFAULT_REQUEST_TIMEOUT_MSEC`).
 pub const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 60_000;
@@ -112,8 +109,18 @@ pub struct MCPStdioTransport {
     startup_timeout_ms: u64,
     tool_call_timeout_ms: u64,
     client_version: String,
-    /// Set by `connect` from the server's `initialize` response.
+    /// Set by `connect` from the server's `initialize` response (legacy
+    /// mode) or the negotiated `2026-07-28` revision (stateless mode).
     server_protocol_version: Option<String>,
+    /// Negotiated protocol era; `None` until `connect` succeeds.
+    mode: Option<McpProtocolMode>,
+    /// Active `subscriptions/listen` subscription ids (the JSON-RPC id of
+    /// each `subscriptions/listen` request).
+    listen_subscriptions: HashSet<u64>,
+    /// Notifications received for active subscriptions, consumed by
+    /// `drain_listen` (stdio shares one message channel, so listen traffic is
+    /// collected as requests come and go and delivered on demand).
+    listen_queue: VecDeque<(String, serde_json::Value)>,
 }
 
 impl MCPStdioTransport {
@@ -226,17 +233,60 @@ impl MCPStdioTransport {
                 .client_version
                 .unwrap_or_else(|| "0.0.0".to_string()),
             server_protocol_version: None,
+            mode: None,
+            listen_subscriptions: HashSet::new(),
+            listen_queue: VecDeque::new(),
         })
     }
 
-    /// Perform the MCP `initialize` → `notifications/initialized` handshake.
-    /// Idempotent: a second call is a no-op once the handshake succeeded.
+    /// Negotiate the protocol era: probe with `server/discover`, adopt the
+    /// stateless `2026-07-28` mode when supported, otherwise fall back to the
+    /// legacy `initialize` → `notifications/initialized` handshake.
+    /// Idempotent: a second call is a no-op once negotiation succeeded.
     pub fn connect(&mut self) -> Result<(), String> {
         if self.server_protocol_version.is_some() {
             return Ok(());
         }
+        match self.try_stateless_discover() {
+            Ok(()) => {
+                self.server_protocol_version = Some(MCP_PROTOCOL_VERSION.to_string());
+                self.mode = Some(McpProtocolMode::Stateless2026);
+                Ok(())
+            }
+            Err(error) if is_discover_fallback(&error) => {
+                self.legacy_initialize()?;
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Probe with `server/discover`. Success requires the server to advertise
+    /// `2026-07-28` in `supportedProtocolVersions`. Older servers return a
+    /// JSON-RPC error (`-32601` method not found) or an unsupported-version
+    /// error, which `connect` treats as a fallback signal.
+    fn try_stateless_discover(&mut self) -> Result<(), String> {
+        let response = self.send_request("server/discover", serde_json::json!({}), self.startup_timeout_ms)?;
+        let supports = response
+            .get("supportedProtocolVersions")
+            .and_then(|v| v.as_array())
+            .map(|versions| versions.iter().any(|v| v.as_str() == Some(MCP_PROTOCOL_VERSION)))
+            .unwrap_or(false);
+        if supports {
+            Ok(())
+        } else {
+            Err(format!(
+                "MCP server does not support protocol version {MCP_PROTOCOL_VERSION}"
+            ))
+        }
+    }
+
+    /// Perform the legacy `initialize` → `notifications/initialized`
+    /// handshake. The server negotiates down to its own revision; the client
+    /// accepts whatever it answers with.
+    fn legacy_initialize(&mut self) -> Result<(), String> {
         let params = serde_json::json!({
-            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "protocolVersion": MCP_LEGACY_PROTOCOL_VERSION,
             "capabilities": {},
             "clientInfo": {
                 "name": MCP_CLIENT_NAME,
@@ -251,13 +301,18 @@ impl MCPStdioTransport {
             .to_string();
         self.send_notification("notifications/initialized", serde_json::json!({}))?;
         self.server_protocol_version = Some(protocol_version);
+        self.mode = Some(McpProtocolMode::Legacy);
         Ok(())
     }
 
-    /// The protocol revision the server answered `initialize` with; `None`
-    /// until `connect` succeeds.
+    /// The negotiated protocol revision; `None` until `connect` succeeds.
     pub fn server_protocol_version(&self) -> Option<&str> {
         self.server_protocol_version.as_deref()
+    }
+
+    /// The negotiated protocol era; `None` until `connect` succeeds.
+    pub fn mode(&self) -> Option<McpProtocolMode> {
+        self.mode
     }
 
     /// Call the MCP `tools/list` endpoint.
@@ -268,7 +323,12 @@ impl MCPStdioTransport {
             .map_err(|e| format!("Failed to parse tools/list response: {e}"))
     }
 
-    /// Call the MCP `tools/call` endpoint.
+    /// Call the MCP `tools/call` endpoint. In stateless mode the request
+    /// carries `_meta` protocol metadata; an `input_required` result
+    /// (MRTR, 2026-07-28) is resolved as follows: an empty `inputRequests`
+    /// list is a retry signal and is retried once; a non-empty list asks the
+    /// client for input this engine cannot gather mid-call, so it becomes a
+    /// descriptive error.
     pub fn call_tool(
         &mut self,
         name: &str,
@@ -279,7 +339,39 @@ impl MCPStdioTransport {
             "arguments": arguments,
         });
         let response = self.send_request("tools/call", params, self.tool_call_timeout_ms)?;
+        if result_type_of(&response) == RESULT_TYPE_INPUT_REQUIRED {
+            return self.resolve_input_required(&response, name, arguments);
+        }
         serde_json::from_value(response)
+            .map_err(|e| format!("Failed to parse tools/call response: {e}"))
+    }
+
+    /// Resolve an MRTR `input_required` result: retry once when the server
+    /// asks for no input (an empty `inputRequests` list), otherwise surface
+    /// a descriptive error listing what the server requested.
+    fn resolve_input_required(
+        &mut self,
+        response: &serde_json::Value,
+        name: &str,
+        arguments: Option<serde_json::Value>,
+    ) -> Result<MCPToolCallResult, String> {
+        let required: MCPInputRequiredResult = serde_json::from_value(response.clone())
+            .map_err(|e| format!("Failed to parse input_required result: {e}"))?;
+        if !required.input_requests.is_empty() {
+            return Err(input_required_error(&required, false));
+        }
+        // Empty inputRequests is a retry signal from the server.
+        let params = serde_json::json!({
+            "name": name,
+            "arguments": arguments,
+        });
+        let retry = self.send_request("tools/call", params, self.tool_call_timeout_ms)?;
+        if result_type_of(&retry) == RESULT_TYPE_INPUT_REQUIRED {
+            let required: MCPInputRequiredResult = serde_json::from_value(retry.clone())
+                .map_err(|e| format!("Failed to parse input_required result: {e}"))?;
+            return Err(input_required_error(&required, true));
+        }
+        serde_json::from_value(retry)
             .map_err(|e| format!("Failed to parse tools/call response: {e}"))
     }
 
@@ -292,15 +384,69 @@ impl MCPStdioTransport {
             .unwrap_or_default()
     }
 
+    /// Open a `subscriptions/listen` subscription (2026-07-28 stateless mode
+    /// only). Stdio shares one message channel, so the server's
+    /// acknowledgment and subsequent notifications are captured by the next
+    /// request's read loop and collected for `drain_listen`. Returns the
+    /// subscription id (the request id) on success.
+    pub fn start_listen(&mut self, notifications: &serde_json::Value) -> Result<u64, String> {
+        if self.mode != Some(McpProtocolMode::Stateless2026) {
+            return Err(
+                "subscriptions/listen requires the 2026-07-28 protocol (stateless mode)".to_string(),
+            );
+        }
+        let mut params = serde_json::json!({ "notifications": notifications });
+        inject_protocol_meta(&mut params, &self.client_version);
+        let id = self.next_id;
+        self.next_id += 1;
+        let request = MCPJsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: serde_json::json!(id),
+            method: "subscriptions/listen".into(),
+            params: Some(params),
+        };
+        self.write_message(&serde_json::to_value(&request).map_err(|e| e.to_string())?)?;
+        self.listen_subscriptions.insert(id);
+        Ok(id)
+    }
+
+    /// Drain the notifications collected for active subscriptions as
+    /// `(method, params)` pairs. A `Closed` marker is not surfaced — callers
+    /// discover closure via the transport itself; a vanished server is
+    /// detected by the next request's failure.
+    pub fn drain_listen(&mut self) -> Vec<(String, serde_json::Value)> {
+        self.listen_queue.drain(..).collect()
+    }
+
+    /// The active subscription id a message belongs to, if any: read from
+    /// `params._meta` (notifications) or `result._meta` (graceful-close
+    /// responses to the `subscriptions/listen` request).
+    fn listen_subscription_of(&self, message: &serde_json::Value) -> Option<u64> {
+        let meta = message
+            .get("params")
+            .and_then(|p| p.get("_meta"))
+            .or_else(|| message.get("result").and_then(|r| r.get("_meta")))?;
+        let id = meta.get(META_SUBSCRIPTION_ID)?;
+        let id: u64 = serde_json::from_value(id.clone()).ok()?;
+        self.listen_subscriptions.contains(&id).then_some(id)
+    }
+
     /// Send a JSON-RPC request and await the response matching its id.
     /// Notifications and interleaved messages are skipped; `ping` requests
-    /// from the server are answered inline.
+    /// from the server are answered inline. In stateless mode the request
+    /// params carry `_meta` protocol metadata.
     fn send_request(
         &mut self,
         method: &str,
         params: serde_json::Value,
         timeout_ms: u64,
     ) -> Result<serde_json::Value, String> {
+        let mut params = params;
+        if self.mode == Some(McpProtocolMode::Stateless2026) || method == "server/discover" {
+            // The probe is sent as a modern request and must carry the
+            // `_meta` protocol metadata like any other stateless request.
+            inject_protocol_meta(&mut params, &self.client_version);
+        }
         let id = self.next_id;
         self.next_id += 1;
         let request = MCPJsonRpcRequest {
@@ -342,8 +488,8 @@ impl MCPStdioTransport {
 
             if let Some(server_method) = message.get("method").and_then(|m| m.as_str()) {
                 // With an id it is a server → client request: answer pings,
-                // reject the rest. Without one it is a notification — nothing
-                // to do at this layer.
+                // reject the rest. Without one it is a notification: capture
+                // it when it belongs to an active subscription.
                 if let Some(server_id) = message.get("id") {
                     let reply = if server_method == "ping" {
                         serde_json::json!({
@@ -359,7 +505,23 @@ impl MCPStdioTransport {
                         })
                     };
                     self.write_message(&reply)?;
+                } else if server_method != NOTIFICATION_SUBSCRIPTIONS_ACKNOWLEDGED
+                    && self.listen_subscription_of(&message).is_some()
+                {
+                    let params = message
+                        .get("params")
+                        .cloned()
+                        .unwrap_or(serde_json::json!({}));
+                    self.listen_queue
+                        .push_back((server_method.to_string(), params));
                 }
+                continue;
+            }
+
+            // A response to a `subscriptions/listen` request (graceful close):
+            // the subscription ended on the server's initiative.
+            if let Some(subscription_id) = self.listen_subscription_of(&message) {
+                self.listen_subscriptions.remove(&subscription_id);
                 continue;
             }
 
@@ -585,24 +747,30 @@ mod tests {
         );
     }
 
-    /// End-to-end handshake + request matching against a scripted MCP server
-    /// (Node inline). Skipped when `node` is unavailable.
+    /// End-to-end negotiation + request matching against a scripted MCP server
+    /// (Node inline): a legacy server that answers `server/discover` with
+    /// `-32601` (method not found), forcing the initialize-handshake fallback.
+    /// Skipped when `node` is unavailable.
     #[test]
-    fn handshake_and_tool_calls_against_scripted_server() {
+    fn legacy_server_falls_back_to_initialize_handshake() {
         if Command::new("node").arg("--version").output().is_err() {
             eprintln!("skipping: node not available");
             return;
         }
-        // The server answers initialize, emits a stray notification and an
-        // unparseable log line (both must be skipped), then serves
-        // tools/list and tools/call.
+        // The server rejects discover, answers initialize, emits a stray
+        // notification and an unparseable log line (both must be skipped),
+        // then serves tools/list and tools/call.
         let script = r#"
 const readline = require('node:readline');
 const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', (line) => {
   let msg;
   try { msg = JSON.parse(line); } catch { return; }
-  if (msg.method === 'initialize') {
+  if (msg.method === 'server/discover') {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: {
+      code: -32601, message: 'Method not found',
+    } }) + '\n');
+  } else if (msg.method === 'initialize') {
     process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
       protocolVersion: msg.params.protocolVersion,
       capabilities: {}, serverInfo: { name: 'scripted', version: '1.0.0' },
@@ -634,9 +802,10 @@ rl.on('line', (line) => {
         .expect("spawn");
 
         transport.connect().expect("handshake");
+        assert_eq!(transport.mode(), Some(McpProtocolMode::Legacy));
         assert_eq!(
             transport.server_protocol_version(),
-            Some(MCP_PROTOCOL_VERSION)
+            Some(MCP_LEGACY_PROTOCOL_VERSION)
         );
 
         let tools = transport.list_tools().expect("tools/list");
@@ -649,6 +818,286 @@ rl.on('line', (line) => {
         let text = mcp_content_to_text(&result.content);
         assert_eq!(text, "echo:hi");
 
+        transport.shutdown().expect("shutdown");
+    }
+
+    /// End-to-end stateless negotiation + request matching against a
+    /// scripted 2026-07-28 server: `server/discover` is answered, no
+    /// initialize handshake happens, and every request carries `_meta`
+    /// protocol metadata.
+    #[test]
+    fn stateless_discover_negotiation_and_meta_carry() {
+        if Command::new("node").arg("--version").output().is_err() {
+            eprintln!("skipping: node not available");
+            return;
+        }
+        let script = r#"
+const readline = require('node:readline');
+const rl = readline.createInterface({ input: process.stdin });
+let sawInitialize = false;
+rl.on('line', (line) => {
+  let msg;
+  try { msg = JSON.parse(line); } catch { return; }
+  if (msg.method === 'initialize') { sawInitialize = true; }
+  if (msg.method === 'server/discover') {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
+      protocolVersion: '2026-07-28',
+      capabilities: {}, serverInfo: { name: 'scripted-modern', version: '1.0.0' },
+      supportedProtocolVersions: ['2026-07-28'],
+    } }) + '\n');
+  } else if (msg.method === 'tools/list') {
+    const meta = (msg.params && msg.params._meta) || {};
+    if (meta['io.modelcontextprotocol/protocolVersion'] !== '2026-07-28') {
+      process.stderr.write('tools/list missing _meta protocolVersion\n');
+    }
+    if (!meta['io.modelcontextprotocol/clientInfo']) {
+      process.stderr.write('tools/list missing _meta clientInfo\n');
+    }
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
+      resultType: 'complete',
+      tools: [{ name: 'echo', description: 'Echo', inputSchema: { type: 'object' } }],
+    } }) + '\n');
+  } else if (msg.method === 'tools/call') {
+    const meta = (msg.params && msg.params._meta) || {};
+    if (meta['io.modelcontextprotocol/protocolVersion'] !== '2026-07-28') {
+      process.stderr.write('tools/call missing _meta protocolVersion\n');
+    }
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
+      resultType: 'complete',
+      content: [{ type: 'text', text: 'echo:' + msg.params.arguments.value }],
+    } }) + '\n');
+  } else if (msg.method === 'notifications/initialized') {
+    sawInitialize = true;
+  }
+  if (sawInitialize) {
+    process.stderr.write('client must not run the initialize handshake in stateless mode\n');
+  }
+});
+"#;
+        let mut transport = MCPStdioTransport::spawn(
+            "node",
+            &["-e".to_string(), script.to_string()],
+            StdioSpawnOptions {
+                startup_timeout_ms: Some(15_000),
+                tool_call_timeout_ms: Some(15_000),
+                ..Default::default()
+            },
+        )
+        .expect("spawn");
+
+        transport.connect().expect("negotiation");
+        assert_eq!(transport.mode(), Some(McpProtocolMode::Stateless2026));
+        assert_eq!(transport.server_protocol_version(), Some(MCP_PROTOCOL_VERSION));
+
+        let tools = transport.list_tools().expect("tools/list");
+        assert_eq!(tools.tools.len(), 1);
+        assert_eq!(tools.tools[0].name, "echo");
+
+        let result = transport
+            .call_tool("echo", Some(serde_json::json!({ "value": "hi" })))
+            .expect("tools/call");
+        let text = mcp_content_to_text(&result.content);
+        assert_eq!(text, "echo:hi");
+
+        transport.shutdown().expect("shutdown");
+    }
+
+    /// MRTR (2026-07-28): a `tools/call` answered with an `input_required`
+    /// result carrying an empty `inputRequests` list is a retry signal; the
+    /// client retries once and gets the final result. A non-empty list
+    /// becomes a descriptive error (the engine cannot gather input).
+    #[test]
+    fn input_required_retry_signal_is_retried_once() {
+        if Command::new("node").arg("--version").output().is_err() {
+            eprintln!("skipping: node not available");
+            return;
+        }
+        let script = r#"
+const readline = require('node:readline');
+const rl = readline.createInterface({ input: process.stdin });
+let callCount = 0;
+rl.on('line', (line) => {
+  let msg;
+  try { msg = JSON.parse(line); } catch { return; }
+  if (msg.method === 'server/discover') {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
+      protocolVersion: '2026-07-28',
+      capabilities: {}, serverInfo: { name: 'scripted-mrtr', version: '1.0.0' },
+      supportedProtocolVersions: ['2026-07-28'],
+    } }) + '\n');
+  } else if (msg.method === 'tools/list') {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
+      resultType: 'complete',
+      tools: [{ name: 'echo', description: 'Echo', inputSchema: { type: 'object' } }],
+    } }) + '\n');
+  } else if (msg.method === 'tools/call') {
+    callCount += 1;
+    if (callCount === 1) {
+      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
+        resultType: 'input_required', inputRequests: [],
+      } }) + '\n');
+    } else {
+      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
+        resultType: 'complete',
+        content: [{ type: 'text', text: 'echo:' + msg.params.arguments.value }],
+      } }) + '\n');
+    }
+  }
+});
+"#;
+        let mut transport = MCPStdioTransport::spawn(
+            "node",
+            &["-e".to_string(), script.to_string()],
+            StdioSpawnOptions {
+                startup_timeout_ms: Some(15_000),
+                tool_call_timeout_ms: Some(15_000),
+                ..Default::default()
+            },
+        )
+        .expect("spawn");
+
+        transport.connect().expect("negotiation");
+        let result = transport
+            .call_tool("echo", Some(serde_json::json!({ "value": "hi" })))
+            .expect("tools/call");
+        assert_eq!(mcp_content_to_text(&result.content), "echo:hi");
+        transport.shutdown().expect("shutdown");
+    }
+
+    /// MRTR (2026-07-28): a non-empty `inputRequests` list asks the client
+    /// for input the engine cannot gather — the call becomes a descriptive
+    /// error.
+    #[test]
+    fn input_required_with_requests_is_a_descriptive_error() {
+        if Command::new("node").arg("--version").output().is_err() {
+            eprintln!("skipping: node not available");
+            return;
+        }
+        let script = r#"
+const readline = require('node:readline');
+const rl = readline.createInterface({ input: process.stdin });
+rl.on('line', (line) => {
+  let msg;
+  try { msg = JSON.parse(line); } catch { return; }
+  if (msg.method === 'server/discover') {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
+      protocolVersion: '2026-07-28',
+      capabilities: {}, serverInfo: { name: 'scripted-mrtr', version: '1.0.0' },
+      supportedProtocolVersions: ['2026-07-28'],
+    } }) + '\n');
+  } else if (msg.method === 'tools/list') {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
+      resultType: 'complete',
+      tools: [{ name: 'echo', description: 'Echo', inputSchema: { type: 'object' } }],
+    } }) + '\n');
+  } else if (msg.method === 'tools/call') {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
+      resultType: 'input_required',
+      inputRequests: [{ input: { type: 'object' }, description: 'pick a number' }],
+    } }) + '\n');
+  }
+});
+"#;
+        let mut transport = MCPStdioTransport::spawn(
+            "node",
+            &["-e".to_string(), script.to_string()],
+            StdioSpawnOptions {
+                startup_timeout_ms: Some(15_000),
+                tool_call_timeout_ms: Some(15_000),
+                ..Default::default()
+            },
+        )
+        .expect("spawn");
+
+        transport.connect().expect("negotiation");
+        let error = transport
+            .call_tool("echo", Some(serde_json::json!({ "value": "hi" })))
+            .expect_err("input_required must not dispatch");
+        assert!(error.contains("pick a number"), "got: {error}");
+        assert!(error.contains("cannot supply"), "got: {error}");
+        transport.shutdown().expect("shutdown");
+    }
+
+    /// `subscriptions/listen` on stdio (2026-07-28): the server acknowledges
+    /// and delivers a `notifications/tools/list_changed` on the shared
+    /// channel; the client captures it during the next request's read loop
+    /// and surfaces it via `drain_listen`.
+    #[test]
+    fn listen_subscription_captures_notifications() {
+        if Command::new("node").arg("--version").output().is_err() {
+            eprintln!("skipping: node not available");
+            return;
+        }
+        let script = r#"
+const readline = require('node:readline');
+const rl = readline.createInterface({ input: process.stdin });
+rl.on('line', (line) => {
+  let msg;
+  try { msg = JSON.parse(line); } catch { return; }
+  if (msg.method === 'server/discover') {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
+      protocolVersion: '2026-07-28',
+      capabilities: {}, serverInfo: { name: 'scripted-listen', version: '1.0.0' },
+      supportedProtocolVersions: ['2026-07-28'],
+    } }) + '\n');
+  } else if (msg.method === 'subscriptions/listen') {
+    const ack = { jsonrpc: '2.0', method: 'notifications/subscriptions/acknowledged',
+      params: { notifications: { toolsListChanged: true },
+        _meta: { 'io.modelcontextprotocol/subscriptionId': msg.id } } };
+    process.stdout.write(JSON.stringify(ack) + '\n');
+    setTimeout(() => {
+      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/tools/list_changed',
+        params: { _meta: { 'io.modelcontextprotocol/subscriptionId': msg.id } } }) + '\n');
+    }, 100);
+  } else if (msg.method === 'tools/list') {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
+      resultType: 'complete',
+      tools: [{ name: 'echo', description: 'Echo', inputSchema: { type: 'object' } }],
+    } }) + '\n');
+  }
+});
+"#;
+        let mut transport = MCPStdioTransport::spawn(
+            "node",
+            &["-e".to_string(), script.to_string()],
+            StdioSpawnOptions {
+                startup_timeout_ms: Some(15_000),
+                tool_call_timeout_ms: Some(15_000),
+                ..Default::default()
+            },
+        )
+        .expect("spawn");
+
+        transport.connect().expect("negotiation");
+        assert_eq!(transport.mode(), Some(McpProtocolMode::Stateless2026));
+
+        // Open the subscription, then run another request so the read loop
+        // collects the acknowledgment and the delayed notification.
+        let subscription_id = transport
+            .start_listen(&serde_json::json!({ LISTEN_TOOLS_LIST_CHANGED: true }))
+            .expect("start_listen");
+        let tools = transport.list_tools().expect("tools/list");
+        assert_eq!(tools.tools.len(), 1);
+
+        // The notification arrives asynchronously (100ms delay in the
+        // script); keep polling the channel with short reads until it lands.
+        let mut drained: Vec<(String, serde_json::Value)> = Vec::new();
+        for _ in 0..50 {
+            drained = transport.drain_listen();
+            if drained.iter().any(|(m, _)| m == NOTIFICATION_TOOLS_LIST_CHANGED) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+            // Pump the channel by re-running a (cheap) request.
+            let _ = transport.list_tools();
+        }
+        assert!(
+            drained
+                .iter()
+                .any(|(m, _)| m == NOTIFICATION_TOOLS_LIST_CHANGED),
+            "expected tools_list_changed, got: {drained:?}"
+        );
+        let _ = subscription_id;
         transport.shutdown().expect("shutdown");
     }
 
