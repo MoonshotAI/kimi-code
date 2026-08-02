@@ -31,16 +31,24 @@ export type { Locale, TranslationKey } from './runtime/i18n-core';
 
 // ── Diagnostic logging ──────────────────────────────────────────────────
 export {
-  log,
-  redact,
   flushDiagnosticLogs,
   flushDiagnosticLogsSync,
+  getRootLogger,
+  log,
+  redact,
   resolveGlobalLogPath,
   type LogContext,
+  type LogEntry,
   type LogLevel,
   type LogPayload,
   type Logger,
+  type LoggingConfig,
+  type RootLogger,
+  type SessionAttachInput,
+  type SessionLogHandle,
 } from './runtime/logging-core/index';
+export { resolveLoggingConfig } from './runtime/logging-core/resolve-config';
+export type { ResolveLoggingInput } from './runtime/logging-core/resolve-config';
 
 import { homedir } from 'node:os';
 

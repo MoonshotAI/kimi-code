@@ -54,6 +54,7 @@ import type {
   ToolExecuteRequest,
   ToolExecuteResponse,
 } from './src/rpc/wire.gen';
+import type { ExecutableTool, LoopMessageBuilder } from './src/contract';
 
 // Re-export the LLM wire types hosts use to register stub/proxy handlers
 // (`llmStep`, `setLlmChatHandler`) — the session surface is host-proxy for
@@ -904,11 +905,127 @@ export interface RustEngineOptions {
   nativeTools?: boolean;
 }
 
+/**
+ * Full override input — matches the retired agent-core `runTurn` contract
+ * (defined locally so consumers of this adapter never drag agent-core into
+ * their type graph). The host owns the message history and transcript;
+ * Rust drives control flow via the per-step/tool callbacks below.
+ */
+
+/** Host-proxy LLM shape (agent-core compatible): the host's provider wrapper
+ *  plus an optional diagnostic logger. `chat` resolves the model step. */
+export interface LoopLlm {
+  readonly model?: string | undefined;
+  readonly modelName?: string | undefined;
+  readonly systemPrompt?: string | undefined;
+  readonly provider?: string | undefined;
+  chat(params: {
+    readonly messages: readonly unknown[];
+    readonly tools?: readonly unknown[] | undefined;
+    readonly signal: AbortSignal;
+    readonly onTextDelta?: ((delta: string) => void) | undefined;
+  }): Promise<{
+    readonly content?: string | undefined;
+    readonly tool_calls?: readonly { readonly id: string; readonly name: string; readonly arguments?: unknown }[] | undefined;
+    readonly finish_reason?: string | undefined;
+    readonly usage?: HostTokenUsage | undefined;
+    readonly providerFinishReason?: string | undefined;
+  }>;
+}
+
+export interface LoopOverrideInput {
+  readonly turnId: string;
+  readonly signal: AbortSignal;
+  readonly llm: LoopLlm;
+  readonly log?: {
+    readonly warn?: (message: string, meta?: Record<string, unknown>) => void;
+  } | undefined;
+  readonly buildMessages: LoopMessageBuilder;
+  readonly buildMessagesStrict?: LoopMessageBuilder | undefined;
+  readonly buildMessagesMediaDegraded?: LoopMessageBuilder | undefined;
+  readonly buildMessagesMediaStripped?: LoopMessageBuilder | undefined;
+  readonly dispatchEvent: (event: unknown) => void;
+  readonly tools?: readonly ExecutableTool[] | undefined;
+  /** Re-invoked before every step when present (dynamic tool tables). */
+  readonly buildTools?: (() => readonly ExecutableTool[]) | undefined;
+  readonly describeMissingTool?: ((name: string) => string | undefined) | undefined;
+  readonly recordStepUsage?:
+    | ((
+        usage: HostTokenUsage,
+      ) =>
+        | { stopTurn?: boolean }
+        | undefined
+        | Promise<{ stopTurn?: boolean } | undefined>)
+    | undefined;
+  /** Replace a predicted (force_precise=false) tool result in the transcript. */
+  readonly replaceToolResult?:
+    | ((toolCallId: string, toolResult: unknown) => void | Promise<void>)
+    | undefined;
+  readonly hooks?: {
+    readonly beforeStep?: ((
+      arg: { readonly turnId: string; readonly stepNumber: number; readonly signal: AbortSignal; readonly llm: LoopLlm },
+    ) =>
+      | { readonly block?: boolean; readonly reason?: string }
+      | undefined
+      | Promise<{ readonly block?: boolean; readonly reason?: string } | undefined>) | undefined;
+    readonly afterStep?: ((
+      arg: {
+        readonly turnId: string;
+        readonly stepNumber: number;
+        readonly signal: AbortSignal;
+        readonly llm: LoopLlm;
+        readonly usage: HostTokenUsage;
+        readonly stopReason: string;
+      },
+    ) =>
+      | { readonly stopTurn?: boolean }
+      | undefined
+      | Promise<{ readonly stopTurn?: boolean } | undefined>) | undefined;
+    readonly prepareToolExecution?: ((
+      arg: {
+        readonly turnId: string;
+        readonly stepNumber: number;
+        readonly signal: AbortSignal;
+        readonly llm: LoopLlm;
+        readonly args: unknown;
+      },
+    ) =>
+      | {
+          readonly updatedArgs?: unknown;
+          readonly block?: boolean;
+          readonly reason?: string;
+          readonly syntheticResult?: unknown;
+          readonly executionMetadata?: unknown;
+        }
+      | undefined
+      | Promise<
+          | {
+              readonly updatedArgs?: unknown;
+              readonly block?: boolean;
+              readonly reason?: string;
+              readonly syntheticResult?: unknown;
+              readonly executionMetadata?: unknown;
+            }
+          | undefined
+        >) | undefined;
+  } | undefined;
+}
+
+/** Result of a `LoopOverrideInput` drive — the retired agent-core `TurnResult`
+ *  shape (host token usage, not the SDK's public TokenUsage). */
+export interface LoopOverrideResult {
+  readonly stopReason: string;
+  readonly steps: number;
+  readonly usage: HostTokenUsage;
+}
+
+export type LoopOverride = (input: LoopOverrideInput) => Promise<LoopOverrideResult>;
+
 export function createRunTurnOverride(
   providers?: LlmProviderDef[],
   workspaceRoot?: string,
   options?: RustEngineOptions,
-): import('@moonshot-ai/agent-core').RunTurnOverride | undefined {
+): LoopOverride | undefined {
   const mode = initEngine();
   if (mode === 'js') return undefined;
 
@@ -923,7 +1040,12 @@ export function createRunTurnOverride(
   // prediction in the transcript via input.replaceToolResult.
   const predictor = workspaceRoot ? new WorkspacePredictor(workspaceRoot) : undefined;
 
-  return async (input) => {
+  // The override contract (LoopOverrideInput/LoopOverrideResult) is fully
+  // typed at the boundary; the body consumes the retired agent-core runTurn
+  // input shape, which is wider than the SDK's public contract (per-step
+  // hooks, tool replacement, host logger). Keep the body's `input` as `any`
+  // so this legacy bridge type-checks without re-importing agent-core.
+  return async (input: any): Promise<LoopOverrideResult> => {
     // The prediction fast-path requires transcript replacement. If the host
     // doesn't provide replaceToolResult, predictions are disabled and all
     // reads execute precisely on the first call.
@@ -1126,10 +1248,10 @@ export function createRunTurnOverride(
     };
     const buildWireTools = (): { name: string; description: string; parameters: unknown }[] => {
       const stepTools = input.buildTools?.() ?? input.tools ?? [];
-      return stepTools.map((t) => ({
+      return stepTools.map((t: { name: string; description: string; parameters?: unknown }) => ({
         name: t.name,
         description: t.description,
-        parameters: (t as { parameters?: unknown }).parameters ?? {},
+        parameters: t.parameters ?? {},
       }));
     };
 
@@ -1211,7 +1333,7 @@ export function createRunTurnOverride(
               input.dispatchEvent({ type: 'thinking.delta', delta });
             }
           },
-          onTextPart: async (part) => {
+          onTextPart: async (part: { type: string; text?: string; think?: string }) => {
             await input.dispatchEvent({
               type: 'content.part',
               uuid: randomUUID(),
@@ -1221,11 +1343,11 @@ export function createRunTurnOverride(
               part,
             });
             // Mirror to the UI stream — see the llm.delta handler.
-            if (part.type === 'text' && part.text.length > 0) {
+            if (part.type === 'text' && part.text !== undefined && part.text.length > 0) {
               input.dispatchEvent({ type: 'text.delta', delta: part.text });
             }
           },
-          onThinkPart: async (part) => {
+          onThinkPart: async (part: { type: string; text?: string; think?: string }) => {
             await input.dispatchEvent({
               type: 'content.part',
               uuid: randomUUID(),
@@ -1234,7 +1356,7 @@ export function createRunTurnOverride(
               stepUuid,
               part,
             });
-            if (part.type === 'think' && part.think.length > 0) {
+            if (part.type === 'think' && part.think !== undefined && part.think.length > 0) {
               input.dispatchEvent({ type: 'thinking.delta', delta: part.think });
             }
           },
@@ -1343,10 +1465,10 @@ export function createRunTurnOverride(
 
       return {
         tool_calls:
-          response.toolCalls?.map((tc) => ({
+          response.toolCalls?.map((tc: { id: string; name: string; arguments?: unknown }) => ({
             id: tc.id,
             name: tc.name,
-            arguments: tc.arguments ? tryParseJson(tc.arguments) : null,
+            arguments: tc.arguments !== undefined ? tryParseJson(String(tc.arguments)) : null,
           })) ?? [],
         finish_reason: response.providerFinishReason ?? 'stop',
         usage: {
@@ -1365,7 +1487,7 @@ export function createRunTurnOverride(
         return { content: `Tool "${req.tool_name}" was aborted`, is_error: true };
       }
       const stepTools = input.buildTools?.() ?? input.tools ?? [];
-      const tool = stepTools.find((t) => t.name === req.tool_name);
+      const tool = stepTools.find((t: { name: string }) => t.name === req.tool_name);
       const toolCallId = req.tool_call_id;
       const stepUuid = openStep?.uuid;
       const stepNum = openStep?.step ?? currentStep;
@@ -1542,7 +1664,7 @@ export function createRunTurnOverride(
     ): Promise<PrepareToolResponse | null> => {
       if (!input.hooks?.prepareToolExecution) return null;
       const stepTools = input.buildTools?.() ?? input.tools ?? [];
-      const tool = stepTools.find((t) => t.name === req.tool_name);
+      const tool = stepTools.find((t: { name: string }) => t.name === req.tool_name);
       const toolCall: { id: string; name: string; arguments: string; type: 'function' } = {
         id: req.tool_call_id,
         name: req.tool_name,
@@ -1596,7 +1718,7 @@ export function createRunTurnOverride(
     ): Promise<AuthorizeToolResponse | null> => {
       if (!input.hooks?.authorizeToolExecution) return null;
       const stepTools = input.buildTools?.() ?? input.tools ?? [];
-      const tool = stepTools.find((t) => t.name === req.tool_name);
+      const tool = stepTools.find((t: { name: string }) => t.name === req.tool_name);
       const toolCall: { id: string; name: string; arguments: string; type: 'function' } = {
         id: req.tool_call_id,
         name: req.tool_name,
@@ -1899,7 +2021,7 @@ export function createRunTurnOverride(
  */
 export function mapStopReason(
   reason: string,
-): Awaited<ReturnType<import('@moonshot-ai/agent-core').RunTurnOverride>>['stopReason'] {
+): LoopOverrideResult['stopReason'] {
   switch (reason) {
     case 'EndTurn':
       return 'end_turn' as never;

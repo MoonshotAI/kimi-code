@@ -123,7 +123,6 @@ export interface RustLoopApi {
   sessionAddAdditionalDir(
     sessionId: string,
     path: string,
-    persist: boolean,
   ): Promise<{ additional_dirs: string[] } | null>;
   sessionRemoveAdditionalDir(sessionId: string, path: string): Promise<unknown>;
   sessionUpdateMetadata(sessionId: string, patch: Record<string, unknown>): Promise<unknown>;

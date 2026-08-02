@@ -5,7 +5,8 @@
  * Run: pnpm exec vitest run packages/node-sdk/test/session-skills.test.ts
  */
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { win32 } from 'node:path';
+import { join, resolve } from 'pathe';
 
 import type * as KosongModule from '@moonshot-ai/kosong';
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
@@ -18,8 +19,8 @@ import {
   type SkillSummary,
 } from '#/index';
 import type { SDKRpcClientBase } from '#/rpc';
+import { isWindowsAbsolutePath } from '#/legacy/guards';
 
-import { normalizeWorkDir } from '../../agent-core/src/session/store';
 import {
   makeTempDir,
   removeTempDirs,
@@ -27,6 +28,16 @@ import {
   waitForSDKEvent,
 } from './session-runtime-helpers';
 import { TEST_IDENTITY } from './test-identity';
+
+/** Slash-normalize a workspace path (port of the retired agent-core
+ *  workdir-key helper; the engine owns session dirs, tests only need the
+ *  path folding for comparisons). */
+function normalizeWorkDir(workDir: string): string {
+  if (isWindowsAbsolutePath(workDir)) {
+    return win32.resolve(workDir).replaceAll('\\', '/');
+  }
+  return resolve(workDir);
+}
 
 const fakeProviderState = vi.hoisted(() => ({
   histories: [] as unknown[],

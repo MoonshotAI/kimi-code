@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,8 +5,6 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createKimiHarness, KimiError, type Event } from '#/index';
-
-import { SessionStore } from '../../agent-core/src/session/store';
 import { TEST_IDENTITY } from './test-identity';
 
 const tempDirs: string[] = [];
@@ -45,81 +42,6 @@ function findRenamedEvent(
   }
   return event;
 }
-
-describe('SessionStore.rename', () => {
-  it('persists custom title state and preserves existing state fields', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const store = new SessionStore(homeDir);
-
-    const summary = await store.create({
-      id: 'ses_store_rename',
-      workDir,
-    });
-    await writeSessionState(summary.sessionDir, {
-      session_id: 'ses_store_rename',
-      title: 'Original Title',
-      updated_at: 1_000,
-      model: 'kimi-for-coding',
-      nested: { enabled: true },
-    });
-
-    await store.rename('ses_store_rename', 'New Store Title');
-
-    const state = await readSessionState(summary.sessionDir);
-    expect(state).toMatchObject({
-      session_id: 'ses_store_rename',
-      title: 'New Store Title',
-      updated_at: 1_000,
-      model: 'kimi-for-coding',
-      isCustomTitle: true,
-      nested: { enabled: true },
-    });
-
-    const renamed = await store.get('ses_store_rename');
-    expect(renamed.title).toBe('New Store Title');
-    expect(renamed.metadata).toBeUndefined();
-  });
-
-  it('rejects indexed sessions with missing state without creating state.json', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const store = new SessionStore(homeDir);
-    const summary = await store.create({ id: 'ses_no_state_rename', workDir });
-
-    await expect(store.rename(summary.id, 'Missing State')).rejects.toMatchObject({
-      name: 'KimiError',
-      code: 'session.state_not_found',
-    } satisfies Partial<KimiError>);
-    expect(existsSync(join(summary.sessionDir, 'state.json'))).toBe(false);
-  });
-
-  it('rejects invalid state.json without overwriting it', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const store = new SessionStore(homeDir);
-    const summary = await store.create({ id: 'ses_bad_state_rename', workDir });
-    await writeFile(join(summary.sessionDir, 'state.json'), '[]', 'utf-8');
-
-    await expect(store.rename(summary.id, 'Bad State')).rejects.toMatchObject({
-      name: 'KimiError',
-      code: 'session.state_invalid',
-    } satisfies Partial<KimiError>);
-    expect(await readFile(join(summary.sessionDir, 'state.json'), 'utf-8')).toBe('[]');
-  });
-
-  it('rejects missing session ids without creating state', async () => {
-    const homeDir = await makeTempDir();
-    const store = new SessionStore(homeDir);
-
-    await expect(store.rename('ses_missing', 'Missing Title')).rejects.toMatchObject({
-      name: 'KimiError',
-      code: 'session.not_found',
-      details: { sessionId: 'ses_missing' },
-    } satisfies Partial<KimiError>);
-    expect(existsSync(join(homeDir, 'sessions', 'ses_missing', 'state.json'))).toBe(false);
-  });
-});
 
 describe('KimiHarness.renameSession', () => {
   it('persists titles through the public Harness API and emits an active session event', async () => {

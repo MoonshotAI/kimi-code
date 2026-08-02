@@ -13,6 +13,10 @@
       "types": "./runtime.ts",
       "default": "./runtime.ts"
     },
+    "./runtime/logging-core": {
+      "types": "./runtime/logging-core/index.ts",
+      "default": "./runtime/logging-core/index.ts"
+    },
     "./contract": {
       "types": "./contract.ts",
       "default": "./contract.ts"
