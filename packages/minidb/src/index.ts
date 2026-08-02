@@ -275,7 +275,13 @@ export class MiniDb<V = unknown> {
   private codecName: ValueCodecName = 'buffer';
   fsyncPolicy: FsyncPolicy = 'everysec';
   syncIntervalMs = 1000;
-  private closed = false;
+  /** Lifecycle state machine. 'closing' is a real state (not just a flag on
+   *  the way down): a cleanup failure leaves the instance there so a later
+   *  close() call can retry the remaining cleanup, and ensureOpen rejects
+   *  'closing' and 'closed' alike. */
+  private state: 'open' | 'closing' | 'closed' = 'open';
+  /** The in-flight close() cleanup pass, shared by concurrent close() calls. */
+  private closePromise: Promise<void> | null = null;
   recoveryInfo: RecoveryInfo | null = null;
   /** Continuation watermark for catchUpFromWal: the WAL inode + applied
    *  offset as advanced by the last successful catch-up (recoveryInfo's scan
@@ -2240,9 +2246,35 @@ export class MiniDb<V = unknown> {
   }
 
   async close(): Promise<void> {
-    if (this.closed) return;
-    if (this.compacting) await this._compactDone;
-    this.closed = true;
+    if (this.state === 'closed') return;
+    // Concurrent close() calls share the one in-flight cleanup pass; after a
+    // failed pass a later call retries the remaining cleanup (the state stays
+    // 'closing' until a pass completes without errors).
+    if (this.closePromise) return this.closePromise;
+    this.state = 'closing';
+    const run = this.closeResources();
+    this.closePromise = run;
+    try {
+      await run;
+      this.state = 'closed';
+    } finally {
+      if (this.closePromise === run) this.closePromise = null;
+    }
+  }
+
+  /** One cleanup pass over every held resource in dependency order (text
+   *  indexes → store → valueReader → WAL → lock). Each resource's close is
+   *  independently fallible and idempotent: an error is collected and the
+   *  rest still run — a failed WAL close must not skip the lock release —
+   *  then every collected error is rethrown as one AggregateError. The WAL
+   *  failure semantics themselves are unchanged (the error propagates); only
+   *  the lock release is no longer skipped because of it. */
+  private async closeResources(): Promise<void> {
+    // Wait out an in-flight compaction, but never propagate its failure: it is
+    // already accounted in lastCompactError/stats.compactErrors, and letting
+    // it escape here would skip the whole cleanup pass (the caller would have
+    // to close() twice to actually release the lock).
+    if (this.compacting) await this._compactDone?.catch(() => {});
     // Let in-flight WAL failures and their kicked recoveries settle before
     // and after closing the WAL: a poisoned/failing close would otherwise
     // leave an un-acked tail in db.wal that a reopen replays as ghost writes.
@@ -2251,19 +2283,46 @@ export class MiniDb<V = unknown> {
     // batch, kicking one more recovery), so wait for the chain to be IDLE in
     // a loop instead of awaiting one snapshot of it.
     while (!this.walRecoveryIdle) await this.walRecoveryChain;
-    for (const ti of this.text.values()) ti.close();
-    this.store.close();
-    this.valueReader?.close();
-    await this.wal.close();
+    const errors: unknown[] = [];
+    try {
+      for (const ti of this.text.values()) ti.close();
+    } catch (e) {
+      errors.push(e);
+    }
+    try {
+      this.store.close();
+    } catch (e) {
+      errors.push(e);
+    }
+    try {
+      this.valueReader?.close();
+    } catch (e) {
+      errors.push(e);
+    }
+    try {
+      await this.wal.close();
+    } catch (e) {
+      errors.push(e);
+    }
     while (!this.walRecoveryIdle) await this.walRecoveryChain;
-    if (this.lock) {
-      await this.lock.release();
-      this.lock = null;
+    try {
+      if (this.lock) {
+        await this.lock.release();
+        this.lock = null;
+      }
+    } catch (e) {
+      errors.push(e);
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(
+        errors,
+        `MiniDb close: ${errors.map((e) => (e instanceof Error ? e.message : String(e))).join('; ')}`,
+      );
     }
   }
 
   private ensureOpen(): void {
-    if (this.closed) throw new Error('MiniDb is closed');
+    if (this.state !== 'open') throw new Error('MiniDb is closed');
   }
   private ensureWritable(): void {
     if (this.readOnly) throw new Error('MiniDb is open in read-only mode');
