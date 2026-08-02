@@ -4,7 +4,7 @@ import { FileTokenStorage, type TokenInfo } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createKimiHarness, type KimiError, type KimiHarness } from '#/index';
-import { makeTempDir, removeTempDirs, waitForAgentWireEvent } from './session-runtime-helpers';
+import { makeTempDir, removeTempDirs } from './session-runtime-helpers';
 import { TEST_IDENTITY } from './test-identity';
 
 const tempDirs: string[] = [];
@@ -25,7 +25,7 @@ afterEach(async () => {
 });
 
 describe('Session.setModel', () => {
-  it('updates the runtime model and sends config.update with the resolved model', async () => {
+  it('updates the runtime model through the engine', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-model-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-model-work-');
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
@@ -40,18 +40,9 @@ describe('Session.setModel', () => {
 
       await session.setModel('next-model');
 
+      // The Rust engine's `session/set_model` is a silent RPC; the observable
+      // contract is the status snapshot reflecting the new model.
       await expect(session.getStatus()).resolves.toMatchObject({ model: 'next-model' });
-      const configEvent = await waitForAgentWireEvent(
-        homeDir,
-        session.id,
-        'config.update',
-        (event) => event['modelAlias'] === 'next-model',
-      );
-      expect(configEvent).toMatchObject({
-        type: 'config.update',
-        modelAlias: 'next-model',
-      });
-      expect(configEvent).not.toHaveProperty('provider');
     } finally {
       await harness.close();
     }
@@ -98,17 +89,6 @@ describe('Session.setModel', () => {
       await expect(session.getStatus()).resolves.toMatchObject({
         model: 'kimi-code/kimi-for-coding',
       });
-      const configEvent = await waitForAgentWireEvent(
-        homeDir,
-        session.id,
-        'config.update',
-        (event) => event['modelAlias'] === 'kimi-code/kimi-for-coding',
-      );
-      expect(configEvent).toMatchObject({
-        type: 'config.update',
-        modelAlias: 'kimi-code/kimi-for-coding',
-      });
-      expect(configEvent).not.toHaveProperty('provider');
     } finally {
       await harness.close();
     }
