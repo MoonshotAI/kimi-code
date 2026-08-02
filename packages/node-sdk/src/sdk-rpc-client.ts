@@ -24,12 +24,9 @@ export function createKimiHarness(options: KimiHarnessOptions): KimiHarness {
     homeDir,
     configPath: options.configPath,
   });
-  // The engine resolves config via `KIMI_CONFIG_PATH` (else ~/.kimi-code).
-  // Align it with the SDK's home dir unless the host pinned one explicitly,
-  // so config reads/writes hit the same file.
-  if (process.env['KIMI_CONFIG_PATH'] === undefined) {
-    process.env['KIMI_CONFIG_PATH'] = configPath;
-  }
+  // Config is host data: the SDK owns config.toml under its home dir (the
+  // engine's config path is engine-internal). The SDK's config API reads and
+  // writes it locally (see RustRpcClient.getKimiConfig/setKimiConfig).
   const rpc = new RustRpcClient({
     rustLoop: rustLoop as unknown as RustLoopApi,
     homeDir,
