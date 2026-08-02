@@ -234,8 +234,6 @@ export class SessionEventHandler {
   }
 
   handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void {
-    if (this.subAgentEventHandler.routeChildAgentEvent(event)) return;
-
     if ('turn_id' in event && event.turn_id !== undefined) {
       this.host.streamingUI.setTurnId(String(event.turn_id));
     }
