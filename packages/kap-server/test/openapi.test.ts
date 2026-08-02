@@ -67,22 +67,16 @@ describe('server-v2 OpenAPI', () => {
     expect(paths['/api/v1/sessions/{session_id}/fs/{*}']).toBeDefined();
   });
 
-  it('projects the session-action dispatcher into archive only', async () => {
+  it('does not fabricate a retired session-action dispatcher', async () => {
     const doc = await fetchOpenApi();
     const paths = asRecord(doc['paths']);
 
-    // v2 only registers ::archive — the generic `{tail}` path must be gone and
-    // the v1-only actions must not be fabricated.
+    // The `{tail}` session-action dispatcher (archive/fork/undo) was retired
+    // with the v2 engine; session export rides the dedicated `/export` route.
     expect(paths['/api/v1/sessions/{tail}']).toBeUndefined();
-    expect(paths['/api/v1/sessions/{session_id}:archive']).toBeDefined();
+    expect(paths['/api/v1/sessions/{session_id}:archive']).toBeUndefined();
     expect(paths['/api/v1/sessions/{session_id}:fork']).toBeUndefined();
     expect(paths['/api/v1/sessions/{session_id}:undo']).toBeUndefined();
-
-    const archiveOp = operation(doc, '/api/v1/sessions/{session_id}:archive', 'post');
-    expect(archiveOp['operationId']).toBe('runSessionArchiveAction');
-    const params = archiveOp['parameters'] as Array<Record<string, unknown>>;
-    expect(params.some((p) => p['in'] === 'path' && p['name'] === 'session_id')).toBe(true);
-    expect(params.some((p) => p['name'] === 'tail')).toBe(false);
   });
 
   it('describes the file upload as multipart/form-data', async () => {

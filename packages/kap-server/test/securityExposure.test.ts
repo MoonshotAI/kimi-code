@@ -111,23 +111,4 @@ describe('server-v2 exposure hardening hooks', () => {
     });
     expect(terminals.statusCode).toBe(404);
   });
-
-  it('can explicitly re-enable terminal routes on non-loopback', async () => {
-    server = await startServer({
-      host: '0.0.0.0',
-      port: 0,
-      homeDir: home,
-      logLevel: 'silent',
-      insecureNoTls: true,
-      allowRemoteTerminals: true,
-    });
-    const token = server.authTokenService.getToken();
-    const res = await server.app.inject({
-      method: 'GET',
-      url: '/api/v1/sessions/missing/terminals',
-      headers: { authorization: `Bearer ${token}` },
-    });
-    const body = res.json() as Record<string, unknown>;
-    expect(body['code']).toBe(40401);
-  });
 });

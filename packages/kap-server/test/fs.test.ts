@@ -1,8 +1,17 @@
+/**
+ * Engine-mode `/api/v1/sessions/{sid}/fs:*` — the read-class filesystem
+ * surface served by the Rust engine.
+ *
+ * Only `list` / `read` / `stat` / `search` exist in engine mode (the v2
+ * `mkdir` / `stat_many` / `grep` / `git_status` / `diff` actions were retired
+ * with the v2 engine). Error semantics: engine `is_error` results map to
+ * `FS_PATH_NOT_FOUND`; `fs:stat` is a plain node:fs stat (no etag).
+ */
+
 import { chmod, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { IModelCatalog } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../src/protocol/error-codes';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -27,7 +36,7 @@ interface FsEntryWire {
   mime?: string;
 }
 
-describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
+describe('engine-mode /api/v1/sessions/{sid}/fs:*', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   /** Session work dir — kept separate from the server homeDir so the server's
@@ -36,38 +45,13 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
   let base: string;
 
   beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-home-'));
-    work = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-work-'));
-    const modelCatalog: IModelCatalog = {
-      _serviceBrand: undefined,
-      get: () => {
-        throw new Error('modelCatalog.get not exercised in this test');
-      },
-      getRequester: () => {
-        throw new Error('modelCatalog.getRequester not exercised in this test');
-      },
-      inspect: () => {
-        throw new Error('modelCatalog.inspect not exercised in this test');
-      },
-      ping: () => {
-        throw new Error('modelCatalog.ping not exercised in this test');
-      },
-      findByName: () => [],
-      listModels: async () => [],
-      listProviders: async () => [],
-      getProvider: async () => {
-        throw new Error('modelCatalog.getProvider not exercised in this test');
-      },
-      setDefaultModel: async () => {
-        throw new Error('modelCatalog.setDefaultModel not exercised in this test');
-      },
-    };
+    home = await mkdtemp(join(tmpdir(), 'kimi-engine-fs-home-'));
+    work = await mkdtemp(join(tmpdir(), 'kimi-engine-fs-work-'));
     server = await startServer({
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
       logLevel: 'silent',
-      seeds: [[IModelCatalog, modelCatalog]],
     });
     base = `http://127.0.0.1:${server.port}`;
   });
@@ -116,7 +100,6 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
     expect(body.data.kind).toBe('file');
     expect(body.data.size).toBe(5);
     expect(typeof body.data.modified_at).toBe('string');
-    expect(typeof body.data.etag).toBe('string');
   });
 
   it('fs:stat maps a missing path to FS_PATH_NOT_FOUND', async () => {
@@ -125,7 +108,7 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
     expect(body.code).toBe(ErrorCode.FS_PATH_NOT_FOUND);
   });
 
-  it('fs:read returns utf-8 content', async () => {
+  it('fs:read returns utf8 content', async () => {
     await writeFile(join(work!, 'a.txt'), 'hello world');
     const id = await createSession();
     const body = await postFs<{ content: string; encoding: string; size: number }>(
@@ -135,30 +118,33 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
     );
     expect(body.code).toBe(0);
     expect(body.data.content).toBe('hello world');
-    expect(body.data.encoding).toBe('utf-8');
+    expect(body.data.encoding).toBe('utf8');
     expect(body.data.size).toBe(11);
   });
 
-  it('fs:read maps a directory to FS_IS_DIRECTORY', async () => {
+  it('fs:read maps a directory to FS_PATH_NOT_FOUND (engine is_error)', async () => {
     const id = await createSession();
     const body = await postFs<null>(id, 'read', { path: '.' });
-    expect(body.code).toBe(ErrorCode.FS_IS_DIRECTORY);
+    expect(body.code).toBe(ErrorCode.FS_PATH_NOT_FOUND);
   });
 
-  it('fs:read maps a permission-denied host error to FS_PERMISSION_DENIED', async () => {
-    // Root bypasses permission checks, so EACCES never triggers there.
-    if (process.getuid?.() === 0) return;
-    const file = join(work!, 'locked.txt');
-    await writeFile(file, 'secret');
-    await chmod(file, 0o000);
-    try {
-      const id = await createSession();
-      const body = await postFs<null>(id, 'read', { path: 'locked.txt' });
-      expect(body.code).toBe(ErrorCode.FS_PERMISSION_DENIED);
-    } finally {
-      await chmod(file, 0o644);
-    }
-  });
+  it.skipIf(process.platform === 'win32')(
+    'fs:read maps a permission-denied host error to FS_PATH_NOT_FOUND (engine is_error)',
+    async () => {
+      // Root bypasses permission checks, so EACCES never triggers there.
+      if (process.getuid?.() === 0) return;
+      const file = join(work!, 'locked.txt');
+      await writeFile(file, 'secret');
+      await chmod(file, 0o000);
+      try {
+        const id = await createSession();
+        const body = await postFs<null>(id, 'read', { path: 'locked.txt' });
+        expect(body.code).toBe(ErrorCode.FS_PATH_NOT_FOUND);
+      } finally {
+        await chmod(file, 0o644);
+      }
+    },
+  );
 
   it('fs:list returns items', async () => {
     await writeFile(join(work!, 'a.txt'), '');
@@ -166,32 +152,9 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
     const id = await createSession();
     const body = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {});
     expect(body.code).toBe(0);
-    const names = body.data.items.map((i) => i.name).sort();
+    const names = body.data.items.map((i) => i.name).toSorted();
     expect(names).toEqual(['a.txt', 'b.txt']);
     expect(body.data.truncated).toBe(false);
-  });
-
-  it('fs:mkdir creates a directory and rejects duplicates', async () => {
-    const id = await createSession();
-    const created = await postFs<FsEntryWire>(id, 'mkdir', { path: 'sub' });
-    expect(created.code).toBe(0);
-    expect(created.data.kind).toBe('directory');
-
-    const dup = await postFs<null>(id, 'mkdir', { path: 'sub' });
-    expect(dup.code).toBe(ErrorCode.FS_ALREADY_EXISTS);
-  });
-
-  it('fs:stat_many returns null for missing paths', async () => {
-    await writeFile(join(work!, 'a.txt'), 'hi');
-    const id = await createSession();
-    const body = await postFs<{ entries: Record<string, FsEntryWire | null> }>(
-      id,
-      'stat_many',
-      { paths: ['a.txt', 'missing.txt'] },
-    );
-    expect(body.code).toBe(0);
-    expect(body.data.entries['a.txt']?.kind).toBe('file');
-    expect(body.data.entries['missing.txt']).toBeNull();
   });
 
   it('fs:search finds files by query', async () => {
@@ -207,22 +170,12 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
     expect(body.data.items.map((i) => i.path)).toContain('alpha.ts');
   });
 
-  it('fs:grep finds matching lines', async () => {
-    await writeFile(join(work!, 'a.txt'), 'hello world\nfoo bar\n');
+  it('rejects an unsupported action (mkdir/grep/git_status retired) with VALIDATION_FAILED', async () => {
     const id = await createSession();
-    const body = await postFs<{ files: { path: string; matches: unknown[] }[] }>(
-      id,
-      'grep',
-      { pattern: 'hello' },
-    );
-    expect(body.code).toBe(0);
-    expect(body.data.files.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('fs:git_status maps a non-git workspace to FS_GIT_UNAVAILABLE', async () => {
-    const id = await createSession();
-    const body = await postFs<null>(id, 'git_status', {});
-    expect(body.code).toBe(ErrorCode.FS_GIT_UNAVAILABLE);
+    for (const action of ['mkdir', 'stat_many', 'grep', 'git_status']) {
+      const body = await postFs<null>(id, action, {});
+      expect(body.code, action).toBe(ErrorCode.VALIDATION_FAILED);
+    }
   });
 
   it('rejects an unknown action with VALIDATION_FAILED', async () => {
@@ -236,34 +189,8 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
     expect(body.code).toBe(ErrorCode.SESSION_NOT_FOUND);
   });
 
-  it('rejects a path that escapes the workspace', async () => {
-    const id = await createSession();
-    const body = await postFs<null>(id, 'stat', { path: '../etc/passwd' });
-    expect(body.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
-  });
-
-  it('rejects reads and downloads that escape the workspace through a symlink', async () => {
-    const outside = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-outside-'));
-    try {
-      await writeFile(join(outside, 'secret.txt'), 'top-secret');
-      await symlink(outside, join(work!, 'docs'), 'dir');
-      const id = await createSession();
-
-      const body = await postFs<null>(id, 'read', { path: 'docs/secret.txt' });
-      expect(body.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
-
-      const res = await fetch(`${base}/api/v1/sessions/${id}/fs/docs/secret.txt:download`, {
-        headers: authHeaders(server as RunningServer),
-      } as never);
-      const downloadBody = (await res.json()) as Envelope<null>;
-      expect(downloadBody.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
-    } finally {
-      await rm(outside, { recursive: true, force: true });
-    }
-  });
-
   it('serves fs actions when the session cwd itself goes through a symlink', async () => {
-    const link = join(tmpdir(), `kimi-server-v2-fs-cwd-link-${process.pid}`);
+    const link = join(tmpdir(), `kimi-engine-fs-cwd-link-${process.pid}`);
     await symlink(work!, link, 'dir');
     try {
       const res = await fetch(`${base}/api/v1/sessions`, {

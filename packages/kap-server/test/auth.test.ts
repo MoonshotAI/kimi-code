@@ -2,8 +2,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { authSummarySchema, type AuthSummary } from '@moonshot-ai/agent-core-v2/app/authLegacy/authLegacy';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { authSummarySchema, type AuthSummary } from '../src/protocol/rest-auth';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { authedFetch } from './helpers/auth';
@@ -20,8 +20,19 @@ describe('server-v2 GET /api/v1/auth', () => {
   let home: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  // The Rust engine process is a module-level singleton: `KIMI_CONFIG_PATH`
+  // freezes at the first spawn, so all cases must share one home dir (the
+  // engine re-reads the config file on every `config/get`, but the path must
+  // not be deleted mid-suite). Each `boot` resets the config file instead.
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-auth-'));
+  });
+
+  afterAll(async () => {
+    if (home !== undefined) {
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
+      home = undefined;
+    }
   });
 
   afterEach(async () => {
@@ -29,15 +40,16 @@ describe('server-v2 GET /api/v1/auth', () => {
       await server.close();
       server = undefined;
     }
-    if (home !== undefined) {
-      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
-      home = undefined;
-    }
   });
 
   async function boot(toml?: string): Promise<void> {
+    const configPath = join(home as string, 'config.toml');
     if (toml !== undefined) {
-      await writeFile(join(home as string, 'config.toml'), toml, 'utf-8');
+      await writeFile(configPath, toml, 'utf-8');
+    } else {
+      // Reset to an empty config: remove the file so the engine falls back to
+      // its built-in models.dev defaults.
+      await rm(configPath, { force: true });
     }
     server = await startServer({
       host: '127.0.0.1',
@@ -58,18 +70,18 @@ describe('server-v2 GET /api/v1/auth', () => {
 
   it('returns ready=false with an empty snapshot on empty config', async () => {
     await boot();
-    expect(await getAuth()).toEqual({
-      ready: false,
-      providers_count: 0,
-      default_model: null,
-      managed_provider: null,
-    });
+    const summary = await getAuth();
+    // The engine config always carries its built-in models.dev providers.
+    expect(summary.ready).toBe(false);
+    expect(summary.providers_count).toBeGreaterThanOrEqual(1);
+    expect(summary.default_model).toBeNull();
+    expect(summary.managed_provider).toBeNull();
   });
 
   it('returns ready=true when provider + api_key + default_model are set', async () => {
     await boot(
       [
-        'default_model = "x"',
+        'defaultModel = "x"',
         '',
         '[providers.x]',
         'type = "kimi"',
@@ -82,12 +94,13 @@ describe('server-v2 GET /api/v1/auth', () => {
         '',
       ].join('\n'),
     );
-    expect(await getAuth()).toEqual({
-      ready: true,
-      providers_count: 1,
-      default_model: 'x',
-      managed_provider: null,
-    });
+    const summary = await getAuth();
+    // The engine config carries built-in models.dev providers alongside the
+    // configured one; readiness + default_model are the engine projection.
+    expect(summary.ready).toBe(true);
+    expect(summary.providers_count).toBeGreaterThanOrEqual(1);
+    expect(summary.default_model).toBe('x');
+    expect(summary.managed_provider).toBeNull();
   });
 
   it('returns ready=false when a provider exists but default_model is missing', async () => {
@@ -106,7 +119,7 @@ describe('server-v2 GET /api/v1/auth', () => {
     );
     const summary = await getAuth();
     expect(summary.ready).toBe(false);
-    expect(summary.providers_count).toBe(1);
+    expect(summary.providers_count).toBeGreaterThanOrEqual(1);
     expect(summary.default_model).toBeNull();
     expect(summary.managed_provider).toBeNull();
   });

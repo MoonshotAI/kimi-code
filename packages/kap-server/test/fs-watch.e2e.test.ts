@@ -1,18 +1,14 @@
 /**
- * `event.fs.changed` end-to-end for kap-server (server-v2).
+ * `event.fs.changed` end-to-end for kap-server (server-v2), engine mode.
  *
- * Mirrors `packages/server/test/fs-watch.e2e.test.ts` (v1) so the wire contract
- * stays byte-compatible:
- *   1. subscribe `src` → create file → receive `event.fs.changed`
- *   2. burst > 500 changes / 200ms → `truncated` event
- *   3. two clients, disjoint paths → no cross-delivery
- *   4. > 100 paths per connection → `42902 fs.watch_limit_exceeded`
- *   5. idempotent add of the same path
- *   6. `watch_fs_remove` updates `watched_paths`; `..` → `41304`
- *
- * Boots `startServer` in-process (loopback, auth disabled) against a tmp
- * workspace, drives `/api/v1/ws` clients with the raw `ws` library, and mutates
- * the filesystem to trigger chokidar events.
+ * Engine mode (the only mode): session fs is owned by the Rust engine, so the
+ * host fs-watch bridge is a deliberate **no-op** — it acks every `watch_fs_add`
+ * / `watch_fs_remove` request so WS clients don't retry, without actually
+ * watching the filesystem (`FsWatchBridge`). The v2 `ISessionFsWatchService`
+ * feed (real chokidar delivery, path-escape / limit validation, dedup,
+ * truncated bursts) was retired with the engine migration. These tests pin the
+ * no-op contract: acks carry the request echo, but no `event.fs.changed` is
+ * ever emitted and no limit/escape errors are produced.
  */
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -167,13 +163,9 @@ async function helloAndSubscribe(conn: Conn, clientId: string, sessionId: string
   await receiveType(conn, 'ack', 1000);
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-/** Time given to chokidar to register newly-watched paths before mutating. */
-const WATCH_SETTLE_MS = 150;
-
-describe('WS fs watch (kap-server)', () => {
-  it('subscribe src → create file → receive event.fs.changed', async () => {
+/** No-op bridge acks everything; the ack payload echoes the requested paths. */
+describe('WS fs watch (kap-server, engine-mode no-op bridge)', () => {
+  it('acknowledges watch_fs_add with the request echo but never emits fs events', async () => {
     const r = await boot();
     const sid = await createSession(r);
     const conn = await openConn(wsUrl(r));
@@ -188,80 +180,16 @@ describe('WS fs watch (kap-server)', () => {
     );
     const ack = await receiveType(conn, 'ack', 1000);
     expect(ack.code).toBe(0);
-    expect(ack.payload).toMatchObject({ watched_paths: ['src'] });
+    expect(ack.payload).toMatchObject({ watched_paths: ['src'], current_count: 1 });
 
-    await sleep(WATCH_SETTLE_MS);
+    // The bridge holds no fs subscriptions, so mutations produce no events.
     writeFileSync(join(workspace, 'src', 'new.ts'), 'export const x = 1;\n');
-
-    const ev = await receiveType(conn, 'event.fs.changed', 2000);
-    expect(ev.session_id).toBe(sid);
-    const payload = ev.payload as {
-      changes: Array<{ path: string; change: string; kind: string }>;
-      coalesced_window_ms: number;
-      truncated?: boolean;
-    };
-    expect(payload.coalesced_window_ms).toBe(200);
-    expect(payload.truncated).toBeUndefined();
-    expect(payload.changes.length).toBeGreaterThanOrEqual(1);
-    const paths = payload.changes.map((c) => c.path);
-    expect(paths.some((p) => p === 'src/new.ts' || p === 'src')).toBe(true);
+    await expect(receiveType(conn, 'event.fs.changed', 500)).rejects.toThrow(/no message/);
 
     conn.ws.close();
   });
 
-  it.skipIf(process.platform === 'win32')(
-    'burst > 500 changes inside 200ms window → truncated:true',
-    { timeout: 15000 },
-    async () => {
-      // Chokidar cannot reliably deliver >500 events inside one 200ms window
-      // under CPU contention (parallel test files), which flaked this test.
-      // Shrink the window capacity instead: 600 files over 500ms windows
-      // guarantees a >100-event window even at ~240 events/s delivery, while
-      // the truncation path under test is identical.
-      vi.stubEnv('KIMI_CODE_FS_WATCH_DEBOUNCE_MS', '500');
-      vi.stubEnv('KIMI_CODE_FS_WATCH_MAX_CHANGES_PER_WINDOW', '100');
-      const r = await boot();
-      const sid = await createSession(r);
-      const conn = await openConn(wsUrl(r));
-      await helloAndSubscribe(conn, 'A', sid);
-
-      conn.ws.send(
-        JSON.stringify({
-          type: 'watch_fs_add',
-          id: 'w2',
-          payload: { session_id: sid, paths: ['.'] },
-        }),
-      );
-      await receiveType(conn, 'ack', 1000);
-      await sleep(WATCH_SETTLE_MS);
-
-      const burstDir = join(workspace, 'burst');
-      mkdirSync(burstDir, { recursive: true });
-      for (let i = 0; i < 600; i++) writeFileSync(join(burstDir, `f${i}.txt`), `x${i}`);
-
-      const deadline = Date.now() + 12000;
-      let sawTruncated = false;
-      while (Date.now() < deadline) {
-        let frame: WsFrame;
-        try {
-          frame = await receive(conn, deadline - Date.now());
-        } catch {
-          break;
-        }
-        if (frame.type !== 'event.fs.changed') continue;
-        const payload = frame.payload as { truncated?: boolean; count?: number };
-        if (payload.truncated === true) {
-          expect(payload.count).toBeGreaterThan(100);
-          sawTruncated = true;
-          break;
-        }
-      }
-      expect(sawTruncated).toBe(true);
-      conn.ws.close();
-    },
-  );
-
-  it('two clients on disjoint paths receive only their own changes', async () => {
+  it('acks multiple disjoint adds (no cross-client isolation state in engine mode)', async () => {
     const r = await boot();
     const sid = await createSession(r);
     const a = await openConn(wsUrl(r));
@@ -276,27 +204,15 @@ describe('WS fs watch (kap-server)', () => {
     b.ws.send(
       JSON.stringify({ type: 'watch_fs_add', id: 'wB', payload: { session_id: sid, paths: ['docs'] } }),
     );
-    await receiveType(b, 'ack', 1000);
-
-    await sleep(WATCH_SETTLE_MS);
-    writeFileSync(join(workspace, 'src', 'a.ts'), 'a');
-    writeFileSync(join(workspace, 'docs', 'b.md'), 'b');
-
-    const evA = await receiveType(a, 'event.fs.changed', 2000);
-    const pathsA = (evA.payload as { changes: Array<{ path: string }> }).changes.map((c) => c.path);
-    expect(pathsA.some((p) => p.startsWith('src/'))).toBe(true);
-    expect(pathsA.some((p) => p.startsWith('docs/'))).toBe(false);
-
-    const evB = await receiveType(b, 'event.fs.changed', 2000);
-    const pathsB = (evB.payload as { changes: Array<{ path: string }> }).changes.map((c) => c.path);
-    expect(pathsB.some((p) => p.startsWith('docs/'))).toBe(true);
-    expect(pathsB.some((p) => p.startsWith('src/'))).toBe(false);
+    const ackB = await receiveType(b, 'ack', 1000);
+    expect(ackB.code).toBe(0);
+    expect((ackB.payload as { current_count: number }).current_count).toBe(1);
 
     a.ws.close();
     b.ws.close();
   });
 
-  it('> 100 paths on one connection → 42902 fs.watch_limit_exceeded', async () => {
+  it('acks >100 paths without a limit error (no-op bridge enforces nothing)', async () => {
     const r = await boot();
     const sid = await createSession(r);
     const conn = await openConn(wsUrl(r));
@@ -304,68 +220,27 @@ describe('WS fs watch (kap-server)', () => {
 
     const paths: string[] = [];
     for (let i = 0; i < 101; i++) {
-      const p = `dir${i}`;
-      mkdirSync(join(workspace, p), { recursive: true });
-      paths.push(p);
+      paths.push(`dir${i}`);
     }
-
-    conn.ws.send(
-      JSON.stringify({
-        type: 'watch_fs_add',
-        id: 'w100',
-        payload: { session_id: sid, paths: paths.slice(0, 100) },
-      }),
-    );
-    const ack100 = await receiveType(conn, 'ack', 2000);
-    expect(ack100.code).toBe(0);
-    expect((ack100.payload as { current_count: number }).current_count).toBe(100);
-
     conn.ws.send(
       JSON.stringify({
         type: 'watch_fs_add',
         id: 'w101',
-        payload: { session_id: sid, paths: [paths[100]!] },
+        payload: { session_id: sid, paths },
       }),
     );
-    const ack101 = await receiveType(conn, 'ack', 2000);
-    expect(ack101.code).toBe(42902);
+    const ack = await receiveType(conn, 'ack', 2000);
+    expect(ack.code).toBe(0);
+    expect((ack.payload as { current_count: number }).current_count).toBe(101);
 
     conn.ws.close();
   });
 
-  it('idempotent: adding the same path twice keeps current_count singular', async () => {
+  it('watch_fs_remove acks with an empty watched_paths (no retained state)', async () => {
     const r = await boot();
     const sid = await createSession(r);
     const conn = await openConn(wsUrl(r));
     await helloAndSubscribe(conn, 'A', sid);
-
-    conn.ws.send(
-      JSON.stringify({ type: 'watch_fs_add', id: 'w1', payload: { session_id: sid, paths: ['src'] } }),
-    );
-    await receiveType(conn, 'ack', 1000);
-    conn.ws.send(
-      JSON.stringify({ type: 'watch_fs_add', id: 'w2', payload: { session_id: sid, paths: ['src'] } }),
-    );
-    const ack = await receiveType(conn, 'ack', 1000);
-    expect((ack.payload as { current_count: number }).current_count).toBe(1);
-
-    conn.ws.close();
-  });
-
-  it('watch_fs_remove drops the subscription and acks updated watched_paths', async () => {
-    const r = await boot();
-    const sid = await createSession(r);
-    const conn = await openConn(wsUrl(r));
-    await helloAndSubscribe(conn, 'A', sid);
-
-    conn.ws.send(
-      JSON.stringify({
-        type: 'watch_fs_add',
-        id: 'wadd',
-        payload: { session_id: sid, paths: ['src', 'docs'] },
-      }),
-    );
-    await receiveType(conn, 'ack', 1000);
 
     conn.ws.send(
       JSON.stringify({
@@ -375,14 +250,15 @@ describe('WS fs watch (kap-server)', () => {
       }),
     );
     const ack = await receiveType(conn, 'ack', 1000);
+    expect(ack.code).toBe(0);
     const payload = ack.payload as { watched_paths: string[]; current_count: number };
-    expect(payload.watched_paths).toEqual(['docs']);
-    expect(payload.current_count).toBe(1);
+    expect(payload.watched_paths).toEqual([]);
+    expect(payload.current_count).toBe(0);
 
     conn.ws.close();
   });
 
-  it('watch_fs_add for `..` path → 41304 fs.path_escapes_session', async () => {
+  it('does not reject a `..` path (no path-escape validation in engine mode)', async () => {
     const r = await boot();
     const sid = await createSession(r);
     const conn = await openConn(wsUrl(r));
@@ -396,7 +272,7 @@ describe('WS fs watch (kap-server)', () => {
       }),
     );
     const ack = await receiveType(conn, 'ack', 1000);
-    expect(ack.code).toBe(41304);
+    expect(ack.code).toBe(0);
 
     conn.ws.close();
   });

@@ -1,8 +1,16 @@
+/**
+ * Engine-mode `/api/v1/sessions/{sid}/approvals`.
+ *
+ * Engine-only projection: the approval surface rides the engine's
+ * `session/approval_list` + `session/approval_resolve` RPC; the v2
+ * per-approval `POST /approvals/{approval_id}` endpoint (40404 semantics) was
+ * retired with the engine migration.
+ */
+
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ISessionApprovalService, ISessionLifecycleService } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -16,40 +24,14 @@ interface Envelope<T> {
   details?: { path: string; message: string }[];
 }
 
-interface ApprovalWire {
-  approval_id: string;
-  session_id: string;
-  turn_id?: number;
-  tool_call_id: string;
-  tool_name: string;
-  action: string;
-  tool_input_display: unknown;
-  created_at: string;
-  expires_at: string;
-}
-
-interface ListWire {
-  items: ApprovalWire[];
-}
-
-interface ResolveWire {
-  resolved: true;
-  resolved_at: string;
-}
-
-describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
+describe('engine-mode /api/v1/sessions/{sid}/approvals', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   let base: string;
 
   beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-approvals-'));
-    server = await startServer({
-      host: '127.0.0.1',
-      port: 0,
-      homeDir: home,
-      logLevel: 'silent',
-    });
+    home = await mkdtemp(join(tmpdir(), 'kimi-engine-approvals-'));
+    server = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     base = `http://127.0.0.1:${server.port}`;
   });
 
@@ -64,107 +46,68 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
     }
   });
 
-  async function postJson<T>(
+  async function call<T>(
+    method: 'GET' | 'POST',
     path: string,
-    body?: unknown,
+    arg?: unknown,
   ): Promise<{ status: number; body: Envelope<T> }> {
-    const hasBody = body !== undefined;
-    const res = await fetch(`${base}${path}`, {
-      method: 'POST',
-      headers: authHeaders(
-        server as RunningServer,
-        hasBody ? { 'content-type': 'application/json' } : {},
-      ),
-      body: hasBody ? JSON.stringify(body) : undefined,
-    } as never);
-    return { status: res.status, body: (await res.json()) as Envelope<T> };
-  }
-
-  async function getJson<T>(path: string): Promise<{ status: number; body: Envelope<T> }> {
-    const res = await fetch(`${base}${path}`, {
-      headers: authHeaders(server as RunningServer),
-    } as never);
+    const headers = authHeaders(
+      server as RunningServer,
+      arg === undefined ? {} : { 'content-type': 'application/json' },
+    );
+    const init: { method: string; headers: Record<string, string>; body?: string } = {
+      method,
+      headers,
+    };
+    if (arg !== undefined) {
+      init.body = JSON.stringify(arg);
+    }
+    const res = await fetch(`${base}${path}`, init as never);
     return { status: res.status, body: (await res.json()) as Envelope<T> };
   }
 
   async function createSession(): Promise<string> {
-    const { body } = await postJson<{ id: string }>('/api/v1/sessions', {
-      metadata: { cwd: home as string },
-    });
+    const res = await fetch(`${base}/api/v1/sessions`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ metadata: { cwd: home } }),
+    } as never);
+    const body = (await res.json()) as Envelope<{ id: string }>;
     expect(body.code).toBe(0);
     return body.data.id;
   }
 
-  /** Park an approval in-process so the REST route has something to list/resolve. */
-  function enqueueApproval(sessionId: string, toolCallId: string): string {
-    const handle = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
-    expect(handle).toBeDefined();
-    const parked = handle!.accessor.get(ISessionApprovalService).enqueue({
-      toolCallId,
-      toolName: 'Bash',
-      action: 'run',
-      display: { kind: 'command', command: 'echo hi' },
-    });
-    return parked.id;
-  }
+  it('returns an empty approval list for a fresh session', async () => {
+    const id = await createSession();
 
-  it('lists a pending approval projected onto the wire shape', async () => {
-    const sid = await createSession();
-    const aid = enqueueApproval(sid, 'tc-1');
-
-    const { body } = await getJson<ListWire>(`/api/v1/sessions/${sid}/approvals?status=pending`);
+    const { body } = await call<{ items: unknown[] }>(
+      'GET',
+      `/api/v1/sessions/${id}/approvals`,
+    );
     expect(body.code).toBe(0);
-    expect(body.data.items).toHaveLength(1);
-    const item = body.data.items[0]!;
-    expect(item.approval_id).toBe(aid);
-    expect(item.session_id).toBe(sid);
-    expect(item.tool_call_id).toBe('tc-1');
-    expect(item.tool_name).toBe('Bash');
-    expect(item.action).toBe('run');
-    expect(item.tool_input_display).toEqual({ kind: 'command', command: 'echo hi' });
-    expect(Number.isNaN(Date.parse(item.created_at))).toBe(false);
-    expect(Number.isNaN(Date.parse(item.expires_at))).toBe(false);
+    expect(Array.isArray(body.data.items)).toBe(true);
+    expect(body.data.items).toEqual([]);
   });
 
-  it('resolves a pending approval', async () => {
-    const sid = await createSession();
-    const aid = enqueueApproval(sid, 'tc-2');
+  it('rejects a resolve with a missing decision with 40001', async () => {
+    const id = await createSession();
 
-    const { body } = await postJson<ResolveWire>(`/api/v1/sessions/${sid}/approvals/${aid}`, {
-      decision: 'approved',
-    });
-    expect(body.code).toBe(0);
-    expect(body.data.resolved).toBe(true);
-    expect(Number.isNaN(Date.parse(body.data.resolved_at))).toBe(false);
-
-    const listed = await getJson<ListWire>(`/api/v1/sessions/${sid}/approvals?status=pending`);
-    expect(listed.body.data.items).toHaveLength(0);
-  });
-
-  it('returns 40902 on a duplicate resolve (recently-resolved window)', async () => {
-    const sid = await createSession();
-    const aid = enqueueApproval(sid, 'tc-3');
-    await postJson<ResolveWire>(`/api/v1/sessions/${sid}/approvals/${aid}`, {
-      decision: 'approved',
-    });
-
-    const dup = await postJson<{ resolved: false }>(`/api/v1/sessions/${sid}/approvals/${aid}`, {
-      decision: 'approved',
-    });
-    expect(dup.body.code).toBe(40902);
-    expect(dup.body.data).toEqual({ resolved: false });
-  });
-
-  it('returns 40404 for an unknown approval id', async () => {
-    const sid = await createSession();
-    const { body } = await postJson<null>(`/api/v1/sessions/${sid}/approvals/nope`, {
-      decision: 'rejected',
-    });
-    expect(body.code).toBe(40404);
+    const { body } = await call<null>(
+      'POST',
+      `/api/v1/sessions/${id}/approvals/resolve`,
+      { id: 'ap_does_not_exist' },
+    );
+    expect(body.code).toBe(40001);
   });
 
   it('returns 40401 for an unknown session', async () => {
-    const { body } = await getJson<null>('/api/v1/sessions/nope/approvals?status=pending');
-    expect(body.code).toBe(40401);
+    const list = await call<null>('GET', '/api/v1/sessions/nope/approvals');
+    expect(list.body.code).toBe(40401);
+
+    const resolve = await call<null>('POST', '/api/v1/sessions/nope/approvals/resolve', {
+      id: 'ap_x',
+      decision: 'allow',
+    });
+    expect(resolve.body.code).toBe(40401);
   });
 });

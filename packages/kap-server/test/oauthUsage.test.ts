@@ -2,19 +2,15 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import {
-  IOAuthService,
-  type IOAuthService as IOAuthServiceType,
-  type ScopeSeed,
-} from '@moonshot-ai/agent-core-v2';
-import {
-  managedUsageResultSchema,
-  type ManagedUsageResult,
-} from '@moonshot-ai/agent-core-v2/app/auth/oauthProtocol';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { z } from 'zod';
+
+import { managedUsageResultSchema } from '../src/protocol/rest-oauth';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { authHeaders } from './helpers/auth';
+
+type ManagedUsageResult = z.infer<typeof managedUsageResultSchema>;
 
 interface Envelope<T> {
   code: number;
@@ -30,6 +26,13 @@ describe('server-v2 GET /api/v1/oauth/usage', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-oauth-usage-'));
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    base = `http://127.0.0.1:${server.port}`;
   });
 
   afterEach(async () => {
@@ -43,92 +46,20 @@ describe('server-v2 GET /api/v1/oauth/usage', () => {
     }
   });
 
-  function oauthStub(getManagedUsage: IOAuthServiceType['getManagedUsage']): IOAuthServiceType {
-    return {
-      _serviceBrand: undefined,
-      startLogin: async () => {
-        throw new Error('unused');
-      },
-      getFlow: () => undefined,
-      cancelLogin: async () => {
-        throw new Error('unused');
-      },
-      logout: async () => {
-        throw new Error('unused');
-      },
-      status: async () => ({ loggedIn: false }),
-      refreshOAuthProviderModels: async () => ({ changed: [], unchanged: [], failed: [] }),
-      getManagedUsage,
-      resolveTokenProvider: () => undefined,
-      getCachedAccessToken: async () => undefined,
-    };
-  }
-
-  async function boot(seeds: ScopeSeed): Promise<void> {
-    server = await startServer({
-      host: '127.0.0.1',
-      port: 0,
-      homeDir: home,
-      logLevel: 'silent',
-      seeds,
-    });
-    base = `http://127.0.0.1:${server.port}`;
-  }
-
-  async function getUsage(query = ''): Promise<ManagedUsageResult> {
-    const res = await fetch(`${base}/api/v1/oauth/usage${query}`, {
+  it('answers the unmanaged wire error shape on the native engine', async () => {
+    const res = await fetch(`${base}/api/v1/oauth/usage`, {
       headers: authHeaders(server as RunningServer),
     } as never);
     expect(res.status).toBe(200);
     const body = (await res.json()) as Envelope<ManagedUsageResult>;
     expect(body.code).toBe(0);
-    return managedUsageResultSchema.parse(body.data);
-  }
-
-  it('maps the ok usage payload to the snake_case wire shape', async () => {
-    const getManagedUsage = vi.fn(async () => ({
-      kind: 'ok' as const,
-      summary: { label: 'Weekly limit', used: 40, limit: 1000, resetHint: 'resets in 2d' },
-      limits: [{ label: '5h limit', used: 1, limit: 100 }],
-      extraUsage: {
-        balanceCents: 500,
-        totalCents: 1000,
-        monthlyChargeLimitEnabled: true,
-        monthlyChargeLimitCents: 2000,
-        monthlyUsedCents: 1500,
-        currency: 'CNY',
-      },
-    }));
-    await boot([[IOAuthService, oauthStub(getManagedUsage)]] as unknown as ScopeSeed);
-
-    expect(await getUsage()).toEqual({
-      kind: 'ok',
-      summary: { label: 'Weekly limit', used: 40, limit: 1000, reset_hint: 'resets in 2d' },
-      limits: [{ label: '5h limit', used: 1, limit: 100 }],
-      extra_usage: {
-        balance_cents: 500,
-        total_cents: 1000,
-        monthly_charge_limit_enabled: true,
-        monthly_charge_limit_cents: 2000,
-        monthly_used_cents: 1500,
-        currency: 'CNY',
-      },
-    });
-  });
-
-  it('passes through the error payload and forwards the provider query', async () => {
-    const getManagedUsage = vi.fn(async (_provider?: string) => ({
-      kind: 'error' as const,
-      message: 'Authorization failed.',
-      status: 401,
-    }));
-    await boot([[IOAuthService, oauthStub(getManagedUsage)]] as unknown as ScopeSeed);
-
-    expect(await getUsage('?provider=managed%3Akimi-code')).toEqual({
+    // Managed OAuth was a v2 `IOAuthService` capability retired with the v2
+    // engine — the route answers the error wire shape so the UI shows an
+    // unmanaged state instead of hanging.
+    expect(managedUsageResultSchema.parse(body.data)).toEqual({
       kind: 'error',
-      message: 'Authorization failed.',
-      status: 401,
+      message: 'managed account usage is not available on the native engine',
+      status: 404,
     });
-    expect(getManagedUsage).toHaveBeenCalledWith('managed:kimi-code');
   });
 });

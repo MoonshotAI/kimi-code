@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { configResponseSchema, type ConfigResponse } from '../src/protocol/rest-config';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { authedFetch } from './helpers/auth';
@@ -18,10 +18,26 @@ interface Envelope<T> {
 describe('server-v2 /api/v1/config default_permission_mode + yolo', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
+  let configPath: string;
   let base: string;
 
-  beforeEach(async () => {
+  // Engine mode: the Rust engine process is a module-level singleton — its
+  // `KIMI_CONFIG_PATH` env is fixed at first spawn (the first `startServer`
+  // probe). A per-test temp path would go stale after the first test (the
+  // singleton keeps writing the first path), so the config fixture lives in
+  // one describe-scoped temp home and each test resets the file.
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-config-'));
+    configPath = join(home, 'config.toml');
+    process.env['KIMI_CONFIG_PATH'] = configPath;
+  });
+
+  afterAll(async () => {
+    delete process.env['KIMI_CONFIG_PATH'];
+    if (home !== undefined) {
+      await rm(home, { recursive: true, force: true });
+      home = undefined;
+    }
   });
 
   afterEach(async () => {
@@ -29,15 +45,15 @@ describe('server-v2 /api/v1/config default_permission_mode + yolo', () => {
       await server.close();
       server = undefined;
     }
-    if (home !== undefined) {
-      await rm(home, { recursive: true, force: true });
-      home = undefined;
-    }
   });
 
   async function boot(toml?: string): Promise<void> {
+    // Reset the fixture so each test starts from a clean config (absent toml
+    // → no config file).
     if (toml !== undefined) {
-      await writeFile(join(home as string, 'config.toml'), toml, 'utf-8');
+      await writeFile(configPath, toml, 'utf-8');
+    } else {
+      await rm(configPath, { force: true });
     }
     server = await startServer({
       host: '127.0.0.1',
@@ -69,7 +85,7 @@ describe('server-v2 /api/v1/config default_permission_mode + yolo', () => {
   }
 
   it('GET echoes default_permission_mode and derives yolo = false', async () => {
-    await boot('default_permission_mode = "auto"\n');
+    await boot('[agent.permission]\nmode = "auto"\n');
     const cfg = await getConfig();
     expect(cfg.default_permission_mode).toBe('auto');
     expect(cfg.yolo).toBe(false);

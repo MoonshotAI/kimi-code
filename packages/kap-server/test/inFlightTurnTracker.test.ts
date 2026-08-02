@@ -2,15 +2,17 @@
  * `InFlightTurnTracker` — volatile accumulation + delta offsets.
  */
 
-import type { Event } from '../src/transport/ws/v1/events';
 import { describe, expect, it } from 'vitest';
 
 import { InFlightTurnTracker } from '../src/transport/ws/v1/inFlightTurnTracker';
 
+/** A projected Rust wire event frame (same shape `InFlightTurnTracker.apply` takes). */
+type Frame = { type: string; agentId?: string; [key: string]: unknown };
+
 const SID = 'sess_1';
 
-function ev(partial: Record<string, unknown>): Event {
-  return { agentId: 'main', sessionId: SID, ...partial } as unknown as Event;
+function ev(partial: Record<string, unknown>): Frame {
+  return { type: 'turn.started', agentId: 'main', sessionId: SID, ...partial } as Frame;
 }
 
 describe('InFlightTurnTracker', () => {
@@ -51,7 +53,7 @@ describe('InFlightTurnTracker', () => {
   it('ignores non-main agents', () => {
     const t = new InFlightTurnTracker();
     t.apply(SID, ev({ type: 'turn.started', turnId: 1 }));
-    const sub = { agentId: 'agent-sub', sessionId: SID, type: 'assistant.delta', turnId: 1, delta: 'nope' } as unknown as Event;
+    const sub: Frame = { agentId: 'agent-sub', sessionId: SID, type: 'assistant.delta', turnId: 1, delta: 'nope' };
     expect(t.apply(SID, sub)).toEqual({});
     expect(t.get(SID)?.assistant_text).toBe('');
   });

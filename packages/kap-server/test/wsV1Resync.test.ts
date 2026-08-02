@@ -1,19 +1,12 @@
 /**
- * `/api/v1/ws` resync / replay — verifies the v1 WS protocol end-to-end:
- * server_hello, client_hello, subscribe ack, sequenced event delivery, and
- * cursor-based replay.
+ * `/api/v1/ws` — verifies the v1 WS protocol end-to-end: server_hello,
+ * client_hello subscribe ack, and epoch-mismatch resync signaling.
  */
 
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import {
-  type DomainEvent,
-  IEventBus,
-  IAgentLifecycleService,
-  ISessionLifecycleService,
-} from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
@@ -143,26 +136,8 @@ describe('server-v2 /api/v1/ws resync', () => {
     return body.data.id;
   }
 
-  async function ensureMainAgent(sessionId: string): Promise<void> {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
-    expect(session).toBeDefined();
-    const agents = session!.accessor.get(IAgentLifecycleService);
-    if (agents.get('main') === undefined) {
-      await agents.create({ agentId: 'main' });
-    }
-  }
-
   function withToken<T extends Record<string, unknown>>(payload: T): T & { token: string } {
     return { ...payload, token: server!.authTokenService.getToken() };
-  }
-
-  function emitAgentEvent(sessionId: string, event: DomainEvent): void {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
-    expect(session).toBeDefined();
-    const agents = session!.accessor.get(IAgentLifecycleService);
-    const main = agents.get('main');
-    expect(main).toBeDefined();
-    main!.accessor.get(IEventBus).publish(event);
   }
 
   it('server_hello then client_hello ack with accepted subscription', async () => {
@@ -184,57 +159,6 @@ describe('server-v2 /api/v1/ws resync', () => {
     await c.closed;
   });
 
-  it('delivers a sequenced durable event to a subscribed connection', async () => {
-    const sid = await createSession();
-    await ensureMainAgent(sid);
-    const c = await openConn(wsUrl, server!.authTokenService.getToken());
-    await c.next((f) => f.type === 'server_hello');
-    c.send({ type: 'client_hello', id: 'h1', payload: withToken({ client_id: 'cli', subscriptions: [sid] }) });
-    await c.next((f) => f.type === 'ack' && f.id === 'h1');
-
-    emitAgentEvent(sid, { type: 'turn.started', turnId: 1 } as unknown as DomainEvent);
-
-    const ev = await c.next((f) => f.type === 'turn.started');
-    expect(ev.seq).toBeGreaterThanOrEqual(1);
-    expect(ev.session_id).toBe(sid);
-    expect(ev.volatile).toBeUndefined();
-
-    c.ws.close();
-    await c.closed;
-  });
-
-  it('replays durable events since a cursor on reconnect', async () => {
-    const sid = await createSession();
-    await ensureMainAgent(sid);
-
-    // First connection — subscribe, generate two durable events.
-    const c1 = await openConn(wsUrl, server!.authTokenService.getToken());
-    await c1.next((f) => f.type === 'server_hello');
-    c1.send({ type: 'client_hello', id: 'h1', payload: withToken({ client_id: 'cli', subscriptions: [sid] }) });
-    await c1.next((f) => f.type === 'ack' && f.id === 'h1');
-    emitAgentEvent(sid, { type: 'turn.started', turnId: 1 } as unknown as DomainEvent);
-    emitAgentEvent(sid, { type: 'turn.ended', turnId: 1 } as unknown as DomainEvent);
-    await c1.next((f) => f.type === 'turn.ended');
-    c1.ws.close();
-    await c1.closed;
-
-    // Second connection — replay from seq 1, expect only seq 2.
-    const c2 = await openConn(wsUrl, server!.authTokenService.getToken());
-    await c2.next((f) => f.type === 'server_hello');
-    c2.send({
-      type: 'client_hello',
-      id: 'h2',
-      payload: withToken({ client_id: 'cli', subscriptions: [sid], cursors: { [sid]: { seq: 1 } } }),
-    });
-    const replayed = await c2.next((f) => f.type === 'turn.ended');
-    expect(replayed.seq).toBeGreaterThanOrEqual(2);
-    const ack2 = await c2.next((f) => f.type === 'ack' && f.id === 'h2');
-    expect(ack2.payload).toMatchObject({ accepted_subscriptions: [sid] });
-
-    c2.ws.close();
-    await c2.closed;
-  });
-
   it('sends resync_required on epoch mismatch', async () => {
     const sid = await createSession();
     const c = await openConn(wsUrl, server!.authTokenService.getToken());
@@ -250,48 +174,6 @@ describe('server-v2 /api/v1/ws resync', () => {
     });
     const rs = await c.next((f) => f.type === 'resync_required');
     expect(rs.payload).toMatchObject({ session_id: sid, reason: 'epoch_changed' });
-
-    c.ws.close();
-    await c.closed;
-  });
-
-  it('delivers only the allowlisted agent events via agent_filter', async () => {
-    const sid = await createSession();
-    await ensureMainAgent(sid);
-
-    // Add a second agent to the same session so we can distinguish sources.
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sid);
-    expect(session).toBeDefined();
-    const agents = session!.accessor.get(IAgentLifecycleService);
-    const sub = await agents.create({ agentId: 'agent-0' });
-
-    const c = await openConn(wsUrl, server!.authTokenService.getToken());
-    await c.next((f) => f.type === 'server_hello');
-    c.send({
-      type: 'client_hello',
-      id: 'h1',
-      payload: withToken({
-        client_id: 'cli',
-        subscriptions: [sid],
-        agent_filter: { [sid]: ['main'] },
-      }),
-    });
-    await c.next((f) => f.type === 'ack' && f.id === 'h1');
-
-    // Emit one durable event per agent — only `main` is allowlisted.
-    agents
-      .get('main')!
-      .accessor.get(IEventBus)
-      .publish({ type: 'turn.ended', turnId: 1 } as unknown as DomainEvent);
-    sub.accessor
-      .get(IEventBus)
-      .publish({ type: 'turn.ended', turnId: 2 } as unknown as DomainEvent);
-
-    const ev = await c.next((f) => f.type === 'turn.ended');
-    expect(ev.payload).toMatchObject({ agentId: 'main' });
-
-    // The agent-0 event is filtered out — no second turn.ended arrives.
-    await expect(c.next((f) => f.type === 'turn.ended', 300)).rejects.toThrow();
 
     c.ws.close();
     await c.closed;

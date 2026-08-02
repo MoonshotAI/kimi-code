@@ -42,14 +42,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/catalog/providers",
-    ],
-    [
-      "GET",
-      "/api/v1/catalog/providers/{catalog_id}",
-    ],
-    [
-      "GET",
       "/api/v1/config",
     ],
     [
@@ -58,35 +50,7 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/debug/{service}/{method}",
-    ],
-    [
-      "GET",
-      "/api/v1/debug/channels",
-    ],
-    [
-      "GET",
-      "/api/v1/debug/session/{session_id}/{service}/{method}",
-    ],
-    [
-      "GET",
-      "/api/v1/debug/session/{session_id}/agent/{agent_id}/{service}/{method}",
-    ],
-    [
-      "GET",
       "/api/v1/files/{file_id}",
-    ],
-    [
-      "GET",
-      "/api/v1/fs:browse",
-    ],
-    [
-      "GET",
-      "/api/v1/fs:content",
-    ],
-    [
-      "GET",
-      "/api/v1/fs:home",
     ],
     [
       "GET",
@@ -134,43 +98,35 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}",
+      "/api/v1/sessions/{id}",
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}/approvals",
+      "/api/v1/sessions/{id}/approvals",
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}/children",
+      "/api/v1/sessions/{id}/goal",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{id}/messages",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{id}/status",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{id}/tasks",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{id}/warnings",
     ],
     [
       "GET",
       "/api/v1/sessions/{session_id}/fs/{*}",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/goal",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/messages",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/messages/{message_id}",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/profile",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/prompts",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/questions",
     ],
     [
       "GET",
@@ -182,43 +138,7 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}/status",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/tasks",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/tasks/{task_id}",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/terminals",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/terminals/{terminal_id}",
-    ],
-    [
-      "GET",
       "/api/v1/sessions/{session_id}/transcript",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/transcript/ops",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/transcript/plan",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/transcript/user-messages",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/warnings",
     ],
     [
       "GET",
@@ -250,18 +170,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
-      "/api/v1/debug/{service}/{method}",
-    ],
-    [
-      "POST",
-      "/api/v1/debug/session/{session_id}/{service}/{method}",
-    ],
-    [
-      "POST",
-      "/api/v1/debug/session/{session_id}/agent/{agent_id}/{service}/{method}",
-    ],
-    [
-      "POST",
       "/api/v1/files",
     ],
     [
@@ -275,10 +183,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/gui/store/setItem",
-    ],
-    [
-      "POST",
-      "/api/v1/mcp/servers/{tail}",
     ],
     [
       "POST",
@@ -298,10 +202,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
-      "/api/v1/providers{action}",
-    ],
-    [
-      "POST",
       "/api/v1/providers/{tail}",
     ],
     [
@@ -310,7 +210,15 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
-      "/api/v1/sessions/{session_id}:archive",
+      "/api/v1/sessions/{id}/approvals/resolve",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{id}/cancel",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{id}/prompts",
     ],
     [
       "POST",
@@ -318,51 +226,7 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
-      "/api/v1/sessions/{session_id}/approvals/{approval_id}",
-    ],
-    [
-      "POST",
-      "/api/v1/sessions/{session_id}/children",
-    ],
-    [
-      "POST",
       "/api/v1/sessions/{session_id}/export",
-    ],
-    [
-      "POST",
-      "/api/v1/sessions/{session_id}/profile",
-    ],
-    [
-      "POST",
-      "/api/v1/sessions/{session_id}/prompts",
-    ],
-    [
-      "POST",
-      "/api/v1/sessions/{session_id}/prompts:steer",
-    ],
-    [
-      "POST",
-      "/api/v1/sessions/{session_id}/prompts/{tail}",
-    ],
-    [
-      "POST",
-      "/api/v1/sessions/{session_id}/questions/{tail}",
-    ],
-    [
-      "POST",
-      "/api/v1/sessions/{session_id}/skills/{tail}",
-    ],
-    [
-      "POST",
-      "/api/v1/sessions/{session_id}/tasks/{tail}",
-    ],
-    [
-      "POST",
-      "/api/v1/sessions/{session_id}/terminals",
-    ],
-    [
-      "POST",
-      "/api/v1/sessions/{session_id}/terminals/{tail}",
     ],
     [
       "POST",

@@ -68,7 +68,6 @@ describe('API surface snapshot', () => {
       port: 0,
       homeDir: home,
       logLevel: 'silent',
-      debugEndpoints: true,
     });
 
     const base = `http://${server.host}:${server.port}`;

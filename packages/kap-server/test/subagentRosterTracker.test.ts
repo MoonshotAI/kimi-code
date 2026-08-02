@@ -2,18 +2,20 @@
  * `SubagentRosterTracker` — live subagent roster for snapshot rebuilds.
  */
 
-import type { Event } from '../src/transport/ws/v1/events';
 import { describe, expect, it } from 'vitest';
 
 import { SubagentRosterTracker } from '../src/transport/ws/v1/subagentRosterTracker';
 
+/** A projected Rust wire event frame (same shape `SubagentRosterTracker.apply` takes). */
+type Frame = { type: string; agentId?: string; [key: string]: unknown };
+
 const SID = 'sess_1';
 
-function ev(partial: Record<string, unknown>): Event {
-  return { agentId: 'main', sessionId: SID, ...partial } as unknown as Event;
+function ev(partial: Record<string, unknown>): Frame {
+  return { type: 'turn.started', agentId: 'main', sessionId: SID, ...partial } as Frame;
 }
 
-function spawn(subagentId: string, extra: Record<string, unknown> = {}): Event {
+function spawn(subagentId: string, extra: Record<string, unknown> = {}): Frame {
   return ev({
     type: 'subagent.spawned',
     subagentId,
@@ -63,7 +65,7 @@ describe('SubagentRosterTracker', () => {
     const t = new SubagentRosterTracker();
     t.apply(SID, spawn('agent-1'));
 
-    const taskStarted = (detached: boolean): Event =>
+    const taskStarted = (detached: boolean): Frame =>
       ev({
         type: 'task.started',
         info: {
