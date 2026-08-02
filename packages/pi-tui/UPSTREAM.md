@@ -186,3 +186,9 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** The cached horizontal-scroll origin used for click mapping in `Input` is the grapheme boundary actually displayed first, not the raw column the scroller chose.
 
 **Why not in the app:** The scroll origin is computed inside `Input.render`; the click mapper only sees the cached value.
+
+### wezterm-images-survive-repaint — keep
+
+**Decision:** On WezTerm, capability detection reports the iTerm2 inline-image protocol instead of kitty.
+
+**Why not in the app:** WezTerm's kitty placements are cell-anchored and lose image content wherever text rows are rewritten, so a scrolling transcript pokes holes in the image until only a sliver remains (wezterm#986); the right protocol is a property of the terminal, not of the app. The per-terminal choice already lives in `detectCapabilitiesFromEnvironment`, and driving it from the app would mean re-detecting the terminal there just to call `setCapabilityOverrides`.
