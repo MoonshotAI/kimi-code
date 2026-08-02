@@ -20,9 +20,10 @@ describe('Session.setThinking', () => {
     try {
       const session = await harness.createSession({ id: 'ses_thinking_wire', workDir });
 
-      // Rust semantics: `session/set_thinking` is a silent RPC applied from
-      // the next turn; the contract is that it succeeds without error.
-      await expect(session.setThinking('low')).resolves.toBeUndefined();
+      await session.setThinking('low');
+
+      // The engine's status snapshot reflects the applied effort.
+      await expect(session.getStatus()).resolves.toMatchObject({ thinkingEffort: 'low' });
     } finally {
       await harness.close();
     }

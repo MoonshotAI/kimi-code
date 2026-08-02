@@ -1701,6 +1701,23 @@ async fn main() -> anyhow::Result<()> {
         })
     });
 
+    // Fork a persisted session under a new id (SDK forkSession parity):
+    // copies conversation + context, drops the goal state. Reports
+    // `forked: false` for an unknown source.
+    let mgr = session_manager.clone();
+    RpcServer::register_arc(&server, types::methods::SESSION_FORK, move |params| {
+        let mgr = mgr.clone();
+        Box::pin(async move {
+            let input: types::SessionForkParams = serde_json::from_value(params)
+                .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+            let mut manager = mgr.lock().await;
+            let forked = manager
+                .fork_session(&input.session_id, &input.fork_id, input.title.as_deref())
+                .map_err(|e| types::JsonRpcError::internal_error(e.to_string()))?;
+            Ok(serde_json::json!({ "forked": forked.is_some() }))
+        })
+    });
+
     let mgr = session_manager.clone();
     RpcServer::register_arc(&server, types::methods::SESSION_LIST, move |params| {
         let mgr = mgr.clone();

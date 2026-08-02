@@ -64,15 +64,22 @@
 | `session.compaction.started` | （按 agent.rs:1969 实际 payload 定） | |
 | `session.shell.output` | `command_id`, `chunk` | 引擎发射点待核实（agent.rs 未见，可能经 shell 通道） |
 
-### 3.2 宿主业务事件（SDK 合成，统一 snake_case）
+### 3.2 宿主业务事件（统一 snake_case）
 
-| type | 字段 | 发射点 |
+> **2026-08-02 修正（对齐代码实现）**：宿主业务事件不再由 RPC 客户端合成。
+> `emitSynthetic` 已整体删除——`session/steer`/`session/set_model`/`session/set_thinking`/
+> `permission/set_mode` 均为 **silent RPC**（已有已提交测试注释佐证：session-steer.test.ts
+> "Rust semantics: `session/steer` is a silent RPC (no synthesized turn.steer event)"）。
+> 唯一保留的宿主合成事件 `session.meta.updated` 由 **SDK Session 对象层**合成
+> （`kimi-harness.ts` `renameSession` → `emitMetaUpdated`），不在 RPC 客户端。
+
+| type | 字段 | 实际状态 |
 |---|---|---|
-| `session.meta.updated` | `title?`, `patch?` | `rpc-client.ts` rename |
-| `config.update` | `model_alias?`, `thinking_effort?`, `permission_mode?` 等 | `rpc-client.ts` setModel/setThinking |
-| `permission.set_mode` | `mode` | `rpc-client.ts` setPermissionMode |
-| `turn.steer` | `input` | `rpc-client.ts` steer |
-| `session.closed` | — | `rpc-client.ts` closeSession |
+| `session.meta.updated` | `title?`, `patch?` | ✅ Session 对象层合成（`kimi-harness.ts` `emitMetaUpdated`），RPC 层不发射 |
+| `config.update` | — | ❌ 已移除（silent RPC，SDK 不合成） |
+| `permission.set_mode` | — | ❌ 已移除（silent RPC，SDK 不合成） |
+| `turn.steer` | — | ❌ 已移除（silent RPC，SDK 不合成） |
+| `session.closed` | — | ❌ 不发射（当前实现无此事件） |
 
 ### 3.3 从契约中删除的事件（引擎不产生）
 

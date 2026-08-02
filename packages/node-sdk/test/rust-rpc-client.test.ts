@@ -78,10 +78,11 @@ describe('RustRpcClient', () => {
     expect(status.contextTokens).toBe(100);
   });
 
-  it('lists sessions from engine records', async () => {
+  it('lists sessions created through this client', async () => {
     const rust = fakeRustLoop();
     const client = new RustRpcClient({ rustLoop: rust });
     const rpc = await client['getRpc']();
+    await rpc.createSession({ id: 'ses_1', workDir: '/ws' });
     const sessions = await rpc.listSessions({});
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.id).toBe('ses_1');

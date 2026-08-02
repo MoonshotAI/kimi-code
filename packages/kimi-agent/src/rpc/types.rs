@@ -98,6 +98,9 @@ pub mod methods {
     /// Unlike `session/destroy`, this removes the persisted record, not just
     /// the in-memory agent.
     pub const SESSION_DELETE: &str = "session/delete";
+    /// Fork a persisted session under a new id, dropping goal state (SDK
+    /// `forkSession`).
+    pub const SESSION_FORK: &str = "session/fork";
     pub const SESSION_SAVE: &str = "session/save";
     pub const SESSION_LOAD: &str = "session/load";
     pub const SESSION_LIST: &str = "session/list";
@@ -467,6 +470,18 @@ pub struct SessionPromptParams {
 #[derive(Debug, Deserialize)]
 pub struct SessionIdParams {
     pub session_id: String,
+}
+
+/// Input for session/fork.
+#[derive(Debug, Deserialize)]
+pub struct SessionForkParams {
+    /// The source session to fork from.
+    pub session_id: String,
+    /// The new session's id.
+    pub fork_id: String,
+    /// Optional title for the fork.
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 /// Input for session/set_model.

@@ -1,37 +1,16 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type * as KosongModule from '@moonshot-ai/kosong';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { createKimiHarness, type KimiError, type Event } from '#/index';
 
 import { makeTempDir, removeTempDirs, waitForSDKEvent } from './session-runtime-helpers';
 import { TEST_IDENTITY } from './test-identity';
 
-vi.mock('@moonshot-ai/kosong', async (importOriginal) => {
-  const actual = await importOriginal<typeof KosongModule>();
-  return {
-    ...actual,
-    createProvider: () => ({
-      name: 'fake',
-      modelName: 'fake-model',
-      thinkingEffort: null,
-      async generate(
-        _systemPrompt: string,
-        _tools: unknown,
-        _history: unknown,
-        options?: { readonly signal?: AbortSignal },
-      ) {
-        await waitForAbort(options?.signal);
-        throwAbortError();
-      },
-      withThinking() {
-        return this;
-      },
-    }),
-  };
-});
+// Rust semantics: engine turns run against a host-proxy `llmStep`. A hanging
+// step keeps the turn active until cancelled.
+const HANGING_LLM: (req: unknown) => Promise<unknown> = () => new Promise(() => {});
 
 const tempDirs: string[] = [];
 
@@ -44,7 +23,7 @@ describe('Session.cancel', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-cancel-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-cancel-work-');
     await writeFakeModelConfig(homeDir);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY, llmStep: HANGING_LLM });
 
     try {
       const session = await harness.createSession({ id: 'ses_cancel_active_turn', workDir });
@@ -124,7 +103,7 @@ describe('KimiHarness.forkSession', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-fork-active-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-fork-active-work-');
     await writeFakeModelConfig(homeDir);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY, llmStep: HANGING_LLM });
 
     try {
       const session = await harness.createSession({ id: 'ses_fork_active_turn', workDir });
@@ -173,21 +152,3 @@ max_context_size = 1000
   );
 }
 
-function waitForAbort(signal: AbortSignal | undefined): Promise<void> {
-  if (signal?.aborted === true) {
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    signal?.addEventListener(
-      'abort',
-      () => {
-        resolve();
-      },
-      { once: true },
-    );
-  });
-}
-
-function throwAbortError(): never {
-  throw new DOMException('The operation was aborted.', 'AbortError');
-}

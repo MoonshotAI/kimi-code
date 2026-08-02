@@ -17,6 +17,17 @@ fn boxed_err(s: String) -> Box<dyn std::error::Error + Send + Sync> {
 ///
 /// This is a standalone function (not an async block) so that the non-`Send`
 /// `Box<dyn Error>` is consumed and dropped before any `.await` in the caller.
+/// Await the cancellation flag flipping to true (returns immediately when
+/// already set).
+async fn cancel_wait(flag: &std::sync::Arc<std::sync::atomic::AtomicBool>) {
+    if flag.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    while !flag.load(std::sync::atomic::Ordering::Relaxed) {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
 fn classify_llm_error(
     err: Box<dyn std::error::Error>,
     llm: &dyn LLM,
@@ -48,7 +59,7 @@ pub fn execute_loop_step<'a>(
     tools: &'a [&'a dyn ExecutableTool],
     tool_defs: Vec<ToolInfo>,
 ) -> BoxFuture<'a, Result<StepResult, Box<dyn std::error::Error + Send + Sync>>> {
-    execute_loop_step_with_retry(turn_id, step, llm, messages, tools, tool_defs, &RetryConfig::default())
+    execute_loop_step_with_retry(turn_id, step, llm, messages, tools, tool_defs, &RetryConfig::default(), None)
 }
 
 /// Execute a single LLM step: call the LLM using the current messages,
@@ -62,6 +73,10 @@ pub fn execute_loop_step<'a>(
 /// Takes owned `messages` and `tool_defs` so the future doesn't borrow
 /// from the caller's local scope — this avoids lifetime propagation
 /// issues when awaited inside an outer async block.
+///
+/// `cancellation` aborts a step whose LLM call is still in flight (a host
+/// `CANCEL_TURN` while the model step is pending): the step resolves as
+/// `Aborted` instead of waiting for the callback to return.
 pub fn execute_loop_step_with_retry<'a>(
     _turn_id: &'a str,
     _step: u32,
@@ -70,6 +85,7 @@ pub fn execute_loop_step_with_retry<'a>(
     _tools: &'a [&'a dyn ExecutableTool],
     tool_defs: Vec<ToolInfo>,
     retry_config: &RetryConfig,
+    cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> BoxFuture<'a, Result<StepResult, Box<dyn std::error::Error + Send + Sync>>> {
     let retry_config = retry_config.clone();
     Box::pin(async move {
@@ -81,9 +97,31 @@ pub fn execute_loop_step_with_retry<'a>(
         let mut attempt: u32 = 0;
         let response = loop {
             attempt += 1;
+            // Race the LLM call against the cancellation flag so a host
+            // cancel terminates a step whose model call never returns.
+            let chat = llm.chat(params.clone());
+            let result = match &cancellation {
+                Some(flag) => {
+                    tokio::select! {
+                        result = chat => result,
+                        _ = cancel_wait(flag) => {
+                            return Ok(StepResult {
+                                usage: crate::rpc::types::TokenUsage {
+                                    input_tokens: 0,
+                                    output_tokens: 0,
+                                    total_tokens: 0,
+                                },
+                                stop_reason: LoopStepStopReason::Aborted,
+                                content: String::new(),
+                            });
+                        }
+                    }
+                }
+                None => chat.await,
+            };
             // Match the chat result and extract only Send-safe values, so the
             // non-Send `Box<dyn Error>` is fully consumed before the `.await`.
-            let (break_resp, return_err, delay) = match llm.chat(params.clone()).await {
+            let (break_resp, return_err, delay) = match result {
                 Ok(resp) => (Some(resp), None, None),
                 Err(err) => {
                     let err_str = err.to_string();
@@ -188,7 +226,7 @@ mod tests {
             max_delay_ms: 10,
         };
         let result = execute_loop_step_with_retry(
-            "t1", 1, &llm, vec![], &[], vec![], &config,
+            "t1", 1, &llm, vec![], &[], vec![], &config, None,
         ).await;
         assert!(result.is_ok(), "should succeed after retries: {:?}", result.err());
         assert_eq!(llm.calls.load(Ordering::SeqCst), 3);
@@ -204,7 +242,7 @@ mod tests {
             max_delay_ms: 10,
         };
         let result = execute_loop_step_with_retry(
-            "t1", 1, &llm, vec![], &[], vec![], &config,
+            "t1", 1, &llm, vec![], &[], vec![], &config, None,
         ).await;
         assert!(result.is_err());
         assert_eq!(llm.calls.load(Ordering::SeqCst), 2);
@@ -220,7 +258,7 @@ mod tests {
             max_delay_ms: 10,
         };
         let result = execute_loop_step_with_retry(
-            "t1", 1, &llm, vec![], &[], vec![], &config,
+            "t1", 1, &llm, vec![], &[], vec![], &config, None,
         ).await;
         assert!(result.is_err());
         assert_eq!(llm.calls.load(Ordering::SeqCst), 1);
@@ -232,7 +270,7 @@ mod tests {
         let llm = FlakyLlm::new(0, true);
         let config = RetryConfig::default();
         let result = execute_loop_step_with_retry(
-            "t1", 1, &llm, vec![], &[], vec![], &config,
+            "t1", 1, &llm, vec![], &[], vec![], &config, None,
         ).await;
         assert!(result.is_ok());
         assert_eq!(llm.calls.load(Ordering::SeqCst), 1);
@@ -266,7 +304,7 @@ mod tests {
         }
 
         let llm = ToolCallLlm { calls: calls.clone() };
-        let result = execute_loop_step_with_retry("t1", 1, &llm, vec![], &[], vec![], &RetryConfig::default()).await;
+        let result = execute_loop_step_with_retry("t1", 1, &llm, vec![], &[], vec![], &RetryConfig::default(), None).await;
         assert!(result.is_ok());
         let step = result.unwrap();
         match step.stop_reason {
@@ -279,7 +317,7 @@ mod tests {
     async fn test_retry_max_attempts_one() {
         let llm = FlakyLlm::new(1, true);
         let config = RetryConfig { max_attempts: 1, base_delay_ms: 1, max_delay_ms: 10 };
-        let result = execute_loop_step_with_retry("t1", 1, &llm, vec![], &[], vec![], &config).await;
+        let result = execute_loop_step_with_retry("t1", 1, &llm, vec![], &[], vec![], &config, None).await;
         assert!(result.is_err());
         assert_eq!(llm.calls.load(Ordering::SeqCst), 1);
     }
@@ -288,7 +326,7 @@ mod tests {
     async fn test_retry_succeeds_on_first_retry() {
         let llm = FlakyLlm::new(1, true);
         let config = RetryConfig { max_attempts: 2, base_delay_ms: 1, max_delay_ms: 10 };
-        let result = execute_loop_step_with_retry("t1", 1, &llm, vec![], &[], vec![], &config).await;
+        let result = execute_loop_step_with_retry("t1", 1, &llm, vec![], &[], vec![], &config, None).await;
         assert!(result.is_ok());
         assert_eq!(llm.calls.load(Ordering::SeqCst), 2);
     }

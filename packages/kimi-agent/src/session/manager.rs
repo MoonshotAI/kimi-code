@@ -588,6 +588,63 @@ impl SessionManager {
         Ok(exists)
     }
 
+    /// Fork a persisted session under a new id (SDK `forkSession` parity):
+    /// copies the source's conversation + durable context, drops the goal
+    /// state, and registers the fork as the active session. Returns `None`
+    /// when the source session is unknown.
+    pub fn fork_session(
+        &mut self,
+        source_id: &str,
+        fork_id: &str,
+        title: Option<&str>,
+    ) -> anyhow::Result<Option<SessionRecord>> {
+        // Refuse to fork a session with an active turn: the conversation is
+        // mid-flight and the copy would be inconsistent (SDK
+        // `session.fork_active_turn`).
+        if self.agents.get(source_id).is_some_and(|agent| agent.has_active_turn()) {
+            anyhow::bail!("session has an active turn; cancel it before forking");
+        }
+        let Some(persisted) = self.store.load_session(source_id)? else {
+            return Ok(None);
+        };
+        let mut record: SessionRecord = serde_json::from_value(persisted.state_json)
+            .ok()
+            .filter(SessionRecord::is_valid_shape)
+            .unwrap_or_else(|| SessionRecord::new(source_id, ModelConfig::default()));
+
+        // New identity + timestamps; the fork is an active session.
+        record.id = fork_id.to_string();
+        record.created_at = Self::iso_now();
+        record.updated_at = record.created_at.clone();
+        if let Some(title) = title {
+            record.title = title.to_string();
+        }
+        record.state = SessionState::Active;
+        // Drop the goal: a fork is a fresh start from the same context.
+        if let Some(state) = record.agent_state.as_object_mut() {
+            state.insert("goal".to_string(), serde_json::Value::Null);
+        }
+
+        self.save_to_store(&record)?;
+        self.sessions.insert(fork_id.to_string(), record.clone());
+        self.active_id = Some(fork_id.to_string());
+        // Carry the creation spec so `session/load` can rebuild the fork's
+        // agent from its copied state.
+        if let Some(spec) = self.agent_specs.get(source_id).cloned() {
+            self.agent_specs.insert(fork_id.to_string(), spec);
+        }
+        // Rebuild the fork's agent from the copied state so RPCs can drive
+        // it immediately (a missing agent surfaces as "no agent for session").
+        let _ = self.load_agent_session(fork_id);
+        self.emit(SessionEvent::Created {
+            id: fork_id.to_string(),
+        });
+        self.emit(SessionEvent::Activated {
+            id: fork_id.to_string(),
+        });
+        Ok(Some(record))
+    }
+
     // ── Listing ───────────────────────────────────────────────────────────
 
     /// List all persisted sessions (most recent first).

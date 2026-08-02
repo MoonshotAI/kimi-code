@@ -13,6 +13,31 @@ export type { KimiErrorPayload, Event } from '@moonshot-ai/protocol';
 
 export { MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE } from '@moonshot-ai/protocol';
 
+// Rust engine events (protocol-toward-engine): snake_case `host/event`
+// stream, passed through by the SDK verbatim.
+export type {
+  EngineTurnStartedEvent,
+  EngineTurnEndedEvent,
+  EngineLlmStepBeginEvent,
+  EngineLlmDeltaEvent,
+  EngineLlmStepEndEvent,
+  EngineToolStartedEvent,
+  EngineToolSettledEvent,
+  EngineGoalUpdatedEvent,
+  EngineTaskStartedEvent,
+  EngineTaskTerminatedEvent,
+  EngineUsageUpdatedEvent,
+  EngineHookResultEvent,
+  EngineCompactionStartedEvent,
+  EngineShellOutputEvent,
+  // Host-synthesized events.
+  HostSessionMetaUpdatedEvent,
+  HostConfigUpdateEvent,
+  HostPermissionSetModeEvent,
+  HostTurnSteerEvent,
+  HostSessionClosedEvent,
+} from '@moonshot-ai/protocol';
+
 // Session lifecycle/status events and their status payload.
 export type {
   AgentStatusUpdatedEvent,

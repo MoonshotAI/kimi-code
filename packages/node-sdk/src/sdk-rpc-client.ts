@@ -33,6 +33,7 @@ export function createKimiHarness(options: KimiHarnessOptions): KimiHarness {
     configPath,
     identity: options.identity,
     telemetry: options.telemetry,
+    llmStep: options.llmStep,
   });
   const auth = new KimiAuthFacade({
     homeDir,

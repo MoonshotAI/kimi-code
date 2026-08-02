@@ -156,6 +156,7 @@ pub fn run_turn<'a>(
  input.tools,
  tool_defs.clone(),
  &retry_config,
+ input.cancellation.clone(),
  ).await.map_err(|e| -> Box<dyn std::error::Error + 'a> {
  Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
  })?;

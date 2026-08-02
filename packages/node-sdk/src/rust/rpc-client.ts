@@ -271,10 +271,9 @@ export class RustRpcClient extends SDKRpcClientBase {
   private dispatchEngineEvent(raw: unknown): void {
     const event = (raw ?? {}) as { type?: string; session_id?: string | null };
     const sessionId = event.session_id ?? '';
-    const translator = this.translators.get(sessionId);
-    if (translator === undefined) return;
-    const translated = translator.translate(raw);
-    if (translated !== null) this.receiveEvent(translated as unknown as ProtocolEvent);
+    if (sessionId.length === 0) return;
+    const { session_id: _drop, ...payload } = event;
+    this.receiveEvent({ ...payload, sessionId, agentId: 'main' } as never);
   }
 
   private async authorizeTool(raw: unknown): Promise<{ block: boolean; resolved: boolean }> {
@@ -429,10 +428,6 @@ export class RustRpcClient extends SDKRpcClientBase {
       },
       steer: async ({ sessionId, input }: any) => {
         await r.sessionSteer(sessionId, [{ type: 'text', text: promptText(input) }]);
-        this.emitSynthetic(sessionId, {
-          type: 'turn.steer',
-          input: [{ type: 'text', text: promptText(input) }],
-        });
       },
       cancel: async ({ sessionId }: any) => {
         await r.sessionCancel(sessionId);
@@ -442,21 +437,15 @@ export class RustRpcClient extends SDKRpcClientBase {
       },
       setModel: async ({ sessionId, model }: any) => {
         await r.sessionSetModel(sessionId, model);
-        this.emitSynthetic(sessionId, { type: 'config.update', model_alias: model });
       },
       setThinking: async ({ sessionId, effort }: any) => {
         await r.sessionSetThinking(sessionId, effort ?? null);
-        this.emitSynthetic(sessionId, {
-          type: 'config.update',
-          thinking_effort: effort ?? null,
-        });
       },
       setPermission: async ({ sessionId, mode }: any) => {
         // The engine gate mode is process-wide; a per-session value is
         // approximated by the last-set mode (documented limitation).
         await (r as unknown as { permissionSetMode?(mode: string): Promise<unknown> })
           .permissionSetMode?.(mode);
-        this.emitSynthetic(sessionId, { type: 'permission.set_mode', mode });
       },
       enterPlan: async ({ sessionId }: any) => {
         await r.sessionSetPlanMode(sessionId, true);
@@ -485,8 +474,12 @@ export class RustRpcClient extends SDKRpcClientBase {
       unregisterTool: async () => {},
       setActiveTools: async () => {},
       getTools: async () => [] as never,
-      addAdditionalDir: async ({ id, path, persist }: any) => {
-        const result = await r.sessionAddAdditionalDir(id, path, persist ?? true);
+      addAdditionalDir: async ({ sessionId, path, persist }: any) => {
+        // NOTE: the engine `session/add_additional_dir` RPC has no `persist`
+        // parameter today — the SDK flag is accepted for contract parity but
+        // silently dropped by the wire (persisted vs ephemeral dirs is an
+        // engine-side gap; see RUST_MIGRATION_PLAN TODO).
+        const result = await r.sessionAddAdditionalDir(sessionId, path);
         return { additionalDirs: result?.additional_dirs ?? [] };
       },
       updateSessionMetadata: async ({ sessionId, patch }: any) => {
@@ -509,7 +502,6 @@ export class RustRpcClient extends SDKRpcClientBase {
             isCustomTitle: true,
           }).catch(() => {});
         }
-        this.emitSynthetic(sessionId, { type: 'session.meta.updated', title, patch: { title } });
       },
       runShellCommand: async ({ sessionId, command, commandId }: any) => {
         const result = await r.sessionRunShell(sessionId, command, undefined, commandId);
@@ -772,13 +764,13 @@ export class RustRpcClient extends SDKRpcClientBase {
   }
 
   private mapContext(raw: unknown): unknown {
-    if (raw === null || typeof raw !== 'object') return { messages: [], tokenCount: 0 };
+    if (raw === null || typeof raw !== 'object') return { history: [], tokenCount: 0 };
     const obj = raw as Record<string, unknown>;
-    const messages = Array.isArray(obj['messages'])
-      ? (obj['messages'] as Record<string, unknown>[]).map(mapContextMessage)
+    const history = Array.isArray(obj['history'])
+      ? (obj['history'] as Record<string, unknown>[]).map(mapContextMessage)
       : [];
     return {
-      messages,
+      history,
       tokenCount: typeof obj['token_count'] === 'number' ? obj['token_count'] : 0,
       ...(obj['projectRoot'] !== undefined ? { projectRoot: obj['projectRoot'] } : {}),
       ...(obj['cwd'] !== undefined ? { cwd: obj['cwd'] } : {}),

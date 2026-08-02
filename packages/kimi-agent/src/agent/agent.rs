@@ -764,6 +764,10 @@ pub struct Agent {
     pub goal_enabled: bool,
     /// Goal mode state machine (active goal lifecycle).
     pub goal: Option<GoalMode>,
+    /// Reasoning effort applied from the next turn (`set_thinking`).
+    /// Independent of the native-LLM transport: host-proxy sessions carry it
+    /// too, and `session_status` reports it.
+    pub thinking_effort: Option<String>,
     pub native_llm: Option<crate::rpc::types::NativeLlmConfig>,
     /// Secondary-model config for subagent spawns (A12). When a subagent's
     /// model preference resolves to `Secondary`, the child binds this model.
@@ -866,6 +870,10 @@ impl Agent {
             )),
             goal_enabled: options.goal_enabled,
             goal: if options.goal_enabled { Some(GoalMode::new()) } else { None },
+            thinking_effort: options
+                .native_llm
+                .as_ref()
+                .and_then(|c| c.reasoning_effort.clone()),
             native_llm: options.native_llm.clone(),
             secondary_native_llm: options.secondary_native_llm.clone(),
             mcp: std::sync::Arc::new(tokio::sync::Mutex::new(
@@ -1022,8 +1030,9 @@ impl Agent {
     ///   medium=4096, high=16k).
     pub fn set_thinking(&mut self, effort: Option<String>) {
         if let Some(ref mut cfg) = self.native_llm {
-            cfg.reasoning_effort = effort;
+            cfg.reasoning_effort = effort.clone();
         }
+        self.thinking_effort = effort;
     }
 
     /// Add an additional directory to the session's workspace allowlist.
@@ -2047,9 +2056,13 @@ any partial output shown above is incomplete. The user's next message continues 
             .clone()
             .or_else(|| self.native_llm.as_ref().map(|c| c.model.clone()));
         let thinking_effort = self
-            .native_llm
-            .as_ref()
-            .and_then(|c| c.reasoning_effort.clone())
+            .thinking_effort
+            .clone()
+            .or_else(|| {
+                self.native_llm
+                    .as_ref()
+                    .and_then(|c| c.reasoning_effort.clone())
+            })
             .unwrap_or_default();
         let permission = serde_json::to_value(self.permission.mode())
             .unwrap_or_else(|_| "manual".into());

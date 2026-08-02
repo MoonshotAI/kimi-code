@@ -94,6 +94,12 @@ export interface KimiHarnessOptions {
   readonly telemetry?: TelemetryClient | undefined;
   readonly onOAuthRefresh?: ((outcome: OAuthRefreshOutcome) => void) | undefined;
   readonly sessionStartedProperties?: TelemetryProperties;
+  /**
+   * Host-proxy model step: answer one engine model request. When set, engine
+   * turns run against this callback (host-proxy mode) instead of a
+   * native-LLM provider.
+   */
+  readonly llmStep?: ((req: unknown) => Promise<unknown>) | undefined;
 }
 
 export interface CreateSessionOptions {

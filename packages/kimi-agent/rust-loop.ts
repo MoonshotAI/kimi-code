@@ -2983,6 +2983,21 @@ export async function sessionDelete(sessionId: string): Promise<{ deleted: boole
   return agentCall('session/delete', { session_id: sessionId });
 }
 
+/** Fork a persisted session under a new id (SDK `forkSession` parity): copies
+ *  conversation + context, drops the goal state. Resolves `{ forked: true }`
+ *  when the source existed, `{ forked: false }` for an unknown source id. */
+export async function sessionFork(input: {
+  sessionId: string;
+  forkId: string;
+  title?: string;
+}): Promise<{ forked: boolean } | null> {
+  return agentCall('session/fork', {
+    session_id: input.sessionId,
+    fork_id: input.forkId,
+    title: input.title,
+  });
+}
+
 /** Read-class filesystem action against the session workspace root (stage
  *  2d): `read` (path + optional line_offset/n_lines), `list` (glob), or
  *  `search` (query + limit). */
