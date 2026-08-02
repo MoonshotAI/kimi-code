@@ -1,0 +1,652 @@
+/**
+ * Local port of agent-core v1's `src/config/schema.ts` (zod schema for
+ * config.toml) plus its two schema-time dependencies:
+ * - `HOOK_EVENT_TYPES` from `src/session/hooks/types.ts`
+ * - `parsePattern` from `src/agent/permission/matches-rule.ts`
+ *
+ * Copied verbatim so node-sdk keeps the same config schema without the
+ * retired `@moonshot-ai/agent-core` package. `parsePattern` keeps only the
+ * TS-fallback parser (agent-core preferred the Rust native parser when the
+ * native module was available; the TS parser is the reference grammar).
+ */
+import { z } from 'zod';
+
+import { ErrorCodes, KimiError } from './errors';
+
+export const HOOK_EVENT_TYPES = [
+  'PreToolUse',
+  'PostToolUse',
+  'PostToolUseFailure',
+  'PermissionRequest',
+  'PermissionResult',
+  'UserPromptSubmit',
+  'Stop',
+  'StopFailure',
+  'Interrupt',
+  'SessionStart',
+  'SessionEnd',
+  'SubagentStart',
+] as const;
+
+export const ProviderTypeSchema = z.enum([
+  'anthropic',
+  'openai',
+  'kimi',
+  'google-genai',
+  'openai_responses',
+  'vertexai',
+  'astron',
+]);
+
+export type ProviderType = z.infer<typeof ProviderTypeSchema>;
+
+export const OAuthRefSchema = z.object({
+  storage: z.enum(['file', 'keyring']),
+  key: z.string().min(1),
+  oauthHost: z.string().min(1).optional(),
+});
+
+export type OAuthRef = z.infer<typeof OAuthRefSchema>;
+
+const StringRecordSchema = z.record(z.string(), z.string());
+
+export const ProviderConfigSchema = z.object({
+  type: ProviderTypeSchema,
+  apiKey: z.string().optional(),
+  baseUrl: z.string().optional(),
+  defaultModel: z.string().optional(),
+  oauth: OAuthRefSchema.optional(),
+  env: StringRecordSchema.optional(),
+  customHeaders: StringRecordSchema.optional(),
+  source: z.record(z.string(), z.unknown()).optional(),
+  // Astron (xunfei Coding Plan) runtime knobs, edited via the TUI Astron
+  // settings panel and forwarded to the OpenAI-legacy transport. Ignored by
+  // other provider types.
+  stream: z.boolean().optional(),
+  temperature: z.number().optional(),
+  maxTokens: z.number().int().min(1).optional(),
+  searchDisable: z.boolean().optional(),
+  // Stateful OpenAI Responses mode (`store: true` + `previous_response_id`
+  // chaining): each request uploads only the new input items; the server
+  // reconstructs the shared prefix from the stored previous response.
+  // Official OpenAI Responses API only; ignored by other provider types.
+  statefulResponses: z.boolean().optional(),
+});
+
+export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
+
+const ModelAliasBaseSchema = z.object({
+  provider: z.string(),
+  model: z.string(),
+  maxContextSize: z.number().int().min(1),
+  // Declared prompt/input cap when below the total window (e.g. gpt-5: 400k
+  // window, 272k input). Compaction and other prompt-budget checks prefer it
+  // over max_context_size; completion budgeting keeps the total window.
+  maxInputSize: z.number().int().min(1).optional(),
+  maxOutputSize: z.number().int().min(1).optional(),
+  capabilities: z.array(z.string()).optional(),
+  displayName: z.string().optional(),
+  reasoningKey: z.string().optional(),
+  protocol: z.literal('anthropic').optional(),
+  // Explicitly declare adaptive-thinking support, overriding the kosong
+  // model-name version inference. Needed for custom-named Anthropic endpoints
+  // whose model name does not encode a parseable Claude version.
+  adaptiveThinking: z.boolean().optional(),
+  // Efforts (e.g. ["low", "high", "max"]) the model supports for
+  // extended thinking, plus the catalog default. Generic to any provider:
+  // managed models fill these from the catalog, others can be set by hand in
+  // config.toml. The user's chosen effort is stored globally in thinking.effort.
+  supportEfforts: z.array(z.string()).optional(),
+  defaultEffort: z.string().optional(),
+  // The effort value that encodes "thinking off" on the wire for this model
+  // (models.dev declares it as the "none" entry, e.g. xai grok). When set,
+  // turning thinking off sends this value instead of omitting the effort
+  // field — required by models whose default is to reason.
+  offEffort: z.string().optional(),
+  // Route the Anthropic transport through the beta Messages API
+  // (`POST /v1/messages?beta=true`) instead of the standard endpoint. Used by
+  // managed Kimi Code models that declare `protocol: 'anthropic'`.
+  betaApi: z.boolean().optional(),
+  // Prompt-cache entry lifetime for Anthropic-transport models. '1h' doubles
+  // the cache-write price but keeps the prefix warm across human think-time
+  // gaps between turns (default '5m' expires during longer pauses and forces
+  // a full re-prefill). Ignored by non-Anthropic transports.
+  cacheTtl: z.enum(['5m', '1h']).optional(),
+  // Per-model endpoint override, paired with `protocol`. Catalog imports set
+  // it when a gateway provider serves this model over a different endpoint
+  // than the provider default.
+  baseUrl: z.string().optional(),
+});
+
+export const ModelAliasOverrideSchema = ModelAliasBaseSchema.omit({
+  provider: true,
+  model: true,
+  protocol: true,
+  betaApi: true,
+  baseUrl: true,
+}).partial();
+
+export type ModelAliasOverrides = z.infer<typeof ModelAliasOverrideSchema>;
+
+export const ModelAliasSchema = ModelAliasBaseSchema.extend({
+  // User overrides for a model alias. These win over the top-level fields at
+  // runtime and are preserved by provider-model refreshes.
+  overrides: ModelAliasOverrideSchema.optional(),
+});
+
+export type ModelAlias = z.infer<typeof ModelAliasSchema>;
+
+export const ThinkingConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  effort: z.string().optional(),
+  // Moonshot Preserved Thinking passthrough (`thinking.keep`). The value is
+  // forwarded verbatim to the wire; "all" enables it, an off-value
+  // (false/0/no/off/none/null) disables it. Defaults to "all" when unset.
+  keep: z.string().optional(),
+});
+
+export type ThinkingConfig = z.infer<typeof ThinkingConfigSchema>;
+
+export const PermissionModeSchema = z.enum(['yolo', 'manual', 'auto']);
+
+export const PermissionRuleDecisionSchema = z.enum(['allow', 'deny', 'ask']);
+export const PermissionRuleScopeSchema = z.enum([
+  'turn-override',
+  'session-runtime',
+  'project',
+  'user',
+]);
+
+export const PermissionRuleSchema = z.object({
+  decision: PermissionRuleDecisionSchema,
+  scope: PermissionRuleScopeSchema.default('user'),
+  pattern: z.string().min(1).refine(isValidPermissionPattern, {
+    message: 'Invalid permission rule pattern',
+  }),
+  reason: z.string().optional(),
+});
+
+export const PermissionConfigSchema = z.object({
+  rules: z.array(PermissionRuleSchema).optional(),
+});
+
+export type PermissionConfig = z.infer<typeof PermissionConfigSchema>;
+
+export const LoopControlSchema = z.object({
+  maxStepsPerTurn: z.number().int().min(0).optional(),
+  maxRetriesPerStep: z.number().int().min(0).optional(),
+  maxRalphIterations: z.number().int().min(-1).optional(), // -1 means unlimited
+  reservedContextSize: z.number().int().min(0).optional(),
+  compactionTriggerRatio: z.number().min(0.5).max(0.99).optional(),
+  /**
+   * Cache-aware early compaction trigger ratio. When the context has grown
+   * past this fraction of the model window and the provider prompt cache has
+   * been idle longer than the configured cache TTL, auto-compaction runs
+   * before the normal trigger to avoid paying two cold prefills.
+   */
+  earlyCompactionTriggerRatio: z.number().min(0.5).max(0.99).optional(),
+});
+
+export type LoopControl = z.infer<typeof LoopControlSchema>;
+
+export const BackgroundConfigSchema = z.object({
+  maxRunningTasks: z.number().int().min(1).optional(),
+  keepAliveOnExit: z.boolean().optional(),
+  /**
+   * When a foreground Bash command times out, move it to the background
+   * instead of killing it. Defaults to true when unset.
+   */
+  bashAutoBackgroundOnTimeout: z.boolean().optional(),
+  /**
+   * Default timeout (seconds) for background Bash tasks when the call omits
+   * `timeout`, also used to re-arm foreground commands moved to the
+   * background. `0` means no timeout. Explicit per-call `timeout` values are
+   * unaffected. Defaults to the Bash tool's built-in 600s when unset.
+   */
+  bashTaskTimeoutS: z.number().int().min(0).optional(),
+  killGracePeriodMs: z.number().int().min(0).optional(),
+  printWaitCeilingS: z.number().int().min(1).optional(),
+  printBackgroundMode: z.enum(['exit', 'drain', 'steer']).optional(),
+  printMaxTurns: z.number().int().min(1).optional(),
+});
+
+export type BackgroundConfig = z.infer<typeof BackgroundConfigSchema>;
+
+export const SubagentConfigSchema = z.object({
+  /**
+   * Per-subagent (`Agent` / `AgentSwarm`, foreground and background) timeout
+   * in milliseconds. `0` means no timeout. Defaults to 2 hours when unset.
+   */
+  timeoutMs: z.number().int().min(0).optional(),
+});
+
+export type SubagentConfig = z.infer<typeof SubagentConfigSchema>;
+
+export const AgentConfigSchema = z.object({
+  /**
+   * The agent engine. The Rust engine is the only engine since the v1/v2
+   * migration — the TypeScript engine was removed. Defaults to `"rust"`.
+   */
+  engine: z.enum(['rust']).default('rust'),
+  /**
+   * MultiLLM: list of provider names to use for concurrent execution.
+   * When set and `engine === "rust"`, the Rust engine sends the same prompt
+   * to all listed providers concurrently and returns the first response
+   * ("first past the post").
+   */
+  multiLlm: z.array(z.string()).optional(),
+  /**
+   * Native HTTP LLM transport (Rust engine only). Names a provider from
+   * `providers` that the Rust engine should call directly over HTTP with
+   * SSE streaming, instead of proxying each LLM call back through the JS
+   * host. Only `openai`/`kimi` (Chat Completions) and `anthropic`
+   * (Messages) provider types are supported; other types fall back to the
+   * host proxy.
+   */
+  nativeLlmProvider: z.string().optional(),
+  /**
+   * Native tool execution (Rust engine only). When enabled, read-only tools
+   * (Read/Grep/Glob) execute inside the Rust engine process, sandboxed to
+   * the workspace root — skipping the host round-trip. Anything outside
+   * the sandbox or not natively supported still executes on the JS host
+   * under the full permission system.
+   *
+   * Defaults to ON when `engine = "rust"`; set `nativeTools = false` to
+   * route every tool call back through the JS host.
+   */
+  nativeTools: z.boolean().optional(),
+});
+
+export type AgentConfig = z.infer<typeof AgentConfigSchema>;
+
+export const MAX_MCP_TIMEOUT_MS = 2_147_483_647;
+const McpTimeoutMsSchema = z.number().int().min(1).max(MAX_MCP_TIMEOUT_MS);
+
+export const McpConfigSchema = z.object({
+  /**
+   * Global default MCP server startup (connect + tool discovery) timeout in
+   * milliseconds. A per-server `startupTimeoutMs` in `mcp.json` and the
+   * KIMI_MCP_STARTUP_TIMEOUT_MS env var both win over this value. Defaults
+   * to 30s when unset.
+   */
+  startupTimeoutMs: McpTimeoutMsSchema.optional(),
+  /**
+   * Global default single MCP tool-call timeout in milliseconds. A
+   * per-server `toolTimeoutMs` in `mcp.json` and the
+   * KIMI_MCP_TOOL_TIMEOUT_MS env var both win over this value. Falls back to
+   * the client built-in default when unset.
+   */
+  toolTimeoutMs: McpTimeoutMsSchema.optional(),
+  /**
+   * When `true`, MCP servers declared in project-local config files
+   * (`.mcp.json` and `.kimi-code/mcp.json`) are loaded and started at
+   * session open. These files can declare arbitrary stdio commands, so
+   * they should only be trusted in repos you control.
+   *
+   * Defaults to `false`. Set this to `true` only for projects you trust.
+   */
+  trustProjectMcpConfig: z.boolean().optional(),
+});
+
+export type McpConfig = z.infer<typeof McpConfigSchema>;
+
+export const ImageConfigSchema = z.object({
+  /**
+   * Longest-edge ceiling (px) applied when compressing images for the model.
+   * Overrides the built-in default; the KIMI_IMAGE_MAX_EDGE_PX env var wins
+   * over this value.
+   */
+  maxEdgePx: z.number().int().min(1).optional(),
+  /**
+   * Raw-byte budget for images the model reads for itself (ReadMediaFile's
+   * default path). Overrides the built-in default; the
+   * KIMI_IMAGE_READ_BYTE_BUDGET env var wins over this value. Explicit
+   * region / full_resolution reads use the provider-scale per-image limit
+   * instead.
+   */
+  readByteBudget: z.number().int().min(1).optional(),
+});
+
+export type ImageConfig = z.infer<typeof ImageConfigSchema>;
+
+export const ModelCatalogConfigSchema = z.object({
+  /** Interval (ms) between automatic provider-model refreshes. `0` disables. */
+  refreshIntervalMs: z.number().int().min(0).optional(),
+  /** Refresh once shortly after the daemon starts. */
+  refreshOnStart: z.boolean().optional(),
+});
+
+export type ModelCatalogConfig = z.infer<typeof ModelCatalogConfigSchema>;
+
+export const ExperimentalConfigSchema = z.record(z.string(), z.union([z.boolean(), z.string()]));
+
+export type ExperimentalConfig = z.infer<typeof ExperimentalConfigSchema>;
+
+export const HookDefSchema = z
+  .object({
+    event: z.enum(HOOK_EVENT_TYPES),
+    matcher: z.string().optional(),
+    command: z.string().min(1),
+    timeout: z.number().int().min(1).max(600).optional(),
+  })
+  .strict();
+
+export type HookDefConfig = z.infer<typeof HookDefSchema>;
+
+export const MoonshotServiceConfigSchema = z.object({
+  baseUrl: z.string().optional(),
+  apiKey: z.string().optional(),
+  oauth: OAuthRefSchema.optional(),
+  customHeaders: StringRecordSchema.optional(),
+});
+
+export type MoonshotServiceConfig = z.infer<typeof MoonshotServiceConfigSchema>;
+
+export const ServicesConfigSchema = z.object({
+  moonshotSearch: MoonshotServiceConfigSchema.optional(),
+  moonshotFetch: MoonshotServiceConfigSchema.optional(),
+});
+
+export type ServicesConfig = z.infer<typeof ServicesConfigSchema>;
+
+const McpServerCommonFields = {
+  enabled: z.boolean().optional(),
+  startupTimeoutMs: McpTimeoutMsSchema.optional(),
+  toolTimeoutMs: McpTimeoutMsSchema.optional(),
+  enabledTools: z.array(z.string()).optional(),
+  disabledTools: z.array(z.string()).optional(),
+} as const;
+
+export const McpServerStdioConfigSchema = z.object({
+  transport: z.literal('stdio'),
+  command: z.string().min(1),
+  args: z.array(z.string()).optional(),
+  env: StringRecordSchema.optional(),
+  cwd: z.string().optional(),
+  // Reserved for future kaos-backed stdio launchers. `undefined` and `'local'`
+  // both mean direct child_process spawn for now.
+  executor: z.enum(['local', 'kaos']).optional(),
+  ...McpServerCommonFields,
+});
+
+export type McpServerStdioConfig = z.infer<typeof McpServerStdioConfigSchema>;
+
+export const McpServerHttpConfigSchema = z.object({
+  transport: z.literal('http'),
+  url: z.string().url(),
+  headers: StringRecordSchema.optional(),
+  // Backward-compatible UI marker. OAuth is still discovered from a remote
+  // server's 401 response; this flag only records that the user explicitly
+  // chose OAuth and lets hosts expose login/reset controls before connecting.
+  auth: z.literal('oauth').optional(),
+  // Indirect secret reference: the bearer token is looked up from
+  // `process.env[bearerTokenEnvVar]` at connection time, never committed.
+  bearerTokenEnvVar: z.string().min(1).optional(),
+  env: StringRecordSchema.optional(),
+  ...McpServerCommonFields,
+});
+
+export type McpServerHttpConfig = z.infer<typeof McpServerHttpConfigSchema>;
+
+export const McpServerSseConfigSchema = z.object({
+  transport: z.literal('sse'),
+  url: z.string().url(),
+  headers: StringRecordSchema.optional(),
+  auth: z.literal('oauth').optional(),
+  // Indirect secret reference: the bearer token is looked up from
+  // `process.env[bearerTokenEnvVar]` at connection time, never committed.
+  bearerTokenEnvVar: z.string().min(1).optional(),
+  env: StringRecordSchema.optional(),
+  ...McpServerCommonFields,
+});
+
+export type McpServerSseConfig = z.infer<typeof McpServerSseConfigSchema>;
+
+export type McpRemoteServerConfig = McpServerHttpConfig | McpServerSseConfig;
+
+const McpServerConfigDiscriminatedSchema = z.discriminatedUnion('transport', [
+  McpServerStdioConfigSchema,
+  McpServerHttpConfigSchema,
+  McpServerSseConfigSchema,
+]);
+
+export const McpServerConfigSchema = z.preprocess((raw) => {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return raw;
+  const obj = raw as Record<string, unknown>;
+  if ('transport' in obj) return obj;
+  if (typeof obj['command'] === 'string' && typeof obj['url'] === 'string') return obj;
+  if (typeof obj['command'] === 'string') return { ...obj, transport: 'stdio' };
+  if (typeof obj['url'] === 'string') return { ...obj, transport: 'http' };
+  return obj;
+}, McpServerConfigDiscriminatedSchema);
+
+export type McpServerConfig = z.infer<typeof McpServerConfigSchema>;
+
+/**
+ * Reject URLs that would let a configured MCP server exfiltrate bearer
+ * tokens to internal networks or cloud metadata services. Allows
+ * loopback for local development only when the host is literally
+ * localhost (not 127.0.0.1 / ::1 / 0.0.0.0), since a developer
+ * running a local MCP server typically uses localhost.
+ */
+export function isSafeMcpRemoteUrl(value: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+  let host = parsed.hostname.toLowerCase();
+  // URL.hostname wraps IPv6 literals in brackets (e.g. ``[::1]``); strip them
+  // so the IPv6 checks see the bare address.
+  if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
+  // Only `localhost` is permitted for loopback; numeric 127.0.0.1 / ::1 are
+  // blocked so a malicious config cannot smuggle a bearer token to a local
+  // service via an IP literal that bypasses DNS review.
+  if (host === 'localhost') return true;
+  if (isPrivateOrLoopbackIPv4(host)) return false;
+  if (isPrivateOrLoopbackIPv6(host)) return false;
+  if (looksLikeObfuscatedLoopback(host)) return false;
+  return true;
+}
+
+function isPrivateOrLoopbackIPv4(host: string): boolean {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (m === null) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  if (a > 255 || b > 255 || Number(m[3]) > 255 || Number(m[4]) > 255) return false;
+  if (a === 127) return true;
+  if (a === 10) return true;
+  if (a === 0) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  return false;
+}
+
+function isPrivateOrLoopbackIPv6(host: string): boolean {
+  const h = host.toLowerCase();
+  if (h === '::1' || h === '::') return true;
+  if (h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return true;
+  if (h.startsWith('::ffff:')) {
+    const v4 = h.slice('::ffff:'.length);
+    if (isPrivateOrLoopbackIPv4(v4)) return true;
+  }
+  return false;
+}
+
+function looksLikeObfuscatedLoopback(host: string): boolean {
+  // Decimal / hex / octal encodings of 127.0.0.1 / 0.0.0.0
+  if (/^\d+$/.test(host)) {
+    const n = Number(host);
+    // 2130706433 = 127.0.0.1, 0 = 0.0.0.0
+    if (n === 2130706433 || n === 0) return true;
+  }
+  if (/^0x[0-9a-f]+$/i.test(host)) return true;
+  if (/^0[0-7]+(\.[0-7]+)*$/.test(host)) return true;
+  return false;
+}
+
+export const KimiConfigSchema = z.object({
+  providers: z.record(z.string(), ProviderConfigSchema).default({}),
+  defaultProvider: z.string().optional(),
+  defaultModel: z.string().optional(),
+  models: z.record(z.string(), ModelAliasSchema).optional(),
+  thinking: ThinkingConfigSchema.optional(),
+  planMode: z.boolean().optional(),
+  yolo: z.boolean().optional(),
+  defaultPermissionMode: PermissionModeSchema.optional(),
+  defaultPlanMode: z.boolean().optional(),
+  permission: PermissionConfigSchema.optional(),
+  hooks: z.array(HookDefSchema).optional(),
+  services: ServicesConfigSchema.optional(),
+  mergeAllAvailableSkills: z.boolean().optional(),
+  extraSkillDirs: z.array(z.string()).optional(),
+  loopControl: LoopControlSchema.optional(),
+  background: BackgroundConfigSchema.optional(),
+  subagent: SubagentConfigSchema.optional(),
+  agent: AgentConfigSchema.optional(),
+  mcp: McpConfigSchema.optional(),
+  image: ImageConfigSchema.optional(),
+  modelCatalog: ModelCatalogConfigSchema.optional(),
+  experimental: ExperimentalConfigSchema.optional(),
+  telemetry: z.boolean().optional(),
+  raw: z.record(z.string(), z.unknown()).optional(),
+});
+
+export type KimiConfig = z.infer<typeof KimiConfigSchema>;
+
+const ProviderConfigPatchSchema = ProviderConfigSchema.partial();
+const ModelAliasPatchSchema = ModelAliasSchema.partial();
+const ThinkingConfigPatchSchema = ThinkingConfigSchema.partial();
+const PermissionConfigPatchSchema = PermissionConfigSchema.partial();
+const LoopControlPatchSchema = LoopControlSchema.partial();
+const BackgroundConfigPatchSchema = BackgroundConfigSchema.partial();
+const SubagentConfigPatchSchema = SubagentConfigSchema.partial();
+const AgentConfigPatchSchema = AgentConfigSchema.partial();
+const McpConfigPatchSchema = McpConfigSchema.partial();
+const ImageConfigPatchSchema = ImageConfigSchema.partial();
+const ModelCatalogConfigPatchSchema = ModelCatalogConfigSchema.partial();
+const ExperimentalConfigPatchSchema = ExperimentalConfigSchema;
+const MoonshotServiceConfigPatchSchema = MoonshotServiceConfigSchema.partial();
+const ServicesConfigPatchSchema = z.object({
+  moonshotSearch: MoonshotServiceConfigPatchSchema.optional(),
+  moonshotFetch: MoonshotServiceConfigPatchSchema.optional(),
+});
+
+export const KimiConfigPatchSchema = z
+  .object({
+    providers: z.record(z.string(), ProviderConfigPatchSchema).optional(),
+    defaultProvider: z.string().optional(),
+    defaultModel: z.string().optional(),
+    models: z.record(z.string(), ModelAliasPatchSchema).optional(),
+    thinking: ThinkingConfigPatchSchema.optional(),
+    planMode: z.boolean().optional(),
+    yolo: z.boolean().optional(),
+    defaultPermissionMode: PermissionModeSchema.optional(),
+    defaultPlanMode: z.boolean().optional(),
+    permission: PermissionConfigPatchSchema.optional(),
+    hooks: z.array(HookDefSchema).optional(),
+    services: ServicesConfigPatchSchema.optional(),
+    mergeAllAvailableSkills: z.boolean().optional(),
+    extraSkillDirs: z.array(z.string()).optional(),
+    loopControl: LoopControlPatchSchema.optional(),
+    background: BackgroundConfigPatchSchema.optional(),
+    subagent: SubagentConfigPatchSchema.optional(),
+    agent: AgentConfigPatchSchema.optional(),
+    mcp: McpConfigPatchSchema.optional(),
+    image: ImageConfigPatchSchema.optional(),
+    modelCatalog: ModelCatalogConfigPatchSchema.optional(),
+    experimental: ExperimentalConfigPatchSchema.optional(),
+    telemetry: z.boolean().optional(),
+  })
+  .strict();
+
+export type KimiConfigPatch = z.infer<typeof KimiConfigPatchSchema>;
+
+export function getDefaultConfig(): KimiConfig {
+  return {
+    providers: {},
+  };
+}
+
+export function validateConfig(config: unknown): KimiConfig {
+  try {
+    return KimiConfigSchema.parse(config);
+  } catch (error) {
+    throw new KimiError(
+      ErrorCodes.CONFIG_INVALID,
+      `Invalid configuration: ${formatConfigValidationError(error)}`,
+      {
+        cause: error,
+      },
+    );
+  }
+}
+
+export function formatConfigValidationError(error: unknown): string {
+  const missingModelContextSize = missingModelContextSizeMessage(error);
+  if (missingModelContextSize !== undefined) return missingModelContextSize;
+  return error instanceof Error ? error.message : String(error);
+}
+
+function missingModelContextSizeMessage(error: unknown): string | undefined {
+  if (!(error instanceof z.ZodError)) return undefined;
+  for (const issue of error.issues) {
+    const [section, modelName, field] = issue.path;
+    if (section === 'models' && typeof modelName === 'string' && field === 'maxContextSize') {
+      return `Model "${modelName}" must define a positive max_context_size in config.toml.`;
+    }
+  }
+  return undefined;
+}
+
+function isValidPermissionPattern(pattern: string): boolean {
+  try {
+    parsePattern(pattern);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * DSL parser for PermissionRule `pattern` strings (TS reference parser).
+ *
+ * Grammar:
+ *   pattern    := toolName ( "(" argPattern ")" )?
+ *   toolName   := identifier characters (e.g. `Bash`, `mcp__github__*`)
+ *   argPattern := any string interpreted only by a tool-provided matcher
+ */
+export interface ParsedPattern {
+  readonly toolName: string;
+  readonly argPattern?: string;
+}
+
+export function parsePattern(pattern: string): ParsedPattern {
+  const trimmed = pattern.trim();
+  if (trimmed.length === 0) {
+    throw new Error('permission pattern: empty string');
+  }
+
+  const openIdx = trimmed.indexOf('(');
+  if (openIdx === -1) {
+    return { toolName: trimmed };
+  }
+
+  if (!trimmed.endsWith(')')) {
+    throw new Error(`permission pattern: missing closing paren in "${pattern}"`);
+  }
+
+  const toolName = trimmed.slice(0, openIdx);
+  const argPattern = trimmed.slice(openIdx + 1, -1);
+  if (toolName.length === 0) {
+    throw new Error(`permission pattern: empty tool name in "${pattern}"`);
+  }
+  if (argPattern.length === 0) {
+    return { toolName };
+  }
+  return { toolName, argPattern };
+}

@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { computeWorkdirBucket, oldMd5BucketName } from '../../src/sessions/workdir-bucket.js';
-import { encodeWorkDirKey } from '@moonshot-ai/agent-core/session/store';
+import { encodeWorkDirKey } from '../../src/sessions/workdir-key.js';
 import { createHash } from 'node:crypto';
 
 /**
- * `computeWorkdirBucket` now aliases agent-core's `encodeWorkDirKey`, so the
- * migrator and the running app share one implementation. The `byte-identical`
- * suite below guards against regressing back to a divergent local copy.
+ * `computeWorkdirBucket` now aliases the local copy of agent-core's
+ * `encodeWorkDirKey`, so the migrator and the running app share one
+ * implementation. The `byte-identical` suite below guards against regressing
+ * back to a divergent local copy.
  */
 
 describe('computeWorkdirBucket', () => {

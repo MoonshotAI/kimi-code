@@ -15,84 +15,40 @@ import type {
   ActivityRetryState,
   ActivityTurnState,
   ActivityViewLifecycle,
-  AgentActivityState,
-  ApprovalRef,
-  BackgroundRef,
-  ToolCallRef,
-  TurnPhase,
-} from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
-import type { AgentContextData } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
-import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import type { PlanData } from '@moonshot-ai/agent-core-v2/agent/plan/plan';
-import type {
   AgentAPI,
-  CancelPlanPayload,
-  CancelShellCommandPayload,
-  EmptyPayload,
-  GetTaskOutputPayload,
-  GetTasksPayload,
-  PromptPart,
-  RunShellCommandPayload,
-  SetModelPayload,
-  SetModelResult,
-  ShellCommandResult,
-  StopTaskPayload,
-} from '@moonshot-ai/agent-core-v2/agent/rpc/core-api';
-import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
-import type { ISessionScopeHandle } from '@moonshot-ai/agent-core-v2/_base/di/scope';
-import type {
-  CreateChildSessionOptions,
-  CreateSessionOptions,
-  ForkSessionOptions,
-} from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
-import type {
+  AgentActivityState,
+  AgentContextData,
+  AgentMeta,
+  ApprovalRef,
   ApprovalRequest,
   ApprovalResponse,
-} from '@moonshot-ai/agent-core-v2/session/approval/approval';
-import type {
-  Interaction,
-  InteractionResolution,
-} from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
-import type {
-  QuestionAnswers,
-  QuestionItem,
-  QuestionOption,
-  QuestionRequest,
-  QuestionResponse,
-  QuestionResult,
-} from '@moonshot-ai/agent-core-v2/session/question/question';
-import type {
-  AgentMeta,
-  SessionMeta,
-  SessionMetadataChangedEvent,
-  SessionMetaPatch,
-} from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
-import type {
   AuthStatus,
-  IOAuthService,
-} from '@moonshot-ai/agent-core-v2/app/auth/auth';
-import type { IBootstrapService } from '@moonshot-ai/agent-core-v2/app/bootstrap/bootstrap';
-import type {
+  BackgroundRef,
+  CancelPlanPayload,
+  CancelShellCommandPayload,
   ConfigDiagnostic,
   ConfigInspectValue,
   ConfigTarget,
-} from '@moonshot-ai/agent-core-v2/app/config/config';
-import type { ExperimentalFeatureState } from '@moonshot-ai/agent-core-v2/app/flag/flag';
-import type {
+  CreateChildSessionOptions,
+  CreateSessionOptions,
+  EmptyPayload,
+  ExperimentalFeatureState,
+  ForkSessionOptions,
   FsBrowseResponse,
   FsHomeResponse,
-} from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
-import type { ModelRecord } from '@moonshot-ai/agent-core-v2/kosong/model/model';
-import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
-import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
-import type {
   GetPluginInfoInput,
+  GetTaskOutputPayload,
+  GetTasksPayload,
+  IBootstrapService,
+  IModelCatalog,
   InstallPluginInput,
-  RemovePluginInput,
-  SetPluginEnabledInput,
-  SetPluginMcpServerEnabledInput,
-} from '@moonshot-ai/agent-core-v2/app/plugin/plugin';
-import type {
+  Interaction,
+  InteractionResolution,
+  IOAuthService,
+  IProviderDiscoveryService,
+  ISessionScopeHandle,
+  ModelRecord,
+  PlanData,
   PluginCommandDef,
   PluginDiagnostic,
   PluginGithubMetadata,
@@ -101,17 +57,35 @@ import type {
   PluginMcpServerInfo,
   PluginSummary,
   PluginUpdateStatus,
+  PromptPart,
+  ProviderConfig,
+  QuestionAnswers,
+  QuestionItem,
+  QuestionOption,
+  QuestionRequest,
+  QuestionResponse,
+  QuestionResult,
   ReloadSummary,
-} from '@moonshot-ai/agent-core-v2/app/plugin/types';
-import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
-import type {
+  RemovePluginInput,
+  RunShellCommandPayload,
   SessionListQuery,
+  SessionMeta,
+  SessionMetadataChangedEvent,
+  SessionMetaPatch,
   SessionSummary,
-} from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
-import type {
+  SetModelPayload,
+  SetModelResult,
+  SetPluginEnabledInput,
+  SetPluginMcpServerEnabledInput,
+  ShellCommandResult,
+  StopTaskPayload,
+  ToolCallRef,
+  TurnEndReason,
+  TurnPhase,
+  UsageStatus,
   Workspace,
   WorkspaceUpdate,
-} from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
+} from '../src/legacy-types.js';
 // Test-only: `@moonshot-ai/protocol` is a devDependency; importing its types
 // here (never in `src/`) strengthens parity for the agent event stream.
 import type {
@@ -127,7 +101,7 @@ import type {
   WarningEvent,
 } from '@moonshot-ai/protocol';
 
-import {
+import type {
   activityLastTurnStateSchema,
   activityRetryStateSchema,
   activityTurnStateSchema,
@@ -139,7 +113,7 @@ import {
   turnEndReasonSchema,
   turnPhaseSchema,
 } from '../src/contract/agent/activity.js';
-import {
+import type {
   agentContextDataSchema,
   agentTaskInfoSchema,
   cancelPayloadSchema,
@@ -162,7 +136,7 @@ import {
   tokenUsageSchema,
   usageStatusSchema,
 } from '../src/contract/agent/rpc.js';
-import {
+import type {
   assistantDeltaEventSchema,
   promptAbortedEventSchema,
   promptCompletedEventSchema,
@@ -173,27 +147,27 @@ import {
   turnStartedEventSchema,
   warningEventSchema,
 } from '../src/contract/agent/events.js';
-import {
+import type {
   approvalRequestSchema,
   approvalResponseSchema,
 } from '../src/contract/session/approval.js';
-import {
+import type {
   createChildSessionOptionsSchema,
   createSessionOptionsSchema,
   forkSessionOptionsSchema,
   handleWireSchema,
 } from '../src/contract/session/lifecycle.js';
-import {
+import type {
   interactionResolutionSchema,
   interactionSchema,
 } from '../src/contract/session/interaction.js';
-import {
+import type {
   agentMetaSchema,
   sessionMetaPatchSchema,
   sessionMetaSchema,
   sessionMetadataChangedEventSchema,
 } from '../src/contract/session/metadata.js';
-import {
+import type {
   questionAnswersSchema,
   questionItemSchema,
   questionOptionSchema,
@@ -202,7 +176,7 @@ import {
   questionResultSchema,
 } from '../src/contract/session/question.js';
 
-import {
+import type {
   authStatusSchema,
   oAuthFlowSnapshotSchema,
   oAuthFlowStartSchema,
@@ -210,27 +184,27 @@ import {
   oAuthLogoutResponseSchema,
   refreshOAuthProviderModelsResponseSchema,
 } from '../src/contract/global/auth.js';
-import {
+import type {
   configDiagnosticSchema,
   configInspectValueSchema,
   configTargetSchema,
 } from '../src/contract/global/config.js';
-import {
+import type {
   modelCatalogItemSchema,
   providerCatalogItemSchema,
   setDefaultModelResponseSchema,
 } from '../src/contract/global/catalog.js';
-import {
+import type {
   refreshProviderModelsOptionsSchema,
   refreshProviderModelsResponseSchema,
 } from '../src/contract/global/providerDiscovery.js';
-import { experimentalFeatureStateSchema } from '../src/contract/global/flags.js';
-import {
+import type { experimentalFeatureStateSchema } from '../src/contract/global/flags.js';
+import type {
   fsBrowseResponseSchema,
   fsHomeResponseSchema,
 } from '../src/contract/global/hostFs.js';
-import { modelConfigSchema } from '../src/contract/global/models.js';
-import {
+import type { modelConfigSchema } from '../src/contract/global/models.js';
+import type {
   getPluginInfoInputSchema,
   installPluginInputSchema,
   pluginCommandDefSchema,
@@ -246,12 +220,12 @@ import {
   setPluginEnabledInputSchema,
   setPluginMcpServerEnabledInputSchema,
 } from '../src/contract/global/plugins.js';
-import { providerConfigSchema } from '../src/contract/global/providers.js';
-import {
+import type { providerConfigSchema } from '../src/contract/global/providers.js';
+import type {
   sessionListQuerySchema,
   sessionSummarySchema,
 } from '../src/contract/global/sessions.js';
-import {
+import type {
   workspaceSchema,
   workspaceUpdateSchema,
 } from '../src/contract/global/workspaces.js';

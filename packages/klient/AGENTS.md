@@ -12,11 +12,12 @@ The package is layered; keep the layers strict when changing code:
   names, and **no escape hatch to raw services** — do not reintroduce a
   service locator (`core()`/`service()`/`makeProxy`).
 - **Contract** (`src/contract/`) — zod input/output schemas for every wire
-  method plus event payload schemas. Schemas are hand-mirrored from
-  agent-core-v2 types and pinned by the compile-time parity assertions in
-  `test/contract-parity.ts`; when the engine types change, tsc fails here
-  first. `maybe()`/`noResult()` in `src/contract/helpers.ts` encode the HTTP
-  wire's `null`-vs-`undefined` semantics — use them for every
+  method plus event payload schemas. Schemas are hand-mirrored from the
+  agent-core-v2 types (retired engine), frozen locally in
+  `src/legacy-types.ts`, and pinned by the compile-time parity assertions in
+  `test/contract-parity.ts`; if a schema drifts from the frozen shapes, tsc
+  fails here first. `maybe()`/`noResult()` in `src/contract/helpers.ts` encode
+  the HTTP wire's `null`-vs-`undefined` semantics — use them for every
   `X | undefined` / `void` result.
 - **Transports** (`src/transports/{ipc,memory}`) — each implements the
   `KlientChannel` SPI (`src/core/channel.ts`) and nothing else. ipc frames

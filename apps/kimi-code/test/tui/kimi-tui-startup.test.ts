@@ -85,8 +85,6 @@ function makeStartupInput(
       outputFormat: undefined,
       prompt: undefined,
       skillsDirs: [],
-      agent: undefined,
-      agentFiles: [],
       ...cliOptions,
     },
     tuiConfig: {

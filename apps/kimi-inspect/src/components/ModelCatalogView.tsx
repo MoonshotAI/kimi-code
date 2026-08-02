@@ -20,17 +20,16 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 
+import type { InspectionSource, TokenUsage } from '../legacy/contracts';
 import {
+  IAgentProfileService,
   IModelCatalog,
+  IModelService,
+  ISessionLifecycleService,
   type ModelCatalogItem,
   type ModelPingResult,
   type ProviderCatalogItem,
-} from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
-import type { InspectionSource } from '@moonshot-ai/agent-core-v2/kosong/contract/inspection';
-import type { TokenUsage } from '@moonshot-ai/agent-core-v2/kosong/contract/usage';
-import { IModelService } from '@moonshot-ai/agent-core-v2/kosong/model/model';
-import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
-import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
+} from '../legacy/services';
 
 import { useConnection } from '../connection';
 import { ActionButton, Badge, ErrorLine, JsonTree, JsonView, errorMessage } from '../ui';

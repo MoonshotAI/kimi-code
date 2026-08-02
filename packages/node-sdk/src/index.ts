@@ -38,9 +38,10 @@ export type {
   FetchCatalogOptions,
 } from '#/catalog';
 
-// Locale — forwarded from agent-core so hosts never import @moonshot-ai/agent-core/i18n directly.
-export { setLocale, getLocale } from '@moonshot-ai/agent-core/i18n';
-export type { Locale } from '@moonshot-ai/agent-core/i18n';
+// Locale — forwarded from the shared i18n package (the same source the retired
+// agent-core re-exported) so hosts never import @moonshot-ai/agent-core/i18n directly.
+export { setLocale, getLocale } from '@moonshot-ai/kimi-i18n';
+export type { Locale } from '@moonshot-ai/kimi-i18n';
 
 export {
   ErrorCodes,
@@ -54,7 +55,7 @@ export {
   isKimiError,
   resolveErrorTitle,
   toKimiErrorPayload,
-} from '@moonshot-ai/agent-core';
+} from '#/legacy/errors';
 
 // Diagnostic logging — public surface only.
 // RootLogger / getRootLogger / LoggingConfig stay inside agent-core.

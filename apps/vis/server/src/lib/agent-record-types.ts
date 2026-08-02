@@ -1,5 +1,6 @@
 // apps/vis/server/src/lib/agent-record-types.ts
-// Single source of truth: everything below comes from agent-core directly.
+// Single source of truth: everything below comes from the local `v1-compat.ts`
+// (verbatim copies of the retired agent-core v1 wire types) or `@moonshot-ai/kosong`.
 // Do NOT add local interfaces that duplicate upstream shapes.
 
 export type {
@@ -23,14 +24,14 @@ export type {
   ProcessBackgroundTaskInfo,
   AgentBackgroundTaskInfo,
   QuestionBackgroundTaskInfo,
-} from '@moonshot-ai/agent-core';
-export { AGENT_WIRE_PROTOCOL_VERSION } from '@moonshot-ai/agent-core';
+} from './v1-compat';
+export { AGENT_WIRE_PROTOCOL_VERSION } from './v1-compat';
 export type { Message, ContentPart, ToolCall, TokenUsage } from '@moonshot-ai/kosong';
 
 // Local bindings for the upstream types referenced by the vis-only DTOs
 // below. The `export type { … }` re-export above forwards the names to
 // consumers but does NOT bring them into this module's scope.
-import type { AgentRecord, BackgroundTaskInfo } from '@moonshot-ai/agent-core';
+import type { AgentRecord, BackgroundTaskInfo } from './v1-compat';
 
 /**
  * Persistent representation of a cron task.

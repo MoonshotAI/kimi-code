@@ -5,7 +5,7 @@ import type { RustLoopSessionApi } from '#/cli/native-session-adapter';
 import type {
   SessionClientFactoryOptions,
   SessionClientHandle,
-} from '#/cli/session-engine-controller';
+} from '@moonshot-ai/kimi-code-sdk/rust';
 
 /** A fake engine client capturing the wired sinks so a test can drive events
  *  and approvals without a live engine process. */

@@ -8,11 +8,13 @@
 
 import { z } from 'zod';
 
-import type { ConfigChangedEvent } from '@moonshot-ai/agent-core-v2/app/config/config';
-import type { ModelsChangedEvent } from '@moonshot-ai/agent-core-v2/kosong/model/model';
-import type { ProvidersChangedEvent } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
-import type { ReloadSummary } from '@moonshot-ai/agent-core-v2/app/plugin/types';
-import type { IOAuthService } from '@moonshot-ai/agent-core-v2/app/auth/auth';
+import type {
+  ConfigChangedEvent,
+  IOAuthService,
+  ModelsChangedEvent,
+  ProvidersChangedEvent,
+  ReloadSummary,
+} from '../../legacy-types.js';
 
 import { stringDeltaSchema } from '../helpers.js';
 import type { EventRegistration } from '../types.js';

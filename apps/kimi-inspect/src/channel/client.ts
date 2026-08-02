@@ -9,8 +9,10 @@
  *   await client.session('s1').service(ISessionMetadata).read();
  *   await client.session('s1').agent('main').service(IAgentRPCService).cancel({});
  *
- * The `agent-core-v2` service token is the whole key: its type parameter `T`
- * types the returned proxy, and its decorator id (`String(id)`) is the channel
+ * The service token (the local legacy decorators in `src/legacy/services.ts`,
+ * copied from the retired `agent-core-v2`) is the whole key: its type
+ * parameter `T` types the returned proxy, and its decorator id (`String(id)`)
+ * is the channel
  * name in the URL. Calls ride HTTP (`ProxyChannel`). There is no event
  * transport: the v2 socket (`/api/v2/ws`) that used to carry Service `onXxx`
  * emitters and scope event streams was removed server-side, so the UI reads

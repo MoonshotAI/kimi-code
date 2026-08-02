@@ -107,8 +107,6 @@ export default {
       serverRunOptionDangerousBypassAuth:
         '禁用所有 REST 和 WebSocket 路由的 Bearer 令牌认证，并通过 /api/v1/meta 广播此状态。仅可在受信任的网络或自有认证代理后使用。',
       serverRunOptionLogLevel: '服务器日志级别：{{levels}}。省略则关闭日志。',
-      serverRunOptionDebugEndpoints:
-        '挂载 /api/v1/debug/* 路由用于测试自省。默认关闭；生产环境请勿启用。',
       serverRunOptionForeground:
         '在前台运行服务器并保持终端连接，直到 SIGINT/SIGTERM（不守护进程化）。',
       serverRunOptionForegroundDefault:
@@ -135,8 +133,6 @@ export default {
       sessionWithoutIdInPromptMode: '在提示模式下不能不带 ID 使用 --session。',
       cannotCombineContinueAndSession: '--continue 不能与 --session 同时使用。',
       cannotCombineYoloAndAuto: '--yolo 不能与 --auto 同时使用。',
-      agentOnlyOnce: '--agent 只能指定一次。',
-      agentFileOnlyOnce: '--agent-file 只能指定一次。',
     },
   },
   startup: {

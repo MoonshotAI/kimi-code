@@ -7,24 +7,18 @@
  * wire).
  */
 
-import type { AgentActivityState } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type {
+  AgentActivityState,
   AgentMeta,
-  SessionMeta,
-  SessionMetaPatch,
-} from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
-import type {
   ApprovalRequest,
   ApprovalResponse,
-} from '@moonshot-ai/agent-core-v2/session/approval/approval';
-import type {
-  QuestionRequest,
-  QuestionResult,
-} from '@moonshot-ai/agent-core-v2/session/question/question';
-import type {
   Interaction,
   InteractionKind,
-} from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
+  QuestionRequest,
+  QuestionResult,
+  SessionMeta,
+  SessionMetaPatch,
+} from '../../legacy-types.js';
 
 import type { ScopeRef } from '../channel.js';
 import type { ScopedCaller } from './global.js';

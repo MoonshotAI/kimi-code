@@ -1,4 +1,4 @@
-import type { ToolInputDisplay } from '@moonshot-ai/agent-core';
+import type { ToolInputDisplay } from '../legacy-types.js';
 
 /**
  * Recover the UI display attached to a legacy top-level ToolResult.

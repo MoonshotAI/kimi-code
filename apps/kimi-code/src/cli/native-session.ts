@@ -74,7 +74,7 @@ type SessionWarning = Awaited<ReturnType<Session['getSessionWarnings']>>[number]
 
 import { resolve } from 'pathe';
 
-import { mapGoalSnapshot } from '#/cli/session-event-translate';
+import { mapGoalSnapshot } from '@moonshot-ai/kimi-code-sdk/rust';
 import type { TuiSession } from '#/tui/tui-session';
 
 import {
@@ -90,7 +90,7 @@ import {
   type NativePermissionMode,
   type RustLoopSessionApi,
 } from './native-session-adapter';
-import type { SessionClientFactoryOptions, SessionClientHandle } from './session-engine-controller';
+import type { SessionClientFactoryOptions, SessionClientHandle } from '@moonshot-ai/kimi-code-sdk/rust';
 
 /** Wire token-usage triple as the engine reports it. */
 interface EngineTokenTriple {

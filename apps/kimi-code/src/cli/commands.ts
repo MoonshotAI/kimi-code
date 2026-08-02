@@ -1,4 +1,4 @@
-import { Command, InvalidArgumentError, Option } from 'commander';
+import { Command, Option } from 'commander';
 
 import { CLI_COMMAND_NAME } from '#/constant/app';
 import { t } from '#/i18n';
@@ -66,27 +66,6 @@ export function createProgram(
         .default([]),
     )
     .addOption(
-      new Option('--agent <name>', t('cli.optionDescriptions.agent'))
-        .argParser((value: string, previous: string | undefined) => {
-          if (previous !== undefined) {
-            throw new InvalidArgumentError(t('cli.errors.agentOnlyOnce'));
-          }
-          return value;
-        })
-        .conflicts('agentFile'),
-    )
-    .addOption(
-      new Option('--agent-file <path>', t('cli.optionDescriptions.agentFile'))
-        .argParser((value: string, previous: string[] | undefined) => {
-          if ((previous?.length ?? 0) > 0) {
-            throw new InvalidArgumentError(t('cli.errors.agentFileOnlyOnce'));
-          }
-          return [value];
-        })
-        .conflicts('agent')
-        .default([]),
-    )
-    .addOption(
       new Option('--add-dir <dir>', t('cli.optionDescriptions.addDir'))
         .argParser((value: string, previous: string[] | undefined) => [...(previous ?? []), value])
         .default([]),
@@ -144,8 +123,6 @@ export function createProgram(
       outputFormat: raw['outputFormat'] as CLIOptions['outputFormat'],
       prompt: raw['prompt'] as string | undefined,
       skillsDirs: raw['skillsDir'] as string[],
-      agent: raw['agent'] as string | undefined,
-      agentFiles: raw['agentFile'] as string[],
       addDirs: raw['addDir'] as string[],
     };
 

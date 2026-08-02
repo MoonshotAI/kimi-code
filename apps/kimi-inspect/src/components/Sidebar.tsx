@@ -10,12 +10,16 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
-import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
-import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
-import { ISessionIndex, type SessionSummary } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
-import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
-import { IWorkspaceService, type Workspace } from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
-import { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+import {
+  IAgentProfileService,
+  IConfigService,
+  IModelCatalog,
+  ISessionIndex,
+  ISessionLifecycleService,
+  IWorkspaceService,
+  type SessionSummary,
+  type Workspace,
+} from '../legacy/services';
 
 import type { InspectClient } from '../channel';
 import { useConnection } from '../connection';

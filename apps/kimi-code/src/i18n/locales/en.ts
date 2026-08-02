@@ -108,8 +108,6 @@ export default {
       serverRunOptionDangerousBypassAuth:
         'Disable bearer-token auth on all REST and WebSocket routes, and advertise it via /api/v1/meta. Only use on a trusted network or behind your own authenticating proxy.',
       serverRunOptionLogLevel: 'Server log level: {{levels}}. Omit to keep logs off.',
-      serverRunOptionDebugEndpoints:
-        'Mount /api/v1/debug/* routes for test introspection. OFF by default; production callers leave this unset.',
       serverRunOptionForeground:
         'Run the server in the foreground and keep this terminal attached until SIGINT/SIGTERM (do not daemonize).',
       serverRunOptionForegroundDefault:
@@ -137,8 +135,6 @@ export default {
       sessionWithoutIdInPromptMode: 'Cannot use --session without an id in prompt mode.',
       cannotCombineContinueAndSession: 'Cannot combine --continue, --session.',
       cannotCombineYoloAndAuto: 'Cannot combine --yolo with --auto.',
-      agentOnlyOnce: '--agent may only be specified once.',
-      agentFileOnlyOnce: '--agent-file may only be specified once.',
     },
   },
   startup: {

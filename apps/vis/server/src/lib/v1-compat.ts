@@ -9,7 +9,7 @@
  * protocol, so a local copy stays in sync by definition.
  */
 
-import type { ContentPart, Message, TokenUsage } from '@moonshot-ai/kosong';
+import type { ContentPart, FinishReason, Message, TokenUsage } from '@moonshot-ai/kosong';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -112,6 +112,12 @@ export interface LoopStepEndEvent {
   readonly finishReason?: string | undefined;
   readonly llmFirstTokenLatencyMs?: number | undefined;
   readonly llmStreamDurationMs?: number | undefined;
+  readonly llmRequestBuildMs?: number | undefined;
+  readonly llmServerFirstTokenMs?: number | undefined;
+  readonly llmServerDecodeMs?: number | undefined;
+  readonly llmClientConsumeMs?: number | undefined;
+  readonly providerFinishReason?: FinishReason | undefined;
+  readonly rawFinishReason?: string | undefined;
   readonly messageId?: string | undefined;
   readonly traceId?: string;
 }
@@ -242,6 +248,8 @@ export interface SkillActivationOrigin {
   readonly skillArgs?: string | undefined;
   readonly trigger: 'user-slash' | 'model-tool' | 'nested-skill';
   readonly skillType?: string | undefined;
+  readonly skillPath?: string | undefined;
+  readonly skillSource?: 'project' | 'user' | 'extra' | 'builtin' | undefined;
 }
 
 export interface PluginCommandOrigin {
@@ -360,7 +368,12 @@ export interface AgentRecordEvents {
   'plan_mode.exit': { id?: string };
   'swarm_mode.enter': { trigger: string };
   'swarm_mode.exit': {};
-  'tools.register_user_tool': { name: string; description?: string };
+  'tools.register_user_tool': {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+    disclosure?: 'inline' | 'deferred';
+  };
   'tools.unregister_user_tool': { name: string };
   'tools.set_active_tools': { names: readonly string[] };
   'usage.record': {
@@ -373,6 +386,18 @@ export interface AgentRecordEvents {
   'micro_compaction.apply': { cutoff: number };
   'context.append_message': { message: ContextMessage };
   'context.append_loop_event': { event: LoopRecordedEvent };
+  /**
+   * A tool result already in history was replaced in-place (Rust engine
+   * prediction fast-path: the precise result overwrites the prediction).
+   */
+  'context.replace_tool_result': {
+    toolCallId: string;
+    result: {
+      output: string | readonly ContentPart[];
+      isError?: boolean | undefined;
+      note?: string | undefined;
+    };
+  };
   'context.update_token_count': { tokenCount: number };
   'context.clear': {};
   'context.apply_compaction': CompactionResult;
@@ -388,8 +413,15 @@ export interface AgentRecordEvents {
     tokensUsed?: number;
     turnsUsed?: number;
     wallClockMs?: number;
+    budgetLimits?: {
+      tokenBudget?: number;
+      turnBudget?: number;
+      wallClockBudgetMs?: number;
+    };
     reason?: string;
     actor?: string;
+    blockedStreak?: number;
+    completionRejections?: number;
   };
   'goal.clear': {};
   'llm.tools_snapshot': {
@@ -406,9 +438,14 @@ export interface AgentRecordEvents {
     model: string;
     modelAlias?: string;
     thinkingEffort?: string;
+    thinkingKeep?: string;
+    temperature?: number;
+    topP?: number;
     maxTokens?: number;
+    betaApi?: boolean;
     toolSelect: boolean;
     systemPromptHash: string;
+    systemPrompt?: string;
     toolsHash: string;
     messageCount: number;
     turnStep?: string;
@@ -422,9 +459,16 @@ export interface AgentRecordEvents {
     tools: readonly {
       name: string;
       description: string;
-      parameters: Record<string, unknown>;
+      inputSchema: unknown;
     }[];
     enabledNames: readonly string[];
+    collisions?: readonly {
+      qualified: string;
+      toolName: string;
+      collidesWith:
+        | { readonly kind: 'same_server'; readonly toolName: string }
+        | { readonly kind: 'other_server'; readonly serverName: string };
+    }[];
   };
 }
 

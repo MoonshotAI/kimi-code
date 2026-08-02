@@ -7,42 +7,32 @@
  */
 
 import type {
-  SessionListQuery,
-  SessionSummary,
-} from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
-import type { SessionMeta } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
-import type { Page } from '@moonshot-ai/agent-core-v2/persistence/interface/queryStore';
-import type {
-  Workspace,
-  WorkspaceUpdate,
-} from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
-import type {
+  AuthStatus,
   ConfigDiagnostic,
   ConfigInspectValue,
   ConfigTarget,
-} from '@moonshot-ai/agent-core-v2/app/config/config';
-import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
-import type {
-  AuthStatus,
-  IOAuthService,
-} from '@moonshot-ai/agent-core-v2/app/auth/auth';
-import type { ExperimentalFeatureState } from '@moonshot-ai/agent-core-v2/app/flag/flag';
-import type {
+  ExperimentalFeatureState,
   FsBrowseResponse,
   FsHomeResponse,
-} from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
-import type { ModelRecord } from '@moonshot-ai/agent-core-v2/kosong/model/model';
-import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
-import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
-
-import type { AnonymousProviderInput, GenerateEvent, GenerateInput, GenerateParams, ProviderInput } from './kosong-types.js';
-import type {
+  IModelCatalog,
+  IOAuthService,
+  IProviderDiscoveryService,
+  ModelRecord,
+  Page,
   PluginCommandDef,
   PluginInfo,
   PluginSummary,
   PluginUpdateStatus,
+  ProviderConfig,
   ReloadSummary,
-} from '@moonshot-ai/agent-core-v2/app/plugin/types';
+  SessionListQuery,
+  SessionMeta,
+  SessionSummary,
+  Workspace,
+  WorkspaceUpdate,
+} from '../../legacy-types.js';
+
+import type { AnonymousProviderInput, GenerateEvent, GenerateInput, GenerateParams, ProviderInput } from './kosong-types.js';
 
 /** Low-level caller the klient factory builds: routes + validates one service call. */
 export type Caller = (service: string, method: string, args: unknown[]) => Promise<unknown>;
@@ -277,7 +267,7 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
           if (title !== undefined) {
             await scoped(scope, 'sessionMetadata', 'setTitle', [title]);
           }
-          return scoped(scope, 'sessionMetadata', 'read', []) as Promise<SessionMeta>;
+          return (await scoped(scope, 'sessionMetadata', 'read', [])) as SessionMeta;
         } catch (error) {
           // Clean up the created session on partial failure.
           await scoped(scope, 'sessionLifecycleService', 'delete', [{ id: handle.id }]).catch(() => {});

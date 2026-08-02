@@ -1,17 +1,21 @@
 /**
- * session-event-translate.ts — engine `host/event` → SDK `Event` bridge.
+ * Rust engine event translator — engine `host/event` → SDK `Event` bridge.
  *
- * The session-owned engine reports lifecycle, streaming, and tool activity
- * as flat wire events (`session.*`, `llm.*`). The TUI's renderer consumes
+ * The session-owned Rust engine reports lifecycle, streaming, and tool
+ * activity as flat wire events (`session.*`, `llm.*`). Host renderers consume
  * the SDK's `Event` union (`turn.started`, `assistant.delta`,
  * `tool.call.started`, …). This translator maps the former onto the latter
- * so `SessionEventHandler.handleEvent` can drive the existing transcript
- * pipeline unchanged when the engine owns the loop.
+ * so the existing transcript pipeline can drive unchanged when the engine
+ * owns the loop.
  *
  * Stateful on purpose: streaming deltas carry no turn id on the wire, so the
  * translator remembers the turn opened by `session.turn.started`.
+ *
+ * Promoted from `apps/kimi-code/src/cli/session-event-translate.ts` so the
+ * SDK owns the engine-facing layer (2026-08-02).
  */
-import type { Event, GoalSnapshot, GoalStatus } from '@moonshot-ai/kimi-code-sdk';
+import type { Event } from '#/events';
+import type { GoalSnapshot, GoalStatus } from '#/types';
 
 interface EngineWireEvent {
   type?: string;
@@ -184,9 +188,10 @@ function mapGoalStatus(raw: unknown): GoalStatus {
 export function mapGoalSnapshot(raw: unknown): GoalSnapshot | null {
   if (raw === null || typeof raw !== 'object') return null;
   const s = raw as Record<string, unknown>;
-  const budget = (typeof s['budget'] === 'object' && s['budget'] !== null
-    ? s['budget']
-    : {}) as Record<string, unknown>;
+  const budget: Record<string, unknown> =
+    typeof s['budget'] === 'object' && s['budget'] !== null
+      ? (s['budget'] as Record<string, unknown>)
+      : {};
   return {
     goalId: strOr(s['goal_id']),
     objective: strOr(s['objective']),

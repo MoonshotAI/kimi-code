@@ -14,10 +14,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 
-import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
-import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
-import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
-import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
+import {
+  ISessionApprovalService,
+  ISessionInteractionService,
+  ISessionMetadata,
+  ISessionQuestionService,
+} from '../legacy/services';
 
 import { serviceByName } from '../channel';
 import { useConnection } from '../connection';

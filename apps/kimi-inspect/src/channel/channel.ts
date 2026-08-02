@@ -10,7 +10,7 @@
  * `listen` throws and panels fetch on demand instead.
  */
 
-import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
+import type { ServiceIdentifier } from '../legacy/di';
 
 export interface IDisposable {
   dispose(): void;

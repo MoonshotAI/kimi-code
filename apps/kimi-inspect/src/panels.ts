@@ -11,35 +11,37 @@
  * that used to drive `refreshOn` refetches went away with the v2 socket
  * (`/api/v2/ws`).
  *
- * The proxies are typed by the real `agent-core-v2` contracts at the call
- * site, but panels treat them as `AnyService` so one descriptor shape covers
- * every Service.
+ * The proxies are typed by the local legacy service contracts
+ * (`src/legacy/services.ts` — copies of the retired `agent-core-v2`
+ * contracts) at the call site, but panels treat them as `AnyService` so one
+ * descriptor shape covers every Service.
  */
 
-import { IAuthSummaryService } from '@moonshot-ai/agent-core-v2/app/auth/auth';
-import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
-import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
-import { IProviderService } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
-
-import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
-import { ISessionInitService } from '@moonshot-ai/agent-core-v2/session/sessionInit/sessionInit';
-import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
-import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
-import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
-import { ISessionWorkspaceContext } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceContext';
-import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
-import { IAgentContextSizeService } from '@moonshot-ai/agent-core-v2/agent/contextSize/contextSize';
-import { IAgentGoalService } from '@moonshot-ai/agent-core-v2/agent/goal/goal';
-import { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
-import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
-import { IAgentPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent/permissionRules/permissionRules';
-import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/agent/plan/plan';
-import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
-import { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
-import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/agent/swarm/swarm';
-import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
-import { IAgentToolRegistryService } from '@moonshot-ai/agent-core-v2/agent/toolRegistry/toolRegistry';
-import { IAgentUsageService } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
+import {
+  IAgentActivityView,
+  IAgentContextSizeService,
+  IAgentGoalService,
+  IAgentMcpService,
+  IAgentPermissionModeService,
+  IAgentPermissionRulesService,
+  IAgentPlanService,
+  IAgentProfileService,
+  IAgentRPCService,
+  IAgentSwarmService,
+  IAgentTaskService,
+  IAgentToolRegistryService,
+  IAgentUsageService,
+  IAuthSummaryService,
+  IConfigService,
+  IFlagService,
+  IProviderService,
+  ISessionApprovalService,
+  ISessionInitService,
+  ISessionInteractionService,
+  ISessionMetadata,
+  ISessionQuestionService,
+  ISessionWorkspaceContext,
+} from './legacy/services';
 import { t } from './i18n';
 
 /** Loosely-typed view of a scoped service proxy (every member is a remote call). */

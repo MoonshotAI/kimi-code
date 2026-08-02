@@ -21,7 +21,7 @@ import {
 } from '@agentclientprotocol/sdk';
 import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 import { log } from '@moonshot-ai/kimi-code-sdk';
-import type { McpServerConfig } from '@moonshot-ai/agent-core';
+import type { McpServerConfig } from '../src/legacy-types';
 
 import { acpMcpServersToConfigs } from '../src/mcp';
 import { AcpServer } from '../src/server';

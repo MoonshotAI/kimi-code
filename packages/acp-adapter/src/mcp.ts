@@ -20,13 +20,13 @@
  * single ACP request collapse with last-write-wins — same behaviour as
  * the kernel's own `loadMcpServers` user/project merge.
  *
- * @see packages/agent-core/src/config/schema.ts (McpServerConfigSchema)
+ * @see src/legacy-types.ts (McpServerConfig, local copy of the retired engine's schema)
  * @see packages/agent-core/src/mcp/session-config.ts (mergeCallerMcpServers)
  * @see node_modules/@agentclientprotocol/sdk/dist/schema/types.gen.d.ts (McpServer)
  */
 
 import type { McpServer, McpServerStdio } from '@agentclientprotocol/sdk';
-import type { McpServerConfig } from '@moonshot-ai/agent-core';
+import type { McpServerConfig } from './legacy-types.js';
 import { log } from '@moonshot-ai/kimi-code-sdk';
 
 /**

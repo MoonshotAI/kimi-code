@@ -7,14 +7,16 @@
  * (`turn.*`, `assistant.delta`, `tool.call.*`, `prompt.completed`, …).
  */
 
-import type { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
-import type { IAgentPlanService } from '@moonshot-ai/agent-core-v2/agent/plan/plan';
-import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
-import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
-import type { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
-import type { IAgentUsageService } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
-import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
+import type {
+  ContentPart,
+  IAgentPlanService,
+  IAgentProfileService,
+  IAgentRPCService,
+  IAgentShellCommandService,
+  IAgentTaskService,
+  IAgentUsageService,
+  PermissionMode,
+} from '../../legacy-types.js';
 
 import type { ScopeRef } from '../channel.js';
 import type { ScopedCaller } from './session.js';

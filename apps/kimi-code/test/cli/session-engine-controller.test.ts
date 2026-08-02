@@ -5,7 +5,7 @@ import {
   SessionEngineController,
   type SessionClientFactoryOptions,
   type SessionClientHandle,
-} from '#/cli/session-engine-controller';
+} from '@moonshot-ai/kimi-code-sdk/rust';
 
 /** A fake engine client that captures the wired sinks so a test can drive
  *  the engine side (fire events, trigger approval) without a live process. */

@@ -10,13 +10,11 @@
 
 import { join } from 'node:path';
 
-import { hostRequestHeadersSeed } from '@moonshot-ai/agent-core-v2';
 import { createServerLogger, startServer, type ServerLogger } from '@moonshot-ai/kap-server';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
 import { type Command } from 'commander';
 
-import { registerRustEngineV2 } from '#/cli/v2/rust-engine-v2';
 import { CLI_SHUTDOWN_TIMEOUT_MS } from '#/constant/app';
 import { t } from '#/i18n';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
@@ -25,7 +23,7 @@ import { openUrl as defaultOpenUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
 
 import { initializeServerTelemetry } from '../../telemetry';
-import { buildKimiDefaultHeaders, getHostPackageRoot, getVersion } from '../../version';
+import { getHostPackageRoot, getVersion } from '../../version';
 import {
   accessUrlLines,
   buildOpenableUrl,
@@ -125,11 +123,6 @@ export function buildWebCommand(cmd: Command): Command {
       false,
     )
     .option(
-      '--allow-remote-terminals',
-      t('cli.optionDescriptions.serverRunOptionAllowRemoteTerminals'),
-      false,
-    )
-    .option(
       '--dangerous-bypass-auth',
       t('cli.optionDescriptions.serverRunOptionDangerousBypassAuth'),
       false,
@@ -138,7 +131,6 @@ export function buildWebCommand(cmd: Command): Command {
       '--log-level <level>',
       t('cli.optionDescriptions.serverRunOptionLogLevel', { levels: VALID_LOG_LEVELS.join('|') }),
     )
-    .option('--debug-endpoints', t('cli.optionDescriptions.serverRunOptionDebugEndpoints'), false)
     .option('--no-open', t('cli.optionDescriptions.serverRunOptionNoOpen'), true)
     .action(async (opts: WebCliOptions) => {
       try {
@@ -249,16 +241,11 @@ async function runServerInProcess(
     process.exit(0);
   }
 
-  // kap-server (the DI × Scope engine server) is the only server flavor. Its
+  // kap-server (the Rust engine server) is the only server flavor. Its
   // `startServer` returns `{ host, port, close }` rather than `{ address,
   // logger, close }`, so adapt it to the `RoutedServer` surface the rest of
   // this runner consumes.
   const logger = createServerLogger({ level: options.logLevel });
-  // Rust agent engine bridge: kap-server runs in-process, so this one
-  // registration covers every session agent it creates. Each agent resolves
-  // the engine lazily at its first turn; a failure throws — the JS engine
-  // was removed with the v1/v2 migration.
-  registerRustEngineV2();
   const v2 = await startServer({
     host: options.host,
     port: options.port,
@@ -267,16 +254,10 @@ async function runServerInProcess(
     version,
     logLevel: options.logLevel,
     logger,
-    debugEndpoints: options.debugEndpoints,
     insecureNoTls: options.insecureNoTls,
     allowRemoteShutdown: options.allowRemoteShutdown,
-    allowRemoteTerminals: options.allowRemoteTerminals,
     allowedHosts: options.allowedHosts,
     disableAuth: options.dangerousBypassAuth,
-    // Seed the CLI's Kimi identity headers so the engine's outbound
-    // requests (model, WebSearch, FetchURL) carry the same User-Agent +
-    // X-Msh-* identity as direct CLI runs.
-    seeds: hostRequestHeadersSeed(buildKimiDefaultHeaders(version)),
     webAssetsDir: serverWebAssetsDir(),
   });
   logger.info('serving the REST/WS API and the bundled web UI');

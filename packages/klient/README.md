@@ -1,6 +1,6 @@
 # @moonshot-ai/klient
 
-Contract-driven client SDK for the agent-core-v2 engine. One facade, two
+Contract-driven client SDK for the agent-core-v2 engine (now **retired** — the only engine is the Rust `kimi-agent`; this SDK remains as host-layer tooling while hosts unbind, see root `AGENTS.md` → "Engine Ownership"). One facade, two
 transports — you pick the transport **once** at creation; everything after
 that is byte-identical:
 

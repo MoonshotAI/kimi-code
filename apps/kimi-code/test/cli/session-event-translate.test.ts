@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { SessionEventTranslator } from '#/cli/session-event-translate';
+import { SessionEventTranslator } from '@moonshot-ai/kimi-code-sdk/rust';
 
 describe('SessionEventTranslator', () => {
   it('maps the engine wire events onto the SDK Event union', () => {

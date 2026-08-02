@@ -1,22 +1,25 @@
 /**
- * session-engine-controller.ts — the reusable core that drives a
+ * Rust engine session controller — the reusable core that drives a
  * session-owned engine and renders through a host's event/approval sinks.
  *
  * This is the integration seam a thin-client host (the TUI, a headless
- * runner) plugs into: it owns the engine `SessionClient`, translates the
- * engine's wire events onto the SDK `Event` union via
- * {@link SessionEventTranslator}, and bridges the engine's tool-approval
- * gate onto a host-supplied yes/no prompt. The host stays ignorant of the
- * engine wire protocol — it supplies two sinks (emit an SDK event, ask for
- * approval) and calls `prompt` / `cancel`.
+ * runner) plugs into: it owns the engine `SessionClient` (from
+ * `@moonshot-ai/kimi-agent/rust-loop`), translates the engine's wire events
+ * onto the SDK `Event` union via {@link SessionEventTranslator}, and bridges
+ * the engine's tool-approval gate onto a host-supplied yes/no prompt. The
+ * host stays ignorant of the engine wire protocol — it supplies two sinks
+ * (emit an SDK event, ask for approval) and calls `prompt` / `cancel`.
  *
  * Dependency-injected on purpose: the `createClient` factory is the real
  * `rustLoop.createSessionClient` in production and a fake in tests, so the
  * whole control/event/approval flow is verifiable without a live engine.
+ *
+ * Promoted from `apps/kimi-code/src/cli/session-engine-controller.ts` so the
+ * SDK owns the engine-facing layer (2026-08-02).
  */
-import type { Event } from '@moonshot-ai/kimi-code-sdk';
+import type { Event } from '#/events';
 
-import { SessionEventTranslator } from '#/cli/session-event-translate';
+import { SessionEventTranslator } from './event-translate';
 
 /** The engine tool-approval request the host is asked to decide on. */
 export interface ToolApprovalRequest {
@@ -150,7 +153,7 @@ export class SessionEngineController {
     const req = raw as { tool_name?: string; tool_call_id?: string; arguments?: unknown };
     // Fail closed: a throwing/cancelled approval prompt must deny, never
     // propagate into the engine's lifecycle RPC (which would hang or abort the
-    // turn). This keeps the interactive seam safe when the TUI approver errors.
+    // turn). This keeps the interactive seam safe when the host approver errors.
     let allowed: boolean;
     try {
       allowed = await this.options.requestApproval({

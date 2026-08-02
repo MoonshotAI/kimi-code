@@ -99,10 +99,8 @@ describe('kimi web', () => {
     expect(longs).toContain('--allowed-host');
     expect(longs).toContain('--insecure-no-tls');
     expect(longs).toContain('--allow-remote-shutdown');
-    expect(longs).toContain('--allow-remote-terminals');
     expect(longs).toContain('--dangerous-bypass-auth');
     expect(longs).toContain('--log-level');
-    expect(longs).toContain('--debug-endpoints');
     // web opens the browser by default → the option is the negative --no-open.
     expect(longs).toContain('--no-open');
     // The background/daemon era flags are gone: the server always runs in the
@@ -406,9 +404,7 @@ describe('`kimi web` option threading', () => {
         insecureNoTls: true,
         allowedHost: ['.example.com'],
         dangerousBypassAuth: true,
-        debugEndpoints: true,
         allowRemoteShutdown: true,
-        allowRemoteTerminals: true,
         open: false,
       },
       { startServerForeground: runner, openUrl: vi.fn(), stdout, stderr },
@@ -418,10 +414,8 @@ describe('`kimi web` option threading', () => {
       host: '0.0.0.0',
       port: 59000,
       logLevel: 'silent',
-      debugEndpoints: true,
       insecureNoTls: true,
       allowRemoteShutdown: true,
-      allowRemoteTerminals: true,
       dangerousBypassAuth: true,
       allowedHosts: ['.example.com'],
     });

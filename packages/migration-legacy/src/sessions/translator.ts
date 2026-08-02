@@ -1,4 +1,4 @@
-import type { ToolInputDisplay } from '@moonshot-ai/agent-core';
+import type { ToolInputDisplay } from '../legacy-types.js';
 
 import { normalizeContentPart, type NormalizedContentPart } from './content-part.js';
 

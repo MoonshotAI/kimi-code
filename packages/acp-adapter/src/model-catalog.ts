@@ -31,7 +31,8 @@
  * declare `protocol`.
  */
 
-import { effectiveModelAlias, type ProviderType } from '@moonshot-ai/agent-core';
+import { effectiveModelAlias } from './legacy-model.js';
+import type { ProviderType } from './legacy-types.js';
 import type { KimiHarness, ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
 /**

@@ -1,4 +1,4 @@
-import { ErrorCodes, KimiError } from '@moonshot-ai/agent-core';
+import { ErrorCodes, KimiError } from '#/legacy/errors';
 import {
   OAuthConnectionError,
   OAuthUnauthorizedError,

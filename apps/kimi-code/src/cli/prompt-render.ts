@@ -1,9 +1,9 @@
 /**
- * Output rendering for `kimi -p` (print mode) — shared by the v1 driver
- * (`run-prompt.ts`) and the native v2 runner (`v2/run-v2-print.ts`).
+ * Output rendering for `kimi -p` (print mode) — the driver
+ * (`run-prompt.ts`).
  *
- * Both engines feed the same writer classes: v1 via the SDK `Event` stream, v2
- * via the main agent's native `IEventBus` (whose `DomainEvent` payloads are
+ * The Rust engine feeds the same writer classes: the SDK `Event` stream from
+ * the engine's own turn loop (whose `DomainEvent` payloads are
  * already v1-protocol-shaped). Keeping the writers here lets v2 reuse them
  * without re-implementing rendering, while v1's `runPromptTurn` keeps its own
  * event-filtering / completion flow intact.

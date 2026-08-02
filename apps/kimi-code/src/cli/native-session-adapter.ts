@@ -29,7 +29,7 @@ import {
   type SessionEngineStartOptions,
   type SessionPromptOutcome,
   type ToolApprovalRequest,
-} from './session-engine-controller';
+} from '@moonshot-ai/kimi-code-sdk/rust';
 
 export type NativePermissionMode = 'manual' | 'auto' | 'yolo';
 

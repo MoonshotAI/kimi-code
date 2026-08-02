@@ -6,7 +6,7 @@ import {
   type NativeTuiRustLoop,
 } from '#/cli/native-session';
 import type { NativePermissionMode, RustLoopSessionApi } from '#/cli/native-session-adapter';
-import type { SessionClientFactoryOptions } from '#/cli/session-engine-controller';
+import type { SessionClientFactoryOptions } from '@moonshot-ai/kimi-code-sdk/rust';
 
 /** A fake rust-loop whose session ops return canned engine wire data. */
 function fakeRustLoop(options: {

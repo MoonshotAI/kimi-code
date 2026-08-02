@@ -17,7 +17,7 @@
  *   interactive approval UI arrives with the TUI integration.
  */
 import { loadNativeLlmDef, loadSessionHooks, loadSessionMcpServers, loadSessionSystemPrompt } from './rust-engine';
-import { SessionEngineController } from './session-engine-controller';
+import { SessionEngineController } from '@moonshot-ai/kimi-code-sdk/rust';
 import type { Event } from '@moonshot-ai/kimi-code-sdk';
 
 interface SessionEngineIo {

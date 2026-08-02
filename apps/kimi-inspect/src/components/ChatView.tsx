@@ -30,13 +30,13 @@ import {
   useSyncExternalStore,
 } from 'react';
 
-import { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
-import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
 import {
+  IAgentRPCService,
+  ISessionApprovalService,
   ISessionQuestionService,
   type QuestionItem,
   type QuestionRequest,
-} from '@moonshot-ai/agent-core-v2/session/question/question';
+} from '../legacy/services';
 import {
   EMPTY_AGENT_STATE,
   itemId,

@@ -11,7 +11,7 @@
 
 import { useEffect, useState } from 'react';
 
-import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
+import { ISessionLifecycleService } from './legacy/services';
 
 import { AppServicesView } from './components/AppServicesView';
 import { ChatView } from './components/ChatView';

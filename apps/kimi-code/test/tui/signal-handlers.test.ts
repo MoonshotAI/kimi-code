@@ -22,8 +22,6 @@ function makeStartupInput(): KimiTUIStartupInput {
       outputFormat: undefined,
       prompt: undefined,
       skillsDirs: [],
-      agent: undefined,
-      agentFiles: [],
     },
     tuiConfig: {
       theme: 'dark',
@@ -134,7 +132,7 @@ describe('KimiTUI signal handlers', () => {
   beforeEach(() => {
     exitSpy = vi
       .spyOn(process, 'exit')
-      .mockImplementation((() => undefined) as unknown as typeof process.exit);
+      .mockImplementation((() => {}) as unknown as typeof process.exit);
     platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
   });
 
@@ -174,7 +172,7 @@ describe('KimiTUI signal handlers', () => {
   it('SIGHUP handler calls emergencyTerminalExit (process.exit(129)) without going through stop()', () => {
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
     const { driver, tui } = makeDriver();
-    const stopSpy = vi.spyOn(tui, 'stop').mockResolvedValue(undefined);
+    const stopSpy = vi.spyOn(tui, 'stop').mockResolvedValue();
     const captured = captureHandlers(driver);
 
     const sighup = captured.signalHandlers.get('SIGHUP');
@@ -221,7 +219,7 @@ describe('KimiTUI signal handlers', () => {
     // `stop()` resolving without exiting models the defensive fallback path
     // where `onExit` was not wired up. The handler must still exit 143 so
     // supervisors see signal termination.
-    const stopSpy = vi.spyOn(tui, 'stop').mockResolvedValue(undefined);
+    const stopSpy = vi.spyOn(tui, 'stop').mockResolvedValue();
     const captured = captureHandlers(driver);
 
     const sigterm = captured.signalHandlers.get('SIGTERM');

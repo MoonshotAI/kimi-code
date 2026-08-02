@@ -5,10 +5,13 @@
  * `providerService`/`modelService` wire formats.
  */
 
-import type { Message, StreamedMessagePart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
-import type { Tool } from '@moonshot-ai/agent-core-v2/kosong/contract/tool';
-import type { TokenUsage } from '@moonshot-ai/agent-core-v2/kosong/contract/usage';
-import type { ResponseFormat } from '@moonshot-ai/agent-core-v2/kosong/contract/provider';
+import type {
+  Message,
+  ResponseFormat,
+  StreamedMessagePart,
+  TokenUsage,
+  Tool,
+} from '../../legacy-types.js';
 
 // ---------------------------------------------------------------------------
 // Provider auth

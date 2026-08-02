@@ -96,7 +96,6 @@
       "serverRunOptionAllowRemoteTerminals": "在非回环绑定上保持 PTY /api/v1/terminals/* 路由启用（默认：禁用 → 404）。远程 Shell 具有高风险。",
       "serverRunOptionDangerousBypassAuth": "禁用所有 REST 和 WebSocket 路由的 Bearer 令牌认证，并通过 /api/v1/meta 广播此状态。仅可在受信任的网络或自有认证代理后使用。",
       "serverRunOptionLogLevel": "服务器日志级别：{{levels}}。省略则关闭日志。",
-      "serverRunOptionDebugEndpoints": "挂载 /api/v1/debug/* 路由用于测试自省。默认关闭；生产环境请勿启用。",
       "serverRunOptionForeground": "在前台运行服务器并保持终端连接，直到 SIGINT/SIGTERM（不守护进程化）。",
       "serverRunOptionForegroundDefault": "在前台运行服务器并保持终端连接，直到 SIGINT/SIGTERM（默认；传递 --background 以守护进程方式运行）。",
       "serverRunOptionBackground": "以后台守护进程方式运行服务器，健康检查通过后返回并释放此终端。",
@@ -120,9 +119,7 @@
       "cannotCombinePromptAndPlan": "--prompt 不能与 --plan 同时使用。",
       "sessionWithoutIdInPromptMode": "在提示模式下不能不带 ID 使用 --session。",
       "cannotCombineContinueAndSession": "--continue 不能与 --session 同时使用。",
-      "cannotCombineYoloAndAuto": "--yolo 不能与 --auto 同时使用。",
-      "agentOnlyOnce": "--agent 只能指定一次。",
-      "agentFileOnlyOnce": "--agent-file 只能指定一次。"
+      "cannotCombineYoloAndAuto": "--yolo 不能与 --auto 同时使用。"
     }
   },
   "startup": {
@@ -1686,6 +1683,7 @@
       "swarmDisable": "禁用",
       "btwSendFailed": "发送 /btw 提示失败：{{error}}",
       "btwCancelFailed": "取消 /btw 失败：{{error}}",
+      "btwEndFailed": "结束 /btw 失败：{{error}}",
       "editorExternalFailed": "外部编辑器失败：{{msg}}",
       "tasksLoadFailed": "加载任务失败：{{error}}",
       "tasksOutputRefreshFailed": "输出刷新失败：{{message}}",

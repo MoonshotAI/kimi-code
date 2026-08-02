@@ -8,7 +8,7 @@ import {
   renderToolResultForModel,
   selectCompactionUserMessages,
   selectRecentUserMessages,
-} from '@moonshot-ai/agent-core';
+} from './v1-compat';
 
 import type {
   ContentPart,
@@ -16,7 +16,6 @@ import type {
   PermissionMode,
   AgentConfigUpdateData,
   TokenUsage,
-  ToolCall,
   WireEntry,
 } from './agent-record-types';
 
@@ -599,12 +598,13 @@ function addUsage(into: TokenUsage, src: TokenUsage): void {
 const MICRO_TRUNCATED_MARKER = '[Old tool result content cleared]';
 const MICRO_MIN_CONTENT_TOKENS = 100;
 
-/** Delegates to agent-core's `estimateTokens` to avoid logic duplication.
- *  agent-core (`packages/agent-core/src/utils/tokens.ts`) sums per-part
- *  estimates, each `estimateTokens(s) = Math.ceil(asciiCount / 4) +
- *  nonAsciiCount` (ASCII ~4 chars/token, every non-ASCII/CJK code point a
- *  full token); other part types contribute 0. Matching it ensures
- *  Chinese-heavy tool results blank at the same gate as the agent. */
+/** Delegates to the local copy of agent-core's `estimateTokens` (see
+ *  `./v1-compat.ts`) to avoid logic duplication. The v1 heuristic
+ *  (`packages/agent-core/src/utils/tokens.ts`) sums per-part estimates, each
+ *  `estimateTokens(s) = Math.ceil(asciiCount / 4) + nonAsciiCount` (ASCII ~4
+ *  chars/token, every non-ASCII/CJK code point a full token); other part types
+ *  contribute 0. Matching it ensures Chinese-heavy tool results blank at the
+ *  same gate as the agent. */
 function estimateTokens(text: string): number {
   return agentCoreEstimateTokens(text);
 }
