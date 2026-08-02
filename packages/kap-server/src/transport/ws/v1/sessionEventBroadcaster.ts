@@ -410,7 +410,7 @@ export class SessionEventBroadcaster {
   }
 
   private ensureState(sessionId: string): Promise<SessionState | undefined> {
-    if (this.closed) return Promise.resolve();
+    if (this.closed) return Promise.resolve(undefined);
     const existing = this.sessions.get(sessionId);
     if (existing !== undefined) return Promise.resolve(existing);
     let pending = this.pendingStates.get(sessionId);
