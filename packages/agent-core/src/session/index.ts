@@ -778,7 +778,23 @@ export class Session {
       { additionalDirs: this.additionalDirs },
     );
     const subagentNames = Object.keys(this.agentCatalog.delegatableSubagents(profile.name));
-    agent.useProfile(profile, context, this.options.kimiHomeDir, subagentNames);
+
+    // Merge global [tools].disabled config into the profile's disallowedTools.
+    // v2 has a dedicated toolPolicy service for this; v1 reads it from the
+    // raw config (unknown sections land in `config.raw`). #2534.
+    const toolsDisabled = this.readToolsDisabled();
+    const effectiveProfile =
+      toolsDisabled.length > 0
+        ? {
+            ...profile,
+            disallowedTools: [
+              ...(profile.disallowedTools ?? []),
+              ...toolsDisabled,
+            ],
+          }
+        : profile;
+
+    agent.useProfile(effectiveProfile, context, this.options.kimiHomeDir, subagentNames);
     const { agentsMdWarning } = context;
     if (agentsMdWarning !== undefined) {
       this.agentsMdWarning = agentsMdWarning;
@@ -789,6 +805,22 @@ export class Session {
         code: 'agents-md-oversized',
       });
     }
+  }
+
+  /**
+   * Read the `[tools].disabled` array from the raw config. v1's
+   * KimiConfigSchema does not have a typed `tools` section (v2 uses a
+   * dedicated toolPolicy service), so unknown sections land in
+   * `config.raw`. This extracts the disabled tool names safely. #2534.
+   */
+  private readToolsDisabled(): string[] {
+    const raw = this.kimiConfig?.raw;
+    if (!raw) return [];
+    const toolsSection = raw['tools'];
+    if (typeof toolsSection !== 'object' || toolsSection === null) return [];
+    const disabled = (toolsSection as Record<string, unknown>)['disabled'];
+    if (!Array.isArray(disabled)) return [];
+    return disabled.filter((v): v is string => typeof v === 'string');
   }
 
   async getSessionWarnings(): Promise<readonly SessionWarning[]> {
