@@ -11,11 +11,11 @@ import {
   KimiError,
   type SessionSummary,
 } from '#/index';
-import { resolveGlobalLogPath } from '../../agent-core/src/logging/logger';
+import { resolveGlobalLogPath } from '@moonshot-ai/kimi-agent/runtime';
 import {
   WIRE_PROTOCOL_VERSION,
   exportSessionDirectory,
-} from '../../agent-core/src/session/export';
+} from '../src/legacy/session-export';
 import { recordingTelemetry, type TelemetryRecord } from './telemetry';
 import { TEST_IDENTITY } from './test-identity';
 
@@ -313,6 +313,9 @@ describe('KimiHarness.exportSession', () => {
     const sessionDir = (await harness.listSessions({ workDir })).find(
       (item) => item.id === session.id,
     )!.sessionDir;
+    // Rust semantics: the engine persists sessions in its own store, so the
+    // host session directory starts empty — the test seeds the export inputs.
+    await writeFile(join(sessionDir, 'state.json'), '{}\n', 'utf-8');
     await writeFile(join(sessionDir, 'wire.jsonl'), '{}\n', 'utf-8');
     await mkdir(join(sessionDir, 'subagents'), { recursive: true });
     await writeFile(join(sessionDir, 'subagents', 'demo.txt'), 'demo', 'utf-8');

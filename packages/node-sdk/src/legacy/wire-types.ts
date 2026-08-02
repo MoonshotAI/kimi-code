@@ -406,6 +406,7 @@ export interface ExportSessionManifest {
   readonly sessionLogPath?: string | undefined;
   readonly globalLogPath?: string | undefined;
   readonly installSource?: string | undefined;
+  readonly shellEnv?: ShellEnvironment | undefined;
 }
 
 export type GlobalMcpServerConfig = McpServerConfig & { readonly name: string };

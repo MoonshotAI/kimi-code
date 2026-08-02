@@ -2,6 +2,7 @@ import type { Kaos } from '@moonshot-ai/kaos';
 
 import { ErrorCodes, KimiError } from '#/legacy/errors';
 import { GlobalMcpConfigStore } from '#/legacy/global-mcp-config';
+import { exportSessionDirectory } from '#/legacy/session-export/index';
 import type { TelemetryClient, TelemetryContextPatch, TelemetryProperties } from '#/types';
 
 import { Session } from '#/session';
@@ -262,9 +263,27 @@ export class KimiHarness {
   }
 
   async exportSession(input: ExportSessionInput): Promise<ExportSessionResult> {
-    const result = await this.rpc.exportSession({
-      ...input,
-      version: input.version ?? this.identity?.version,
+    // Host-side export: the engine persists sessions in its own store, so the
+    // host resolves the session directory and assembles the debug zip.
+    const summary = (await this.rpc.listSessions({ sessionId: input.id })).find(
+      (item) => item.id === input.id,
+    );
+    if (summary === undefined) {
+      throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `Session not found: ${input.id}`, {
+        details: { sessionId: input.id },
+      });
+    }
+    const result = await exportSessionDirectory({
+      request: {
+        sessionId: input.id,
+        outputPath: input.outputPath,
+        version: input.version ?? this.identity?.version ?? '',
+        includeGlobalLog: input.includeGlobalLog,
+        installSource: input.installSource,
+        shellEnv: input.shellEnv,
+      },
+      summary,
+      homeDir: this.homeDir,
     });
     this.trackSessionEvent(input.id, 'export');
     return result;

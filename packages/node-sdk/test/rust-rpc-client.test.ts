@@ -22,9 +22,11 @@ function fakeRustLoop(overrides: Partial<RustLoopApi> = {}): RustLoopApi & {
     isRustEngineAvailable: () => true,
     installSessionHostHandlers: () => true,
     sessionCreate: async () => ({ session_id: 'ses_1' }),
-    sessionList: async () => [
-      { id: 'ses_1', created_at: '2026-08-02T00:00:00.000Z', updated_at: '2026-08-02T01:00:00.000Z', work_dir: '/ws' },
-    ],
+    sessionList: async () => ({
+      sessions: [
+        { id: 'ses_1', created_at: '2026-08-02T00:00:00.000Z', updated_at: '2026-08-02T01:00:00.000Z', work_dir: '/ws' },
+      ],
+    }),
     sessionGetStatus: async () => ({
       model: 'kimi-k2',
       thinking_effort: 'medium',
@@ -123,7 +125,7 @@ describe('RustRpcClient', () => {
     await expect(rpc.installPlugin({ source: 'x' } as never)).rejects.toThrow(
       'not available under the native engine',
     );
-    await expect(rpc.deleteSession({ sessionId: 'ses_1' } as never)).rejects.toThrow(
+    await expect(rpc.forkSession({ sessionId: 'ses_1' } as never)).rejects.toThrow(
       'not available under the native engine',
     );
   });

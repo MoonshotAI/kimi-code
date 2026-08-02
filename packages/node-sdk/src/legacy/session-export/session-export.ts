@@ -1,0 +1,120 @@
+/**
+ * Session export (host-side) — local port of the retired
+ * `agent-core/session/export/session-export.ts`. The engine persists
+ * sessions; the host assembles the debug zip from the session directory.
+ */
+
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'pathe';
+
+import { resolveGlobalLogPath } from '@moonshot-ai/kimi-agent/runtime';
+
+import { ErrorCodes, KimiError } from '../errors';
+import { buildExportManifest } from './manifest';
+import { scanSessionWire } from './wire-scan';
+import {
+  type ExtraZipEntry,
+  collectFilesRecursive,
+  writeExportZip,
+} from './zip';
+import type { ExportSessionManifest, SessionSummary } from '../wire-types';
+
+export interface ExportSessionResult {
+  readonly zipPath: string;
+  readonly entries: readonly string[];
+  readonly sessionDir: string;
+  readonly manifest: ExportSessionManifest;
+}
+
+const SESSION_LOG_REL = 'logs/kimi-code.log';
+const GLOBAL_LOG_REL = 'logs/global/kimi-code.log';
+
+export async function exportSessionDirectory(input: {
+  readonly request: {
+    readonly sessionId: string;
+    readonly outputPath?: string | undefined;
+    readonly version: string;
+    readonly includeGlobalLog?: boolean | undefined;
+    readonly installSource?: string | undefined;
+    readonly shellEnv?: unknown | undefined;
+  };
+  readonly summary: SessionSummary;
+  readonly homeDir?: string | undefined;
+  readonly globalLogPath?: string | undefined;
+}): Promise<ExportSessionResult> {
+  const sessionDir = input.summary.sessionDir;
+  const sessionFiles = await collectFilesRecursive(sessionDir);
+  if (sessionFiles.length === 0) {
+    throw new KimiError(
+      ErrorCodes.SESSION_EXPORT_NOT_FOUND,
+      `Session "${input.summary.id}" has no exportable directory at "${sessionDir}"`,
+      {
+        details: { sessionId: input.summary.id, sessionDir },
+      },
+    );
+  }
+
+  const sessionScan = await scanSessionWire(sessionDir);
+  const hasSessionLog = sessionFiles.some((f) =>
+    f.endsWith(`/${SESSION_LOG_REL}`) || f.endsWith(`\\${SESSION_LOG_REL.replaceAll('/', '\\')}`),
+  );
+
+  const extras: ExtraZipEntry[] = [];
+  let bundledGlobal = false;
+  const globalPath =
+    input.globalLogPath ??
+    (input.homeDir === undefined ? undefined : resolveGlobalLogPath(input.homeDir));
+  if (input.request.includeGlobalLog === true && globalPath !== undefined) {
+    const data = await readOptionalFile(globalPath);
+    if (data !== undefined) {
+      extras.push({ data, target: GLOBAL_LOG_REL });
+      bundledGlobal = true;
+    }
+  }
+
+  const now = new Date();
+  const manifest: ExportSessionManifest = buildExportManifest({
+    summary: input.summary,
+    now,
+    version: input.request.version,
+    sessionScan,
+    sessionLogPath: hasSessionLog ? SESSION_LOG_REL : undefined,
+    globalLogPath: bundledGlobal ? GLOBAL_LOG_REL : undefined,
+    installSource: input.request.installSource,
+    shellEnv: input.request.shellEnv as never,
+  });
+
+  const outputPath =
+    input.request.outputPath !== undefined
+      ? resolve(input.request.outputPath)
+      : resolve(defaultExportZipName(input.summary.id, now));
+
+  const entries = await writeExportZip({
+    outputPath,
+    manifest,
+    sessionDir,
+    sessionFiles,
+    extraEntries: extras,
+  });
+
+  return {
+    zipPath: outputPath,
+    entries,
+    sessionDir,
+    manifest,
+  };
+}
+
+function defaultExportZipName(sessionId: string, now: Date): string {
+  const shortId = sessionId.slice(0, 8);
+  const timestamp = now.toISOString().replaceAll(/[-:]/g, '').replace(/T/, '-').slice(0, 15);
+  return `kimi-debug-${shortId}-${timestamp}.zip`;
+}
+
+async function readOptionalFile(path: string): Promise<Buffer | undefined> {
+  try {
+    return await readFile(path);
+  } catch {
+    return undefined;
+  }
+}

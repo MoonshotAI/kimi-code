@@ -128,6 +128,7 @@ export interface RustLoopApi {
   sessionSave(sessionId: string): Promise<{ ok: boolean } | null>;
   sessionLoad(sessionId: string): Promise<{ found: boolean } | null>;
   sessionDelete(sessionId: string): Promise<{ deleted: boolean } | null>;
+  sessionDelete(sessionId: string): Promise<{ deleted: boolean } | null>;
   cronList(): Promise<{ tasks: unknown[] } | null>;
   bgList(): Promise<{ tasks: unknown[] } | null>;
   bgOutput(taskId: string): Promise<{ output: string } | null>;
@@ -217,6 +218,10 @@ export class RustRpcClient extends SDKRpcClientBase {
   /** SDK-owned sessionId → workDir map (the engine's work_dir is only
    *  populated when the host routes it through; the SDK is the authority). */
   private readonly workDirs = new Map<string, string>();
+  /** Host mirror of sessions created by this client. The engine's store is
+   *  process-global (shared across harnesses/tests), so listing must filter on
+   *  what this client actually created rather than the whole store. */
+  private readonly sessionSummaries = new Map<string, SessionSummary>();
   /** Per-session v1-compatible wire event history (host-side). */
   private readonly wireWriters = new Map<string, WireEventWriter>();
   private readonly ready: Promise<SdkRpcSurface>;
@@ -336,6 +341,7 @@ export class RustRpcClient extends SDKRpcClientBase {
           metadata: {},
           additionalDirs: additionalDirs ?? [],
         };
+        this.sessionSummaries.set(sessionId, summary);
         this.translators.set(sessionId, new SessionEventTranslator(sessionId, 'main'));
         if (this.homeDir.length > 0) {
           try {
@@ -354,23 +360,20 @@ export class RustRpcClient extends SDKRpcClientBase {
         this.clearSessionHandlers(sessionId);
       },
       listSessions: async ({ workDir, sessionId }: ListSessionsOptions) => {
-        const records = (await r.sessionList())?.sessions ?? [];
-        return records
-          .map((record) => {
-            const summary = mapSessionRecord(record, this.homeDir);
-            // The SDK owns the workDir mapping; the engine's work_dir may be
-            // empty (host-routed sessions) or stale — prefer the SDK's.
-            const sdkWorkDir = this.workDirs.get(record.id);
-            if (sdkWorkDir !== undefined) {
-              return { ...summary, workDir: sdkWorkDir, sessionDir: sdkWorkDir };
-            }
-            return summary;
-          })
-          .filter(
-            (summary) =>
-              (workDir === undefined || summary.workDir === workDir) &&
-              (sessionId === undefined || summary.id === sessionId),
+        if (typeof workDir === 'string' && workDir.trim() === '') {
+          throw new KimiError(
+            ErrorCodes.REQUEST_WORK_DIR_REQUIRED,
+            'listSessions requires workDir',
           );
+        }
+        // Host mirror: list what this client created, so a harness only sees
+        // its own sessions even though the engine store is process-global.
+        const summaries = Array.from(this.sessionSummaries.values());
+        return summaries.filter(
+          (summary) =>
+            (workDir === undefined || summary.workDir === workDir) &&
+            (sessionId === undefined || summary.id === sessionId),
+        );
       },
       resumeSession: async ({ sessionId }: any) => {
         await r.sessionLoad(sessionId);
@@ -392,9 +395,10 @@ export class RustRpcClient extends SDKRpcClientBase {
         if (!result || !result.deleted) {
           throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `Session not found: ${sessionId}`);
         }
-        // The engine owns persistence; the host just mirrors active handles.
-        this.wireWriters.delete(sessionId);
         this.translators.delete(sessionId);
+        this.workDirs.delete(sessionId);
+        this.sessionSummaries.delete(sessionId);
+        this.clearSessionHandlers(sessionId);
       },
       exportSession: async () => nativeUnavailable('exportSession'),
 
@@ -494,7 +498,7 @@ export class RustRpcClient extends SDKRpcClientBase {
         if (status === null) throw new Error('Session not found');
         return {
           modelAlias: status.model ?? undefined,
-          provider: status.model !== undefined ? { model: status.model } : undefined,
+          provider: status.model != null ? { model: status.model } : undefined,
           thinkingEffort: status.thinking_effort,
           modelCapabilities: {
             max_context_tokens: status.max_context_tokens,
