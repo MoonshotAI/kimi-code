@@ -12,6 +12,16 @@
 // Group commit: all append() calls within a tick are coalesced into a single
 // writev(2) syscall on the next macrotask. Only one flush is ever in flight, so
 // frames reach disk strictly in append order (single-writer, like SQLite WAL).
+//
+// Write-failure semantics (the commit point): a writev or write-path fsync
+// failure in a flush POISONS the WAL. The poison records the failed batch's
+// first predicted offset — every byte at/after it may have reached the file
+// without being acknowledged. While poisoned, appends reject with
+// 'WAL_POISONED', flush() throws, sync() is a no-op, and close() skips its
+// final flush. The owner (MiniDb) recovers in place: truncate the file to the
+// poison offset (removing exactly the un-acked bytes), refreshSize(), then
+// clearPoison(). A background everysec sync failure never poisons: it rejects
+// no write and is observable only in stats (stage-1 semantics).
 
 import fs from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
@@ -26,14 +36,27 @@ interface PendingWrite {
   reject: (err: unknown) => void;
 }
 
+/** The failure that poisoned the WAL plus the offset the owner must truncate
+ *  the file to for in-place recovery: every acknowledged frame sits in
+ *  earlier, successful batches, so truncating here removes exactly the
+ *  un-acked bytes. */
+export interface WalPoison {
+  failedAtOffset: number;
+  error: unknown;
+}
+
 /** Cumulative WAL counters, owned by MiniDb so they survive WAL rotation
  *  during compaction (which replaces the WAL). */
 export interface WalStats {
   walBytesWritten: number;
   /** Successful fsyncs (write-path 'always', background 'everysec', close). */
   walFsyncs: number;
+  /** Failed writev-class attempts on the write path. Each one poisons the WAL
+   *  (see the header) and triggers the owner's in-place recovery. */
+  walWriteErrors: number;
   /** Failed fsync attempts. A background everysec failure does not reject any
-   *  write — it is observable only here and via lastWalFsyncError. */
+   *  write — it is observable only here and via lastWalFsyncError. A
+   *  write-path ('always') failure rejects its batch and poisons the WAL. */
   walFsyncErrors: number;
   /** Sticky copy of the most recent fsync failure (never cleared on success). */
   lastWalFsyncError: unknown;
@@ -73,6 +96,15 @@ export class WAL {
    *  old WAL so no append can slip between the final flush and close(): any
    *  frame that will ever land in the old file is durable after one flush. */
   private sealed = false;
+  /** Set by the first failed flush (or poisonPending): the WAL stops accepting
+   *  appends until the owner recovers it in place (see the header). Distinct
+   *  from `sealed`: seal is a normal compaction rotation (rejections are
+   *  retried against the new WAL), poison is a fault state (hard failures). */
+  private poisoned: WalPoison | null = null;
+  /** Id of the batch the next drain will carry. appendLoc stamps each frame
+   *  with it so the owner can track per-flush-group pre-state; flushBatch
+   *  increments it at drain time, so same-tick appends always share an id. */
+  private nextBatchId = 1;
   private timer: ReturnType<typeof setInterval> | null = null;
   private closed = false;
   private readonly stats: WalStats | null;
@@ -128,22 +160,29 @@ export class WAL {
     this.sealed = true;
   }
 
-  /** Append one frame and return its predicted absolute file offset. The offset
-   *  is known synchronously because frames are flushed strictly in append order.
+  /** Append one frame and return its predicted absolute file offset plus the
+   *  id of the flush batch that will carry it. The offset is known
+   *  synchronously because frames are flushed strictly in append order.
    *  NOTE: the frame's bytes are NOT in the file yet — they sit in the in-memory
    *  queue until a later writev lands — so the offset must not be published as a
    *  disk value pointer before `done` resolves: a synchronous positioned read in
-   *  that window would hit a short read past the current end of the file. */
-  appendLoc(frame: Buffer): { offset: number; done: Promise<void> } {
-    if (this.closed) return { offset: -1, done: Promise.reject(new Error('WAL is closed')) };
+   *  that window would hit a short read past the current end of the file.
+   *  batchId is -1 for frames that never entered a group (immediate
+   *  rejections: closed/poisoned/sealed/invalid). */
+  appendLoc(frame: Buffer): { offset: number; batchId: number; done: Promise<void> } {
+    if (this.closed) return { offset: -1, batchId: -1, done: Promise.reject(new Error('WAL is closed')) };
+    if (this.poisoned) return { offset: -1, batchId: -1, done: Promise.reject(this.poisonError()) };
     if (this.sealed) {
       const err = new Error('WAL is sealed by a compaction rotation; retry against the new WAL');
       (err as { code?: string }).code = 'WAL_SEALED';
-      return { offset: -1, done: Promise.reject(err) };
+      return { offset: -1, batchId: -1, done: Promise.reject(err) };
     }
-    if (!Buffer.isBuffer(frame)) return { offset: -1, done: Promise.reject(new TypeError('frame must be a Buffer')) };
+    if (!Buffer.isBuffer(frame)) {
+      return { offset: -1, batchId: -1, done: Promise.reject(new TypeError('frame must be a Buffer')) };
+    }
     const offset = this.nextOffset;
     this.nextOffset += frame.length;
+    const batchId = this.nextBatchId;
     const done = new Promise<void>((resolve, reject) => {
       this.queue.push({ buf: frame, resolve, reject });
       this.queuedBytes += frame.length;
@@ -158,7 +197,7 @@ export class WAL {
         setImmediate(() => { void this.flushBatch(); });
       }
     });
-    return { offset, done };
+    return { offset, batchId, done };
   }
 
   /** Append one frame. Resolves once written to the OS page cache; for
@@ -171,6 +210,7 @@ export class WAL {
     this.scheduled = false;
     if (this.flushing) return this.inflight;
     if (this.queue.length === 0) return null;
+    if (this.poisoned) return null; // defensive: the queue stays empty while poisoned
 
     this.flushing = true;
     const run = async () => {
@@ -178,17 +218,23 @@ export class WAL {
       this.queue = [];
       const batchBytes = this.queuedBytes;
       this.queuedBytes = 0;
+      this.nextBatchId++;
       if (this.stats) {
         this.stats.walQueuedBytes -= batchBytes;
         this.stats.walGroupCommits++;
         this.stats.walGroupCommitFrames += batch.length;
       }
+      // The predicted offset of the batch's first frame: the owner's recovery
+      // truncation point if this flush fails. Captured now — later appends
+      // move nextOffset forward.
+      const batchStartOffset = this.nextOffset - batchBytes;
       // writev(2) may short-write (signal interruption, RLIMIT_FSIZE, …). Retry
       // until the whole batch lands so a partial write never rejects frames
       // whose in-memory side effects were already applied. Only a real I/O
       // error (or zero progress) rejects the batch.
       let bufs = batch.map((b) => b.buf);
       let off = 0; // byte offset within bufs[0]
+      let failure: unknown = null;
       try {
         while (bufs.length > 0) {
           const toWrite = off > 0 ? [bufs[0]!.subarray(off), ...bufs.slice(1)] : bufs;
@@ -212,21 +258,109 @@ export class WAL {
             }
           }
         }
-        if (this.policy === 'always') await this.sync();
-        for (const b of batch) b.resolve();
       } catch (err) {
-        for (const b of batch) b.reject(err);
-      } finally {
-        this.flushing = false;
-        this.inflight = null;
-        if (this.queue.length > 0 && !this.closed) {
-          this.scheduled = true;
-          setImmediate(() => { void this.flushBatch(); });
+        failure = err;
+        if (this.stats) this.stats.walWriteErrors++;
+      }
+      if (!failure && this.policy === 'always') {
+        // sync() records walFsyncErrors itself. The batch's bytes are in the
+        // page cache but unacknowledged, so an fsync failure poisons exactly
+        // like a write failure.
+        try {
+          await this.sync();
+        } catch (err) {
+          failure = err;
         }
+      }
+      if (failure) {
+        this.poisonWith(batchStartOffset, failure);
+        // Reject the still-queued frames first (reverse enqueue order: newest
+        // flush group first, so the owner's group rollback unwinds
+        // newest-first), then this batch's frames with the original error —
+        // the oldest group's rollback must run last.
+        const perr = this.poisonError();
+        this.rejectQueued(perr);
+        for (const b of batch) b.reject(failure);
+      } else {
+        for (const b of batch) b.resolve();
+      }
+      this.flushing = false;
+      this.inflight = null;
+      if (this.queue.length > 0 && !this.closed && !this.poisoned) {
+        this.scheduled = true;
+        setImmediate(() => { void this.flushBatch(); });
       }
     };
     this.inflight = run();
     return this.inflight;
+  }
+
+  /** Non-null while the WAL is poisoned by a failed flush (or poisonPending):
+   *  the failure and the owner's in-place recovery truncation point. */
+  get poison(): WalPoison | null {
+    return this.poisoned;
+  }
+
+  /** Clear the poison after the owner truncated the file to failedAtOffset
+   *  and re-synced size bookkeeping via refreshSize(): the write path resumes. */
+  clearPoison(): void {
+    this.poisoned = null;
+  }
+
+  /** Poison the WAL from outside the flush path — used when a post-append
+   *  in-memory apply fails (MiniDb's applyOp contract violation): every queued
+   *  frame is un-acked and must never reach disk, exactly as if the flush
+   *  carrying it had failed. The truncation point is the start of the queued
+   *  region; an in-flight batch keeps its own fate. */
+  poisonPending(error: unknown): void {
+    if (this.closed) return;
+    this.poisonWith(this.nextOffset - this.queuedBytes, error);
+    this.rejectQueued(this.poisonError());
+  }
+
+  private poisonWith(failedAtOffset: number, error: unknown): void {
+    if (this.poisoned) {
+      // Already poisoned (poisonPending raced a flush failure, or a second
+      // batch failed): widen the truncation point to also cover the older
+      // un-acked bytes, never narrowing it.
+      this.poisoned.failedAtOffset = Math.min(this.poisoned.failedAtOffset, failedAtOffset);
+      return;
+    }
+    this.poisoned = { failedAtOffset, error };
+  }
+
+  /** Reject every queued frame with `perr` in reverse enqueue order (see the
+   *  flushBatch failure path for why newest-first matters). */
+  private rejectQueued(perr: Error): void {
+    if (this.queue.length === 0) return;
+    for (let i = this.queue.length - 1; i >= 0; i--) this.queue[i]!.reject(perr);
+    if (this.stats) this.stats.walQueuedBytes -= this.queuedBytes;
+    this.queue = [];
+    this.queuedBytes = 0;
+  }
+
+  /** The rejection appends and flush() see while poisoned. 'WAL_POISONED' is
+   *  deliberately distinct from 'WAL_SEALED': seal is a normal rotation
+   *  (callers retry against the new WAL), poison is a hard failure the caller
+   *  must treat as ambiguous. */
+  private poisonError(): Error {
+    const cause = this.poisoned?.error;
+    const err = new Error(
+      `WAL is poisoned by a previous write failure: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+    (err as { code?: string }).code = 'WAL_POISONED';
+    (err as { cause?: unknown }).cause = cause;
+    return err;
+  }
+
+  /** Await the currently in-flight flush (if any) without scheduling new
+   *  ones. Used by the owner's in-place recovery: a poisonPending truncation
+   *  point is predicted against the in-flight batch fully landing, so the
+   *  truncate must wait for that batch to settle — on success the point lies
+   *  beyond its bytes, on failure poisonWith already widened the point to
+   *  cover them. Never rejects (flushBatch settles its frames itself). */
+  async whenIdle(): Promise<void> {
+    await this.inflight;
   }
 
   /** Re-sync size/nextOffset with the file on disk. Required after recovery
@@ -244,9 +378,11 @@ export class WAL {
   /** Force an fsync of the underlying file. On success the durability
    *  watermark advances to the write generation sampled when the fsync was
    *  issued; a failure is recorded (walFsyncErrors + sticky lastWalFsyncError)
-   *  and rethrown, and the WAL stays dirty. */
+   *  and rethrown, and the WAL stays dirty. A no-op while poisoned: the tail
+   *  is about to be truncated by the owner's recovery, so syncing it reports
+   *  nothing actionable. */
   async sync(): Promise<void> {
-    if (!this.fh) return;
+    if (!this.fh || this.poisoned) return;
     const gen = this.writeGen;
     try {
       await this.fh.sync();
@@ -267,9 +403,14 @@ export class WAL {
   /** Flush buffered frames to the OS (without necessarily fsync'ing).
    *  Loops until everything queued up to now has been flushed: an earlier
    *  version only awaited the in-flight batch and could return while newer
-   *  frames were still queued, which let compaction truncate un-flushed data. */
+   *  frames were still queued, which let compaction truncate un-flushed data.
+   *  Throws the poison error when the WAL is (or becomes) poisoned: a caller
+   *  that needs a durable fence (compaction, backup) must fail there instead
+   *  of building on a tail the owner's recovery is about to truncate. */
   async flush(): Promise<void> {
-    while (this.queue.length > 0 || this.inflight) {
+    for (;;) {
+      if (this.poisoned) throw this.poisonError();
+      if (this.queue.length === 0 && !this.inflight) return;
       if (this.inflight) await this.inflight;
       if (this.queue.length > 0) await this.flushBatch();
     }
@@ -287,10 +428,22 @@ export class WAL {
     // fd (a compaction rotation recovering from a failed close swaps in a
     // fresh WAL on the same path and abandons this handle). An fh.close()
     // error itself is swallowed: with the fsync above already durable there
-    // is nothing actionable left to report.
+    // is nothing actionable left to report. While poisoned the final flush is
+    // skipped entirely — the queue was drained with rejections and the tail
+    // belongs to the owner's recovery (or the write-disabled state). A flush
+    // that fails HERE (the final flush itself drives a queued failing batch)
+    // poisons the WAL the same way and is swallowed identically: the frames
+    // were rejected and the owner's recovery — which MiniDb.close() awaits
+    // right after this — owns the tail.
     try {
-      await this.flush();
-      if (this.fh) await this.sync();
+      if (!this.poisoned) {
+        try {
+          await this.flush();
+        } catch (err) {
+          if (!this.poisoned) throw err;
+        }
+        if (this.fh) await this.sync();
+      }
     } finally {
       const fh = this.fh;
       this.fh = null;

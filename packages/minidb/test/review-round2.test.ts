@@ -377,3 +377,465 @@ test('open failure on corrupt index JSON releases the lock', async () => {
   await db2.close();
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+// --- WAL poison / flush-group rollback (write-failure semantics) ------------
+//
+// Fault-injection assertions for the commit point: a failed WAL write/fsync
+// poisons the WAL, the failed frames are physically truncated away (in-place
+// recovery), every touched flush group rolls back to its pre-group records,
+// and later writes queue behind the recovery instead of hitting the poisoned
+// WAL. All synchronization is barrier-driven (in-flight writev gates,
+// condition polling, the recovery gate inside every commit) — no fixed sleeps
+// on the assertion path.
+
+type WalFh = { writev: (...a: unknown[]) => Promise<unknown>; sync: () => Promise<void> };
+
+function walFh(db: MiniDb<unknown>): WalFh {
+  return (db as unknown as { wal: { fh: WalFh } }).wal.fh;
+}
+
+/** One-shot writev failure on the live WAL's append handle. */
+function failNextWritev(db: MiniDb<unknown>): void {
+  const fh = walFh(db);
+  const orig = fh.writev.bind(fh);
+  let fail = true;
+  fh.writev = async (...a: unknown[]) => {
+    if (fail) {
+      fail = false;
+      throw new Error('injected WAL failure');
+    }
+    return orig(...a);
+  };
+}
+
+/** Condition-driven barrier (not a fixed sleep): poll until `cond` holds. */
+async function waitFor(cond: () => boolean, what: string, timeoutMs = 5000): Promise<void> {
+  const t0 = Date.now();
+  while (!cond()) {
+    if (Date.now() - t0 > timeoutMs) throw new Error(`timeout waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 2));
+  }
+}
+
+const MEM_OPTS = { valueCodec: 'string' as const, fsyncPolicy: 'no' as const, activeExpireIntervalMs: 0 };
+
+test('WAL poison: a failed writev is truncated away — the rejected key never reappears and later writes stay consistent (disk mode)', async () => {
+  const dir = await tmpDir();
+  let db = await MiniDb.open<string>({ dir, ...MEM_OPTS, valueMode: 'disk' });
+  failNextWritev(db as MiniDb<unknown>);
+
+  const err: Error = await db.set('failed', 'not-written').then(
+    () => {
+      throw new Error('expected the set to reject');
+    },
+    (e) => e as Error,
+  );
+  assert.match(String(err), /injected WAL failure/);
+  assert.equal((err as { ambiguous?: boolean }).ambiguous, true, 'a failure past the commit point is marked ambiguous');
+  assert.equal(db.get('failed'), undefined, 'the group rollback hides the rejected write in-memory');
+  assert.equal(db.stats.walWriteErrors, 1, 'writev-class failure counted');
+  assert.equal(db.stats.walFsyncErrors, 0);
+
+  // The next write queues behind the in-place recovery, then lands at the
+  // real EOF: disk-mode get() must not short-read a stale predicted offset.
+  await db.set('ok', 'persisted');
+  assert.equal(db.get('ok'), 'persisted');
+  await db.close();
+
+  db = await MiniDb.open<string>({ dir, ...MEM_OPTS, valueMode: 'disk' });
+  assert.equal(db.get('failed'), undefined, 'rejected write must not reappear after reopen');
+  assert.equal(db.get('ok'), 'persisted');
+  await db.close();
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('WAL poison: a half-written group is fully revoked — in-memory and reopen agree that both keys are absent', async () => {
+  const dir = await tmpDir();
+  let db = await MiniDb.open<string>({ dir, ...MEM_OPTS });
+  const fh = walFh(db as MiniDb<unknown>);
+  const orig = fh.writev.bind(fh);
+  let calls = 0;
+  fh.writev = async (bufs: unknown[]) => {
+    calls++;
+    // Both sets coalesce into one group commit: land only the first frame,
+    // then fail the remainder of the batch.
+    if (calls === 1) return orig([bufs[0]]);
+    throw new Error('injected after first frame');
+  };
+
+  const results = await Promise.allSettled([db.set('first', 'should-fail'), db.set('second', 'should-fail')]);
+  assert.deepEqual(
+    results.map((r) => r.status),
+    ['rejected', 'rejected'],
+  );
+  assert.equal(db.get('first'), undefined, 'in-memory state must match what reopen replays');
+  assert.equal(db.get('second'), undefined);
+  await db.close();
+
+  db = await MiniDb.open<string>({ dir, ...MEM_OPTS });
+  assert.equal(db.get('first'), undefined, 'the half-written frame was truncated by the in-place recovery');
+  assert.equal(db.get('second'), undefined);
+  await db.close();
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("WAL poison: an fsync failure (fsyncPolicy 'always') revokes the rejected write — no reappears after reopen", async () => {
+  const dir = await tmpDir();
+  let db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'always', activeExpireIntervalMs: 0 });
+  const fh = walFh(db as MiniDb<unknown>);
+  const origSync = fh.sync.bind(fh);
+  let fail = true;
+  fh.sync = async () => {
+    if (fail) {
+      fail = false;
+      throw new Error('injected fsync failure');
+    }
+    return origSync();
+  };
+
+  const err: Error = await db.set('rejected', 'reappears').then(
+    () => {
+      throw new Error('expected the set to reject');
+    },
+    (e) => e as Error,
+  );
+  assert.match(String(err), /injected fsync failure/);
+  assert.equal((err as { ambiguous?: boolean }).ambiguous, true);
+  assert.equal(db.get('rejected'), undefined);
+  assert.equal(db.stats.walFsyncErrors, 1, 'fsync-class failure counted separately');
+  assert.equal(db.stats.walWriteErrors, 0, 'not a writev-class failure');
+  await db.close();
+
+  db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'always', activeExpireIntervalMs: 0 });
+  assert.equal(db.get('rejected'), undefined, 'rejected write must not reappear after reopen');
+  await db.close();
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('WAL poison: same-key ops failing in one group restore the pre-group value; a cross-group failure keeps the committed value', async () => {
+  // Same group: A and B share the failed batch — the key rolls back to 'old'
+  // (never the never-committed intermediate A).
+  const dir1 = await tmpDir();
+  let db = await MiniDb.open<string>({ dir: dir1, ...MEM_OPTS });
+  await db.set('k', 'old');
+  failNextWritev(db as MiniDb<unknown>);
+  const results = await Promise.allSettled([db.set('k', 'A'), db.set('k', 'B')]);
+  assert.deepEqual(
+    results.map((r) => r.status),
+    ['rejected', 'rejected'],
+  );
+  assert.equal(db.get('k'), 'old', 'group rollback restores the pre-group value, not an intermediate one');
+  await db.close();
+  db = await MiniDb.open<string>({ dir: dir1, ...MEM_OPTS });
+  assert.equal(db.get('k'), 'old', 'reopen agrees with the in-memory state');
+  await db.close();
+  await fs.rm(dir1, { recursive: true, force: true });
+
+  // Different groups: A commits in its own batch, B's later batch fails — the
+  // key stays 'A' in-memory and after reopen.
+  const dir2 = await tmpDir();
+  db = await MiniDb.open<string>({ dir: dir2, ...MEM_OPTS });
+  await db.set('k', 'A');
+  failNextWritev(db as MiniDb<unknown>);
+  await assert.rejects(db.set('k', 'B'), /injected WAL failure/);
+  assert.equal(db.get('k'), 'A', 'a failed later group must not roll back a committed value');
+  await db.close();
+  db = await MiniDb.open<string>({ dir: dir2, ...MEM_OPTS });
+  assert.equal(db.get('k'), 'A');
+  await db.close();
+  await fs.rm(dir2, { recursive: true, force: true });
+});
+
+test('WAL poison: an applyOp contract violation poisons the WAL and rolls the group back — no half-commit anywhere', async () => {
+  const dir = await tmpDir();
+  let db = await MiniDb.open<{ t: string }>({ dir, valueCodec: 'json', fsyncPolicy: 'no', activeExpireIntervalMs: 0 });
+  await db.createTextIndex('ft', { fields: ['t'] });
+  const ti = (db as unknown as { text: Map<string, { add: (k: string, v: unknown) => void }> }).text.get('ft')!;
+  const origAdd = ti.add.bind(ti);
+  let boom = true;
+  ti.add = (k: string, v: unknown) => {
+    if (boom) {
+      boom = false;
+      throw new Error('injected apply failure');
+    }
+    origAdd(k, v);
+  };
+
+  const err: Error = await db.set('doc', { t: 'hello world' }).then(
+    () => {
+      throw new Error('expected the set to reject');
+    },
+    (e) => e as Error,
+  );
+  assert.match(String(err), /injected apply failure/);
+  assert.equal((err as { ambiguous?: boolean }).ambiguous, true);
+  assert.equal(db.get('doc'), undefined, 'no half-commit in the store');
+  assert.deepEqual(
+    db.search('ft', 'hello'),
+    [],
+    'no half-commit in the text index',
+  );
+
+  // The defensive poison triggers the same in-place recovery as a write
+  // failure; later writes land normally.
+  await db.set('after', { t: 'fine' });
+  assert.equal(db.get('after')?.t, 'fine');
+  await db.close();
+
+  db = await MiniDb.open<{ t: string }>({ dir, valueCodec: 'json', fsyncPolicy: 'no', activeExpireIntervalMs: 0 });
+  assert.equal(db.get('doc'), undefined, 'the half-applied write never reached disk');
+  assert.equal(db.get('after')?.t, 'fine');
+  await db.close();
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('WAL poison: when the recovery truncate fails the instance is write-disabled but stays readable and closable', async () => {
+  const dir = await tmpDir();
+  const db = await MiniDb.open<string>({ dir, ...MEM_OPTS });
+  await db.set('k', 'v');
+  failNextWritev(db as MiniDb<unknown>);
+
+  const origTruncate = fs.truncate;
+  (fs as unknown as { truncate: unknown }).truncate = async () => {
+    throw new Error('injected truncate failure');
+  };
+  try {
+    await assert.rejects(db.set('bad', 'x'), /injected WAL failure/);
+    await waitFor(() => db.writeDisabled !== null, 'writeDisabled to be set');
+  } finally {
+    (fs as unknown as { truncate: unknown }).truncate = origTruncate;
+  }
+  assert.match(String(db.writeDisabled), /injected truncate failure/);
+
+  await assert.rejects(db.set('more', 'x'), /writes are disabled/);
+  await assert.rejects(db.batch([{ op: 'set', key: 'b2', value: 'x' }]), /writes are disabled/);
+  assert.equal(db.get('k'), 'v', 'reads keep working');
+  await db.close(); // must not throw
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('everysec background sync failure neither poisons the WAL nor rejects writes (stage-1 semantics regression)', async () => {
+  const dir = await tmpDir();
+  const db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'everysec', syncIntervalMs: 10, activeExpireIntervalMs: 0 });
+  const fh = walFh(db as MiniDb<unknown>);
+  const origSync = fh.sync.bind(fh);
+  const boom = new Error('injected background fsync failure');
+  fh.sync = () => Promise.reject(boom);
+  try {
+    // Writes are acknowledged from the page cache: the failing background
+    // fsync never rejects them.
+    await db.set('k', 'v');
+    await waitFor(() => db.stats.walFsyncErrors >= 1, 'walFsyncErrors to be counted');
+    assert.equal(db.stats.lastWalFsyncError, boom, 'sticky error is observable');
+    assert.equal(db.wal.poison, null, 'a background sync failure must not poison the WAL');
+    await db.set('k2', 'v2');
+    assert.equal(db.get('k'), 'v');
+    assert.equal(db.get('k2'), 'v2');
+  } finally {
+    fh.sync = origSync; // let close()'s final sync succeed
+  }
+  await db.close();
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('WAL poison: an applyOp violation queued behind an in-flight batch still lets that batch commit', async () => {
+  // The in-flight batch (op A) must keep its own fate when a later op's
+  // applyOp violation poisons the pending queue: A commits, the poisoned op
+  // is revoked, and the recovery truncates nothing of A's bytes (the
+  // truncation point is the queued region's start, applied only after the
+  // in-flight batch settled — no zero-extended gap on reopen).
+  const dir = await tmpDir();
+  let db = await MiniDb.open<{ t: string }>({ dir, valueCodec: 'json', fsyncPolicy: 'no', activeExpireIntervalMs: 0 });
+  await db.createTextIndex('ft', { fields: ['t'] });
+
+  const fh = walFh(db as MiniDb<unknown>);
+  const orig = fh.writev.bind(fh);
+  let releaseWritev!: () => void;
+  const writevGate = new Promise<void>((r) => (releaseWritev = r));
+  let writevCalls = 0;
+  fh.writev = async (...a: unknown[]) => {
+    writevCalls++;
+    if (writevCalls === 1) await writevGate; // park A's batch mid-flight
+    return orig(...a);
+  };
+
+  const opA = db.set('a', { t: 'first' });
+  await waitFor(() => writevCalls === 1, "op A's writev to be in flight");
+
+  const ti = (db as unknown as { text: Map<string, { add: (k: string, v: unknown) => void }> }).text.get('ft')!;
+  const origAdd = ti.add.bind(ti);
+  let boom = true;
+  ti.add = (k: string, v: unknown) => {
+    if (boom) {
+      boom = false;
+      throw new Error('injected apply failure');
+    }
+    origAdd(k, v);
+  };
+  await assert.rejects(db.set('b', { t: 'second' }), /injected apply failure/);
+  assert.ok(db.wal.poison, 'the apply violation poisoned the pending queue');
+
+  releaseWritev();
+  await opA; // A's batch was in flight before the poison: it commits
+  await waitFor(() => db.wal.poison === null, 'the in-place recovery to finish');
+
+  assert.equal(db.get('a')?.t, 'first');
+  assert.equal(db.get('b'), undefined);
+  await db.set('c', { t: 'third' });
+  await db.close();
+
+  db = await MiniDb.open<{ t: string }>({ dir, valueCodec: 'json', fsyncPolicy: 'no', activeExpireIntervalMs: 0 });
+  assert.equal(db.get('a')?.t, 'first', 'the committed in-flight batch survives reopen');
+  assert.equal(db.get('b'), undefined);
+  assert.equal(db.get('c')?.t, 'third');
+  await db.close();
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('WAL poison: an applyOp violation on a never-enqueued frame (sealed WAL) does not poison and rolls back per-op', async () => {
+  // During a compaction rotation the old WAL is sealed: an op's appendLoc is
+  // rejected with WAL_SEALED and the frame is NEVER enqueued. An applyOp
+  // violation on such an op must not poison the WAL (the rotation can still
+  // commit a new, shorter file at db.wal — a poison recorded with the old
+  // file's coordinates would corrupt it during the in-place recovery); only
+  // the partial in-memory mutation needs undoing.
+  const dir = await tmpDir();
+  let db = await MiniDb.open<{ t: string }>({ dir, valueCodec: 'json', fsyncPolicy: 'no', activeExpireIntervalMs: 0 });
+  await db.createTextIndex('ft', { fields: ['t'] });
+  await db.set('old', { t: 'keep' });
+
+  const ti = (db as unknown as { text: Map<string, { add: (k: string, v: unknown) => void }> }).text.get('ft')!;
+  ti.add = () => {
+    throw new Error('injected apply failure');
+  };
+  // Simulate the rotation seal (what db.wal.seal() does inside compaction).
+  db.wal.seal();
+
+  const err: Error = await db.set('bad', { t: 'x' }).then(
+    () => {
+      throw new Error('expected the set to reject');
+    },
+    (e) => e as Error,
+  );
+  assert.match(String(err), /injected apply failure/);
+  assert.equal(db.wal.poison, null, 'a never-enqueued frame poisons nothing');
+  assert.equal(db.get('bad'), undefined, 'the partial apply was undone');
+  assert.equal(db.get('old')?.t, 'keep');
+  assert.deepEqual(db.search('ft', 'keep').map((h) => h.key), ['old'], 'derived indexes stayed consistent');
+  await db.close(); // the sealed WAL still flushes its (empty) queue and closes
+
+  db = await MiniDb.open<{ t: string }>({ dir, valueCodec: 'json', fsyncPolicy: 'no', activeExpireIntervalMs: 0 });
+  assert.equal(db.get('bad'), undefined);
+  assert.equal(db.get('old')?.t, 'keep');
+  await db.close();
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('WAL poison: in-place recovery skips the truncate when the WAL file was replaced (stale coordinates)', async () => {
+  // Defense-in-depth for the rotation window: a poison whose failedAtOffset
+  // was recorded against the OLD file must never zero-extend the NEW, shorter
+  // file that a committed rotation left at db.wal.
+  const dir = await tmpDir();
+  let db = await MiniDb.open<string>({ dir, ...MEM_OPTS });
+  for (let i = 0; i < 10; i++) await db.set(`k${i}`, `v${i}`);
+  await db.wal.flush();
+  const staleOffset = (await fs.stat(path.join(dir, 'db.wal'))).size;
+  assert.ok(staleOffset > 0);
+
+  // Poison the WAL directly (no op rejection, so no recovery is kicked yet).
+  db.wal.poisonPending(new Error('injected poison'));
+  const poison = db.wal.poison!;
+  assert.equal(poison.failedAtOffset, staleOffset);
+
+  // Simulate a successful rotation committing a NEW, shorter WAL at the same
+  // path: the recorded offset now belongs to the old file's coordinates.
+  await fs.writeFile(path.join(dir, 'db.wal'), Buffer.alloc(0));
+
+  // Drive the recovery: the stale-coordinate guard must skip the truncate —
+  // zero-extending to the stale offset would corrupt the new file.
+  await (db as unknown as { recoverWalInPlace(w: unknown): Promise<void> }).recoverWalInPlace(db.wal);
+  assert.equal((await fs.stat(path.join(dir, 'db.wal'))).size, 0, 'the new file was not zero-extended');
+  assert.equal(db.wal.poison, null, 'the poison is cleared');
+
+  await db.set('post', 'ok');
+  assert.equal(db.get('post'), 'ok');
+  await db.close();
+  db = await MiniDb.open<string>({ dir, ...MEM_OPTS });
+  assert.equal(db.size, 1, 'only the post-recovery write is in the fresh WAL');
+  assert.equal(db.get('post'), 'ok');
+  await db.close();
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('WAL poison: close() in the same tick as a failing write resolves cleanly and leaves a consistent file', async () => {
+  // The WAL's final flush itself drives the queued failing batch: close()
+  // must swallow the poison, wait for the recovery the op's rejection kicks,
+  // and still release everything. The first writev parks so close() provably
+  // begins while the failing batch is in flight.
+  const dir = await tmpDir();
+  let db = await MiniDb.open<string>({ dir, ...MEM_OPTS });
+  const fh = walFh(db as MiniDb<unknown>);
+  const orig = fh.writev.bind(fh);
+  let releaseWritev!: () => void;
+  const writevGate = new Promise<void>((r) => (releaseWritev = r));
+  let calls = 0;
+  fh.writev = async (...a: unknown[]) => {
+    calls++;
+    if (calls === 1) {
+      await writevGate;
+      throw new Error('injected WAL failure');
+    }
+    return orig(...a);
+  };
+
+  const op = db.set('bad', 'x');
+  await waitFor(() => calls === 1, 'the failing writev to be in flight');
+  const closing = db.close();
+  releaseWritev();
+  await assert.rejects(op, /injected WAL failure/);
+  await closing; // must not throw even though the failure landed mid-close
+
+  db = await MiniDb.open<string>({ dir, ...MEM_OPTS });
+  assert.equal(db.get('bad'), undefined, 'the revoked write did not survive close+reopen');
+  await db.close();
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('backup waits out an in-flight WAL recovery instead of copying the un-acked tail', async () => {
+  const dir = await tmpDir();
+  const backupDir = await tmpDir();
+  const restoreDir = await tmpDir();
+  const db = await MiniDb.open<string>({ dir, ...MEM_OPTS });
+  await db.set('k', 'v');
+  failNextWritev(db as MiniDb<unknown>);
+
+  // Park the recovery's truncate so the backup provably overlaps the
+  // in-flight recovery; the backup must wait it out and re-fence.
+  const origTruncate = fs.truncate;
+  let releaseTruncate!: () => void;
+  const truncateGate = new Promise<void>((r) => (releaseTruncate = r));
+  (fs as unknown as { truncate: unknown }).truncate = async (p: unknown, len?: number) => {
+    await truncateGate;
+    return origTruncate(p as Parameters<typeof origTruncate>[0], len);
+  };
+  try {
+    await assert.rejects(db.set('bad', 'x'), /injected WAL failure/);
+    const backingUp = db.backup(backupDir, { compact: false });
+    releaseTruncate();
+    await backingUp;
+  } finally {
+    (fs as unknown as { truncate: unknown }).truncate = origTruncate;
+  }
+  assert.equal(db.get('bad'), undefined);
+  await db.close();
+
+  // The backup carries the recovered state: the acknowledged write is in,
+  // the revoked one is not.
+  const restored = await MiniDb.restore<string>(backupDir, restoreDir, { ...MEM_OPTS, force: true });
+  assert.equal(restored.get('k'), 'v');
+  assert.equal(restored.get('bad'), undefined, 'the un-acked tail never reached the backup');
+  await restored.close();
+  await fs.rm(dir, { recursive: true, force: true });
+  await fs.rm(backupDir, { recursive: true, force: true });
+  await fs.rm(restoreDir, { recursive: true, force: true });
+});

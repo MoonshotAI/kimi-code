@@ -369,3 +369,85 @@ test('a compaction whose onCompacted hook throws counts as a compactError, not a
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('a WAL poison during the snapshot phase aborts this compaction; the next compaction succeeds and data stays consistent', async () => {
+  // Barrier-driven: the snapshot phase parks on `releaseSnapshot`, and the
+  // in-place recovery's fs.truncate parks on `releaseTruncate`, so the
+  // compaction deterministically hits the poisoned WAL (its pre-copy flush
+  // throws) before the recovery can clear the poison.
+  let snapshotEntered!: () => void;
+  let releaseSnapshot!: () => void;
+  const entered = new Promise<void>((r) => (snapshotEntered = r));
+  const releaseS = new Promise<void>((r) => (releaseSnapshot = r));
+  vi.doMock('../src/snapshot.js', async () => {
+    const real = await vi.importActual<typeof import('../src/snapshot.js')>('../src/snapshot.js');
+    return {
+      ...real,
+      writeSnapshot: async (...args: Parameters<typeof real.writeSnapshot>) => {
+        snapshotEntered();
+        await releaseS;
+        return real.writeSnapshot(...args);
+      },
+    };
+  });
+  let releaseTruncate!: () => void;
+  const truncateGate = new Promise<void>((r) => (releaseTruncate = r));
+  const truncate = async (p: PathLike, len?: number): Promise<void> => {
+    await truncateGate;
+    return fs.truncate(p, len);
+  };
+  const mocked = { ...fs, truncate };
+  vi.doMock('node:fs/promises', () => ({ ...mocked, default: mocked }));
+
+  const { MiniDb } = await import('../src/index.js');
+  const dir = await tmpDir();
+  try {
+    let db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', compactThresholdBytes: 1 << 30 });
+    const N = 50;
+    for (let i = 0; i < N; i++) await db.set(`k${i}`, `v${i}`);
+
+    const compactPromise = db.compact();
+    await entered; // the compaction is parked inside the snapshot phase now
+
+    // Poison the WAL with a one-shot writev failure.
+    const fh = (db as unknown as { wal: { fh: { writev: (...a: unknown[]) => Promise<unknown> } } }).wal.fh;
+    const orig = fh.writev.bind(fh);
+    let boom = true;
+    fh.writev = async (...a: unknown[]) => {
+      if (boom) {
+        boom = false;
+        throw new Error('injected WAL failure');
+      }
+      return orig(...a);
+    };
+    await assert.rejects(db.set('bad', 'x'), /injected WAL failure/);
+
+    // The compaction's next flush hits the poison and aborts the whole round
+    // through its existing catch (the recovery's truncate is still gated).
+    releaseSnapshot();
+    await assert.rejects(compactPromise, /poisoned/);
+    assert.equal(db.stats.compactions, 0);
+    assert.equal(db.stats.compactErrors, 1);
+
+    // Let the in-place recovery run; later writes queue behind it. Then the
+    // next compaction round succeeds on the truncated WAL.
+    releaseTruncate();
+    await db.set('post', 'ok');
+    await db.compact();
+    assert.equal(db.stats.compactions, 1);
+    assert.equal(db.stats.compactErrors, 1);
+    assert.equal(db.get('bad'), undefined, 'the rejected write never reached the snapshot or the WAL');
+    assert.equal(db.get('k0'), 'v0');
+    assert.equal(db.get('post'), 'ok');
+    await db.close();
+
+    db = await MiniDb.open<string>({ dir, valueCodec: 'string' });
+    assert.equal(db.size, N + 1);
+    assert.equal(db.get('bad'), undefined);
+    assert.equal(db.get(`k${N - 1}`), `v${N - 1}`);
+    assert.equal(db.get('post'), 'ok');
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

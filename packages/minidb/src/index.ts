@@ -12,6 +12,7 @@ import path from 'node:path';
 import { Store } from './store.js';
 import type { StoreRecord, ValueLoc } from './store.js';
 import { WAL } from './wal.js';
+import type { WalPoison } from './wal.js';
 import { ValueReader } from './value-reader.js';
 import { recover, catchUpWal, frameToOps } from './recovery.js';
 import { compact, shouldCompact } from './compaction.js';
@@ -212,6 +213,20 @@ interface PreparedOp<V> {
   valueDecoded: V | undefined;
 }
 
+/** Per-flush-group rollback state: the pre-group logical record of every key
+ *  the group's ops touched, plus the count of the group's ops still awaiting
+ *  their frame's `done`. Created when the first op of a group applies. */
+interface WalGroup {
+  /** pk → pre-group record. The earliest capture per key wins: several ops of
+   *  one group on the same key roll back to the state before the FIRST of
+   *  them, so the result matches what a reopen replays (the whole group's
+   *  frames are truncated away together). */
+  pre: Map<string, StoreRecord | undefined>;
+  pending: number;
+  /** Set once the group failed and was rolled back; later rejects are no-ops. */
+  rolledBack: boolean;
+}
+
 /** Persisted shape of one entry in `db.textindexes.json`. `tokenizer` is
  *  absent in definitions written before n-gram support existed, which means
  *  'default'; it is also omitted for new default indexes so their definitions
@@ -282,13 +297,52 @@ export class MiniDb<V = unknown> {
   maxMemoryPolicy: 'reject' | 'evict-lru' = 'reject';
   private access = new Set<string>(); // pk, insertion-ordered by last touch (Map/Set iteration order): front = LRU
   private uniqueWriteLock: Promise<void> = Promise.resolve();
+  /** Serializes in-place WAL recoveries (poison → truncate → resume), the same
+   *  promise-chain style as uniqueWriteLock. Never rejects (a failed recovery
+   *  lands in writeDisabled instead). */
+  private walRecoveryChain: Promise<void> = Promise.resolve();
+  /** False while a kicked recovery may still be running. Write-op commit
+   *  bodies check it BEFORE awaiting walRecoveryChain: with no recovery in
+   *  flight the commit path takes zero extra awaits (hot path), while a write
+   *  issued after a failure queues behind the recovery instead of hitting the
+   *  still-poisoned WAL. */
+  private walRecoveryIdle = true;
+  /** The poison object the current recovery chain covers (dedupe key for
+   *  kickWalRecovery; each poison event is a fresh object identity). */
+  private walRecoveryCovers: WalPoison | null = null;
+  /** Set when in-place WAL recovery's truncate fails (persistent I/O error):
+   *  from then on every write op throws a WAL_WRITE_DISABLED error
+   *  immediately; reads and close() keep working. The value is the truncate
+   *  error (the cause). DESIGNED CONSEQUENCE: the WAL stays poisoned, so
+   *  close() skips its final flush and the un-acked tail is LEFT in db.wal —
+   *  a later reopen replays it and the rejected writes resurface. That is
+   *  exactly why every commit-point failure is marked `ambiguous: true`: in
+   *  this state the caller cannot assume a rejected write had no effect. */
+  writeDisabled: unknown = null;
+  /** Scratch out-param for applyOp's pre-state capture. Live only within the
+   *  synchronous apply section of a commit body (shared safely because
+   *  nothing awaits while it is read); callers lift the reference into a
+   *  local before any await. Avoids one small allocation per write op. */
+  private readonly applyBox: { prev: StoreRecord | undefined } = { prev: undefined };
+  /** Pre-group rollback state of every in-flight flush group, keyed per WAL:
+   *  a compaction rotation replaces the WAL and each side's batchIds are
+   *  independent. Entries are dropped when their group fully settles. */
+  private pendingGroups = new Map<WAL, Map<number, WalGroup>>();
+  /** The group groupFor returned most recently (see groupFor); invalidated
+   *  when that group settles or rolls back. batchIds are monotonic per WAL,
+   *  so a stale (wal, batchId) pair can never collide with a later group. */
+  private lastGroup: { wal: WAL; batchId: number; group: WalGroup } | null = null;
   readonly stats = {
     compactions: 0,
     compactErrors: 0,
     walBytesWritten: 0,
     walFsyncs: 0,
+    /** Failed writev-class attempts on the WAL write path. Each one poisons
+     *  the WAL and triggers an in-place recovery (truncate + resume). */
+    walWriteErrors: 0,
     /** Failed fsync attempts; a background everysec failure never rejects a
-     *  write — it surfaces only here and in lastWalFsyncError. */
+     *  write — it surfaces only here and in lastWalFsyncError. A write-path
+     *  ('always') fsync failure rejects its batch and poisons the WAL. */
     walFsyncErrors: 0,
     /** Sticky copy of the most recent fsync failure (never cleared). */
     lastWalFsyncError: null as unknown,
@@ -742,6 +796,182 @@ export class MiniDb<V = unknown> {
     }
   }
 
+  // ---- WAL poison: in-place recovery + flush-group rollback ----------------
+  //
+  // Commit point semantics: an op is committed when its frame's `done`
+  // resolves. A WAL write/fsync failure poisons the WAL (see wal.ts) and
+  // rejects every un-acked frame; each rejected op rolls its flush group back
+  // to the pre-group records, then the instance recovers the WAL in place —
+  // truncate db.wal to the failed batch's first predicted offset (removing
+  // exactly the un-acked bytes), refreshSize, clearPoison — so the on-disk
+  // tail a reopen would replay and the in-memory state agree again.
+
+  /** Register one op of a flush group (one call per op awaiting a frame) and
+   *  return the group; null when the frame never entered a group (batchId < 0:
+   *  a sealed/closed/poisoned appendLoc — those use the per-op rollback).
+   *  lastGroup caches the previous lookup: ops of one flush burst share the
+   *  same (wal, batchId), so they hit two reference compares instead of two
+   *  map lookups. */
+  private groupFor(wal: WAL, batchId: number): WalGroup | null {
+    if (batchId < 0) return null;
+    const last = this.lastGroup;
+    if (last && last.wal === wal && last.batchId === batchId) {
+      last.group.pending++;
+      return last.group;
+    }
+    let byId = this.pendingGroups.get(wal);
+    if (!byId) {
+      byId = new Map();
+      this.pendingGroups.set(wal, byId);
+    }
+    let g = byId.get(batchId);
+    if (!g) {
+      g = { pre: new Map(), pending: 0, rolledBack: false };
+      byId.set(batchId, g);
+    }
+    g.pending++;
+    this.lastGroup = { wal, batchId, group: g };
+    return g;
+  }
+
+  /** Record a key's pre-group record; the earliest capture per group wins. */
+  private groupNoteKey(group: WalGroup | null, pk: string, prev: StoreRecord | undefined): void {
+    if (group && !group.pre.has(pk)) group.pre.set(pk, prev);
+  }
+
+  /** The op's frame landed: drop the group's pre-state once every op settled. */
+  private settleGroup(group: WalGroup | null, wal: WAL, batchId: number): void {
+    if (!group) return;
+    if (--group.pending === 0 && !group.rolledBack) {
+      const byId = this.pendingGroups.get(wal);
+      byId?.delete(batchId);
+      if (byId && byId.size === 0) this.pendingGroups.delete(wal);
+      if (this.lastGroup?.group === group) this.lastGroup = null;
+    }
+  }
+
+  /** Roll a failed group back as a whole: every touched key returns to its
+   *  pre-group record. Uses the unguarded restoreGroupKey — flush-group
+   *  ordering itself guarantees no legally-committed later op exists (a
+   *  poison rejects every queued frame, and the rollbacks unwind newest
+   *  group first because the WAL rejects queued frames in reverse enqueue
+   *  order), so the per-op seq guard would only misfire here: an earlier
+   *  group's pre-state must win even after a later group's rollback re-seqd
+   *  the record. Idempotent per group. */
+  private rollbackGroup(group: WalGroup | null, wal: WAL, batchId: number): void {
+    if (!group || group.rolledBack) return;
+    group.rolledBack = true;
+    for (const [pk, prev] of group.pre) this.restoreGroupKey(pk, prev);
+    const byId = this.pendingGroups.get(wal);
+    byId?.delete(batchId);
+    if (byId && byId.size === 0) this.pendingGroups.delete(wal);
+    if (this.lastGroup?.group === group) this.lastGroup = null;
+  }
+
+  /** Tag a failure past the commit point as ambiguous: the op's frame may
+   *  have reached the OS — and its value was visible to in-process readers
+   *  between applyOp and the group rollback — before the failure revoked it,
+   *  so the caller must not assume the write had no effect. Errors thrown
+   *  before the commit point (validation, unique violation, maxMemory,
+   *  write-disabled) carry no flag: those definitely had no effect.
+   *  WAL_SEALED is excluded too: retryOnWalSeal transparently retries it. */
+  private markAmbiguous(err: unknown): unknown {
+    if (err && typeof err === 'object' && (err as { code?: string }).code !== 'WAL_SEALED') {
+      (err as { ambiguous?: boolean }).ambiguous = true;
+    }
+    return err;
+  }
+
+  /** Kick the in-place recovery for a poisoned WAL (single-flight; recoveries
+   *  serialize on walRecoveryChain). Called from op catches after the group
+   *  rollback — many ops can share one poison event, so a recovery already
+   *  chained for THIS poison object is not chained again (a write storm's
+   *  worth of catches costs one recovery, not one per op). No-op for
+   *  anything that did not poison the WAL (e.g. a seal rejection during a
+   *  compaction rotation). */
+  private kickWalRecovery(wal: WAL): void {
+    const poison = wal.poison;
+    if (!poison || poison === this.walRecoveryCovers) return;
+    this.walRecoveryCovers = poison;
+    this.walRecoveryIdle = false;
+    const run = this.walRecoveryChain.then(() => this.recoverWalInPlace(wal));
+    const chain = run.catch(() => {});
+    this.walRecoveryChain = chain;
+    void chain.finally(() => {
+      // Idle again only once the LATEST kicked recovery settled (an earlier
+      // chain's settle must not mark idle while a later one still runs).
+      if (this.walRecoveryChain === chain) {
+        this.walRecoveryIdle = true;
+        this.walRecoveryCovers = null;
+      }
+    });
+  }
+
+  /** Write-op gate at the start of every commit body: throws synchronously
+   *  while writes are disabled; returns the recovery chain to await while a
+   *  recovery is in flight, null otherwise — so the hot path pays zero extra
+   *  microtasks (`const g = this.walRecoveryGate(); if (g) await g;`).
+   *  Correctness never depends on the gate alone: an op that races a poison
+   *  past the check is still rejected by the WAL itself and rolls its group
+   *  back. */
+  private walRecoveryGate(): Promise<void> | null {
+    if (this.writeDisabled) throw this.writeDisabledError();
+    return this.walRecoveryIdle ? null : this.walRecoveryChain;
+  }
+
+  private writeDisabledError(): Error {
+    const cause = this.writeDisabled;
+    return Object.assign(
+      new Error(
+        `MiniDb writes are disabled: in-place WAL recovery failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      ),
+      { code: 'WAL_WRITE_DISABLED', cause },
+    );
+  }
+
+  /** Recover a poisoned WAL back to a known-safe point: truncate db.wal to
+   *  the failed batch's first predicted offset — exactly the un-acked bytes;
+   *  every acknowledged write sits in earlier, successful batches — then
+   *  re-sync the live WAL's size bookkeeping and clear the poison.
+   *
+   *  Mutual exclusion with a compaction rotation (which has its own recovery:
+   *  swapping in a fresh WAL at the real EOF): the truncate targets the PATH,
+   *  so it is correct whether or not the rotation's recovery swapped the WAL
+   *  meanwhile, and the bookkeeping refresh hits the CURRENT WAL. Both sides
+   *  only ever truncate to the same poison offset, so the composition never
+   *  double-executes.
+   *
+   *  A truncate failure (the I/O error persists) parks the instance in
+   *  writeDisabled: the poison is kept, so appends keep rejecting, reads keep
+   *  working and close() skips its final flush. */
+  private async recoverWalInPlace(wal: WAL): Promise<void> {
+    let poison = wal.poison;
+    if (!poison) return;
+    // Settle any in-flight flush first: a poisonPending truncation point is
+    // predicted against the in-flight batch fully landing, so truncating past
+    // the real EOF would zero-extend the file (a corrupt gap on reopen). A
+    // failed in-flight batch widens the point via poisonWith meanwhile.
+    await wal.whenIdle();
+    poison = wal.poison;
+    if (!poison) return;
+    try {
+      // Stale-coordinate guard: if db.wal was REPLACED since the poison was
+      // recorded (a compaction rotation committed a new, shorter file at the
+      // path — the commit-body guards make this unreachable for poisons
+      // recorded during/after the seal, so this is defense-in-depth), the
+      // offset belongs to the old file's coordinate system and truncating to
+      // it would zero-extend the new file. The new file never carried the
+      // un-acked tail, so skipping the truncate is the correct recovery.
+      const st = await fs.stat(this.walPath);
+      if (poison.failedAtOffset <= st.size) await fs.truncate(this.walPath, poison.failedAtOffset);
+    } catch (err) {
+      this.writeDisabled = err;
+      return;
+    }
+    await this.wal.refreshSize();
+    wal.clearPoison();
+  }
+
   private touchAccess(pk: string): void {
     // Re-insert so the iteration order of `access` is LRU..MRU: delete()+add()
     // moves the key to the most-recently-used end (a plain set() on an existing
@@ -793,16 +1023,42 @@ export class MiniDb<V = unknown> {
     // A failed attempt restores the victim via restoreKey, so re-running the
     // idempotent DEL body against the post-rotation WAL is safe.
     const commit = async (): Promise<void> => {
-      const appended = this.wal.append(encodeFrame({ type: TYPE_DEL, key: op.key }));
-      const prev = this.applyOp(op);
-      const seq = this.store.map.get(op.pk)?.seq;
+      const recoveryGate = this.walRecoveryGate();
+      if (recoveryGate) await recoveryGate;
+      const wal = this.wal;
+      const appended = wal.appendLoc(encodeFrame({ type: TYPE_DEL, key: op.key }));
+      const group = this.groupFor(wal, appended.batchId);
+      const applied = this.applyBox;
+      let prev: StoreRecord | undefined;
+      let seq: number | undefined;
       try {
-        await appended;
+        this.applyOp(op, applied);
+        prev = applied.prev;
+        seq = this.store.map.get(op.pk)?.seq;
+      } catch (err) {
+        // See set() for this defensive path (applyOp's must-not-throw contract).
+        void appended.done.catch(() => {}); // this op throws here; swallow the frame's rejection
+        if (group) {
+          wal.poisonPending(err);
+          this.groupNoteKey(group, op.pk, applied.prev);
+          this.rollbackGroup(group, wal, appended.batchId);
+          this.kickWalRecovery(wal);
+        } else {
+          this.restoreGroupKey(op.pk, applied.prev);
+        }
+        throw this.markAmbiguous(err);
+      }
+      this.groupNoteKey(group, op.pk, prev);
+      try {
+        await appended.done;
         this.stats.evictions++;
       } catch (e) {
-        this.restoreKey(op.pk, prev, seq);
-        throw e;
+        if (group) this.rollbackGroup(group, wal, appended.batchId);
+        else this.restoreKey(op.pk, prev, seq);
+        this.kickWalRecovery(wal);
+        throw this.markAmbiguous(e);
       }
+      this.settleGroup(group, wal, appended.batchId);
     };
     await this.retryOnWalSeal(commit);
   }
@@ -891,6 +1147,11 @@ export class MiniDb<V = unknown> {
     await this.ensureMemoryFor([op]);
 
     const commit = async (): Promise<void> => {
+      // Queue behind any in-place WAL recovery: a write issued after a
+      // failure waits for the truncate + poison-clear instead of hitting the
+      // still-poisoned WAL. Null (and zero-cost) when no recovery is running.
+      const recoveryGate = this.walRecoveryGate();
+      if (recoveryGate) await recoveryGate;
       if (this.indexes.indexes.size && this.indexable(value)) this.indexes.checkUnique(op.pk, value);
       const frame = encodeFrame({ type: TYPE_SET, key: op.key, value: op.value, meta: op.meta, expireAt: op.expireAt });
       const wal = this.wal;
@@ -901,17 +1162,48 @@ export class MiniDb<V = unknown> {
       // db.wal yet (appendLoc's offset is only a prediction), so a disk
       // pointer published now could point past the end of the file. The
       // pointer is published once `done` resolves (see publishWalRef). If the
-      // WAL write ultimately fails, roll the store + derived indexes back to
-      // the pre-op record so in-memory state never diverges from what is
-      // durable.
-      const prev = this.applyOp(op);
-      const seq = this.store.map.get(op.pk)?.seq;
+      // WAL write ultimately fails, the whole flush group rolls back to the
+      // pre-group records so in-memory state never diverges from what is
+      // durable (and from what a reopen replays after the in-place recovery
+      // truncated the failed tail).
+      const group = this.groupFor(wal, appended.batchId);
+      const applied = this.applyBox;
+      let prev: StoreRecord | undefined;
+      let seq: number | undefined;
+      try {
+        this.applyOp(op, applied);
+        // Lift the pre-state reference out of the shared scratch before any
+        // await lets a later op overwrite it.
+        prev = applied.prev;
+        seq = this.store.map.get(op.pk)?.seq;
+      } catch (err) {
+        // applyOp violated its must-not-throw contract (see its doc — stage 11
+        // makes it structural; this try is the defensive layer). An enqueued
+        // frame (batchId >= 0) is un-acked and must never reach disk: poison
+        // the WAL exactly like a write failure and roll the group back. A
+        // never-enqueued frame (batchId < 0, e.g. a seal race) poisons
+        // nothing — only the partial in-memory mutation needs undoing.
+        void appended.done.catch(() => {}); // this op throws here; swallow the frame's rejection
+        if (group) {
+          wal.poisonPending(err);
+          this.groupNoteKey(group, op.pk, applied.prev);
+          this.rollbackGroup(group, wal, appended.batchId);
+          this.kickWalRecovery(wal);
+        } else {
+          this.restoreGroupKey(op.pk, applied.prev);
+        }
+        throw this.markAmbiguous(err);
+      }
+      this.groupNoteKey(group, op.pk, prev);
       try {
         await appended.done;
       } catch (e) {
-        this.restoreKey(op.pk, prev, seq);
-        throw e;
+        if (group) this.rollbackGroup(group, wal, appended.batchId);
+        else this.restoreKey(op.pk, prev, seq);
+        this.kickWalRecovery(wal);
+        throw this.markAmbiguous(e);
       }
+      this.settleGroup(group, wal, appended.batchId);
       if (this.valueMode === 'disk') {
         this.publishWalRef(
           op.pk,
@@ -938,15 +1230,41 @@ export class MiniDb<V = unknown> {
     const op = this.prepareDel(key);
     await this.ensureMemoryFor([op]);
     const commit = async (): Promise<void> => {
-      const appended = this.wal.append(encodeFrame({ type: TYPE_DEL, key: op.key }));
-      const prev = this.applyOp(op);
-      const seq = this.store.map.get(op.pk)?.seq;
+      const recoveryGate = this.walRecoveryGate();
+      if (recoveryGate) await recoveryGate;
+      const wal = this.wal;
+      const appended = wal.appendLoc(encodeFrame({ type: TYPE_DEL, key: op.key }));
+      const group = this.groupFor(wal, appended.batchId);
+      const applied = this.applyBox;
+      let prev: StoreRecord | undefined;
+      let seq: number | undefined;
       try {
-        await appended;
-      } catch (e) {
-        this.restoreKey(op.pk, prev, seq);
-        throw e;
+        this.applyOp(op, applied);
+        prev = applied.prev;
+        seq = this.store.map.get(op.pk)?.seq;
+      } catch (err) {
+        // See set() for this defensive path (applyOp's must-not-throw contract).
+        void appended.done.catch(() => {}); // this op throws here; swallow the frame's rejection
+        if (group) {
+          wal.poisonPending(err);
+          this.groupNoteKey(group, op.pk, applied.prev);
+          this.rollbackGroup(group, wal, appended.batchId);
+          this.kickWalRecovery(wal);
+        } else {
+          this.restoreGroupKey(op.pk, applied.prev);
+        }
+        throw this.markAmbiguous(err);
       }
+      this.groupNoteKey(group, op.pk, prev);
+      try {
+        await appended.done;
+      } catch (e) {
+        if (group) this.rollbackGroup(group, wal, appended.batchId);
+        else this.restoreKey(op.pk, prev, seq);
+        this.kickWalRecovery(wal);
+        throw this.markAmbiguous(e);
+      }
+      this.settleGroup(group, wal, appended.batchId);
       this.maybeAutoCompact();
     };
     await this.retryOnWalSeal(commit);
@@ -963,6 +1281,8 @@ export class MiniDb<V = unknown> {
     await this.ensureMemoryFor(prepared);
 
     const commit = async (): Promise<void> => {
+      const recoveryGate = this.walRecoveryGate();
+      if (recoveryGate) await recoveryGate;
       if (this.indexes.indexes.size) {
         this.indexes.checkUniqueBatch(
           prepared.map((o) => ({
@@ -978,15 +1298,37 @@ export class MiniDb<V = unknown> {
       const frame = encodeFrame({ type: TYPE_BATCH, key: Buffer.alloc(0), value: body });
       const wal = this.wal;
       const appended = wal.appendLoc(frame);
+      const group = this.groupFor(wal, appended.batchId);
       // Capture each key's pre-batch record (first applyOp per key) so the whole
       // batch can be rolled back if the WAL write fails, preserving atomicity.
       const prevs = new Map<string, StoreRecord | undefined>();
-      for (const op of prepared) {
-        const prev = this.applyOp(op);
-        if (!prevs.has(op.pk)) prevs.set(op.pk, prev);
+      const applied = this.applyBox;
+      let cur: PreparedOp<V> | null = null;
+      try {
+        for (const op of prepared) {
+          cur = op;
+          this.applyOp(op, applied);
+          if (!prevs.has(op.pk)) prevs.set(op.pk, applied.prev);
+        }
+      } catch (err) {
+        // See set() for this defensive path (applyOp's must-not-throw
+        // contract); the op that threw mid-apply has its pre-state in `applied`.
+        if (cur && !prevs.has(cur.pk)) prevs.set(cur.pk, applied.prev);
+        void appended.done.catch(() => {}); // this batch throws here; swallow the frame's rejection
+        if (group) {
+          wal.poisonPending(err);
+          for (const [pk, p] of prevs) this.groupNoteKey(group, pk, p);
+          this.rollbackGroup(group, wal, appended.batchId);
+          this.kickWalRecovery(wal);
+        } else {
+          for (const [pk, p] of prevs) this.restoreGroupKey(pk, p);
+        }
+        throw this.markAmbiguous(err);
       }
+      for (const [pk, p] of prevs) this.groupNoteKey(group, pk, p);
       // Seq identity of each record as this batch left it (undefined where the
-      // batch's last op deleted the key): guards both the rollback and the WAL
+      // batch's last op deleted the key): guards both the per-op rollback
+      // (frames that never entered a group, e.g. a seal race) and the WAL
       // pointer publish against interleaved same-key commits.
       const seqs = new Map<string, number | undefined>();
       for (const pk of prevs.keys()) seqs.set(pk, this.store.map.get(pk)?.seq);
@@ -1009,9 +1351,12 @@ export class MiniDb<V = unknown> {
       try {
         await appended.done;
       } catch (e) {
-        for (const [pk, prev] of prevs) this.restoreKey(pk, prev, seqs.get(pk));
-        throw e;
+        if (group) this.rollbackGroup(group, wal, appended.batchId);
+        else for (const [pk, prev] of prevs) this.restoreKey(pk, prev, seqs.get(pk));
+        this.kickWalRecovery(wal);
+        throw this.markAmbiguous(e);
       }
+      this.settleGroup(group, wal, appended.batchId);
       for (const [pk, { op, loc, seq }] of lastSet) {
         this.publishWalRef(pk, wal, seq, loc, op.expireAt, op.dtNorm);
       }
@@ -1049,11 +1394,20 @@ export class MiniDb<V = unknown> {
     return { type: TYPE_DEL, key: toBuf(key), value: null, meta: null, expireAt: 0, dtNorm: null, pk: this.pk(key), valueDecoded: undefined };
   }
 
-  /** Apply a prepared op to the store + derived indexes. Returns the key's
-   *  pre-op logical record so the caller can roll back on WAL failure. */
-  private applyOp(op: PreparedOp<V>): StoreRecord | undefined {
+  /** Apply a prepared op to the store + derived indexes, writing the key's
+   *  pre-op logical record into `out.prev` so the caller can roll back (or
+   *  poison + group-rollback) on failure. `out.prev` is assigned before any
+   *  mutation, so it is valid even when the apply throws.
+   *
+   *  CONTRACT: applyOp must not throw — every fallible input validation
+   *  belongs to the prepare phase (stage 11 moves unique checks, the
+   *  tokenizer and canonical extraction there, making this structural).
+   *  Until then the commit bodies wrap the call in a defensive try that
+   *  converts a throw into a WAL poison + group rollback + in-place recovery;
+   *  that path is not the normal one. */
+  private applyOp(op: PreparedOp<V>, out: { prev: StoreRecord | undefined }): void {
     const oldBuf = this.store.get(op.pk);
-    const prev = oldBuf !== undefined ? this.store.map.get(op.pk) : undefined;
+    out.prev = oldBuf !== undefined ? this.store.map.get(op.pk) : undefined;
     const oldDoc = oldBuf !== undefined ? this.decode(oldBuf) : undefined;
     if (op.type === TYPE_SET) {
       // Always applied as an in-memory ref; in valueMode 'disk' the caller
@@ -1081,7 +1435,6 @@ export class MiniDb<V = unknown> {
       }
     }
     if (op.type === TYPE_SET) this.touchAccess(op.pk);
-    return prev;
   }
 
   /** Roll a key back to its pre-op record across the store and every derived
@@ -1091,10 +1444,20 @@ export class MiniDb<V = unknown> {
    *  restore is skipped when the key's current state no longer matches it —
    *  the same seq-identity guard publishWalRef uses — because a later same-key
    *  op committed (or an expiry reaped the key) meanwhile, and rolling back
-   *  over it would wipe state that is already durable. */
+   *  over it would wipe state that is already durable. This per-op path covers
+   *  frames that never entered a flush group (batchId < 0: a seal/rotation
+   *  race) and cross-group interleaves with retryOnWalSeal retries; grouped
+   *  failures roll back via rollbackGroup instead. */
   private restoreKey(pk: string, prev: StoreRecord | undefined, appliedSeq: number | undefined): void {
     const cur = this.store.map.get(pk);
     if (appliedSeq === undefined ? cur !== undefined : cur?.seq !== appliedSeq) return;
+    this.restoreGroupKey(pk, prev);
+  }
+
+  /** The unguarded restore core behind restoreKey and the flush-group
+   *  rollback: put the key back to `prev` across the store and every derived
+   *  index (TTL/access/dt/secondary/compound/text). */
+  private restoreGroupKey(pk: string, prev: StoreRecord | undefined): void {
     if (this.indexes.indexes.size) this.indexes.remove(pk, undefined);
     for (const ti of this.text.values()) ti.remove(pk);
     this.dt.del(pk);
@@ -1197,21 +1560,45 @@ export class MiniDb<V = unknown> {
     const keyBuf = toBuf(key);
     const frame = encodeFrame({ type: TYPE_SET, key: keyBuf, value: curValue, meta, expireAt });
     const commit = async (): Promise<void> => {
+      const recoveryGate = this.walRecoveryGate();
+      if (recoveryGate) await recoveryGate;
       const wal = this.wal;
       const appended = wal.appendLoc(frame);
+      const group = this.groupFor(wal, appended.batchId);
       // In-memory ref first (see set()); the disk pointer is published once the
       // frame's bytes are durably in db.wal. prev/seq are captured per attempt
       // (as in set()): a rotation retry can find a different record in place,
       // and restoreKey's seq guard then leaves that newer durable state alone.
       const prev = this.store.map.get(k);
-      this.store.set(k, curValue, expireAt, cur.dt);
-      const seq = this.store.map.get(k)?.seq;
+      let seq: number | undefined;
+      try {
+        this.store.set(k, curValue, expireAt, cur.dt);
+        seq = this.store.map.get(k)?.seq;
+      } catch (err) {
+        // The in-memory mutation failed: an enqueued frame poisons the WAL
+        // exactly like a write failure and rolls the group back; a
+        // never-enqueued one only needs the per-op undo (see set()).
+        void appended.done.catch(() => {}); // this op throws here; swallow the frame's rejection
+        if (group) {
+          wal.poisonPending(err);
+          this.groupNoteKey(group, k, prev);
+          this.rollbackGroup(group, wal, appended.batchId);
+          this.kickWalRecovery(wal);
+        } else {
+          this.restoreGroupKey(k, prev);
+        }
+        throw this.markAmbiguous(err);
+      }
+      this.groupNoteKey(group, k, prev);
       try {
         await appended.done;
       } catch (e) {
-        this.restoreKey(k, prev, seq);
-        throw e;
+        if (group) this.rollbackGroup(group, wal, appended.batchId);
+        else this.restoreKey(k, prev, seq);
+        this.kickWalRecovery(wal);
+        throw this.markAmbiguous(e);
       }
+      this.settleGroup(group, wal, appended.batchId);
       if (this.valueMode === 'disk') {
         this.publishWalRef(
           k,
@@ -1755,6 +2142,14 @@ export class MiniDb<V = unknown> {
       releaseRotation = resolve;
     });
     try {
+      // Wait out any in-flight WAL recovery before fencing: a WAL failure
+      // racing the backup leaves un-acked bytes in db.wal that the recovery
+      // is about to truncate away, and the fence must land on the recovered
+      // (possibly truncated) file rather than copying bytes that are about
+      // to disappear. A persistent failure keeps the WAL poisoned and the
+      // flush below then rejects the backup. (Stage 12 rewrites backup with
+      // OpTracker; this is the minimal guard.)
+      await this.walRecoveryChain;
       await this.wal.flush();
       await fs.mkdir(destDir, { recursive: true });
       const files = await this.persistentFiles();
@@ -1848,10 +2243,19 @@ export class MiniDb<V = unknown> {
     if (this.closed) return;
     if (this.compacting) await this._compactDone;
     this.closed = true;
+    // Let in-flight WAL failures and their kicked recoveries settle before
+    // and after closing the WAL: a poisoned/failing close would otherwise
+    // leave an un-acked tail in db.wal that a reopen replays as ghost writes.
+    // Kicks arrive in op rejection microtasks that can be scheduled behind
+    // this close (and the WAL's own final flush can drive a queued failing
+    // batch, kicking one more recovery), so wait for the chain to be IDLE in
+    // a loop instead of awaiting one snapshot of it.
+    while (!this.walRecoveryIdle) await this.walRecoveryChain;
     for (const ti of this.text.values()) ti.close();
     this.store.close();
     this.valueReader?.close();
     await this.wal.close();
+    while (!this.walRecoveryIdle) await this.walRecoveryChain;
     if (this.lock) {
       await this.lock.release();
       this.lock = null;
@@ -1863,5 +2267,6 @@ export class MiniDb<V = unknown> {
   }
   private ensureWritable(): void {
     if (this.readOnly) throw new Error('MiniDb is open in read-only mode');
+    if (this.writeDisabled) throw this.writeDisabledError();
   }
 }
