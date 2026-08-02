@@ -8,7 +8,6 @@
  * bootstrap.
  */
 
-import type { Scope } from '@moonshot-ai/agent-core-v2';
 import { WebSocketServer } from 'ws';
 
 import type { CredentialValidator } from '../../../services/auth/credentials';
@@ -34,8 +33,7 @@ export interface RegisterWsV1Options {
   readonly highWaterMarkBytes?: number;
 }
 
-export function registerWsV1(core: Scope, opts: RegisterWsV1Options): WebSocketServer {
-  void core; // the broadcaster already holds the Core scope
+export function registerWsV1(opts: RegisterWsV1Options): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024, handleProtocols: selectWsBearerProtocol });
   const { registry, broadcaster } = opts;
 

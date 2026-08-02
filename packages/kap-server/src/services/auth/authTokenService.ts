@@ -11,7 +11,7 @@
  * async — the token path is synchronous, but the interface must await both.
  */
 
-import { createDecorator } from '@moonshot-ai/agent-core-v2';
+import { createDecorator } from '../../di';
 
 import { verifyPassword } from './password';
 import type { TokenStore } from './tokenStore';

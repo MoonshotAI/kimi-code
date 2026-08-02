@@ -1,50 +1,39 @@
 /**
  * `/api/v1` route registration.
  *
- * Mirrors the v1 server's prefixing and per-module delegation, but resolves
- * services from the `agent-core-v2` Core `Scope` instead of the v1 flat
- * `IInstantiationService`. v0.1 mounts the subset of routes that v2 can serve
- * end-to-end today (health, meta, auth readiness, OAuth device flow, config,
- * model/provider catalog, sessions, messages, approvals, workspaces, the fs
- * folder picker, the session filesystem, terminals, connections, shutdown).
+ * Engine mode (the only mode): routes resolve the session surface from the
+ * Rust engine session backend (`rustSession`) and host-owned services
+ * (workspace registry, file blob store). The v2 Core `Scope` was retired with
+ * the engine migration.
  */
 
-import type { Scope } from '@moonshot-ai/agent-core-v2';
 import { ulid } from 'ulid';
 
 import { okEnvelope } from '../envelope';
 import { type IConnectionRegistry } from '../transport/ws/connectionRegistry';
 import { type SessionEventBroadcaster } from '../transport/ws/v1/sessionEventBroadcaster';
-import type { TranscriptService } from '../services/transcript/transcriptService';
-import { registerApprovalsRoutes } from './approvals';
+import type { ServerLogger } from '../services/pinoLoggerService';
 import { registerAuthRoute } from './auth';
 import { registerConfigRoutes } from './config';
 import { registerConnectionsRoutes } from './connections';
 import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
 import { registerGuiStoreRoutes } from './guiStore';
-import { registerMessagesRoutes } from './messages';
 import type { IGuiStoreService } from '../services/guiStore/guiStore';
-import type { ISnapshotReader } from '../services/snapshot';
-import { registerDebugRoutes } from '../transport/registerDebugRoutes';
 import { registerMetaRoute } from './meta';
 import { registerModelCatalogRoutes } from './modelCatalog';
 import { registerOAuthRoutes } from './oauth';
-import { registerPromptsRoutes } from './prompts';
-import { registerQuestionsRoutes } from './questions';
 import { registerSessionExportRoute } from './sessionExport';
-import { registerSessionsRoutes } from './sessions';
 import { registerShutdownRoutes } from './shutdown';
 import { registerSnapshotRoutes } from './snapshot';
 import { registerSkillsRoutes } from './skills';
-import { registerTasksRoutes } from './tasks';
-import { registerTerminalsRoutes } from './terminals';
 import { registerToolsRoutes } from './tools';
 import { registerTranscriptRoutes } from './transcript';
-import { registerWorkspaceFsRoutes } from './workspaceFs';
 import { registerWorkspacesRoutes } from './workspaces';
 
 import type { RustSessionService } from '../services/rustSession/rustSessionService';
+import type { FileBlobStore } from '../services/fileBlobStore';
+import type { WorkspaceRegistry } from '../services/workspaceRegistry';
 import { registerRustSessionsRoutes } from './rustSessions';
 
 interface ApiV1AppHost {
@@ -64,15 +53,12 @@ interface ApiV1RouteHost {
 
 export interface RegisterApiV1RoutesOptions {
   readonly serverVersion: string;
-  readonly debugEndpoints?: boolean;
   readonly enableShutdown?: boolean;
-  readonly enableTerminals?: boolean;
   readonly guiStore: IGuiStoreService;
   readonly onShutdown: () => void;
   readonly connectionRegistry: IConnectionRegistry;
   readonly broadcaster: SessionEventBroadcaster;
-  readonly snapshotReader: ISnapshotReader;
-  readonly transcriptService: TranscriptService;
+  readonly logger: ServerLogger;
   /**
    * Surface `dangerous_bypass_auth` in the `/meta` payload. Set by `start.ts`
    * from the `disableAuth` server option (the `--dangerous-bypass-auth` CLI
@@ -80,28 +66,28 @@ export interface RegisterApiV1RoutesOptions {
    */
   readonly dangerousBypassAuth?: boolean;
   /**
-   * Rust engine session backend. When present, the engine-owned session
-   * routes (create/prompt/cancel/approvals) are registered INSTEAD of their
-   * v2-backed counterparts — web sessions then run entirely on the Rust
-   * engine. Absent (engine unavailable) → v2 routes serve.
+   * Rust engine session backend (the only engine — required).
    */
-  readonly rustSession?: RustSessionService;
+  readonly rustSession: RustSessionService;
+  /** Host-owned workspace registry (stage 3a). */
+  readonly workspaceRegistry?: WorkspaceRegistry;
+  /** Host-owned file blob store (stage 3b). */
+  readonly fileBlobStore: FileBlobStore;
 }
 
 export async function registerApiV1Routes(
   app: ApiV1AppHost,
-  core: Scope,
   opts: RegisterApiV1RoutesOptions,
 ): Promise<void> {
   await app.register(
     async (apiV1) => {
-      registerHealthRoute(apiV1);
-
-      // Dev-only debug RPC surface (`--debug-endpoints`, loopback-gated in
-      // `start.ts`): every scoped Service reachable.
-      if (opts.debugEndpoints === true) {
-        registerDebugRoutes(apiV1 as unknown as Parameters<typeof registerDebugRoutes>[0], core);
+      // Rust engine is the only engine: the session backend is required.
+      const rustSession = opts.rustSession;
+      if (rustSession === undefined) {
+        throw new Error('registerApiV1Routes: rustSession is required (engine is the only engine)');
       }
+
+      registerHealthRoute(apiV1);
 
       registerMetaRoute(apiV1, {
         serverVersion: opts.serverVersion,
@@ -110,84 +96,63 @@ export async function registerApiV1Routes(
         dangerousBypassAuth: opts.dangerousBypassAuth === true,
       });
 
-      registerAuthRoute(apiV1 as unknown as Parameters<typeof registerAuthRoute>[0], core);
-      registerOAuthRoutes(apiV1 as unknown as Parameters<typeof registerOAuthRoutes>[0], core);
-      registerConfigRoutes(apiV1 as unknown as Parameters<typeof registerConfigRoutes>[0], core);
+      registerAuthRoute(
+        apiV1 as unknown as Parameters<typeof registerAuthRoute>[0],
+        rustSession,
+      );
+      registerOAuthRoutes(
+        apiV1 as unknown as Parameters<typeof registerOAuthRoutes>[0],
+        rustSession,
+      );
+      registerConfigRoutes(
+        apiV1 as unknown as Parameters<typeof registerConfigRoutes>[0],
+        rustSession,
+      );
       registerModelCatalogRoutes(
         apiV1 as unknown as Parameters<typeof registerModelCatalogRoutes>[0],
-        core,
+        rustSession,
       );
-      if (opts.rustSession !== undefined) {
-        // Rust engine session backend: web sessions run entirely on the
-        // engine (loop/context/tools/approval). The v2 engine routes below
-        // (sessions/prompts/approvals/questions/tasks/messages) are skipped —
-        // the engine-owned surface replaces them. Host routes (workspaces,
-        // config, model catalog, auth, fs) keep serving.
-        registerRustSessionsRoutes(
-          apiV1 as unknown as Parameters<typeof registerRustSessionsRoutes>[0],
-          opts.rustSession,
-        );
-      } else {
-        registerSessionsRoutes(
-          apiV1 as unknown as Parameters<typeof registerSessionsRoutes>[0],
-          core,
-        );
-      }
+      registerRustSessionsRoutes(
+        apiV1 as unknown as Parameters<typeof registerRustSessionsRoutes>[0],
+        rustSession,
+      );
       registerSessionExportRoute(
         apiV1 as unknown as Parameters<typeof registerSessionExportRoute>[0],
-        core,
-        { serverVersion: opts.serverVersion },
+        { serverVersion: opts.serverVersion, logger: opts.logger },
+        rustSession,
       );
-      registerSkillsRoutes(apiV1 as unknown as Parameters<typeof registerSkillsRoutes>[0], core);
-      if (opts.rustSession === undefined) {
-        registerMessagesRoutes(
-          apiV1 as unknown as Parameters<typeof registerMessagesRoutes>[0],
-          core,
-        );
-        registerTasksRoutes(apiV1 as unknown as Parameters<typeof registerTasksRoutes>[0], core);
-        registerApprovalsRoutes(
-          apiV1 as unknown as Parameters<typeof registerApprovalsRoutes>[0],
-          core,
-        );
-        registerQuestionsRoutes(
-          apiV1 as unknown as Parameters<typeof registerQuestionsRoutes>[0],
-          core,
-        );
-        registerPromptsRoutes(
-          apiV1 as unknown as Parameters<typeof registerPromptsRoutes>[0],
-          core,
-        );
-      }
+      registerSkillsRoutes(
+        apiV1 as unknown as Parameters<typeof registerSkillsRoutes>[0],
+        rustSession,
+        opts.workspaceRegistry,
+      );
       registerWorkspacesRoutes(
         apiV1 as unknown as Parameters<typeof registerWorkspacesRoutes>[0],
-        core,
+        rustSession,
+        opts.workspaceRegistry,
       );
-      registerWorkspaceFsRoutes(
-        apiV1 as unknown as Parameters<typeof registerWorkspaceFsRoutes>[0],
-        core,
+      registerFilesRoutes(
+        apiV1 as unknown as Parameters<typeof registerFilesRoutes>[0],
+        opts.fileBlobStore,
       );
-      registerFilesRoutes(apiV1 as unknown as Parameters<typeof registerFilesRoutes>[0], core);
-      registerFsRoutes(apiV1 as unknown as Parameters<typeof registerFsRoutes>[0], core);
+      registerFsRoutes(
+        apiV1 as unknown as Parameters<typeof registerFsRoutes>[0],
+        rustSession,
+      );
       registerGuiStoreRoutes(apiV1 as unknown as Parameters<typeof registerGuiStoreRoutes>[0], opts.guiStore);
-      registerToolsRoutes(apiV1 as unknown as Parameters<typeof registerToolsRoutes>[0], core);
-      if (opts.enableTerminals !== false) {
-        registerTerminalsRoutes(
-          apiV1 as unknown as Parameters<typeof registerTerminalsRoutes>[0],
-          core,
-        );
-      }
+      registerToolsRoutes(
+        apiV1 as unknown as Parameters<typeof registerToolsRoutes>[0],
+        rustSession,
+      );
       registerConnectionsRoutes(
         apiV1 as unknown as Parameters<typeof registerConnectionsRoutes>[0],
         opts.connectionRegistry,
       );
       registerSnapshotRoutes(apiV1 as unknown as Parameters<typeof registerSnapshotRoutes>[0], {
-        core,
-        broadcaster: opts.broadcaster,
-        reader: opts.snapshotReader,
+        rustSession,
       });
       registerTranscriptRoutes(apiV1 as unknown as Parameters<typeof registerTranscriptRoutes>[0], {
-        core,
-        transcriptService: opts.transcriptService,
+        rustSession,
       });
       if (opts.enableShutdown !== false) {
         registerShutdownRoutes(apiV1 as unknown as Parameters<typeof registerShutdownRoutes>[0], {

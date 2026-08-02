@@ -38,15 +38,21 @@
  * would duplicate the row after a refresh.
  */
 
-import type { Event } from './events';
 import type { SnapshotSubagent } from '../../../protocol/rest-snapshot';
 
 const MAIN_AGENT_ID = 'main';
 
+/** A projected Rust wire event frame (fields narrowed by assertion). */
+type RustEventFrame = {
+  readonly type: string;
+  readonly agentId?: string;
+  [key: string]: unknown;
+};
+
 export class SubagentRosterTracker {
   private readonly bySession = new Map<string, Map<string, SnapshotSubagent>>();
 
-  apply(sessionId: string, event: Event): void {
+  apply(sessionId: string, event: RustEventFrame): void {
     switch (event.type) {
       case 'subagent.spawned': {
         // Background subagents persist in the main agent's background-task
@@ -54,29 +60,33 @@ export class SubagentRosterTracker {
         // task id) — tracking them here too would duplicate the row (keyed by
         // agent id) and mis-target cancel/detail actions. The roster exists
         // for the foreground/live-only subagents REST cannot serve.
-        if (event.runInBackground === true) return;
+        if (event['runInBackground'] === true) return;
         let roster = this.bySession.get(sessionId);
         if (!roster) {
           roster = new Map();
           this.bySession.set(sessionId, roster);
         }
-        roster.set(event.subagentId, {
-          id: event.subagentId,
+        const subagentId = event['subagentId'] as string;
+        const subagentName = event['subagentName'] as string | undefined;
+        const parentToolCallId = event['parentToolCallId'] as string | undefined;
+        const swarmIndex = event['swarmIndex'] as number | undefined;
+        roster.set(subagentId, {
+          id: subagentId,
           session_id: sessionId,
           kind: 'subagent',
-          description: event.description ?? event.subagentName ?? 'Sub Agent',
+          description: (event['description'] as string | undefined) ?? subagentName ?? 'Sub Agent',
           status: 'running',
           subagent_phase: 'queued',
-          subagent_type: event.subagentName,
-          parent_tool_call_id: event.parentToolCallId === '' ? undefined : event.parentToolCallId,
-          swarm_index: event.swarmIndex,
-          run_in_background: event.runInBackground,
+          subagent_type: subagentName,
+          parent_tool_call_id: parentToolCallId === '' ? undefined : parentToolCallId,
+          swarm_index: swarmIndex,
+          run_in_background: event['runInBackground'] as boolean | undefined,
           created_at: new Date().toISOString(),
         });
         return;
       }
       case 'subagent.started': {
-        const entry = this.bySession.get(sessionId)?.get(event.subagentId);
+        const entry = this.bySession.get(sessionId)?.get(event['subagentId'] as string);
         if (!entry) return;
         entry.subagent_phase = 'working';
         entry.suspended_reason = undefined;
@@ -86,28 +96,28 @@ export class SubagentRosterTracker {
         return;
       }
       case 'subagent.suspended': {
-        const entry = this.bySession.get(sessionId)?.get(event.subagentId);
+        const entry = this.bySession.get(sessionId)?.get(event['subagentId'] as string);
         if (!entry) return;
         entry.subagent_phase = 'suspended';
-        entry.suspended_reason = event.reason;
+        entry.suspended_reason = event['reason'] as string;
         return;
       }
       case 'subagent.completed': {
-        const entry = this.bySession.get(sessionId)?.get(event.subagentId);
+        const entry = this.bySession.get(sessionId)?.get(event['subagentId'] as string);
         if (!entry) return;
         entry.subagent_phase = 'completed';
         entry.status = 'completed';
         entry.completed_at = new Date().toISOString();
-        entry.output_preview = event.resultSummary;
+        entry.output_preview = event['resultSummary'] as string | undefined;
         return;
       }
       case 'subagent.failed': {
-        const entry = this.bySession.get(sessionId)?.get(event.subagentId);
+        const entry = this.bySession.get(sessionId)?.get(event['subagentId'] as string);
         if (!entry) return;
         entry.subagent_phase = 'failed';
         entry.status = 'failed';
         entry.completed_at = new Date().toISOString();
-        entry.output_preview = event.error;
+        entry.output_preview = event['error'] as string | undefined;
         return;
       }
       case 'task.started': {
@@ -117,7 +127,7 @@ export class SubagentRosterTracker {
         // row (agent id) and the REST row (task id). Registration of a
         // background spawn emits the same event, but those were never tracked
         // here, so the delete is a no-op for them.
-        const info = event.info;
+        const info = event['info'] as { kind: string; detached?: boolean; agentId?: string };
         if (info.kind === 'agent' && info.detached === true && info.agentId !== undefined) {
           this.bySession.get(sessionId)?.delete(info.agentId);
         }
@@ -126,7 +136,7 @@ export class SubagentRosterTracker {
       case 'turn.ended': {
         if (event.agentId !== MAIN_AGENT_ID) return;
         const roster = this.bySession.get(sessionId);
-        if (roster === undefined || event.reason === 'completed') return;
+        if (roster === undefined || event['reason'] === 'completed') return;
         // Aborted main turn (cancelled / failed / blocked): the swarm dies
         // with it, and the abort path suppresses the members' own
         // `subagent.failed` events — finalize any still-live entries here so a
@@ -138,7 +148,9 @@ export class SubagentRosterTracker {
           entry.status = 'failed';
           entry.subagent_phase = 'failed';
           entry.completed_at = new Date().toISOString();
-          entry.output_preview ??= `Main turn ${event.reason}`;
+          entry.output_preview ??= `Main turn ${
+            typeof event['reason'] === 'string' ? event['reason'] : 'aborted'
+          }`;
         }
         return;
       }

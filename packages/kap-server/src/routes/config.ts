@@ -1,32 +1,12 @@
 /**
  * `/config` route handlers — server-v2 port.
  *
- * Implements the v1 `/api/v1/config` wire contract on top of `agent-core-v2`'s
- * section-registry `IConfigService`:
- *   GET  /config   — global Kimi configuration, secrets redacted
- *   POST /config   — update global configuration (merge semantics)
- *
- * **Wire fidelity**: reuses the local `protocol/rest-config` `configResponseSchema` /
- * `patchConfigRequestSchema` verbatim, so the request/response shape is
- * byte-for-byte compatible with v1's `routes/config.ts`. v2's `IConfigService`
- * is a per-domain registry (`get(domain)` / `set(domain, patch)`) and does not
- * expose a whole-config view or redaction, so this route is the edge facade
- * that:
- *   - projects `getAll()` (camelCase resolved config) into the snake_case
- *     `ConfigResponse`, redacting provider credentials to `has_api_key`
- *     (mirrors v1 `toConfigResponse`);
- *   - splits v1's flat multi-domain `POST /config` patch into per-domain
- *     `IConfigService.set(domain, value)` calls (snake_case → camelCase);
- *   - republishes the change as a v2 `DomainEvent` on `IEventService`.
- *
- * **Event shape**: v2's `DomainEvent` is `{ type, payload }`, and the Core
- * `events` WS stream forwards it as-is. The config-changed notification is
- * therefore emitted as `{ type: 'event.config.changed', payload: { changedFields,
- * config } }` rather than v1's flat `{ type, changedFields, config }`. The HTTP
- * response (the schema contract) is unaffected.
+ * Implements the v1 `/api/v1/config` wire contract. Engine mode: the Rust
+ * engine owns `config.toml` (`config/get` / `config/set` RPC), and this route
+ * is the edge facade that projects the resolved camelCase config into the
+ * snake_case `ConfigResponse`, redacting provider credentials to `has_api_key`
+ * (mirrors v1 `toConfigResponse`), and folds v1's `yolo` sugar.
  */
-
-import { IConfigService, IEventService, type Scope } from '@moonshot-ai/agent-core-v2';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
@@ -34,6 +14,7 @@ import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import { configResponseSchema, patchConfigRequestSchema } from '../protocol/rest-config';
 import type { ConfigResponse } from '../protocol/rest-config';
+import type { RustSessionService } from '../services/rustSession/rustSessionService';
 
 type ProviderResponse = ConfigResponse['providers'][string];
 
@@ -56,7 +37,7 @@ interface ConfigRouteHost {
   ): unknown;
 }
 
-export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
+export function registerConfigRoutes(app: ConfigRouteHost, rustSession: RustSessionService): void {
   const getRoute = defineRoute(
     {
       method: 'GET',
@@ -66,9 +47,11 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
       tags: ['config'],
     },
     async (req, reply) => {
-      const config = core.accessor.get(IConfigService);
-      await config.ready;
-      reply.send(okEnvelope(toConfigResponse(config.getAll()), req.id));
+      // Engine mode: the engine parses config.toml itself (stage 2a); the
+      // resolved camelCase KimiConfig flows through the same projection and
+      // redaction as the retired v2 path.
+      const resolved = (await rustSession.configGet()) as Record<string, unknown> | null;
+      reply.send(okEnvelope(toConfigResponse(resolved ?? {}), req.id));
     },
   );
   app.get(getRoute.path, getRoute.options, getRoute.handler as Parameters<ConfigRouteHost['get']>[2]);
@@ -87,31 +70,30 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       try {
-        const config = core.accessor.get(IConfigService);
-        await config.ready;
+        // Engine mode: the engine owns config.toml — merge the camelCase patch
+        // and re-read for the wire response.
         const camelPatch = convertKeysSnakeToCamel(req.body) as Record<string, unknown>;
         // v1 wire sugar: `yolo: true` is an alias for
-        // `default_permission_mode = 'yolo'`. Fold it into the canonical domain and
-        // drop the key so `yolo` is never a config domain and never persisted.
+        // `default_permission_mode = 'yolo'`. Fold it into the canonical
+        // setting and drop the key so `yolo` is never persisted.
         if (camelPatch['yolo'] === true) {
           camelPatch['defaultPermissionMode'] = 'yolo';
         }
         delete camelPatch['yolo'];
-        for (const domain of Object.keys(camelPatch)) {
-          await config.set(domain, camelPatch[domain]);
+        // v1 wire: `default_permission_mode` maps onto the engine's nested
+        // `[agent.permission] mode` (the engine owns config.toml).
+        const defaultMode = camelPatch['defaultPermissionMode'];
+        if (defaultMode !== undefined) {
+          delete camelPatch['defaultPermissionMode'];
+          const agent = (camelPatch['agent'] as Record<string, unknown> | undefined) ?? {};
+          camelPatch['agent'] = { ...agent, permission: { mode: defaultMode } };
         }
-        const response = toConfigResponse(config.getAll());
+        await rustSession.configSet(camelPatch);
+        const resolved = (await rustSession.configGet()) as Record<string, unknown> | null;
         const changedFields = Object.keys(req.body as Record<string, unknown>);
-        core.accessor.get(IEventService).publish({
-          type: 'event.config.changed',
-          payload: {
-            changedFields,
-            config: response,
-          },
-        });
         // Only the changed field *names* — values may carry secrets.
         requestLog(req)?.info({ changedFields }, 'config updated');
-        reply.send(okEnvelope(response, req.id));
+        reply.send(okEnvelope(toConfigResponse(resolved ?? {}), req.id));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         requestLog(req)?.error({ err: error }, 'config update failed');
@@ -123,8 +105,8 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
 }
 
 // ---------------------------------------------------------------------------
-// Edge facade — project the v2 resolved config into the v1 `ConfigResponse`
-// wire shape. Top-level domain keys are mapped camelCase→snake_case generically,
+// Edge facade — project the engine config into the v1 `ConfigResponse` wire
+// shape. Top-level domain keys are mapped camelCase→snake_case generically,
 // so this route does not enumerate the config domains; values pass through
 // unchanged except `providers`, whose credentials are redacted to `has_api_key`
 // (the only domain-specific transform). Pure projection: no service calls.
@@ -135,11 +117,15 @@ function toConfigResponse(resolved: Record<string, unknown>): ConfigResponse {
   for (const [domain, value] of Object.entries(resolved)) {
     wire[camelToSnake(domain)] = domain === 'providers' ? toProviderResponses(value) : value;
   }
-  // v1 wire echo: surface `yolo` as a derived boolean of the effective default
-  // permission mode. `yolo` is not a config domain; it is computed here so the
-  // v1 `/config` shape is preserved without persisting a parallel field.
-  const defaultPermissionMode = resolved['defaultPermissionMode'];
+  // v1 wire echo: surface the effective permission mode as
+  // `default_permission_mode` + derived `yolo`. The engine stores it as
+  // `[agent.permission] mode`; a legacy top-level `defaultPermissionMode`
+  // (if the engine ever reports one) wins over the nested read.
+  const agent = resolved['agent'] as Record<string, unknown> | undefined;
+  const engineMode = (agent?.['permission'] as { mode?: unknown } | undefined)?.mode;
+  const defaultPermissionMode = resolved['defaultPermissionMode'] ?? engineMode;
   if (typeof defaultPermissionMode === 'string') {
+    wire['default_permission_mode'] = defaultPermissionMode;
     wire['yolo'] = defaultPermissionMode === 'yolo';
   }
   // `providers` is required by `ConfigResponse` even when no provider is configured.

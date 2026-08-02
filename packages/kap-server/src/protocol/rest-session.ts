@@ -17,36 +17,56 @@
 
 import { z } from 'zod';
 
-import { messageSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
-import {
-  sessionStatusResponseSchema,
-  sessionWarningSchema,
-  sessionWarningsResponseSchema,
-  updateSessionProfileRequestSchema,
-  type UpdateSessionProfileRequest,
-} from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
-
+import { messageSchema } from './message';
 import { goalSnapshotSchema } from './goal';
 import { cursorQuerySchema, pageResponseSchema } from './pagination';
 import {
+  permissionRuleSchema,
+  sessionAgentConfigPartialSchema,
   sessionChildCreateSchema,
   sessionCreateSchema,
   sessionForkSchema,
+  sessionMetadataSchema,
   sessionSchema,
 } from './session';
 
-export {
-  sessionStatusResponseSchema,
-  sessionWarningSchema,
-  sessionWarningsResponseSchema,
-  updateSessionProfileRequestSchema,
-};
-export type {
-  SessionStatusResponse,
-  SessionWarning,
-  SessionWarningsResponse,
-  UpdateSessionProfileRequest,
-} from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
+/**
+ * Locally-owned session-status / profile-update wire schemas (stage 4:
+ * protocol localisation) — copied from the v2
+ * `app/sessionLegacy/sessionProtocol` so kap-server no longer imports it.
+ */
+export const sessionWarningSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+  severity: z.enum(['info', 'warning', 'error']),
+});
+export type SessionWarning = z.infer<typeof sessionWarningSchema>;
+
+export const sessionWarningsResponseSchema = z.object({
+  warnings: z.array(sessionWarningSchema),
+});
+export type SessionWarningsResponse = z.infer<typeof sessionWarningsResponseSchema>;
+
+export const sessionStatusResponseSchema = z.object({
+  busy: z.boolean(),
+  model: z.string().optional(),
+  thinking_level: z.string(),
+  permission: z.string(),
+  plan_mode: z.boolean(),
+  swarm_mode: z.boolean(),
+  context_tokens: z.number().int().nonnegative(),
+  max_context_tokens: z.number().int().nonnegative(),
+  context_usage: z.number().min(0).max(1),
+});
+export type SessionStatusResponse = z.infer<typeof sessionStatusResponseSchema>;
+
+export const updateSessionProfileRequestSchema = z.object({
+  title: z.string().min(1).optional(),
+  metadata: sessionMetadataSchema.partial().optional(),
+  agent_config: sessionAgentConfigPartialSchema.optional(),
+  permission_rules: z.array(permissionRuleSchema).optional(),
+});
+export type UpdateSessionProfileRequest = z.infer<typeof updateSessionProfileRequestSchema>;
 
 export const createSessionRequestSchema = sessionCreateSchema;
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;

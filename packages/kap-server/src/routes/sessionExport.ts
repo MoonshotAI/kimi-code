@@ -2,33 +2,27 @@
  * `POST /sessions/{session_id}/export` — stream a session diagnostic archive.
  *
  * The server owns archive options and temporary paths. A bounded Web JSONL log
- * may be supplied by the client and is added to the archive by sessionExport.
+ * may be supplied by the client and is added to the archive by the engine
+ * (`session/export` RPC zips the session — manifest + wire records + files —
+ * and the host decodes the base64 payload into a temp file and streams it).
  */
 
 import { createReadStream, type ReadStream } from 'node:fs';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import type { ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
-import {
-  ErrorCodes,
-  ILogService,
-  ISessionExportService,
-  isError2,
-  type Scope,
-} from '@moonshot-ai/agent-core-v2';
 
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import { errEnvelope } from '../protocol/envelope';
+import type { ServerLogger } from '../services/pinoLoggerService';
+import type { RustSessionService } from '../services/rustSession/rustSessionService';
 import {
   exportSessionParamsSchema,
   exportSessionRequestSchema,
 } from '../protocol/rest-session';
-
-const MAX_WEB_SESSION_EXPORT_BYTES = 64 * 1024 * 1024;
 
 interface SessionExportRouteHost {
   post(
@@ -47,10 +41,10 @@ interface SessionExportReply {
 
 export function registerSessionExportRoute(
   app: SessionExportRouteHost,
-  core: Scope,
-  options: { readonly serverVersion: string },
+  options: { readonly serverVersion: string; readonly logger: ServerLogger },
+  rustSession: RustSessionService,
 ): void {
-  const log = core.accessor.get(ILogService);
+  const log = options.logger;
   const route = defineRoute(
     {
       method: 'POST',
@@ -94,11 +88,7 @@ export function registerSessionExportRoute(
           maxRetries: 3,
           retryDelay: 50,
         }).catch((error: unknown) => {
-          log.warn('session export temporary directory cleanup failed', {
-            error,
-            requestId: req.id,
-            tempDir,
-          });
+          log.warn({ error, requestId: req.id, tempDir }, 'session export temporary directory cleanup failed');
         });
         await cleanupPromise;
       };
@@ -114,19 +104,41 @@ export function registerSessionExportRoute(
         }
 
         const outputPath = join(tempDir, 'session.zip');
-        await core.accessor.get(ISessionExportService).export(
-          {
-            sessionId: req.params.session_id,
-            outputPath,
-            includeGlobalLog: true,
-            version: options.serverVersion,
-          },
-          {
-            webLog: req.body.web_log,
-            signal: exportAbort.signal,
-            maxArchiveBytes: MAX_WEB_SESSION_EXPORT_BYTES,
-          },
-        );
+        // Stage 2c: the engine zips the session itself (manifest + wire
+        // records + files); the host decodes the base64 payload into the
+        // temp file and streams it with the same abort/cleanup path. The
+        // files bundled into the archive come from the session's own workdir,
+        // not the server process cwd. An unknown session is a v1 wire error
+        // (40401 JSON), checked before the engine RPC so no zip is produced.
+        const session = rustSession.getSession(req.params.session_id);
+        if (session === undefined) {
+          await cleanup();
+          reply.send(
+            errEnvelope(
+              ErrorCode.SESSION_NOT_FOUND,
+              `session ${req.params.session_id} not found`,
+              req.id,
+            ),
+          );
+          return;
+        }
+        const webLog = (req.body as { web_log?: unknown } | undefined)?.web_log;
+        const result = (await rustSession.sessionExport(
+          req.params.session_id,
+          session.workDir,
+          typeof webLog === 'string' ? webLog : undefined,
+        )) as { session_id?: string; zip_base64?: string } | null;
+        if (result?.zip_base64 === null || result?.zip_base64 === undefined) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.SESSION_NOT_FOUND,
+              `session ${req.params.session_id} not found`,
+              req.id,
+            ),
+          );
+          return;
+        }
+        await writeFile(outputPath, Buffer.from(result.zip_base64, 'base64'));
         if (aborted) {
           await cleanup();
           return;
@@ -186,29 +198,12 @@ function sanitizeSessionId(sessionId: string): string {
 }
 
 function sendMappedError(reply: SessionExportReply, req: { id: string }, error: unknown): void {
-  const requestId = req.id;
-  if (isError2(error)) {
-    if (error.code === ErrorCodes.SESSION_NOT_FOUND) {
-      reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, error.message, requestId));
-      return;
-    }
-    if (error.code === ErrorCodes.SESSION_EXPORT_TOO_LARGE) {
-      reply.send(
-        errEnvelope(
-          ErrorCode.FILE_TOO_LARGE,
-          'session export exceeds the 64 MiB web limit',
-          requestId,
-        ),
-      );
-      return;
-    }
-  }
   requestLog(req)?.error({ err: error }, 'session export failed');
   reply.send(
     errEnvelope(
       ErrorCode.INTERNAL_ERROR,
       error instanceof Error ? error.message : 'internal error',
-      requestId,
+      req.id,
     ),
   );
 }

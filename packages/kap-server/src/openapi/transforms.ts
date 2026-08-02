@@ -15,7 +15,7 @@ import {
   fsDiffResponseSchema,
   fsGitStatusRequestSchema,
   fsGitStatusResponseSchema,
-} from '@moonshot-ai/agent-core-v2/app/git/git';
+} from '../protocol/rest-fs';
 import {
   fsGrepRequestSchema,
   fsGrepResponseSchema,
@@ -33,7 +33,7 @@ import {
   fsStatManyResponseSchema,
   fsStatRequestSchema,
   fsStatResponseSchema,
-} from '@moonshot-ai/agent-core-v2/session/sessionFs/fs';
+} from '../protocol/rest-fs';
 import { z } from 'zod';
 
 import {
@@ -53,7 +53,6 @@ import {
   questionResolveRequestSchema,
   questionResolveResultSchema,
 } from '../protocol/rest-question';
-import { archiveSessionResponseSchema } from '../protocol/rest-session';
 
 const binarySchema = {
   type: 'string',
@@ -124,7 +123,6 @@ export function transformOpenApiDocument(
   patchFileUpload(paths);
   patchFileDownload(paths);
   patchSessionExport(paths);
-  patchSessionAction(paths);
   patchFsAction(paths);
   patchFsDownload(paths);
   patchQuestionResolveOrDismiss(paths);
@@ -187,26 +185,6 @@ function patchFileDownload(paths: Record<string, unknown>): void {
     description: 'File not found',
     content: jsonContent(errorEnvelopeSchema),
   });
-}
-
-function patchSessionAction(paths: Record<string, unknown>): void {
-  const internalPath = '/api/v1/sessions/{tail}';
-  const pathItem = asRecord(paths[internalPath]);
-  const operation = asRecord(pathItem?.['post']);
-  if (pathItem === undefined || operation === undefined) return;
-
-  const cloned = cloneRecord(pathItem);
-  replacePathParamName(cloned, 'tail', 'session_id');
-  const clonedOperation = asRecord(cloned['post']);
-  if (clonedOperation !== undefined) {
-    clonedOperation['operationId'] = 'runSessionArchiveAction';
-    setResponse(clonedOperation, '200', {
-      description: 'Session archive response',
-      content: jsonContent(openApiDocumentEnvelopeJsonSchema(archiveSessionResponseSchema)),
-    });
-  }
-  paths['/api/v1/sessions/{session_id}:archive'] = cloned;
-  delete paths[internalPath];
 }
 
 function patchFsAction(paths: Record<string, unknown>): void {
@@ -333,33 +311,6 @@ function headerInteger(): Record<string, unknown> {
 function appendDescription(existing: unknown, extra: string): string {
   if (typeof existing !== 'string' || existing.length === 0) return extra;
   return `${existing} ${extra}`;
-}
-
-function replacePathParamName(
-  container: Record<string, unknown>,
-  from: string,
-  to: string,
-): void {
-  const params = container['parameters'];
-  if (Array.isArray(params)) {
-    for (const param of params) {
-      const record = asRecord(param);
-      if (record?.['in'] === 'path' && record['name'] === from) {
-        record['name'] = to;
-      }
-    }
-  }
-
-  for (const method of ['get', 'post', 'put', 'patch', 'delete']) {
-    const operation = asRecord(container[method]);
-    if (operation !== undefined) {
-      replacePathParamName(operation, from, to);
-    }
-  }
-}
-
-function cloneRecord(value: Record<string, unknown>): Record<string, unknown> {
-  return structuredClone(value);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

@@ -2,52 +2,33 @@
  * `/api/v1` session filesystem routes — server-v2 port.
  *
  * Mirrors `packages/server/src/routes/fs.ts` path-for-path and schema-for-schema
- * so existing v1 clients keep working against server-v2. Backed by the v2
- * Session-scoped `ISessionFsService` (`agent-core-v2/src/sessionFs`): the route resolves
- * the session from the URL, then dispatches `fs:<action>` to the matching
- * `ISessionFsService` method. The wire schema comes from the engine's own
- * `sessionFs` domain contract (`agent-core-v2`).
+ * so existing v1 clients keep working against server-v2. Engine mode: the
+ * session lives in the Rust engine, not the v2 lifecycle; the read-class
+ * actions are served host-side against the session workdir (stages 2d/3a) —
+ * `fs:read` via the engine's fs toolset, `fs:list` / `fs:stat` / `fs:search`
+ * via plain node:fs, and `fs:*:download` straight from disk. The remaining v2
+ * `ISessionFsService` actions (list_many, stat_many, mkdir, grep, git_status,
+ * diff, open, open-in, reveal) were retired with the v2 engine. The wire
+ * schema comes from the local `protocol/rest-fs` contract.
  */
 
-import { createReadStream } from 'node:fs';
+import { createReadStream, statSync, type Stats } from 'node:fs';
+import { readdir } from 'node:fs/promises';
+import { basename, extname, isAbsolute, join, relative } from 'node:path';
 
-import {
-  ErrorCodes,
-  ISessionFsService,
-  ISessionLifecycleService,
-  isError2,
-  Error2,
-  type Scope,
-} from '@moonshot-ai/agent-core-v2';
-import {
-  fsDiffRequestSchema,
-  fsGitStatusRequestSchema,
-  fsGrepRequestSchema,
-  fsListManyRequestSchema,
-  fsListRequestSchema,
-  fsMkdirRequestSchema,
-  fsReadRequestSchema,
-  fsSearchRequestSchema,
-  fsStatManyRequestSchema,
-  fsStatRequestSchema,
-} from '@moonshot-ai/agent-core-v2/session/sessionFs/fs';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
-import {
-  launchDetached,
-  openFileCommandFor,
-  openInAppCommandFor,
-  revealFileCommandFor,
-} from '../lib/fileLaunch';
+import type { RustSessionService } from '../services/rustSession/rustSessionService';
 import { parseRangeHeader, pickHeader } from '../lib/httpRange';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
-  fsOpenInRequestSchema,
-  fsOpenRequestSchema,
-  fsRevealRequestSchema,
+  fsListRequestSchema,
+  fsReadRequestSchema,
+  fsSearchRequestSchema,
+  fsStatRequestSchema,
 } from '../protocol/rest-fs';
 
 interface FsRouteHost {
@@ -81,33 +62,14 @@ const sessionIdAndTailParamSchema = z.object({
   tail: z.string().min(1),
 });
 
-const FS_ACTIONS = [
-  'list',
-  'read',
-  'list_many',
-  'stat',
-  'stat_many',
-  'mkdir',
-  'search',
-  'grep',
-  'git_status',
-  'diff',
-  'open',
-  'open-in',
-  'reveal',
-] as const;
+const FS_ACTIONS = ['list', 'read', 'stat', 'search'] as const;
 type FsAction = (typeof FS_ACTIONS)[number];
 const FS_TAIL_PREFIX = 'fs:';
 
-function resolveFs(core: Scope, sessionId: string): ISessionFsService {
-  const session = core.accessor.get(ISessionLifecycleService).get(sessionId);
-  if (session === undefined) {
-    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
-  }
-  return session.accessor.get(ISessionFsService);
-}
-
-export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
+export function registerFsRoutes(
+  app: FsRouteHost,
+  rustSession?: RustSessionService,
+): void {
   const fsActionRoute = defineRoute(
     {
       method: 'POST',
@@ -127,7 +89,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         [ErrorCode.FS_ALREADY_EXISTS]: {},
       },
       description:
-        'Filesystem action dispatcher. Supported actions: list, read, list_many, stat, stat_many, mkdir, search, grep, git_status, diff, open, open-in, reveal.',
+        'Filesystem action dispatcher. Supported actions: list, read, stat, search.',
       tags: ['fs'],
       operationId: 'fsAction',
     },
@@ -150,63 +112,44 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       }
       const fsAction = action as FsAction;
 
-      // Cold-load a persisted-but-not-live session so fs actions (which only
-      // need the work dir) do not 404 on a freshly-opened session. Matches v1,
-      // which reads the persisted cwd. `resume` returns undefined only when the
-      // session is unknown or its workspace is gone.
-      const session = await core.accessor.get(ISessionLifecycleService).resume(session_id);
-      if (session === undefined) {
-        reply.send(
-          errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
-        );
-        return;
-      }
-
-      try {
-        switch (fsAction) {
-          case 'list':
-            await handleList(core, session_id, req, reply);
-            return;
-          case 'read':
-            await handleRead(core, session_id, req, reply);
-            return;
-          case 'list_many':
-            await handleListMany(core, session_id, req, reply);
-            return;
-          case 'stat':
-            await handleStat(core, session_id, req, reply);
-            return;
-          case 'stat_many':
-            await handleStatMany(core, session_id, req, reply);
-            return;
-          case 'mkdir':
-            await handleMkdir(core, session_id, req, reply);
-            return;
-          case 'search':
-            await handleSearch(core, session_id, req, reply);
-            return;
-          case 'grep':
-            await handleGrep(core, session_id, req, reply);
-            return;
-          case 'git_status':
-            await handleGitStatus(core, session_id, req, reply);
-            return;
-          case 'diff':
-            await handleDiff(core, session_id, req, reply);
-            return;
-          case 'open':
-            await handleOpen(core, session_id, req, reply);
-            return;
-          case 'open-in':
-            await handleOpenIn(core, session_id, req, reply);
-            return;
-          case 'reveal':
-            await handleReveal(core, session_id, req, reply);
-            return;
+      // Rust-engine mode: the session lives in the engine, not the v2
+      // lifecycle. Serve the read-class actions host-side against the
+      // session workdir (stage 2d/3a): read via the engine toolset, list,
+      // stat and search via plain node:fs — no v2 sessionFs service.
+      if (rustSession !== undefined) {
+        if (fsAction === 'read') {
+          await handleRustRead(rustSession, session_id, req, reply);
+          return;
         }
-      } catch (err) {
-        sendMappedError(reply, req, err);
+        if (fsAction === 'search') {
+          const workDir = rustSession.getSession(session_id)?.workDir;
+          if (workDir === undefined) {
+            reply.send(
+              errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
+            );
+            return;
+          }
+          await handleRustSearch(rustSession, session_id, workDir, req, reply);
+          return;
+        }
+        if (fsAction === 'list' || fsAction === 'stat') {
+          const workDir = rustSession.getSession(session_id)?.workDir;
+          if (workDir === undefined) {
+            reply.send(
+              errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
+            );
+            return;
+          }
+          if (fsAction === 'list') {
+            await handleRustList(workDir, req, reply);
+          } else {
+            await handleRustStat(workDir, req, reply);
+          }
+          return;
+        }
       }
+      // Unreachable: every remaining action is served by the Rust engine
+      // above — the v2 sessionFs dispatch was retired with the v2 engine.
     },
   );
   app.post(
@@ -249,48 +192,72 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         return;
       }
 
-      // Cold-load so a freshly-opened (persisted but not live) session can still
-      // serve downloads; `resume` only returns undefined for unknown / workspace-gone.
-      const session = await core.accessor.get(ISessionLifecycleService).resume(session_id);
-      if (session === undefined) {
+      // Rust-engine mode (stage 3a, host-owned): resolve the rel path against
+      // the session workdir and stream it with plain node:fs — the v2
+      // sessionFs resolveDownload path was retired with the v2 engine.
+      const workDir = rustSession?.getSession(session_id)?.workDir;
+      if (workDir === undefined) {
         reply.send(
           errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
         );
         return;
       }
 
-      let resolved: Awaited<ReturnType<ISessionFsService['resolveDownload']>>;
-      try {
-        resolved = await resolveFs(core, session_id).resolveDownload(relPath);
-      } catch (err) {
-        sendMappedError(reply, req, err);
+      const abs = resolveDownloadPath(workDir, relPath);
+      if (abs === null) {
+        reply.send(
+          errEnvelope(ErrorCode.FS_PATH_ESCAPES_SESSION, `path "${relPath}" rejected`, req.id),
+        );
         return;
       }
+      const rel = relative(workDir, abs).replaceAll('\\', '/');
+      let st: Stats;
+      try {
+        st = statSync(abs);
+      } catch {
+        reply.send(
+          errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, `no such file: ${relPath}`, req.id),
+        );
+        return;
+      }
+      if (st.isDirectory()) {
+        reply.send(
+          errEnvelope(ErrorCode.FS_IS_DIRECTORY, `path is a directory: ${relPath}`, req.id),
+        );
+        return;
+      }
+
+      // Etag mirrors the retired v2 sessionFs `buildEtag` (mtime-size-ino, base36).
+      const etag = [
+        Math.floor(st.mtimeMs).toString(36),
+        st.size.toString(36),
+        (st.ino ?? 0).toString(36),
+      ].join('-');
 
       const r = reply as unknown as FsDownloadReply;
       const headers = req.headers;
 
       const ifNoneMatch = pickHeader(headers, 'if-none-match');
-      if (ifNoneMatch !== undefined && ifNoneMatch === resolved.etag) {
-        r.code(304).header('etag', resolved.etag).send('');
+      if (ifNoneMatch !== undefined && ifNoneMatch === etag) {
+        r.code(304).header('etag', etag).send('');
         return;
       }
 
-      r.header('etag', resolved.etag);
-      r.header('last-modified', resolved.modifiedAt.toUTCString());
+      r.header('etag', etag);
+      r.header('last-modified', st.mtime.toUTCString());
       r.header(
         'content-disposition',
-        `attachment; filename="${sanitizeFilename(resolved.relative)}"`,
+        `attachment; filename="${sanitizeFilename(rel)}"`,
       );
-      r.type(resolved.mime);
+      r.type(guessDownloadMime(abs));
 
       const rangeHeader = pickHeader(headers, 'range');
-      const range = parseRangeHeader(rangeHeader, resolved.size);
+      const range = parseRangeHeader(rangeHeader, st.size);
       if (range !== null) {
         r.code(206)
           .header('content-length', String(range.length))
-          .header('content-range', `bytes ${range.start}-${range.end}/${resolved.size}`);
-        const stream = createReadStream(resolved.absolute, {
+          .header('content-range', `bytes ${range.start}-${range.end}/${st.size}`);
+        const stream = createReadStream(abs, {
           start: range.start,
           end: range.end,
         });
@@ -308,8 +275,8 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         return r.send(stream) as unknown as void;
       }
 
-      r.code(200).header('content-length', String(resolved.size));
-      const stream = createReadStream(resolved.absolute);
+      r.code(200).header('content-length', String(st.size));
+      const stream = createReadStream(abs);
       stream.on('error', (error: unknown) => {
         requestLog(req)?.warn(
           { session_id, path: relPath, err: error },
@@ -332,232 +299,278 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
 }
 
 // ---------------------------------------------------------------------------
-// Action handlers — thin adapters: parse body, call ISessionFsService, wrap result.
+// Action handlers — thin adapters: parse body, dispatch the engine / node:fs,
+// wrap the result. (The v2 sessionFs action handlers were retired with the
+// v2 engine.)
 // ---------------------------------------------------------------------------
 
 type Req = { id: string; body: unknown };
 type Reply = { send(payload: unknown): unknown };
 
-async function handleList(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
-  const parsed = fsListRequestSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
-    return;
-  }
-  const data = await resolveFs(core, sessionId).list(parsed.data);
-  reply.send(okEnvelope(data, req.id));
-}
-
-async function handleRead(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
+/** Rust-engine fs:read (stage 2d): the engine's Read tool serves the file;
+ *  strip the `N→` line-number prefixes the model-facing tool emits and
+ *  project the remaining facts onto the v1 read shape. */
+async function handleRustRead(
+  rust: RustSessionService,
+  sessionId: string,
+  req: Req,
+  reply: Reply,
+): Promise<void> {
   const parsed = fsReadRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
     return;
   }
-  const data = await resolveFs(core, sessionId).read(parsed.data);
-  reply.send(okEnvelope(data, req.id));
-}
-
-async function handleListMany(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
-  const parsed = fsListManyRequestSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
-    return;
-  }
-  const data = await resolveFs(core, sessionId).listMany(parsed.data);
-  reply.send(okEnvelope(data, req.id));
-}
-
-async function handleStat(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
-  const parsed = fsStatRequestSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
-    return;
-  }
-  const data = await resolveFs(core, sessionId).stat(parsed.data);
-  reply.send(okEnvelope(data, req.id));
-}
-
-async function handleStatMany(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
-  const parsed = fsStatManyRequestSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
-    return;
-  }
-  const data = await resolveFs(core, sessionId).statMany(parsed.data);
-  reply.send(okEnvelope(data, req.id));
-}
-
-async function handleMkdir(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
-  const parsed = fsMkdirRequestSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
-    return;
-  }
-  const data = await resolveFs(core, sessionId).mkdir(parsed.data);
-  reply.send(okEnvelope(data, req.id));
-}
-
-async function handleSearch(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
-  const parsed = fsSearchRequestSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
-    return;
-  }
-  const data = await resolveFs(core, sessionId).search(parsed.data);
-  reply.send(okEnvelope(data, req.id));
-}
-
-async function handleGrep(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
-  const parsed = fsGrepRequestSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
-    return;
-  }
-  const data = await resolveFs(core, sessionId).grep(parsed.data);
-  reply.send(okEnvelope(data, req.id));
-}
-
-async function handleGitStatus(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
-  const parsed = fsGitStatusRequestSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
-    return;
-  }
-  const data = await resolveFs(core, sessionId).gitStatus(parsed.data);
-  reply.send(okEnvelope(data, req.id));
-}
-
-async function handleDiff(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
-  const parsed = fsDiffRequestSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
-    return;
-  }
-  const data = await resolveFs(core, sessionId).diff(parsed.data);
-  reply.send(okEnvelope(data, req.id));
-}
-
-async function handleOpen(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
-  const parsed = fsOpenRequestSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
-    return;
-  }
-  const resolved = await resolveFs(core, sessionId).resolvePath(parsed.data.path);
-  await launchDetached(openFileCommandFor(resolved.absolute, parsed.data.line));
-  reply.send(okEnvelope({ opened: true as const }, req.id));
-}
-
-async function handleReveal(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
-  const parsed = fsRevealRequestSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
-    return;
-  }
-  const resolved = await resolveFs(core, sessionId).resolvePath(parsed.data.path);
-  await launchDetached(revealFileCommandFor(resolved.absolute));
-  reply.send(okEnvelope({ revealed: true as const }, req.id));
-}
-
-async function handleOpenIn(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
-  const parsed = fsOpenInRequestSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
-    return;
-  }
-  const body = parsed.data;
-  const resolved = await resolveFs(core, sessionId).resolvePath(body.path);
-  try {
-    await launchDetached(
-      openInAppCommandFor(body.app_id, resolved.absolute, {
-        line: body.line,
-        isDirectory: resolved.isDirectory,
-      }),
+  const result = (await rust.fsAction(sessionId, {
+    action: 'read',
+    path: parsed.data.path,
+  })) as { content?: string; is_error?: boolean } | null;
+  if (result === null) {
+    reply.send(
+      errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, req.id),
     );
-  } catch (err) {
-    requestLog(req)?.warn(
-      { session_id: sessionId, app_id: body.app_id, err },
-      'fs open-in launch failed',
-    );
+    return;
+  }
+  if (result.is_error) {
     reply.send(
       errEnvelope(
-        ErrorCode.INTERNAL_ERROR,
-        `failed to open in ${body.app_id}: ${err instanceof Error ? err.message : String(err)}`,
+        ErrorCode.FS_PATH_NOT_FOUND,
+        `read failed: ${result.content ?? 'unknown error'}`,
         req.id,
       ),
     );
     return;
   }
-  reply.send(okEnvelope({ opened: true as const }, req.id));
+  const content = stripReadLineNumbers(result.content ?? '');
+  const size = Buffer.byteLength(content, 'utf8');
+  reply.send(
+    okEnvelope(
+      {
+        path: parsed.data.path,
+        content,
+        encoding: 'utf8',
+        size,
+        truncated: false,
+        etag: `"${simpleHash(content)}"`,
+        mime: 'text/plain',
+        is_binary: false,
+      },
+      req.id,
+    ),
+  );
+}
+
+/** Strip the engine Read tool's `      N→` line-number prefixes. */
+function stripReadLineNumbers(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => line.replace(/^\s*\d+→/, ''))
+    .join('\n')
+    .replace(/\n$/, '');
+}
+
+/** Rust-engine fs:search (stage 2d): the engine's FsSearch tool lists paths
+ *  (directories suffixed with `/`); project them onto the v1 search hits. */
+async function handleRustSearch(
+  rust: RustSessionService,
+  sessionId: string,
+  workDir: string,
+  req: Req,
+  reply: Reply,
+): Promise<void> {
+  const parsed = fsSearchRequestSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
+    return;
+  }
+  const result = (await rust.fsAction(sessionId, {
+    action: 'search',
+    query: parsed.data.query,
+    limit: parsed.data.limit,
+  })) as { content?: string; is_error?: boolean } | null;
+  if (result === null) {
+    reply.send(
+      errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, req.id),
+    );
+    return;
+  }
+  if (result.is_error) {
+    reply.send(
+      errEnvelope(
+        ErrorCode.FS_PATH_NOT_FOUND,
+        `search failed: ${result.content ?? 'unknown error'}`,
+        req.id,
+      ),
+    );
+    return;
+  }
+  const lines = (result.content ?? '').split('\n').filter((l) => l.trim().length > 0);
+  const items = lines
+    .slice(0, parsed.data.limit)
+    .map((line) => {
+      const isDir = line.endsWith('/');
+      const path = isDir ? line.slice(0, -1) : line;
+      const name = basename(path) || path;
+      return {
+        path,
+        name,
+        kind: isDir ? 'directory' : 'file',
+        score: 1,
+        match_positions: [],
+      };
+    });
+  const truncated = lines.length > parsed.data.limit;
+  reply.send(okEnvelope({ items, truncated }, req.id));
+}
+
+/** Cheap stable tag for the read response (not a real content hash). */
+function simpleHash(text: string): string {
+  let h = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    h = ((h << 5) - h + (text.codePointAt(i) ?? 0)) | 0;
+  }
+  return (h >>> 0).toString(16);
+}
+
+/** Rust-engine fs:list (stage 3a, host-owned): plain node:fs directory read
+ *  against the session workdir — no v2 sessionFs service. */
+async function handleRustList(
+  workDir: string,
+  req: Req,
+  reply: Reply,
+): Promise<void> {
+  const parsed = fsListRequestSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
+    return;
+  }
+  const dir = join(workDir, parsed.data.path);
+  let dirents;
+  try {
+    dirents = await readdir(dir, { withFileTypes: true });
+  } catch {
+    reply.send(
+      errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, `no such directory: ${parsed.data.path}`, req.id),
+    );
+    return;
+  }
+  const items: unknown[] = [];
+  for (const dirent of dirents) {
+    if (!parsed.data.show_hidden && dirent.name.startsWith('.')) continue;
+    if (items.length >= parsed.data.limit) break;
+    const abs = join(dir, dirent.name);
+    const rel = join(parsed.data.path, dirent.name).replaceAll('\\', '/');
+    let size: number | undefined;
+    let modifiedAt = new Date().toISOString();
+    try {
+      const st = statSync(abs);
+      size = st.size;
+      modifiedAt = st.mtime.toISOString();
+    } catch {
+      // broken symlink or race — emit the entry without stat facts
+    }
+    items.push({
+      path: rel,
+      name: dirent.name,
+      kind: dirent.isDirectory() ? 'directory' : dirent.isSymbolicLink() ? 'symlink' : 'file',
+      ...(size !== undefined ? { size } : {}),
+      modified_at: modifiedAt,
+    });
+  }
+  reply.send(okEnvelope({ items, truncated: false }, req.id));
+}
+
+/** Rust-engine fs:stat (stage 3a, host-owned). */
+async function handleRustStat(
+  workDir: string,
+  req: Req,
+  reply: Reply,
+): Promise<void> {
+  const parsed = fsStatRequestSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
+    return;
+  }
+  const abs = join(workDir, parsed.data.path);
+  let st;
+  try {
+    st = statSync(abs);
+  } catch {
+    reply.send(
+      errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, `no such path: ${parsed.data.path}`, req.id),
+    );
+    return;
+  }
+  const name = basename(parsed.data.path) || parsed.data.path;
+  reply.send(
+    okEnvelope(
+      {
+        path: parsed.data.path,
+        name,
+        kind: st.isDirectory() ? 'directory' : 'file',
+        size: st.size,
+        modified_at: st.mtime.toISOString(),
+      },
+      req.id,
+    ),
+  );
 }
 
 // ---------------------------------------------------------------------------
-// Error mapping — domain Error2 codes → protocol wire codes.
+// Host download resolution — mirrors the retired v2 sessionFs
+// `resolveWithin` / `resolveDownload` semantics with plain node:fs.
 // ---------------------------------------------------------------------------
 
-function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void {
-  const requestId = req.id;
-  const log = requestLog(req);
-  if (isError2(err)) {
-    switch (err.code) {
-      case ErrorCodes.FS_PATH_ESCAPES:
-        reply.send(errEnvelope(ErrorCode.FS_PATH_ESCAPES_SESSION, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.FS_PATH_NOT_FOUND:
-        reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.FS_IS_DIRECTORY:
-        reply.send(errEnvelope(ErrorCode.FS_IS_DIRECTORY, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.FS_ALREADY_EXISTS:
-        reply.send(errEnvelope(ErrorCode.FS_ALREADY_EXISTS, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.FS_IS_BINARY:
-        reply.send(errEnvelope(ErrorCode.FS_IS_BINARY, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.FS_TOO_LARGE:
-        reply.send(errEnvelope(ErrorCode.FS_TOO_LARGE, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.FS_TOO_MANY_RESULTS:
-        reply.send(errEnvelope(ErrorCode.FS_TOO_MANY_RESULTS, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.FS_GREP_TIMEOUT:
-        reply.send(errEnvelope(ErrorCode.FS_GREP_TIMEOUT, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.FS_GIT_UNAVAILABLE:
-        reply.send(errEnvelope(ErrorCode.FS_GIT_UNAVAILABLE, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.SESSION_NOT_FOUND:
-        reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      // hostFs errors that escaped the sessionFs layer keep their `os.fs.*`
-      // code; map them onto the closest v1 wire code (ENOTDIR collapses into
-      // path-not-found, matching `mapFsError`).
-      case ErrorCodes.OS_FS_NOT_FOUND:
-      case ErrorCodes.OS_FS_NOT_DIRECTORY:
-        reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.OS_FS_IS_DIRECTORY:
-        reply.send(errEnvelope(ErrorCode.FS_IS_DIRECTORY, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.OS_FS_ALREADY_EXISTS:
-        reply.send(errEnvelope(ErrorCode.FS_ALREADY_EXISTS, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.OS_FS_PERMISSION_DENIED:
-        reply.send(errEnvelope(ErrorCode.FS_PERMISSION_DENIED, err.message, requestId, err.stack));
-        return;
-    }
+/** Reject empty / absolute / `..`-escaping rel paths (v2 `resolveWithin`).
+ *  Returns the resolved absolute path inside `workDir`, or null when the path
+ *  is rejected or escapes the workspace. */
+function resolveDownloadPath(workDir: string, relPath: string): string | null {
+  const segments = relPath.split(/[/\\]+/).filter((s) => s.length > 0);
+  if (segments.length === 0 || isAbsolute(relPath) || segments.includes('..')) {
+    return null;
   }
-  log?.error({ err }, 'fs request failed');
-  reply.send(
-    errEnvelope(
-      ErrorCode.INTERNAL_ERROR,
-      err instanceof Error ? err.message : String(err),
-      requestId,
-      err instanceof Error ? err.stack : undefined,
-    ),
-  );
+  const abs = join(workDir, ...segments);
+  const rel = relative(workDir, abs);
+  if (rel === '..' || rel.startsWith('..')) return null;
+  return abs;
+}
+
+/** Extension→MIME for downloads (subset of the retired v2 `guessMime` table). */
+const DOWNLOAD_EXT_TO_MIME: Readonly<Record<string, string>> = {
+  '.ts': 'text/typescript',
+  '.tsx': 'text/typescript',
+  '.js': 'text/javascript',
+  '.jsx': 'text/javascript',
+  '.mjs': 'text/javascript',
+  '.cjs': 'text/javascript',
+  '.json': 'application/json',
+  '.md': 'text/markdown',
+  '.html': 'text/html',
+  '.css': 'text/css',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain',
+  '.yaml': 'text/yaml',
+  '.yml': 'text/yaml',
+  '.toml': 'application/toml',
+  '.sh': 'text/x-shellscript',
+  '.py': 'text/x-python',
+  '.rs': 'text/rust',
+  '.go': 'text/x-go',
+};
+
+function guessDownloadMime(path: string): string {
+  const mapped = DOWNLOAD_EXT_TO_MIME[extname(path).toLowerCase()];
+  return mapped ?? 'application/octet-stream';
 }
 
 function buildValidationEnvelope(
@@ -592,6 +605,6 @@ function buildValidationEnvelope(
 
 function sanitizeFilename(rel: string): string {
   const segs = rel.split('/');
-  const base = segs[segs.length - 1] ?? rel;
-  return base.replace(/[\x00-\x1f\x7f]/g, '').replace(/"/g, '\\"');
+  const base = segs.at(-1) ?? rel;
+  return base.replaceAll(/[\u0000-\u001F\u007F]/g, '').replaceAll('"', '\\"');
 }

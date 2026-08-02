@@ -19,15 +19,17 @@
 
 import { z } from 'zod';
 
-import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
-import { messageContentSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
+import { isoDateTimeSchema } from './session';
+import { messageContentSchema } from './message';
 import {
   promptPermissionModeSchema,
   promptThinkingSchema,
-} from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
+  type PromptPermissionMode,
+  type PromptThinking,
+} from './session';
 
 export { promptPermissionModeSchema, promptThinkingSchema };
-export type { PromptPermissionMode, PromptThinking } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
+export type { PromptPermissionMode, PromptThinking };
 
 export const promptSubmissionSchema = z.object({
   content: z.array(messageContentSchema).min(1),

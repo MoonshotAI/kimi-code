@@ -6,31 +6,29 @@
  *   DELETE /oauth/login   cancel pending flow       → { cancelled, status }
  *   POST   /oauth/logout  logout                    → { logged_out, provider }
  *
- * Backed by the v2 `IOAuthService` (Core scope), which already returns the
- * protocol wire types, so the handlers only swap the v1 accessor
- * (`ix.invokeFunction`) for the v2 one (`core.accessor.get`).
+ * Managed OAuth was a v2 `IOAuthService` (Core scope) capability; that service
+ * was retired with the v2 engine. The Rust engine authenticates via config API
+ * keys, so these endpoints answer the unsupported / no-op wire shapes so the
+ * web UI shows the unmanaged state instead of hanging. Response schemas are
+ * the localized `protocol/rest-oauth` copies of the retired v2 oauthProtocol.
  */
 
-import { IOAuthService, type Scope } from '@moonshot-ai/agent-core-v2';
-import {
-  managedUsageResultSchema,
-  oauthFlowSnapshotSchema,
-  oauthFlowStartSchema,
-  oauthLoginCancelResponseSchema,
-  oauthLogoutResponseSchema,
-  type ManagedUsageResult,
-  type UsageRow,
-} from '@moonshot-ai/agent-core-v2/app/auth/oauthProtocol';
 import { z } from 'zod';
 
 import { okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import {
+  managedUsageResultSchema,
+  oauthFlowSnapshotSchema,
+  oauthFlowStartSchema,
+  oauthLoginCancelResponseSchema,
   oauthLoginQuerySchema,
   oauthLoginStartRequestSchema,
   oauthLogoutRequestSchema,
+  oauthLogoutResponseSchema,
 } from '../protocol/rest-oauth';
+import type { RustSessionService } from '../services/rustSession/rustSessionService';
 
 interface RouteHost {
   get(
@@ -64,7 +62,7 @@ const oauthFlowSnapshotOrNullSchema = z.union([
   z.null(),
 ]);
 
-export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
+export function registerOAuthRoutes(app: RouteHost, rustSession?: RustSessionService): void {
   // POST /oauth/login — start device flow ----------------------------------
   const loginStartRoute = defineRoute(
     {
@@ -76,9 +74,23 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
       tags: ['auth'],
     },
     async (req, reply) => {
-      const result = await core.accessor.get(IOAuthService).startLogin(req.body.provider);
-      requestLog(req)?.info({ provider: req.body.provider, action: 'login' }, 'oauth login started');
-      reply.send(okEnvelope(result, req.id));
+      if (rustSession !== undefined) {
+        // Stage 3i: the native engine authenticates via config API keys —
+        // managed OAuth device login is a v2-engine capability. Fail loudly
+        // so the web UI shows the unsupported state instead of hanging.
+        reply.send(
+          okEnvelope(
+            {
+              kind: 'error',
+              message: 'managed OAuth login is not available on the native engine; configure a provider API key in /providers instead',
+            },
+            req.id,
+          ),
+        );
+        return;
+      }
+      // Unreachable: the v2 IOAuthService branch was retired with the v2
+      // engine — the session backend is always the Rust engine.
     },
   );
   app.post(
@@ -98,8 +110,12 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
       tags: ['auth'],
     },
     async (req, reply) => {
-      const snapshot = core.accessor.get(IOAuthService).getFlow(req.query.provider);
-      reply.send(okEnvelope(snapshot ?? null, req.id));
+      if (rustSession !== undefined) {
+        reply.send(okEnvelope(null, req.id));
+        return;
+      }
+      // Unreachable: the v2 IOAuthService branch was retired with the v2
+      // engine — the session backend is always the Rust engine.
     },
   );
   app.get(
@@ -119,12 +135,12 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
       tags: ['auth'],
     },
     async (req, reply) => {
-      const result = await core.accessor.get(IOAuthService).cancelLogin(req.query.provider);
-      requestLog(req)?.info(
-        { provider: req.query.provider, action: 'cancel_login' },
-        'oauth login cancelled',
-      );
-      reply.send(okEnvelope(result, req.id));
+      if (rustSession !== undefined) {
+        reply.send(okEnvelope({ cancelled: true }, req.id));
+        return;
+      }
+      // Unreachable: the v2 IOAuthService branch was retired with the v2
+      // engine — the session backend is always the Rust engine.
     },
   );
   app.delete(
@@ -144,9 +160,15 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
       tags: ['auth'],
     },
     async (req, reply) => {
-      const result = await core.accessor.get(IOAuthService).logout(req.body.provider);
-      requestLog(req)?.info({ provider: req.body.provider, action: 'logout' }, 'oauth logout');
-      reply.send(okEnvelope(result, req.id));
+      if (rustSession !== undefined) {
+        // Stage 3i: no managed OAuth account on the native engine — logout is
+        // a no-op success.
+        requestLog(req)?.info({ provider: req.body.provider, action: 'logout' }, 'oauth logout');
+        reply.send(okEnvelope({ ok: true }, req.id));
+        return;
+      }
+      // Unreachable: the v2 IOAuthService branch was retired with the v2
+      // engine — the session backend is always the Rust engine.
     },
   );
   app.post(
@@ -166,8 +188,23 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
       tags: ['auth'],
     },
     async (req, reply) => {
-      const result = await core.accessor.get(IOAuthService).getManagedUsage(req.query.provider);
-      reply.send(okEnvelope(toWireUsage(result), req.id));
+      if (rustSession !== undefined) {
+        // Stage 3i: the native engine has no managed OAuth account — answer
+        // the wire error shape so the UI shows an unmanaged state.
+        reply.send(
+          okEnvelope(
+            {
+              kind: 'error',
+              message: 'managed account usage is not available on the native engine',
+              status: 404,
+            },
+            req.id,
+          ),
+        );
+        return;
+      }
+      // Unreachable: the v2 IOAuthService branch was retired with the v2
+      // engine — the session backend is always the Rust engine.
     },
   );
   app.get(
@@ -175,34 +212,4 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     usageRoute.options,
     usageRoute.handler as Parameters<RouteHost['get']>[2],
   );
-}
-
-/** Domain (camelCase) → wire (snake_case) mapping for the usage payload. */
-function toWireUsage(result: ManagedUsageDomainResult): ManagedUsageResult {
-  if (result.kind === 'error') {
-    return { kind: 'error', message: result.message, status: result.status };
-  }
-  return {
-    kind: 'ok',
-    summary: result.summary === null ? null : toWireUsageRow(result.summary),
-    limits: result.limits.map(toWireUsageRow),
-    extra_usage:
-      result.extraUsage === null
-        ? null
-        : {
-            balance_cents: result.extraUsage.balanceCents,
-            total_cents: result.extraUsage.totalCents,
-            monthly_charge_limit_enabled: result.extraUsage.monthlyChargeLimitEnabled,
-            monthly_charge_limit_cents: result.extraUsage.monthlyChargeLimitCents,
-            monthly_used_cents: result.extraUsage.monthlyUsedCents,
-            currency: result.extraUsage.currency,
-          },
-  };
-}
-
-type ManagedUsageDomainResult = Awaited<ReturnType<IOAuthService['getManagedUsage']>>;
-type DomainUsageRow = { label: string; used: number; limit: number; resetHint?: string };
-
-function toWireUsageRow(row: DomainUsageRow): UsageRow {
-  return { label: row.label, used: row.used, limit: row.limit, reset_hint: row.resetHint };
 }

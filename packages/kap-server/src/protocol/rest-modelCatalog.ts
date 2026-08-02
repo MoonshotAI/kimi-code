@@ -13,11 +13,45 @@
 
 import { z } from 'zod';
 
-import { PROVIDER_ID_PATTERN } from '@moonshot-ai/agent-core-v2';
-import {
-  modelCatalogItemSchema,
-  providerCatalogItemSchema,
-} from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+/**
+ * Locally-owned catalog wire schemas (stage 4: protocol localisation) —
+ * copied from the v2 `kosong/model/catalog` + `app/kosongConfig/modelsDevImport`
+ * (PROVIDER_ID_PATTERN) so kap-server no longer imports them. The catalog item
+ * shapes are owned by the engine (`kosong/model/catalog`); these are only the
+ * REST list/get wrappers around them, plus the manual create/replace/delete
+ * write surface.
+ */
+export const modelCatalogItemSchema = z.object({
+  provider: z.string().min(1),
+  model: z.string().min(1),
+  display_name: z.string().min(1).optional(),
+  max_context_size: z.number().int().min(1),
+  capabilities: z.array(z.string()).optional(),
+  support_efforts: z.array(z.string()).optional(),
+  default_effort: z.string().optional(),
+});
+export type ModelCatalogItem = z.infer<typeof modelCatalogItemSchema>;
+
+export const providerCatalogStatusSchema = z.enum([
+  'connected',
+  'error',
+  'unconfigured',
+]);
+export type ProviderCatalogStatus = z.infer<typeof providerCatalogStatusSchema>;
+
+export const providerCatalogItemSchema = z.object({
+  id: z.string().min(1),
+  type: z.string().min(1),
+  base_url: z.string().min(1).optional(),
+  default_model: z.string().min(1).optional(),
+  has_api_key: z.boolean(),
+  status: providerCatalogStatusSchema,
+  models: z.array(z.string().min(1)).optional(),
+});
+export type ProviderCatalogItem = z.infer<typeof providerCatalogItemSchema>;
+
+/** Provider id shape accepted by the create/replace routes (v2 `modelsDevImport`). */
+const PROVIDER_ID_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}\-_ ]*$/u;
 
 export const listModelsResponseSchema = z.object({
   items: z.array(modelCatalogItemSchema),
@@ -36,6 +70,17 @@ export const getProviderResponseSchema = providerCatalogItemSchema.extend({
   api_key: z.string().optional(),
 });
 export type GetProviderResponse = z.infer<typeof getProviderResponseSchema>;
+
+/**
+ * POST /v1/models/{tail} (:set_default) — copied from the v2
+ * `kosong/model/catalog` (stage 4: protocol localisation) so kap-server no
+ * longer imports the engine schema.
+ */
+export const setDefaultModelResponseSchema = z.object({
+  default_model: z.string().min(1),
+  model: modelCatalogItemSchema,
+});
+export type SetDefaultModelResponse = z.infer<typeof setDefaultModelResponseSchema>;
 
 // ---------------------------------------------------------------------------
 // POST /v1/providers — manual provider creation
@@ -257,3 +302,35 @@ export const importCustomRegistryResponseSchema = z.object({
   models_imported: z.number().int().min(0),
 });
 export type ImportCustomRegistryResponse = z.infer<typeof importCustomRegistryResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// POST /v1/providers/{tail} (:refresh) — single-provider model refresh
+// ---------------------------------------------------------------------------
+
+/**
+ * Refresh result shapes — copied from the v2 `app/kosongConfig/discovery`
+ * (stage 4: protocol localisation). On the native engine a refresh is a no-op
+ * reported as unchanged; these schemas only document the wire contract.
+ */
+export const providerRefreshChangeSchema = z.object({
+  provider_id: z.string().min(1),
+  provider_name: z.string().min(1),
+  added: z.number().int().min(0),
+  removed: z.number().int().min(0),
+});
+export type ProviderRefreshChange = z.infer<typeof providerRefreshChangeSchema>;
+
+export const providerRefreshFailureSchema = z.object({
+  provider: z.string().min(1),
+  reason: z.string().min(1),
+});
+export type ProviderRefreshFailure = z.infer<typeof providerRefreshFailureSchema>;
+
+export const refreshProviderModelsResponseSchema = z.object({
+  changed: z.array(providerRefreshChangeSchema),
+  unchanged: z.array(z.string().min(1)),
+  failed: z.array(providerRefreshFailureSchema),
+});
+export type RefreshProviderModelsResponse = z.infer<
+  typeof refreshProviderModelsResponseSchema
+>;

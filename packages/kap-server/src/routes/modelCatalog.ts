@@ -1,95 +1,62 @@
 /**
- * `/models` + `/providers` catalog route handlers — server-v2 port.
+ * `/models` + `/providers` catalog route handlers — native-engine projection.
  *
- * Implements the v1 model/provider catalog wire contract on top of
- * `agent-core-v2`'s `IModelCatalog` (the remote-discovery refresh lives on
- * `IProviderDiscoveryService`; the OAuth-only managed refresh additionally
- * lives on `IOAuthService`; the models.dev directory browse and the
- * catalog/registry imports live on `IModelsDevImportService`):
+ * Implements the v1 model/provider catalog wire contract as projections over
+ * the Rust engine's parsed config (`rustSession.configGet` /
+ * `rustSession.configSet`). The engine is the only runtime (web sessions all
+ * run through `RustSessionService`), so every handler below reads or writes
+ * the camelCase KimiConfig directly — there is no v2 `IModelCatalog`:
  *   GET    /models                       — list configured model aliases
  *   GET    /providers                    — list configured providers
  *   GET    /providers/{provider_id}      — get a configured provider by id
  *   POST   /providers                    — create a provider manually
  *   PUT    /providers/{provider_id}      — replace a provider + rebuild its model aliases
  *   DELETE /providers/{provider_id}      — delete a provider + its model aliases
- *   GET    /catalog/providers            — browse the models.dev directory (proxied)
- *   GET    /catalog/providers/{catalog_id} — get one directory entry
- *   POST   /providers:import_catalog     — import a directory entry as a provider
  *   POST   /models/{tail} (:set_default) — set the global default model alias
- *   POST   /providers:refresh            — refresh ALL refreshable providers
- *   POST   /providers:refresh_oauth      — refresh OAuth-backed provider models
- *   POST   /providers/{tail} (:refresh)  — refresh a single provider by id
+ *   POST   /providers/{tail} (:refresh)  — refresh a single provider by id (no-op)
  *
- * **Wire fidelity**: reuses agent-core-v2's catalog schemas and the local
- * numeric `ErrorCode` envelope verbatim, so the response shape and error codes
- * (`40412` provider-not-found, `40413` model-not-found, `40001` validation) are
- * byte-for-byte compatible with v1's `routes/modelCatalog.ts`. The v2 domain
- * throws coded `Error2`s (`provider.not_found` / `model.not_found` /
- * `provider.catalog_*` / `provider.*_import_invalid` / `provider.oauth_managed`);
- * this edge maps them to the numeric protocol codes by `code` (never
- * `instanceof`).
+ * **Wire fidelity**: reuses the local catalog schemas and the numeric
+ * `ErrorCode` envelope verbatim, so the response shape and error codes
+ * (`40412` provider-not-found, `40413` model-not-found, `40001` validation)
+ * stay byte-for-byte compatible with v1's `routes/modelCatalog.ts`. The v2
+ * remote-discovery surface is gone from this edge: the models.dev directory
+ * browse/import (`/catalog/providers*`, `/providers:import_*`) and the
+ * discovery refreshes (`/providers:refresh*`) were v2-service-only
+ * (`IModelsDevImportService` / `IProviderDiscoveryService` / `IOAuthService`)
+ * and are not registered on the native engine.
  *
- * **Write surface**: create/replace/delete write the user config layer through
- * `IConfigService` (the catalog/registry imports write through
- * `IModelsDevImportService` in the engine — this edge only maps the wire).
- * Replace and delete use whole-section `replace` (deep-merge
- * `set` can never drop a key). One subtlety shapes all the write code below:
- * the providers/models TOML transforms rebuild each section's entries but
- * overlay each entry's fields onto the old on-disk raw — so an entry id
- * absent from the replacement truly disappears, while a FIELD absent from a
- * kept entry would silently survive on disk (and resurrect on the next boot).
- * Field-level clears therefore always assign an explicit `undefined` (the
- * transform's `setDefined` drops those). The kosong
- * persistence bridge then pushes the change into the registries, which is
- * also what invalidates the catalog cache. Multi-step sequences are
- * serialized through `enqueueProviderWrite`.
+ * **Write surface**: create/replace/delete write the engine config through
+ * `rustSession.configSet`. Replace and delete rebuild each section's entries
+ * so an entry id absent from the replacement truly disappears. Multi-step
+ * sequences are serialized through `enqueueProviderWrite`.
  */
 
-import {
-  IConfigService,
-  IKosongConfigService,
-  IModelCatalog,
-  IOAuthService,
-  IProviderDiscoveryService,
-  IModelsDevImportService,
-  isError2,
-  ModelsDevImportErrors,
-  SECONDARY_DERIVED_MODEL_ID,
-  type ModelRecord,
-  type ModelsSection,
-  type ProviderConfig,
-  type ProvidersSection,
-  type Scope,
-} from '@moonshot-ai/agent-core-v2';
-import { setDefaultModelResponseSchema } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
-import { refreshProviderModelsResponseSchema } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
-import {
-  DEFAULT_MODEL_SECTION,
-  DEFAULT_PROVIDER_SECTION,
-  MODELS_SECTION,
-  PROVIDERS_SECTION,
-} from '@moonshot-ai/agent-core-v2/app/kosongConfig/configSection';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import type { RustSessionService } from '../services/rustSession/rustSessionService';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
   createProviderRequestSchema,
   createProviderResponseSchema,
-  getCatalogProviderResponseSchema,
   getProviderResponseSchema,
-  importCatalogProviderResponseSchema,
-  importCustomRegistryResponseSchema,
-  listCatalogProvidersResponseSchema,
   listModelsResponseSchema,
   listProvidersResponseSchema,
-  providerCollectionActionBodySchema,
+  refreshProviderModelsResponseSchema,
   replaceProviderRequestSchema,
   replaceProviderResponseSchema,
-  type ProviderCollectionActionBody,
+  setDefaultModelResponseSchema,
 } from '../protocol/rest-modelCatalog';
 import { parseActionSuffix } from './action-suffix';
+
+/**
+ * The synthesized runtime-only model alias the engine overlays onto the
+ * effective `models` view (bound-secondary config); never a configured alias,
+ * so the list route keeps it out of pickers (the catalog still resolves it by
+ * id). Copied from the v2 `app/kosongConfig/secondaryModelOverlay`.
+ */
+const SECONDARY_DERIVED_MODEL_ID = '__secondary__';
 
 interface ModelCatalogRouteHost {
   get(
@@ -144,82 +111,52 @@ const providerActionTailParamSchema = z.object({
   tail: z.string().min(1),
 });
 
-const providerCollectionActionParamSchema = z.object({
-  action: z.string().min(1),
-});
-
-const catalogIdParamSchema = z.object({
-  catalog_id: z.string().min(1),
-});
-
-/**
- * Resolve the catalog service after the config layer is ready. Config loads
- * asynchronously during bootstrap; mirroring `routes/config.ts`, route handlers
- * await `IConfigService.ready` so an immediate request never observes an empty
- * (not-yet-loaded) catalog.
- */
-async function loadCatalog(core: Scope): Promise<IModelCatalog> {
-  await core.accessor.get(IConfigService).ready;
-  return core.accessor.get(IModelCatalog);
-}
-
-/**
- * Resolve the config service for the write routes once the kosong persistence
- * bridge is also ready. The bridge subscribes to section changes after the
- * initial hydration; awaiting it guarantees a write below reaches the kosong
- * registries (and the catalog-cache invalidation riding them) before the
- * handler reads back or returns.
- */
-async function loadConfig(core: Scope): Promise<IConfigService> {
-  const config = core.accessor.get(IConfigService);
-  await config.ready;
-  await core.accessor.get(IKosongConfigService).ready;
-  return config;
-}
-
-async function loadDiscovery(core: Scope): Promise<IProviderDiscoveryService> {
-  await core.accessor.get(IConfigService).ready;
-  return core.accessor.get(IProviderDiscoveryService);
-}
-
-async function loadOAuth(core: Scope): Promise<IOAuthService> {
-  await core.accessor.get(IConfigService).ready;
-  return core.accessor.get(IOAuthService);
+/** Rust-engine provider projection (stage 3h): camelCase patch → v1 item. */
+function toRustProviderCatalogItem(
+  id: string,
+  patch: Record<string, unknown>,
+): {
+  id: string;
+  type: string;
+  base_url?: string;
+  default_model?: string;
+  has_api_key: boolean;
+  status: 'connected' | 'error' | 'unconfigured';
+} {
+  return {
+    id,
+    type: typeof patch['type'] === 'string' ? (patch['type'] as string) : 'unknown',
+    ...(patch['baseUrl'] !== undefined ? { base_url: patch['baseUrl'] as string } : {}),
+    ...(patch['defaultModel'] !== undefined
+      ? { default_model: patch['defaultModel'] as string }
+      : {}),
+    has_api_key: patch['apiKey'] !== undefined,
+    status: patch['apiKey'] !== undefined ? 'connected' : 'unconfigured',
+  };
 }
 
 /**
  * Serializes the provider write routes' multi-step sequences (inspect → build
- * → replace × N). The config service only serializes individual writes, so
- * two interleaved edits could otherwise lose each other's section rebuilds
- * (or land a half-migrated rename). The refresh routes are excluded — the
- * discovery service chains its own runs.
+ * → replace × N). The engine config only serializes individual writes, so two
+ * interleaved edits could otherwise lose each other's section rebuilds (or
+ * land a half-migrated rename). The single-provider refresh route is excluded
+ * — it is a no-op and chains nothing.
  */
 let providerWriteChain: Promise<unknown> = Promise.resolve();
 
 function enqueueProviderWrite<T>(task: () => Promise<T>): Promise<T> {
   const run = providerWriteChain.then(task, task);
   providerWriteChain = run.then(
-    () => undefined,
-    () => undefined,
+    () => {},
+    () => {},
   );
   return run;
 }
 
-/**
- * Seed the global default model when — and only when — none is configured.
- * Provider writes otherwise never move the default pointers, but a fresh
- * setup has no pointer at all: the first provider added must leave the
- * daemon usable (GET /auth's readiness requires a default model). An
- * existing pointer is never rewritten here, not even a dangling one — it is
- * the user's setting, not this route's to second-guess.
- */
-async function seedDefaultModelWhenUnset(config: IConfigService, alias: string): Promise<void> {
-  const current = config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
-  if (current !== undefined && current.trim() !== '') return;
-  await config.replace(DEFAULT_MODEL_SECTION, alias);
-}
-
-export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Scope): void {
+export function registerModelCatalogRoutes(
+  app: ModelCatalogRouteHost,
+  rustSession: RustSessionService,
+): void {
   const listModelsRoute = defineRoute(
     {
       method: 'GET',
@@ -229,17 +166,20 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
       tags: ['models'],
     },
     async (req, reply) => {
-      const items = await (await loadCatalog(core)).listModels();
-      // Presentation filter: the secondary-model derived entry is synthesized
-      // runtime state, not a configured alias — keep it out of pickers (the
-      // catalog still resolves it by id, and the overlay's strip keeps any
-      // default-model pointer to it out of config.toml).
-      reply.send(
-        okEnvelope(
-          { items: items.filter((item) => item.model !== SECONDARY_DERIVED_MODEL_ID) },
-          req.id,
-        ),
-      );
+      // Stage 3f: project configured model aliases from the engine's parsed
+      // config — no v2 IModelCatalog.
+      const config = (await rustSession.configGet()) as
+        | { models?: Record<string, { provider: string; model: string }> }
+        | null;
+      const items = Object.entries(config?.models ?? {})
+        .filter(([, alias]) => alias?.model !== SECONDARY_DERIVED_MODEL_ID)
+        .map(([id, alias]) => ({
+          provider: alias.provider,
+          model: alias.model,
+          display_name: id,
+          max_context_size: 1_000_000,
+        }));
+      reply.send(okEnvelope({ items }, req.id));
     },
   );
   app.get(
@@ -263,25 +203,53 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
       operationId: 'setDefaultModel',
     },
     async (req, reply) => {
-      try {
-        const { tail } = req.params;
-        const parsed = parseActionSuffix({
-          tail,
-          allowedActions: ['set_default'] as const,
-          resourceLabel: 'model',
-        });
-        if (parsed.kind !== 'action') {
-          const message =
-            parsed.kind === 'invalid' ? parsed.reason : `unsupported action: ${tail}`;
-          reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, message, req.id));
-          return;
-        }
-        const result = await (await loadCatalog(core)).setDefaultModel(parsed.id);
-        reply.send(okEnvelope(result, req.id));
-      } catch (err) {
-        if (sendMappedError(reply, req.id, err)) return;
-        throw err;
+      const { tail } = req.params;
+      const parsed = parseActionSuffix({
+        tail,
+        allowedActions: ['set_default'] as const,
+        resourceLabel: 'model',
+      });
+      if (parsed.kind !== 'action') {
+        const message =
+          parsed.kind === 'invalid' ? parsed.reason : `unsupported action: ${tail}`;
+        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, message, req.id));
+        return;
       }
+      // Stage 3h: write the global default-model pointer through the engine's
+      // config — validated against the configured aliases like v2
+      // `IModelCatalog.setDefaultModel` (unknown id → 40413). The v2
+      // materialization gate (dangling provider, conflicting credentials)
+      // does not exist on this path: any configured alias is settable.
+      const config = (await rustSession.configGet()) as
+        | {
+            models?: Record<
+              string,
+              { provider?: string; model?: string; displayName?: string; maxContextSize?: number }
+            >;
+          }
+        | null;
+      const alias = config?.models?.[parsed.id];
+      if (alias === undefined) {
+        reply.send(
+          errEnvelope(ErrorCode.MODEL_NOT_FOUND, `model ${parsed.id} does not exist`, req.id),
+        );
+        return;
+      }
+      await rustSession.configSet({ defaultModel: parsed.id });
+      reply.send(
+        okEnvelope(
+          {
+            default_model: parsed.id,
+            model: {
+              provider: alias.provider ?? '',
+              model: alias.model ?? parsed.id,
+              display_name: alias.displayName ?? parsed.id,
+              max_context_size: alias.maxContextSize ?? 1_000_000,
+            },
+          },
+          req.id,
+        ),
+      );
     },
   );
   app.post(
@@ -299,7 +267,19 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
       tags: ['providers'],
     },
     async (req, reply) => {
-      const items = await (await loadCatalog(core)).listProviders();
+      // Stage 3e: project the provider list from the engine's parsed config
+      // (camelCase KimiConfig) — no v2 IModelCatalog/IConfigService.
+      const config = (await rustSession.configGet()) as
+        | { providers?: Record<string, { type?: string; baseUrl?: string; defaultModel?: string; apiKey?: string; oauth?: unknown }> }
+        | null;
+      const items = Object.entries(config?.providers ?? {}).map(([id, p]) => ({
+        id,
+        type: p?.type ?? 'unknown',
+        ...(p?.baseUrl !== undefined ? { base_url: p.baseUrl } : {}),
+        ...(p?.defaultModel !== undefined ? { default_model: p.defaultModel } : {}),
+        has_api_key: Boolean(p?.apiKey),
+        status: p?.apiKey !== undefined || p?.oauth !== undefined ? 'connected' : 'unconfigured',
+      }));
       reply.send(okEnvelope({ items }, req.id));
     },
   );
@@ -326,10 +306,13 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     },
     async (req, reply) => {
       await enqueueProviderWrite(async () => {
-        const config = await loadConfig(core);
+        // Stage 3h: write through the engine's config/set — no v2 config
+        // service or model catalog.
         const { id } = req.body;
-        const providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
-        if (providers[id] !== undefined) {
+        const current = (await rustSession.configGet()) as
+          | { providers?: Record<string, unknown>; defaultModel?: string }
+          | null;
+        if (current?.providers?.[id] !== undefined) {
           reply.send(
             errEnvelope(
               ErrorCode.PROVIDER_ALREADY_EXISTS,
@@ -339,47 +322,41 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
           );
           return;
         }
-
-        const provider: ProviderConfig = { type: req.body.type };
-        if (req.body.api_key !== undefined) provider.apiKey = req.body.api_key;
-        if (req.body.base_url !== undefined) provider.baseUrl = req.body.base_url;
+        const providerPatch: Record<string, unknown> = { type: req.body.type };
+        if (req.body.api_key !== undefined) providerPatch['apiKey'] = req.body.api_key;
+        if (req.body.base_url !== undefined) providerPatch['baseUrl'] = req.body.base_url;
+        let providerDefault: string | undefined;
         if (req.body.default_model !== undefined) {
-          // The provider-level default references the model alias id
-          // (`<id>/<model>`), the form runtime resolution reads back.
-          provider.defaultModel = `${id}/${req.body.default_model}`;
+          providerDefault = `${id}/${req.body.default_model}`;
+          providerPatch['defaultModel'] = providerDefault;
         }
-        await config.set(PROVIDERS_SECTION, { [id]: provider });
-
-        const aliases: Record<string, ModelRecord> = {};
+        const modelsPatch: Record<string, unknown> = {};
         for (const entry of req.body.models) {
-          const alias: ModelRecord = {
+          const alias: Record<string, unknown> = {
             provider: id,
             model: entry.model,
             maxContextSize: entry.max_context_size,
           };
-          if (entry.display_name !== undefined) alias.displayName = entry.display_name;
-          if (entry.capabilities !== undefined) alias.capabilities = [...entry.capabilities];
-          if (entry.max_output_size !== undefined) alias.maxOutputSize = entry.max_output_size;
+          if (entry.display_name !== undefined) alias['displayName'] = entry.display_name;
+          if (entry.capabilities !== undefined) alias['capabilities'] = [...entry.capabilities];
+          if (entry.max_output_size !== undefined)
+            alias['maxOutputSize'] = entry.max_output_size;
           if (entry.support_efforts !== undefined)
-            alias.supportEfforts = [...entry.support_efforts];
+            alias['supportEfforts'] = [...entry.support_efforts];
           if (entry.adaptive_thinking !== undefined)
-            alias.adaptiveThinking = entry.adaptive_thinking;
-          aliases[`${id}/${entry.model}`] = alias;
+            alias['adaptiveThinking'] = entry.adaptive_thinking;
+          modelsPatch[`${id}/${entry.model}`] = alias;
         }
-        await config.set(MODELS_SECTION, aliases);
-
-        // A fresh setup has no default model at all: seed it with the
-        // provider's own default (or its first model) so the first provider
-        // added leaves the daemon usable. Existing pointers are never moved.
+        const patch: Record<string, unknown> = {
+          providers: { [id]: providerPatch },
+          models: modelsPatch,
+        };
         const firstModel = req.body.models[0];
-        if (firstModel !== undefined) {
-          await seedDefaultModelWhenUnset(
-            config,
-            provider.defaultModel ?? `${id}/${firstModel.model}`,
-          );
+        if (current?.defaultModel === undefined && firstModel !== undefined) {
+          patch['defaultModel'] = providerDefault ?? `${id}/${firstModel.model}`;
         }
-
-        const created = await core.accessor.get(IModelCatalog).getProvider(id);
+        await rustSession.configSet(patch);
+        const created = toRustProviderCatalogItem(id, providerPatch);
         (reply as unknown as StatusReply).code(201).send(okEnvelope(created, req.id));
       });
     },
@@ -410,10 +387,25 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     },
     async (req, reply) => {
       await enqueueProviderWrite(async () => {
-        const config = await loadConfig(core);
+        // Stage 3h: replace via the engine's config/set. Same-id replacement
+        // only — renames (new_id) are rejected: the TOML-key migration is a
+        // v2 config-transform concern not replicated on the native path.
         const { provider_id } = req.params;
-        const providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
-        const target = providers[provider_id];
+        const body = req.body;
+        if (body.new_id !== undefined && body.new_id !== provider_id) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.VALIDATION_FAILED,
+              'provider rename (new_id) is not supported on the native engine',
+              req.id,
+            ),
+          );
+          return;
+        }
+        const current = (await rustSession.configGet()) as
+          | { providers?: Record<string, unknown>; models?: Record<string, { provider?: string }>; defaultModel?: string }
+          | null;
+        const target = current?.providers?.[provider_id];
         if (target === undefined) {
           reply.send(
             errEnvelope(
@@ -424,7 +416,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
           );
           return;
         }
-        if (target.oauth !== undefined) {
+        if ((target as { oauth?: unknown }).oauth !== undefined) {
           reply.send(
             errEnvelope(
               ErrorCode.PROVIDER_OAUTH_MANAGED,
@@ -434,140 +426,53 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
           );
           return;
         }
-
-        // Whole-section replace (not deep-merge `set`, which could never drop
-        // the old api_key/base_url/default_model keys when they leave the form).
-        // The provider record itself merges like the model records below do:
-        // fields the form does not know (custom_headers / env / the registry
-        // `source` blob that scheduled refreshes rediscover by) ride along on
-        // `target`; the fields the form owns are authoritative — absent from
-        // the body means cleared. api_key tri-state: field absent keeps the
-        // stored key, "" clears it — persisted as `api_key = ""`, the same
-        // cleared form authService writes (runtime credential resolution
-        // treats "" as no key).
-        const newId = req.body.new_id ?? provider_id;
-        if (newId !== provider_id && providers[newId] !== undefined) {
-          reply.send(
-            errEnvelope(
-              ErrorCode.PROVIDER_ALREADY_EXISTS,
-              `provider ${newId} already exists`,
-              req.id,
-            ),
-          );
-          return;
+        const providerPatch: Record<string, unknown> = { type: body.type };
+        if (body.api_key !== undefined) providerPatch['apiKey'] = body.api_key;
+        if (body.base_url !== undefined) providerPatch['baseUrl'] = body.base_url;
+        if (body.default_model !== undefined) {
+          providerPatch['defaultModel'] = `${provider_id}/${body.default_model}`;
         }
-
-        const provider: ProviderConfig = { ...target, type: req.body.type };
-        // Explicit `undefined` assignments (NOT `delete`): the TOML transform is
-        // a raw overlay that only drops a key when the new value carries the key
-        // with an undefined value (`setDefined`); a missing key would keep the
-        // old on-disk value alive and resurrect it on the next boot.
-        provider.apiKey = req.body.api_key ?? target.apiKey;
-        provider.baseUrl = req.body.base_url;
-        provider.defaultModel =
-          req.body.default_model !== undefined
-            ? // The provider-level default references the model alias id
-              // (`<id>/<model>`), the same form create persists.
-              `${newId}/${req.body.default_model}`
-            : undefined;
-        // A rename is a key swap on the same section; every other entry (and its
-        // TOML position) is untouched.
-        const nextProviders = Object.fromEntries(
-          Object.entries(providers).map(([key, value]) => [
-            key === provider_id ? newId : key,
-            value,
-          ]),
-        );
-        nextProviders[newId] = provider;
-
-        // Foreign-prefix collision guard: alias keys are global, and a kept
-        // alias owned by ANOTHER provider may already sit on a `<newId>/<model>`
-        // key the rebuild would write — refuse instead of silently retargeting
-        // it. Checked BEFORE any write so a collision never lands half the edit.
-        const models = config.inspect<ModelsSection>(MODELS_SECTION).userValue ?? {};
-        const newAliasKeys = new Set(req.body.models.map((entry) => `${newId}/${entry.model}`));
-        const colliding = Object.entries(models)
-          .filter(([, record]) => record.provider !== provider_id)
-          .map(([aliasId]) => aliasId)
-          .filter((aliasId) => newAliasKeys.has(aliasId));
-        if (colliding.length > 0) {
-          reply.send(
-            errEnvelope(
-              ErrorCode.VALIDATION_FAILED,
-              `model alias key already owned by another provider: ${colliding.join(', ')}`,
-              req.id,
-            ),
-          );
-          return;
-        }
-
-        await config.replace(PROVIDERS_SECTION, nextProviders);
-
-        // Rebuild the provider's aliases from the submitted list: keep every
-        // alias owned by other providers, drop the old set, append the new one.
-        const previousAliasIds = new Set(
-          Object.entries(models)
-            .filter(([, record]) => record.provider === provider_id)
-            .map(([aliasId]) => aliasId),
-        );
-        const nextModels = Object.fromEntries(
-          Object.entries(models).filter(([, record]) => record.provider !== provider_id),
-        );
-        const previousByModel = new Map(
-          Object.values(models)
-            .filter((record) => record.provider === provider_id && record.model !== undefined)
-            .map((record) => [record.model as string, record] as const),
-        );
-        for (const entry of req.body.models) {
-          // Merge onto the existing record so fields the form does not know
-          // (betaApi / reasoningKey / protocol / per-model baseUrl / overrides /
-          // defaultEffort / maxInputSize …) survive an edit; only models the
-          // user removed lose their record. Fields the form does know are
-          // authoritative — absent from the body means cleared, and the clear
-          // must be an explicit `undefined` assignment (never `delete`): the
-          // TOML transform is a raw overlay that only drops a key when the new
-          // record carries it with an undefined value.
-          const alias: ModelRecord = {
-            ...previousByModel.get(entry.model),
-            provider: newId,
+        const modelsPatch: Record<string, unknown> = {};
+        for (const entry of body.models) {
+          const alias: Record<string, unknown> = {
+            provider: provider_id,
             model: entry.model,
             maxContextSize: entry.max_context_size,
           };
-          alias.displayName = entry.display_name !== undefined ? entry.display_name : undefined;
-          alias.capabilities =
-            entry.capabilities !== undefined ? [...entry.capabilities] : undefined;
-          alias.maxOutputSize = entry.max_output_size !== undefined ? entry.max_output_size : undefined;
-          alias.supportEfforts =
-            entry.support_efforts !== undefined ? [...entry.support_efforts] : undefined;
-          alias.adaptiveThinking =
-            entry.adaptive_thinking !== undefined ? entry.adaptive_thinking : undefined;
-          nextModels[`${newId}/${entry.model}`] = alias;
+          if (entry.display_name !== undefined) alias['displayName'] = entry.display_name;
+          if (entry.capabilities !== undefined) alias['capabilities'] = [...entry.capabilities];
+          if (entry.max_output_size !== undefined)
+            alias['maxOutputSize'] = entry.max_output_size;
+          if (entry.support_efforts !== undefined)
+            alias['supportEfforts'] = [...entry.support_efforts];
+          modelsPatch[`${provider_id}/${entry.model}`] = alias;
         }
-        await config.replace(MODELS_SECTION, nextModels);
-
-        // Migrate the global pointers on rename — and ONLY on rename: provider
-        // writes never clear default_provider/default_model, not even when the
-        // rebuild drops the alias they point at (the pointer is the user's
-        // setting, not this endpoint's to garbage-collect). default_model is
-        // repointed via the old record's bare model name, not the alias key —
-        // old aliases may carry a foreign prefix.
-        if (newId !== provider_id) {
-          const defaultProvider = config.inspect<string>(DEFAULT_PROVIDER_SECTION).userValue;
-          if (defaultProvider === provider_id) {
-            await config.replace(DEFAULT_PROVIDER_SECTION, newId);
-          }
-          const defaultModel = config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
-          if (defaultModel !== undefined && previousAliasIds.has(defaultModel)) {
-            const renamedModel = models[defaultModel]?.model;
-            const renamedAlias = renamedModel !== undefined ? `${newId}/${renamedModel}` : undefined;
-            if (renamedAlias !== undefined && nextModels[renamedAlias] !== undefined) {
-              await config.replace(DEFAULT_MODEL_SECTION, renamedAlias);
-            }
-          }
-        }
-
-        const saved = await core.accessor.get(IModelCatalog).getProvider(newId);
-        reply.send(okEnvelope({ provider: saved }, req.id));
+        // Drop the provider's previous aliases via null delete markers (the
+        // engine merge is insert/update only); keep other providers' aliases.
+        const restModels = Object.fromEntries(
+          Object.entries(current?.models ?? {}).filter(
+            ([, r]) => r?.provider !== provider_id,
+          ),
+        );
+        const droppedAliases = Object.fromEntries(
+          Object.keys(current?.models ?? {})
+            .filter((alias) => alias.startsWith(`${provider_id}/`) && !(alias in modelsPatch))
+            .map((alias) => [alias, null]),
+        );
+        const patch: Record<string, unknown> = {
+          providers: { [provider_id]: providerPatch },
+          models: { ...restModels, ...droppedAliases, ...modelsPatch },
+        };
+        await rustSession.configSet(patch);
+        // Read back the merged provider so the response reflects retained
+        // fields (e.g. an api_key kept because the PUT body omitted it).
+        const after = (await rustSession.configGet()) as
+          | { providers?: Record<string, Record<string, unknown>> }
+          | null;
+        const mergedProvider = after?.providers?.[provider_id] ?? providerPatch;
+        reply.send(
+          okEnvelope(toRustProviderCatalogItem(provider_id, mergedProvider), req.id),
+        );
       });
     },
   );
@@ -575,66 +480,6 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     replaceProviderRoute.path,
     replaceProviderRoute.options,
     replaceProviderRoute.handler as Parameters<ModelCatalogRouteHost['put']>[2],
-  );
-
-  const refreshProvidersRoute = defineRoute(
-    {
-      method: 'POST',
-      path: '/providers:action',
-      params: providerCollectionActionParamSchema,
-      // One route hosts every collection-level action because find-my-way
-      // cannot register a static `/providers:import_catalog` next to the
-      // in-segment `:action` parameter. The body applies to `import_catalog`
-      // only; the refresh actions are invoked without one.
-      body: providerCollectionActionBodySchema.optional(),
-      success: {
-        data: z.union([
-          refreshProviderModelsResponseSchema,
-          importCatalogProviderResponseSchema,
-          importCustomRegistryResponseSchema,
-        ]),
-      },
-      errors: {
-        [ErrorCode.VALIDATION_FAILED]: {},
-        [ErrorCode.CATALOG_IMPORT_INVALID]: {},
-        [ErrorCode.REGISTRY_IMPORT_INVALID]: {},
-        [ErrorCode.PROVIDER_OAUTH_MANAGED]: {},
-        [ErrorCode.CATALOG_ENTRY_NOT_FOUND]: {},
-        [ErrorCode.CATALOG_UNAVAILABLE]: {},
-      },
-      description:
-        'Provider collection actions. Use `:refresh` for all providers or `:refresh_oauth` for OAuth-backed providers only. Use `:import_catalog` to import a models.dev directory entry as a configured provider (201): the wire protocol and endpoint come from the catalog resolution (`base_url` overrides it; required when the entry resolves to needs-base-url), all catalogued models are written as aliases, and importing an id that already exists is a refresh — the provider entry and its aliases are rewritten from the catalog (OAuth-managed providers are rejected instead). `id` overrides the catalog id as the local provider id. Use `:import_registry` to import a models.dev-shaped private registry (api.json `url` + optional Bearer `api_key`, 201): every listed provider is written with a `source` blob so scheduled refreshes rediscover it, and re-importing the same URL removes providers that disappeared upstream (the URL is the stable registry identity). For both imports the global default_provider/default_model pointers are never modified — except that a default_model is seeded from the first imported model when none is configured at all (fresh setup).',
-      tags: ['providers'],
-      operationId: 'providerCollectionAction',
-    },
-    async (req, reply) => {
-      const raw = req.params.action;
-      const action = raw.startsWith(':') ? raw.slice(1) : raw;
-      if (action === 'refresh_oauth') {
-        const result = await (await loadOAuth(core)).refreshOAuthProviderModels();
-        reply.send(okEnvelope(result, req.id));
-        return;
-      }
-      if (action === 'refresh') {
-        const result = await (await loadDiscovery(core)).refreshProviderModels({ scope: 'all' });
-        reply.send(okEnvelope(result, req.id));
-        return;
-      }
-      if (action === 'import_catalog') {
-        await enqueueProviderWrite(() => handleImportCatalog(req, reply, core));
-        return;
-      }
-      if (action === 'import_registry') {
-        await enqueueProviderWrite(() => handleImportRegistry(req, reply, core));
-        return;
-      }
-      reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, `unsupported action: ${raw}`, req.id));
-    },
-  );
-  app.post(
-    refreshProvidersRoute.path,
-    refreshProvidersRoute.options,
-    refreshProvidersRoute.handler as Parameters<ModelCatalogRouteHost['post']>[2],
   );
 
   const refreshProviderRoute = defineRoute(
@@ -652,27 +497,21 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
       operationId: 'refreshProvider',
     },
     async (req, reply) => {
-      try {
-        const { tail } = req.params;
-        const parsed = parseActionSuffix({
-          tail,
-          allowedActions: ['refresh'] as const,
-          resourceLabel: 'provider',
-        });
-        if (parsed.kind !== 'action') {
-          const message =
-            parsed.kind === 'invalid' ? parsed.reason : `unsupported action: ${tail}`;
-          reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, message, req.id));
-          return;
-        }
-        const result = await (await loadDiscovery(core)).refreshProviderModels({
-          providerId: parsed.id,
-        });
-        reply.send(okEnvelope(result, req.id));
-      } catch (err) {
-        if (sendMappedError(reply, req.id, err)) return;
-        throw err;
+      const { tail } = req.params;
+      const parsed = parseActionSuffix({
+        tail,
+        allowedActions: ['refresh'] as const,
+        resourceLabel: 'provider',
+      });
+      if (parsed.kind !== 'action') {
+        const message =
+          parsed.kind === 'invalid' ? parsed.reason : `unsupported action: ${tail}`;
+        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, message, req.id));
+        return;
       }
+      // Stage 3h: the engine manages models from config — a refresh is a
+      // no-op (nothing auto-discovered), reported as unchanged.
+      reply.send(okEnvelope({ changed: [], unchanged: [parsed.id], failed: [] }, req.id));
     },
   );
   app.post(
@@ -696,22 +535,31 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
       tags: ['providers'],
     },
     async (req, reply) => {
-      try {
-        const { provider_id } = req.params;
-        const provider = await (await loadCatalog(core)).getProvider(provider_id);
-        const config = await loadConfig(core);
-        const stored = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue?.[provider_id];
-        const apiKey = stored?.apiKey;
+      const { provider_id } = req.params;
+      // Stage 3h: project the stored provider from the engine's parsed config,
+      // revealing the stored api_key (the list route stays redacted).
+      const config = (await rustSession.configGet()) as
+        | { providers?: Record<string, Record<string, unknown>> }
+        | null;
+      const stored = config?.providers?.[provider_id];
+      if (stored === undefined) {
         reply.send(
-          okEnvelope(
-            apiKey !== undefined && apiKey !== '' ? { ...provider, api_key: apiKey } : provider,
+          errEnvelope(
+            ErrorCode.PROVIDER_NOT_FOUND,
+            `provider ${provider_id} does not exist`,
             req.id,
           ),
         );
-      } catch (err) {
-        if (sendMappedError(reply, req.id, err)) return;
-        throw err;
+        return;
       }
+      const provider = toRustProviderCatalogItem(provider_id, stored);
+      const apiKey = stored['apiKey'];
+      reply.send(
+        okEnvelope(
+          apiKey !== undefined && apiKey !== '' ? { ...provider, api_key: apiKey } : provider,
+          req.id,
+        ),
+      );
     },
   );
   app.get(
@@ -740,11 +588,13 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     },
     async (req, reply) => {
       await enqueueProviderWrite(async () => {
-        const config = await loadConfig(core);
+        // Stage 3h: delete via the engine's config/set — providers + the
+        // provider's model aliases.
         const { provider_id } = req.params;
-        const providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
-        const target = providers[provider_id];
-        if (target === undefined) {
+        const current = (await rustSession.configGet()) as
+          | { providers?: Record<string, unknown>; models?: Record<string, { provider?: string }> }
+          | null;
+        if (current?.providers?.[provider_id] === undefined) {
           reply.send(
             errEnvelope(
               ErrorCode.PROVIDER_NOT_FOUND,
@@ -754,7 +604,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
           );
           return;
         }
-        if (target.oauth !== undefined) {
+        if ((current.providers[provider_id] as { oauth?: unknown })?.oauth !== undefined) {
           reply.send(
             errEnvelope(
               ErrorCode.PROVIDER_OAUTH_MANAGED,
@@ -764,17 +614,29 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
           );
           return;
         }
-
-        const models = config.inspect<ModelsSection>(MODELS_SECTION).userValue ?? {};
-        const restProviders = { ...providers };
+        const restProviders = { ...current.providers };
         delete restProviders[provider_id];
-        await config.replace(PROVIDERS_SECTION, restProviders);
         const restModels = Object.fromEntries(
-          Object.entries(models).filter(([, record]) => record.provider !== provider_id),
+          Object.entries(current.models ?? {}).filter(([, r]) => r?.provider !== provider_id),
         );
-        if (Object.keys(restModels).length !== Object.keys(models).length) {
-          await config.replace(MODELS_SECTION, restModels);
-        }
+        // Null entries are delete markers for the engine `config/set` (merge
+        // is insert/update only); the removed provider's aliases are dropped
+        // the same way.
+        const patch: Record<string, unknown> = {
+          providers: {
+            ...restProviders,
+            [provider_id]: null,
+          },
+          models: {
+            ...restModels,
+            ...Object.fromEntries(
+              Object.keys(current.models ?? {})
+                .filter((alias) => alias.startsWith(`${provider_id}/`))
+                .map((alias) => [alias, null]),
+            ),
+          },
+        };
+        await rustSession.configSet(patch);
         (reply as unknown as StatusReply).code(204).send();
       });
     },
@@ -784,184 +646,4 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     deleteProviderRoute.options,
     deleteProviderRoute.handler as Parameters<ModelCatalogRouteHost['delete']>[2],
   );
-
-  const listCatalogProvidersRoute = defineRoute(
-    {
-      method: 'GET',
-      path: '/catalog/providers',
-      success: { data: listCatalogProvidersResponseSchema },
-      errors: { [ErrorCode.CATALOG_UNAVAILABLE]: {} },
-      description:
-        'Browse the models.dev directory (server-proxied, 10-minute in-memory cache, built-in snapshot fallback). Entries the server cannot import carry `rejected: true` with a machine-readable `reject_reason`; entries with `needs_base_url: true` require a base URL at import time. Items keep the upstream directory order.',
-      tags: ['providers'],
-      operationId: 'listCatalogProviders',
-    },
-    async (req, reply) => {
-      try {
-        const items = await core.accessor.get(IModelsDevImportService).listModelsDevProviders();
-        reply.send(okEnvelope({ items }, req.id));
-      } catch (err) {
-        if (sendModelsDevImportError(reply, req.id, err)) return;
-        throw err;
-      }
-    },
-  );
-  app.get(
-    listCatalogProvidersRoute.path,
-    listCatalogProvidersRoute.options,
-    listCatalogProvidersRoute.handler as Parameters<ModelCatalogRouteHost['get']>[2],
-  );
-
-  const getCatalogProviderRoute = defineRoute(
-    {
-      method: 'GET',
-      path: '/catalog/providers/{catalog_id}',
-      params: catalogIdParamSchema,
-      success: { data: getCatalogProviderResponseSchema },
-      errors: {
-        [ErrorCode.CATALOG_ENTRY_NOT_FOUND]: {},
-        [ErrorCode.CATALOG_UNAVAILABLE]: {},
-      },
-      description: 'Get one models.dev directory entry by catalog id.',
-      tags: ['providers'],
-      operationId: 'getCatalogProvider',
-    },
-    async (req, reply) => {
-      try {
-        const { catalog_id } = req.params;
-        const item = await core.accessor.get(IModelsDevImportService).getModelsDevProvider(catalog_id);
-        reply.send(okEnvelope(item, req.id));
-      } catch (err) {
-        if (sendModelsDevImportError(reply, req.id, err)) return;
-        throw err;
-      }
-    },
-  );
-  app.get(
-    getCatalogProviderRoute.path,
-    getCatalogProviderRoute.options,
-    getCatalogProviderRoute.handler as Parameters<ModelCatalogRouteHost['get']>[2],
-  );
 }
-
-/** Map a coded domain error to the numeric protocol envelope. Returns true if handled. */
-function sendMappedError(
-  reply: { send(payload: unknown): unknown },
-  requestId: string,
-  err: unknown,
-): boolean {
-  if (!isError2(err)) return false;
-  if (err.code === 'provider.not_found') {
-    reply.send(errEnvelope(ErrorCode.PROVIDER_NOT_FOUND, err.message, requestId, err.stack));
-    return true;
-  }
-  if (err.code === 'model.not_found') {
-    reply.send(errEnvelope(ErrorCode.MODEL_NOT_FOUND, err.message, requestId, err.stack));
-    return true;
-  }
-  return false;
-}
-
-/** The engine's provider-import error codes mapped onto the numeric protocol codes. */
-const MODELS_DEV_IMPORT_ERROR_CODES: Record<string, number> = {
-  [ModelsDevImportErrors.codes.CATALOG_UNAVAILABLE]: ErrorCode.CATALOG_UNAVAILABLE,
-  [ModelsDevImportErrors.codes.CATALOG_ENTRY_NOT_FOUND]: ErrorCode.CATALOG_ENTRY_NOT_FOUND,
-  [ModelsDevImportErrors.codes.CATALOG_IMPORT_INVALID]: ErrorCode.CATALOG_IMPORT_INVALID,
-  [ModelsDevImportErrors.codes.REGISTRY_IMPORT_INVALID]: ErrorCode.REGISTRY_IMPORT_INVALID,
-  [ModelsDevImportErrors.codes.PROVIDER_OAUTH_MANAGED]: ErrorCode.PROVIDER_OAUTH_MANAGED,
-};
-
-/** Map a provider-import domain error to the numeric protocol envelope. Returns true if handled. */
-function sendModelsDevImportError(
-  reply: { send(payload: unknown): unknown },
-  requestId: string,
-  err: unknown,
-): boolean {
-  if (!isError2(err)) return false;
-  const numeric = MODELS_DEV_IMPORT_ERROR_CODES[err.code];
-  if (numeric === undefined) return false;
-  reply.send(errEnvelope(numeric, err.message, requestId, err.stack));
-  return true;
-}
-
-/**
- * The `:import_catalog` collection action. Lives behind `/providers:action`
- * because find-my-way cannot register a static `/providers:import_catalog`
- * next to the in-segment `:action` parameter.
- */
-async function handleImportCatalog(
-  req: { id: string; body: ProviderCollectionActionBody | undefined },
-  reply: { send(payload: unknown): unknown },
-  core: Scope,
-): Promise<void> {
-  try {
-    const body = req.body;
-    if (body?.catalog_id === undefined) {
-      reply.send(
-        errEnvelope(
-          ErrorCode.VALIDATION_FAILED,
-          'catalog_id is required for :import_catalog',
-          req.id,
-        ),
-      );
-      return;
-    }
-
-    const result = await core.accessor.get(IModelsDevImportService).importModelsDevProvider({
-      catalogId: body.catalog_id,
-      id: body.id,
-      apiKey: body.api_key,
-      baseUrl: body.base_url,
-    });
-    (reply as unknown as StatusReply)
-      .code(201)
-      .send(
-        okEnvelope(
-          { provider: result.provider, models_imported: result.modelsImported },
-          req.id,
-        ),
-      );
-  } catch (err) {
-    if (sendModelsDevImportError(reply, req.id, err)) return;
-    throw err;
-  }
-}
-
-/**
- * The `:import_registry` collection action: fetch a models.dev-shaped private
- * registry (api.json) and apply every entry. The orchestration (fetch +
- * validation + the two persisted remove/apply passes) lives in the engine's
- * `IModelsDevImportService`; this edge only validates the wire body and maps
- * the result and errors.
- */
-async function handleImportRegistry(
-  req: { id: string; body: ProviderCollectionActionBody | undefined },
-  reply: { send(payload: unknown): unknown },
-  core: Scope,
-): Promise<void> {
-  try {
-    const body = req.body;
-    if (body?.url === undefined) {
-      reply.send(
-        errEnvelope(ErrorCode.VALIDATION_FAILED, 'url is required for :import_registry', req.id),
-      );
-      return;
-    }
-    const result = await core.accessor.get(IModelsDevImportService).importCustomRegistry({
-      url: body.url,
-      apiKey: body.api_key,
-    });
-    (reply as unknown as StatusReply)
-      .code(201)
-      .send(
-        okEnvelope(
-          { providers: result.providers, models_imported: result.modelsImported },
-          req.id,
-        ),
-      );
-  } catch (err) {
-    if (sendModelsDevImportError(reply, req.id, err)) return;
-    throw err;
-  }
-}
-

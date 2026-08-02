@@ -1,30 +1,16 @@
 /**
- * Server bootstrap — wires `@moonshot-ai/agent-core-v2` (DI × Scope engine) into
- * a Fastify HTTP server that speaks the same `/api/v1` interface as the v1
- * server.
+ * Server bootstrap — wires the Rust engine session backend and host-owned
+ * services into a Fastify HTTP server that speaks the `/api/v1` interface.
  *
- * Composition root: `bootstrap()` builds the Core `Scope`; route handlers resolve
- * Core-scoped services through `core.accessor.get(IXxx)`.
+ * Composition root: host-owned services are constructed directly; the session
+ * surface is served by the Rust engine (`rustSession`). The v2 Core `Scope`
+ * (`bootstrap()`) was retired with the engine migration.
  */
 
-import {
-  bootstrap,
-  hostRequestHeadersSeed,
-  IConfigService,
-  IProviderDiscoveryService,
-  IWorkspaceService,
-  logSeed,
-  resolveConfigPath,
-  resolveKimiHome,
-  resolveLoggingConfig,
-  skillCatalogRuntimeOptionsSeed,
-  type Scope,
-  type ScopeSeed,
-} from '@moonshot-ai/agent-core-v2';
-import { createAsyncApiDocument } from './protocol/asyncapi';
-import { enableEnvelopeStackTraces } from './protocol/envelope';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { homedir } from 'node:os';
 
+import { createAsyncApiDocument } from './protocol/asyncapi';
 import { installErrorHandler } from './error-handler';
 import { createInstanceRegistry, type InstanceRegistration } from './instanceRegistry';
 import { transformOpenApiDocument } from './openapi/transforms';
@@ -41,6 +27,8 @@ import { join } from 'node:path';
 import type { Socket } from 'node:net';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
+
+import type { LlmChatRequest, LlmChatResponse } from '@moonshot-ai/kimi-agent/rust-loop';
 
 import {
   ConnectionRegistry,
@@ -62,9 +50,8 @@ import { createSecurityHeadersHook } from './middleware/securityHeaders';
 import { createAuthHook } from './middleware/auth';
 import { GuiStoreService } from './services/guiStore/guiStoreService';
 import { RustSessionService } from './services/rustSession/rustSessionService';
-import { loadSnapshotConfig, SnapshotReader } from './services/snapshot';
-import { TranscriptService } from './services/transcript/transcriptService';
-import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
+import { FileBlobStore } from './services/fileBlobStore';
+import { WorkspaceRegistry } from './services/workspaceRegistry';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
 import {
   createAuthTokenService,
@@ -82,6 +69,7 @@ import { createTokenStore } from './services/auth/tokenStore';
 async function maybeCreateRustSessionService(
   logger: ServerLogger,
   broadcaster: SessionEventBroadcaster,
+  llmStep?: (req: LlmChatRequest) => Promise<LlmChatResponse>,
 ): Promise<RustSessionService> {
   try {
     // The session-owned surface (`session/*` RPC) is stdio-only — force the
@@ -109,6 +97,7 @@ async function maybeCreateRustSessionService(
         // with the current watermark — they never advance the journal seq).
         broadcaster.broadcastRustFrame(sessionId, frame);
       },
+      llmStep,
     });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('[kimi-agent]')) {
@@ -130,14 +119,12 @@ export interface ServerStartOptions {
   readonly instancesDir?: string;
   readonly logLevel?: ServerLogLevel;
   readonly logger?: ServerLogger;
-  readonly debugEndpoints?: boolean;
   readonly bindClass?: 'lan' | 'public';
   readonly allowedHosts?: readonly string[];
   readonly corsOrigins?: readonly string[];
   readonly disableHostCheck?: boolean;
   readonly insecureNoTls?: boolean;
   readonly allowRemoteShutdown?: boolean;
-  readonly allowRemoteTerminals?: boolean;
   readonly authTokenService?: IAuthTokenService;
   readonly disableAuth?: boolean;
   /**
@@ -147,15 +134,6 @@ export interface ServerStartOptions {
    * unset unless a second, distinct RPC credential is genuinely needed.
    */
   readonly rpcToken?: string;
-  /** Extra scope seeds applied at bootstrap (e.g. a host-provided `ISessionModelResolver`). */
-  readonly seeds?: ScopeSeed;
-  /**
-   * Explicit skill directories for this process (v1's SDK `skillDirs`): when
-   * non-empty, default user / project skill discovery is skipped and these
-   * directories serve as the user skill source for every session. Applied to
-   * all sessions the server hosts — for embedding hosts, not per-session use.
-   */
-  readonly skillDirs?: readonly string[];
   /**
    * Directory of the built Kimi web UI (`dist-web`). When set, `GET /` and the
    * `/*` SPA fallback serve these assets (auth-exempt, matching v1). Omit to run
@@ -169,11 +147,16 @@ export interface ServerStartOptions {
    * embedding hosts (the CLI) should pass their own version.
    */
   readonly version?: string;
+  /**
+   * Host-proxy LLM step handler for engine turns (tests). When set, every web
+   * session's engine turns run through this callback instead of a native HTTP
+   * LLM transport — lets tests drive real engine loops with a stub provider.
+   */
+  readonly llmStep?: (req: LlmChatRequest) => Promise<LlmChatResponse>;
 }
 
 export interface RunningServer {
   readonly app: FastifyInstance;
-  readonly core: Scope;
   readonly connectionRegistry: IConnectionRegistry;
   readonly authTokenService: IAuthTokenService;
   readonly host: string;
@@ -213,14 +196,17 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     );
   }
   const enableShutdown = exposureClass === 'loopback' || opts.allowRemoteShutdown === true;
-  const enableTerminals = exposureClass === 'loopback' || opts.allowRemoteTerminals === true;
-  const debugEndpoints = exposureClass === 'loopback' && opts.debugEndpoints === true;
-  if (debugEndpoints) enableEnvelopeStackTraces();
   const logger = opts.logger ?? createServerLogger({ level: opts.logLevel ?? 'info' });
   const authFailureLimiter =
     exposureClass === 'loopback' ? undefined : createAuthFailureLimiter({ logger });
 
   const configPath = resolveConfigPath({ homeDir, configPath: opts.configPath });
+  // Engine mode: point the engine's config resolution at the host's
+  // `config.toml` (`KIMI_CONFIG_PATH` is the highest priority in the engine's
+  // `find_config_paths`), so `config/get` / `config/set` serve the same file
+  // the host manages. The engine process is a module-level singleton, so this
+  // must be set before the first engine spawn (the probe below).
+  process.env['KIMI_CONFIG_PATH'] = configPath;
   const guiStore = new GuiStoreService(homeDir, logger);
   let authTokenService: IAuthTokenService;
   // Whether a password credential is configured (only meaningful for the real,
@@ -240,24 +226,6 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   // the WS upgrade handler, and the post-connect handshakes so one credential
   // gates all surfaces and upgrade / handshake can never disagree.
   const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken);
-  // `ILogOptions` (logSeed) is required by the Session-scoped log writer; any
-  // route that creates a session (e.g. POST /sessions) would otherwise fail to
-  // instantiate the Session scope. Resolve it from env + homeDir like the CLI.
-  const logging = resolveLoggingConfig({ homeDir, env: process.env });
-  // `bootstrap()` seeds `IFileSystemStorageService` with a `FileStorageService`
-  // rooted at `homeDir`, so the Store facades above it (append-log, atomic
-  // document, blob) — and in turn session metadata, wire records, blobs, and
-  // the session index — all persist to disk.
-  const { app: core } = bootstrap({ homeDir, configPath }, [
-    ...logSeed(logging),
-    // Default host identity so outbound requests (model, WebSearch, registry
-    // refresh) carry a product User-Agent even when the embedding host did not
-    // seed its own headers. Hosts like the CLI pass full Kimi identity headers
-    // through `opts.seeds`, which override this entry (last seed wins).
-    ...hostRequestHeadersSeed({ 'User-Agent': `kimi-code-cli/${hostVersion}` }),
-    ...skillCatalogRuntimeOptionsSeed(opts.skillDirs),
-    ...(opts.seeds ?? []),
-  ]);
 
   if (exposureClass !== 'loopback') {
     logger.warn(
@@ -271,26 +239,6 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
       );
     }
   }
-  const modelCatalogRefreshScheduler = new ModelCatalogRefreshScheduler(
-    core.accessor.get(IProviderDiscoveryService),
-    core.accessor.get(IConfigService),
-    logger,
-  );
-
-  // Sync the workspace catalog from the legacy session index once at startup,
-  // so sessions created by the v1 TUI surface as workspaces on the very first
-  // /workspaces request. Awaited so the write completes before the server
-  // starts accepting traffic (and before embedding hosts tear the homeDir
-  // down); best-effort: a failure re-surfaces on first access.
-  try {
-    await core.accessor.get(IWorkspaceService).list();
-  } catch (error) {
-    logger.warn(
-      { err: error instanceof Error ? error.message : String(error) },
-      'workspace catalog startup sync failed',
-    );
-  }
-
   const app = Fastify({
     loggerInstance: logger,
     // Fastify's default access log records `res.statusCode`, but every
@@ -337,32 +285,26 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   const close = async (): Promise<void> => {
     await app.close();
     authFailureLimiter?.dispose();
-    modelCatalogRefreshScheduler.dispose();
-    core.dispose();
     await registration.release();
   };
 
   const connectionRegistry = new ConnectionRegistry();
-  const transcriptService = new TranscriptService({ homeDir, core, logger });
+  const workspaceRegistry = new WorkspaceRegistry(homeDir);
+  const fileBlobStore = new FileBlobStore(homeDir);
   const broadcaster = new SessionEventBroadcaster({
     eventsDir: join(homeDir, 'server', 'events'),
-    core,
     logger,
-    transcriptService,
+    // Engine is the only engine (missing binary fails startup): serve the
+    // Rust session subscriptions with ephemeral states, skip the v2 bus.
+    rustOnly: true,
   });
   // Rust-engine session backend (web sessions bound to engine-owned sessions).
   // The Rust engine is the only engine — a missing binary fails startup loudly
   // instead of silently serving from the v2-backed JS routes.
-  const rustSession = await maybeCreateRustSessionService(logger, broadcaster);
+  const rustSession = await maybeCreateRustSessionService(logger, broadcaster, opts.llmStep);
 
-  const fsWatchBridge = new FsWatchBridge({ core, logger });
-
-  const snapshotReader = new SnapshotReader({
-    homeDir,
-    core,
-    broadcaster,
+  const fsWatchBridge = new FsWatchBridge({
     logger,
-    config: loadSnapshotConfig(),
   });
 
   const serverVersion = hostVersion;
@@ -409,24 +351,23 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   // be registered before any routes it should document.
   await registerOpenApi();
 
-  await registerApiV1Routes(app, core, {
+  await registerApiV1Routes(app, {
     serverVersion,
-    debugEndpoints,
     enableShutdown,
-    enableTerminals,
     guiStore,
     onShutdown: () => {
       void close().catch((error: unknown) => logger.error({ error }, 'server close failed'));
     },
     connectionRegistry,
     broadcaster,
-    snapshotReader,
-    transcriptService,
+    logger,
     dangerousBypassAuth: opts.disableAuth === true,
     rustSession,
+    workspaceRegistry,
+    fileBlobStore,
   });
 
-  const wssV1 = registerWsV1(core, {
+  const wssV1 = registerWsV1({
     validateCredential,
     registry: connectionRegistry,
     broadcaster,
@@ -581,14 +522,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   // registry finds the real listener.
   await registration.update({ port: boundPort });
 
-  void modelCatalogRefreshScheduler.start().catch((error) => {
-    logger.warn(
-      { err: error instanceof Error ? error.message : String(error) },
-      'provider-model catalog auto-refresh failed to start',
-    );
-  });
-
-  return { app, core, connectionRegistry, authTokenService, host, port: boundPort, close };
+  return { app, connectionRegistry, authTokenService, host, port: boundPort, close };
 }
 
 /**
@@ -660,4 +594,17 @@ export async function listenWithPortRetry(
       port = next;
     }
   }
+}
+
+/**
+ * Resolve the Kimi home directory: explicit option, `KIMI_CODE_HOME` env, or
+ * `<osHome>/.kimi-code` (localized from the retired `agent-core-v2` bootstrap).
+ */
+function resolveKimiHome(homeDir?: string): string {
+  return homeDir ?? process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code');
+}
+
+/** Resolve the config file path: explicit option or `<home>/config.toml`. */
+function resolveConfigPath(input: { readonly homeDir?: string; readonly configPath?: string }): string {
+  return input.configPath ?? join(resolveKimiHome(input.homeDir), 'config.toml');
 }

@@ -5,33 +5,33 @@
  *   GET    /files/{file_id}  download a file (binary stream)
  *   DELETE /files/{file_id}  delete a file → { deleted: true }
  *
- * Backed by the v2 `IFileService` (Core scope), which stores bytes in
- * `IBlobStore` and the metadata index alongside them. Mirrors the v1 server's
- * wire behavior (envelope codes 40407 / 41301, 50 MiB cap, content-disposition)
- * but resolves the store through `core.accessor.get`.
+ * Backed by the host-owned `FileBlobStore` (stage 3b), which stores bytes on
+ * disk under `<home>/server/files` with a JSON metadata index alongside them.
+ * Mirrors the v1 server's wire behavior (envelope codes 40407 / 41301, 50 MiB
+ * cap, content-disposition). The v2 `IFileService` backend was retired with
+ * the v2 engine.
  */
 
 import multipart from '@fastify/multipart';
 
-import {
-  DEFAULT_MAX_UPLOAD_BYTES,
-  ErrorCodes,
-  IFileService,
-  Error2,
-  type Scope,
-} from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
 
+import { parseRangeHeader, pickHeader } from '../lib/httpRange';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import { errEnvelope, okEnvelope } from '../protocol/envelope';
+import type { FileBlobStore } from '../services/fileBlobStore';
 import {
   deleteFileParamSchema,
   deleteFileResponseSchema,
   getFileParamSchema,
   uploadFileResponseSchema,
 } from '../protocol/rest-file';
+
+/** Upload cap, matching the v1 server's 50 MiB limit. Localized from
+ *  `agent-core-v2/app/file/fileService.ts` (`DEFAULT_MAX_UPLOAD_BYTES`). */
+const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 interface FilesRouteHost {
   register(plugin: unknown, opts?: unknown): unknown;
@@ -73,7 +73,10 @@ interface FilesReply {
   send(payload: unknown): unknown;
 }
 
-export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
+export function registerFilesRoutes(
+  app: FilesRouteHost,
+  fileBlobStore: FileBlobStore,
+): void {
   app.register(multipart, {
     limits: {
       fileSize: DEFAULT_MAX_UPLOAD_BYTES,
@@ -106,15 +109,14 @@ export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
         const nameOverride = readFieldString(part.fields['name']);
         const expiresInSec = readFieldNumber(part.fields['expires_in_sec']);
 
-        const store = core.accessor.get(IFileService);
-
         const partFile = part.file as NodeJS.ReadableStream & { truncated?: boolean };
         let busboyTruncated = false;
         partFile.on('limit', () => {
           busboyTruncated = true;
         });
         try {
-          const meta = await store.save(
+          // Stage 3b: host-owned blob store — no v2 IFileService.
+          const meta = await fileBlobStore.save(
             partFile as unknown as import('node:stream').Readable,
             part.filename,
             {
@@ -124,15 +126,10 @@ export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
             },
           );
           if (busboyTruncated || partFile.truncated === true) {
-            try {
-              await store.delete(meta.id);
-            } catch {
-              // best-effort cleanup of the truncated blob
-            }
-            sendMappedError(reply as unknown as FilesReply, req, new Error2(
-              ErrorCodes.FILE_TOO_LARGE,
-              `upload size exceeds limit ${DEFAULT_MAX_UPLOAD_BYTES} bytes`,
-            ));
+            await fileBlobStore.delete(meta.id);
+            (reply as unknown as FilesReply)
+              .code(413)
+              .send(errEnvelope(ErrorCode.FILE_TOO_LARGE, 'upload too large (>50MB)', req.id));
             return;
           }
           reply.send(okEnvelope(meta, req.id));
@@ -167,32 +164,51 @@ export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const { file_id } = req.params;
-        const store = core.accessor.get(IFileService);
-        const file = await store.get(file_id);
+        // Stage 3b: host-owned blob store.
+        const meta = await fileBlobStore.getMeta(file_id);
+        if (meta === undefined) {
+          const r = reply as unknown as FilesReply;
+          r.code(404).send(
+            errEnvelope(ErrorCode.FILE_NOT_FOUND, `file ${file_id} does not exist`, req.id),
+          );
+          return;
+        }
         const r = reply as unknown as FilesReply;
-        const { meta } = file;
-        const size = meta.size;
-        r.type(meta.media_type)
-          .header('content-disposition', buildContentDisposition(meta.name, meta.media_type))
-          .header('accept-ranges', 'bytes')
-          .header('etag', `"${meta.id}-${size}"`);
+        const etag = `"${meta.id}-${meta.size}"`;
+        const headers = req.headers;
 
-        // Browsers load <video>/<audio> via byte-range requests (Range: bytes=…).
-        // Without 206 Partial Content + Content-Range the media stalls at 0:00
-        // and refuses to play or seek, so honor Range when the client sends one.
-        const range = parseRange(
-          readRangeHeader((req as unknown as FastifyRequestLike).headers['range']),
-          size,
-        );
-        if (range) {
-          r.header('content-range', `bytes ${range.start}-${range.end}/${size}`)
-            .header('content-length', range.end - range.start + 1)
-            .code(206);
-          return r.send(file.stream(range)) as unknown as void;
+        const ifNoneMatch = pickHeader(headers, 'if-none-match');
+        if (ifNoneMatch !== undefined && ifNoneMatch === etag) {
+          r.code(304).header('etag', etag).send('');
+          return;
         }
 
-        r.header('content-length', size).code(200);
-        return r.send(file.stream()) as unknown as void;
+        r.header('etag', etag);
+        r.header('accept-ranges', 'bytes');
+        r.header('content-disposition', buildContentDisposition(meta.name, meta.media_type));
+        r.type(meta.media_type);
+
+        const rangeHeader = pickHeader(headers, 'range');
+        const range = parseRangeHeader(rangeHeader, meta.size);
+        if (range !== null) {
+          r.code(206)
+            .header('content-length', String(range.length))
+            .header('content-range', `bytes ${range.start}-${range.end}/${meta.size}`);
+          const stream = fileBlobStore.stream(file_id, { start: range.start, end: range.end });
+          stream.on('error', (error: unknown) => {
+            requestLog(req)?.warn({ file_id, err: error }, 'file download stream error');
+            stream.destroy();
+          });
+          return r.send(stream) as unknown as void;
+        }
+
+        r.code(200).header('content-length', String(meta.size));
+        const stream = fileBlobStore.stream(file_id);
+        stream.on('error', (error: unknown) => {
+          requestLog(req)?.warn({ file_id, err: error }, 'file download stream error');
+          stream.destroy();
+        });
+        return r.send(stream) as unknown as void;
       } catch (error) {
         sendMappedError(reply as unknown as FilesReply, req, error);
         return;
@@ -217,8 +233,14 @@ export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const { file_id } = req.params;
-        const store = core.accessor.get(IFileService);
-        await store.delete(file_id);
+        const deleted = await fileBlobStore.delete(file_id);
+        if (!deleted) {
+          const r = reply as unknown as FilesReply;
+          r.code(404).send(
+            errEnvelope(ErrorCode.FILE_NOT_FOUND, `file ${file_id} does not exist`, req.id),
+          );
+          return;
+        }
         requestLog(req)?.info({ file_id }, 'file deleted');
         reply.send(okEnvelope({ deleted: true as const }, req.id));
       } catch (error) {
@@ -235,14 +257,6 @@ export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
 
 function sendMappedError(reply: FilesReply, req: { id: string }, err: unknown): void {
   const requestId = req.id;
-  if (err instanceof Error2 && err.code === ErrorCodes.FILE_NOT_FOUND) {
-    reply.code(404).send(errEnvelope(ErrorCode.FILE_NOT_FOUND, 'file not found', requestId));
-    return;
-  }
-  if (err instanceof Error2 && err.code === ErrorCodes.FILE_TOO_LARGE) {
-    reply.code(413).send(errEnvelope(ErrorCode.FILE_TOO_LARGE, 'upload too large (>50MB)', requestId));
-    return;
-  }
   if (
     typeof err === 'object' &&
     err !== null &&
@@ -285,48 +299,10 @@ function readFieldNumber(field: unknown): number | undefined {
   return undefined;
 }
 
-function readRangeHeader(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
-
 function buildContentDisposition(name: string, mediaType?: string): string {
   const disposition = /^(image|video|audio)\//.test(mediaType ?? '') ? 'inline' : 'attachment';
   if (/^[\w. ()+[\]-]+$/.test(name)) {
     return `${disposition}; filename="${name}"`;
   }
   return disposition;
-}
-
-interface ByteRange {
-  start: number;
-  end: number;
-}
-
-/** Parse a `Range: bytes=start-end` header against the file size. Returns
- *  undefined for a missing / malformed / unsatisfiable range, in which case the
- *  caller serves the whole file with 200 (browsers accept that response). */
-function parseRange(header: string | undefined, size: number): ByteRange | undefined {
-  if (!header || size <= 0) return undefined;
-  const m = /^bytes=(\d*)-(\d*)$/i.exec(header.trim());
-  if (!m) return undefined;
-  const startStr = m[1]!;
-  const endStr = m[2]!;
-  if (startStr === '' && endStr === '') return undefined;
-
-  let start: number;
-  let end: number;
-  if (startStr === '') {
-    // Suffix range: `bytes=-N` -> the last N bytes.
-    const suffix = Number(endStr);
-    if (!Number.isFinite(suffix) || suffix <= 0) return undefined;
-    start = Math.max(size - suffix, 0);
-    end = size - 1;
-  } else {
-    start = Number(startStr);
-    if (!Number.isFinite(start) || start < 0 || start >= size) return undefined;
-    end = endStr === '' ? size - 1 : Number(endStr);
-    if (!Number.isFinite(end) || end < 0) return undefined;
-  }
-  if (start > end) return undefined;
-  return { start, end: Math.min(end, size - 1) };
 }

@@ -1,23 +1,36 @@
 /**
  * The v1 WS `Event` union — the per-agent event stream frame payloads.
  *
- * Most frames are the engine's own `DomainEvent`s (turn / tool / subagent /
- * compaction / mcp / …), re-exported here as the stream's backbone. The
- * remaining interfaces are the v1-only frames this transport synthesizes
- * (session/workspace lifecycle, config changes, the merged
- * legacy status overlay, and the legacy background-task spellings) — they
- * never had an engine-side producer, so they are defined here, next to the
- * broadcaster that emits them.
+ * Engine mode (the only mode): Rust-engine frames arrive as projected
+ * `Record<string, unknown>` via the broadcaster's `broadcastRustFrame` path;
+ * the typed `Event` union below covers the v1-only frames this transport
+ * synthesizes (session/workspace lifecycle, config changes, the merged
+ * legacy status overlay, and the legacy background-task spellings). The v2
+ * `DomainEvent` backbone was retired with the engine migration.
  */
 
-import type { DomainEvent } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
-import type { MessageContent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
-import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
-import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
+import type { MessageContent } from '../../../protocol/message';
 import type { AgentPhase } from '../../../services/legacyStatus/legacyStatus';
 import type { ConfigResponse } from '../../../protocol/rest-config';
 import type { Session, SessionPendingInteraction } from '../../../protocol/session';
 import type { Workspace } from '../../../protocol/workspace';
+
+/** Legacy `permission` mode of the combined status payload (localized from v2). */
+export type PermissionMode = 'manual' | 'yolo' | 'auto';
+
+/** Legacy token-usage shape of the combined status payload (localized from v2). */
+export interface TokenUsage {
+  readonly inputOther: number;
+  readonly output: number;
+  readonly inputCacheRead: number;
+  readonly inputCacheCreation: number;
+}
+
+export interface UsageStatus {
+  readonly byModel?: Record<string, TokenUsage>;
+  readonly currentTurn?: TokenUsage;
+  readonly total?: TokenUsage;
+}
 
 export interface AgentStatusUpdatedEvent {
   readonly type: 'agent.status.updated';
@@ -166,7 +179,6 @@ export interface BackgroundTaskTerminatedEvent {
 }
 
 export type AgentEvent =
-  | DomainEvent
   | AgentStatusUpdatedEvent
   | AgentCreatedEvent
   | AgentDisposedEvent

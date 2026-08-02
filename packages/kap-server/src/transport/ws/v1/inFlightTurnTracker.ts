@@ -16,12 +16,22 @@
  *
  * Only main-agent activity is tracked: subagent deltas share the session id but
  * describe a different stream and would corrupt the accumulation.
+ *
+ * Engine mode: the applied frames are the projected Rust wire events — the v2
+ * `Event` union was retired with the engine migration, so the frame shape is
+ * the narrow `RustEventFrame` here.
  */
 
-import type { Event } from './events';
 import type { InFlightToolCall, InFlightTurn } from '../../../protocol/rest-snapshot';
 
 const MAIN_AGENT_ID = 'main';
+
+/** A projected Rust wire event frame (fields narrowed by assertion). */
+type RustEventFrame = {
+  readonly type: string;
+  readonly agentId?: string;
+  [key: string]: unknown;
+};
 
 interface ToolAccum {
   tool_call_id: string;
@@ -51,13 +61,13 @@ export interface VolatileAnnotation {
 export class InFlightTurnTracker {
   private readonly bySession = new Map<string, TurnAccum>();
 
-  apply(sessionId: string, event: Event): VolatileAnnotation {
-    if (event.agentId !== MAIN_AGENT_ID) return {};
+  apply(sessionId: string, event: RustEventFrame): VolatileAnnotation {
+    if (event.agentId !== undefined && event.agentId !== MAIN_AGENT_ID) return {};
 
     switch (event.type) {
       case 'turn.started': {
         this.bySession.set(sessionId, {
-          turnId: event.turnId,
+          turnId: event['turnId'] as number,
           assistantText: '',
           thinkingText: '',
           tools: new Map(),
@@ -71,52 +81,56 @@ export class InFlightTurnTracker {
       case 'turn.step.started': {
         // Prior steps' text is already in the transcript; keep running tools.
         const turn = this.bySession.get(sessionId);
-        if (!turn || turn.turnId !== event.turnId) return {};
+        if (!turn || turn.turnId !== (event['turnId'] as number)) return {};
         turn.assistantText = '';
         turn.thinkingText = '';
         return {};
       }
       case 'assistant.delta': {
         const turn = this.bySession.get(sessionId);
-        if (!turn || turn.turnId !== event.turnId) return {};
+        if (!turn || turn.turnId !== (event['turnId'] as number)) return {};
+        const delta = event['delta'] as string;
         const offset = turn.assistantText.length;
-        turn.assistantText += event.delta;
+        turn.assistantText += delta;
         return { offset };
       }
       case 'thinking.delta': {
         const turn = this.bySession.get(sessionId);
-        if (!turn || turn.turnId !== event.turnId) return {};
+        if (!turn || turn.turnId !== (event['turnId'] as number)) return {};
+        const delta = event['delta'] as string;
         const offset = turn.thinkingText.length;
-        turn.thinkingText += event.delta;
+        turn.thinkingText += delta;
         return { offset };
       }
       case 'tool.call.started': {
         const turn = this.bySession.get(sessionId);
-        if (!turn || turn.turnId !== event.turnId) return {};
-        turn.tools.set(event.toolCallId, {
-          tool_call_id: event.toolCallId,
-          name: event.name,
-          args: event.args,
-          ...(event.description !== undefined ? { description: event.description } : {}),
-          ...(event.display !== undefined ? { display: event.display } : {}),
+        if (!turn || turn.turnId !== (event['turnId'] as number)) return {};
+        const toolCallId = event['toolCallId'] as string;
+        turn.tools.set(toolCallId, {
+          tool_call_id: toolCallId,
+          name: event['name'] as string,
+          args: event['args'],
+          ...(event['description'] !== undefined ? { description: event['description'] as string } : {}),
+          ...(event['display'] !== undefined ? { display: event['display'] } : {}),
         });
         return {};
       }
       case 'tool.progress': {
         const turn = this.bySession.get(sessionId);
-        const tool = turn?.tools.get(event.toolCallId);
+        const tool = turn?.tools.get(event['toolCallId'] as string);
         if (!tool) return {};
-        const { kind, text, percent } = event.update;
+        const update = event['update'] as { kind: string; text?: string; percent?: number };
+        const { kind, text, percent } = update;
         if (kind === 'custom') return {};
         tool.last_progress = {
-          kind,
+          kind: kind as 'stdout' | 'stderr' | 'progress' | 'status' | 'custom',
           ...(text !== undefined ? { text } : {}),
           ...(percent !== undefined ? { percent } : {}),
         };
         return {};
       }
       case 'tool.result': {
-        this.bySession.get(sessionId)?.tools.delete(event.toolCallId);
+        this.bySession.get(sessionId)?.tools.delete(event['toolCallId'] as string);
         return {};
       }
       default:

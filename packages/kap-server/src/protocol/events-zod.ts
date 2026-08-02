@@ -1,88 +1,12 @@
-import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
-import { messageContentSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
-import type {
-  CompactionSummaryOrigin,
-  CronJobOrigin,
-  CronMissedOrigin,
-  HookResultOrigin,
-  InjectionOrigin,
-  PluginCommandOrigin,
-  RetryOrigin,
-  ShellCommandOrigin,
-  SkillActivationOrigin,
-  SkillSource,
-  SystemTriggerOrigin,
-  TaskOrigin,
-  UserPromptOrigin,
-} from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
-import type { HookResultEvent } from '@moonshot-ai/agent-core-v2/agent/externalHooks/externalHooksService';
-import type {
-  CompactionBlockedEvent,
-  CompactionCancelledEvent,
-  CompactionCompletedEvent,
-  CompactionStartedEvent,
-} from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
-import type { CompactionResult } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/types';
-import type {
-  GoalActor,
-  GoalBudgetLimits,
-  GoalBudgetReport,
-  GoalChange,
-  GoalChangeKind,
-  GoalChangeStats,
-  GoalSnapshot,
-  GoalStatus,
-  GoalToolResult,
-} from '@moonshot-ai/agent-core-v2/agent/goal/types';
-import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import type {
-  AssistantDeltaEvent,
-  ThinkingDeltaEvent,
-  ToolCallDeltaEvent,
-  TurnStepCompletedEvent,
-  TurnStepInterruptedEvent,
-  TurnStepStartedEvent,
-} from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import type {
-  McpServerStatusEvent,
-  McpServerStatusPayload,
-  ToolListUpdatedEvent,
-  ToolListUpdatedReason,
-} from '@moonshot-ai/agent-core-v2/agent/mcp/mcpService';
-import type { McpOAuthAuthorizationUrlUpdateData } from '@moonshot-ai/agent-core-v2/agent/mcp/tools/auth';
-import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
-import type { WarningEvent } from '@moonshot-ai/agent-core-v2/agent/profile/profileService';
-import type { PluginCommandActivatedEvent } from '@moonshot-ai/agent-core-v2/agent/rpc/rpcService';
-import type {
-  ShellCompletedEvent,
-  ShellOutputEvent,
-  ShellStartedEvent,
-} from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommandService';
-import type { TurnStepRetryingEvent } from '@moonshot-ai/agent-core-v2/agent/stepRetry/stepRetryService';
-import type { AgentTaskStatus } from '@moonshot-ai/agent-core-v2/agent/task/types';
-import type {
-  ToolCallStartedEvent,
-  ToolProgressEvent,
-  ToolResultEvent,
-} from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
-import type { FinishReason } from '@moonshot-ai/agent-core-v2/kosong/contract/provider';
-import type { TokenUsage } from '@moonshot-ai/agent-core-v2/kosong/contract/usage';
-import type {
-  SubagentCompletedEvent,
-  SubagentFailedEvent,
-  SubagentSpawnedEvent,
-  SubagentStartedEvent,
-} from '@moonshot-ai/agent-core-v2/session/subagent/mirrorAgentRun';
-import type { SubagentSuspendedEvent } from '@moonshot-ai/agent-core-v2/session/swarm/sessionSwarmService';
-import type { ToolUpdate } from '@moonshot-ai/agent-core-v2/tool/toolContract';
+import { isoDateTimeSchema } from './session';
+import { messageContentSchema } from './message';
 /**
  * Zod schema half of the v1 event catalog (`packages/protocol/src/events.ts`),
  * ported verbatim for byte-level AsyncAPI/JSON-Schema compatibility. Interface
  * declarations and the deprecated volatile-event helpers are intentionally not
- * ported; `satisfies z.ZodType<T>` clauses are kept only where `T` is
- * importable from an agent-core-v2 leaf path and dropped elsewhere (dropped
- * clauses do not affect the emitted JSON Schema).
+ * ported. Stage 4 (protocol localisation): the `satisfies z.ZodType<T>`
+ * clauses were dropped along with their agent-core-v2 type-only imports —
+ * they were type assertions only and do not affect the emitted JSON Schema.
  */
 import { z } from 'zod';
 
@@ -96,7 +20,7 @@ export const tokenUsageSchema = z.object({
   output: z.number(),
   inputCacheRead: z.number(),
   inputCacheCreation: z.number(),
-}) satisfies z.ZodType<TokenUsage>;
+})
 
 export const finishReasonSchema = z.enum([
   'completed',
@@ -105,30 +29,30 @@ export const finishReasonSchema = z.enum([
   'filtered',
   'paused',
   'other',
-]) satisfies z.ZodType<FinishReason>;
+])
 
 export const usageStatusSchema = z.object({
   byModel: z.record(z.string(), tokenUsageSchema).optional(),
   currentTurn: tokenUsageSchema.optional(),
   total: tokenUsageSchema.optional(),
-}) satisfies z.ZodType<UsageStatus>;
+})
 
 export const permissionModeSchema = z.enum([
   'manual',
   'yolo',
   'auto',
-]) satisfies z.ZodType<PermissionMode>;
+])
 
 export const skillSourceSchema = z.enum([
   'project',
   'user',
   'extra',
   'builtin',
-]) satisfies z.ZodType<SkillSource>;
+])
 
 export const userPromptOriginSchema = z.object({
   kind: z.literal('user'),
-}) satisfies z.ZodType<UserPromptOrigin>;
+})
 
 export const skillActivationOriginSchema = z.object({
   kind: z.literal('skill_activation'),
@@ -139,7 +63,7 @@ export const skillActivationOriginSchema = z.object({
   skillType: z.string().optional(),
   skillPath: z.string().optional(),
   skillSource: skillSourceSchema.optional(),
-}) satisfies z.ZodType<SkillActivationOrigin>;
+})
 
 export const pluginCommandOriginSchema = z.object({
   kind: z.literal('plugin_command'),
@@ -148,27 +72,27 @@ export const pluginCommandOriginSchema = z.object({
   commandName: z.string(),
   commandArgs: z.string().optional(),
   trigger: z.literal('user-slash'),
-}) satisfies z.ZodType<PluginCommandOrigin>;
+})
 
 export const injectionOriginSchema = z.object({
   kind: z.literal('injection'),
   variant: z.string(),
-}) satisfies z.ZodType<InjectionOrigin>;
+})
 
 export const shellCommandOriginSchema = z.object({
   kind: z.literal('shell_command'),
   phase: z.enum(['input', 'output']),
   isError: z.boolean().optional(),
-}) satisfies z.ZodType<ShellCommandOrigin>;
+})
 
 export const compactionSummaryOriginSchema = z.object({
   kind: z.literal('compaction_summary'),
-}) satisfies z.ZodType<CompactionSummaryOrigin>;
+})
 
 export const systemTriggerOriginSchema = z.object({
   kind: z.literal('system_trigger'),
   name: z.string(),
-}) satisfies z.ZodType<SystemTriggerOrigin>;
+})
 
 export const taskLifecycleStatusSchema = z.enum([
   'running',
@@ -177,14 +101,14 @@ export const taskLifecycleStatusSchema = z.enum([
   'timed_out',
   'killed',
   'lost',
-]) satisfies z.ZodType<AgentTaskStatus>;
+])
 
 export const taskOriginSchema = z.object({
   kind: z.literal('task'),
   taskId: z.string(),
   status: taskLifecycleStatusSchema,
   notificationId: z.string(),
-}) satisfies z.ZodType<TaskOrigin>;
+})
 
 export const backgroundTaskOriginSchema = z.object({
   kind: z.literal('background_task'),
@@ -200,23 +124,23 @@ export const cronJobOriginSchema = z.object({
   recurring: z.boolean(),
   coalescedCount: z.number(),
   stale: z.boolean(),
-}) satisfies z.ZodType<CronJobOrigin>;
+})
 
 export const cronMissedOriginSchema = z.object({
   kind: z.literal('cron_missed'),
   count: z.number(),
-}) satisfies z.ZodType<CronMissedOrigin>;
+})
 
 export const hookResultOriginSchema = z.object({
   kind: z.literal('hook_result'),
   event: z.string(),
   blocked: z.boolean().optional(),
-}) satisfies z.ZodType<HookResultOrigin>;
+})
 
 export const retryOriginSchema = z.object({
   kind: z.literal('retry'),
   trigger: z.string().optional(),
-}) satisfies z.ZodType<RetryOrigin>;
+})
 
 export const promptOriginSchema = z.discriminatedUnion('kind', [
   userPromptOriginSchema,
@@ -241,20 +165,20 @@ export const goalStatusSchema = z.enum([
   'complete',
   'budget_limited',
   'usage_limited',
-]) satisfies z.ZodType<GoalStatus>;
+])
 
 export const goalActorSchema = z.enum([
   'user',
   'model',
   'runtime',
   'system',
-]) satisfies z.ZodType<GoalActor>;
+])
 
 export const goalBudgetLimitsSchema = z.object({
   tokenBudget: z.number().optional(),
   turnBudget: z.number().optional(),
   wallClockBudgetMs: z.number().optional(),
-}) satisfies z.ZodType<GoalBudgetLimits>;
+})
 
 export const goalBudgetReportSchema = z.object({
   tokenBudget: z.number().nullable(),
@@ -269,7 +193,7 @@ export const goalBudgetReportSchema = z.object({
   overBudget: z.boolean(),
   inputTokensUsed: z.number(),
   outputTokensUsed: z.number(),
-}) satisfies z.ZodType<GoalBudgetReport>;
+})
 
 export const goalSnapshotSchema = z.object({
   goalId: z.string(),
@@ -286,22 +210,22 @@ export const goalSnapshotSchema = z.object({
   blockedStreak: z.number().optional(),
   createdAt: z.number(),
   updatedAt: z.number(),
-}) satisfies z.ZodType<GoalSnapshot>;
+})
 
 export const goalToolResultSchema = z.object({
   goal: goalSnapshotSchema.nullable(),
-}) satisfies z.ZodType<GoalToolResult>;
+})
 
 export const goalChangeStatsSchema = z.object({
   turnsUsed: z.number(),
   tokensUsed: z.number(),
   wallClockMs: z.number(),
-}) satisfies z.ZodType<GoalChangeStats>;
+})
 
 export const goalChangeKindSchema = z.enum([
   'lifecycle',
   'completion',
-]) satisfies z.ZodType<GoalChangeKind>;
+])
 
 export const goalChangeSchema = z.object({
   kind: goalChangeKindSchema,
@@ -309,7 +233,7 @@ export const goalChangeSchema = z.object({
   reason: z.string().optional(),
   stats: goalChangeStatsSchema.optional(),
   actor: goalActorSchema.optional(),
-}) satisfies z.ZodType<GoalChange>;
+})
 
 export const kimiErrorCodeSchema = z.enum([
   'config.invalid',
@@ -468,7 +392,7 @@ export const compactionResultSchema = z.object({
   keptUserMessageCount: z.number().optional(),
   keptHeadUserMessageCount: z.number().optional(),
   droppedCount: z.number().optional(),
-}) satisfies z.ZodType<CompactionResult>;
+})
 
 export const toolUpdateSchema = z.object({
   kind: z.enum(['stdout', 'stderr', 'progress', 'status', 'custom']),
@@ -476,19 +400,19 @@ export const toolUpdateSchema = z.object({
   percent: z.number().optional(),
   customKind: z.string().optional(),
   customData: z.unknown().optional(),
-}) satisfies z.ZodType<ToolUpdate>;
+})
 
 export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({
   serverName: z.string(),
   authorizationUrl: z.string(),
-}) satisfies z.ZodType<McpOAuthAuthorizationUrlUpdateData>;
+})
 
 export const turnEndReasonSchema = z.enum([
   'completed',
   'cancelled',
   'failed',
   'blocked',
-]) satisfies z.ZodType<TurnEndReason>;
+])
 
 export const agentPhaseSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('idle') }),
@@ -655,7 +579,7 @@ export const pluginCommandActivatedEventSchema = z.object({
   commandName: z.string(),
   commandArgs: z.string().optional(),
   trigger: z.literal('user-slash'),
-}) satisfies z.ZodType<PluginCommandActivatedEvent>;
+})
 
 export const errorEventSchema = kimiErrorPayloadObjectSchema.extend({
   type: z.literal('error'),
@@ -665,7 +589,7 @@ export const warningEventSchema = z.object({
   type: z.literal('warning'),
   message: z.string(),
   code: z.string().optional(),
-}) satisfies z.ZodType<WarningEvent>;
+})
 
 export const turnStartedEventSchema = z.object({
   type: z.literal('turn.started'),
@@ -687,7 +611,7 @@ export const turnStepStartedEventSchema = z.object({
   turnId: z.number(),
   step: z.number(),
   stepId: z.string().optional(),
-}) satisfies z.ZodType<TurnStepStartedEvent>;
+})
 
 export const turnStepCompletedEventSchema = z.object({
   type: z.literal('turn.step.completed'),
@@ -704,7 +628,7 @@ export const turnStepCompletedEventSchema = z.object({
   llmClientConsumeMs: z.number().optional(),
   providerFinishReason: finishReasonSchema.optional(),
   rawFinishReason: z.string().optional(),
-}) satisfies z.ZodType<TurnStepCompletedEvent>;
+})
 
 export const turnStepRetryingEventSchema = z.object({
   type: z.literal('turn.step.retrying'),
@@ -718,7 +642,7 @@ export const turnStepRetryingEventSchema = z.object({
   errorName: z.string(),
   errorMessage: z.string(),
   statusCode: z.number().optional(),
-}) satisfies z.ZodType<TurnStepRetryingEvent>;
+})
 
 export const turnStepInterruptedEventSchema = z.object({
   type: z.literal('turn.step.interrupted'),
@@ -727,13 +651,13 @@ export const turnStepInterruptedEventSchema = z.object({
   stepId: z.string().optional(),
   reason: z.string(),
   message: z.string().optional(),
-}) satisfies z.ZodType<TurnStepInterruptedEvent>;
+})
 
 export const assistantDeltaEventSchema = z.object({
   type: z.literal('assistant.delta'),
   turnId: z.number(),
   delta: z.string(),
-}) satisfies z.ZodType<AssistantDeltaEvent>;
+})
 
 export const hookResultEventSchema = z.object({
   type: z.literal('hook.result'),
@@ -741,13 +665,13 @@ export const hookResultEventSchema = z.object({
   hookEvent: z.string(),
   content: z.string(),
   blocked: z.boolean().optional(),
-}) satisfies z.ZodType<HookResultEvent>;
+})
 
 export const thinkingDeltaEventSchema = z.object({
   type: z.literal('thinking.delta'),
   turnId: z.number(),
   delta: z.string(),
-}) satisfies z.ZodType<ThinkingDeltaEvent>;
+})
 
 export const toolCallDeltaEventSchema = z.object({
   type: z.literal('tool.call.delta'),
@@ -755,7 +679,7 @@ export const toolCallDeltaEventSchema = z.object({
   toolCallId: z.string(),
   name: z.string().optional(),
   argumentsPart: z.string().optional(),
-}) satisfies z.ZodType<ToolCallDeltaEvent>;
+})
 
 export const toolCallStartedEventSchema = z.object({
   type: z.literal('tool.call.started'),
@@ -765,34 +689,34 @@ export const toolCallStartedEventSchema = z.object({
   args: z.unknown(),
   description: z.string().optional(),
   display: ToolInputDisplaySchema.optional(),
-}) satisfies z.ZodType<ToolCallStartedEvent>;
+})
 
 export const toolProgressEventSchema = z.object({
   type: z.literal('tool.progress'),
   turnId: z.number(),
   toolCallId: z.string(),
   update: toolUpdateSchema,
-}) satisfies z.ZodType<ToolProgressEvent>;
+})
 
 export const shellOutputEventSchema = z.object({
   type: z.literal('shell.output'),
   commandId: z.string(),
   update: toolUpdateSchema,
   taskId: z.string().optional(),
-}) satisfies z.ZodType<ShellOutputEvent>;
+})
 
 export const shellStartedEventSchema = z.object({
   type: z.literal('shell.started'),
   commandId: z.string(),
   taskId: z.string(),
-}) satisfies z.ZodType<ShellStartedEvent>;
+})
 
 export const shellCompletedEventSchema = z.object({
   type: z.literal('shell.completed'),
   commandId: z.string(),
   isError: z.boolean(),
   taskId: z.string().optional(),
-}) satisfies z.ZodType<ShellCompletedEvent>;
+})
 
 export const toolResultEventSchema = z.object({
   type: z.literal('tool.result'),
@@ -801,7 +725,7 @@ export const toolResultEventSchema = z.object({
   output: z.unknown(),
   isError: z.boolean().optional(),
   synthetic: z.boolean().optional(),
-}) satisfies z.ZodType<ToolResultEvent>;
+})
 
 export const subagentSpawnedEventSchema = z.object({
   type: z.literal('subagent.spawned'),
@@ -814,18 +738,18 @@ export const subagentSpawnedEventSchema = z.object({
   description: z.string().optional(),
   swarmIndex: z.number().optional(),
   runInBackground: z.boolean(),
-}) satisfies z.ZodType<SubagentSpawnedEvent>;
+})
 
 export const subagentStartedEventSchema = z.object({
   type: z.literal('subagent.started'),
   subagentId: z.string(),
-}) satisfies z.ZodType<SubagentStartedEvent>;
+})
 
 export const subagentSuspendedEventSchema = z.object({
   type: z.literal('subagent.suspended'),
   subagentId: z.string(),
   reason: z.string(),
-}) satisfies z.ZodType<SubagentSuspendedEvent>;
+})
 
 export const subagentCompletedEventSchema = z.object({
   type: z.literal('subagent.completed'),
@@ -833,33 +757,33 @@ export const subagentCompletedEventSchema = z.object({
   resultSummary: z.string(),
   usage: tokenUsageSchema.optional(),
   contextTokens: z.number().optional(),
-}) satisfies z.ZodType<SubagentCompletedEvent>;
+})
 
 export const subagentFailedEventSchema = z.object({
   type: z.literal('subagent.failed'),
   subagentId: z.string(),
   error: z.string(),
-}) satisfies z.ZodType<SubagentFailedEvent>;
+})
 
 export const compactionStartedEventSchema = z.object({
   type: z.literal('compaction.started'),
   trigger: z.enum(['manual', 'auto']),
   instruction: z.string().optional(),
-}) satisfies z.ZodType<CompactionStartedEvent>;
+})
 
 export const compactionBlockedEventSchema = z.object({
   type: z.literal('compaction.blocked'),
   turnId: z.number().optional(),
-}) satisfies z.ZodType<CompactionBlockedEvent>;
+})
 
 export const compactionCancelledEventSchema = z.object({
   type: z.literal('compaction.cancelled'),
-}) satisfies z.ZodType<CompactionCancelledEvent>;
+})
 
 export const compactionCompletedEventSchema = z.object({
   type: z.literal('compaction.completed'),
   result: compactionResultSchema,
-}) satisfies z.ZodType<CompactionCompletedEvent>;
+})
 
 export const taskStartedEventSchema = z.object({
   type: z.literal('task.started'),
@@ -921,13 +845,13 @@ export const toolListUpdatedReasonSchema = z.enum([
   'mcp.connected',
   'mcp.disconnected',
   'mcp.failed',
-]) satisfies z.ZodType<ToolListUpdatedReason>;
+])
 
 export const toolListUpdatedEventSchema = z.object({
   type: z.literal('tool.list.updated'),
   reason: toolListUpdatedReasonSchema,
   serverName: z.string(),
-}) satisfies z.ZodType<ToolListUpdatedEvent>;
+})
 
 export const mcpServerStatusPayloadSchema = z.object({
   name: z.string(),
@@ -935,12 +859,12 @@ export const mcpServerStatusPayloadSchema = z.object({
   status: z.enum(['pending', 'connected', 'failed', 'disabled', 'needs-auth']),
   toolCount: z.number(),
   error: z.string().optional(),
-}) satisfies z.ZodType<McpServerStatusPayload>;
+})
 
 export const mcpServerStatusEventSchema = z.object({
   type: z.literal('mcp.server.status'),
   server: mcpServerStatusPayloadSchema,
-}) satisfies z.ZodType<McpServerStatusEvent>;
+})
 
 export const agentEventSchema = z.discriminatedUnion('type', [
   errorEventSchema,
