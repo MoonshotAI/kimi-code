@@ -1,4 +1,4 @@
-import type { KimiConfig, ModelAlias } from '@moonshot-ai/agent-core';
+import type { KimiConfig, ModelAlias } from './legacy/config-schema';
 import {
   catalogBaseUrl,
   catalogProviderModels,

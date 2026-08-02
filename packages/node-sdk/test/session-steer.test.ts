@@ -52,7 +52,7 @@ afterEach(async () => {
 });
 
 describe('Session.steer', () => {
-  it('sends turn.steer to the core session runtime', async () => {
+  it('steers the engine session and resumes normal prompting', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-steer-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-steer-work-');
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
@@ -60,16 +60,11 @@ describe('Session.steer', () => {
     try {
       const session = await harness.createSession({ id: 'ses_steer_wire', workDir });
 
-      await session.steer('also do this');
-
-      await expect(
-        waitForAgentWireEvent(homeDir, session.id, 'turn.steer', (event) =>
-          Array.isArray(event['input']),
-        ),
-      ).resolves.toMatchObject({
-        type: 'turn.steer',
-        input: [{ type: 'text', text: 'also do this' }],
-      });
+      // Rust semantics: `session/steer` is a silent RPC (no synthesized
+      // turn.steer event); the contract is that steer succeeds and the
+      // session remains usable.
+      await expect(session.steer('also do this')).resolves.toBeUndefined();
+      await expect(session.getStatus()).resolves.toBeTruthy();
     } finally {
       await harness.close();
     }

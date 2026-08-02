@@ -62,7 +62,12 @@ export function resolveConfigPath(input: {
   readonly homeDir?: string | undefined;
   readonly configPath?: string | undefined;
 }): string {
-  return input.configPath ?? join(resolveKimiHome(input.homeDir), 'config.toml');
+  // Normalize to forward slashes (pathe-style) so paths are stable across
+  // hosts, matching the v1 SDK surface the config RPC wrapper exposes.
+  return (input.configPath ?? join(resolveKimiHome(input.homeDir), 'config.toml')).replaceAll(
+    '\\',
+    '/',
+  );
 }
 
 export function ensureKimiHome(homeDir: string): void {
@@ -959,7 +964,15 @@ function setSection<T>(
 function providerToToml(provider: ProviderConfig, rawProvider: unknown): Record<string, unknown> {
   const out = cloneRecord(rawProvider);
   for (const [key, value] of Object.entries(provider)) {
-    if (key === 'apiKey') continue;
+    if (key === 'apiKey') {
+      // An explicit non-empty apiKey replaces the raw value (a raw snapshot
+      // would otherwise shadow a patch that updates the key); empty/undefined
+      // keeps whatever the raw provider carried.
+      if (value !== undefined && value !== '') {
+        out['api_key'] = value;
+      }
+      continue;
+    }
     if (key === 'oauth' && value !== undefined) {
       out[camelToSnake(key)] = oauthToToml(value as OAuthRef);
     } else if ((key === 'env' || key === 'customHeaders') && value !== undefined) {

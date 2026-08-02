@@ -1,27 +1,24 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-import {
-  ErrorCodes,
-  KimiError,
-  makeErrorPayload,
-  type AgentContextData,
-  type ApprovalRequest,
-  type ApprovalResponse,
-  type BeginGlobalMcpServerAuthResult,
-  type CoreAPI,
-  type ProtocolEvent,
-  type ExperimentalFeatureState,
-  type GetCronTasksResult,
-  type QuestionRequest,
-  type QuestionResult,
-  type RPCMethods,
-  type SDKAPI,
-  type ToolCallRequest,
-  type ToolCallResponse,
-  type SwarmModeTrigger,
-} from '@moonshot-ai/agent-core';
+import { ErrorCodes, KimiError, makeErrorPayload } from './legacy/errors';
+import type {
+  AgentContextData,
+  BeginGlobalMcpServerAuthResult,
+  GetCronTasksResult,
+  SwarmModeTrigger,
+} from './legacy/wire-types';
+import type { ExperimentalFeatureState } from './legacy/flags';
+import type {
+  ApprovalRequest,
+  ApprovalResponse,
+  QuestionRequest,
+  QuestionResult,
+  ToolCallRequest,
+  ToolCallResponse,
+} from './legacy/rpc-types';
 import type { Kaos } from '@moonshot-ai/kaos';
 
+import type { Event } from './events';
 import type { ApprovalHandler, QuestionHandler } from '#/events';
 import type {
   AddAdditionalDirInput,
@@ -132,11 +129,100 @@ export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
   readonly name: string;
 }
 
-type ResolvedCoreAPI = RPCMethods<CoreAPI>;
+/**
+ * The engine RPC surface the SDK host drives (local replacement for the
+ * retired agent-core `RPCMethods<CoreAPI>`). Each method is a
+ * payload → Promise<result> call; the concrete result shapes are the
+ * local wire types (the Rust engine answers with Rust-side shapes that the
+ * host projects). Implementations may be structured (`Record<string, ...>`);
+ * callers read specific fields.
+ */
+export interface SdkRpcSurface {
+  activatePluginCommand(payload?: unknown, options?: unknown): Promise<any>;
+  activateSkill(payload?: unknown, options?: unknown): Promise<any>;
+  addAdditionalDir(payload?: unknown, options?: unknown): Promise<any>;
+  addGlobalMcpServer(payload?: unknown, options?: unknown): Promise<any>;
+  beginCompaction(payload?: unknown, options?: unknown): Promise<any>;
+  beginGlobalMcpServerAuth(payload?: unknown, options?: unknown): Promise<any>;
+  cancel(payload?: unknown, options?: unknown): Promise<any>;
+  cancelCompaction(payload?: unknown, options?: unknown): Promise<any>;
+  cancelGlobalMcpServerAuth(payload?: unknown, options?: unknown): Promise<any>;
+  cancelGoal(payload?: unknown, options?: unknown): Promise<any>;
+  cancelPlan(payload?: unknown, options?: unknown): Promise<any>;
+  cancelShellCommand(payload?: unknown, options?: unknown): Promise<any>;
+  clearContext(payload?: unknown, options?: unknown): Promise<any>;
+  clearPlan(payload?: unknown, options?: unknown): Promise<any>;
+  closeSession(payload?: unknown, options?: unknown): Promise<any>;
+  completeGlobalMcpServerAuth(payload?: unknown, options?: unknown): Promise<any>;
+  createGoal(payload?: unknown, options?: unknown): Promise<any>;
+  createSession(payload?: unknown, options?: unknown): Promise<any>;
+  deleteSession(payload?: unknown, options?: unknown): Promise<any>;
+  detachBackground(payload?: unknown, options?: unknown): Promise<any>;
+  enterPlan(payload?: unknown, options?: unknown): Promise<any>;
+  enterSwarm(payload?: unknown, options?: unknown): Promise<any>;
+  exitSwarm(payload?: unknown, options?: unknown): Promise<any>;
+  exportSession(payload?: unknown, options?: unknown): Promise<any>;
+  forkSession(payload?: unknown, options?: unknown): Promise<any>;
+  generateAgentsMd(payload?: unknown, options?: unknown): Promise<any>;
+  getBackground(payload?: unknown, options?: unknown): Promise<any>;
+  getBackgroundOutput(payload?: unknown, options?: unknown): Promise<any>;
+  getConfig(payload?: unknown, options?: unknown): Promise<any>;
+  getConfigDiagnostics(payload?: unknown, options?: unknown): Promise<any>;
+  getContext(payload?: unknown, options?: unknown): Promise<any>;
+  getCronTasks(payload?: unknown, options?: unknown): Promise<any>;
+  getExperimentalFeatures(payload?: unknown, options?: unknown): Promise<any>;
+  getGoal(payload?: unknown, options?: unknown): Promise<any>;
+  getKimiConfig(payload?: unknown, options?: unknown): Promise<any>;
+  getMcpStartupMetrics(payload?: unknown, options?: unknown): Promise<any>;
+  getPermission(payload?: unknown, options?: unknown): Promise<any>;
+  getPlan(payload?: unknown, options?: unknown): Promise<any>;
+  getPluginInfo(payload?: unknown, options?: unknown): Promise<any>;
+  getSessionMetadata(payload?: unknown, options?: unknown): Promise<any>;
+  getSessionWarnings(payload?: unknown, options?: unknown): Promise<any>;
+  getSwarmMode(payload?: unknown, options?: unknown): Promise<any>;
+  getUsage(payload?: unknown, options?: unknown): Promise<any>;
+  handlePrintMainTurnCompleted(payload?: unknown, options?: unknown): Promise<any>;
+  importContext(payload?: unknown, options?: unknown): Promise<any>;
+  installPlugin(payload?: unknown, options?: unknown): Promise<any>;
+  listGlobalMcpServers(payload?: unknown, options?: unknown): Promise<any>;
+  listMcpServers(payload?: unknown, options?: unknown): Promise<any>;
+  listPluginCommands(payload?: unknown, options?: unknown): Promise<any>;
+  listPlugins(payload?: unknown, options?: unknown): Promise<any>;
+  listSessions(payload?: unknown, options?: unknown): Promise<any>;
+  listSkills(payload?: unknown, options?: unknown): Promise<any>;
+  listWorkspaceSkills(payload?: unknown, options?: unknown): Promise<any>;
+  pauseGoal(payload?: unknown, options?: unknown): Promise<any>;
+  prompt(payload?: unknown, options?: unknown): Promise<any>;
+  reconnectMcpServer(payload?: unknown, options?: unknown): Promise<any>;
+  reloadPlugins(payload?: unknown, options?: unknown): Promise<any>;
+  reloadSession(payload?: unknown, options?: unknown): Promise<any>;
+  removeGlobalMcpServer(payload?: unknown, options?: unknown): Promise<any>;
+  removeKimiProvider(payload?: unknown, options?: unknown): Promise<any>;
+  removePlugin(payload?: unknown, options?: unknown): Promise<any>;
+  renameSession(payload?: unknown, options?: unknown): Promise<any>;
+  resetGlobalMcpServerAuth(payload?: unknown, options?: unknown): Promise<any>;
+  resumeGoal(payload?: unknown, options?: unknown): Promise<any>;
+  resumeSession(payload?: unknown, options?: unknown): Promise<any>;
+  runShellCommand(payload?: unknown, options?: unknown): Promise<any>;
+  setKimiConfig(payload?: unknown, options?: unknown): Promise<any>;
+  setModel(payload?: unknown, options?: unknown): Promise<any>;
+  setPermission(payload?: unknown, options?: unknown): Promise<any>;
+  setPluginEnabled(payload?: unknown, options?: unknown): Promise<any>;
+  setPluginMcpServerEnabled(payload?: unknown, options?: unknown): Promise<any>;
+  setThinking(payload?: unknown, options?: unknown): Promise<any>;
+  startBtw(payload?: unknown, options?: unknown): Promise<any>;
+  steer(payload?: unknown, options?: unknown): Promise<any>;
+  stopBackground(payload?: unknown, options?: unknown): Promise<any>;
+  testGlobalMcpServer(payload?: unknown, options?: unknown): Promise<any>;
+  undoHistory(payload?: unknown, options?: unknown): Promise<any>;
+  updateGlobalMcpServer(payload?: unknown, options?: unknown): Promise<any>;
+  updateSessionMetadata(payload?: unknown, options?: unknown): Promise<any>;
+  waitForBackgroundTasksOnPrint(payload?: unknown, options?: unknown): Promise<any>;
+}
 
 export abstract class SDKRpcClientBase {
   private readonly interactiveAgentScope = new AsyncLocalStorage<string>();
-  private readonly eventListeners = new Set<(event: ProtocolEvent) => void>();
+  private readonly eventListeners = new Set<(event: Event) => void>();
   private readonly approvalHandlers = new Map<string, ApprovalHandler>();
   private readonly questionHandlers = new Map<string, QuestionHandler>();
 
@@ -148,7 +234,7 @@ export abstract class SDKRpcClientBase {
     return this.interactiveAgentScope.run(agentId, fn);
   }
 
-  protected abstract getRpc(): Promise<ResolvedCoreAPI>;
+  protected abstract getRpc(): Promise<SdkRpcSurface>;
 
   async createSession(input: CreateSessionOptions): Promise<SessionSummary> {
     const rpc = await this.getRpc();
@@ -789,14 +875,14 @@ export abstract class SDKRpcClientBase {
     });
   }
 
-  onEvent(listener: (event: ProtocolEvent) => void): Unsubscribe {
+  onEvent(listener: (event: Event) => void): Unsubscribe {
     this.eventListeners.add(listener);
     return () => {
       this.eventListeners.delete(listener);
     };
   }
 
-  receiveEvent(event: ProtocolEvent): void {
+  receiveEvent(event: Event): void {
     for (const listener of this.eventListeners) {
       listener(event);
     }
@@ -878,10 +964,24 @@ export abstract class SDKRpcClientBase {
 
 }
 
+/** Host-facing SDK API surface (local replacement for the retired agent-core
+ *  SDKAPI). The engine drives these for host-side approval/question/tool
+ *  handling. */
+export interface SDKAPI {
+  emitEvent(event: Event): void;
+  requestApproval(
+    request: ApprovalRequest & { sessionId: string; agentId: string },
+  ): Promise<ApprovalResponse>;
+  requestQuestion(
+    request: QuestionRequest & { sessionId: string; agentId: string },
+  ): Promise<QuestionResult>;
+  toolCall(request: ToolCallRequest): Promise<ToolCallResponse>;
+}
+
 export class ClientAPI implements SDKAPI {
   constructor(readonly client: SDKRpcClientBase) {}
 
-  emitEvent(event: ProtocolEvent): void {
+  emitEvent(event: Event): void {
     this.client.receiveEvent(event);
   }
 

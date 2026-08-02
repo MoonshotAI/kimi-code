@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createKimiHarness, type KimiError, type PermissionMode } from '#/index';
-import { makeTempDir, removeTempDirs, waitForAgentWireEvent } from './session-runtime-helpers';
+import { makeTempDir, removeTempDirs } from './session-runtime-helpers';
 import { TEST_IDENTITY } from './test-identity';
 
 const tempDirs: string[] = [];
@@ -12,7 +12,7 @@ afterEach(async () => {
 
 describe('Session.setPermission', () => {
   it.each(['yolo', 'manual', 'auto'] as const)(
-    'sends permission.set_mode with mode %s',
+    'applies permission mode %s through the engine gate',
     async (mode: PermissionMode) => {
       const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-permission-home-');
       const workDir = await makeTempDir(tempDirs, 'kimi-sdk-permission-work-');
@@ -26,17 +26,9 @@ describe('Session.setPermission', () => {
 
         await session.setPermission(mode);
 
-        await expect(
-          waitForAgentWireEvent(
-            homeDir,
-            session.id,
-            'permission.set_mode',
-            (event) => event['mode'] === mode,
-          ),
-        ).resolves.toMatchObject({
-          type: 'permission.set_mode',
-          mode,
-        });
+        // Rust semantics: the engine gate mode is process-wide; the status
+        // snapshot reflects the applied mode.
+        await expect(session.getStatus()).resolves.toMatchObject({ permission: mode });
       } finally {
         await harness.close();
       }

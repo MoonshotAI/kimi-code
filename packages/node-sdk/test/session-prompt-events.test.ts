@@ -483,7 +483,7 @@ describe('Session.prompt events', () => {
       });
       await fork.close();
       const resumed = await harness.resumeSession({ id: fork.id });
-      const replayText = visibleReplayText(resumed.getResumeState()?.agents['main']?.replay ?? []);
+      const replayText = visibleReplayText((resumed.getResumeState()?.agents['main']?.replay ?? []) as never);
 
       expect(replayText).toEqual([
         'user:first question',

@@ -1,11 +1,6 @@
-import {
-  ErrorCodes,
-  KimiError,
-  resolveKimiHome,
-  type Logger,
-  type ModelProvider,
-  type ResolvedRuntimeProvider,
-} from '@moonshot-ai/agent-core';
+import { ErrorCodes, KimiError } from './legacy/errors';
+import { resolveKimiHome } from './legacy/config';
+import type { Logger } from '@moonshot-ai/kimi-agent/runtime';
 import {
   createKimiDefaultHeaders,
   KIMI_CODE_FLOW_CONFIG,
@@ -31,6 +26,30 @@ export interface KimiForCodingProviderOptions extends KimiHostIdentity {
   readonly baseUrl?: string;
   readonly promptCacheKey?: string;
   readonly defaultHeaders?: Record<string, string>;
+}
+
+/** Resolved provider view (local port of the retired agent-core provider
+ *  manager shape). */
+export interface ResolvedRuntimeProvider {
+  readonly providerName: string;
+  readonly provider: KosongProviderConfig;
+  readonly modelCapabilities: unknown;
+  readonly alwaysThinking?: boolean;
+  readonly supportEfforts?: readonly string[];
+  readonly defaultEffort?: string;
+  readonly maxOutputSize?: number;
+  readonly type: string;
+  readonly protocol?: unknown;
+}
+
+/** A model provider that resolves auth + runtime config for a model. */
+export interface ModelProvider {
+  readonly defaultModel?: string;
+  resolveProviderConfig(model: string): ResolvedRuntimeProvider;
+  resolveAuth?(
+    model: string,
+    options?: { readonly log?: Logger },
+  ): unknown;
 }
 
 export class KimiForCodingProvider implements ModelProvider {

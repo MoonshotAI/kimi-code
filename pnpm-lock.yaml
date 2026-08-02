@@ -1058,9 +1058,6 @@ importers:
       '@jsquash/webp':
         specifier: ^1.5.0
         version: 1.5.0
-      '@moonshot-ai/agent-core':
-        specifier: workspace:^
-        version: link:../agent-core
       '@moonshot-ai/kaos':
         specifier: workspace:^
         version: link:../kaos

@@ -1,11 +1,5 @@
-import type {
-  ExportSessionManifest,
-  ResumeSessionResult,
-  ShellEnvironment,
-  TelemetryClient,
-  TelemetryContextPatch,
-  TelemetryProperties,
-} from '@moonshot-ai/agent-core';
+import type { ExportSessionManifest, ResumeSessionResult, ShellEnvironment } from './legacy/wire-types';
+import type { TelemetryClient, TelemetryContextPatch, TelemetryProperties } from './legacy/telemetry';
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
 import type { ContentPart } from '@moonshot-ai/kosong';
@@ -17,17 +11,13 @@ export type JsonObject = { readonly [key: string]: JsonValue };
 export type Unsubscribe = () => void;
 
 export type {
-  AgentReplayRecord,
   AgentBackgroundTaskInfo,
-  BackgroundConfig,
+  AgentReplayRecord,
   BackgroundTaskInfo,
   BackgroundTaskStatus,
   ConfigDiagnostics,
   ContextMessage,
   CronTaskSnapshot,
-  ExperimentalFeatureState,
-  ExperimentalFlagMap,
-  ExperimentalFlagSource,
   ExportSessionManifest,
   GoalBudgetLimits,
   GoalBudgetReport,
@@ -37,14 +27,37 @@ export type {
   GoalSnapshot,
   GoalStatus,
   GoalToolResult,
+  McpServerInfo,
+  McpStartupMetrics,
+  ProcessBackgroundTaskInfo,
+  PromptOrigin,
+  QuestionBackgroundTaskInfo,
+  ResumedAgentState,
+  ShellEnvironment,
+  SkillSummary,
+  ToolInfo,
+  GlobalMcpServerConfig as McpServerConfig,
+  GlobalMcpServerTestResult as McpTestResult,
+} from './legacy/wire-types';
+export type {
+  BackgroundConfig,
   KimiConfig,
   KimiConfigPatch,
   LoopControl,
-  McpServerInfo,
-  McpStartupMetrics,
   ModelAlias,
   MoonshotServiceConfig,
   OAuthRef,
+  ProviderConfig,
+  ProviderType,
+  ServicesConfig,
+  ThinkingConfig,
+} from './legacy/config-schema';
+export type {
+  ExperimentalFeatureState,
+  ExperimentalFlagMap,
+  ExperimentalFlagSource,
+} from './legacy/flags';
+export type {
   PluginCommandDef,
   PluginGithubMetadata,
   PluginGithubRef,
@@ -52,21 +65,8 @@ export type {
   PluginMcpServerInfo,
   PluginSource,
   PluginSummary,
-  ProcessBackgroundTaskInfo,
-  PromptOrigin,
-  ProviderConfig,
-  ProviderType,
-  QuestionBackgroundTaskInfo,
   ReloadSummary,
-  ResumedAgentState,
-  ServicesConfig,
-  ShellEnvironment,
-  SkillSummary,
-  ThinkingConfig,
-  ToolInfo,
-  GlobalMcpServerConfig as McpServerConfig,
-  GlobalMcpServerTestResult as McpTestResult,
-} from '@moonshot-ai/agent-core';
+} from './legacy/plugin/types';
 
 export type { KimiHostIdentity, OAuthRefreshOutcome };
 export type { TelemetryClient, TelemetryContextPatch, TelemetryProperties };

@@ -17,9 +17,11 @@
  * loud (`nativeUnavailable`) rather than fake a result, matching the
  * native-session convention.
  */
-import type { CoreAPI, ProtocolEvent, RPCMethods } from '@moonshot-ai/agent-core';
+import type { SdkRpcSurface } from '../rpc';
+import type { Event } from '../events';
 
 import { SDKRpcClientBase } from '#/rpc';
+import { ensureConfigFile as legacyEnsureConfigFile, readConfigFile, writeConfigFile } from '#/legacy/config';
 import type {
   KimiConfig,
   KimiHostIdentity,
@@ -67,7 +69,7 @@ export interface RustLoopApi {
     hooks?: unknown[];
     workspaceTrusted?: boolean;
   }): Promise<{ session_id: string } | null>;
-  sessionList(): Promise<EngineSessionRecord[] | null>;
+  sessionList(): Promise<{ sessions: EngineSessionRecord[] } | null>;
   sessionGetStatus(sessionId: string): Promise<EngineSessionStatus | null>;
   sessionPrompt(
     sessionId: string,
@@ -154,6 +156,31 @@ const noopTelemetryClient: TelemetryClient = {
   setContext: () => {},
 };
 
+/** Deep-merge a config patch onto a base (objects merge recursively; other
+ *  values replace). `undefined`/null patch values keep the base. */
+function deepMergeConfig(base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null || value === undefined) continue;
+    const existing = out[key];
+    if (
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      typeof existing === 'object' &&
+      existing !== null &&
+      !Array.isArray(existing)
+    ) {
+      out[key] = deepMergeConfig(
+        existing as Record<string, unknown>,
+        value as Record<string, unknown>,
+      );
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
 /** Map an engine session record onto the SDK `SessionSummary`. */
 function mapSessionRecord(
   record: EngineSessionRecord,
@@ -187,7 +214,7 @@ export class RustRpcClient extends SDKRpcClientBase {
   private readonly translators = new Map<string, SessionEventTranslator>();
   /** Per-session v1-compatible wire event history (host-side). */
   private readonly wireWriters = new Map<string, WireEventWriter>();
-  private readonly ready: Promise<RPCMethods<CoreAPI>>;
+  private readonly ready: Promise<SdkRpcSurface>;
 
   constructor(options: RustRpcClientOptions) {
     super();
@@ -212,7 +239,7 @@ export class RustRpcClient extends SDKRpcClientBase {
     if (translator === undefined) return;
     const translated = translator.translate(raw);
     if (translated !== null) {
-      this.receiveEvent(translated as unknown as ProtocolEvent);
+      this.receiveEvent(translated as unknown as Event);
       void this.appendWireEvent(sessionId, translated);
     }
   }
@@ -223,7 +250,7 @@ export class RustRpcClient extends SDKRpcClientBase {
     sessionId: string,
     event: { type: string; [key: string]: unknown },
   ): void {
-    this.receiveEvent(event as unknown as ProtocolEvent);
+    this.receiveEvent(event as unknown as Event);
     void this.appendWireEvent(sessionId, event);
   }
 
@@ -261,7 +288,7 @@ export class RustRpcClient extends SDKRpcClientBase {
 
   // ── CoreAPI implementation ─────────────────────────────────────────────
 
-  private buildRpc(): RPCMethods<CoreAPI> {
+  private buildRpc(): SdkRpcSurface {
     const r = this.rustLoop;
     // Wide implementation type: the exact CoreAPI shape is enforced at the
     // return boundary (see the cast below); payload fields are structurally
@@ -307,7 +334,7 @@ export class RustRpcClient extends SDKRpcClientBase {
         this.clearSessionHandlers(sessionId);
       },
       listSessions: async ({ workDir }: ListSessionsOptions) => {
-        const records = (await r.sessionList()) ?? [];
+        const records = (await r.sessionList())?.sessions ?? [];
         return records
           .filter((record) => workDir === undefined || record.work_dir === undefined || record.work_dir === workDir)
           .map((record) => mapSessionRecord(record, this.homeDir));
@@ -538,14 +565,22 @@ export class RustRpcClient extends SDKRpcClientBase {
       },
       getExperimentalFeatures: async () => [] as never,
       getKimiConfig: async () => {
-        const config = await r.configGet();
-        return (config ?? { providers: {}, models: {} }) as KimiConfig;
+        // Config is host data: read the SDK-owned config.toml locally (the
+        // engine's config/get serves the engine's own resolved view).
+        return readConfigFile(this.configPath);
       },
       setKimiConfig: async (patch: any) => {
-        await r.configSet(patch);
-        // The engine merges + persists; re-read to return the full config.
-        const config = await r.configGet();
-        return (config ?? {}) as KimiConfig;
+        // Deep-merge the patch onto the on-disk config and persist it
+        // locally (v1 config semantics live host-side, not in the engine).
+        const base = readConfigFile(this.configPath);
+        const merged = deepMergeConfig(base, patch ?? {});
+        // The legacy writer's config type is its own schema; the SDK config
+        // shape is structurally compatible (both camelCase KimiConfig).
+        await writeConfigFile(
+          this.configPath,
+          merged as unknown as Parameters<typeof writeConfigFile>[1],
+        );
+        return merged as KimiConfig;
       },
       removeKimiProvider: async () => nativeUnavailable('removeKimiProvider'),
       getConfigDiagnostics: async () => ({ warnings: [] }) as never,
@@ -574,13 +609,13 @@ export class RustRpcClient extends SDKRpcClientBase {
       listPluginCommands: async () => [],
       activatePluginCommand: async () => nativeUnavailable('activatePluginCommand'),
     };
-    return impl as unknown as RPCMethods<CoreAPI>;
+    return impl as unknown as SdkRpcSurface;
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────
 
   private async sessionSummaryFor(sessionId: string): Promise<SessionSummary> {
-    const records = (await this.rustLoop.sessionList()) ?? [];
+    const records = (await this.rustLoop.sessionList())?.sessions ?? [];
     const record = records.find((r) => r.id === sessionId);
     return mapSessionRecord(
       record ?? { id: sessionId, created_at: '', updated_at: '' },
@@ -627,14 +662,16 @@ export class RustRpcClient extends SDKRpcClientBase {
   }
 
   async ensureConfigFile(): Promise<void> {
-    // The Rust engine owns config; nothing to materialize client-side.
+    // Config is host data: materialize the default scaffold under the SDK's
+    // config path (the engine does not own the host config file).
+    await legacyEnsureConfigFile(this.configPath);
   }
 
   async close(): Promise<void> {
     // The engine process is host-owned; nothing to release client-side.
   }
 
-  protected async getRpc(): Promise<RPCMethods<CoreAPI>> {
+  protected async getRpc(): Promise<SdkRpcSurface> {
     return this.ready;
   }
 }

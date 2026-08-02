@@ -162,4 +162,4 @@ export type {
   PromptOrigin,
   ResumedAgentState,
   SwarmModeTrigger,
-} from '@moonshot-ai/agent-core';
+} from '#/legacy/wire-types';

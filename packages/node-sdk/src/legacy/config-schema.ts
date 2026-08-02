@@ -13,20 +13,8 @@ import { z } from 'zod';
 
 import { ErrorCodes, KimiError } from './errors';
 
-export const HOOK_EVENT_TYPES = [
-  'PreToolUse',
-  'PostToolUse',
-  'PostToolUseFailure',
-  'PermissionRequest',
-  'PermissionResult',
-  'UserPromptSubmit',
-  'Stop',
-  'StopFailure',
-  'Interrupt',
-  'SessionStart',
-  'SessionEnd',
-  'SubagentStart',
-] as const;
+export { HOOK_EVENT_TYPES } from './plugin/hooks';
+import { HOOK_EVENT_TYPES } from './plugin/hooks';
 
 export const ProviderTypeSchema = z.enum([
   'anthropic',

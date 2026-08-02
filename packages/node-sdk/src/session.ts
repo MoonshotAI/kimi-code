@@ -1,10 +1,5 @@
-import {
-  ErrorCodes,
-  KimiError,
-  type AgentContextData,
-  type KimiErrorCode,
-  type SwarmModeTrigger,
-} from '@moonshot-ai/agent-core';
+import { ErrorCodes, KimiError, type KimiErrorCode } from './legacy/errors';
+import type { AgentContextData, SwarmModeTrigger } from './legacy/wire-types';
 
 import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
 import type { SDKRpcClientBase } from '#/rpc';

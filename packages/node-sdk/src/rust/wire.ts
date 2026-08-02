@@ -276,7 +276,7 @@ export function mapBackgroundTask(raw: unknown): BackgroundTaskInfo {
       kind: 'agent',
       agentId: typeof r['agent_id'] === 'string' ? (r['agent_id'] as string) : undefined,
       subagentType: typeof r['subagent_type'] === 'string' ? (r['subagent_type'] as string) : undefined,
-    } as BackgroundTaskInfo;
+    } as unknown as BackgroundTaskInfo;
   }
   if (kind === 'question') {
     return {
@@ -284,7 +284,7 @@ export function mapBackgroundTask(raw: unknown): BackgroundTaskInfo {
       kind: 'question',
       questionCount: typeof r['question_count'] === 'number' ? (r['question_count'] as number) : 0,
       toolCallId: typeof r['tool_call_id'] === 'string' ? (r['tool_call_id'] as string) : undefined,
-    } as BackgroundTaskInfo;
+    } as unknown as BackgroundTaskInfo;
   }
   return {
     ...common,

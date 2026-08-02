@@ -69,7 +69,6 @@
   },
   "devDependencies": {
     "@jsquash/webp": "^1.5.0",
-    "@moonshot-ai/agent-core": "workspace:^",
     "@moonshot-ai/kaos": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/kosong": "workspace:^",

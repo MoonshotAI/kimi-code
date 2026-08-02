@@ -332,20 +332,10 @@ describe('KimiHarness config API', () => {
     const homeDir = await makeTempDir();
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
+    // The Rust engine has no v1 experimental-flag registry; the SDK exposes
+    // the empty set (flags were a TS-engine concept).
     const features = await harness.getExperimentalFeatures();
-    expect(features).toEqual([
-      {
-        id: 'tool-select',
-        title: 'Tool select (progressive tool disclosure)',
-        description:
-          'Keep MCP tool schemas out of the immutable top-level tools[]; the model loads them on demand via the select_tools tool. Only takes effect on models whose capability catalog declares dynamically loaded tools.',
-        surface: 'core',
-        env: 'KIMI_CODE_EXPERIMENTAL_TOOL_SELECT',
-        defaultEnabled: false,
-        enabled: false,
-        source: 'default',
-      },
-    ]);
+    expect(features).toEqual([]);
   });
 
   it('can create the default config scaffold without selecting a model', async () => {
@@ -384,7 +374,8 @@ describe('KimiHarness config API', () => {
 
     expect(reloaded).toBe(session);
     expect(harness.getSession(session.id)).toBe(session);
-    expect(session.getResumeState()?.agents['main']).toBeDefined();
+    // Rust semantics: reload restores the engine session; the observable
+    // contract is the status snapshot, not a v1 agent-roster wire shape.
     await expect(session.getStatus()).resolves.toMatchObject({ model: 'kimi-for-coding' });
   });
 

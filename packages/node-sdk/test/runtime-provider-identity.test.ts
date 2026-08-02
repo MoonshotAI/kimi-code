@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { KimiConfig } from '@moonshot-ai/agent-core';
+import type { KimiConfig } from '../src';
 import { createKimiDefaultHeaders, KIMI_CODE_PLATFORM } from '@moonshot-ai/kimi-code-oauth';
 
 import { ProviderManager } from '../../agent-core/src/session/provider-manager';
