@@ -4,7 +4,7 @@
 use crate::processor::{MessageProcessor, Processor};
 use crate::request_processors::{
     ApprovalProcessor, ConfigProcessor, FsProcessor, GitProcessor, HealthProcessor,
-    PluginProcessor, SessionProcessor,
+    PermissionProcessor, PluginProcessor, SessionProcessor,
 };
 use crate::state::ServerState;
 
@@ -31,6 +31,7 @@ impl Server {
         PluginProcessor::new()?.register(&mut processor);
         SessionProcessor::with_state(state.clone()).register(&mut processor);
         ApprovalProcessor::with_state(state.clone()).register(&mut processor);
+        PermissionProcessor::with_state(state.clone()).register(&mut processor);
 
         Ok(Self { processor, state })
     }
