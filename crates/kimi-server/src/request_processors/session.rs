@@ -700,6 +700,28 @@ impl Processor for SessionProcessor {
             })
         });
 
+        // `session/compact` — manually compact the session context.
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_COMPACT, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionCompactParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                agent
+                    .compact(input.instruction)
+                    .await
+                    .map_err(JsonRpcError::internal_error)
+            })
+        });
+
         // `session/get_status` — live engine status snapshot.
         let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_GET_STATUS, move |params| {
