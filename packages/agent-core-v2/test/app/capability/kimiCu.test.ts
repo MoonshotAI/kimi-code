@@ -445,6 +445,45 @@ describe('kimi-cu entry', () => {
     expect(plugins.mcpEnabledCalls).toEqual([{ id: 'kimi-cu', server: 'mac', enabled: true }]);
   });
 
+  it('never stops the old service when the downloaded archive is corrupt', async () => {
+    const plugins = fakePlugins([]);
+    const host = fakeHostProcess([
+      { match: 'ditto -x -k', code: 1, stderr: 'ditto: Not a zip file' },
+    ]);
+    const fetchImpl = (() =>
+      Promise.resolve(
+        new Response(new TextEncoder().encode('<html>captive portal</html>'), {
+          status: 200,
+          headers: { 'content-length': '26' },
+        }),
+      )) as never;
+    const entry = createKimiCuEntry(
+      makeCtx({
+        applicationsDir: path.join(root, 'Applications'),
+        plugins: plugins.service,
+        hostProcess: host.service,
+        fetchImpl,
+      }),
+    );
+
+    // A corrupt archive must fail before any teardown — a failed update
+    // never breaks a previously working setup.
+    await expect(entry.install(() => {})).rejects.toThrow(/Failed to unzip/);
+    expect(host.calls.some((call) => call.includes('uninstall'))).toBe(false);
+    expect(host.calls.some((call) => call.includes('bootout'))).toBe(false);
+    expect(host.calls.some((call) => call.includes('pkill'))).toBe(false);
+  });
+
+  it('reads a bundle missing its Info.plist as a broken install', async () => {
+    const applicationsDir = await fakeAppBundle();
+    // Executable binary but the bundle metadata is gone (partial copy).
+    await rm(path.join(applicationsDir, 'KimiCU.app', 'Contents', 'Info.plist'));
+    const entry = createKimiCuEntry(makeCtx({ applicationsDir }));
+
+    const detected = await entry.detect();
+    expect(detected.steps.find((s) => s.id === 'app')?.state).toBe('missing');
+  });
+
   it('reads a non-executable leftover app binary as a broken install', async () => {
     const applicationsDir = await fakeAppBundle();
     // An interrupted ditto leaves the binary present but not executable.

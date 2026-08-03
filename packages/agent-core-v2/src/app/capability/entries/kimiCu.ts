@@ -12,9 +12,10 @@
  * shell pipe. Elevation when /Applications is not writable goes through
  * `osascript ... with administrator privileges` (native auth dialog).
  * Installs are detect-first and idempotent: only unsatisfied layers are
- * redone, setup re-enables a previously disabled wiring plugin, the app
- * step requires an executable binary (an interrupted copy reads as
- * missing), and cleanup of old processes is best-effort — a wedged old
+ * redone, setup re-enables a previously disabled wiring plugin (and its
+ * MCP servers), the app step requires an executable binary with bundle
+ * metadata, the archive is staged and unpacked before the old service is
+ * stopped, and cleanup of old processes is best-effort — a wedged old
  * binary turns CLI probes into failed steps or is skipped past, never
  * blocking the replacement.
  */
@@ -143,7 +144,7 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
 
     const version = await readAppBundleVersion(infoPlist);
     const appExists = await exists(appBin);
-    const appUsable = appExists && (await executable(appBin));
+    const appUsable = appExists && (await executable(appBin)) && (await exists(infoPlist));
     steps.push({
       id: 'app',
       state: appUsable ? 'ok' : 'missing',
@@ -278,7 +279,6 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
         );
 
         report('app');
-        await stopOldProcesses();
         const unzipDir = path.join(workDir, 'unzipped');
         const unzipped = await runCommand(ctx.hostProcess, 'ditto', ['-x', '-k', zipPath, unzipDir], {
           timeout: 120_000,
@@ -286,6 +286,7 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
         if (unzipped.code !== 0) {
           throw new Error(`Failed to unzip KimiCU.app: ${unzipped.stderr || unzipped.stdout}`);
         }
+        await stopOldProcesses();
         await moveAppIntoPlace(path.join(unzipDir, APP_BUNDLE));
         await runCommand(ctx.hostProcess, 'xattr', ['-dr', 'com.apple.quarantine', appPath], {
           timeout: commandTimeoutMs,
