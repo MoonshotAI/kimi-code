@@ -1657,6 +1657,46 @@ mod create_tests {
     }
 
     #[tokio::test]
+    async fn list_skills_and_get_plan_empty_states() {
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = SessionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/create".into(),
+                params: serde_json::json!({ "session_id": "s-skills" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "create failed: {body}");
+
+        // A fresh session has no skills registered.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/list_skills".into(),
+                params: serde_json::json!({ "session_id": "s-skills" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "list_skills failed: {body}");
+        assert!(body["result"]["skills"].is_array());
+
+        // And no active plan yet (get_plan returns an empty result, no error).
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(3),
+                method: "session/get_plan".into(),
+                params: serde_json::json!({ "session_id": "s-skills" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "get_plan failed: {body}");
+    }
+
+    #[tokio::test]
     async fn list_tools_returns_native_and_goal_tools() {
         let state = crate::state::ServerState::new().expect("state");
         let processor = SessionProcessor::with_state(state);
