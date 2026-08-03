@@ -280,13 +280,13 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 5. **验证**：cargo test --lib 2027 绿；node-sdk/kimi-code typecheck 0；gen:wire 幂等
 6. **ts-rs 决策**：离线环境（crates.io 不可达）无法引入 ts-rs/schemars；TS 绑定由 `gen-wire-contract.mjs` 生成（自研，从 kimi-protocol Rust 类型导出，已验证覆盖 serde default/rename/tagged/元组变体/跨文件引用）。联网后可评估 ts-rs 迁移（可选优化，非必需）。
 
-### 阶段 B — 宿主协议层（方法族迁移进行中，协议层完成）
-1. ✅ `kimi-server` crate（MessageProcessor + in_process + ServerHostCallbacks/EventBus + ServerState/Server::build）——commit aaa47b5ac/946d7a690/fe93928dc 等
-2. ✅ `kimi-server-transport`（stdio serve）——commit 38d985f69
-3. ✅ `kimi-server-client`（AppServerClient{InProcess, Remote} 门面）——commit 91cf74039
-4. ✅ 方法族迁移（health/config/fs/git/approval + **session 27 方法**：create/prompt/cancel/set_model/set_thinking/set_swarm_mode/set_plan_mode/clear_context/get_context/get_status/list/get_usage/get_plan/get_warnings/list_mcp_servers/undo_history/import_context/activate_skill/steer/goal_create/goal_get/goal_pause/goal_resume/goal_cancel/save/delete/load）——全部与 main.rs handler 同源
-5. [ ] session 剩余（fork/export/start_btw/end_btw/compact/run_shell）；kap-server 测试平移（377 基线）
-6. **验证**：kimi-server 18 测试 + client 2 测试全绿；workspace check 干净；0 warnings
+### 阶段 B — 宿主协议层（方法族迁移完成 ✅）
+1. ✅ `kimi-server` crate（MessageProcessor + in_process + ServerHostCallbacks/EventBus + ServerState/Server::build）
+2. ✅ `kimi-server-transport`（stdio serve）
+3. ✅ `kimi-server-client`（AppServerClient{InProcess, Remote} 门面）
+4. ✅ **方法族迁移完成（11 processor）**：session **35 方法**（create/prompt/cancel/run_shell/cancel_shell_command/compact/save/load/delete/fork/export/set_model/set_thinking/set_swarm_mode/set_plan_mode/clear_context/get_context/get_status/list/get_usage/get_plan/get_warnings/list_mcp_servers/list_skills/undo_history/import_context/activate_skill/steer/goal 全生命周期/start_btw/end_btw）+ health/config(get+set)/fs/git/approval/plugin/permission/cron/bg/task——引擎 RPC 全部方法族在 Rust 宿主协议层，全部与 main.rs handler 同源
+5. [ ] kap-server 测试平移（377 基线，TS 面，阶段 B 收尾可选）
+6. **验证**：kimi-server 22 测试 + client 2 + exec 2 全绿；workspace check 干净；0 warnings
 
 ### 阶段 C — CLI + exec
 1. `kimi-cli`：clap 分发 + 子命令平移（acp/doctor/export/login/provider/upgrade/vis/web）
