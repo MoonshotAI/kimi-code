@@ -440,12 +440,28 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   private get officialEntries(): readonly PluginMarketplaceEntry[] {
+    // While the catalog is loading or unreachable, the locally-known
+    // capability rows still render and install — built-in runtime setup
+    // must never be blocked by an unrelated catalog fetch.
+    if (this.market.status !== 'loaded') {
+      return this.pendingBuiltInEntries.some((entry) => entry.id === WEB_BRIDGE_ENTRY.id)
+        ? this.pendingBuiltInEntries
+        : [...this.pendingBuiltInEntries, WEB_BRIDGE_ENTRY];
+    }
     // The real catalog entry wins when present (it installs the actual
     // plugin); the hardcoded promo row is only a fallback while the catalog
     // is loading, unreachable, or predates it — never a duplicate row.
     return this.officialCatalogEntries.some((entry) => entry.id === WEB_BRIDGE_ENTRY.id)
       ? this.officialCatalogEntries
       : [WEB_BRIDGE_ENTRY, ...this.officialCatalogEntries];
+  }
+
+  /** Capability rows synthesized from the engine's registry, independent of
+   * the marketplace state; unsupported platforms hide them entirely. */
+  private get pendingBuiltInEntries(): readonly PluginMarketplaceEntry[] {
+    return (this.opts.capabilities ?? [])
+      .filter((capability) => capability.supported)
+      .map(capabilityMarketplaceEntry);
   }
 
   private get officialCatalogEntries(): readonly PluginMarketplaceEntry[] {
@@ -738,12 +754,16 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   private renderOfficial(lines: string[], width: number): void {
-    // Loading / error: catalog rows can't render yet — show only the pinned
-    // promo as the fallback. Once loaded, `officialEntries` already includes
-    // the promo only when the catalog lacks the real entry.
+    // Loading / error: `officialEntries` carries the locally-known
+    // capability rows (plus the promo fallback when webbridge is not among
+    // them), so built-in setup works before the catalog arrives. Once
+    // loaded, the promo appears only when the catalog lacks the real entry.
     if (this.market.status !== 'loaded') {
-      lines.push(...this.renderMarketplaceRow(WEB_BRIDGE_ENTRY, 0, width));
-      this.renderMarketplaceTab(lines, width, [], 1);
+      const entries = this.officialEntries;
+      for (let i = 0; i < entries.length; i += 1) {
+        lines.push(...this.renderMarketplaceRow(entries[i]!, i, width));
+      }
+      this.renderMarketplaceTab(lines, width, [], entries.length);
       return;
     }
     this.renderMarketplaceTab(lines, width, this.officialEntries, 0, this.officialCatalogEntries);

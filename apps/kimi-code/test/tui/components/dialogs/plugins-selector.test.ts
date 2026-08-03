@@ -414,6 +414,40 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain('Marketplace unavailable: fetch failed');
   });
 
+  it('renders capability rows from the engine while the catalog is still loading', () => {
+    const capabilities = [
+      makeCapability(),
+      makeCapability({
+        id: 'kimi-webbridge',
+        displayName: 'Kimi WebBridge',
+        state: 'not_installed',
+        steps: [],
+      }),
+    ];
+    const { panel, onSelect } = makePanel({ initialTab: 'official', capabilities });
+
+    // No setMarketplace yet — built-in runtime setup must not wait on the
+    // remote catalog: the engine-known rows render (and the promo is
+    // suppressed by the real webbridge row).
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Kimi Computer Use  finish setup');
+    expect(out).toContain('Kimi WebBridge  install');
+    expect(out).not.toContain('open in browser');
+    expect(out).toContain('Loading marketplace');
+
+    panel.handleInput('\r'); // index 0 → kimi-cu routes to capability install
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: 'install',
+      entry: expect.objectContaining({ id: 'kimi-cu', source: 'capability:kimi-cu' }),
+    });
+    panel.handleInput('[B');
+    panel.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: 'install',
+      entry: expect.objectContaining({ id: 'kimi-webbridge', source: 'capability:kimi-webbridge' }),
+    });
+  });
+
   it('opens the Web Bridge webpage on Enter instead of installing', () => {
     const { panel, onSelect } = makePanel({ initialTab: 'official' });
     panel.setMarketplace(marketplaceEntries, '/tmp/marketplace.json');
