@@ -19,9 +19,9 @@ import { join } from 'pathe';
 
 import {
   DEFAULT_AGENT_PROFILE_NAME,
-  renderAgentProfile,
   type AgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import type { IAgentProfileRenderer } from '#/app/agentProfileCatalog/agentProfileRenderer';
 import {
   renderPromptTemplate,
   renderPromptTemplateResult,
@@ -38,6 +38,7 @@ export async function loadSystemMdProfile(
   fs: IHostFileSystem,
   brandHome: string,
   builtinDefault: AgentProfile,
+  profileRenderer: Pick<IAgentProfileRenderer, 'render'>,
   warn: (message: string) => void,
 ): Promise<AgentProfile | undefined> {
   const path = join(brandHome, SYSTEM_MD_FILENAME);
@@ -68,11 +69,11 @@ export async function loadSystemMdProfile(
     subagents: builtinDefault.subagents,
     systemPrompt: (context) =>
       renderPromptTemplate(text, context, { skillActive }, (ctx) =>
-        renderAgentProfile(builtinDefault, ctx),
+        profileRenderer.render(builtinDefault, ctx),
       ),
     renderSystemPrompt: (context) =>
       renderPromptTemplateResult(text, context, { skillActive }, (ctx) =>
-        renderAgentProfile(builtinDefault, ctx),
+        profileRenderer.render(builtinDefault, ctx),
       ),
   };
 }

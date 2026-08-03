@@ -98,18 +98,3 @@ export interface AgentProfile {
   readonly promptPrefix?: (ctx: AgentProfilePromptPrefixContext) => Promise<string>;
   readonly summaryPolicy?: AgentProfileSummaryPolicy;
 }
-
-export function renderAgentProfile(
-  profile: AgentProfile,
-  context: AgentProfileContext,
-): SystemPromptRenderResult {
-  return (
-    profile.renderSystemPrompt?.(context) ?? {
-      text: profile.systemPrompt(context),
-      environment: {
-        cwd: context.cwd ?? '',
-        date: { disclosed: false },
-      },
-    }
-  );
-}

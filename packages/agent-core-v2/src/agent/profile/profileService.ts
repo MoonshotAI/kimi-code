@@ -81,10 +81,8 @@ import {
   type ThinkingConfig,
 } from '#/kosong/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
-import {
-  DEFAULT_AGENT_PROFILE_NAME,
-  renderAgentProfile,
-} from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { IAgentProfileRenderer } from '#/app/agentProfileCatalog/agentProfileRenderer';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { ErrorCodes, Error2 } from "#/errors";
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -212,6 +210,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IProtocolAdapterRegistry private readonly protocolAdapters: IProtocolAdapterRegistry,
     @IHostEnvironment private readonly env: IHostEnvironment,
     @IHostClock private readonly clock: IHostClock,
+    @IAgentProfileRenderer private readonly profileRenderer: IAgentProfileRenderer,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
@@ -370,7 +369,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const context = await this.buildSystemPromptContext(profile);
     this.assertBindable(profile.name);
     const currentProfileName = this.profileName;
-    const rendered = renderAgentProfile(profile, context);
+    const rendered = this.profileRenderer.render(profile, context);
     this.activeProfile = profile;
     this.cacheAgentsMdWarning(context);
 
@@ -454,7 +453,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void {
     this.activeProfile = profile;
-    const rendered = renderAgentProfile(profile, context);
+    const rendered = this.profileRenderer.render(profile, context);
     this.update({
       profileName: profile.name,
       systemPrompt: rendered.text,
@@ -488,7 +487,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       return;
     }
     this.activeProfile = profile;
-    const rendered = renderAgentProfile(profile, context);
+    const rendered = this.profileRenderer.render(profile, context);
     this.update({
       profileName: profile.name,
       systemPrompt: rendered.text,

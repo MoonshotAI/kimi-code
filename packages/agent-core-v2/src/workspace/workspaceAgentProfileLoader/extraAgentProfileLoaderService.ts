@@ -15,7 +15,7 @@ import {
   AGENT_PROFILE_SOURCE_PRIORITY,
   type AgentProfileContribution,
 } from '#/app/agentProfileCatalog/agentProfileContribution';
-import { renderAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { IAgentProfileRenderer } from '#/app/agentProfileCatalog/agentProfileRenderer';
 import { profilesFromDiscovery } from './internal/agentProfileFromFile';
 import { configuredAgentRoots } from '#/workspace/workspaceAgentProfileLoader/internal/agentRoots';
 import {
@@ -47,6 +47,7 @@ export class ExtraAgentProfileLoaderService
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService log: ILogService,
     @IUserAgentProfileLoader private readonly user: IUserAgentProfileLoader,
+    @IAgentProfileRenderer private readonly profileRenderer: IAgentProfileRenderer,
     @IAgentProfileRegistry registry: IAgentProfileRegistry,
   ) {
     super(registry, log);
@@ -84,7 +85,7 @@ export class ExtraAgentProfileLoaderService
         ),
         (message) => this.log.warn(message),
       ),
-      (context) => renderAgentProfile(this.user.getDefaultProfile(), context),
+      (context) => this.profileRenderer.render(this.user.getDefaultProfile(), context),
     );
   }
 }
