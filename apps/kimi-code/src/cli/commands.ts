@@ -122,7 +122,6 @@ export function createProgram(
   if (isAcpV2Enabled()) {
     registerAcpV2Command(program);
   }
-  registerServerCommand(program);
   registerLoginCommand(program);
   registerDoctorCommand(program);
   registerVisCommand(program);
