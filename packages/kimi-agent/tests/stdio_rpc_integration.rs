@@ -5304,3 +5304,228 @@ fn approval_rpc_resolves_pending_write() {
     let _ = child.wait();
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+// ---------------------------------------------------------------------------
+// P2-2 (RUST_MIGRATION_PLAN.non-agent.md): zero-host full chain — native LLM,
+// native Read tool, persisted session, cross-process resume. Neither process
+// may reach the host for the LLM or tool execution.
+// ---------------------------------------------------------------------------
+
+fn spawn_engine(
+    binary: &std::path::Path,
+    home: &std::path::Path,
+) -> (
+    std::process::Child,
+    std::process::ChildStdin,
+    BufReader<std::process::ChildStdout>,
+) {
+    let mut child = Command::new(binary)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("KIMI_AGENT_HOME", home)
+        .spawn()
+        .expect("spawn kimi-agent");
+    let stdin = child.stdin.take().expect("stdin");
+    let stdout = BufReader::new(child.stdout.take().expect("stdout"));
+    (child, stdin, stdout)
+}
+
+/// Send one RPC request and read until its response. Host-bound methods
+/// (request/response round trips) are recorded and answered with `null` so the
+/// engine can continue; `host/event` notifications are skipped.
+fn rpc_call(
+    stdin: &mut std::process::ChildStdin,
+    stdout: &mut BufReader<std::process::ChildStdout>,
+    id: u32,
+    method: &str,
+    params: serde_json::Value,
+    host_methods: &mut Vec<String>,
+) -> serde_json::Value {
+    let req = serde_json::json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+    writeln!(stdin, "{req}").unwrap();
+    stdin.flush().unwrap();
+    let mut buf = String::new();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        assert!(Instant::now() <= deadline, "timed out on {method}");
+        buf.clear();
+        if stdout.read_line(&mut buf).unwrap_or(0) == 0 {
+            panic!("stdout closed during {method}");
+        }
+        let trimmed = buf.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(msg) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+            continue;
+        };
+        match msg.get("method").and_then(|m| m.as_str()) {
+            None => {
+                if msg.get("id") == Some(&serde_json::json!(id)) {
+                    return msg;
+                }
+            }
+            // Fire-and-forget notifications carry no id: skip.
+            Some("host/event") => {}
+            Some(method_name) => {
+                if let Some(rid) = msg.get("id").filter(|v| !v.is_null()) {
+                    host_methods.push(method_name.to_string());
+                    let resp = serde_json::json!({"jsonrpc": "2.0", "id": rid, "result": null});
+                    writeln!(stdin, "{resp}").unwrap();
+                    stdin.flush().unwrap();
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn native_full_chain_self_served_persists_and_resumes() {
+    let binary = match find_binary() {
+        Some(b) => b,
+        None => {
+            eprintln!("Skipping: kimi-agent binary not built.");
+            return;
+        }
+    };
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let pid = std::process::id();
+    let home = std::env::temp_dir().join(format!("kimi-agent-it-fullchain-{pid}-{n}"));
+    std::fs::create_dir_all(&home).expect("create home");
+    let ws = temp_workspace("secret.txt", "NATIVE-CHAIN-BODY-88");
+
+    // Turn 1 asks the model for a Read tool call; turn 2 completes the text.
+    let stub = spawn_sse_stub(|i| {
+        if i == 0 {
+            sse(&[
+                serde_json::json!({ "choices": [{ "delta": { "role": "assistant" } }] }),
+                serde_json::json!({ "choices": [{ "delta": { "tool_calls": [{ "index": 0, "id": "call_1", "type": "function", "function": { "name": "Read", "arguments": "" } }] } }] }),
+                serde_json::json!({ "choices": [{ "delta": { "tool_calls": [{ "index": 0, "function": { "arguments": "{\"path\":\"secret.txt\"}" } }] } }] }),
+                serde_json::json!({ "choices": [{ "delta": {}, "finish_reason": "tool_calls" }], "usage": { "prompt_tokens": 9, "completion_tokens": 4 } }),
+            ])
+        } else {
+            sse(&[
+                serde_json::json!({ "choices": [{ "delta": { "role": "assistant" } }] }),
+                serde_json::json!({ "choices": [{ "delta": { "content": "CHAIN-DONE" }, "finish_reason": null }] }),
+                serde_json::json!({ "choices": [{ "delta": {}, "finish_reason": "stop" }], "usage": { "prompt_tokens": 20, "completion_tokens": 1 } }),
+            ])
+        }
+    });
+
+    let native_llm = serde_json::json!({
+        "protocol": "openai",
+        "base_url": format!("http://127.0.0.1:{}/v1", stub.port),
+        "api_key": "stub",
+        "model": "stub-model"
+    });
+
+    // ── Process 1: create → prompt (native LLM + native Read) → save ──
+    let (mut child1, mut stdin1, mut stdout1) = spawn_engine(&binary, &home);
+    let mut host_methods: Vec<String> = Vec::new();
+    let create = rpc_call(
+        &mut stdin1,
+        &mut stdout1,
+        1,
+        "session/create",
+        serde_json::json!({
+            "session_id": "it-fullchain",
+            "homedir": ws.to_string_lossy(),
+            "system_prompt": "test",
+            "model": "stub-model",
+            "goal_enabled": false,
+            "native_llm": native_llm,
+            "native_tools": true
+        }),
+        &mut host_methods,
+    );
+    assert!(create.get("error").is_none(), "create failed: {create}");
+
+    let prompt = rpc_call(
+        &mut stdin1,
+        &mut stdout1,
+        2,
+        "session/prompt",
+        serde_json::json!({
+            "session_id": "it-fullchain",
+            "input": [{"type": "text", "text": "read secret.txt"}]
+        }),
+        &mut host_methods,
+    );
+    assert!(prompt.get("error").is_none(), "prompt failed: {prompt}");
+    assert_eq!(prompt["result"]["stop_reason"], "EndTurn", "got: {prompt}");
+    assert_eq!(stub.bodies.lock().unwrap().len(), 2, "provider called twice");
+
+    let save = rpc_call(
+        &mut stdin1,
+        &mut stdout1,
+        3,
+        "session/save",
+        serde_json::json!({"session_id": "it-fullchain"}),
+        &mut host_methods,
+    );
+    assert_eq!(save["result"]["ok"], true, "got: {save}");
+
+    assert!(
+        !host_methods.iter().any(|m| m == "host/llm_chat" || m == "host/execute_tool"),
+        "process 1 must be zero-host for LLM + tools, saw: {host_methods:?}"
+    );
+    drop(stdin1);
+    let _ = child1.kill();
+    let _ = child1.wait();
+
+    // ── Process 2: resume — recreate the same id, load, read context ──
+    let (mut child2, mut stdin2, mut stdout2) = spawn_engine(&binary, &home);
+    let mut host_methods2: Vec<String> = Vec::new();
+    let recreate = rpc_call(
+        &mut stdin2,
+        &mut stdout2,
+        1,
+        "session/create",
+        serde_json::json!({
+            "session_id": "it-fullchain",
+            "homedir": ws.to_string_lossy(),
+            "system_prompt": "test",
+            "model": "stub-model",
+            "goal_enabled": false,
+            "native_llm": native_llm,
+            "native_tools": true
+        }),
+        &mut host_methods2,
+    );
+    assert!(recreate.get("error").is_none(), "recreate failed: {recreate}");
+
+    let loaded = rpc_call(
+        &mut stdin2,
+        &mut stdout2,
+        2,
+        "session/load",
+        serde_json::json!({"session_id": "it-fullchain"}),
+        &mut host_methods2,
+    );
+    assert_eq!(loaded["result"]["found"], true, "got: {loaded}");
+
+    let ctx = rpc_call(
+        &mut stdin2,
+        &mut stdout2,
+        3,
+        "session/get_context",
+        serde_json::json!({"session_id": "it-fullchain"}),
+        &mut host_methods2,
+    );
+    let ctx_text = serde_json::to_string(&ctx["result"]).unwrap_or_default();
+    assert!(
+        ctx_text.contains("read secret.txt"),
+        "resumed context must include the user prompt; got: {ctx}"
+    );
+    assert!(
+        ctx_text.contains("NATIVE-CHAIN-BODY-88"),
+        "resumed context must include the native tool result; got: {ctx}"
+    );
+
+    drop(stdin2);
+    let _ = child2.kill();
+    let _ = child2.wait();
+    let _ = std::fs::remove_dir_all(&ws);
+}
