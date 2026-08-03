@@ -23,4 +23,11 @@ export interface CapabilityEntryContext {
   readonly applicationsDir?: string;
   /** kimi-webbridge only: defaults to `http://127.0.0.1:10086`. */
   readonly webbridgeBaseUrl?: string;
+  /**
+   * Root holding the client-bundled wiring plugins (one `<id>/` subdirectory
+   * per plugin). Explicit injection for tests/hosts; when omitted, entries
+   * resolve via `KIMI_CODE_BUNDLED_PLUGINS_DIR` and the module-relative
+   * probes in `bundledPlugins.ts`.
+   */
+  readonly bundledPluginsRoot?: string;
 }

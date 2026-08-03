@@ -3,8 +3,10 @@
  *
  * Layers: daemon binary (`~/.kimi-webbridge/bin/`, local HTTP daemon on
  * 127.0.0.1:10086) + agent wiring (the official `kimi-webbridge` plugin —
- * skills only, installed through `IPluginService`) + browser extension
- * (soft gate, user installs from the webstore or the manual zip).
+ * skills only, bundled inside the client release and installed through
+ * `IPluginService` from the bundled copy — see `../bundledPlugins.ts`) +
+ * browser extension (soft gate, user installs from the webstore or the
+ * manual zip).
  *
  * Lifecycle rules honored here (official operations contract): the daemon
  * is only ever STARTED — never stopped / restarted / uninstalled — because
@@ -26,6 +28,7 @@ import { access, chmod, mkdir, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { requireBundledPluginDir } from '../bundledPlugins';
 import { downloadToFile, runCommand } from '../host';
 import type {
   CapabilityDetectResult,
@@ -37,8 +40,6 @@ import type {
 import type { CapabilityEntryContext } from './context';
 
 const PLUGIN_ID = 'kimi-webbridge';
-const PLUGIN_ZIP_URL =
-  'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip';
 const BINARY_CDN_BASE = 'https://cdn.kimi.com/webbridge/latest/releases';
 const DEFAULT_DAEMON_BASE_URL = 'http://127.0.0.1:10086';
 const STATUS_TIMEOUT_MS = 1_500;
@@ -191,7 +192,9 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     }
 
     report('skill');
-    await ctx.plugins.installPlugin({ source: PLUGIN_ZIP_URL });
+    await ctx.plugins.installPlugin({
+      source: requireBundledPluginDir(PLUGIN_ID, ctx.bundledPluginsRoot),
+    });
     // Un-shadow the plugin copy: user-source skills (priority 20, in either
     // user dir) win over the plugin source (priority 5) on name collisions.
     // Surface the migration so clients can tell the user their
