@@ -143,6 +143,7 @@ function stubHookRunner(partial: unknown): IExternalHooksRunnerService {
   return {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
+    onDidReload: Event.None,
     hasHooksFor: () => false,
     ...p,
   } as IExternalHooksRunnerService;
@@ -1319,6 +1320,66 @@ describe('IExternalHooksRunnerService integration', () => {
 
       await vi.advanceTimersByTimeAsync(180_000);
       expect(fired).toEqual([]);
+    } finally {
+      ix?.dispose();
+      disposables.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('arms and disarms SessionHeartbeat when the hook index reloads', async () => {
+    vi.useFakeTimers();
+    const disposables = new DisposableStore();
+    let ix: TestInstantiationService | undefined;
+    try {
+      const fired: string[] = [];
+      const reloadEmitter = disposables.add(new Emitter<void>());
+      let heartbeatEnabled = false;
+      const hookEngine = {
+        trigger: async () => [],
+        triggerBlock: async () => undefined,
+        fireAndForgetTrigger: async (event: string) => {
+          fired.push(event);
+          return [];
+        },
+        hasHooksFor: (event: string) => heartbeatEnabled && event === 'SessionHeartbeat',
+        onDidReload: reloadEmitter.event,
+      };
+
+      ix = createServices(disposables, {
+        strict: true,
+        additionalServices: (reg) => {
+          registerStateServices(reg);
+          reg.defineInstance(ISessionContext, stubSessionContext());
+          reg.defineInstance(ISessionLifecycleHooks, stubSessionLifecycleHooks());
+          reg.defineInstance(ISessionMetadata, stubSessionMetadata());
+          reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
+          reg.defineInstance(IModelService, stubModelService());
+          reg.definePartialInstance(ISessionSubagentService, {
+            hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
+            onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
+          });
+        },
+      });
+      ix.set(IExternalHooksRunnerService, stubHookRunner(hookEngine));
+      ix.set(ISessionExternalHooksService, new SyncDescriptor(SessionExternalHooksService));
+      ix.get(ISessionExternalHooksService);
+
+      // No heartbeat hook at startup: nothing fires.
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(fired).toEqual([]);
+
+      // A plugin reload contributes a SessionHeartbeat hook: the timer arms.
+      heartbeatEnabled = true;
+      reloadEmitter.fire();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fired).toEqual(['SessionHeartbeat']);
+
+      // A later reload drops it again: the timer disarms.
+      heartbeatEnabled = false;
+      reloadEmitter.fire();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(fired).toEqual(['SessionHeartbeat']);
     } finally {
       ix?.dispose();
       disposables.dispose();

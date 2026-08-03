@@ -112,16 +112,26 @@ export class SessionExternalHooksService
 
     // Arm the heartbeat only once the configured-hook index has loaded and
     // only when the event has hooks at all, so sessions without a
-    // SessionHeartbeat hook never hold a recurring timer.
+    // SessionHeartbeat hook never hold a recurring timer. Re-sync on every
+    // hook-index reload (plugin reload) so late-registered heartbeat hooks
+    // still arm, and removed ones disarm.
     void this.runner.ready
-      .then(() => {
-        if (!this.runner.hasHooksFor('SessionHeartbeat')) return;
-        this.heartbeat.cancelAndSet(() => this.tickHeartbeat(), HEARTBEAT_INTERVAL_MS);
-      })
+      .then(() => this.syncHeartbeat())
       .catch(() => undefined);
+    this._register(this.runner.onDidReload(() => this.syncHeartbeat()));
   }
 
   private readonly heartbeat = this._register(new IntervalTimer({ unref: true }));
+
+  private syncHeartbeat(): void {
+    try {
+      if (this.runner.hasHooksFor('SessionHeartbeat')) {
+        this.heartbeat.cancelAndSet(() => this.tickHeartbeat(), HEARTBEAT_INTERVAL_MS);
+      } else {
+        this.heartbeat.cancel();
+      }
+    } catch {}
+  }
 
   private async triggerSessionStart(source: SessionStartHookSource): Promise<void> {
     await this.runner.trigger('SessionStart', {

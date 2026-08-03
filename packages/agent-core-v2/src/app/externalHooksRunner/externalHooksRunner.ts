@@ -10,6 +10,7 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { Event } from '#/_base/event';
 import type { HookBlockDecision, HookMatcherValue, HookResult } from '#/agent/externalHooks/types';
 
 export interface ExternalHooksRunnerTriggerArgs {
@@ -23,6 +24,8 @@ export interface ExternalHooksRunnerTriggerArgs {
 export interface IExternalHooksRunnerService {
   readonly _serviceBrand: undefined;
   readonly ready: Promise<void>;
+  /** Fired after the hook index is (re)built — initial load and plugin reloads. */
+  readonly onDidReload: Event<void>;
   trigger(event: string, args?: ExternalHooksRunnerTriggerArgs): Promise<HookResult[]>;
   triggerBlock(
     event: string,

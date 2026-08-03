@@ -16,6 +16,7 @@
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Emitter, type Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IPluginService } from '#/app/plugin/plugin';
@@ -35,6 +36,9 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
 
   private byEvent = new Map<string, HookDef[]>();
   readonly ready: Promise<void>;
+
+  private readonly _onDidReload = this._register(new Emitter<void>());
+  readonly onDidReload: Event<void> = this._onDidReload.event;
 
   constructor(
     @IConfigService private readonly config: IConfigService,
@@ -128,6 +132,7 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     const configured = this.config.get(HOOKS_SECTION) as readonly HookDefConfig[] | undefined;
     const pluginHooks = await this.plugins.enabledHooks();
     this.byEvent = indexHooks([...(configured ?? []), ...pluginHooks]);
+    this._onDidReload.fire();
   }
 }
 
