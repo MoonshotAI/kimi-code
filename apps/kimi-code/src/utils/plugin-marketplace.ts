@@ -90,9 +90,64 @@ export async function loadPluginMarketplace(
       configuredSource === undefined ? await getSourceCheckoutMarketplaceLocation() : undefined;
     if (fallback === undefined) throw error;
     raw = await readMarketplaceText(fallback, fetchImpl);
-    return withLatestVersions(parsePluginMarketplace(raw, fallback), fetchImpl);
+    return withBuiltInEntries(await withLatestVersions(parsePluginMarketplace(raw, fallback), fetchImpl));
   }
-  return withLatestVersions(parsePluginMarketplace(raw, location), fetchImpl);
+  return withBuiltInEntries(await withLatestVersions(parsePluginMarketplace(raw, location), fetchImpl));
+}
+
+/**
+ * The built-in capability entries (kimi-cu, kimi-webbridge) are injected by
+ * the client instead of being served by the marketplace catalog, so their
+ * visibility is bound to the client version — older clients never see them.
+ * They are appended to every catalog (default, custom, or the source-checkout
+ * fallback), skipping ids the catalog already carries so a real entry always
+ * wins. No `version` is pinned: it would drift from the actual CDN content,
+ * and reinstalling is the upgrade path (a reinstall upserts the wiring).
+ */
+async function withBuiltInEntries(marketplace: PluginMarketplace): Promise<PluginMarketplace> {
+  const present = new Set(marketplace.plugins.map((entry) => entry.id));
+  const missing = (await builtInMarketplaceEntries()).filter((entry) => !present.has(entry.id));
+  return missing.length === 0
+    ? marketplace
+    : { ...marketplace, plugins: [...marketplace.plugins, ...missing] };
+}
+
+async function builtInMarketplaceEntries(): Promise<readonly PluginMarketplaceEntry[]> {
+  return [
+    {
+      id: 'kimi-cu',
+      tier: 'official',
+      displayName: 'Kimi Computer Use',
+      description:
+        'macOS GUI automation in the background — click, type, scroll, and drag without taking over your mouse. Requires the KimiCU.app runtime (macOS only); current clients set it up automatically on install.',
+      keywords: ['computer-use', 'macos', 'accessibility', 'automation', 'gui'],
+      source: 'https://cdn.kimi.com/kimi-computer-use/latest/kimi-cu-plugin.zip',
+    },
+    {
+      id: 'kimi-webbridge',
+      tier: 'official',
+      displayName: 'Kimi WebBridge',
+      description:
+        'Control your real browser from Kimi Code — navigate, click, type, and screenshot. Requires the WebBridge daemon + browser extension.',
+      homepage: 'https://www.kimi.com/features/webbridge',
+      keywords: ['browser', 'webbridge', 'cdp', 'automation', 'web'],
+      source: await resolveBuiltInWebbridgeSource(),
+    },
+  ];
+}
+
+const BUILT_IN_WEBBRIDGE_ZIP_URL =
+  'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip';
+
+/**
+ * In a source checkout the built-in webbridge entry installs the repo's own
+ * plugin copy (dev); every packaged build installs the official CDN zip.
+ */
+async function resolveBuiltInWebbridgeSource(): Promise<string> {
+  const sourceDir = dirname(fileURLToPath(import.meta.url));
+  const repoDir = resolve(sourceDir, '../../../../plugins/official/kimi-webbridge');
+  const info = await stat(join(repoDir, 'kimi.plugin.json')).catch(() => undefined);
+  return info?.isFile() === true ? repoDir : BUILT_IN_WEBBRIDGE_ZIP_URL;
 }
 
 async function withLatestVersions(

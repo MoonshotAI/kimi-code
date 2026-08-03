@@ -96,32 +96,82 @@ describe('loadPluginMarketplace', () => {
 
     const marketplace = await loadPluginMarketplace({ workDir: '/tmp/work', source: file });
 
-    expect(marketplace).toEqual({
-      source: file,
-      version: '1',
-      plugins: [
-        {
-          id: 'kimi-datasource',
-          displayName: 'Kimi Datasource',
-          tier: 'official',
-          version: '1.0.0',
-          description: 'Datasource tools',
-          source: join(dir, 'kimi-datasource'),
-          keywords: ['data'],
-          homepage: undefined,
-        },
-        {
-          id: 'superpowers',
-          displayName: 'Superpowers',
-          tier: 'curated',
-          version: '5.1.0',
-          description: 'Workflow skills',
-          source: join(dir, 'curated', 'superpowers'),
-          keywords: ['skills', 'workflow'],
-          homepage: 'https://github.com/obra/superpowers',
-        },
-      ],
-    });
+    expect(marketplace.source).toBe(file);
+    expect(marketplace.version).toBe('1');
+    expect(marketplace.plugins.slice(0, 2)).toEqual([
+      {
+        id: 'kimi-datasource',
+        displayName: 'Kimi Datasource',
+        tier: 'official',
+        version: '1.0.0',
+        description: 'Datasource tools',
+        source: join(dir, 'kimi-datasource'),
+        keywords: ['data'],
+        homepage: undefined,
+      },
+      {
+        id: 'superpowers',
+        displayName: 'Superpowers',
+        tier: 'curated',
+        version: '5.1.0',
+        description: 'Workflow skills',
+        source: join(dir, 'curated', 'superpowers'),
+        keywords: ['skills', 'workflow'],
+        homepage: 'https://github.com/obra/superpowers',
+      },
+    ]);
+  });
+
+  it('appends the built-in capability entries the catalog does not carry', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-plugin-marketplace-'));
+    const file = join(dir, 'marketplace.json');
+    await writeFile(file, JSON.stringify({ version: '1', plugins: [] }), 'utf8');
+
+    const marketplace = await loadPluginMarketplace({ workDir: '/tmp/work', source: file });
+
+    // Client-injected, so the visibility of the two capabilities is bound to
+    // the client version; no version is pinned (reinstall is the upgrade path).
+    expect(marketplace.plugins).toEqual([
+      expect.objectContaining({
+        id: 'kimi-cu',
+        tier: 'official',
+        source: 'https://cdn.kimi.com/kimi-computer-use/latest/kimi-cu-plugin.zip',
+      }),
+      expect.objectContaining({
+        id: 'kimi-webbridge',
+        tier: 'official',
+        // In a source checkout the entry installs the repo's own plugin copy.
+        source: join(REPO_ROOT, 'plugins/official/kimi-webbridge'),
+      }),
+    ]);
+    expect(marketplace.plugins.map((entry) => entry.version)).toEqual([undefined, undefined]);
+  });
+
+  it('lets a catalog entry win over the built-in entry with the same id', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-plugin-marketplace-'));
+    const file = join(dir, 'marketplace.json');
+    await writeFile(
+      file,
+      JSON.stringify({
+        plugins: [
+          {
+            id: 'kimi-webbridge',
+            tier: 'official',
+            displayName: 'Kimi WebBridge',
+            source: './kimi-webbridge',
+          },
+        ],
+      }),
+      'utf8',
+    );
+
+    const marketplace = await loadPluginMarketplace({ workDir: '/tmp/work', source: file });
+
+    const webbridge = marketplace.plugins.filter((entry) => entry.id === 'kimi-webbridge');
+    expect(webbridge).toHaveLength(1);
+    expect(webbridge[0]?.source).toBe(join(dir, 'kimi-webbridge'));
+    // kimi-cu is still injected — only the carried id is deduped.
+    expect(marketplace.plugins.some((entry) => entry.id === 'kimi-cu')).toBe(true);
   });
 
   it('includes Superpowers in the repository marketplace fixture', async () => {
