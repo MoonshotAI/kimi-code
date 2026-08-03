@@ -91,4 +91,40 @@ describe('injectMermaidHtmlLabelsOff', () => {
     expect(out).toContain(`\`\`\`mermaid\n%% kimi-web`);
     expect(out.indexOf(DIRECTIVE)).toBeLessThan(out.indexOf('%%{init: {"theme": "forest"}}%%'));
   });
+
+  it('does NOT rewrite a mermaid sample inside a longer enclosing fence', () => {
+    // A ```mermaid line that is the CONTENT of a ````markdown block must stay
+    // untouched — injecting there would alter user-visible example text.
+    const text =
+      '````markdown\n示例：\n\n```mermaid\nflowchart TD\n  A-->B\n```\n````\n';
+    expect(injectMermaidHtmlLabelsOff(text)).toBe(text);
+  });
+
+  it('does NOT inject into an unclosed outer fence (streaming partial input)', () => {
+    const text = '````markdown\n```mermaid\nflowchart TD\n  A--';
+    expect(injectMermaidHtmlLabelsOff(text)).toBe(text);
+  });
+
+  it('injects a real mermaid fence that follows an enclosed sample', () => {
+    const text =
+      '````markdown\n```mermaid\nnot a real fence\n```\n````\n\n```mermaid\nflowchart TD\n  A-->B\n```\n';
+    const out = injectMermaidHtmlLabelsOff(text);
+    // Exactly one injection, into the second (real) fence.
+    expect(out.match(/kimi-web: htmlLabels=off/g)).toHaveLength(1);
+    expect(out).toContain('````\n\n```mermaid\n%% kimi-web');
+  });
+
+  it('treats a closing fence with fewer marks than the opener as content', () => {
+    // The ``` line does not close a ```` fence, so the later ```mermaid is
+    // still sample content and must not be injected.
+    const text = '````text\n```\n```mermaid\nflowchart TD\n````\n';
+    expect(injectMermaidHtmlLabelsOff(text)).toBe(text);
+  });
+
+  it('a tilde fence does not close a backtick fence', () => {
+    const text = '```text\n~~~\n```mermaid\nflowchart TD\n```\n';
+    // The ~~~ line is content; ```mermaid is content too (inside the
+    // backtick fence), so nothing is injected.
+    expect(injectMermaidHtmlLabelsOff(text)).toBe(text);
+  });
 });

@@ -23,25 +23,53 @@
 // does not already start with a directive (`trimStart().startsWith("%%{")`),
 // so the comment line comes first to keep its dark/light theme injection
 // working. Mermaid merges multiple init directives, so both take effect.
-
-const MERMAID_FENCE_RE = /(^|\n)( {0,3})(`{3,}|~{3,})mermaid[ \t]*(\r?\n)/g;
+//
+// Fences are tracked CommonMark-style (same marker char, closing length >=
+// opening length, backtick info strings cannot contain backticks) so a
+// ```mermaid line that is the CONTENT of a longer enclosing fence (e.g. a
+// ````markdown example) is left untouched — injecting there would rewrite
+// user-visible sample text instead of a rendered diagram.
 
 const INJECT_COMMENT = '%% kimi-web: htmlLabels=off (workaround for markstream flattening foreignObject soft-wraps)';
 const INJECT_DIRECTIVE = '%%{init: {"htmlLabels": false}}%%';
 
+const FENCE_LINE_RE = /^( {0,3})(`{3,}|~{3,})([^`]*)$/;
+
 /**
  * Return `text` with the htmlLabels-off directive injected right after the
- * opening line of every ```mermaid fence (``` or ~~~, up to 3 leading spaces,
- * LF or CRLF). Pure and idempotent over raw model text: callers always pass
- * the original markdown, so repeated renders never accumulate injections.
- * Text without mermaid fences is returned byte-for-byte unchanged.
+ * opening line of every real ```mermaid fence (``` or ~~~, up to 3 leading
+ * spaces). Pure and idempotent over raw model text: callers always pass the
+ * original markdown, so repeated renders never accumulate injections. Text
+ * without mermaid fences is returned byte-for-byte unchanged.
  */
 export function injectMermaidHtmlLabelsOff(text: string): string {
   if (!text.includes('mermaid')) return text;
-  MERMAID_FENCE_RE.lastIndex = 0;
-  return text.replace(
-    MERMAID_FENCE_RE,
-    (_full, lead: string, indent: string, fence: string, nl: string) =>
-      `${lead}${indent}${fence}mermaid${nl}${indent}${INJECT_COMMENT}${nl}${indent}${INJECT_DIRECTIVE}${nl}`,
-  );
+
+  const lines = text.split(/(?<=\n)/);
+  let openChar: '`' | '~' | null = null;
+  let openLen = 0;
+  const out: string[] = [];
+
+  for (const line of lines) {
+    out.push(line);
+    const body = line.endsWith('\r\n') ? line.slice(0, -2) : line.endsWith('\n') ? line.slice(0, -1) : line;
+    const m = FENCE_LINE_RE.exec(body);
+    if (!m) continue;
+    const [, indent = '', marks = '', info = ''] = m;
+    const char = marks[0] as '`' | '~';
+
+    if (openChar === null) {
+      openChar = char;
+      openLen = marks.length;
+      if (info.trim() === 'mermaid') {
+        const nl = line.endsWith('\r\n') ? '\r\n' : '\n';
+        out.push(`${indent}${INJECT_COMMENT}${nl}${indent}${INJECT_DIRECTIVE}${nl}`);
+      }
+    } else if (char === openChar && marks.length >= openLen && info.trim() === '') {
+      openChar = null;
+      openLen = 0;
+    }
+  }
+
+  return out.join('');
 }
