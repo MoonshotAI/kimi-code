@@ -79,15 +79,5 @@ export async function shutdownServerTelemetry(
 ): Promise<void> {
   telemetry.registration?.dispose();
   if (telemetry.appender === undefined) return;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      telemetry.appender.shutdown(),
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, Math.max(0, deadlineMs - Date.now()));
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
+  await telemetry.appender.shutdown(deadlineMs);
 }

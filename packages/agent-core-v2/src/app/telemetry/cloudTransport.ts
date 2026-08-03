@@ -1,6 +1,6 @@
 /**
- * `telemetry` domain — `CloudTransport`, the HTTP transport for cloud
- * telemetry. Posts enriched events to the telemetry endpoint with Bearer
+ * `telemetry` domain (L1) — `CloudTransport`, the HTTP transport behind
+ * `CloudAppender`. Posts enriched events to the telemetry endpoint with Bearer
  * auth, retry, and a byte-store fallback for failed events, persisted through
  * the `storage` byte layer (`IFileSystemStorageService`) under the `telemetry` scope.
  * App-scoped; independent of `@moonshot-ai/kimi-telemetry`.
@@ -139,10 +139,12 @@ export class CloudTransport {
     await this.storage.write(TELEMETRY_SCOPE, key, textEncoder.encode(text));
   }
 
-  async retryDiskEvents(): Promise<void> {
+  async retryDiskEvents(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted === true) return;
     const keys = await this.storage.list(TELEMETRY_SCOPE, FAILED_PREFIX);
     const now = this.now();
     for (const key of keys) {
+      if (signal?.aborted === true) return;
       if (!key.startsWith(FAILED_PREFIX) || !key.endsWith(JSONL_SUFFIX)) continue;
       const createdAt = parseFailedTimestamp(key);
       if (createdAt === undefined || now - createdAt > DISK_EVENT_MAX_AGE_MS) {
@@ -163,10 +165,11 @@ export class CloudTransport {
       }
 
       try {
-        await this.sendHttp(payload);
+        await this.sendHttp(payload, signal);
         await this.storage.delete(TELEMETRY_SCOPE, key);
       } catch (error) {
         if (error instanceof TransientCloudError) continue;
+        if (signal?.aborted === true) return;
       }
     }
   }

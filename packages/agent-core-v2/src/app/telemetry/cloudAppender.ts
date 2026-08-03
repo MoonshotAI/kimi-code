@@ -1,11 +1,24 @@
 /**
- * `telemetry` domain — `CloudAppender`, an `ITelemetryAppender` that
+ * `telemetry` domain (L1) — `CloudAppender`, an `ITelemetryAppender` that
  * batches events, drops non-primitive properties, redacts PII from string
  * values, enriches events with common context, and posts them to the
  * telemetry endpoint through `CloudTransport`, which persists failed events
- * through the `storage` byte layer. Reads host facts (`clientIdentity`, env,
- * platform/arch) from `IBootstrapService`; `createCloudAppender` assembles
- * one from a `ServicesAccessor` so hosts only supply identity facts.
+ * through the `storage` byte layer (`IFileSystemStorageService`). Reads host
+ * facts (`clientVersion`, env, platform/arch) from `IBootstrapService`;
+ * `createCloudAppender` assembles one from a `ServicesAccessor` so hosts only
+ * supply identity facts.
+ *
+ * Shutdown lifecycle:
+ * - `flush()` is guarded by a chained-promise lock so concurrent periodic /
+ *   threshold / manual / shutdown triggers serialize without two waiters
+ *   racing on a cleared `flushInFlight` flag.
+ * - `shutdown(deadlineMs?)` provides a deadline-bounded, idempotent close:
+ *   creates an AbortController deadline, threads the signal through flush and
+ *   spool replay, cancels in-flight sends, hands unsent buffer to durable
+ *   storage, replays recoverable v2 spool data before completing.
+ * - Delivery is at-least-once across ambiguous cancellation boundaries; stable
+ *   event IDs preserve the server's deduplication key.
+ *
  * App-scoped; independent of `@moonshot-ai/kimi-telemetry`.
  */
 
@@ -74,6 +87,7 @@ export function createCloudAppender(
 
 const DEFAULT_FLUSH_THRESHOLD = 50;
 const DEFAULT_FLUSH_INTERVAL_MS = 30_000;
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
 
 export class CloudAppender implements ITelemetryAppender {
   private readonly transport: CloudTransport;
@@ -84,6 +98,10 @@ export class CloudAppender implements ITelemetryAppender {
   private sessionId: string | null;
   private buffer: EnrichedCloudEvent[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
+
+  private flushInFlight: Promise<void> | null = null;
+  private shutdownController: AbortController | null = null;
+  private shutDown = false;
 
   constructor(options: CloudAppenderOptions) {
     this.deviceId = options.deviceId;
@@ -105,6 +123,7 @@ export class CloudAppender implements ITelemetryAppender {
   }
 
   track(event: string, properties?: TelemetryProperties): void {
+    if (this.shutDown) return;
     const eventSessionId = properties?.['sessionId'];
     const enriched: EnrichedCloudEvent = {
       event_id: randomUUID().replaceAll('-', ''),
@@ -137,15 +156,61 @@ export class CloudAppender implements ITelemetryAppender {
   }
 
   async flush(): Promise<void> {
+    const prev = this.flushInFlight;
+    const flushPromise = (async () => {
+      if (prev !== null) {
+        await prev.catch(() => {});
+      }
+      if (this.buffer.length === 0) return;
+      await this.doFlush();
+    })();
+    this.flushInFlight = flushPromise;
+    await flushPromise;
+  }
+
+  private async doFlush(): Promise<void> {
     if (this.buffer.length === 0) return;
     const events = this.buffer;
     this.buffer = [];
-    await this.transport.send(events);
+    const signal = this.shutdownController?.signal;
+    await this.transport.send(events, signal);
   }
 
-  async shutdown(): Promise<void> {
+  async shutdown(deadlineMs?: number): Promise<void> {
+    if (this.shutDown) return;
+    this.shutDown = true;
+
     this.stopPeriodicFlush();
-    await this.flush();
+
+    const deadline = deadlineMs ?? Date.now() + DEFAULT_SHUTDOWN_TIMEOUT_MS;
+    this.shutdownController = new AbortController();
+    const signal = this.shutdownController.signal;
+    const remainingMs = Math.max(0, deadline - Date.now());
+
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    if (remainingMs > 0) {
+      deadlineTimer = setTimeout(() => {
+        this.shutdownController?.abort(new Error('shutdown deadline expired'));
+      }, remainingMs);
+      deadlineTimer.unref?.();
+    } else {
+      this.shutdownController.abort(new Error('shutdown deadline already expired'));
+    }
+
+    try {
+      await this.flush().catch(() => {});
+
+      if (this.buffer.length > 0) {
+        await this.transport.saveToDisk(this.buffer).catch(() => {});
+        this.buffer = [];
+      }
+
+      await this.transport.retryDiskEvents(signal).catch(() => {});
+    } finally {
+      if (deadlineTimer !== undefined) {
+        clearTimeout(deadlineTimer);
+      }
+    }
   }
 
   startPeriodicFlush(): void {
@@ -186,8 +251,8 @@ function buildContext(options: CloudAppenderOptions): CloudContext {
   const { bootstrap } = options;
   const context: CloudContext = {
     app_name: options.appName,
-    client_version: bootstrap.clientIdentity.version,
-    version: bootstrap.clientIdentity.version,
+    client_version: bootstrap.clientVersion,
+    version: bootstrap.clientVersion,
     core_version: resolveCoreVersion(),
     runtime: 'node',
     platform: bootstrap.platform,
