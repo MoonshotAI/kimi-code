@@ -55,6 +55,9 @@ enum Commands {
         /// Print the raw RPC result JSON instead of the rendered transcript.
         #[arg(long)]
         json: bool,
+        /// Create a goal on the session before prompting (goal mode).
+        #[arg(long)]
+        goal: Option<String>,
     },
     /// List persisted sessions.
     Sessions {
@@ -448,12 +451,40 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     };
     match command {
-        Commands::Print { prompt, verbose, json } => {
+        Commands::Print { prompt, verbose, json, goal } => {
             // Progress on stderr: always with `--verbose`, and by default when
             // stderr is a terminal (script pipes stay clean — stdout keeps the
             // result contract either way).
             let capture = verbose || std::io::stderr().is_terminal();
             let (mut client, renderer) = connect_with_renderer(&server, capture)?;
+            // Goal mode: create the session + goal before prompting (pure
+            // state ops) so the engine drives continuation turns toward the
+            // objective; run_prompt's own create is idempotent.
+            if let Some(objective) = goal {
+                let created = client
+                    .call(
+                        kimi_protocol::methods::SESSION_CREATE,
+                        serde_json::json!({ "session_id": "kimi-exec" }),
+                    )
+                    .await;
+                if let Some(error) = created.get("error") {
+                    eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
+                    std::process::exit(1);
+                }
+                let goal_created = client
+                    .call(
+                        kimi_protocol::methods::SESSION_GOAL_CREATE,
+                        serde_json::json!({
+                            "session_id": "kimi-exec",
+                            "objective": objective,
+                        }),
+                    )
+                    .await;
+                if let Some(error) = goal_created.get("error") {
+                    eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
+                    std::process::exit(1);
+                }
+            }
             let result = kimi_exec::run_prompt(&mut client, "kimi-exec", &prompt, kimi_exec::native_llm_from_config()).await;
             if let Some(renderer) = renderer {
                 renderer.abort();
