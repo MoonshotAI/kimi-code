@@ -1106,6 +1106,7 @@ function selectModel(modelId: string): void {
             v-if="status"
             class="model-pill"
             :class="{ open: dropdownOpen }"
+            :title="status.model"
             role="button"
             tabindex="0"
             @click.stop="toggleDropdown"
@@ -1146,6 +1147,7 @@ function selectModel(modelId: string): void {
             :key="m.id"
             class="md-row"
             :class="{ 'is-current': m.id === status.modelId }"
+            :title="`${m.displayName ?? m.model} (${m.provider})`"
             role="menuitem"
             @click="selectModel(m.id)"
           >
@@ -1164,6 +1166,7 @@ function selectModel(modelId: string): void {
             :key="m.id"
             class="md-row"
             :class="{ 'is-current': m.id === status.modelId }"
+            :title="m.displayName ?? m.model"
             role="menuitem"
             @click="selectModel(m.id)"
           >
