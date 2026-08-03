@@ -123,4 +123,69 @@ impl Session {
         }
         Ok(body["result"].clone())
     }
+
+    /// Create a goal on the session; returns the goal snapshot.
+    pub async fn create_goal(&mut self, objective: &str) -> anyhow::Result<serde_json::Value> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                kimi_protocol::methods::SESSION_GOAL_CREATE,
+                serde_json::json!({ "session_id": self.id, "objective": objective }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("create goal: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"].clone())
+    }
+
+    /// The current goal snapshot (or null when none is active).
+    pub async fn goal(&mut self) -> anyhow::Result<serde_json::Value> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                kimi_protocol::methods::SESSION_GOAL_GET,
+                serde_json::json!({ "session_id": self.id }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("get goal: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"].clone())
+    }
+
+    /// Pause the active goal (optional reason).
+    pub async fn pause_goal(&mut self, reason: Option<&str>) -> anyhow::Result<serde_json::Value> {
+        self.goal_state_change(kimi_protocol::methods::SESSION_GOAL_PAUSE, reason).await
+    }
+
+    /// Resume the paused goal (optional reason).
+    pub async fn resume_goal(&mut self, reason: Option<&str>) -> anyhow::Result<serde_json::Value> {
+        self.goal_state_change(kimi_protocol::methods::SESSION_GOAL_RESUME, reason).await
+    }
+
+    /// Cancel the active goal.
+    pub async fn cancel_goal(&mut self) -> anyhow::Result<serde_json::Value> {
+        self.goal_state_change(kimi_protocol::methods::SESSION_GOAL_CANCEL, None).await
+    }
+
+    async fn goal_state_change(
+        &mut self,
+        method: &str,
+        reason: Option<&str>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let mut params = serde_json::json!({ "session_id": self.id });
+        if let Some(reason) = reason {
+            params["reason"] = serde_json::json!(reason);
+        }
+        let body = self.client.lock().await.call(method, params).await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("goal change: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"].clone())
+    }
 }

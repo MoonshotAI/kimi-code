@@ -77,6 +77,17 @@ async fn harness_exposes_engine_events() {
     // Approval surface: empty list; unknown resolve -> false.
     assert!(harness.approvals(Some("s-events")).await.expect("approvals").is_empty());
     assert_eq!(harness.resolve_approval("nope", true, None).await.expect("resolve"), false);
+
+    // Goal lifecycle on a session handle (pure state ops).
+    let mut session = harness.create_session("s-goal").await.expect("create goal session");
+    let snapshot = session.create_goal("do the migration").await.expect("create goal");
+    assert_eq!(snapshot["objective"], "do the migration", "goal snapshot: {snapshot}");
+    // goal_get nests the snapshot under `goal`.
+    let goal = session.goal().await.expect("goal");
+    assert_eq!(goal["goal"]["objective"], "do the migration", "goal get: {goal}");
+    session.pause_goal(Some("offline test")).await.expect("pause goal");
+    session.resume_goal(None).await.expect("resume goal");
+    session.cancel_goal().await.expect("cancel goal");
 }
 
 #[tokio::test]
