@@ -303,6 +303,45 @@ impl Processor for SessionProcessor {
             })
         });
 
+        // `session/set_model` — switch the agent's model.
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_SET_MODEL, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionSetModelParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                agent.set_model(input.model);
+                Ok(serde_json::json!({ "ok": true }))
+            })
+        });
+
+        // `session/clear_context` — clear the session's model context.
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_CLEAR_CONTEXT, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: SessionGoalParams = serde_json::from_value(params)
+                    .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                let cleared = agent.context.clear().is_some();
+                Ok(serde_json::json!({ "cleared": cleared }))
+            })
+        });
+
         // `session/get_status` — live engine status snapshot.
         let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_GET_STATUS, move |params| {
