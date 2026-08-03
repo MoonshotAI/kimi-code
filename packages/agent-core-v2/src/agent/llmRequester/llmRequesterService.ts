@@ -61,7 +61,6 @@ import { emptyUsage, inputTotal, type TokenUsage } from '#/kosong/contract/usage
 import { ILogService, type LogContext } from '#/_base/log/log';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import {
-  effectiveMaxCompletionTokens,
   type ModelRequestEvent,
   type ModelRequestParams,
   type ModelRequester,
@@ -372,14 +371,19 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         modelName: request.model.name,
         modelAlias: request.modelAlias,
         thinkingEffort: request.thinkingEffort,
-        maxTokens: effectiveMaxCompletionTokens(request.params),
         systemPrompt: input.systemPrompt,
         tools: input.tools,
         messages: input.messages,
         fields,
       };
-      this.logRequest(logInput);
-      this.recordRequest(logInput);
+      let requestRecorded = false;
+      const recordOutboundRequest = (maxTokens: number | undefined): void => {
+        if (requestRecorded) return;
+        requestRecorded = true;
+        const sentInput = { ...logInput, maxTokens };
+        this.logRequest(sentInput);
+        this.recordRequest(sentInput);
+      };
 
       let message: Message | undefined;
       let usage: TokenUsage | undefined;
@@ -391,28 +395,37 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         onRequestTrace(normalized);
       };
 
-      for await (const event of request.requester.request(input, signal, {
-        ...request.params,
-        onTraceId: setTraceId,
-      })) {
-        switch (event.type) {
-          case 'part':
-            await onPart(event.part);
-            break;
-          case 'usage':
-            usage = event.usage;
-            break;
-          case 'finish':
-            finish = event;
-            message = event.message;
-            setTraceId(event.traceId);
-            break;
-          case 'timing': {
-            const { type: _type, ...streamTiming } = event;
-            timing = streamTiming;
-            break;
+      try {
+        for await (const event of request.requester.request(input, signal, {
+          ...request.params,
+          onTraceId: setTraceId,
+        })) {
+          recordOutboundRequest(
+            event.type === 'request' ? event.observation.maxCompletionTokens : undefined,
+          );
+          switch (event.type) {
+            case 'request':
+              break;
+            case 'part':
+              await onPart(event.part);
+              break;
+            case 'usage':
+              usage = event.usage;
+              break;
+            case 'finish':
+              finish = event;
+              message = event.message;
+              setTraceId(event.traceId);
+              break;
+            case 'timing': {
+              const { type: _type, ...streamTiming } = event;
+              timing = streamTiming;
+              break;
+            }
           }
         }
+      } finally {
+        recordOutboundRequest(undefined);
       }
 
       if (message === undefined || finish === undefined) {

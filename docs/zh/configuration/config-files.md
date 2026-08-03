@@ -150,7 +150,7 @@ KIMI_BASE_URL = "https://api.moonshot.ai/v1"
 | `model` | `string` | 是 | 调用 API 时实际传给服务端的模型 ID |
 | `max_context_size` | `integer` | 是 | 最大上下文长度（token 数），必须 ≥ 1 |
 | `max_input_size` | `integer` | 否 | 模型声明的单次请求输入上限（当低于总窗口时，如 gpt-5 的 400k 窗口 / 272k 输入）。压缩、上下文溢出检查和用量比率优先使用它；补全预算仍使用总窗口。解析时会被钳制到不超过 `max_context_size` |
-| `max_output_size` | `integer` | 否 | 单次请求的输出 token 上限（对应 `max_tokens` / `max_output_tokens`）。所有供应商都会作为显式上限读取：`anthropic` 下覆盖模型内置的服务端最大值；OpenAI 兼容供应商下按显式值原样发送，未设置时回退为推断预算并以 128k 封顶 |
+| `max_output_size` | `integer` | 否 | 单次请求的输出 token 上限（对应 `max_tokens` / `max_output_tokens`）。所有供应商都会作为显式上限读取：`anthropic` 下覆盖模型内置的服务端最大值；OpenAI 兼容供应商下会跳过通用的 128k 回退上限，但仍受剩余上下文窗口约束，未设置时回退为推断预算并以 128k 封顶 |
 | `capabilities` | `array<string>` | 否 | 显式追加的能力标签：`thinking`、`always_thinking`、`image_in`、`video_in`、`audio_in`、`tool_use`。与供应商自动识别的能力取并集，只能追加不能移除 |
 | `support_efforts` | `array<string>` | 否 | 模型接受的 Thinking 档位。对 `kimi` 而言，在运行时选择列表外的值会报错；模型解析时若配置值或之前的值不受目标模型支持，会回落到目标模型的 `default_effort`，并将该有效值同步给 UI。支持 Thinking 但没有此字段的 Kimi 模型使用布尔 `on` / `off`。其他 provider 在协议提供原生 effort 字段时会原样传递具体值；协议仅提供等级或 token budget 时，只做必要的格式转换。managed 和 open-platform 刷新可能会改写该字段；如需手动固定，请改用 `[models."<alias>".overrides] support_efforts` |
 | `default_effort` | `string` | 否 | 模型的默认 Thinking 档位。managed 和 open-platform 刷新可能会改写该字段；如需手动固定，请改用 `[models."<alias>".overrides] default_effort` |

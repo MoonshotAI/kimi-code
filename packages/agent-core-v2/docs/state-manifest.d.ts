@@ -1042,7 +1042,6 @@ export interface AgentStateSnapshot {
       readonly maxCompletionTokensExplicit?: boolean;
       readonly usedContextTokens?: number;
       readonly maxContextTokens?: number;
-      readonly onTraceId?: (traceId: string | null) => void;
     };
     readonly systemPrompt: string;
   }>;

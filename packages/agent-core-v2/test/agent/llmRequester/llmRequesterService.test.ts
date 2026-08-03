@@ -7,7 +7,9 @@
  * Responsibilities: assert retry eligibility, projection order and bounds,
  * per-turn recovery stickiness, request recording, and usage accounting.
  * Wiring: real AgentLLMRequesterService with stubbed context memory,
- * projector, context sizing, profile, model, telemetry, and wire/log services. Run:
+ * projector, context sizing, profile, telemetry, and wire/log services; the
+ * request-recording case also uses the real ModelRequesterImpl and OpenAI Responses
+ * provider with only its SDK client boundary stubbed. Run:
  * pnpm test -- test/agent/llmRequester/llmRequesterService.test.ts
  */
 
@@ -48,11 +50,14 @@ import type { ThinkingEffort } from '#/kosong/contract/provider';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { IModelService } from '#/kosong/model/model';
+import { ModelRequesterImpl } from '#/kosong/model/modelRequesterImpl';
 import {
   type ModelRequestEvent,
   type ModelRequestInput,
   type ModelRequester,
 } from '#/kosong/model/modelRequester';
+import type { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
+import { OpenAIResponsesChatProvider } from '#/kosong/provider/bases/openai/openai-responses';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ILogService } from '#/_base/log/log';
 import { Error2, ErrorCodes } from '#/errors';
@@ -141,14 +146,16 @@ function createService(
     | undefined,
   options: {
     readonly thinkingLevel?: ThinkingEffort;
+    readonly modelCapabilities?: ModelCapability;
   } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
   const thinkingLevel = options.thinkingLevel ?? 'off';
+  const modelCapabilities = options.modelCapabilities ?? capabilities;
   const profile: Partial<IAgentProfileService> = {
     resolveModelContext: () => ({
       modelAlias: 'm',
-      modelCapabilities: capabilities,
+      modelCapabilities,
       maxOutputSize: undefined,
       alwaysThinking: undefined,
       thinkingLevel,
@@ -160,7 +167,7 @@ function createService(
     data: () => ({
       cwd: '',
       modelAlias: 'm',
-      modelCapabilities: capabilities,
+      modelCapabilities,
       thinkingLevel,
       systemPrompt: 'system',
     }),
@@ -270,6 +277,84 @@ describe('AgentLLMRequesterService measured anchors', () => {
 
     expect(measuredCalls).toHaveLength(1);
     expect(measuredCalls[0]?.usage.inputOther).toBe(40);
+  });
+});
+
+async function* responsesEventStream(): AsyncIterable<unknown> {
+  yield { type: 'response.created', response: { id: 'resp-budget' } };
+  yield { type: 'response.output_text.delta', delta: 'ok' };
+  yield {
+    type: 'response.completed',
+    response: {
+      id: 'resp-budget',
+      status: 'completed',
+      usage: { input_tokens: 3, output_tokens: 1, total_tokens: 4 },
+    },
+  };
+}
+
+describe('AgentLLMRequesterService request trace', () => {
+  it('records the provider-resolved max token cap when OpenAI Responses clamps an inferred budget', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const provider = new OpenAIResponsesChatProvider({
+      model: 'gpt-4.1',
+      clientFactory: () =>
+        ({
+          responses: {
+            create: (params: unknown) => {
+              capturedBody = params as Record<string, unknown>;
+              return Promise.resolve(responsesEventStream());
+            },
+          },
+        }) as never,
+    });
+    const modelCapabilities: ModelCapability = {
+      ...capabilities,
+      max_context_tokens: 1_000_000,
+    };
+    const model: Model = {
+      id: 'm',
+      name: 'gpt-4.1',
+      aliases: [],
+      protocol: 'openai_responses',
+      headers: {},
+      capabilities: modelCapabilities,
+      maxContextSize: 1_000_000,
+      alwaysThinking: false,
+      providerName: 'e2e',
+      authProvider: { getAuth: () => Promise.resolve(undefined) },
+    };
+    const registry = {
+      _serviceBrand: undefined,
+      createChatProvider: () => provider,
+    } as unknown as IProtocolAdapterRegistry;
+    const requester = new ModelRequesterImpl(model, registry);
+    const { service, wire, records } = createService(requester, undefined, {
+      modelCapabilities,
+    });
+
+    await service.request();
+    await wire.flush();
+
+    expect(capturedBody).toMatchObject({
+      model: 'gpt-4.1',
+      max_output_tokens: 131_072,
+    });
+    const requestRecords = records.filter((record) => record.type === 'llm.request');
+    expect(requestRecords).toHaveLength(1);
+    expect(requestRecords[0]?.['maxTokens']).toBe(capturedBody?.['max_output_tokens']);
+  });
+
+  it('leaves the cap unknown when a custom requester does not report its prepared request', async () => {
+    const calls = { value: 0 };
+    const { service, wire, records } = createService(createRequester(calls, null), undefined);
+
+    await service.request();
+    await wire.flush();
+
+    const requestRecords = records.filter((record) => record.type === 'llm.request');
+    expect(requestRecords).toHaveLength(1);
+    expect(requestRecords[0]?.['maxTokens']).toBeUndefined();
   });
 });
 

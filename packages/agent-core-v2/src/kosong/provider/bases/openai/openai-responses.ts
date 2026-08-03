@@ -1174,6 +1174,9 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
         );
       }
 
+      options?.onRequestPrepared?.({
+        maxCompletionTokens: readNumberField(createParams, 'max_output_tokens'),
+      });
       options?.onRequestSent?.();
       const response = await (
         client.responses as {

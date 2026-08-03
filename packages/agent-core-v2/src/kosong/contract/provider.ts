@@ -82,6 +82,10 @@ export interface StreamDecodeStats {
   readonly clientConsumeMs: number;
 }
 
+export interface ProviderRequestObservation {
+  readonly maxCompletionTokens?: number;
+}
+
 export interface VideoUploadInput {
   readonly data: Uint8Array;
   readonly mimeType: string;
@@ -100,6 +104,8 @@ export interface GenerateOptions {
   usedContextTokens?: number;
   maxContextTokens?: number;
   onRequestStart?: () => void;
+  /** Reports safe, provider-normalized request fields immediately before dispatch. */
+  onRequestPrepared?: (observation: ProviderRequestObservation) => void;
   onRequestSent?: () => void;
   onStreamEnd?: (stats?: StreamDecodeStats) => void;
   onTraceId?: (traceId: string | null) => void;

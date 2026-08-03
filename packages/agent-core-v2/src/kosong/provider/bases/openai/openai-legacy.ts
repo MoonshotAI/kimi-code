@@ -633,6 +633,13 @@ export class OpenAILegacyChatProvider implements ChatProvider {
 
     try {
       const client = this._createClient(options?.auth);
+      const maxCompletionTokens =
+        typeof finalParams['max_completion_tokens'] === 'number'
+          ? finalParams['max_completion_tokens']
+          : typeof finalParams['max_tokens'] === 'number'
+            ? finalParams['max_tokens']
+            : undefined;
+      options?.onRequestPrepared?.({ maxCompletionTokens });
       options?.onRequestSent?.();
       const { data, response } = await client.chat.completions
         .create(
