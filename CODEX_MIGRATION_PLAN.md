@@ -286,20 +286,26 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 3. ✅ `kimi-server-client`（AppServerClient{InProcess, Remote} 门面；Remote 经 stdio 全链路测试）
 4. ✅ **方法族迁移完成（11 processor）**：session **44 方法**（create/prompt/cancel/run_shell/cancel_shell_command/compact/save/load/delete/fork/export/set_model/set_thinking/set_swarm_mode/set_plan_mode/clear_context/get_context/get_status/list/get_usage/get_plan/get_warnings/list_mcp_servers/list_skills/undo_history/import_context/activate_skill/steer/goal 全生命周期/start_btw/end_btw/**init/destroy/clear_plan/get_mcp_startup_metrics/reconnect_mcp_server/list_tools/add_additional_dir/remove_additional_dir/update_metadata**）+ health/config(get+set)/fs/git/approval/plugin/permission(get/set_mode/**add_rule**)/cron/bg（register/list/get/stop/output/append_output/**settle/detach**）/task——宿主可服务的全部请求方法在 Rust 协议层，与 main.rs handler 同源（`agent/*`、`host/*` 属引擎侧 stdio 协议，由 kimi-agent 原生实现；bg/event、cron/fired 为事件流 wire 常量）
 5. [ ] kap-server 测试平移（377 基线，TS 面，阶段 B 收尾可选）
-6. **验证**：kimi-server 40 测试 + client 2 + exec 2 全绿；CLI 集成 12 + kimi-ui 4；workspace check 干净；0 warnings
+6. **验证**：kimi-server 40 测试 + client 4 + exec 2 全绿；CLI 集成 13 + kimi-ui 6；workspace check 干净；0 warnings
 
 ### 阶段 C — CLI + exec
-1. ✅ `kimi-cli`：clap 分发 + 子命令平移（print/sessions/resume/config/doctor/health/**export**；acp/login/provider/upgrade/vis/web 待）+ **全局 `--server <bin>`**：所有子命令可选走 Remote stdio 传输（独立 `kimi-server-serve` 进程），而非内嵌 server；**doctor 含 config 文件级检查**（OK/SKIP/ERROR + 合并解析验证，TS parity）；**`print --verbose` 事件渲染器**（turn/tool/usage 等 → 人类可读进度行，内嵌与 Remote 统一；非 verbose 在 stderr 为 TTY 时同样渲染，脚本管道保持 stdout JSON 契约））
+1. ✅ `kimi-cli`：clap 分发 + 子命令平移（print/sessions/resume/config/doctor/health/**export**；acp/login/provider/upgrade/vis/web 待）+ **全局 `--server <bin>`**：所有子命令可选走 Remote stdio 传输（独立 `kimi-server-serve` 进程），而非内嵌 server；**doctor 含 config 文件级检查**（OK/SKIP/ERROR + 合并解析验证 + `config <path>` 单文件校验 + tui.toml 存在性，TS parity）；**事件渲染**（turn/tool/usage → 进度行，内嵌与 Remote 统一；非 verbose 在 stderr 为 TTY 时同样渲染，脚本管道保持 stdout 契约）；**print/resume 默认可读转录**（`--json` 保留原始 RPC）；**`config --set KEY=VALUE`**（点路径写盘）；**`sessions --json`**；**裸 `kimi` 打印帮助 + 阶段 D 提示**
 2. ✅ `kimi-exec`：-p/print + run_prompt 经 AppServerClient（InProcess/Remote）
-3. ✅ **验证**：`kimi -p "..."` 端到端；CLI 集成测试（health/sessions/export/config/doctor/--server/verbose 事件流驱动真实二进制，9 用例）；CLI 测试平移（55 用例，TS 面待）
+3. ✅ **验证**：`kimi -p "..."` 端到端；CLI 集成测试（health/sessions/export/config/doctor/--server/verbose 事件流/裸调用，13 用例）；CLI 测试平移（55 用例，TS 面待）
 
 ### 阶段 D — TUI
 0. ✅ `kimi-ui` crate（渲染原语：render_event 事件→进度行、last_assistant_text 转录提取、**EventSource 统一事件源**（内嵌 EventBus / Remote stderr 捕获，CLI/TUI 共用），6 测试）
-1. `kimi-tui`：app 主循环 + custom_terminal + 事件流（ratatui 依赖，离线待引入）
+1. `kimi-tui`：app 主循环 + custom_terminal + 事件流（ratatui 依赖，离线待引入；事件源与渲染原语已就绪）
 2. chatwidget（transcript/streaming/tool_requests/slash）→ components/messages 平移
 3. bottom_pane（composer/textarea/footer）→ controllers
 4. reverse_rpc（approval/question）接线
 5. **验证**：TUI 冒烟（VT100 终端仿真测试）；交互路径与 TS 版行为一致
+
+### 阶段 C/D 期间修复的宿主缺陷（迁移测试驱动发现）
+- `session/export` 丢失 base64 编码（zip 字节被序列化成数字数组）→ 已补 `STANDARD.encode`
+- `config/set` 不建 `.kimi-code/` 父目录（新目录写失败 os error 3）→ 已补 `create_dir_all`
+- `CronProcessor` 未调用 `manager.start()`（main.rs 有）→ `cron/get_next_fire` 永远 None → 已修
+- `session/fs` action=list 从不传 Glob `pattern`（main.rs 同款 bug 继承）→ query→pattern 映射 + 缺 pattern 报错
 
 ### 阶段 E — SDK/ACP/OAuth/Config
 1. `kimi-sdk`：session/harness/auth/catalog 平移；klient 并入
@@ -328,8 +334,8 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 ## 8. 状态
 
 - [x] 阶段 A 框架落地（kimi-protocol + workspace + wire 类型下沉）✅
-- [ ] 阶段 B 宿主协议层（kimi-server + transport + client）
-- [ ] 阶段 C CLI + exec
-- [ ] 阶段 D TUI
+- [x] 阶段 B 宿主协议层（kimi-server 40 测试 + transport/serve 二进制 + client InProcess/Remote 全链路）✅
+- [x] 阶段 C CLI + exec（13 集成测试 + typed client + 配置读写闭环）✅
+- [ ] 阶段 D TUI（kimi-ui 前置完成；ratatui 离线待引入）
 - [ ] 阶段 E SDK/ACP/OAuth/Config
 - [ ] 阶段 F 退役
