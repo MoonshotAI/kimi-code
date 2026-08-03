@@ -20,6 +20,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost } from '#/_base/di/test';
 import { Error2, isError2 } from '#/_base/errors/errors';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import {
   resetModelsDevUpstreamForTest,
@@ -35,6 +37,10 @@ import type { ModelsSection } from '#/kosong/model/model';
 import type { ProvidersSection } from '#/kosong/provider/provider';
 
 import { StubConfigService } from '../../kosong/stubs';
+import { stubBootstrap } from '../bootstrap/stubs';
+import { stubAgentIdentity } from '../agentIdentity/stubs';
+
+const HOST_HEADERS = { 'User-Agent': 'kimi-test/1.0' };
 
 const codes = ModelsDevImportErrors.codes;
 
@@ -141,6 +147,8 @@ function createHost(sections: Record<string, unknown> = {}): {
     [IConfigService, config],
     [IKosongConfigService, stubKosongConfig()],
     [IModelCatalog, stubModelCatalog()],
+    [IBootstrapService, stubBootstrap('/home', {}, { requestHeaders: HOST_HEADERS })],
+    [IAgentIdentity, stubAgentIdentity()],
   ]);
   return { config, imports: host.app.accessor.get(IModelsDevImportService) };
 }

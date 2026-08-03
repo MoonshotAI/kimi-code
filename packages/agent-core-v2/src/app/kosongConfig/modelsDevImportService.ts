@@ -25,6 +25,10 @@
  * passes (drop, then re-add onto clean slots). The kosong persistence
  * bridge then pushes the change into the registries, which is also what
  * invalidates the runtime model catalog.
+ *
+ * The custom-registry import targets a user-supplied third-party URL, so its
+ * request carries the host User-Agent under the configured identity — the same
+ * value the scheduled refresh sends, rather than a hardcoded product token.
  */
 
 import {
@@ -38,6 +42,8 @@ import {
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
+import { IAgentIdentity, identityUserAgent } from '#/app/agentIdentity/agentIdentity';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog } from '#/kosong/model/catalog';
 import { type ModelsSection } from '#/kosong/model/model';
@@ -76,6 +82,8 @@ export class ModelsDevImportService implements IModelsDevImportService {
     @IConfigService private readonly config: IConfigService,
     @IKosongConfigService private readonly kosongConfig: IKosongConfigService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IAgentIdentity private readonly identity: IAgentIdentity,
   ) {}
 
   async listModelsDevProviders(): Promise<ModelsDevProviderItem[]> {
@@ -216,7 +224,10 @@ export class ModelsDevImportService implements IModelsDevImportService {
     try {
       entries = await fetchCustomRegistry(source, {
         fetchImpl: upstreamFetch(),
-        userAgent: 'kimi-code-kap-server',
+        userAgent: identityUserAgent(
+          this.bootstrap.args.requestHeaders['User-Agent'],
+          this.identity.slug,
+        ),
         signal: AbortSignal.timeout(UPSTREAM_FETCH_TIMEOUT_MS),
       });
     } catch (err) {

@@ -24,7 +24,15 @@
  * a blank or non-ASCII product token. A name leaving nothing behind (CJK-only,
  * punctuation-only, blank) yields `DEFAULT_IDENTITY_SLUG` instead of an empty
  * token.
+ *
+ * `identityUserAgent` projects the identity onto a host User-Agent for the
+ * app-scope callers that issue their own outbound requests: no identity, or no
+ * host header to rewrite, leaves the value untouched. `kosong`'s model catalog
+ * cannot use it — a foundational layer must not import an app domain — so it
+ * carries the same two guards inline against its header map.
  */
+
+import { replaceUserAgentProduct } from '@moonshot-ai/kimi-code-oauth';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
@@ -55,4 +63,12 @@ export function normalizeIdentitySlug(raw: string): string {
     .replaceAll(/[^a-z0-9]+/g, '-')
     .replaceAll(/^-+|-+$/g, '');
   return folded.length > 0 ? folded : DEFAULT_IDENTITY_SLUG;
+}
+
+export function identityUserAgent(
+  hostUserAgent: string | undefined,
+  slug: string | undefined,
+): string | undefined {
+  if (hostUserAgent === undefined || slug === undefined) return hostUserAgent;
+  return replaceUserAgentProduct(hostUserAgent, slug);
 }

@@ -41,7 +41,6 @@
 
 import {
   refreshProviderModels,
-  replaceUserAgentProduct,
   type ManagedKimiConfigShape,
   type ManagedKimiOAuthRef,
   type RefreshProviderHost,
@@ -52,7 +51,7 @@ import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/
 import { Error2 } from '#/_base/errors/errors';
 import { IOAuthService } from '#/app/auth/auth';
 import { AuthErrors } from '#/app/auth/errors';
-import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
+import { IAgentIdentity, identityUserAgent } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
@@ -183,20 +182,16 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     };
   }
 
-  private outboundUserAgent(): string | undefined {
-    const userAgent = this.bootstrap.args.requestHeaders['User-Agent'];
-    const slug = this.identity.slug;
-    if (userAgent === undefined || slug === undefined) return userAgent;
-    return replaceUserAgentProduct(userAgent, slug);
-  }
-
   private buildRefreshHost(exclusion: StaticExclusion): RefreshProviderHost {
     return {
       getConfig: async () => this.readUserConfigShape(exclusion),
       removeProvider: (providerId) => this.shapeWithoutProvider(providerId),
       setConfig: (patch) => this.applyRefreshPatch(patch, exclusion),
       resolveOAuthToken: (providerName, oauthRef) => this.resolveOAuthToken(providerName, oauthRef),
-      userAgent: this.outboundUserAgent(),
+      userAgent: identityUserAgent(
+        this.bootstrap.args.requestHeaders['User-Agent'],
+        this.identity.slug,
+      ),
     };
   }
 
