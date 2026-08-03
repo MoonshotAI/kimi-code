@@ -308,6 +308,9 @@ describe('AgentRecords persistence metadata', () => {
     expect(agent.config.profileName).toBe('coding');
     expect(agent.config.systemPrompt).toBe('You are a v2 coding agent.');
     expect(agent.config.subagentNames).toEqual(['explore']);
+    expect(agent.replayBuilder.buildResult().map((record) => record.type)).not.toContain(
+      'config_updated',
+    );
     const names = agent.tools.loopTools.map((tool) => tool.name);
     expect(names).toContain('Read');
     expect(names).toContain('Bash');

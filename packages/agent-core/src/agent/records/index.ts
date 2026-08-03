@@ -60,7 +60,7 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
       // tools.set_active_tools records are treated.
       if (!Array.isArray(input.activeToolNames)) return;
       const thinkingEffort = input.thinkingEffort ?? input.thinkingLevel;
-      agent.config.update({
+      agent.config.restore({
         ...(input.modelAlias !== undefined ? { modelAlias: input.modelAlias } : {}),
         ...(input.profileName !== undefined ? { profileName: input.profileName } : {}),
         ...(thinkingEffort !== undefined ? { thinkingEffort } : {}),
