@@ -89,7 +89,14 @@ export async function loadPluginMarketplace(
   } catch (error) {
     const fallback =
       configuredSource === undefined ? await getSourceCheckoutMarketplaceLocation() : undefined;
-    if (fallback === undefined) throw error;
+    if (fallback === undefined) {
+      if (options.includeBuiltInCapabilities === true) {
+        // The built-in entries do not come from the catalog — keep them
+        // visible when the catalog itself is unreachable.
+        return withBuiltInEntries({ source: location.resolved, plugins: [] });
+      }
+      throw error;
+    }
     raw = await readMarketplaceText(fallback, fetchImpl);
     const marketplace = await withLatestVersions(parsePluginMarketplace(raw, fallback), fetchImpl);
     return options.includeBuiltInCapabilities === true

@@ -71,6 +71,28 @@ describe('CapabilityService', () => {
     ]);
   });
 
+  it('isolates a failing detector to its own entry', async () => {
+    const broken: CapabilityEntry = {
+      id: 'kimi-cu',
+      displayName: 'kimi-cu',
+      description: 'fake',
+      supported: true,
+      detect: () => Promise.reject(new Error('probe timed out')),
+      install: () => Promise.resolve(),
+    };
+    const service = fakeService([
+      broken,
+      fakeEntry({ id: 'kimi-webbridge', detect: { steps: [{ id: 'daemon', state: 'ok' }] } }),
+    ]);
+
+    // One entry's broken probe must not take down the whole list.
+    const list = await service.listCapabilities();
+    expect(list.find((c) => c.id === 'kimi-webbridge')?.state).toBe('ready');
+    const cu = list.find((c) => c.id === 'kimi-cu');
+    expect(cu?.state).toBe('partial');
+    expect(cu?.steps).toEqual([{ id: 'detect', state: 'failed', detail: 'probe timed out' }]);
+  });
+
   it('marks optional steps as non-blocking for ready', async () => {
     const service = fakeService([
       fakeEntry({

@@ -61,7 +61,7 @@ export class CapabilityService implements ICapabilityService {
   }
 
   listCapabilities(): Promise<readonly CapabilityStatus[]> {
-    return Promise.all([...this.entries.values()].map((entry) => this.statusOf(entry)));
+    return Promise.all([...this.entries.values()].map((entry) => this.statusOfSafe(entry)));
   }
 
   async getCapability(id: string): Promise<CapabilityStatus> {
@@ -144,6 +144,35 @@ export class CapabilityService implements ICapabilityService {
       steps: detected.steps,
       ...(detected.version !== undefined ? { version: detected.version } : {}),
     };
+  }
+
+  /**
+   * `statusOf` for the list view: one entry's broken probe (e.g. a timed-out
+   * CLI call) must not take down every other entry's status, so detection
+   * failures degrade to a failed step on that entry alone.
+   */
+  private async statusOfSafe(entry: CapabilityEntry): Promise<CapabilityStatus> {
+    try {
+      return await this.statusOf(entry);
+    } catch (error) {
+      const install = this.installProgress.get(entry.id) ?? IDLE_PROGRESS;
+      const detail = error instanceof Error ? error.message : String(error);
+      const base = {
+        id: entry.id,
+        displayName: entry.displayName,
+        description: entry.description,
+        install,
+      };
+      if (!entry.supported) {
+        return { ...base, supported: false, state: 'unsupported', steps: [] };
+      }
+      return {
+        ...base,
+        supported: true,
+        state: 'partial',
+        steps: [{ id: 'detect', state: 'failed' as const, detail }],
+      };
+    }
   }
 }
 

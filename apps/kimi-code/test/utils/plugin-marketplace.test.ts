@@ -298,6 +298,23 @@ describe('loadPluginMarketplace', () => {
     })).rejects.toThrow(/fetch failed/);
   });
 
+  it('keeps the built-in entries when the catalog is unreachable', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('fetch failed');
+    }) as unknown as typeof fetch;
+
+    // Explicit source (no checkout fallback) + unreachable: the built-ins do
+    // not come from the catalog, so they must survive the outage.
+    const marketplace = await loadPluginMarketplace({
+      workDir: '/tmp/work',
+      source: 'https://example.test/marketplace.json',
+      fetchImpl,
+      includeBuiltInCapabilities: true,
+    });
+
+    expect(marketplace.plugins.map((entry) => entry.id)).toEqual(['kimi-cu', 'kimi-webbridge']);
+  });
+
   describe('version derivation from a GitHub source', () => {
     async function loadEntry(source: string, version?: string) {
       const dir = await mkdtemp(join(tmpdir(), 'kimi-plugin-marketplace-'));
