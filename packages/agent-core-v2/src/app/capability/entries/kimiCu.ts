@@ -124,7 +124,7 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     steps.push({
       id: 'plugin',
       state: pluginOk ? 'ok' : 'missing',
-      ...(plugin?.version !== undefined ? { detail: plugin.version } : {}),
+      detail: plugin?.version,
     });
 
     const version = await readAppBundleVersion(infoPlist);
@@ -136,11 +136,7 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     steps.push({
       id: 'app',
       state: appUsable ? 'ok' : 'missing',
-      ...(appExists && !appUsable
-        ? { detail: 'not executable' }
-        : version !== undefined
-          ? { detail: version }
-          : {}),
+      detail: appExists && !appUsable ? 'not executable' : version,
     });
 
     // A wedged binary turns these CLI probes into timeouts — mark the step
@@ -173,15 +169,16 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
       steps.push({
         id: 'permissions',
         state: granted ? 'ok' : 'missing',
-        ...(granted || missingPermissions === undefined || missingPermissions.length === 0
-          ? {}
-          : { detail: missingPermissions }),
+        detail:
+          granted || missingPermissions === undefined || missingPermissions.length === 0
+            ? undefined
+            : missingPermissions,
       });
     }
 
     return {
       steps,
-      ...(version !== undefined ? { version } : plugin?.version !== undefined ? { version: plugin.version } : {}),
+      version: version ?? plugin?.version,
     };
   }
 

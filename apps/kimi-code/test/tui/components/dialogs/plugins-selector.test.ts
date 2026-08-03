@@ -414,6 +414,33 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain('Marketplace unavailable: fetch failed');
   });
 
+  it('renders a same-id custom catalog row as a normal plugin, without capability state', () => {
+    // A custom marketplace may legitimately list an entry reusing the
+    // kimi-webbridge id: without the capability: marker it must render and
+    // install as a plain plugin, not borrow capability status.
+    const capabilities = [makeCapability({ id: 'kimi-webbridge', displayName: 'Kimi WebBridge' })];
+    const entries = [
+      {
+        id: 'kimi-webbridge',
+        tier: 'official' as const,
+        displayName: 'Kimi WebBridge (fork)',
+        source: 'https://x/fork.zip',
+      },
+    ];
+    const { panel, onSelect } = makePanel({ initialTab: 'official', capabilities });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Kimi WebBridge (fork)  install');
+    expect(out).not.toContain('finish setup');
+
+    panel.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: 'install',
+      entry: expect.objectContaining({ id: 'kimi-webbridge', source: 'https://x/fork.zip' }),
+    });
+  });
+
   it('renders capability rows from the engine while the catalog is still loading', () => {
     const capabilities = [
       makeCapability(),
@@ -477,7 +504,7 @@ describe('plugins selector dialogs', () => {
         id: 'kimi-webbridge',
         tier: 'official' as const,
         displayName: 'Kimi WebBridge',
-        source: 'https://x/w.zip',
+        source: 'capability:kimi-webbridge',
       },
       ...officialEntries,
     ];
@@ -491,7 +518,7 @@ describe('plugins selector dialogs', () => {
     panel.handleInput('\r'); // index 0 → the real entry installs
     expect(onSelect).toHaveBeenCalledWith({
       kind: 'install',
-      entry: expect.objectContaining({ id: 'kimi-webbridge', source: 'https://x/w.zip' }),
+      entry: expect.objectContaining({ id: 'kimi-webbridge', source: 'capability:kimi-webbridge' }),
     });
   });
 
@@ -504,7 +531,7 @@ describe('plugins selector dialogs', () => {
         id: 'kimi-webbridge',
         tier: 'curated' as const,
         displayName: 'Kimi WebBridge',
-        source: 'https://x/w.zip',
+        source: 'capability:kimi-webbridge',
       },
     ];
     const { panel, onSelect } = makePanel({ initialTab: 'third-party' });
@@ -514,7 +541,7 @@ describe('plugins selector dialogs', () => {
     panel.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({
       kind: 'install',
-      entry: expect.objectContaining({ id: 'kimi-webbridge', source: 'https://x/w.zip' }),
+      entry: expect.objectContaining({ id: 'kimi-webbridge', source: 'capability:kimi-webbridge' }),
     });
   });
 
@@ -603,7 +630,7 @@ describe('plugins selector dialogs', () => {
         tier: 'official' as const,
         displayName: 'Kimi Computer Use',
         version: '0.5.4',
-        source: 'https://code.kimi.com/kimi-code/plugins/official/kimi-cu.zip',
+        source: 'capability:kimi-cu',
       },
     ];
     const { panel } = makePanel({ installed, capabilities });
@@ -671,7 +698,7 @@ describe('plugins selector dialogs', () => {
     ];
     const { panel } = makePanel({ capabilities, initialTab: 'official' });
     panel.setMarketplace(
-      [{ id: 'kimi-webbridge', displayName: 'Kimi WebBridge', source: 'https://x/w.zip', tier: 'official' }],
+      [{ id: 'kimi-webbridge', displayName: 'Kimi WebBridge', source: 'capability:kimi-webbridge', tier: 'official' }],
       '/tmp/marketplace.json',
     );
 
@@ -696,7 +723,7 @@ describe('plugins selector dialogs', () => {
     ];
     const { panel } = makePanel({ capabilities, initialTab: 'official' });
     panel.setMarketplace(
-      [{ id: 'kimi-webbridge', displayName: 'Kimi WebBridge', source: 'https://x/w.zip', tier: 'official' }],
+      [{ id: 'kimi-webbridge', displayName: 'Kimi WebBridge', source: 'capability:kimi-webbridge', tier: 'official' }],
       '/tmp/marketplace.json',
     );
 

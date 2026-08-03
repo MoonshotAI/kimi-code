@@ -142,7 +142,7 @@ export class CapabilityService implements ICapabilityService {
       supported: true,
       state,
       steps: detected.steps,
-      ...(detected.version !== undefined ? { version: detected.version } : {}),
+      version: detected.version,
     };
   }
 

@@ -439,6 +439,14 @@ export class PluginsPanelComponent extends Container implements Focusable {
     return this.opts.capabilities?.find((capability) => capability.id === id);
   }
 
+  /** Capability state for a MARKETPLACE row: only our own injected rows
+   * (the `capability:<id>` source marker) may show capability status — a
+   * custom catalog row that merely reuses the id renders as a normal
+   * plugin, matching how Enter routes it. */
+  private capabilityForEntry(entry: PluginMarketplaceEntry): CapabilityStatus | undefined {
+    return entry.source === `capability:${entry.id}` ? this.capabilityFor(entry.id) : undefined;
+  }
+
   private get officialEntries(): readonly PluginMarketplaceEntry[] {
     // While the catalog is loading or unreachable, the locally-known
     // capability rows still render and install — built-in runtime setup
@@ -467,7 +475,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
   private get officialCatalogEntries(): readonly PluginMarketplaceEntry[] {
     return this.marketplaceEntries.filter((entry) => {
       if (entry.tier !== 'official') return false;
-      return this.capabilityFor(entry.id)?.supported !== false;
+      return this.capabilityForEntry(entry)?.supported !== false;
     });
   }
 
@@ -779,7 +787,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
     const pointer = selected ? SELECT_POINTER : ' ';
     const labelStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
     const prefix = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `);
-    const capability = this.capabilityFor(entry.id);
+    const capability = this.capabilityForEntry(entry);
     const status = isPinnedWebBridgeEntry(entry)
       ? 'open in browser'
       : capability === undefined

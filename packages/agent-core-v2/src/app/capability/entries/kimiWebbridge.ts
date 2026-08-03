@@ -105,7 +105,7 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     steps.push({
       id: 'daemon-binary',
       state: binaryUsable ? 'ok' : 'missing',
-      ...(binaryPresent && !binaryUsable ? { detail: 'not executable' } : {}),
+      detail: binaryPresent && !binaryUsable ? 'not executable' : undefined,
     });
 
     const daemon = await fetchDaemonStatus();
@@ -113,7 +113,7 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     steps.push({
       id: 'daemon',
       state: daemonRunning ? 'ok' : 'missing',
-      ...(daemonRunning && daemon?.version !== undefined ? { detail: daemon.version } : {}),
+      detail: daemonRunning ? daemon?.version : undefined,
     });
 
     const installed = await ctx.plugins.listPlugins();
@@ -122,7 +122,7 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     steps.push({
       id: 'skill',
       state: pluginOk ? 'ok' : 'missing',
-      ...(plugin?.version !== undefined ? { detail: plugin.version } : {}),
+      detail: plugin?.version,
     });
 
     const skillShadows = (
@@ -147,7 +147,7 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
       optional: true,
     });
 
-    return { steps, ...(daemon?.version !== undefined ? { version: daemon.version } : {}) };
+    return { steps, version: daemon?.version };
   }
 
   async function waitForDaemon(): Promise<void> {
