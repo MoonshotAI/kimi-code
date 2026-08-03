@@ -47,10 +47,15 @@ export interface MCPContentBlock {
  * Result of a single MCP tool invocation.
  *
  * Matches the shape returned by the MCP protocol's `tools/call` method.
+ * `structuredContent` is the machine-readable payload returned by tools that
+ * declare an `outputSchema`; the human-oriented `content` blocks are often
+ * only a lossy summary of it ("returned 6 item(s)"), so it must reach the
+ * model alongside them.
  */
 export interface MCPToolResult {
   content: MCPContentBlock[];
   isError: boolean;
+  structuredContent?: Record<string, unknown>;
 }
 
 /**

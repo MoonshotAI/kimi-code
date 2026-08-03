@@ -79,11 +79,14 @@ export function toMcpToolDefinition(tool: SdkListedTool): MCPToolDefinition {
 
 export function toMcpToolResult(result: unknown): MCPToolResult {
   if (typeof result === 'object' && result !== null && 'content' in result) {
-    const typed = result as { content: unknown; isError?: unknown };
+    const typed = result as { content: unknown; isError?: unknown; structuredContent?: unknown };
     if (Array.isArray(typed.content)) {
       return {
         content: typed.content as MCPToolResult['content'],
         isError: typed.isError === true,
+        ...(isStructuredContent(typed.structuredContent)
+          ? { structuredContent: typed.structuredContent }
+          : {}),
       };
     }
   }
@@ -100,4 +103,12 @@ export function toMcpToolResult(result: unknown): MCPToolResult {
     };
   }
   return { content: [], isError: false };
+}
+
+/**
+ * Per the MCP spec `structuredContent` is a JSON object; ignore anything else
+ * a non-conforming server might send under that key.
+ */
+function isStructuredContent(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

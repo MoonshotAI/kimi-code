@@ -696,3 +696,85 @@ describe('mcpResultToExecutableOutput', () => {
     await rm(dir, { recursive: true, force: true });
   });
 });
+
+describe('structuredContent forwarding', () => {
+  test('forwards structuredContent the content blocks only summarize', async () => {
+    // Regression: tools with an outputSchema often return a lossy summary in
+    // `content` ("returned 6 item(s)") plus the real payload in
+    // `structuredContent` — the model must see the payload, not just the
+    // summary.
+    const out = await mcpResultToExecutableOutput(
+      {
+        content: [{ type: 'text', text: 'list_projects returned 2 item(s).' }],
+        isError: false,
+        structuredContent: { projects: [{ id: 'p1' }, { id: 'p2' }] },
+      },
+      'mcp__s__list_projects',
+    );
+
+    expect(out.isError).toBe(false);
+    expect(out.output).toEqual([
+      { type: 'text', text: 'list_projects returned 2 item(s).' },
+      { type: 'text', text: '{"projects":[{"id":"p1"},{"id":"p2"}]}' },
+    ]);
+  });
+
+  test('does not double-forward structuredContent already serialized into a text block', async () => {
+    // Spec-conforming fallbacks serialize the structured payload verbatim
+    // into a text block; appending it again would double the token cost.
+    const structuredContent = { total: 2, items: ['a', 'b'] };
+    for (const text of [
+      JSON.stringify(structuredContent),
+      JSON.stringify(structuredContent, null, 2),
+    ]) {
+      const out = await mcpResultToExecutableOutput(
+        { content: [{ type: 'text', text }], isError: false, structuredContent },
+        'mcp__s__t',
+      );
+      expect(out.output).toBe(text);
+    }
+  });
+
+  test('emits structuredContent even when the content array is empty', async () => {
+    const out = await mcpResultToExecutableOutput(
+      { content: [], isError: false, structuredContent: { ok: true } },
+      'mcp__s__t',
+    );
+    expect(out).toEqual({ output: '{"ok":true}', isError: false });
+  });
+
+  test('keeps the media-only wrap when structuredContent accompanies an image', async () => {
+    const out = await mcpResultToExecutableOutput(
+      {
+        content: [{ type: 'image', data: 'AAA', mimeType: 'image/png' }],
+        isError: false,
+        structuredContent: { width: 10 },
+      },
+      'mcp__s__shot',
+    );
+
+    expect(out.output).toEqual([
+      { type: 'text', text: '<mcp_tool_result name="mcp__s__shot">' },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+      { type: 'text', text: '</mcp_tool_result>' },
+      { type: 'text', text: '{"width":10}' },
+    ]);
+  });
+
+  test('counts the forwarded structuredContent against the text budget', async () => {
+    const out = await mcpResultToExecutableOutput(
+      {
+        content: [{ type: 'text', text: 'summary' }],
+        isError: false,
+        structuredContent: { payload: 'x'.repeat(100_000) },
+      },
+      'mcp__s__t',
+    );
+
+    expect(out.truncated).toBe(true);
+    const parts = out.output as ContentPart[];
+    const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
+    expect(joined).toContain('summary');
+    expect(joined).toContain('Output truncated');
+  });
+});
