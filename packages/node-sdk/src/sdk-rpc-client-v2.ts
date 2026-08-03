@@ -2045,8 +2045,16 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return this.engineAccessor.get(IAgentIdentity).slug;
   }
 
-  /** v1's per-core `globalMcpOAuth`, built over the app-scope document store. */
-  private get globalMcpOAuthService(): McpOAuthService {
+  /**
+   * v1's per-core `globalMcpOAuth`, built over the app-scope document store.
+   *
+   * Async on purpose: the service caches providers by store key and stamps the
+   * client name when it first builds one, so any path that can materialize a
+   * provider must not run before config has loaded. Guarding here rather than
+   * at each call site means a new entry point cannot forget to.
+   */
+  private async globalMcpOAuthService(): Promise<McpOAuthService> {
+    await this.configReady;
     if (this.globalMcpOAuth === undefined) {
       this.globalMcpOAuth = new McpOAuthService({
         store: createMcpOAuthStore(this.engineAccessor.get(IAtomicDocumentStore)),
@@ -2086,12 +2094,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async beginGlobalMcpServerAuth(name: string): Promise<BeginGlobalMcpServerAuthResult> {
     const server = await this.globalMcpConfig.get(name);
     const config = requireOAuthMcpServer(server);
-    // `McpOAuthService` caches providers by store key and stamps the client
-    // name when it first builds one, so reading the identity before config
-    // has loaded would pin the built-in label for the rest of the process.
-    await this.configReady;
     try {
-      const flow = await this.globalMcpOAuthService.beginAuthorization(server.name, config.url);
+      const oauth = await this.globalMcpOAuthService();
+      const flow = await oauth.beginAuthorization(server.name, config.url);
       const flowId = randomUUID();
       this.globalMcpOAuthFlows.set(flowId, { flow });
       return {
@@ -2135,7 +2140,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async resetGlobalMcpServerAuth(name: string): Promise<void> {
     const server = await this.globalMcpConfig.get(name);
     const config = requireRemoteMcpServer(server);
-    await this.globalMcpOAuthService.invalidate(server.name, config.url);
+    const oauth = await this.globalMcpOAuthService();
+    await oauth.invalidate(server.name, config.url);
   }
 
   /**
@@ -2156,7 +2162,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const section = this.engineAccessor.get(IConfigService).get<McpSection | undefined>(MCP_SECTION);
     const manager = new McpConnectionManager({
       stdioCwd: options.cwd,
-      oauthService: this.globalMcpOAuthService,
+      oauthService: await this.globalMcpOAuthService(),
       resolveClientName: () => this.resolveMcpClientName(),
       resolveDefaultTimeouts: () => ({
         startupTimeoutMs: section?.startupTimeoutMs,
