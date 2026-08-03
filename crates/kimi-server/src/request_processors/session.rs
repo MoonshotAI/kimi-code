@@ -5,16 +5,18 @@
 
 use std::sync::Arc;
 
-use kimi_agent::session::manager::SessionManager;
 use kimi_protocol::rpc::JsonRpcError;
 use kimi_protocol::wire_types::SessionGoalParams;
-use tokio::sync::Mutex;
 
 use crate::processor::{MessageProcessor, Processor};
 
-/// Session methods, backed by the shared engine `SessionManager`.
+/// Session methods, backed by the shared engine state.
 pub struct SessionProcessor {
-    manager: Arc<Mutex<SessionManager>>,
+    state: crate::state::ServerState,
+    /// Per-session cancellation flags (create stores; prompt reads).
+    cancel: Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
+    /// Per-session steer queues.
+    steer: Arc<std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::Mutex<Vec<kimi_agent::context::types::ContentPart>>>>>>,
 }
 
 impl SessionProcessor {
@@ -26,20 +28,184 @@ impl SessionProcessor {
     /// Create from shared server state.
     pub fn with_state(state: crate::state::ServerState) -> Self {
         Self {
-            manager: state.manager,
+            state,
+            cancel: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            steer: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 
     /// Expose the shared manager (for tests / future processors).
-    pub fn manager(&self) -> Arc<Mutex<SessionManager>> {
-        self.manager.clone()
+    pub fn manager(&self) -> Arc<tokio::sync::Mutex<kimi_agent::session::manager::SessionManager>> {
+        self.state.manager.clone()
     }
 }
 
 impl Processor for SessionProcessor {
     fn register(&self, processor: &mut MessageProcessor) {
+        // `session/create` — create a session + agent (main.rs parity).
+        let mgr = self.state.manager.clone();
+        let callbacks = self.state.callbacks.clone();
+        let approval = self.state.approval.clone();
+        let permission = self.state.permission.clone();
+        let cancel = self.cancel.clone();
+        let steer = self.steer.clone();
+        processor.register(kimi_protocol::methods::SESSION_CREATE, move |params| {
+            let mgr = mgr.clone();
+            let callbacks = callbacks.clone();
+            let approval = approval.clone();
+            let permission = permission.clone();
+            let cancel = cancel.clone();
+            let steer = steer.clone();
+            Box::pin(async move {
+                let mut input: kimi_agent::rpc::types::SessionCreateParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let id = input.session_id.take().unwrap_or_else(|| {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis();
+                    format!("sess-{now}")
+                });
+                let mut manager = mgr.lock().await;
+                manager.create_session(
+                    &id,
+                    kimi_agent::session::types::ModelConfig {
+                        provider: input.provider.clone().unwrap_or_default(),
+                        model: input.model.clone().unwrap_or_default(),
+                        max_tokens: None,
+                    },
+                );
+                manager.set_work_dir(&id, input.homedir.as_deref().unwrap_or(""));
+                let rpc_callbacks = callbacks;
+                let mcp_servers = std::mem::take(&mut input.mcp_servers);
+                let workspace_trusted = input.workspace_trusted;
+                let skills = std::mem::take(&mut input.skills);
+                let external_hooks = std::mem::take(&mut input.hooks);
+                let native_tools = input.native_tools;
+                let homedir = input.homedir.clone();
+                let (mcp_runtime, cancellation, steer_queue) = {
+                    let secondary_native_llm = input.native_llm.as_ref().and_then(|primary| {
+                        let env_map: std::collections::HashMap<String, String> =
+                            std::env::vars().collect();
+                        kimi_agent::config::loader::load_config_with_env()
+                            .ok()
+                            .and_then(|config| {
+                                kimi_agent::config::native_llm::resolve_secondary_native_llm(
+                                    Some(&config),
+                                    primary,
+                                    &env_map,
+                                )
+                            })
+                    });
+                    let agent = manager
+                        .create_agent(
+                            &id,
+                            rpc_callbacks,
+                            kimi_agent::agent::types::AgentOptions {
+                                session_id: Some(id.clone()),
+                                homedir: homedir.clone(),
+                                config: Some(kimi_agent::agent::types::AgentConfig {
+                                    cwd: homedir.clone().unwrap_or_default(),
+                                    model_alias: input.model.take(),
+                                    system_prompt: input.system_prompt.take().unwrap_or_default(),
+                                    has_provider: true,
+                                    has_model: true,
+                                }),
+                                goal_enabled: input.goal_enabled.unwrap_or(true),
+                                native_llm: input.native_llm.take(),
+                                secondary_native_llm,
+                                host_tools: std::mem::take(&mut input.tools)
+                                    .into_iter()
+                                    .map(|t| kimi_agent::turn_loop::types::ToolInfo {
+                                        name: t.name,
+                                        description: t.description,
+                                        input_schema: t.input_schema,
+                                    })
+                                    .collect(),
+                                permission: Some(permission),
+                                external_hooks,
+                                approval: Some(approval),
+                                ..Default::default()
+                            },
+                        )
+                        .map_err(|e| JsonRpcError::internal_error(e.to_string()))?;
+                    if native_tools {
+                        if let Some(home) = homedir.as_deref() {
+                            if let Some(toolset) = kimi_agent::tools::NativeToolset::new(home) {
+                                let gated = kimi_agent::callbacks::NativeToolCallbacks {
+                                    inner: agent.callbacks.clone(),
+                                    toolset: std::sync::Arc::new(toolset),
+                                    background: Some(agent.background.clone()),
+                                    permission: Some(agent.permission.clone()),
+                                    hooks: None,
+                                    approval: Some(agent.approval.clone()),
+                                };
+                                agent.callbacks = std::sync::Arc::new(gated);
+                            }
+                        }
+                    }
+                    for skill in skills {
+                        agent.skill_manager.registry.register(skill.into_metadata());
+                    }
+                    if let Some(max_context_size) = input.max_context_size {
+                        if max_context_size > 0 {
+                            agent.compaction.set_model(
+                                kimi_agent::compaction::strategy::ProfileModelContext {
+                                    max_size: max_context_size,
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                    }
+                    (agent.mcp.clone(), agent.cancellation.clone(), agent.steer_queue.clone())
+                };
+                drop(manager);
+                if !mcp_servers.is_empty() {
+                    let mcp_started = std::time::Instant::now();
+                    let rt_handle = mcp_runtime.clone();
+                    let handle = tokio::runtime::Handle::current();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        handle.block_on(async move {
+                            let mut runtime = rt_handle.lock().await;
+                            runtime.set_workspace_trusted(workspace_trusted);
+                            for server in mcp_servers {
+                                let (name, spec, source) = server.into_registration();
+                                let _ = runtime.register(&name, spec, source).await;
+                            }
+                        });
+                    })
+                    .await;
+                    let elapsed_ms = mcp_started.elapsed().as_millis() as u64;
+                    if let Some(agent) = mgr.lock().await.get_agent(&id) {
+                        agent.mcp_startup_ms = elapsed_ms;
+                    }
+                }
+                cancel
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(id.clone(), cancellation);
+                steer
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(id.clone(), steer_queue);
+                {
+                    let mut manager = mgr.lock().await;
+                    if let Some(agent) = manager.get_agent(&id) {
+                        agent
+                            .fire_lifecycle_hook(
+                                kimi_agent::hooks::external::HookEventType::SessionStart,
+                                serde_json::json!({ "session_id": id }),
+                            )
+                            .await;
+                    }
+                }
+                Ok(serde_json::json!({ "session_id": id }))
+            })
+        });
+
         // `session/get_status` — live engine status snapshot.
-        let mgr = self.manager.clone();
+        let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_GET_STATUS, move |params| {
             let mgr = mgr.clone();
             Box::pin(async move {
@@ -58,7 +224,7 @@ impl Processor for SessionProcessor {
         });
 
         // `session/list` — persisted session summaries.
-        let mgr = self.manager.clone();
+        let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_LIST, move |params| {
             let mgr = mgr.clone();
             Box::pin(async move {
@@ -97,7 +263,7 @@ impl Processor for SessionProcessor {
         });
 
         // `session/get_usage` — cumulative token usage.
-        let mgr = self.manager.clone();
+        let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_GET_USAGE, move |params| {
             let mgr = mgr.clone();
             Box::pin(async move {
@@ -116,7 +282,7 @@ impl Processor for SessionProcessor {
         });
 
         // `session/get_plan` — active plan snapshot (null when none).
-        let mgr = self.manager.clone();
+        let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_GET_PLAN, move |params| {
             let mgr = mgr.clone();
             Box::pin(async move {
@@ -140,7 +306,7 @@ impl Processor for SessionProcessor {
 
         // `session/get_warnings` — failed / needs-auth MCP servers surface as
         // session warnings (the engine's own signal).
-        let mgr = self.manager.clone();
+        let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_GET_WARNINGS, move |params| {
             let mgr = mgr.clone();
             Box::pin(async move {
@@ -196,7 +362,7 @@ impl Processor for SessionProcessor {
         });
 
         // `session/list_mcp_servers` — per-server views.
-        let mgr = self.manager.clone();
+        let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_LIST_MCP_SERVERS, move |params| {
             let mgr = mgr.clone();
             Box::pin(async move {
@@ -291,4 +457,44 @@ mod tests {
             .await;
         assert_eq!(body["error"]["message"], "no agent for session: nope");
     }
+}
+
+#[cfg(test)]
+mod create_tests {
+    use super::*;
+    use kimi_protocol::rpc::JsonRpcRequest;
+
+    #[tokio::test]
+    async fn create_then_list_shows_session() {
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = SessionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/create".into(),
+                params: serde_json::json!({ "session_id": "s-test-create" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "create failed: {body}");
+        assert_eq!(body["result"]["session_id"], "s-test-create");
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/list".into(),
+                params: serde_json::json!({ "limit": 50 }),
+            })
+            .await;
+        let sessions = body["result"]["sessions"].as_array().expect("sessions");
+        assert!(
+            sessions.iter().any(|s| s["id"] == "s-test-create"),
+            "created session should appear in list: {body}"
+        );
+    }
+
 }
