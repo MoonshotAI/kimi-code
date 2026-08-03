@@ -143,6 +143,9 @@
               fileset = lib.fileset.unions (
                 [
                   ./build
+                  # Bundled capability wiring plugins (kimi-cu / kimi-webbridge),
+                  # staged into apps/kimi-code/bundled-plugins during the build.
+                  ./plugins
                   ./.npmrc
                   ./.nvmrc
                   ./package.json
@@ -200,11 +203,13 @@
                     "// runVerifyStep skipped in nix sandbox (sigtool lacks -dv)"
               ''}
               # The SEA blob step (scripts/native/02-sea-blob.mjs) embeds the
-              # Kimi web assets from apps/kimi-code/dist-web and fails if that
-              # directory is missing. Build the web app and stage its assets
-              # before producing the native executable.
+              # Kimi web assets from apps/kimi-code/dist-web and the bundled
+              # capability plugins from apps/kimi-code/bundled-plugins, and
+              # fails if either directory is missing. Build the web app and
+              # stage both asset dirs before producing the native executable.
               pnpm --filter=@moonshot-ai/kimi-web run build
               node apps/kimi-code/scripts/copy-web-assets.mjs
+              node apps/kimi-code/scripts/copy-bundled-plugins.mjs
               pnpm --filter=@moonshot-ai/kimi-code run build:native:sea
               runHook postBuild
             '';
