@@ -103,6 +103,13 @@ async fn harness_exposes_engine_events() {
         undo.is_err() && undo.unwrap_err().to_string().contains("Nothing to undo"),
         "empty-history undo errors cleanly"
     );
+
+    // Skill / plan / usage read surfaces on a fresh session.
+    let skills = session.list_skills().await.expect("list_skills");
+    assert!(skills["skills"].is_array(), "skills: {skills}");
+    session.get_plan().await.expect("get_plan");
+    let usage = session.get_usage().await.expect("get_usage");
+    assert!(usage.is_object(), "usage: {usage}");
 }
 
 #[tokio::test]

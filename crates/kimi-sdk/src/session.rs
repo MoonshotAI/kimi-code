@@ -246,6 +246,34 @@ impl Session {
         Ok(body["result"]["queued"].as_bool().unwrap_or(false))
     }
 
+    /// Registered skills on the session.
+    pub async fn list_skills(&mut self) -> anyhow::Result<serde_json::Value> {
+        self.simple_call(kimi_protocol::methods::SESSION_LIST_SKILLS).await
+    }
+
+    /// The active plan, if any.
+    pub async fn get_plan(&mut self) -> anyhow::Result<serde_json::Value> {
+        self.simple_call(kimi_protocol::methods::SESSION_GET_PLAN).await
+    }
+
+    /// Usage snapshot for the session.
+    pub async fn get_usage(&mut self) -> anyhow::Result<serde_json::Value> {
+        self.simple_call(kimi_protocol::methods::SESSION_GET_USAGE).await
+    }
+
+    async fn simple_call(&mut self, method: &str) -> anyhow::Result<serde_json::Value> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(method, serde_json::json!({ "session_id": self.id }))
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("{method}: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"].clone())
+    }
+
     async fn mode_toggle(&mut self, method: &str, enabled: bool) -> anyhow::Result<()> {
         let body = self
             .client
