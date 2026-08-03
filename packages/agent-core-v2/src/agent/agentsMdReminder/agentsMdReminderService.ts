@@ -1,5 +1,5 @@
 /**
- * `agentsMdReminder` domain (L4) — `IAgentAgentsMdReminderService`
+ * `agentsMdReminder` domain — `IAgentAgentsMdReminderService`
  * implementation.
  *
  * Self-wiring plugin: registers an `onDidExecuteTool` hook on `toolExecutor`
@@ -14,24 +14,29 @@
  * `Glob`/`Grep` contribute their optional search root, and `Bash` contributes
  * its explicit `cwd` plus the literal directory operands extracted from the
  * command's syntax tree (see `./bashTargets`), resolved against the frozen
- * `sessionContext.cwd` exactly like the Bash tool itself. Preflight-rejected
- * calls (no `tool` on the context — guard denials included) are never
- * probed: the path policy already said no to that path. Calls vetoed by a
- * listener (permission denials) arrive with `tool` set and a result that is
- * still shown to the model, so they are probed and reminded like any visible
- * result — with one exception: a same-step duplicate vetoed by `toolDedupe`
- * carries a placeholder result that the dedupe hook swaps for the original's
- * deferred result, so anything attached to it would be discarded while the
- * file was already counted as reminded. The hook detects the placeholder
- * (the call id sits in `toolDedupe.syntheticCallIds` until the dedupe hook
- * consumes it) and leaves it untouched, keeping reminder, telemetry, and the
- * known-set strictly on results that reach the model. The gate
- * (`agents-md-reminder` experimental flag) is evaluated per tool call, so
- * runtime config overrides take effect without reconstructing the agent. The
- * hook is ordered before `toolDedupe` when that hook is present (falling back
- * to plain append-order registration otherwise): the placeholder is then
- * still marked synthetic when this hook runs, and the original call carries
- * the reminder by the time the duplicate's deferred result resolves.
+ * `sessionContext.cwd` exactly like the Bash tool itself (`args.cwd ??
+ * sessionContext.cwd` — a base that deliberately differs from the live agent
+ * cwd after a chdir). Preflight-rejected calls (no `tool` on the context —
+ * guard denials included) are never probed: the path policy already said no
+ * to that path. Calls vetoed by a listener (permission denials) arrive with
+ * `tool` set and a result that is still shown to the model, so they are
+ * probed and reminded like any visible result — with one exception: a
+ * same-step duplicate vetoed by `toolDedupe` carries a placeholder result
+ * that the dedupe hook swaps for the original's deferred result, so anything
+ * attached to it would be discarded while the file was already counted as
+ * reminded. The hook detects the placeholder (the call id sits in
+ * `toolDedupe.syntheticCallIds` until the dedupe hook consumes it — the key
+ * only exists where `toolDedupe` constructed, so in scopes without it no
+ * call is ever treated as a duplicate) and leaves it untouched, keeping
+ * reminder, telemetry, and the known-set strictly on results that reach the
+ * model. The gate (`agents-md-reminder` experimental flag) is evaluated per
+ * tool call, so runtime config overrides take effect without reconstructing
+ * the agent. The hook is ordered before `toolDedupe` so the placeholder is
+ * still marked synthetic when this hook runs and the original call carries
+ * the reminder by the time the duplicate's deferred result resolves; the
+ * ordered registration throws when its target is absent, so scopes without
+ * `toolDedupe` fall back to plain append-order registration, which still
+ * lands ahead of a `toolDedupe` hook constructed later.
  *
  * Known-set discipline: candidates are claimed synchronously per discovered
  * file into an in-memory `claimed` set (parallel calls can never duplicate a
@@ -83,6 +88,7 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ExecutableToolOutput, ExecutableToolResult } from '#/tool/toolContract';
 import {
+  AGENTS_MD_PLAIN_NAMES,
   agentsMdCandidatePaths,
   dirsRootToLeaf,
   findAgentsMdInDir,
@@ -98,7 +104,7 @@ import { IAgentAgentsMdReminderService } from './agentsMdReminder';
 import { extractBashTargetDirs } from './bashTargets';
 import { AGENTS_MD_REMINDER_FLAG_ID } from './flag';
 
-const AGENTS_MD_BASENAMES: ReadonlySet<string> = new Set(['AGENTS.md', 'agents.md']);
+const AGENTS_MD_BASENAMES: ReadonlySet<string> = new Set<string>(AGENTS_MD_PLAIN_NAMES);
 
 const BASH_PARSE_OPTIONS = { timeoutMs: 20, maxNodes: 10_000 } as const;
 
@@ -142,8 +148,6 @@ export class AgentAgentsMdReminderService
       }
       await next();
     };
-    // `before: 'toolDedupe'` throws when that hook is absent (minimal scopes);
-    // plain registration still lands ahead of it whenever it constructs later.
     try {
       this._register(toolExecutor.hooks.onDidExecuteTool.register('agentsMdReminder', handler, { before: 'toolDedupe' }));
     } catch {
@@ -170,17 +174,10 @@ export class AgentAgentsMdReminderService
   }
 
   private isDedupePlaceholder(ctx: ToolDidExecuteContext): boolean {
-    // The key only exists where `toolDedupe` constructed; in minimal scopes
-    // without it no call is ever a synthetic duplicate.
     if (!this.states.has(toolDedupeSyntheticCallIdsKey)) return false;
     return this.states.get(toolDedupeSyntheticCallIdsKey).has(ctx.toolCall.id);
   }
 
-  // Session resume and forks commit an already-rendered system prompt without
-  // going through bind/apply/refresh, so no seed point fires for them.
-  // Re-run the init-time discovery with the same inputs (agent cwd, os home,
-  // brand home) and seed from it, once per agent. A failure throws into the
-  // caller's catch — the agent stays unseeded and the next touch retries.
   private async ensureSeeded(): Promise<void> {
     if (this.states.get(agentsMdReminderSeededKey)) return;
     const { paths } = await loadAgentsMdDetailed(
@@ -192,14 +189,7 @@ export class AgentAgentsMdReminderService
   }
 
   private async augmentWithReminder(ctx: ToolDidExecuteContext): Promise<ExecutableToolResult> {
-    // Preflight-rejected calls (guard denial, missing tool, invalid args)
-    // arrive without `tool`: the path policy already said no to this path, so
-    // probing it (and reporting what exists there) is out of bounds.
     if (ctx.tool === undefined) return ctx.result;
-    // A same-step duplicate vetoed by `toolDedupe` carries a placeholder the
-    // dedupe hook (running after this one) swaps for the original's deferred
-    // result. Attaching here would discard the reminder while the file was
-    // already counted as reminded — the original call carries it for both.
     if (this.isDedupePlaceholder(ctx)) return ctx.result;
     const discovered: string[] = [];
     try {
@@ -265,9 +255,6 @@ export class AgentAgentsMdReminderService
         const command = stringArg(args, 'command');
         if (command === undefined) return { dirs: [], selfKnown };
         const cwdArg = stringArg(args, 'cwd');
-        // The Bash tool executes with `args.cwd ?? sessionContext.cwd` (frozen
-        // at session creation), so its base differs from the live agent cwd
-        // after a chdir — resolve exactly like the tool does.
         const base = this.sessionContext.cwd;
         const effectiveCwd =
           cwdArg === undefined

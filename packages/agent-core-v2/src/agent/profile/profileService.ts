@@ -894,6 +894,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     return {
       content: this.instructions.agentsMd ?? '',
       warning: this.instructions.agentsMdWarning,
+      paths: this.instructions.agentsMdPaths ?? [],
     };
   }
 

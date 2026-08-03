@@ -1,5 +1,5 @@
 /**
- * `agentsMdReminder` domain (L4) — AGENTS.md discovery-reminder contract.
+ * `agentsMdReminder` domain — AGENTS.md discovery-reminder contract.
  *
  * Defines the `IAgentAgentsMdReminderService`, the seed side of the domain:
  * `profile` reports the AGENTS.md paths it injected into the system prompt

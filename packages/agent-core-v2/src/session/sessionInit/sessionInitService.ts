@@ -114,7 +114,7 @@ export class SessionInitService implements ISessionInitService {
       );
       main.accessor
         .get(IAgentAgentsMdReminderService)
-        .seedInjected(agentsMdPaths, own.cwd);
+        .seedInjected(agentsMdPaths, this.sessionContext.cwd);
       main.accessor
         .get(IAgentSystemReminderService)
         .appendSystemReminder(initCompletionReminder(agentsMd), {

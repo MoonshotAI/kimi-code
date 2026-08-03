@@ -225,6 +225,7 @@ function buildHost(key: string): {
     ready: Promise.resolve(),
     agentsMd: undefined,
     agentsMdWarning: undefined,
+    agentsMdPaths: undefined,
     onDidChange: Event.None as Event<void>,
   } satisfies ISessionInstructionsProvider);
   host.stub(ISessionToolPolicy, {

@@ -1,12 +1,13 @@
 /**
- * `agentsMdReminder` domain (L4) — Bash-command directory extraction.
+ * `agentsMdReminder` domain — Bash-command directory extraction.
  *
  * Statically extracts the directories a Bash tool call is going to inspect,
  * walking the `bashParser` syntax tree: the literal operands of
  * directory-listing commands (`ls` / `tree` / `find` / `dir` / `exa` / `eza` /
  * `lsd`), with literal `cd` commands rebasing relative resolution as they
- * appear (`cd packages && ls kap-server`) and operand-less listing commands
- * listing the current base. Only top-level simple commands are read —
+ * appear (`cd packages && ls kap-server`) and a genuinely operand-less
+ * listing command listing the current base (one whose operands all failed
+ * resolution is skipped instead). Only top-level simple commands are read —
  * anything not statically resolvable (expansions, command
  * substitution, glob characters (quoted or not), `~`, quoting mixes, compound
  * constructs, `cd -`, a `cd` inside a pipeline, or a listing command invoked
@@ -82,9 +83,6 @@ export function extractBashTargetDirs(
 
   const targets: string[] = [];
   const seen = new Set<string>();
-  // `undefined` poisons relative resolution: a `cd` with an unresolvable
-  // operand (or `cd -`) makes the real base unknowable, so relative operands
-  // are skipped until an absolute `cd` re-anchors.
   let base: string | undefined = cwd;
   const push = (operand: string): void => {
     let dir: string;
@@ -125,8 +123,6 @@ export function extractBashTargetDirs(
     }
     if (!LISTING_COMMANDS.has(name)) continue;
     const operands = name === 'find' ? takeLeadingPaths(args) : dropFlags(args);
-    // A genuinely operand-less listing command lists the current base; one
-    // whose operands all failed resolution is skipped instead.
     if (operands.length === 0) {
       if (!dropped) push('.');
       continue;

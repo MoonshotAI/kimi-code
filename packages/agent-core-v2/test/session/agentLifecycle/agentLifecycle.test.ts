@@ -347,6 +347,7 @@ describe('AgentLifecycleService', () => {
       ready: Promise.resolve(),
       agentsMd: undefined,
       agentsMdWarning: undefined,
+      agentsMdPaths: undefined,
       onDidChange: Event.None as Event<void>,
     } satisfies ISessionInstructionsProvider);
     // The session's MCP readiness arrives through the seeded

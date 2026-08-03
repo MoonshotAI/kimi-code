@@ -141,8 +141,6 @@ async function isNonEmptyFile(
   }
 }
 
-export type { LoadedAgentsMd };
-
 export async function loadAgentsMdForRoots(
   deps: ProfileContextDeps,
   brandHome: string | undefined,
