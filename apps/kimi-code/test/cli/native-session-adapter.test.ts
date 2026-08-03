@@ -263,7 +263,7 @@ describe('NativeSessionAdapter', () => {
 
   it('listSessions forwards to the engine op and returns [] without one', async () => {
     const records = [
-      { id: 's1', created_at: '1', updated_at: '2', work_dir: '/w' },
+      { id: 's1', created_at: '1', updated_at: '2', title: '', work_dir: '/w' },
     ];
     const adapter = new NativeSessionAdapter({
       createClient: (o) => Promise.resolve(new FakeClient(o)),

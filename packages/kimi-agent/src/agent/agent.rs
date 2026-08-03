@@ -2049,7 +2049,7 @@ any partial output shown above is incomplete. The user's next message continues 
     /// real engine source: model/effort from the LLM config, permission from
     /// the shared gate, plan from the gate's context type, context tokens
     /// from the tokenizer tally, the ceiling from the compaction strategy.
-    pub fn session_status(&self) -> serde_json::Value {
+    pub fn session_status(&self) -> crate::rpc::types::SessionStatusResult {
         let model = self
             .config
             .model_alias
@@ -2065,7 +2065,9 @@ any partial output shown above is incomplete. The user's next message continues 
             })
             .unwrap_or_default();
         let permission = serde_json::to_value(self.permission.mode())
-            .unwrap_or_else(|_| "manual".into());
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_else(|| "manual".into());
         let plan_mode =
             self.permission.manager().context_type().as_deref() == Some("plan_mode");
         let context_tokens = self.context.token_count_with_pending();
@@ -2075,18 +2077,18 @@ any partial output shown above is incomplete. The user's next message continues 
         } else {
             context_tokens as f64 / max_context_tokens as f64
         };
-        serde_json::json!({
-            "model": model,
-            "thinking_effort": thinking_effort,
-            "permission": permission,
-            "plan_mode": plan_mode,
-            "swarm_mode": self.swarm.is_active(),
-            "goal_enabled": self.goal_enabled,
-            "context_tokens": context_tokens,
-            "max_context_tokens": max_context_tokens,
-            "context_usage": context_usage,
-            "usage": self.usage.status(),
-        })
+        crate::rpc::types::SessionStatusResult {
+            model,
+            thinking_effort,
+            permission,
+            plan_mode,
+            swarm_mode: self.swarm.is_active(),
+            goal_enabled: self.goal_enabled,
+            context_tokens,
+            max_context_tokens,
+            context_usage,
+            usage: self.usage.status(),
+        }
     }
 
     /// Emit the current goal for thin clients: the full snapshot for

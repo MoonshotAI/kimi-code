@@ -481,6 +481,127 @@ export interface HealthStatus {
   version: string;
 }
 
+export interface McpServerInfoRpc {
+  name: string;
+  transport: string;
+  status: string;
+  tool_count: number;
+  error?: string | undefined;
+}
+
+export interface McpServerListResult {
+  servers: Array<McpServerInfoRpc>;
+}
+
+export interface SkillSummaryRpc {
+  name: string;
+  description: string;
+  skill_type: string;
+  source?: string | undefined;
+  path?: string | undefined;
+  dir?: string | undefined;
+}
+
+export interface SkillListResult {
+  skills: Array<SkillSummaryRpc>;
+}
+
+export interface SessionWarning {
+  code: string;
+  message: string;
+  severity: string;
+}
+
+export interface WarningsResult {
+  warnings: Array<SessionWarning>;
+}
+
+export interface McpStartupMetricsResult {
+  duration_ms: number;
+}
+
+export interface ListToolsResult {
+  tools: Array<ToolDef>;
+}
+
+export interface SessionSummaryRpc {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  title: string;
+  work_dir: string;
+}
+
+export interface SessionListResult {
+  sessions: Array<SessionSummaryRpc>;
+}
+
+export interface PluginSummaryRpc {
+  id: string;
+  display_name: string;
+  version: string;
+  enabled: boolean;
+  state: string;
+  skill_count: number;
+  mcp_server_count: number;
+  enabled_mcp_server_count: number;
+  hook_count: number;
+  command_count: number;
+  has_errors: boolean;
+  source: string;
+}
+
+export interface PluginListResult {
+  plugins: Array<PluginSummaryRpc>;
+}
+
+export interface PluginMcpServerInfoRpc {
+  name: string;
+  runtime_name: string;
+  enabled: boolean;
+  transport: string;
+  command?: string | undefined;
+  url?: string | undefined;
+}
+
+export interface PluginInfoRpc {
+  id: string;
+  display_name: string;
+  version: string;
+  enabled: boolean;
+  state: string;
+  skill_count: number;
+  mcp_server_count: number;
+  enabled_mcp_server_count: number;
+  hook_count: number;
+  command_count: number;
+  has_errors: boolean;
+  source: string;
+  root: string;
+  installed_at: string;
+  mcp_servers: Array<PluginMcpServerInfoRpc>;
+  diagnostics: Array<unknown>;
+}
+
+export interface UsageStatus {
+  by_model?: Record<string, TokenUsage> | undefined;
+  total?: TokenUsage | undefined;
+  current_turn?: TokenUsage | undefined;
+}
+
+export interface SessionStatusResult {
+  model?: string | undefined;
+  thinking_effort: string;
+  permission: string;
+  plan_mode: boolean;
+  swarm_mode: boolean;
+  goal_enabled: boolean;
+  context_tokens: number;
+  max_context_tokens: number;
+  context_usage: number;
+  usage?: UsageStatus | undefined;
+}
+
 export interface CronCreateParams {
   cron: string;
   prompt: string;
@@ -591,3 +712,100 @@ export interface BgEventPayload {
 export type RequestId = unknown;
 
 export type FinalizeToolResponse = ExecutableToolResultData | null;
+
+export type SessionUsageResult = UsageStatus;
+
+export interface PlanData {
+  id: string;
+  content: string;
+  path: string;
+}
+
+export type SessionPlanResult = PlanData | null;
+
+export type TaskStatus = 'running' | 'completed' | 'failed' | 'timed_out' | 'killed' | 'lost';
+
+export interface TaskInfoBase {
+  task_id: string;
+  description: string;
+  status: TaskStatus;
+  kind: string;
+  started_at: number;
+  ended_at?: number | undefined;
+  /** Whether the task currently runs detached. Derived from whether a foreground release is still outstanding, never stored on the live entry. */
+  detached: boolean;
+  stop_reason?: string | undefined;
+  terminal_notification_suppressed?: boolean;
+  timeout_ms?: number | undefined;
+  agent_id?: string | undefined;
+}
+
+export type TaskListResult = Array<TaskInfoBase>;
+
+export interface ImageUrlValue {
+  url: string;
+  id?: string | undefined;
+}
+
+export interface AudioUrlValue {
+  url: string;
+  id?: string | undefined;
+}
+
+export interface VideoUrlValue {
+  url: string;
+  id?: string | undefined;
+}
+
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'think'; think: string; encrypted: string }
+  | { type: 'image_url'; image_url: ImageUrlValue }
+  | { type: 'audio_url'; audio_url: AudioUrlValue }
+  | { type: 'video_url'; video_url: VideoUrlValue };
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: unknown;
+}
+
+export type MessageOrigin =
+  | { kind: 'user' }
+  | { kind: 'injection'; variant: string }
+  | { kind: 'compaction_summary' }
+  | { kind: 'system_trigger'; name: string }
+  | { kind: 'shell_command'; phase: string; is_error: boolean }
+  | { kind: 'hook_result'; event: string; blocked: boolean }
+  | { kind: 'retry'; trigger: string }
+  | { kind: 'background_task'; task_id: string; status: string; notification_id: string }
+  | { kind: 'cron_job'; job_id: string; cron: string; recurring: boolean; coalesced_count: number; stale: boolean }
+  | { kind: 'cron_missed'; count: number }
+  | { kind: 'skill_activation'; activation_id: string; skill_name: string; skill_args: string; trigger: string }
+  | { kind: 'plugin_command'; activation_id: string; plugin_id: string; command_name: string; trigger: string };
+
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  input_schema?: unknown;
+}
+
+export interface ContextMessage {
+  role: string;
+  content?: Array<ContentPart>;
+  tool_calls?: Array<ToolCall>;
+  tool_call_id?: string | undefined;
+  origin?: MessageOrigin | undefined;
+  is_error?: boolean | undefined;
+  partial?: boolean | undefined;
+  name?: string | undefined;
+  note?: string | undefined;
+  tools?: Array<ToolDefinition> | undefined;
+}
+
+export interface AgentContextData {
+  history: Array<ContextMessage>;
+  token_count: number;
+}
+
+export type SessionContextResult = AgentContextData;

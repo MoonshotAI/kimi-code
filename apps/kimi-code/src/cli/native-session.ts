@@ -688,7 +688,7 @@ async function buildResumedSessionState(
     },
     context: { history, tokenCount: context?.token_count ?? 0 },
     replay,
-    permission: { mode: status?.permission ?? 'manual', rules: [] },
+    permission: { mode: (status?.permission ?? 'manual') as PermissionMode, rules: [] },
     plan: plan === null ? null : { id: plan.id, content: plan.content, path: plan.path },
     swarmMode: status?.swarm_mode ?? false,
     usage: mapUsage(usage) ?? {},

@@ -928,7 +928,7 @@ async fn main() -> anyhow::Result<()> {
                     input.session_id
                 ))
             })?;
-            Ok(agent.session_status())
+            Ok(serde_json::to_value(agent.session_status()).unwrap_or_else(|_| serde_json::json!({})))
         })
     });
 
@@ -951,22 +951,22 @@ async fn main() -> anyhow::Result<()> {
             };
             // Lock the runtime outside the manager lock so a slow MCP call
             // in a running turn cannot deadlock against this listing.
-            let servers: Vec<serde_json::Value> = mcp
+            let servers: Vec<types::McpServerInfoRpc> = mcp
                 .lock()
                 .await
                 .list()
                 .into_iter()
-                .map(|entry| {
-                    serde_json::json!({
-                        "name": entry.name,
-                        "transport": entry.transport.as_str(),
-                        "status": entry.status.as_str(),
-                        "tool_count": entry.tool_count,
-                        "error": entry.error,
-                    })
+                .map(|entry| types::McpServerInfoRpc {
+                    name: entry.name,
+                    transport: entry.transport.as_str().to_string(),
+                    status: entry.status.as_str().to_string(),
+                    tool_count: entry.tool_count,
+                    error: entry.error,
                 })
                 .collect();
-            Ok(serde_json::json!({ "servers": servers }))
+            Ok(serde_json::to_value(types::McpServerListResult { servers }).map_err(|e| {
+                types::JsonRpcError::internal_error(format!("list_mcp_servers serialize failed: {e}"))
+            })?)
         })
     });
 
@@ -987,20 +987,20 @@ async fn main() -> anyhow::Result<()> {
             })?;
             let mut skills = agent.skill_manager.registry.list_skills();
             skills.sort_by(|a, b| a.name.cmp(&b.name));
-            let skills: Vec<serde_json::Value> = skills
+            let skills: Vec<types::SkillSummaryRpc> = skills
                 .into_iter()
-                .map(|s| {
-                    serde_json::json!({
-                        "name": s.name,
-                        "description": s.description,
-                        "skill_type": s.skill_type,
-                        "source": s.source,
-                        "path": s.path,
-                        "dir": s.dir,
-                    })
+                .map(|s| types::SkillSummaryRpc {
+                    name: s.name.clone(),
+                    description: s.description.clone(),
+                    skill_type: s.skill_type.clone(),
+                    source: s.source.clone(),
+                    path: s.path.clone(),
+                    dir: s.dir.clone(),
                 })
                 .collect();
-            Ok(serde_json::json!({ "skills": skills }))
+            Ok(serde_json::to_value(types::SkillListResult { skills }).map_err(|e| {
+                types::JsonRpcError::internal_error(format!("list_skills serialize failed: {e}"))
+            })?)
         })
     });
 
@@ -1025,7 +1025,7 @@ async fn main() -> anyhow::Result<()> {
             };
             // Same lock-after-release order as list_mcp_servers.
             use kimi_agent::mcp::connection_manager::McpServerStatus;
-            let warnings: Vec<serde_json::Value> = mcp
+            let warnings: Vec<types::SessionWarning> = mcp
                 .lock()
                 .await
                 .list()
@@ -1042,14 +1042,16 @@ async fn main() -> anyhow::Result<()> {
                             e.error.clone().unwrap_or_else(|| "connection failed".to_string()),
                         ),
                     };
-                    serde_json::json!({
-                        "code": code,
-                        "message": format!("MCP server \"{}\": {}", e.name, detail),
-                        "severity": "warning",
-                    })
+                    types::SessionWarning {
+                        code: code.to_string(),
+                        message: format!("MCP server \"{}\": {}", e.name, detail),
+                        severity: "warning".to_string(),
+                    }
                 })
                 .collect();
-            Ok(serde_json::json!({ "warnings": warnings }))
+            Ok(serde_json::to_value(types::WarningsResult { warnings }).map_err(|e| {
+                types::JsonRpcError::internal_error(format!("get_warnings serialize failed: {e}"))
+            })?)
         })
     });
 
@@ -1201,7 +1203,9 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
             let resolved = store.resolve(&input.id, decision);
-            Ok(serde_json::json!({ "resolved": resolved }))
+            let body = serde_json::to_value(kimi_agent::approval::ApprovalResolveResult { resolved })
+                .map_err(|e| types::JsonRpcError::internal_error(format!("approval_resolve serialize failed: {e}")))?;
+            Ok(body)
         })
     });
 
@@ -1383,7 +1387,12 @@ async fn main() -> anyhow::Result<()> {
                     input.session_id
                 ))
             })?;
-            Ok(serde_json::json!({ "duration_ms": agent.mcp_startup_ms }))
+            Ok(serde_json::to_value(types::McpStartupMetricsResult { duration_ms: agent.mcp_startup_ms })
+                .map_err(|e| {
+                    types::JsonRpcError::internal_error(format!(
+                        "get_mcp_startup_metrics serialize failed: {e}"
+                    ))
+                })?)
         })
     });
 
@@ -1443,13 +1452,16 @@ async fn main() -> anyhow::Result<()> {
             .await
             .map_err(|e| types::JsonRpcError::internal_error(format!("reconnect join: {e}")))?
             .map_err(types::JsonRpcError::internal_error)?;
-            Ok(serde_json::json!({
-                "name": entry.name,
-                "transport": entry.transport.as_str(),
-                "status": entry.status.as_str(),
-                "tool_count": entry.tool_count,
-                "error": entry.error,
-            }))
+            Ok(serde_json::to_value(types::McpServerInfoRpc {
+                name: entry.name,
+                transport: entry.transport.as_str().to_string(),
+                status: entry.status.as_str().to_string(),
+                tool_count: entry.tool_count,
+                error: entry.error,
+            })
+            .map_err(|e| {
+                types::JsonRpcError::internal_error(format!("reconnect_mcp_server serialize failed: {e}"))
+            })?)
         })
     });
 
@@ -1800,16 +1812,18 @@ async fn main() -> anyhow::Result<()> {
                                 kimi_agent::session::types::ModelConfig::default(),
                             )
                         });
-                    serde_json::json!({
-                        "id": record.id,
-                        "created_at": record.created_at,
-                        "updated_at": record.updated_at,
-                        "title": rich.title,
-                        "work_dir": rich.work_dir,
-                    })
+                    types::SessionSummaryRpc {
+                        id: record.id,
+                        created_at: record.created_at,
+                        updated_at: record.updated_at,
+                        title: rich.title,
+                        work_dir: rich.work_dir,
+                    }
                 })
                 .collect::<Vec<_>>();
-            Ok(serde_json::json!({ "sessions": sessions }))
+            Ok(serde_json::to_value(types::SessionListResult { sessions }).map_err(|e| {
+                types::JsonRpcError::internal_error(format!("session/list serialize failed: {e}"))
+            })?)
         })
     });
 
@@ -1939,54 +1953,62 @@ async fn main() -> anyhow::Result<()> {
             PluginSource::Url { .. } => "zip-url",
         }
     }
-    fn plugin_summary_json(r: &kimi_agent::plugin::types::PluginRecord) -> serde_json::Value {
+    fn plugin_summary_rpc(r: &kimi_agent::plugin::types::PluginRecord) -> types::PluginSummaryRpc {
         let enabled = r.is_enabled();
-        serde_json::json!({
-            "id": r.id,
-            "display_name": r.name,
-            "version": r.version,
-            "enabled": enabled,
+        types::PluginSummaryRpc {
+            id: r.id.to_string(),
+            display_name: r.name.clone(),
+            version: r.version.clone(),
+            enabled,
             // The engine tracks enabled/disabled, not a health state, so a
             // present record is always "ok".
-            "state": "ok",
-            "skill_count": r.skills.len(),
-            "mcp_server_count": r.mcp_servers.len(),
+            state: "ok".into(),
+            skill_count: r.skills.len(),
+            mcp_server_count: r.mcp_servers.len(),
             // No per-server enable flag on disk yet: a disabled plugin
             // contributes none; an enabled one contributes all.
-            "enabled_mcp_server_count": if enabled { r.mcp_servers.len() } else { 0 },
-            "hook_count": r.hooks.len(),
-            "command_count": 0,
-            "has_errors": false,
-            "source": plugin_source_str(&r.source),
-        })
+            enabled_mcp_server_count: if enabled { r.mcp_servers.len() } else { 0 },
+            hook_count: r.hooks.len(),
+            command_count: 0,
+            has_errors: false,
+            source: plugin_source_str(&r.source).into(),
+        }
     }
-    fn plugin_info_json(r: &kimi_agent::plugin::types::PluginRecord) -> serde_json::Value {
-        let mut base = plugin_summary_json(r);
+    fn plugin_info_rpc(r: &kimi_agent::plugin::types::PluginRecord) -> types::PluginInfoRpc {
+        let s = plugin_summary_rpc(r);
         let root = match &r.source {
             kimi_agent::plugin::types::PluginSource::Local { path } => path.clone(),
             _ => String::new(),
         };
-        let mcp_servers: Vec<serde_json::Value> = r
-            .mcp_servers
-            .iter()
-            .map(|m| {
-                serde_json::json!({
-                    "name": m.name,
-                    "runtime_name": m.name,
-                    "enabled": r.is_enabled(),
-                    "transport": m.transport,
-                    "command": m.command,
-                    "url": m.url,
+        types::PluginInfoRpc {
+            id: s.id,
+            display_name: s.display_name,
+            version: s.version,
+            enabled: s.enabled,
+            state: s.state,
+            skill_count: s.skill_count,
+            mcp_server_count: s.mcp_server_count,
+            enabled_mcp_server_count: s.enabled_mcp_server_count,
+            hook_count: s.hook_count,
+            command_count: s.command_count,
+            has_errors: s.has_errors,
+            source: s.source,
+            root,
+            installed_at: r.installed_at.clone(),
+            mcp_servers: r
+                .mcp_servers
+                .iter()
+                .map(|m| types::PluginMcpServerInfoRpc {
+                    name: m.name.clone(),
+                    runtime_name: m.name.clone(),
+                    enabled: r.is_enabled(),
+                    transport: m.transport.clone(),
+                    command: m.command.clone(),
+                    url: m.url.clone(),
                 })
-            })
-            .collect();
-        if let Some(obj) = base.as_object_mut() {
-            obj.insert("root".into(), serde_json::json!(root));
-            obj.insert("installed_at".into(), serde_json::json!(r.installed_at));
-            obj.insert("mcp_servers".into(), serde_json::json!(mcp_servers));
-            obj.insert("diagnostics".into(), serde_json::json!([]));
+                .collect(),
+            diagnostics: vec![],
         }
-        base
     }
 
     let plugin_store: Arc<kimi_agent::plugin::store::PluginStore> = Arc::new(
@@ -2007,8 +2029,11 @@ async fn main() -> anyhow::Result<()> {
             let records = ps
                 .list()
                 .map_err(|e| types::JsonRpcError::internal_error(format!("plugin list: {e}")))?;
-            let plugins: Vec<serde_json::Value> = records.iter().map(plugin_summary_json).collect();
-            Ok(serde_json::json!({ "plugins": plugins }))
+            let plugins: Vec<types::PluginSummaryRpc> =
+                records.iter().map(plugin_summary_rpc).collect();
+            Ok(serde_json::to_value(types::PluginListResult { plugins }).map_err(|e| {
+                types::JsonRpcError::internal_error(format!("plugin list serialize failed: {e}"))
+            })?)
         })
     });
 
@@ -2022,7 +2047,9 @@ async fn main() -> anyhow::Result<()> {
                 .get(&input.id)
                 .map_err(|e| types::JsonRpcError::internal_error(format!("plugin get: {e}")))?
             {
-                Some(r) => Ok(plugin_info_json(&r)),
+                Some(r) => Ok(serde_json::to_value(plugin_info_rpc(&r)).map_err(|e| {
+                    types::JsonRpcError::internal_error(format!("plugin get serialize failed: {e}"))
+                })?),
                 None => Ok(serde_json::Value::Null),
             }
         })
@@ -2211,33 +2238,26 @@ async fn main() -> anyhow::Result<()> {
             let input: types::SessionListToolsParams = serde_json::from_value(params)
                 .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
             let root = input.homedir.clone().unwrap_or_default();
-            let mut defs: Vec<serde_json::Value> = kimi_agent::tools::NativeToolset::new(&root)
-                .map(|ts| {
-                    ts.tool_definitions()
-                        .into_iter()
-                        .map(|td| {
-                            serde_json::json!({
-                                "name": td.name,
-                                "description": td.description,
-                                "input_schema": td.input_schema,
-                            })
-                        })
-                        .collect()
-                })
+            let mut defs: Vec<types::ToolDef> = kimi_agent::tools::NativeToolset::new(&root)
+                .map(|ts| ts.tool_definitions().into_iter().map(|td| types::ToolDef {
+                    name: td.name,
+                    description: td.description,
+                    input_schema: td.input_schema.unwrap_or(serde_json::Value::Null),
+                }).collect())
                 .unwrap_or_default();
             // Goal tools advertised with an active goal (mirror agent.rs).
             defs.extend(
                 kimi_agent::agent::agent::goal_tool_definitions()
                     .into_iter()
-                    .map(|td| {
-                        serde_json::json!({
-                            "name": td.name,
-                            "description": td.description,
-                            "input_schema": td.input_schema,
-                        })
+                    .map(|td| types::ToolDef {
+                        name: td.name,
+                        description: td.description,
+                        input_schema: td.input_schema,
                     }),
             );
-            Ok(serde_json::json!({ "tools": defs }))
+            Ok(serde_json::to_value(types::ListToolsResult { tools: defs }).map_err(|e| {
+                types::JsonRpcError::internal_error(format!("list_tools serialize failed: {e}"))
+            })?)
         })
     });
 

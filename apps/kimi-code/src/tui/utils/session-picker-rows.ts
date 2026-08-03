@@ -36,8 +36,8 @@ export function nativeSessionRowsForPicker(
     .filter((record) => currentSessionHasContent || record.id !== currentSessionId)
     .map((record) => ({
       id: record.id,
-      title: record.title ?? null,
-      work_dir: record.work_dir ?? workDir,
+      title: record.title || null,
+      work_dir: record.work_dir || workDir,
       updated_at: engineTimestampToMs(record.updated_at),
     }));
 }

@@ -166,7 +166,7 @@ function flagState(
   def: FlagDefinition,
   enabled: boolean,
   source: FlagSource,
-  configValue: boolean | undefined,
+  configValue?: boolean,
 ): ExperimentalFeatureState {
   return {
     id: def.id,

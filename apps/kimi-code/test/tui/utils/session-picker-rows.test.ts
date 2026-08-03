@@ -75,8 +75,8 @@ function engineRecord(input: {
     id: input.id,
     updated_at: input.updatedAt,
     created_at: input.createdAt,
-    title: input.title,
-    work_dir: input.workDir,
+    title: input.title ?? '',
+    work_dir: input.workDir ?? '',
   };
 }
 

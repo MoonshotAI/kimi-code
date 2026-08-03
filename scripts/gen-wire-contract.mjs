@@ -92,12 +92,40 @@ function parseEnums(text) {
     const name = m[1];
     const lines = m[2].split('\n');
     const variants = [];
+    let pending = null; // multi-line struct variant: { name, fields, renameLine }
     for (let i = 0; i < lines.length; i++) {
       const raw = lines[i].trim();
       if (!raw) continue;
       const renameLine = i > 0 && lines[i - 1].trim().startsWith('#[serde(rename')
         ? lines[i - 1].trim().match(/rename = "([^"]+)"/)?.[1]
         : undefined;
+      if (raw.startsWith('#')) continue;
+      // Multi-line struct variant: `Name {` ... `}`.
+      if (pending === null && /^(\w+)\s*\{\s*$/.test(raw)) {
+        const headerMatch = raw.match(/^(\w+)\s*\{/);
+        pending = {
+          name: headerMatch[1],
+          fields: [],
+          renameLine,
+        };
+        continue;
+      }
+      if (pending !== null) {
+        if (/^\},?$/.test(raw)) {
+          variants.push({
+            name: pending.renameLine ?? pending.name,
+            kind: 'struct',
+            fields: pending.fields,
+          });
+          pending = null;
+          continue;
+        }
+        const field = raw.replace(/,$/, '').trim();
+        if (!field) continue;
+        const [fn, ...rest] = field.split(':').map((s) => s.trim());
+        pending.fields.push({ name: fn, rawType: rest.join(':') });
+        continue;
+      }
       const t = raw.replace(/,$/, '').trim();
       if (t.startsWith('#')) continue;
       // struct variant: Name { a: T, b: T }
@@ -145,19 +173,25 @@ const PRIMITIVES = {
   bool: 'boolean',
 };
 
-const registry = { structs: new Map(), enums: new Map(), aliases: new Map() };
+const registry = { structs: new Map(), enums: new Map(), aliases: new Map(), files: new Map() };
 const warnings = [];
 
-function registerFile(text) {
+function registerFile(key, text) {
   const s = parseStructs(text);
   const e = parseEnums(text);
   const a = parseAliases(text);
-  for (const [k, v] of s) registry.structs.set(k, v);
-  for (const [k, v] of e) registry.enums.set(k, v);
+  for (const [k, v] of s) {
+    registry.structs.set(k, v);
+    registry.files.set(k, key);
+  }
+  for (const [k, v] of e) {
+    registry.enums.set(k, v);
+    registry.files.set(k, key);
+  }
   for (const [k, v] of a) registry.aliases.set(k, v);
 }
 
-for (const [, text] of SOURCES) registerFile(text);
+for (const [key, text] of SOURCES) registerFile(key, text);
 
 function mapType(rawType) {
   let t = rawType.trim();
@@ -217,15 +251,19 @@ function renderEnum(enumDef, attrs) {
     }
     return rustName;
   };
-  // Tagged enum with struct variants → discriminated union.
+  // Tagged enum with struct variants → discriminated union. Unit variants
+  // serialize as `{"kind":"user"}`-style objects under the tag, so they are
+  // members too.
   if (enumDef.variants.some((v) => v.kind === 'struct')) {
     const tag = attrs.tag ?? 'type';
-    const members = enumDef.variants
-      .filter((v) => v.kind === 'struct')
-      .map((v) => {
+    const members = enumDef.variants.map((v) => {
+      const tagName = `'${wireName(v.name)}'`;
+      if (v.kind === 'struct') {
         const fields = v.fields.map((f) => `${f.name}: ${mapType(f.rawType)}`).join('; ');
-        return `  | { ${tag}: '${wireName(v.name)}'; ${fields} }`;
-      });
+        return `  | { ${tag}: ${tagName}; ${fields} }`;
+      }
+      return `  | { ${tag}: ${tagName} }`;
+    });
     return `export type ${enumDef.name} =\n${members.join('\n')};`;
   }
   // Plain unit enum → union of string literals (serde rename honored).
@@ -265,13 +303,36 @@ function emit(name) {
     rendered.set(name, renderStruct(s));
   } else if (registry.enums.has(name)) {
     const e = registry.enums.get(name);
-    const idx = primary.indexOf(`pub enum ${name}`);
-    const attrs = idx >= 0 ? (primary.slice(0, idx).match(/#\[serde\(([^)]*)\)\]\s*$/)?.[1] ?? '') : '';
+    // Enum struct-variant fields may reference crate types (e.g. `ContentPart`
+    // → `ImageUrlValue`) — emit them before rendering the enum.
+    for (const v of e.variants) {
+      if (v.kind === 'struct') {
+        for (const f of v.fields) {
+          const dep = baseName(f.rawType);
+          if (dep && (registry.structs.has(dep) || registry.enums.has(dep))) emit(dep);
+        }
+      }
+    }
+    // Serde attrs come from the enum's own source file — `rename_all` /
+    // `tag` live next to the definition, which may not be types.rs
+    // (e.g. `MessageOrigin` uses `tag = "kind"` in context/types.rs).
+    const fileKey = registry.files.get(name);
+    const text = fileKey === 'rpc/types.rs' ? primary : (SOURCES.get(fileKey) ?? primary);
+    const idx = text.indexOf(`pub enum ${name}`);
+    const attrs = idx >= 0 ? (text.slice(0, idx).match(/#\[serde\(([^)]*)\)\]\s*$/)?.[1] ?? '') : '';
     const tag = attrs.match(/tag = "(\w+)"/)?.[1];
     const renameAll = attrs.match(/rename_all = "(\w+)"/)?.[1];
     rendered.set(name, renderEnum(e, { tag, renameAll }));
   } else if (registry.aliases.has(name)) {
-    rendered.set(name, renderAlias(name, registry.aliases.get(name)));
+    const raw = registry.aliases.get(name);
+    // Emit the alias target too, so `pub type X = crate::usage::UsageStatus;`
+    // (a struct living outside types.rs) renders a concrete interface instead
+    // of a dangling reference.
+    const dep = baseName(raw);
+    if (dep && (registry.structs.has(dep) || registry.enums.has(dep) || registry.aliases.has(dep))) {
+      emit(dep);
+    }
+    rendered.set(name, renderAlias(name, raw));
   }
   inProgress.delete(name);
 }

@@ -1018,6 +1018,177 @@ pub struct HealthStatus {
     pub version: String,
 }
 
+// ── Session RPC result aliases (wire.gen.ts consumers) ────────────────────
+// These mirror existing crate result types so the generated wire contract
+// covers every session-level RPC result. Field shapes must match what the
+// handlers serialize today — do not rename or re-shape here.
+
+/// Result of `session/get_usage` — engine cumulative usage.
+pub type SessionUsageResult = crate::usage::UsageStatus;
+
+/// Result of `session/get_plan` — active plan data, or null.
+pub type SessionPlanResult = Option<crate::plan::PlanData>;
+
+/// Result of `task/list` — flat array of task records (no `{tasks}` wrapper).
+pub type TaskListResult = Vec<crate::task::types::TaskInfoBase>;
+
+/// Result of `session/get_context` — engine context snapshot.
+pub type SessionContextResult = crate::context::types::AgentContextData;
+
+/// A single MCP server view returned by `session/list_mcp_servers` and
+/// `session/reconnect_mcp_server`. `transport` / `status` stay as strings:
+/// the engine's typed enums serialize with non-snake_case values
+/// (`pending-approval`, `needs-auth`) that would not survive a rename.
+#[derive(Debug, Serialize)]
+pub struct McpServerInfoRpc {
+    pub name: String,
+    pub transport: String,
+    pub status: String,
+    pub tool_count: usize,
+    pub error: Option<String>,
+}
+
+/// Result of `session/list_mcp_servers`.
+#[derive(Debug, Serialize)]
+pub struct McpServerListResult {
+    pub servers: Vec<McpServerInfoRpc>,
+}
+
+/// A registered skill view returned by `session/list_skills`. Deliberately a
+/// dedicated wire shape (not `SkillMetadata`): the metadata struct carries a
+/// `content` field that would serialize as `null` and change the wire.
+#[derive(Debug, Serialize)]
+pub struct SkillSummaryRpc {
+    pub name: String,
+    pub description: String,
+    pub skill_type: String,
+    pub source: Option<String>,
+    pub path: Option<String>,
+    pub dir: Option<String>,
+}
+
+/// Result of `session/list_skills`.
+#[derive(Debug, Serialize)]
+pub struct SkillListResult {
+    pub skills: Vec<SkillSummaryRpc>,
+}
+
+/// One session warning returned by `session/get_warnings`.
+#[derive(Debug, Serialize)]
+pub struct SessionWarning {
+    pub code: String,
+    pub message: String,
+    pub severity: String,
+}
+
+/// Result of `session/get_warnings`.
+#[derive(Debug, Serialize)]
+pub struct WarningsResult {
+    pub warnings: Vec<SessionWarning>,
+}
+
+/// Result of `session/get_mcp_startup_metrics`.
+#[derive(Debug, Serialize)]
+pub struct McpStartupMetricsResult {
+    pub duration_ms: u64,
+}
+
+/// Result of `session/list_tools` — native tool definitions (reuses `ToolDef`).
+#[derive(Debug, Serialize)]
+pub struct ListToolsResult {
+    pub tools: Vec<ToolDef>,
+}
+
+/// A persisted-session summary returned by `session/list`. `title` /
+/// `work_dir` are always present as strings (the record's own fields).
+#[derive(Debug, Serialize)]
+pub struct SessionSummaryRpc {
+    pub id: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub title: String,
+    pub work_dir: String,
+}
+
+/// Result of `session/list`.
+#[derive(Debug, Serialize)]
+pub struct SessionListResult {
+    pub sessions: Vec<SessionSummaryRpc>,
+}
+
+/// A plugin summary returned by `plugin/list` (and embedded in `plugin/get`).
+#[derive(Debug, Serialize)]
+pub struct PluginSummaryRpc {
+    pub id: String,
+    pub display_name: String,
+    pub version: String,
+    pub enabled: bool,
+    pub state: String,
+    pub skill_count: usize,
+    pub mcp_server_count: usize,
+    pub enabled_mcp_server_count: usize,
+    pub hook_count: usize,
+    pub command_count: usize,
+    pub has_errors: bool,
+    pub source: String,
+}
+
+/// Result of `plugin/list`.
+#[derive(Debug, Serialize)]
+pub struct PluginListResult {
+    pub plugins: Vec<PluginSummaryRpc>,
+}
+
+/// One MCP server contributed by a plugin (`plugin/get` detail).
+#[derive(Debug, Serialize)]
+pub struct PluginMcpServerInfoRpc {
+    pub name: String,
+    pub runtime_name: String,
+    pub enabled: bool,
+    pub transport: String,
+    pub command: Option<String>,
+    pub url: Option<String>,
+}
+
+/// A plugin detail returned by `plugin/get` (summary fields + detail extras).
+#[derive(Debug, Serialize)]
+pub struct PluginInfoRpc {
+    pub id: String,
+    pub display_name: String,
+    pub version: String,
+    pub enabled: bool,
+    pub state: String,
+    pub skill_count: usize,
+    pub mcp_server_count: usize,
+    pub enabled_mcp_server_count: usize,
+    pub hook_count: usize,
+    pub command_count: usize,
+    pub has_errors: bool,
+    pub source: String,
+    pub root: String,
+    pub installed_at: String,
+    pub mcp_servers: Vec<PluginMcpServerInfoRpc>,
+    pub diagnostics: Vec<serde_json::Value>,
+}
+
+/// Result of `session/get_status` — live engine status snapshot. Wire shape
+/// mirrors the previous `serde_json::json!` literal: `model` and `usage`
+/// serialize as `null` when absent (no skip), `permission` is the stringified
+/// permission mode.
+#[derive(Debug, Serialize)]
+pub struct SessionStatusResult {
+    pub model: Option<String>,
+    pub thinking_effort: String,
+    pub permission: String,
+    pub plan_mode: bool,
+    pub swarm_mode: bool,
+    pub goal_enabled: bool,
+    pub context_tokens: u64,
+    pub max_context_tokens: u64,
+    pub context_usage: f64,
+    pub usage: Option<crate::usage::UsageStatus>,
+}
+
 // ── Helper functions ───────────────────────────────────────────────────────
 
 impl JsonRpcResponse {

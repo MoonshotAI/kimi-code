@@ -1136,7 +1136,7 @@ export class RustRpcClient extends SDKRpcClientBase {
     const records = (await this.rustLoop.sessionList())?.sessions ?? [];
     const record = records.find((r) => r.id === sessionId);
     const summary = mapSessionRecord(
-      record ?? { id: sessionId, created_at: '', updated_at: '' },
+      record ?? { id: sessionId, created_at: '', updated_at: '', title: '', work_dir: '' },
       this.homeDir,
     );
     const sdkWorkDir = this.workDirs.get(sessionId);

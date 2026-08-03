@@ -8,6 +8,18 @@
  * `apps/kimi-code/src/cli/native-session.ts` (2026-08-02).
  */
 import type {
+  McpServerInfoRpc,
+  PluginInfoRpc,
+  PluginSummaryRpc,
+  SessionStatusResult,
+  SessionSummaryRpc,
+  SessionWarning,
+  SkillSummaryRpc,
+  TaskInfoBase,
+  TokenUsage,
+  UsageStatus,
+} from '@moonshot-ai/kimi-agent/rpc/wire';
+import type {
   BackgroundTaskInfo,
   ContextMessage,
   ContentPart,
@@ -23,104 +35,20 @@ import type {
   ToolCall,
 } from '#/types';
 
-// ── Engine wire shapes (mirrored from @moonshot-ai/kimi-agent/rust-loop) ──
+// ── Engine wire shapes (single source: the generated RPC wire contract) ──
+// The engine's session-level RPC results live in
+// `@moonshot-ai/kimi-agent/rpc/wire` (generated from `rpc/types.rs`). These
+// aliases keep the historical `Engine*` names so map*/clients stay stable.
 
-export interface EngineSessionRecord {
-  id: string;
-  created_at: string;
-  updated_at: string;
-  title?: string;
-  work_dir?: string;
-}
-
-export interface EngineSessionStatus {
-  model?: string | null;
-  thinking_effort: string;
-  permission: 'manual' | 'auto' | 'yolo';
-  plan_mode: boolean;
-  swarm_mode: boolean;
-  goal_enabled: boolean;
-  context_tokens: number;
-  max_context_tokens: number;
-  context_usage: number;
-  usage?: {
-    by_model?: Record<string, { input_tokens: number; output_tokens: number; total_tokens: number }>;
-    total?: { input_tokens: number; output_tokens: number; total_tokens: number };
-    current_turn?: { input_tokens: number; output_tokens: number; total_tokens: number };
-  } | null;
-}
-
-export interface EngineMcpServerInfo {
-  name: string;
-  transport: 'stdio' | 'http' | 'sse';
-  status: 'pending' | 'pending-approval' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
-  tool_count: number;
-  error?: string | null;
-}
-
-export interface EngineTaskInfo {
-  task_id: string;
-  description: string;
-  status: 'running' | 'completed' | 'failed' | 'timed_out' | 'killed' | 'lost';
-  kind: string;
-  started_at: number;
-  ended_at?: number | null;
-  detached: boolean;
-  stop_reason?: string | null;
-  terminal_notification_suppressed: boolean;
-  timeout_ms?: number | null;
-  agent_id?: string | null;
-}
-
-export interface EngineSkillSummary {
-  name: string;
-  description: string;
-  skill_type: string;
-  source?: string | null;
-  path?: string | null;
-  dir?: string | null;
-}
-
-export interface EngineSessionWarning {
-  code: string;
-  message: string;
-  severity: 'info' | 'warning' | 'error';
-}
-
-export interface EngineSessionUsage {
-  by_model?: Record<string, { input_tokens: number; output_tokens: number; total_tokens: number }>;
-  total?: { input_tokens: number; output_tokens: number; total_tokens: number };
-  current_turn?: { input_tokens: number; output_tokens: number; total_tokens: number };
-}
-
-export interface EnginePluginSummary {
-  id: string;
-  display_name: string;
-  version: string;
-  enabled: boolean;
-  state: string;
-  skill_count: number;
-  mcp_server_count: number;
-  enabled_mcp_server_count: number;
-  hook_count: number;
-  command_count: number;
-  has_errors: boolean;
-  source: string;
-}
-
-export interface EnginePluginInfo extends EnginePluginSummary {
-  root: string;
-  installed_at: string;
-  mcp_servers: Array<{
-    name: string;
-    runtime_name: string;
-    enabled: boolean;
-    transport: string;
-    command?: string | null;
-    url?: string | null;
-  }>;
-  diagnostics: Array<{ severity: string; message: string }>;
-}
+export type EngineSessionRecord = SessionSummaryRpc;
+export type EngineSessionStatus = SessionStatusResult;
+export type EngineMcpServerInfo = McpServerInfoRpc;
+export type EngineTaskInfo = TaskInfoBase;
+export type EngineSkillSummary = SkillSummaryRpc;
+export type EngineSessionWarning = SessionWarning;
+export type EngineSessionUsage = UsageStatus;
+export type EnginePluginSummary = PluginSummaryRpc;
+export type EnginePluginInfo = PluginInfoRpc;
 
 // ── Translation helpers ──────────────────────────────────────────────────
 
@@ -147,16 +75,14 @@ export function promptText(input: string | readonly { type: string; text?: strin
  *  SDK's four-way shape with the cache lanes zeroed (documented approximation
  *  until the engine reports cache-read / cache-creation separately). */
 function mapTokenUsage(
-  triple:
-    | { input_tokens: number; output_tokens: number; total_tokens: number }
-    | undefined,
+  triple: TokenUsage | undefined,
 ):
   | { inputOther: number; output: number; inputCacheRead: number; inputCacheCreation: number }
   | undefined {
   if (triple === undefined) return undefined;
   return {
-    inputOther: triple.input_tokens,
-    output: triple.output_tokens,
+    inputOther: triple.input_tokens ?? 0,
+    output: triple.output_tokens ?? 0,
     inputCacheRead: 0,
     inputCacheCreation: 0,
   };
@@ -180,7 +106,7 @@ export function mapStatus(e: EngineSessionStatus): SessionStatus {
   return {
     model: e.model ?? undefined,
     thinkingEffort: e.thinking_effort,
-    permission: e.permission,
+    permission: e.permission as SessionStatus['permission'],
     planMode: e.plan_mode,
     swarmMode: e.swarm_mode,
     contextTokens: e.context_tokens,
@@ -334,7 +260,10 @@ export function mapPluginInfo(w: EnginePluginInfo): PluginInfo {
       }),
     ),
     diagnostics: w.diagnostics.map(
-      (d): Diag => ({ severity: d.severity as Diag['severity'], message: d.message }),
+      (raw): Diag => {
+        const d = raw as { severity: string; message: string };
+        return { severity: d.severity as Diag['severity'], message: d.message };
+      },
     ),
   };
 }
