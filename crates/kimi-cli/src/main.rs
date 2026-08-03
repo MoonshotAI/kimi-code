@@ -208,6 +208,9 @@ async fn handle_chat_command(
             println!("/compact     compact the session context");
             println!("/export      export the session as <session_id>.zip");
             println!("/sessions    list persisted sessions");
+            println!("/goal <obj>  create a goal on the session");
+            println!("/goal-status show the active goal");
+            println!("/goal-cancel cancel the active goal");
             ChatCommand::Handled
         }
         "/resume" => {
@@ -347,6 +350,55 @@ async fn handle_chat_command(
                 let title = if title.is_empty() { "(untitled)" } else { title };
                 println!("{id}  {title}");
             }
+            ChatCommand::Handled
+        }
+        "/goal" => {
+            // Create a goal on the current session (pure state op — no LLM).
+            if rest.is_empty() {
+                return ChatCommand::Error("usage: /goal <objective>".into());
+            }
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_GOAL_CREATE,
+                    serde_json::json!({ "session_id": *session_id, "objective": rest }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&body["result"]).unwrap_or_default()
+            );
+            ChatCommand::Handled
+        }
+        "/goal-status" => {
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_GOAL_GET,
+                    serde_json::json!({ "session_id": *session_id }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&body["result"]).unwrap_or_default()
+            );
+            ChatCommand::Handled
+        }
+        "/goal-cancel" => {
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_GOAL_CANCEL,
+                    serde_json::json!({ "session_id": *session_id }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            println!("goal cancelled");
             ChatCommand::Handled
         }
         _ => ChatCommand::Error(format!("unknown command {cmd} — try /help")),

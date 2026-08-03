@@ -383,6 +383,35 @@ fn acp_initialize_handshake() {
 }
 
 #[test]
+fn chat_goal_lifecycle() {
+    // `/goal` is a pure state op (no LLM): create -> status -> cancel.
+    let home = temp_dir("chat-goal");
+    let cwd = temp_dir("chat-goal-cwd");
+    let mut child = Command::new(binary())
+        .args(["chat", "-s", "s-chat-goal"])
+        .current_dir(&cwd)
+        .env("KIMI_AGENT_HOME", &home)
+        .env("HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn kimi chat");
+    {
+        use std::io::Write;
+        let stdin = child.stdin.as_mut().expect("stdin");
+        stdin
+            .write_all(b"/goal do the thing\n/goal-status\n/goal-cancel\n/quit\n")
+            .expect("write");
+    }
+    let output = child.wait_with_output().expect("wait");
+    assert!(output.status.success(), "chat exits 0: {}", output.status);
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(out.contains("objective"), "goal create snapshot: {out}");
+    assert!(out.contains("goal cancelled"), "cancel line: {out}");
+}
+
+#[test]
 fn server_mode_verbose_emits_events() {
     // `--verbose` over the Remote path: the serve binary fans engine events
     // to stderr (session.turn.started fires before the LLM call, so it lands
