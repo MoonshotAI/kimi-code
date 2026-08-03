@@ -74,10 +74,16 @@ function fakeHostProcess(
 }
 
 function fakePlugins(
-  installed: Array<{ id: string; enabled: boolean; state: string; version?: string }>,
-): { service: IPluginService; installs: string[]; enabledCalls: Array<{ id: string; enabled: boolean }> } {
+  installed: Array<{ id: string; enabled: boolean; state: string; version?: string; enabledMcp?: number }>,
+): {
+  service: IPluginService;
+  installs: string[];
+  enabledCalls: Array<{ id: string; enabled: boolean }>;
+  mcpEnabledCalls: Array<{ id: string; server: string; enabled: boolean }>;
+} {
   const installs: string[] = [];
   const enabledCalls: Array<{ id: string; enabled: boolean }> = [];
+  const mcpEnabledCalls: Array<{ id: string; server: string; enabled: boolean }> = [];
   const service = {
     listPlugins: () =>
       Promise.resolve(
@@ -89,13 +95,26 @@ function fakePlugins(
           state: p.state,
           skillCount: 1,
           mcpServerCount: 1,
-          enabledMcpServerCount: 1,
+          enabledMcpServerCount: p.enabledMcp ?? 1,
           hookCount: 0,
           commandCount: 0,
           hasErrors: false,
           source: 'zip-url',
         })),
       ),
+    getPluginInfo: (input: { id: string }) => {
+      const existing = installed.find((p) => p.id === input.id);
+      return Promise.resolve({
+        mcpServers: [
+          {
+            name: 'mac',
+            runtimeName: 'mac',
+            enabled: (existing?.enabledMcp ?? 1) === 1,
+            transport: 'stdio',
+          },
+        ],
+      } as never);
+    },
     installPlugin: (input: { source: string }) => {
       installs.push(input.source);
       // Upsert semantics of the real manager: a new id installs enabled, an
@@ -103,10 +122,14 @@ function fakePlugins(
       const existing = installed.find((p) => p.id === 'kimi-cu');
       if (existing === undefined) {
         installed.push({ id: 'kimi-cu', enabled: true, state: 'ok' });
-        return Promise.resolve({ enabled: true } as never);
+        return Promise.resolve({ enabled: true, mcpServerCount: 1, enabledMcpServerCount: 1 } as never);
       }
       existing.state = 'ok';
-      return Promise.resolve({ enabled: existing.enabled } as never);
+      return Promise.resolve({
+        enabled: existing.enabled,
+        mcpServerCount: 1,
+        enabledMcpServerCount: existing.enabledMcp ?? 1,
+      } as never);
     },
     setPluginEnabled: (input: { id: string; enabled: boolean }) => {
       enabledCalls.push(input);
@@ -114,8 +137,14 @@ function fakePlugins(
       if (existing !== undefined) existing.enabled = input.enabled;
       return Promise.resolve();
     },
+    setPluginMcpServerEnabled: (input: { id: string; server: string; enabled: boolean }) => {
+      mcpEnabledCalls.push(input);
+      const existing = installed.find((p) => p.id === input.id);
+      if (existing !== undefined) existing.enabledMcp = input.enabled ? 1 : 0;
+      return Promise.resolve();
+    },
   } as unknown as IPluginService;
-  return { service, installs, enabledCalls };
+  return { service, installs, enabledCalls, mcpEnabledCalls };
 }
 
 describe('parsePermissionStatus', () => {
@@ -370,6 +399,37 @@ describe('kimi-cu entry', () => {
     // Fully ready → explicit reinstall exercises the cleanup path.
     await entry.install(() => {});
     expect(host.calls.some((call) => call.includes('ditto'))).toBe(true);
+  });
+
+  it('reports the plugin layer missing when its MCP server is disabled', async () => {
+    const plugins = fakePlugins([{ id: 'kimi-cu', enabled: true, state: 'ok', version: '0.5.4', enabledMcp: 0 }]);
+    const entry = createKimiCuEntry(makeCtx({ plugins: plugins.service }));
+
+    // The plugin toggle is on but the stdio MCP wrapper is off: readiness
+    // must not claim ready — new sessions would get no Computer Use tools.
+    const detected = await entry.detect();
+    expect(detected.steps.find((s) => s.id === 'plugin')).toEqual({
+      id: 'plugin',
+      state: 'missing',
+      detail: 'mcp 0/1 enabled',
+    });
+  });
+
+  it('re-enables disabled MCP servers during setup', async () => {
+    const applicationsDir = await fakeAppBundle();
+    const plugins = fakePlugins([{ id: 'kimi-cu', enabled: true, state: 'ok', version: '0.5.4', enabledMcp: 0 }]);
+    const host = fakeHostProcess([
+      { match: 'service-status', code: 0, stdout: 'SMAppService status=1' },
+      { match: 'xpc-ping', code: 0, stdout: 'permissionStatus: accessibility=true screenRecording=true' },
+    ]);
+    const entry = createKimiCuEntry(
+      makeCtx({ applicationsDir, plugins: plugins.service, hostProcess: host.service }),
+    );
+
+    // Upsert preserves the per-server disabled state, so setup repairs it
+    // explicitly — the plugin toggle alone is not enough.
+    await entry.install(() => {});
+    expect(plugins.mcpEnabledCalls).toEqual([{ id: 'kimi-cu', server: 'mac', enabled: true }]);
   });
 
   it('reads a non-executable leftover app binary as a broken install', async () => {

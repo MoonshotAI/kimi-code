@@ -121,11 +121,19 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
 
     const installed = await ctx.plugins.listPlugins();
     const plugin = installed.find((p) => p.id === PLUGIN_ID);
-    const pluginOk = plugin !== undefined && plugin.enabled && plugin.state === 'ok';
+    const mcpGap =
+      plugin !== undefined && plugin.enabledMcpServerCount < plugin.mcpServerCount
+        ? `mcp ${plugin.enabledMcpServerCount}/${plugin.mcpServerCount} enabled`
+        : undefined;
+    const pluginOk =
+      plugin !== undefined &&
+      plugin.enabled &&
+      plugin.state === 'ok' &&
+      plugin.enabledMcpServerCount === plugin.mcpServerCount;
     steps.push({
       id: 'skill',
       state: pluginOk ? 'ok' : 'missing',
-      detail: plugin?.version,
+      detail: mcpGap ?? plugin?.version,
     });
 
     const skillShadows = (

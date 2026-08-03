@@ -118,11 +118,19 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
 
     const installed = await ctx.plugins.listPlugins();
     const plugin = installed.find((p) => p.id === PLUGIN_ID);
-    const pluginOk = plugin !== undefined && plugin.enabled && plugin.state === 'ok';
+    const mcpGap =
+      plugin !== undefined && plugin.enabledMcpServerCount < plugin.mcpServerCount
+        ? `mcp ${plugin.enabledMcpServerCount}/${plugin.mcpServerCount} enabled`
+        : undefined;
+    const pluginOk =
+      plugin !== undefined &&
+      plugin.enabled &&
+      plugin.state === 'ok' &&
+      plugin.enabledMcpServerCount === plugin.mcpServerCount;
     steps.push({
       id: 'plugin',
       state: pluginOk ? 'ok' : 'missing',
-      detail: plugin?.version,
+      detail: mcpGap ?? plugin?.version,
     });
 
     const version = await readAppBundleVersion(infoPlist);
@@ -231,6 +239,18 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
       const summary = await ctx.plugins.installPlugin({ source: PLUGIN_ZIP_URL });
       if (!summary.enabled) {
         await ctx.plugins.setPluginEnabled({ id: PLUGIN_ID, enabled: true });
+      }
+      if (summary.enabledMcpServerCount < summary.mcpServerCount) {
+        const info = await ctx.plugins.getPluginInfo({ id: PLUGIN_ID });
+        for (const server of info.mcpServers) {
+          if (!server.enabled) {
+            await ctx.plugins.setPluginMcpServerEnabled({
+              id: PLUGIN_ID,
+              server: server.name,
+              enabled: true,
+            });
+          }
+        }
       }
     }
 
