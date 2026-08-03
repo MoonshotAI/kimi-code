@@ -64,6 +64,9 @@ enum Commands {
         /// Print engine events (progress/deltas) as they arrive.
         #[arg(long)]
         verbose: bool,
+        /// Print the raw RPC result JSON instead of the rendered transcript.
+        #[arg(long)]
+        json: bool,
     },
     /// Show the engine config (model/provider); with `--set`, write a value.
     Config {
@@ -287,7 +290,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("{id}  {title}  {work_dir}");
             }
         }
-        Commands::Resume { session_id, prompt, verbose } => {
+        Commands::Resume { session_id, prompt, verbose, json } => {
             let (mut client, renderer) = connect_with_renderer(&server, verbose)?;
             let native_llm = kimi_exec::native_llm_from_config();
             let mut create_params = serde_json::json!({ "session_id": session_id });
@@ -318,7 +321,22 @@ async fn main() -> anyhow::Result<()> {
                 eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
                 std::process::exit(1);
             }
-            println!("{result}");
+            if json {
+                println!("{result}");
+            } else {
+                // Default: render the transcript (last assistant text), same
+                // as `kimi print`; raw RPC envelope via `--json`.
+                let ctx = client
+                    .call(
+                        kimi_protocol::methods::SESSION_GET_CONTEXT,
+                        serde_json::json!({ "session_id": session_id }),
+                    )
+                    .await;
+                match last_assistant_text(&ctx["result"]) {
+                    Some(text) => println!("{text}"),
+                    None => println!("{result}"),
+                }
+            }
         }
         Commands::Config { set } => {
             let mut client = connect(&server)?;
