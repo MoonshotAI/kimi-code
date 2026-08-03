@@ -667,6 +667,39 @@ impl Processor for SessionProcessor {
             })
         });
 
+        // `session/fork` — copy a persisted session under a new id.
+        let mgr = self.state.manager.clone();
+        let busy = self.busy.clone();
+        processor.register(kimi_protocol::methods::SESSION_FORK, move |params| {
+            let mgr = mgr.clone();
+            let busy = busy.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionForkParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                // Reject a busy session WITHOUT taking the manager lock: a
+                // running prompt holds it for the whole turn.
+                {
+                    let busy = busy.lock().unwrap_or_else(|e| e.into_inner());
+                    if busy.get(&input.session_id).copied().unwrap_or(false) {
+                        return Err(JsonRpcError::internal_error(
+                            "session has an active turn; cancel it before forking".to_string(),
+                        ));
+                    }
+                }
+                let mut manager = mgr.lock().await;
+                let forked = manager
+                    .fork_session(
+                        &input.session_id,
+                        &input.fork_id,
+                        input.title.as_deref(),
+                        input.turn_index,
+                    )
+                    .map_err(|e| JsonRpcError::internal_error(e.to_string()))?;
+                Ok(serde_json::json!({ "forked": forked.is_some() }))
+            })
+        });
+
         // `session/get_status` — live engine status snapshot.
         let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_GET_STATUS, move |params| {
