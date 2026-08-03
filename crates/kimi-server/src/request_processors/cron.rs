@@ -18,11 +18,16 @@ pub struct CronProcessor {
 }
 
 impl CronProcessor {
-    /// Create with a fresh cron manager.
+    /// Create with a fresh cron manager + initialized scheduler (main.rs
+    /// calls `start()` once at engine init; the scheduler computes next-fire
+    /// times on demand — no background loop is spawned).
     pub fn new() -> Self {
-        Self {
-            manager: Arc::new(Mutex::new(CronManager::new(None))),
+        let manager = Arc::new(Mutex::new(CronManager::new(None)));
+        {
+            let mut mgr = manager.lock().unwrap_or_else(|e| e.into_inner());
+            mgr.start();
         }
+        Self { manager }
     }
 }
 
@@ -146,5 +151,75 @@ mod tests {
             .await;
         let tasks = body["result"]["tasks"].as_array().expect("tasks");
         assert!(tasks.iter().any(|t| t["id"] == id), "created task in list");
+    }
+
+    #[tokio::test]
+    async fn cron_get_next_fire_then_delete() {
+        let processor = CronProcessor::new();
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "cron/create".into(),
+                params: serde_json::json!({
+                    "cron": "0 9 * * *",
+                    "prompt": "morning",
+                    "recurring": true,
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "cron/create failed: {body}");
+        let id = body["result"]["id"].as_str().expect("id").to_string();
+
+        // The scheduler computes a next fire time for the task.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "cron/get_next_fire".into(),
+                params: serde_json::json!({ "task_id": id }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "get_next_fire failed: {body}");
+        assert!(
+            body["result"]["next_fire_at"].is_u64(),
+            "a next fire time is scheduled: {body}"
+        );
+
+        // Global next-fire mirrors the only task's slot (params must be an
+        // object — `{}` — matching the engine contract; null is rejected).
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(3),
+                method: "cron/get_next_fire".into(),
+                params: serde_json::json!({}),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "global next fire failed: {body}");
+        assert!(body["result"]["next_fire_at"].is_u64(), "global next fire: {body}");
+
+        // Deleting the task empties the schedule again.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(4),
+                method: "cron/delete".into(),
+                params: serde_json::json!({ "ids": [id] }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "cron/delete failed: {body}");
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(5),
+                method: "cron/get_next_fire".into(),
+                params: serde_json::json!({}),
+            })
+            .await;
+        assert_eq!(body["result"]["next_fire_at"], serde_json::Value::Null);
     }
 }
