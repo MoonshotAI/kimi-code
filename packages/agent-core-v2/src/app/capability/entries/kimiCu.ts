@@ -33,6 +33,12 @@ const APP_BUNDLE = 'KimiCU.app';
 const LAUNCHD_LABEL = 'ai.kimi.cu.service';
 const COMMAND_TIMEOUT_MS = 30_000;
 const PERMISSIONS_TIMEOUT_MS = 15_000;
+/**
+ * Detect-path probes (`service-status`, `xpc-ping`) answer in milliseconds
+ * when healthy but run on every status listing, so a wedged binary must
+ * degrade quickly instead of stalling the whole capability list.
+ */
+const DETECT_PROBE_TIMEOUT_MS = 3_000;
 
 interface PermissionStatus {
   readonly accessibility: boolean;
@@ -81,7 +87,7 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
   async function serviceRunning(): Promise<boolean> {
     if (!(await exists(appBin))) return false;
     const result = await runCommand(ctx.hostProcess, appBin, ['service-status'], {
-      timeout: COMMAND_TIMEOUT_MS,
+      timeout: DETECT_PROBE_TIMEOUT_MS,
     });
     // `SMAppService status=1` means enabled (1=enabled, 2=requiresApproval, 3=notFound).
     return /status=1\b/.test(result.stdout);
@@ -90,7 +96,7 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
   async function permissionStatus(): Promise<PermissionStatus | undefined> {
     if (!(await exists(appBin))) return undefined;
     const result = await runCommand(ctx.hostProcess, appBin, ['xpc-ping'], {
-      timeout: PERMISSIONS_TIMEOUT_MS,
+      timeout: DETECT_PROBE_TIMEOUT_MS,
     });
     return parsePermissionStatus(result.stdout);
   }

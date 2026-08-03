@@ -125,7 +125,24 @@ describe('loadPluginMarketplace', () => {
     ]);
   });
 
-  it('appends the built-in capability entries the catalog does not carry', async () => {
+  const builtInEntries = [
+    {
+      id: 'kimi-cu',
+      displayName: 'Kimi Computer Use',
+      description: 'fake cu',
+      tier: 'official' as const,
+      source: 'capability:kimi-cu',
+    },
+    {
+      id: 'kimi-webbridge',
+      displayName: 'Kimi WebBridge',
+      description: 'fake wb',
+      tier: 'official' as const,
+      source: 'capability:kimi-webbridge',
+    },
+  ];
+
+  it('appends the caller-supplied built-in entries the catalog does not carry', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'kimi-plugin-marketplace-'));
     const file = join(dir, 'marketplace.json');
     await writeFile(file, JSON.stringify({ version: '1', plugins: [] }), 'utf8');
@@ -133,23 +150,12 @@ describe('loadPluginMarketplace', () => {
     const marketplace = await loadPluginMarketplace({
       workDir: '/tmp/work',
       source: file,
-      includeBuiltInCapabilities: true,
+      builtInEntries,
     });
 
-    // Client-injected, so the visibility of the two capabilities is bound to
-    // the client version; no version is pinned (reinstall is the upgrade path).
-    expect(marketplace.plugins).toEqual([
-      expect.objectContaining({
-        id: 'kimi-cu',
-        tier: 'official',
-        source: 'capability:kimi-cu',
-      }),
-      expect.objectContaining({
-        id: 'kimi-webbridge',
-        tier: 'official',
-        source: 'capability:kimi-webbridge',
-      }),
-    ]);
+    // The util owns no product knowledge: entries come from the caller (the
+    // engine's capability registry), and no version is pinned.
+    expect(marketplace.plugins).toEqual(builtInEntries);
     expect(marketplace.plugins.map((entry) => entry.version)).toEqual([undefined, undefined]);
   });
 
@@ -174,7 +180,7 @@ describe('loadPluginMarketplace', () => {
     const marketplace = await loadPluginMarketplace({
       workDir: '/tmp/work',
       source: file,
-      includeBuiltInCapabilities: true,
+      builtInEntries,
     });
 
     // What the built-in ids mean stays decided by the client release: the
@@ -308,7 +314,7 @@ describe('loadPluginMarketplace', () => {
       workDir: '/tmp/work',
       source: 'https://example.test/marketplace.json',
       fetchImpl,
-      includeBuiltInCapabilities: true,
+      builtInEntries,
     });
 
     expect(marketplace.plugins.map((entry) => entry.id)).toEqual(['kimi-cu', 'kimi-webbridge']);

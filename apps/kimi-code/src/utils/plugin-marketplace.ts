@@ -71,7 +71,12 @@ export interface LoadPluginMarketplaceOptions {
   readonly workDir: string;
   readonly source?: string;
   readonly fetchImpl?: typeof fetch;
-  readonly includeBuiltInCapabilities?: boolean;
+  /**
+   * Built-in capability rows to inject, supplied by the caller from the
+   * engine's capability registry (this util owns no product knowledge).
+   * Undefined means no injection.
+   */
+  readonly builtInEntries?: readonly PluginMarketplaceEntry[];
 }
 
 export async function loadPluginMarketplace(
@@ -90,64 +95,41 @@ export async function loadPluginMarketplace(
     const fallback =
       configuredSource === undefined ? await getSourceCheckoutMarketplaceLocation() : undefined;
     if (fallback === undefined) {
-      if (options.includeBuiltInCapabilities === true) {
+      if (options.builtInEntries !== undefined) {
         // The built-in entries do not come from the catalog — keep them
         // visible when the catalog itself is unreachable.
-        return withBuiltInEntries({ source: location.resolved, plugins: [] });
+        return withBuiltInEntries({ source: location.resolved, plugins: [] }, options.builtInEntries);
       }
       throw error;
     }
     raw = await readMarketplaceText(fallback, fetchImpl);
     const marketplace = await withLatestVersions(parsePluginMarketplace(raw, fallback), fetchImpl);
-    return options.includeBuiltInCapabilities === true
-      ? withBuiltInEntries(marketplace)
+    return options.builtInEntries !== undefined
+      ? withBuiltInEntries(marketplace, options.builtInEntries)
       : marketplace;
   }
   const marketplace = await withLatestVersions(parsePluginMarketplace(raw, location), fetchImpl);
-  return options.includeBuiltInCapabilities === true
-    ? withBuiltInEntries(marketplace)
+  return options.builtInEntries !== undefined
+    ? withBuiltInEntries(marketplace, options.builtInEntries)
     : marketplace;
 }
 
 /**
- * The built-in capability entries (kimi-cu, kimi-webbridge) are injected by
- * the client instead of being served by the marketplace catalog, so their
+ * Built-in capability entries (kimi-cu, kimi-webbridge) are injected by the
+ * client instead of being served by the marketplace catalog, so their
  * visibility is bound to the client version — older clients never see them.
- * The v2 catalog surface opts into them explicitly. Same-id catalog rows are
- * MASKED, not merged: what these two ids mean stays decided by the client
- * release, and a future official marketplace listing only reaches older
- * clients (whose fix is to upgrade). No `version` is pinned: reinstalling
- * uses the latest managed artifacts.
+ * Same-id catalog rows are MASKED, not merged: what these ids mean stays
+ * decided by the client release, and a future official marketplace listing
+ * only reaches older clients (whose fix is to upgrade). No `version` is
+ * pinned: reinstalling uses the latest managed artifacts.
  */
-function withBuiltInEntries(marketplace: PluginMarketplace): PluginMarketplace {
-  const builtIns = builtInMarketplaceEntries();
+function withBuiltInEntries(
+  marketplace: PluginMarketplace,
+  builtIns: readonly PluginMarketplaceEntry[],
+): PluginMarketplace {
   const builtInIds = new Set(builtIns.map((entry) => entry.id));
   const catalog = marketplace.plugins.filter((entry) => !builtInIds.has(entry.id));
   return { ...marketplace, plugins: [...catalog, ...builtIns] };
-}
-
-function builtInMarketplaceEntries(): readonly PluginMarketplaceEntry[] {
-  return [
-    {
-      id: 'kimi-cu',
-      tier: 'official',
-      displayName: 'Kimi Computer Use',
-      description:
-        'macOS GUI automation in the background — click, type, scroll, and drag without taking over your mouse. Requires the KimiCU.app runtime (macOS only); current clients set it up automatically on install.',
-      keywords: ['computer-use', 'macos', 'accessibility', 'automation', 'gui'],
-      source: 'capability:kimi-cu',
-    },
-    {
-      id: 'kimi-webbridge',
-      tier: 'official',
-      displayName: 'Kimi WebBridge',
-      description:
-        'Control your real browser from Kimi Code — navigate, click, type, and screenshot. Requires the WebBridge daemon + browser extension.',
-      homepage: 'https://www.kimi.com/features/webbridge',
-      keywords: ['browser', 'webbridge', 'cdp', 'automation', 'web'],
-      source: 'capability:kimi-webbridge',
-    },
-  ];
 }
 
 async function withLatestVersions(

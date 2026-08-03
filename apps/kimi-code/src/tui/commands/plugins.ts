@@ -206,7 +206,7 @@ async function showPluginsPicker(
     // keep working even when the marketplace is unreachable (badges simply stay
     // hidden until data arrives).
     onRequestMarketplace: () => {
-      void loadMarketplaceCatalog(host, panel, options?.marketplaceSource);
+      void loadMarketplaceCatalog(host, panel, options?.marketplaceSource, capabilities);
     },
   });
   host.mountEditorReplacement(panel);
@@ -217,20 +217,41 @@ async function showPluginsPicker(
   // over `panel`.
   if (options?.initialTab !== 'custom') {
     panel.setMarketplaceLoading();
-    void loadMarketplaceCatalog(host, panel, options?.marketplaceSource);
+    void loadMarketplaceCatalog(host, panel, options?.marketplaceSource, capabilities);
   }
+}
+
+/**
+ * Adapt a capability from the engine's registry into a catalog row. The
+ * engine is the single source of truth for what the built-in capabilities
+ * are — the CLI only renders them. The `capability:<id>` source marker
+ * routes installs through the capability flow (never a plain plugin
+ * install), so the row needs no real URL.
+ */
+function capabilityMarketplaceEntry(capability: CapabilityStatus): PluginMarketplaceEntry {
+  return {
+    id: capability.id,
+    displayName: capability.displayName,
+    description: capability.description,
+    tier: 'official',
+    source: `capability:${capability.id}`,
+  };
 }
 
 async function loadMarketplaceCatalog(
   host: SlashCommandHost,
   panel: PluginsPanelComponent,
-  source?: string,
+  source: string | undefined,
+  capabilities: readonly CapabilityStatus[],
 ): Promise<void> {
   try {
     const marketplace = await loadPluginMarketplace({
       workDir: host.state.appState.workDir,
       source,
-      includeBuiltInCapabilities: host.engineV2 && source === undefined,
+      builtInEntries:
+        host.engineV2 && source === undefined
+          ? capabilities.map(capabilityMarketplaceEntry)
+          : undefined,
     });
     panel.setMarketplace(marketplace.plugins, marketplace.source);
   } catch (error) {
@@ -323,8 +344,15 @@ function isCapabilityEntry(host: SlashCommandHost, entry: PluginMarketplaceEntry
   return host.engineV2 && entry.source === `capability:${entry.id}`;
 }
 
-function isCapabilityId(host: SlashCommandHost, id: string): boolean {
-  return host.engineV2 && (id === 'kimi-cu' || id === 'kimi-webbridge');
+/** Capability ids come from the engine's registry — nothing is hardcoded
+ * client-side. v1 engines have no capability surface and answer false. */
+async function isCapabilityId(host: SlashCommandHost, id: string): Promise<boolean> {
+  try {
+    const capabilities = await host.requireSession().listCapabilities();
+    return capabilities.some((capability) => capability.id === id);
+  } catch {
+    return false;
+  }
 }
 
 /** Poll a background capability install, mirroring progress into the
@@ -584,7 +612,7 @@ async function handlePluginMcpSelection(
 async function removePlugin(host: SlashCommandHost, id: string): Promise<void> {
   await host.requireSession().removePlugin(id);
   host.showStatus(`Removed ${id}.`);
-  if (isCapabilityId(host, id)) {
+  if (await isCapabilityId(host, id)) {
     host.showStatus(
       'Note: the runtime binaries were left untouched, but Kimi Code plugin wiring is disabled for new sessions. Reinstall any time from the Official tab.',
     );
