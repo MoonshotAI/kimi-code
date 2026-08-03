@@ -1,8 +1,9 @@
 //! Kimi Code command dispatcher — the `kimi` binary, ported from
 //! `apps/kimi-code/src/cli`. Stage C slice: `kimi -p <prompt>` (non-interactive
-//! run) and `kimi health`. More subcommands (doctor/login/web…) land as the
-//! migration progresses.
+//! run), `kimi health`, `kimi export`. More subcommands (doctor/login/web…)
+//! land as the migration progresses.
 
+use base64::Engine;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -42,6 +43,17 @@ enum Commands {
     Doctor,
     /// Engine health check.
     Health,
+    /// Export a session as a ZIP archive (`session/export` parity).
+    Export {
+        /// Session id to export (defaults to the most recent session).
+        session_id: Option<String>,
+        /// Output zip path (defaults to `<session_id>.zip` in the cwd).
+        #[arg(short, long)]
+        output: Option<String>,
+        /// Pick the most recent session without confirmation.
+        #[arg(short, long)]
+        yes: bool,
+    },
 }
 
 #[tokio::main]
@@ -165,6 +177,60 @@ async fn main() -> anyhow::Result<()> {
             );
             let body = client.health().await;
             println!("{}", body["result"]["status"].as_str().unwrap_or("?"));
+        }
+        Commands::Export { session_id, output, yes } => {
+            let server = kimi_server::Server::build()?;
+            let mut client = kimi_server_client::AppServerClient::InProcess(
+                kimi_server::in_process::spawn(server.processor),
+            );
+            // Resolve the session id: explicit, or the most recent session when
+            // `-y` opts in (mirrors the TS CLI's previous-session flow).
+            let resolved_id = match session_id {
+                Some(id) if !id.trim().is_empty() => id,
+                _ => {
+                    if !yes {
+                        eprintln!("no session id given; pass one or use -y to pick the most recent session");
+                        std::process::exit(1);
+                    }
+                    let list = client
+                        .call(kimi_protocol::methods::SESSION_LIST, serde_json::json!({ "limit": 1 }))
+                        .await;
+                    if let Some(error) = list.get("error") {
+                        eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
+                        std::process::exit(1);
+                    }
+                    let sessions = list["result"]["sessions"].as_array().cloned().unwrap_or_default();
+                    let Some(first) = sessions.into_iter().next() else {
+                        eprintln!("no sessions to export");
+                        std::process::exit(1);
+                    };
+                    let id = first["id"].as_str().unwrap_or("").to_string();
+                    eprintln!("exporting most recent session: {id}");
+                    id
+                }
+            };
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_EXPORT,
+                    serde_json::json!({ "session_id": resolved_id }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
+                std::process::exit(1);
+            }
+            let b64 = body["result"]["zip_base64"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("export returned no zip_base64"))?;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .map_err(|e| anyhow::anyhow!("zip_base64 decode failed: {e}"))?;
+            let out_path = match output {
+                Some(p) => std::path::PathBuf::from(p),
+                None => std::path::PathBuf::from(format!("{resolved_id}.zip")),
+            };
+            std::fs::write(&out_path, &bytes)?;
+            println!("{}", out_path.display());
         }
     }
     Ok(())

@@ -1325,6 +1325,7 @@ dependencies = [
  "hex",
  "ignore",
  "image",
+ "kimi-protocol",
  "kimi-shared",
  "napi",
  "napi-build",
@@ -1352,6 +1353,34 @@ dependencies = [
  "regex",
  "serde_json",
  "winapi",
+]
+
+[[package]]
+name = "kimi-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "clap",
+ "kimi-exec",
+ "kimi-protocol",
+ "kimi-server",
+ "kimi-server-client",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "kimi-exec"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "kimi-agent",
+ "kimi-protocol",
+ "kimi-server",
+ "kimi-server-client",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -1398,6 +1427,47 @@ dependencies = [
  "ulid",
  "ureq",
  "url",
+]
+
+[[package]]
+name = "kimi-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "kimi-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "kimi-agent",
+ "kimi-protocol",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "kimi-server-client"
+version = "0.1.0"
+dependencies = [
+ "kimi-protocol",
+ "kimi-server",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "kimi-server-transport"
+version = "0.1.0"
+dependencies = [
+ "kimi-protocol",
+ "kimi-server",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

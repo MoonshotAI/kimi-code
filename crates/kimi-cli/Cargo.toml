@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 clap = { workspace = true }
 kimi-exec = { path = "../kimi-exec" }
 kimi-protocol = { path = "../kimi-protocol" }

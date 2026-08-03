@@ -7,6 +7,7 @@ description = "Kimi Code host protocol layer — MessageProcessor over the engin
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 kimi-agent = { path = "../../packages/kimi-agent" }
 kimi-protocol = { path = "../kimi-protocol" }
 serde = { workspace = true }

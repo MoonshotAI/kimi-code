@@ -5,10 +5,16 @@
 
 use std::sync::Arc;
 
+use base64::Engine;
 use kimi_protocol::rpc::JsonRpcError;
 use kimi_protocol::wire_types::SessionGoalParams;
 
 use crate::processor::{MessageProcessor, Processor};
+
+/// Serializes tests that touch `KIMI_AGENT_HOME` (process-global env var; the
+/// export roundtrip repoints it at a temp store).
+#[cfg(test)]
+static STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Session methods, backed by the shared engine state.
 pub struct SessionProcessor {
@@ -883,7 +889,7 @@ impl Processor for SessionProcessor {
                 .map_err(|e| JsonRpcError::internal_error(format!("export: {e}")))?;
                 Ok(serde_json::json!({
                     "session_id": input.session_id,
-                    "zip_base64": zip_bytes,
+                    "zip_base64": base64::engine::general_purpose::STANDARD.encode(&zip_bytes),
                 }))
             })
         });
@@ -1421,6 +1427,9 @@ mod tests {
 
     #[tokio::test]
     async fn list_returns_empty_page() {
+        // Serialize with tests that touch `KIMI_AGENT_HOME`: that env var is
+        // process-global, and the export test repoints it at a temp store.
+        let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let processor = SessionProcessor::new().expect("session processor");
         let mut server = MessageProcessor::new();
         processor.register(&mut server);
@@ -1645,6 +1654,58 @@ mod create_tests {
             .await;
         assert!(body.get("error").is_none(), "cancel should not error: {body}");
         assert_eq!(body["result"]["cancelled"], false);
+    }
+
+    #[tokio::test]
+    async fn export_roundtrip_yields_zip() {
+        // Point the store at a temp dir so session/export (which opens the
+        // store per call) sees the session created below. Serialized against
+        // other store-sensitive tests via STORE_LOCK; the old value is
+        // restored so parallel tests never see the temp store.
+        let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("kimi-export-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).expect("mkdir");
+        let previous = std::env::var_os("KIMI_AGENT_HOME");
+        std::env::set_var("KIMI_AGENT_HOME", &tmp);
+
+        let result = async {
+            let state = crate::state::ServerState::new().expect("state");
+            let processor = SessionProcessor::with_state(state);
+            let mut server = MessageProcessor::new();
+            processor.register(&mut server);
+            let body = server
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(1),
+                    method: "session/create".into(),
+                    params: serde_json::json!({ "session_id": "s-test-export" }),
+                })
+                .await;
+            assert!(body.get("error").is_none(), "create failed: {body}");
+
+            let body = server
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(2),
+                    method: "session/export".into(),
+                    params: serde_json::json!({ "session_id": "s-test-export" }),
+                })
+                .await;
+            assert!(body.get("error").is_none(), "export failed: {body}");
+            let b64 = body["result"]["zip_base64"].as_str().expect("zip_base64 string");
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .expect("valid base64");
+            assert_eq!(&bytes[..2], b"PK", "zip magic bytes");
+        }
+        .await;
+
+        match previous {
+            Some(v) => std::env::set_var("KIMI_AGENT_HOME", v),
+            None => std::env::remove_var("KIMI_AGENT_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+        result;
     }
 
 

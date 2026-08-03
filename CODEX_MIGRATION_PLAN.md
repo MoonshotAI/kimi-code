@@ -289,8 +289,8 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 6. **验证**：kimi-server 27 测试 + client 2 + exec 2 全绿；workspace check 干净；0 warnings
 
 ### 阶段 C — CLI + exec
-1. `kimi-cli`：clap 分发 + 子命令平移（acp/doctor/export/login/provider/upgrade/vis/web）
-2. `kimi-exec`：-p/print + -s shell 执行
+1. ✅ `kimi-cli`：clap 分发 + 子命令平移（print/sessions/resume/config/doctor/health/**export**；acp/login/provider/upgrade/vis/web 待）
+2. ✅ `kimi-exec`：-p/print + run_prompt 经 AppServerClient（InProcess/Remote）
 3. **验证**：`kimi -p "..."` 端到端；CLI 测试平移（55 用例）
 
 ### 阶段 D — TUI
