@@ -262,6 +262,47 @@ impl Processor for SessionProcessor {
             })
         });
 
+        // `session/cancel` — flag the running turn for cancellation.
+        let cancel = self.cancel.clone();
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_CANCEL, move |params| {
+            let cancel = cancel.clone();
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                use std::sync::atomic::Ordering;
+                let input: kimi_protocol::wire_types::SessionIdParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let cancelled = {
+                    let map = cancel.lock().unwrap_or_else(|e| e.into_inner());
+                    match map.get(&input.session_id) {
+                        Some(flag) => {
+                            flag.store(true, Ordering::Relaxed);
+                            true
+                        }
+                        None => false,
+                    }
+                };
+                // Interrupt hooks: fire-and-forget when the cancel actually took
+                // effect (a flag existed for this session).
+                if cancelled {
+                    let mut manager = mgr.lock().await;
+                    if let Some(agent) = manager.get_agent(&input.session_id) {
+                        agent
+                            .fire_lifecycle_hook(
+                                kimi_agent::hooks::external::HookEventType::Interrupt,
+                                serde_json::json!({
+                                    "session_id": input.session_id,
+                                    "reason": "user_cancelled",
+                                }),
+                            )
+                            .await;
+                    }
+                }
+                Ok(serde_json::json!({ "cancelled": cancelled }))
+            })
+        });
+
         // `session/get_status` — live engine status snapshot.
         let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_GET_STATUS, move |params| {
@@ -575,5 +616,24 @@ mod create_tests {
             })
             .await;
         assert_eq!(body["error"]["message"], "no agent for session: nope");
+    }
+
+
+    #[tokio::test]
+    async fn cancel_unknown_session_returns_false() {
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = SessionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/cancel".into(),
+                params: serde_json::json!({ "session_id": "nope" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "cancel should not error: {body}");
+        assert_eq!(body["result"]["cancelled"], false);
     }
 }
