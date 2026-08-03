@@ -97,6 +97,12 @@ enum Commands {
         #[arg(short, long)]
         yes: bool,
     },
+    /// Interactive chat loop (stage-D prototype: plain text, no ratatui).
+    Chat {
+        /// Session id to reuse (defaults to a fresh `chat-<pid>` one).
+        #[arg(short, long)]
+        session: Option<String>,
+    },
 }
 
 /// Sub-targets of `kimi doctor`.
@@ -391,6 +397,68 @@ async fn main() -> anyhow::Result<()> {
             let mut client = connect(&server)?;
             let body = client.health().await;
             println!("{}", body["result"]["status"].as_str().unwrap_or("?"));
+        }
+        Commands::Chat { session } => {
+            // Stage-D prototype: a plain-text REPL over the same event
+            // rendering as `print --verbose`. Progress goes to stderr when it
+            // is a TTY; the assistant transcript goes to stdout per turn.
+            let capture = std::io::stderr().is_terminal();
+            let (mut client, renderer) = connect_with_renderer(&server, capture)?;
+            let session_id = session.unwrap_or_else(|| format!("chat-{}", std::process::id()));
+            let created = client
+                .call(
+                    kimi_protocol::methods::SESSION_CREATE,
+                    serde_json::json!({ "session_id": session_id }),
+                )
+                .await;
+            if let Some(error) = created.get("error") {
+                eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
+                std::process::exit(1);
+            }
+            if std::io::stderr().is_terminal() {
+                eprintln!("chat session {session_id} — type /quit to exit");
+            }
+            let stdin = std::io::stdin();
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match stdin.read_line(&mut line) {
+                    Ok(0) => break, // EOF
+                    Ok(_) => {}
+                    Err(e) => {
+                        eprintln!("read error: {e}");
+                        break;
+                    }
+                }
+                let text = line.trim();
+                if text.is_empty() {
+                    continue;
+                }
+                if matches!(text, "/quit" | "/exit") {
+                    break;
+                }
+                let result = client
+                    .call(
+                        kimi_protocol::methods::SESSION_PROMPT,
+                        serde_json::json!({
+                            "session_id": session_id,
+                            "input": [{ "type": "text", "text": text }],
+                        }),
+                    )
+                    .await;
+                if let Some(error) = result.get("error") {
+                    eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
+                    continue;
+                }
+                let ctx = client.session_get_context(&session_id).await;
+                match kimi_ui::last_assistant_text(&ctx["result"]) {
+                    Some(text) => println!("{text}"),
+                    None => println!("{result}"),
+                }
+            }
+            if let Some(renderer) = renderer {
+                renderer.abort();
+            }
         }
         Commands::Export { session_id, output, yes } => {
             let mut client = connect(&server)?;

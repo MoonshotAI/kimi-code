@@ -232,6 +232,43 @@ fn config_set_rejects_malformed_key() {
 }
 
 #[test]
+fn chat_with_closed_stdin_exits_cleanly() {
+    // No stdin (output() pipes null) -> the REPL reads EOF and exits without
+    // ever touching the LLM.
+    let home = temp_dir("chat");
+    let output = run(&home, &["chat"]);
+    assert!(
+        output.status.success(),
+        "chat exits 0 on EOF: {} — {}",
+        output.status,
+        stderr(&output)
+    );
+}
+
+#[test]
+fn chat_quit_command_exits() {
+    let home = temp_dir("chat-quit");
+    let cwd = temp_dir("chat-cwd");
+    let mut child = Command::new(binary())
+        .args(["chat"])
+        .current_dir(&cwd)
+        .env("KIMI_AGENT_HOME", &home)
+        .env("HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn kimi chat");
+    {
+        use std::io::Write;
+        let stdin = child.stdin.as_mut().expect("stdin");
+        stdin.write_all(b"/quit\n").expect("write");
+    }
+    let status = child.wait().expect("wait");
+    assert!(status.success(), "chat /quit exits 0: {status}");
+}
+
+#[test]
 fn server_mode_verbose_emits_events() {
     // `--verbose` over the Remote path: the serve binary fans engine events
     // to stderr (session.turn.started fires before the LLM call, so it lands
