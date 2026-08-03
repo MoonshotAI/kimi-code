@@ -11,6 +11,7 @@ pub mod health;
 pub mod permission;
 pub mod plugin;
 pub mod session;
+pub mod task;
 
 pub use approval::ApprovalProcessor;
 pub use bg::BgProcessor;
@@ -22,3 +23,4 @@ pub use health::HealthProcessor;
 pub use permission::PermissionProcessor;
 pub use plugin::PluginProcessor;
 pub use session::SessionProcessor;
+pub use task::TaskProcessor;
