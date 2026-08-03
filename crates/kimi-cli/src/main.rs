@@ -65,7 +65,12 @@ enum Commands {
     /// Show the current engine config (model/provider).
     Config,
     /// Environment + config diagnostics.
-    Doctor,
+    Doctor {
+        /// Validate a specific config.toml file (TS `kimi doctor config`
+        /// parity); without this, the default full checks run.
+        #[command(subcommand)]
+        target: Option<DoctorTarget>,
+    },
     /// Engine health check.
     Health,
     /// Export a session as a ZIP archive (`session/export` parity).
@@ -78,6 +83,17 @@ enum Commands {
         /// Pick the most recent session without confirmation.
         #[arg(short, long)]
         yes: bool,
+    },
+}
+
+/// Sub-targets of `kimi doctor`.
+#[derive(Subcommand)]
+enum DoctorTarget {
+    /// Validate a specific config.toml file.
+    Config {
+        /// Path to the config file (defaults to the first found).
+        #[arg(value_name = "path")]
+        path: Option<String>,
     },
 }
 
@@ -270,7 +286,31 @@ async fn main() -> anyhow::Result<()> {
             }
             println!("{}", serde_json::to_string_pretty(&config["result"]).unwrap_or_default());
         }
-        Commands::Doctor => {
+        Commands::Doctor { target } => {
+            // `kimi doctor config [path]` — validate one specific config file
+            // (TS `doctor config` parity): existence, then parse + validate.
+            if let Some(DoctorTarget::Config { path }) = target {
+                let resolved = match path {
+                    Some(p) => std::path::PathBuf::from(p),
+                    None => kimi_agent::config::loader::find_config_paths()
+                        .into_iter()
+                        .find(|p| p.exists())
+                        .unwrap_or_else(|| std::path::PathBuf::from("config.toml")),
+                };
+                if !resolved.exists() {
+                    println!("config file: ERROR (not found) {}", resolved.display());
+                    std::process::exit(1);
+                }
+                match kimi_agent::config::loader::parse_config_file(&resolved) {
+                    Ok(_) => println!("config file: OK {}", resolved.display()),
+                    Err(e) => {
+                        println!("config file: ERROR {} — {e}", resolved.display());
+                        std::process::exit(1);
+                    }
+                }
+                return Ok(());
+            }
+
             let mut client = connect(&server)?;
             let health = client.health().await;
             println!("health: {}", health["result"]["status"].as_str().unwrap_or("?"));

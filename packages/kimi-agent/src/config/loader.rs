@@ -5,7 +5,7 @@
 /// A reload only commits a fully loaded and validated config: a corrupted
 /// (e.g. half-written) config.toml fails the reload and keeps the last good
 /// configuration, so the loaded provider/model catalogs are never cleared.
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
 use anyhow::Result;
@@ -231,6 +231,18 @@ pub fn load_config() -> Result<KimiConfig> {
 /// on top of all file-based configuration.
 pub fn load_config_with_env() -> Result<KimiConfig> {
     load_from_paths(&find_config_paths(), true)
+}
+
+/// Parse and validate a single config file (used by `kimi doctor config
+/// <path>`): reads the one file, applies no merging and no environment
+/// overrides, and validates the result like a real load.
+pub fn parse_config_file(path: &Path) -> Result<KimiConfig> {
+    let mut config = KimiConfig::empty();
+    if let Some(loaded) = try_load(&path.to_path_buf())? {
+        config = merge_configs(config, loaded);
+    }
+    validate_config(&config)?;
+    Ok(config)
 }
 
 // ── Hot reload ─────────────────────────────────────────────────────────────

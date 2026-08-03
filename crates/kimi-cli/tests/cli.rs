@@ -143,6 +143,30 @@ fn doctor_reports_health_and_config_files() {
 }
 
 #[test]
+fn doctor_config_validates_specific_file() {
+    let home = temp_dir("doctor-config");
+    let good = home.join("good.toml");
+    std::fs::write(
+        &good,
+        "[providers.mock]\ntype = \"openai\"\nbaseUrl = \"http://localhost:9999/v1\"\n",
+    )
+    .expect("write");
+    let output = run(&home, &["doctor", "config", good.to_str().unwrap()]);
+    assert!(output.status.success(), "good config should pass: {}", stderr(&output));
+    assert!(stdout(&output).contains("OK"), "OK line: {}", stdout(&output));
+
+    let bad = home.join("bad.toml");
+    std::fs::write(&bad, "[model]\nname = \"x\"\n").expect("write");
+    let output = run(&home, &["doctor", "config", bad.to_str().unwrap()]);
+    assert_eq!(output.status.code(), Some(1), "bad config should fail");
+    assert!(stdout(&output).contains("ERROR"), "ERROR line: {}", stdout(&output));
+
+    let output = run(&home, &["doctor", "config", home.join("nope.toml").to_str().unwrap()]);
+    assert_eq!(output.status.code(), Some(1), "missing file should fail");
+    assert!(stdout(&output).contains("not found"));
+}
+
+#[test]
 fn server_mode_verbose_emits_events() {
     // `--verbose` over the Remote path: the serve binary fans engine events
     // to stderr (session.turn.started fires before the LLM call, so it lands
