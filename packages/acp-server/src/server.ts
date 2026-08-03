@@ -1,16 +1,17 @@
 /**
- * ACP `AgentSideConnection` handler backed directly by `agent-core-v2`.
+ * ACP `AgentSideConnection` handler backed by the `Klient` facade (in-memory
+ * transport by default — see `./start`).
  *
  * `initialize`, the session lifecycle (`session/new`, `/load`, `/resume`,
- * `/list`, `/close`), `session/prompt`, `session/cancel`, the config surface
- * (model / mode / thinking), slash commands, skills, approval / question
- * bridging (`session/request_permission`), and `session/load` history replay
- * are wired to the `ISessionLifecycleService` / `ISessionIndex`, the
- * per-session main agent, and the `ISessionInteractionService` kernel. MCP
- * forwarding and terminal reverse-RPC land in later phases.
+ * `/list`, `/close`), `session/prompt`, `session/cancel`, and the config
+ * surface (model / mode; thinking is hidden until klient exposes it) are
+ * wired to `klient.global.sessions`, `klient.session(id)` lifecycle +
+ * interactions, and the per-session main agent handle (`klient.session(id).
+ * agent('main')`). Slash commands, skills, approval / question bridging
+ * (`session/request_permission`), and `session/load` history replay live in
+ * `./session` / `./interaction-bridge`. MCP forwarding and terminal
+ * reverse-RPC land in later phases.
  */
-
-import { randomUUID } from 'node:crypto';
 
 import {
   type Agent,
@@ -44,21 +45,10 @@ import {
   type SetSessionModelRequest,
   type SetSessionModelResponse,
 } from '@agentclientprotocol/sdk';
-import {
-  ensureMainAgent,
-  type IAgentScopeHandle,
-  IAuthSummaryService,
-  IConfigService,
-  IAgentProfileService,
-  ISessionIndex,
-  ISessionLifecycleService,
-  type ISessionScopeHandle,
-  type Scope,
-  type SessionSummary,
-} from '@moonshot-ai/agent-core-v2';
+import type { AgentHandle, Klient, SessionSummary } from '@moonshot-ai/klient';
 
+import type { IAcpConnection } from './acp-fs';
 import { buildTerminalAuthMethod, TERMINAL_AUTH_METHOD } from './auth-methods';
-import { IAcpConnection } from './acp-fs';
 import { log } from './log';
 import { isAcpModeId } from './modes';
 import { AcpSession } from './session';
@@ -70,9 +60,10 @@ export interface AcpServerOptions {
   /** Agent identity advertised in `initialize.agentInfo`. */
   readonly agentInfo?: Implementation;
   /**
-   * Bypass the auth gate (`IAuthSummaryService`). Intended for tests and local
-   * dev — production ACP hosts should leave this `false` so unauthenticated
-   * clients get a structured `auth_required` before any session is created.
+   * Bypass the auth gate (`klient.global.auth.summarize()`). Intended for
+   * tests and local dev — production ACP hosts should leave this `false` so
+   * unauthenticated clients get a structured `auth_required` before any
+   * session is created.
    */
   readonly disableAuth?: boolean;
   /**
@@ -101,7 +92,13 @@ export class AcpServer implements Agent {
 
   constructor(
     private readonly conn: AgentSideConnection,
-    private readonly core: Scope,
+    private readonly klient: Klient,
+    /**
+     * The engine-side ACP connection holder (host file-IO reverse-RPC). This
+     * is a composition-root concern, not a klient facade concern — `start.ts`
+     * resolves it from the bootstrapped scope and passes it in.
+     */
+    private readonly acpConnection: IAcpConnection,
     opts: AcpServerOptions = {},
   ) {
     this.agentInfo = opts.agentInfo;
@@ -122,7 +119,7 @@ export class AcpServer implements Agent {
 
   async initialize(params: InitializeRequest): Promise<InitializeResponse> {
     this.clientCapabilities = params.clientCapabilities;
-    this.core.accessor.get(IAcpConnection).bindFsCapabilities(params.clientCapabilities?.fs);
+    this.acpConnection.bindFsCapabilities(params.clientCapabilities?.fs);
 
     const agentCapabilities: AgentCapabilities = {
       loadSession: true,
@@ -155,60 +152,54 @@ export class AcpServer implements Agent {
 
   async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
     await this.ensureAuthed();
-    const sessionId = `session_${randomUUID()}`;
-    const handle = await this.core.accessor
-      .get(ISessionLifecycleService)
-      .create({ sessionId, workDir: params.cwd });
-    const acpSession = await this.wireSession(handle, sessionId);
+    // The engine mints the session id and registers the workspace for the cwd
+    // implicitly. ACP `mcpServers` are not forwarded (as before — the facade
+    // `create` has no slot for them yet).
+    const meta = await this.klient.global.sessions.create({ workDir: params.cwd });
+    const sessionId = meta.id;
+    const acpSession = await this.wireSession(sessionId);
     this.sessions.set(sessionId, acpSession);
     void acpSession.emitAvailableCommandsUpdate();
-    return { sessionId, configOptions: acpSession.configOptions() };
+    return { sessionId, configOptions: await acpSession.configOptions() };
   }
 
   async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
     await this.ensureAuthed();
-    const handle = await this.resumeHandle(params.sessionId);
-    const acpSession = await this.wireSession(handle, params.sessionId);
-    this.sessions.get(params.sessionId)?.dispose();
-    this.sessions.set(params.sessionId, acpSession);
+    const acpSession = await this.resumeAcpSession(params.sessionId);
     // Replay the persisted history as an ordered batch of `session/update`
     // notifications BEFORE settling, so the client re-renders prior turns
     // before the load response lands. This is the one differentiator vs.
     // `resumeSession`, which deliberately skips replay per the ACP spec.
     await acpSession.replayHistory();
     void acpSession.emitAvailableCommandsUpdate();
-    return { configOptions: acpSession.configOptions() };
+    return { configOptions: await acpSession.configOptions() };
   }
 
   async resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
     await this.ensureAuthed();
-    const handle = await this.resumeHandle(params.sessionId);
-    const acpSession = await this.wireSession(handle, params.sessionId);
-    this.sessions.get(params.sessionId)?.dispose();
-    this.sessions.set(params.sessionId, acpSession);
+    const acpSession = await this.resumeAcpSession(params.sessionId);
     void acpSession.emitAvailableCommandsUpdate();
-    return { configOptions: acpSession.configOptions() };
+    return { configOptions: await acpSession.configOptions() };
   }
 
   async listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
     const cwd = params.cwd ?? undefined;
-    const page = await this.core.accessor.get(ISessionIndex).list({});
+    const page = await this.klient.global.sessions.list({});
     // Filter by cwd when the client supplies one. SessionSummary.cwd is optional
     // (sessions written before cwd was persisted); those are excluded when a
     // filter is active.
-    const items =
-      cwd !== undefined ? page.items.filter((s) => s.cwd === cwd) : page.items;
+    const items = cwd !== undefined ? page.items.filter((s) => s.cwd === cwd) : page.items;
     const sessions: SessionInfo[] = items.map(sessionSummaryToSessionInfo);
     return { sessions, nextCursor: page.nextCursor ?? null };
   }
 
   /**
    * Handle ACP `session/close`. Cancels any in-flight turn, tears down the
-   * per-session ACP resources (interaction bridge), and asks the engine to
-   * dispose the live session scope. Best-effort: an unknown or already-closed
-   * session id is not an error — `close` is a cleanup operation, and
-   * `ISessionLifecycleService.close` is a no-op for a session that is not
-   * currently live.
+   * per-session ACP resources (interaction bridge, event subscriptions), and
+   * asks the engine to dispose the live session scope. Best-effort: an
+   * unknown or already-closed session id is not an error — `close` is a
+   * cleanup operation, and the lifecycle close is a no-op for a session that
+   * is not currently live.
    */
   async closeSession(params: CloseSessionRequest): Promise<CloseSessionResponse | void> {
     const acpSession = this.sessions.get(params.sessionId);
@@ -216,7 +207,7 @@ export class AcpServer implements Agent {
       acpSession.dispose();
       this.sessions.delete(params.sessionId);
     }
-    await this.core.accessor.get(ISessionLifecycleService).close(params.sessionId);
+    await this.klient.session(params.sessionId).close();
   }
 
   async authenticate(params: AuthenticateRequest): Promise<AuthenticateResponse | void> {
@@ -304,24 +295,26 @@ export class AcpServer implements Agent {
         break;
       case 'mode': {
         if (!isAcpModeId(value)) {
-          throw RequestError.invalidParams(
-            { modeId: value },
-            `Unknown modeId: ${String(value)}`,
-          );
+          throw RequestError.invalidParams({ modeId: value }, `Unknown modeId: ${String(value)}`);
         }
         await acpSession.setMode(value);
         break;
       }
       case 'thinking':
-        await acpSession.setThinking(value === 'on');
-        break;
+        // KLIENT-GAP(thinking): the option is never advertised (see
+        // `AcpSession.configOptions`); reject stale clients explicitly instead
+        // of pretending the toggle took effect.
+        throw RequestError.invalidParams(
+          { configId: params.configId },
+          'thinking is not configurable: klient exposes no thinking surface yet',
+        );
       default:
         throw RequestError.invalidParams(
           { configId: params.configId },
           `Unknown configId: ${params.configId}`,
         );
     }
-    return { configOptions: acpSession.configOptions() };
+    return { configOptions: await acpSession.configOptions() };
   }
 
   async extMethod(
@@ -336,37 +329,45 @@ export class AcpServer implements Agent {
   }
 
   /**
-   * Resume a persisted session into the live scope tree. Maps an unknown
-   * session id to ACP `invalid_params` (-32602) rather than a generic internal
-   * error.
+   * Resume a persisted session into the live scope tree and build its ACP
+   * session. An unknown session id maps to ACP `invalid_params` (-32602)
+   * rather than a generic internal error.
    */
-  private async resumeHandle(sessionId: string): Promise<ISessionScopeHandle> {
-    const handle = await this.core.accessor.get(ISessionLifecycleService).resume(sessionId);
-    if (handle === undefined) {
+  private async resumeAcpSession(sessionId: string): Promise<AcpSession> {
+    // `restore` re-materializes a persisted session (a live one passes
+    // through) and reports `false` only when the id no longer exists.
+    const restored = await this.klient.session(sessionId).restore();
+    if (!restored) {
       throw RequestError.invalidParams({ sessionId }, `Unknown sessionId: ${sessionId}`);
     }
-    return handle;
+    const acpSession = await this.wireSession(sessionId);
+    this.sessions.get(sessionId)?.dispose();
+    this.sessions.set(sessionId, acpSession);
+    return acpSession;
   }
 
   /**
-   * Ensure the main agent exists for a session and bind the configured default
-   * model (best-effort — a missing default model leaves the agent unbound, and
-   * `prompt` settles gracefully until a model is set via `set_config_option`).
+   * Build the ACP session for a live session: bind the configured default
+   * model to the main agent (best-effort — a missing default model leaves the
+   * agent unbound, and `prompt` settles gracefully until a model is set via
+   * `set_config_option`), then subscribe its event stream.
    */
-  private async wireSession(handle: ISessionScopeHandle, sessionId: string): Promise<AcpSession> {
-    const main = await ensureMainAgent(handle);
-    await this.bindDefaultModel(main);
-    return new AcpSession(this.conn, handle, main, sessionId);
+  private async wireSession(sessionId: string): Promise<AcpSession> {
+    await this.bindDefaultModel(this.klient.session(sessionId).agent('main'));
+    const acpSession = new AcpSession(this.conn, this.klient, sessionId);
+    await acpSession.init();
+    return acpSession;
   }
 
-  private async bindDefaultModel(main: IAgentScopeHandle): Promise<void> {
+  private async bindDefaultModel(agent: AgentHandle): Promise<void> {
     try {
-      const profile = main.accessor.get(IAgentProfileService);
-      if (profile.isRunnable()) return;
-      const inspected = this.core.accessor.get(IConfigService).inspect<string>('defaultModel');
+      // `getModel` is '' while the profile has no model bound (the same guard
+      // the old engine-direct binding expressed via `isRunnable()`).
+      if ((await agent.getModel()).length > 0) return;
+      const inspected = await this.klient.global.config.inspect<string>('defaultModel');
       const model = inspected.value;
       if (typeof model === 'string' && model.length > 0) {
-        await profile.setModel(model);
+        await agent.setModel(model);
       }
     } catch (error) {
       log.warn('acp: default model binding skipped', {
@@ -378,7 +379,7 @@ export class AcpServer implements Agent {
   /** Auth gate: throws `auth_required` unless authed (or `disableAuth`). */
   private async ensureAuthed(): Promise<void> {
     if (this.disableAuth) return;
-    const summaries = await this.core.accessor.get(IAuthSummaryService).summarize();
+    const summaries = await this.klient.global.auth.summarize();
     const authed = summaries.some((s) => s.loggedIn);
     if (!authed) {
       throw RequestError.authRequired();
@@ -387,8 +388,8 @@ export class AcpServer implements Agent {
 }
 
 /**
- * Project an agent-core-v2 {@link SessionSummary} into the ACP
- * {@link SessionInfo} shape used by `session/list`.
+ * Project a wire {@link SessionSummary} into the ACP {@link SessionInfo}
+ * shape used by `session/list`.
  */
 function sessionSummaryToSessionInfo(summary: SessionSummary): SessionInfo {
   let updatedAt: string | null = null;

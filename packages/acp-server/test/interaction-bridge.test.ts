@@ -1,15 +1,10 @@
+import type { AgentSideConnection, RequestPermissionResponse } from '@agentclientprotocol/sdk';
+import type { Interaction } from '@moonshot-ai/agent-core-v2';
+import type { SessionHandle } from '@moonshot-ai/klient';
+import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { AcpInteractionBridge } from '../src/interaction-bridge';
-
-import type { AgentSideConnection, RequestPermissionResponse } from '@agentclientprotocol/sdk';
-import {
-  type Interaction,
-  type ISessionInteractionService,
-  type ISessionScopeHandle,
-  ISessionInteractionService as ISessionInteractionServiceId,
-} from '@moonshot-ai/agent-core-v2';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
 const SESSION_ID = 'session_test';
 
@@ -18,37 +13,48 @@ const commandDisplay: ToolInputDisplay = {
   command: 'echo hi',
 } as unknown as ToolInputDisplay;
 
-interface FakeInteraction {
-  readonly svc: ISessionInteractionService;
+interface FakeSession {
+  readonly handle: SessionHandle;
   readonly responses: Array<{ id: string; response: unknown }>;
   setPending(pending: readonly Interaction[]): void;
   fire(): void;
 }
 
-function makeFakeInteraction(): FakeInteraction {
-  let listener: (() => void) | undefined;
+/**
+ * Fake the klient session surface the bridge consumes:
+ * `events.on('interactions.changed')` + `interactions.list()` / `respond()`.
+ */
+function makeFakeSession(): FakeSession {
+  let listener: ((pending: readonly Interaction[]) => void) | undefined;
   let pending: readonly Interaction[] = [];
   const responses: Array<{ id: string; response: unknown }> = [];
-  const svc = {
-    onDidChangePending: (l: () => void) => {
-      listener = l;
-      return { dispose: () => { listener = undefined; } };
+  const handle = {
+    events: {
+      on: (_event: string, l: (payload: readonly Interaction[]) => void) => {
+        listener = l;
+        return {
+          dispose: () => {
+            listener = undefined;
+          },
+        };
+      },
+      onError: () => ({ dispose: () => {} }),
     },
-    listPending: () => pending,
-    respond: (id: string, response: unknown) => {
-      responses.push({ id, response });
+    interactions: {
+      list: () => Promise.resolve(pending),
+      respond: (id: string, response: unknown) => {
+        responses.push({ id, response });
+        return Promise.resolve();
+      },
     },
-    // Unused interface members stubbed for completeness.
-    request: () => Promise.resolve(undefined),
-    enqueue: () => ({ id: '', kind: 'approval', payload: undefined, origin: {}, createdAt: 0 }),
-    isRecentlyResolved: () => false,
-    onDidResolve: () => ({ dispose: () => {} }),
-  } as unknown as ISessionInteractionService;
+  } as unknown as SessionHandle;
   return {
-    svc,
+    handle,
     responses,
-    setPending: (p) => { pending = p; },
-    fire: () => listener?.(),
+    setPending: (p) => {
+      pending = p;
+    },
+    fire: () => listener?.(pending),
   };
 }
 
@@ -57,7 +63,9 @@ interface FakeConn {
   readonly calls: Array<Record<string, unknown>>;
 }
 
-function makeFakeConn(handler: (params: Record<string, unknown>) => RequestPermissionResponse): FakeConn {
+function makeFakeConn(
+  handler: (params: Record<string, unknown>) => RequestPermissionResponse,
+): FakeConn {
   const calls: Array<Record<string, unknown>> = [];
   const conn = {
     requestPermission: async (params: Record<string, unknown>) => {
@@ -66,17 +74,6 @@ function makeFakeConn(handler: (params: Record<string, unknown>) => RequestPermi
     },
   } as unknown as AgentSideConnection;
   return { conn, calls };
-}
-
-function makeSessionHandle(svc: ISessionInteractionService): ISessionScopeHandle {
-  return {
-    accessor: {
-      get: (id: unknown) => {
-        if (id === ISessionInteractionServiceId) return svc;
-        throw new Error(`unexpected service request: ${String(id)}`);
-      },
-    },
-  } as unknown as ISessionScopeHandle;
 }
 
 async function flush(): Promise<void> {
@@ -99,10 +96,12 @@ const approvalInteraction: Interaction = {
 
 describe('AcpInteractionBridge', () => {
   it('forwards an approval request to the client and responds with the decision', async () => {
-    const interaction = makeFakeInteraction();
-    const { conn, calls } = makeFakeConn(() => ({ outcome: { outcome: 'selected', optionId: 'approve_once' } }));
-    interaction.setPending([approvalInteraction]);
-    const bridge = new AcpInteractionBridge(conn, makeSessionHandle(interaction.svc), SESSION_ID);
+    const session = makeFakeSession();
+    const { conn, calls } = makeFakeConn(() => ({
+      outcome: { outcome: 'selected', optionId: 'approve_once' },
+    }));
+    session.setPending([approvalInteraction]);
+    const bridge = new AcpInteractionBridge(conn, session.handle, SESSION_ID);
     await flush();
 
     expect(calls).toHaveLength(1);
@@ -110,18 +109,22 @@ describe('AcpInteractionBridge', () => {
       sessionId: SESSION_ID,
       toolCall: { toolCallId: '3:call_1', title: 'Bash' },
     });
-    expect(interaction.responses).toEqual([{ id: 'approval-1', response: { decision: 'approved', selectedLabel: 'Approve once' } }]);
+    expect(session.responses).toEqual([
+      { id: 'approval-1', response: { decision: 'approved', selectedLabel: 'Approve once' } },
+    ]);
     bridge.dispose();
   });
 
   it('maps approve_always to a session-scoped approval', async () => {
-    const interaction = makeFakeInteraction();
-    const { conn } = makeFakeConn(() => ({ outcome: { outcome: 'selected', optionId: 'approve_always' } }));
-    interaction.setPending([approvalInteraction]);
-    const bridge = new AcpInteractionBridge(conn, makeSessionHandle(interaction.svc), SESSION_ID);
+    const session = makeFakeSession();
+    const { conn } = makeFakeConn(() => ({
+      outcome: { outcome: 'selected', optionId: 'approve_always' },
+    }));
+    session.setPending([approvalInteraction]);
+    const bridge = new AcpInteractionBridge(conn, session.handle, SESSION_ID);
     await flush();
 
-    expect(interaction.responses[0]?.response).toEqual({
+    expect(session.responses[0]?.response).toEqual({
       decision: 'approved',
       scope: 'session',
       selectedLabel: 'Approve for this session',
@@ -130,21 +133,25 @@ describe('AcpInteractionBridge', () => {
   });
 
   it('responds rejected when the client RPC fails', async () => {
-    const interaction = makeFakeInteraction();
+    const session = makeFakeSession();
     const conn = {
-      requestPermission: async () => { throw new Error('transport dropped'); },
+      requestPermission: async () => {
+        throw new Error('transport dropped');
+      },
     } as unknown as AgentSideConnection;
-    interaction.setPending([approvalInteraction]);
-    const bridge = new AcpInteractionBridge(conn, makeSessionHandle(interaction.svc), SESSION_ID);
+    session.setPending([approvalInteraction]);
+    const bridge = new AcpInteractionBridge(conn, session.handle, SESSION_ID);
     await flush();
 
-    expect(interaction.responses).toEqual([{ id: 'approval-1', response: { decision: 'rejected' } }]);
+    expect(session.responses).toEqual([{ id: 'approval-1', response: { decision: 'rejected' } }]);
     bridge.dispose();
   });
 
   it('forwards a question request and responds with the answer', async () => {
-    const interaction = makeFakeInteraction();
-    const { conn, calls } = makeFakeConn(() => ({ outcome: { outcome: 'selected', optionId: 'q0_opt_0' } }));
+    const session = makeFakeSession();
+    const { conn, calls } = makeFakeConn(() => ({
+      outcome: { outcome: 'selected', optionId: 'q0_opt_0' },
+    }));
     const questionInteraction: Interaction = {
       id: 'question-1',
       kind: 'question',
@@ -156,17 +163,19 @@ describe('AcpInteractionBridge', () => {
       origin: { turnId: 5 },
       createdAt: 0,
     };
-    interaction.setPending([questionInteraction]);
-    const bridge = new AcpInteractionBridge(conn, makeSessionHandle(interaction.svc), SESSION_ID);
+    session.setPending([questionInteraction]);
+    const bridge = new AcpInteractionBridge(conn, session.handle, SESSION_ID);
     await flush();
 
-    expect(calls[0]).toMatchObject({ toolCall: { toolCallId: '5:tc_q', title: 'AskUserQuestion' } });
-    expect(interaction.responses).toEqual([{ id: 'question-1', response: { 'Pick one': 'A' } }]);
+    expect(calls[0]).toMatchObject({
+      toolCall: { toolCallId: '5:tc_q', title: 'AskUserQuestion' },
+    });
+    expect(session.responses).toEqual([{ id: 'question-1', response: { 'Pick one': 'A' } }]);
     bridge.dispose();
   });
 
   it('ignores non-approval/question interactions', async () => {
-    const interaction = makeFakeInteraction();
+    const session = makeFakeSession();
     const { conn, calls } = makeFakeConn(() => ({ outcome: { outcome: 'cancelled' } }));
     const userToolInteraction: Interaction = {
       id: 'ut-1',
@@ -175,22 +184,24 @@ describe('AcpInteractionBridge', () => {
       origin: {},
       createdAt: 0,
     };
-    interaction.setPending([userToolInteraction]);
-    const bridge = new AcpInteractionBridge(conn, makeSessionHandle(interaction.svc), SESSION_ID);
+    session.setPending([userToolInteraction]);
+    const bridge = new AcpInteractionBridge(conn, session.handle, SESSION_ID);
     await flush();
 
     expect(calls).toHaveLength(0);
-    expect(interaction.responses).toEqual([]);
+    expect(session.responses).toEqual([]);
     bridge.dispose();
   });
 
   it('does not double-handle the same pending id across change events', async () => {
-    const interaction = makeFakeInteraction();
-    const { conn, calls } = makeFakeConn(() => ({ outcome: { outcome: 'selected', optionId: 'approve_once' } }));
-    interaction.setPending([approvalInteraction]);
-    const bridge = new AcpInteractionBridge(conn, makeSessionHandle(interaction.svc), SESSION_ID);
-    interaction.fire();
-    interaction.fire();
+    const session = makeFakeSession();
+    const { conn, calls } = makeFakeConn(() => ({
+      outcome: { outcome: 'selected', optionId: 'approve_once' },
+    }));
+    session.setPending([approvalInteraction]);
+    const bridge = new AcpInteractionBridge(conn, session.handle, SESSION_ID);
+    session.fire();
+    session.fire();
     await flush();
 
     expect(calls).toHaveLength(1);

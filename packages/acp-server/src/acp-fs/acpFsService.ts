@@ -2,8 +2,8 @@
  * ACP-backed `IHostFileSystem` — Session-scoped `IHostFileSystem` that routes
  * text file reads/writes through the ACP client (`fs.readTextFile` /
  * `fs.writeTextFile`, keyed by this session's `sessionId`) and delegates every
- * other operation (binary IO, stat/readdir/mkdir/remove, exclusive create) to a
- * node-local inner backend.
+ * other operation (binary IO, stat/realpath/readdir/mkdir/remove, exclusive
+ * create) to a node-local inner backend.
  *
  * Registered at Session scope so it shadows the App-scope node-local
  * `IHostFileSystem` for Session- and Agent-scope consumers (the os file tools),
@@ -49,9 +49,10 @@ export class AcpHostFileSystem implements IHostFileSystem {
   declare readonly _serviceBrand: undefined;
 
   /**
-   * Local inner backend for every operation ACP `fs` does not model (binary IO,
-   * directory ops, stat, exclusive create). `HostFileSystem` is stateless (no
-   * DI dependencies), so constructing it directly is safe.
+   * Local inner backend for every operation the ACP `fs` protocol cannot
+   * express (binary IO, append, stat, realpath, directory ops, exclusive
+   * create). `HostFileSystem` is stateless (no DI dependencies), so
+   * constructing it directly is safe.
    */
   private readonly inner = new HostFileSystem();
 
@@ -106,6 +107,10 @@ export class AcpHostFileSystem implements IHostFileSystem {
 
   stat(path: string): Promise<HostFileStat> {
     return this.inner.stat(path);
+  }
+
+  realpath(path: string): Promise<string> {
+    return this.inner.realpath(path);
   }
 
   readdir(path: string): Promise<readonly HostDirEntry[]> {

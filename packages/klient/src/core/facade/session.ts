@@ -9,22 +9,22 @@
 
 import type { AgentActivityState } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type {
-  AgentMeta,
-  SessionMeta,
-  SessionMetaPatch,
-} from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
-import type {
   ApprovalRequest,
   ApprovalResponse,
 } from '@moonshot-ai/agent-core-v2/session/approval/approval';
+import type {
+  Interaction,
+  InteractionKind,
+} from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
 import type {
   QuestionRequest,
   QuestionResult,
 } from '@moonshot-ai/agent-core-v2/session/question/question';
 import type {
-  Interaction,
-  InteractionKind,
-} from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
+  AgentMeta,
+  SessionMeta,
+  SessionMetaPatch,
+} from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 
 import type { ScopeRef } from '../channel.js';
 import { RPCError } from '../errors.js';
@@ -74,10 +74,7 @@ export interface SessionFacade {
   /** Re-materialize a closed session; `false` when it no longer exists. */
   restore(): Promise<boolean>;
   fork(input?: { title?: string; metadata?: Record<string, unknown> }): Promise<SessionMeta>;
-  createChild(input?: {
-    title?: string;
-    metadata?: Record<string, unknown>;
-  }): Promise<SessionMeta>;
+  createChild(input?: { title?: string; metadata?: Record<string, unknown> }): Promise<SessionMeta>;
   readonly approvals: SessionApprovalsFacade;
   readonly questions: SessionQuestionsFacade;
   readonly interactions: SessionInteractionsFacade;
@@ -158,7 +155,9 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
       const handle = (await call({ workspaceId }, 'sessionLifecycleService', 'restore', [
         sessionId,
       ])) as HandleWire | null;
-      return handle !== null;
+      // The engine reports "not found" with `undefined`, which JSON transports
+      // may surface as `null` — reject both.
+      return handle !== null && handle !== undefined;
     },
     fork: (input) => spawn('fork', input),
     createChild: (input) => spawn('createChild', input),

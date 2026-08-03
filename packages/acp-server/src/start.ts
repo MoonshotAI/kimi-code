@@ -2,10 +2,13 @@
  * acp-server bootstrap — wires `@moonshot-ai/agent-core-v2` (the DI × Scope
  * engine) into an ACP (Agent Client Protocol) stdio server.
  *
- * Composition root: `bootstrap()` builds the App `Scope`; ACP method handlers
- * resolve services through `core.accessor.get(IXxx)` and per-session scope
- * handles. The ACP-backed `IHostFileSystem` (./acp-fs) is imported for its
- * Session-scope registration side effect (see the import below).
+ * Composition root: `bootstrap()` builds the App `Scope`; a `@moonshot-ai/
+ * klient` facade over the in-memory transport is created on top of it, and
+ * every ACP method handler drives the engine through that facade. The
+ * ACP-backed `IHostFileSystem` (./acp-fs) is imported for its Session-scope
+ * registration side effect (see the import below) — being registered on the
+ * same scope the memory transport dispatches against, it keeps working
+ * unchanged.
  */
 
 import { Readable, Writable } from 'node:stream';
@@ -21,13 +24,15 @@ import {
   type Scope,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
+import type { Klient } from '@moonshot-ai/klient';
+import { createKlient } from '@moonshot-ai/klient/memory';
 
-import { AcpServer, type AcpServerOptions } from './server';
 // Importing the `acp-fs` barrel also registers the ACP-backed Session-scope
 // `IHostFileSystem` and the App-scope `IAcpConnection` holder via the barrel's
 // module side effects. `IAcpConnection` is used below to bind the ACP client
 // connection.
 import { IAcpConnection } from './acp-fs';
+import { AcpServer, type AcpServerOptions } from './server';
 
 export interface RunAcpServerOptions extends AcpServerOptions {
   readonly homeDir?: string;
@@ -45,6 +50,7 @@ export interface RunAcpServerOptions extends AcpServerOptions {
 
 export interface RunningAcpServer {
   readonly core: Scope;
+  readonly klient: Klient;
   readonly conn: AgentSideConnection;
   close(): Promise<void>;
 }
@@ -66,9 +72,10 @@ function redirectConsoleToStderr(): void {
 /**
  * Drive an {@link AcpServer} over an arbitrary ACP {@link Stream}.
  *
- * Boots `agent-core-v2`, binds the ACP client connection into
- * {@link IAcpConnection} (so the `acp` `IHostFileSystem` can reverse-RPC file
- * IO), and resolves when the connection closes.
+ * Boots `agent-core-v2`, creates the in-memory `Klient` facade over the app
+ * scope, binds the ACP client connection into {@link IAcpConnection} (so the
+ * `acp` `IHostFileSystem` can reverse-RPC file IO), and resolves when the
+ * connection closes.
  */
 export async function runAcpServerWithStream(
   stream: Stream,
@@ -87,12 +94,18 @@ export async function runAcpServerWithStream(
     ...(opts.extraSeeds ?? []),
   ]);
 
+  // The klient dispatches against the same app scope — calls and events stay
+  // in-process but observe wire-shaped (JSON-cloned) data. The klient does
+  // NOT own the scope: lifecycle stays with this composition root.
+  const klient = createKlient({ scope: core });
+  const acpConnection = core.accessor.get(IAcpConnection);
+
   const conn = new AgentSideConnection((c) => {
     // Bind the process-wide ACP client connection before any session performs
     // file IO. The `acp` `IHostFileSystem` reads it lazily via
     // `IAcpConnection.get()`.
-    core.accessor.get(IAcpConnection).bind(c);
-    return new AcpServer(c, core, {
+    acpConnection.bind(c);
+    return new AcpServer(c, klient, acpConnection, {
       agentInfo: opts.agentInfo,
       disableAuth: opts.disableAuth,
       terminalAuthEnv: opts.terminalAuthEnv,
@@ -101,6 +114,9 @@ export async function runAcpServerWithStream(
   }, stream);
 
   const close = async (): Promise<void> => {
+    // Detach the klient's event subscriptions first so disposal below cannot
+    // deliver into a torn-down scope.
+    await klient.close();
     // Flush the append-log write-behind before disposing, so a clean shutdown
     // never races a pending drain against teardown (and doesn't drop the last
     // persisted ops). Best-effort: a flush failure must not block disposal.
@@ -116,7 +132,7 @@ export async function runAcpServerWithStream(
     void close();
   });
 
-  return { core, conn, close };
+  return { core, klient, conn, close };
 }
 
 /**

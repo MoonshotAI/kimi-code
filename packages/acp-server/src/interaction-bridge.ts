@@ -5,26 +5,24 @@
  * `interaction` kernel.
  *
  * The engine's `AgentPermissionGate` and `AskUserQuestionTool` park requests on
- * the Session-scoped `ISessionInteractionService` and block on their response.
- * This bridge is a pure edge observer: it subscribes to
- * `ISessionInteractionService.onDidChangePending`, and for every newly-pending
- * `approval` / `question` interaction it calls `conn.requestPermission(...)`,
- * maps the response through the pure mappers in `./approval` / `./question`,
- * and settles the parked request via `interaction.respond(id, ...)`. The
- * default `SessionApprovalService` / `SessionQuestionService` stay in place —
- * the bridge never replaces them.
+ * the Session-scoped interaction service and block on their response. This
+ * bridge is a pure edge observer driven entirely by the klient facade: it
+ * subscribes to the session's `interactions.changed` event (which pushes the
+ * full pending set on every change), and for every newly-pending `approval` /
+ * `question` interaction it calls `conn.requestPermission(...)`, maps the
+ * response through the pure mappers in `./approval` / `./question`, and
+ * settles the parked request via `session.interactions.respond(id, ...)`.
  */
 
 import type { AgentSideConnection } from '@agentclientprotocol/sdk';
-import {
-  type Interaction,
-  type ISessionScopeHandle,
-  ISessionInteractionService,
-  type QuestionAnswers,
-  type QuestionRequest,
-  type SessionApprovalRequest as ApprovalRequest,
-  type SessionApprovalResponse as ApprovalResponse,
+import type {
+  Interaction,
+  QuestionAnswers,
+  QuestionRequest,
+  SessionApprovalRequest as ApprovalRequest,
+  SessionApprovalResponse as ApprovalResponse,
 } from '@moonshot-ai/agent-core-v2';
+import type { IDisposable, SessionHandle } from '@moonshot-ai/klient';
 
 import {
   approvalRequestToPermissionOptions,
@@ -36,27 +34,32 @@ import { acpToolCallId } from './events-map';
 import { log } from './log';
 import { outcomeToQuestionAnswer, questionItemToPermissionOptions } from './question';
 
-/** Disposable subscription handle returned by the event-bus `Event`. */
-interface Disposable {
-  dispose(): void;
-}
-
 export class AcpInteractionBridge {
   /** Ids the bridge has already begun handling — guards against re-entry. */
   private readonly inFlight = new Set<string>();
-  private readonly subscription: Disposable;
-  private readonly interaction: ISessionInteractionService;
+  private readonly subscription: IDisposable;
   private disposed = false;
 
   constructor(
     private readonly conn: AgentSideConnection,
-    sessionHandle: ISessionScopeHandle,
+    private readonly session: SessionHandle,
     private readonly sessionId: string,
   ) {
-    this.interaction = sessionHandle.accessor.get(ISessionInteractionService);
-    this.subscription = this.interaction.onDidChangePending(() => this.onPendingChanged());
-    // Catch anything that was parked before the subscription attached.
-    this.onPendingChanged();
+    this.subscription = session.events.on('interactions.changed', (pending) => {
+      this.onPendingChanged(pending);
+    }); // The event stream only fires on change — sweep anything parked before the
+    // subscription attached (matches the old direct `listPending()` sweep).
+    void this.session.interactions.list().then(
+      (pending) => {
+        this.onPendingChanged(pending);
+      },
+      (error: unknown) => {
+        log.warn('acp: initial interaction sweep failed', {
+          sessionId: this.sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      },
+    );
   }
 
   dispose(): void {
@@ -66,9 +69,9 @@ export class AcpInteractionBridge {
     this.inFlight.clear();
   }
 
-  private onPendingChanged(): void {
+  private onPendingChanged(pending: readonly Interaction[]): void {
     if (this.disposed) return;
-    for (const interaction of this.interaction.listPending()) {
+    for (const interaction of pending) {
       if (this.inFlight.has(interaction.id)) continue;
       if (interaction.kind !== 'approval' && interaction.kind !== 'question') continue;
       this.inFlight.add(interaction.id);
@@ -77,15 +80,17 @@ export class AcpInteractionBridge {
   }
 
   private async dispatch(interaction: Interaction): Promise<void> {
+    const respond = (response: unknown): Promise<void> =>
+      this.session.interactions.respond(interaction.id, response);
     try {
       if (interaction.kind === 'approval') {
         const response = await this.handleApproval(interaction.payload as ApprovalRequest);
-        this.interaction.respond(interaction.id, response);
+        await respond(response);
         return;
       }
       if (interaction.kind === 'question') {
         const result = await this.handleQuestion(interaction.payload as QuestionRequest);
-        this.interaction.respond(interaction.id, result);
+        await respond(result);
       }
     } catch (error) {
       // `respond` itself never throws for a still-pending id, and the handlers
@@ -98,11 +103,17 @@ export class AcpInteractionBridge {
         kind: interaction.kind,
         error: error instanceof Error ? error.message : String(error),
       });
-      if (interaction.kind === 'approval') {
-        this.interaction.respond(interaction.id, { decision: 'rejected' } satisfies ApprovalResponse);
-      } else {
-        this.interaction.respond(interaction.id, null);
-      }
+      const fallback: unknown =
+        interaction.kind === 'approval'
+          ? ({ decision: 'rejected' } satisfies ApprovalResponse)
+          : null;
+      await respond(fallback).catch((respondError: unknown) => {
+        log.warn('acp: interaction bridge fallback respond failed', {
+          sessionId: this.sessionId,
+          interactionId: interaction.id,
+          error: respondError instanceof Error ? respondError.message : String(respondError),
+        });
+      });
     }
   }
 
@@ -165,7 +176,8 @@ export class AcpInteractionBridge {
     const q = questions[0]!;
     const options = questionItemToPermissionOptions(q, 0);
     const rawToolCallId = req.toolCallId ?? 'ask-user';
-    const toolCallId = req.turnId !== undefined ? acpToolCallId(req.turnId, rawToolCallId) : rawToolCallId;
+    const toolCallId =
+      req.turnId !== undefined ? acpToolCallId(req.turnId, rawToolCallId) : rawToolCallId;
     try {
       const response = await this.conn.requestPermission({
         sessionId: this.sessionId,

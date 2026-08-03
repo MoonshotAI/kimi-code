@@ -556,6 +556,9 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../agent-core-v2
+      '@moonshot-ai/klient':
+        specifier: workspace:^
+        version: link:../klient
       '@moonshot-ai/protocol':
         specifier: workspace:^
         version: link:../protocol

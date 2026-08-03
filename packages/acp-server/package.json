@@ -21,6 +21,7 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.23.0",
     "@moonshot-ai/agent-core-v2": "workspace:^",
+    "@moonshot-ai/klient": "workspace:^",
     "@moonshot-ai/protocol": "workspace:^"
   }
 }
