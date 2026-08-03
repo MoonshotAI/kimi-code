@@ -172,20 +172,16 @@ describe('rest/snapshot — session snapshot', () => {
 });
 
 describe('events — volatile classification', () => {
-  it('classifies stream fragments and periodic status as volatile', () => {
+  it('classifies engine stream events as volatile', () => {
     for (const type of [
-      'assistant.delta',
-      'thinking.delta',
-      'tool.call.delta',
-      'tool.progress',
-      'shell.output',
-      'shell.started',
-      'shell.completed',
-      'agent.status.updated',
+      'llm.delta',
+      'llm.step.begin',
+      'llm.step.end',
+      'session.shell.output',
     ]) {
       expect(isVolatileEventType(type)).toBe(true);
     }
-    expect(VOLATILE_EVENT_TYPES).toHaveLength(8);
+    expect(VOLATILE_EVENT_TYPES).toHaveLength(4);
   });
 
   it('keeps timeline-bearing events durable', () => {

@@ -748,8 +748,6 @@ importers:
         specifier: workspace:^
         version: link:../kaos
 
-  packages/minidb: {}
-
   packages/node-sdk:
     dependencies:
       '@antfu/utils':

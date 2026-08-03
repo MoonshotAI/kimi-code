@@ -701,25 +701,6 @@ export interface GoalUpdatedEvent {
   readonly change?: GoalChange;
 }
 
-export interface SkillActivatedEvent {
-  readonly type: 'skill.activated';
-  readonly activationId: string;
-  readonly skillName: string;
-  readonly skillArgs?: string;
-  readonly trigger: 'user-slash' | 'model-tool' | 'nested-skill';
-  readonly skillPath?: string;
-  readonly skillSource?: SkillSource;
-}
-
-export interface PluginCommandActivatedEvent {
-  readonly type: 'plugin_command.activated';
-  readonly activationId: string;
-  readonly pluginId: string;
-  readonly commandName: string;
-  readonly commandArgs?: string;
-  readonly trigger: 'user-slash';
-}
-
 export interface ErrorEvent extends KimiErrorPayload {
   readonly type: 'error';
 }
@@ -745,63 +726,6 @@ export interface TurnEndedEvent {
   readonly durationMs?: number;
 }
 
-export interface TurnStepStartedEvent {
-  readonly type: 'turn.step.started';
-  readonly turnId: number;
-  readonly step: number;
-  readonly stepId?: string;
-}
-
-export interface TurnStepCompletedEvent {
-  readonly type: 'turn.step.completed';
-  readonly turnId: number;
-  readonly step: number;
-  readonly stepId?: string;
-  readonly usage?: TokenUsage;
-  readonly finishReason?: string;
-  readonly llmFirstTokenLatencyMs?: number;
-  readonly llmStreamDurationMs?: number;
-  /**
-   * Split of `llmFirstTokenLatencyMs`: in-process request-building time on the
-   * client vs. network + API-server time to the first token. Both omitted when
-   * the provider does not report the client/server boundary.
-   */
-  readonly llmRequestBuildMs?: number;
-  readonly llmServerFirstTokenMs?: number;
-  /**
-   * Split of `llmStreamDurationMs` (the decode window): time awaiting parts from
-   * the provider vs. time processing parts in-process. Both omitted when the
-   * provider stream did not report decode accounting.
-   */
-  readonly llmServerDecodeMs?: number;
-  readonly llmClientConsumeMs?: number;
-  readonly providerFinishReason?: FinishReason;
-  readonly rawFinishReason?: string;
-}
-
-export interface TurnStepRetryingEvent {
-  readonly type: 'turn.step.retrying';
-  readonly turnId: number;
-  readonly step: number;
-  readonly stepId?: string;
-  readonly failedAttempt: number;
-  readonly nextAttempt: number;
-  readonly maxAttempts: number;
-  readonly delayMs: number;
-  readonly errorName: string;
-  readonly errorMessage: string;
-  readonly statusCode?: number;
-}
-
-export interface TurnStepInterruptedEvent {
-  readonly type: 'turn.step.interrupted';
-  readonly turnId: number;
-  readonly step: number;
-  readonly stepId?: string;
-  readonly reason: string;
-  readonly message?: string;
-}
-
 export interface AssistantDeltaEvent {
   readonly type: 'assistant.delta';
   readonly turnId: number;
@@ -822,14 +746,6 @@ export interface ThinkingDeltaEvent {
   readonly delta: string;
 }
 
-export interface ToolCallDeltaEvent {
-  readonly type: 'tool.call.delta';
-  readonly turnId: number;
-  readonly toolCallId: string;
-  readonly name?: string;
-  readonly argumentsPart?: string;
-}
-
 export interface ToolCallStartedEvent {
   readonly type: 'tool.call.started';
   readonly turnId: number;
@@ -838,13 +754,6 @@ export interface ToolCallStartedEvent {
   readonly args: unknown;
   readonly description?: string;
   readonly display?: ToolInputDisplay;
-}
-
-export interface ToolProgressEvent {
-  readonly type: 'tool.progress';
-  readonly turnId: number;
-  readonly toolCallId: string;
-  readonly update: ToolUpdate;
 }
 
 /**
@@ -860,28 +769,6 @@ export interface ShellOutputEvent {
   readonly taskId?: string;
 }
 
-/**
- * Fired once when a `!` shell command's foreground process task is registered,
- * carrying the task id so the client can detach (ctrl+b) it. Transient.
- */
-export interface ShellStartedEvent {
-  readonly type: 'shell.started';
-  readonly commandId: string;
-  readonly taskId: string;
-}
-
-/**
- * Fired once when a foreground `!` shell command settles (success or
- * failure). Runs detached to background do NOT fire it — they report through
- * the task lifecycle instead. Transient, like the other `shell.*` events.
- */
-export interface ShellCompletedEvent {
-  readonly type: 'shell.completed';
-  readonly commandId: string;
-  readonly isError: boolean;
-  readonly taskId?: string;
-}
-
 export interface ToolResultEvent {
   readonly type: 'tool.result';
   readonly turnId: number;
@@ -891,62 +778,10 @@ export interface ToolResultEvent {
   readonly synthetic?: boolean;
 }
 
-export interface SubagentSpawnedEvent {
-  readonly type: 'subagent.spawned';
-  readonly subagentId: string;
-  readonly subagentName: string;
-  readonly parentToolCallId: string;
-  readonly parentToolCallUuid?: string;
-  readonly parentAgentId?: string;
-  readonly callerAgentId?: string;
-  readonly description?: string;
-  readonly swarmIndex?: number;
-  readonly runInBackground: boolean;
-}
-
-export interface SubagentStartedEvent {
-  readonly type: 'subagent.started';
-  readonly subagentId: string;
-}
-
-export interface SubagentSuspendedEvent {
-  readonly type: 'subagent.suspended';
-  readonly subagentId: string;
-  readonly reason: string;
-}
-
-export interface SubagentCompletedEvent {
-  readonly type: 'subagent.completed';
-  readonly subagentId: string;
-  readonly resultSummary: string;
-  readonly usage?: TokenUsage;
-  readonly contextTokens?: number;
-}
-
-export interface SubagentFailedEvent {
-  readonly type: 'subagent.failed';
-  readonly subagentId: string;
-  readonly error: string;
-}
-
 export interface CompactionStartedEvent {
   readonly type: 'compaction.started';
   readonly trigger: 'manual' | 'auto';
   readonly instruction?: string;
-}
-
-export interface CompactionBlockedEvent {
-  readonly type: 'compaction.blocked';
-  readonly turnId?: number;
-}
-
-export interface CompactionCancelledEvent {
-  readonly type: 'compaction.cancelled';
-}
-
-export interface CompactionCompletedEvent {
-  readonly type: 'compaction.completed';
-  readonly result: CompactionResult;
 }
 
 export interface TaskStartedEvent {
@@ -957,28 +792,6 @@ export interface TaskStartedEvent {
 export interface TaskTerminatedEvent {
   readonly type: 'task.terminated';
   readonly info: TaskInfo;
-}
-
-/**
- * Legacy background-task lifecycle events emitted by the pre-v2 agent core
- * (`background.task.started` / `background.task.terminated`). The v2 engine
- * emits `task.started` / `task.terminated` instead; both spellings are kept in
- * the union so clients see a consistent event stream across engines.
- */
-export interface BackgroundTaskStartedEvent {
-  readonly type: 'background.task.started';
-  readonly info: TaskInfo;
-}
-
-export interface BackgroundTaskTerminatedEvent {
-  readonly type: 'background.task.terminated';
-  readonly info: TaskInfo;
-}
-
-export interface CronFiredEvent {
-  readonly type: 'cron.fired';
-  readonly origin: CronJobOrigin;
-  readonly prompt: string;
 }
 
 export interface PromptSubmittedEvent {
@@ -1009,14 +822,6 @@ export interface PromptSteeredEvent {
   readonly promptIds: readonly string[];
   readonly content: readonly MessageContent[];
   readonly steeredAt: string;
-}
-
-export type ToolListUpdatedReason = 'mcp.connected' | 'mcp.disconnected' | 'mcp.failed';
-
-export interface ToolListUpdatedEvent {
-  readonly type: 'tool.list.updated';
-  readonly reason: ToolListUpdatedReason;
-  readonly serverName: string;
 }
 
 export interface McpServerStatusEvent {
@@ -1571,25 +1376,6 @@ export const goalUpdatedEventSchema = z.object({
   change: goalChangeSchema.optional(),
 }) satisfies z.ZodType<GoalUpdatedEvent>;
 
-export const skillActivatedEventSchema = z.object({
-  type: z.literal('skill.activated'),
-  activationId: z.string(),
-  skillName: z.string(),
-  skillArgs: z.string().optional(),
-  trigger: z.enum(['user-slash', 'model-tool', 'nested-skill']),
-  skillPath: z.string().optional(),
-  skillSource: skillSourceSchema.optional(),
-}) satisfies z.ZodType<SkillActivatedEvent>;
-
-export const pluginCommandActivatedEventSchema = z.object({
-  type: z.literal('plugin_command.activated'),
-  activationId: z.string(),
-  pluginId: z.string(),
-  commandName: z.string(),
-  commandArgs: z.string().optional(),
-  trigger: z.literal('user-slash'),
-}) satisfies z.ZodType<PluginCommandActivatedEvent>;
-
 export const errorEventSchema = kimiErrorPayloadObjectSchema.extend({
   type: z.literal('error'),
 }) satisfies z.ZodType<ErrorEvent>;
@@ -1615,53 +1401,6 @@ export const turnEndedEventSchema = z.object({
   durationMs: z.number().optional(),
 }) satisfies z.ZodType<TurnEndedEvent>;
 
-export const turnStepStartedEventSchema = z.object({
-  type: z.literal('turn.step.started'),
-  turnId: z.number(),
-  step: z.number(),
-  stepId: z.string().optional(),
-}) satisfies z.ZodType<TurnStepStartedEvent>;
-
-export const turnStepCompletedEventSchema = z.object({
-  type: z.literal('turn.step.completed'),
-  turnId: z.number(),
-  step: z.number(),
-  stepId: z.string().optional(),
-  usage: tokenUsageSchema.optional(),
-  finishReason: z.string().optional(),
-  llmFirstTokenLatencyMs: z.number().optional(),
-  llmStreamDurationMs: z.number().optional(),
-  llmRequestBuildMs: z.number().optional(),
-  llmServerFirstTokenMs: z.number().optional(),
-  llmServerDecodeMs: z.number().optional(),
-  llmClientConsumeMs: z.number().optional(),
-  providerFinishReason: finishReasonSchema.optional(),
-  rawFinishReason: z.string().optional(),
-}) satisfies z.ZodType<TurnStepCompletedEvent>;
-
-export const turnStepRetryingEventSchema = z.object({
-  type: z.literal('turn.step.retrying'),
-  turnId: z.number(),
-  step: z.number(),
-  stepId: z.string().optional(),
-  failedAttempt: z.number(),
-  nextAttempt: z.number(),
-  maxAttempts: z.number(),
-  delayMs: z.number(),
-  errorName: z.string(),
-  errorMessage: z.string(),
-  statusCode: z.number().optional(),
-}) satisfies z.ZodType<TurnStepRetryingEvent>;
-
-export const turnStepInterruptedEventSchema = z.object({
-  type: z.literal('turn.step.interrupted'),
-  turnId: z.number(),
-  step: z.number(),
-  stepId: z.string().optional(),
-  reason: z.string(),
-  message: z.string().optional(),
-}) satisfies z.ZodType<TurnStepInterruptedEvent>;
-
 export const assistantDeltaEventSchema = z.object({
   type: z.literal('assistant.delta'),
   turnId: z.number(),
@@ -1682,14 +1421,6 @@ export const thinkingDeltaEventSchema = z.object({
   delta: z.string(),
 }) satisfies z.ZodType<ThinkingDeltaEvent>;
 
-export const toolCallDeltaEventSchema = z.object({
-  type: z.literal('tool.call.delta'),
-  turnId: z.number(),
-  toolCallId: z.string(),
-  name: z.string().optional(),
-  argumentsPart: z.string().optional(),
-}) satisfies z.ZodType<ToolCallDeltaEvent>;
-
 export const toolCallStartedEventSchema = z.object({
   type: z.literal('tool.call.started'),
   turnId: z.number(),
@@ -1700,32 +1431,12 @@ export const toolCallStartedEventSchema = z.object({
   display: ToolInputDisplaySchema.optional(),
 }) satisfies z.ZodType<ToolCallStartedEvent>;
 
-export const toolProgressEventSchema = z.object({
-  type: z.literal('tool.progress'),
-  turnId: z.number(),
-  toolCallId: z.string(),
-  update: toolUpdateSchema,
-}) satisfies z.ZodType<ToolProgressEvent>;
-
 export const shellOutputEventSchema = z.object({
   type: z.literal('shell.output'),
   commandId: z.string(),
   update: toolUpdateSchema,
   taskId: z.string().optional(),
 }) satisfies z.ZodType<ShellOutputEvent>;
-
-export const shellStartedEventSchema = z.object({
-  type: z.literal('shell.started'),
-  commandId: z.string(),
-  taskId: z.string(),
-}) satisfies z.ZodType<ShellStartedEvent>;
-
-export const shellCompletedEventSchema = z.object({
-  type: z.literal('shell.completed'),
-  commandId: z.string(),
-  isError: z.boolean(),
-  taskId: z.string().optional(),
-}) satisfies z.ZodType<ShellCompletedEvent>;
 
 export const toolResultEventSchema = z.object({
   type: z.literal('tool.result'),
@@ -1736,63 +1447,11 @@ export const toolResultEventSchema = z.object({
   synthetic: z.boolean().optional(),
 }) satisfies z.ZodType<ToolResultEvent>;
 
-export const subagentSpawnedEventSchema = z.object({
-  type: z.literal('subagent.spawned'),
-  subagentId: z.string(),
-  subagentName: z.string(),
-  parentToolCallId: z.string(),
-  parentToolCallUuid: z.string().optional(),
-  parentAgentId: z.string().optional(),
-  callerAgentId: z.string().optional(),
-  description: z.string().optional(),
-  swarmIndex: z.number().optional(),
-  runInBackground: z.boolean(),
-}) satisfies z.ZodType<SubagentSpawnedEvent>;
-
-export const subagentStartedEventSchema = z.object({
-  type: z.literal('subagent.started'),
-  subagentId: z.string(),
-}) satisfies z.ZodType<SubagentStartedEvent>;
-
-export const subagentSuspendedEventSchema = z.object({
-  type: z.literal('subagent.suspended'),
-  subagentId: z.string(),
-  reason: z.string(),
-}) satisfies z.ZodType<SubagentSuspendedEvent>;
-
-export const subagentCompletedEventSchema = z.object({
-  type: z.literal('subagent.completed'),
-  subagentId: z.string(),
-  resultSummary: z.string(),
-  usage: tokenUsageSchema.optional(),
-  contextTokens: z.number().optional(),
-}) satisfies z.ZodType<SubagentCompletedEvent>;
-
-export const subagentFailedEventSchema = z.object({
-  type: z.literal('subagent.failed'),
-  subagentId: z.string(),
-  error: z.string(),
-}) satisfies z.ZodType<SubagentFailedEvent>;
-
 export const compactionStartedEventSchema = z.object({
   type: z.literal('compaction.started'),
   trigger: z.enum(['manual', 'auto']),
   instruction: z.string().optional(),
 }) satisfies z.ZodType<CompactionStartedEvent>;
-
-export const compactionBlockedEventSchema = z.object({
-  type: z.literal('compaction.blocked'),
-  turnId: z.number().optional(),
-}) satisfies z.ZodType<CompactionBlockedEvent>;
-
-export const compactionCancelledEventSchema = z.object({
-  type: z.literal('compaction.cancelled'),
-}) satisfies z.ZodType<CompactionCancelledEvent>;
-
-export const compactionCompletedEventSchema = z.object({
-  type: z.literal('compaction.completed'),
-  result: compactionResultSchema,
-}) satisfies z.ZodType<CompactionCompletedEvent>;
 
 export const taskStartedEventSchema = z.object({
   type: z.literal('task.started'),
@@ -1803,22 +1462,6 @@ export const taskTerminatedEventSchema = z.object({
   type: z.literal('task.terminated'),
   info: taskInfoSchema,
 }) satisfies z.ZodType<TaskTerminatedEvent>;
-
-export const backgroundTaskStartedEventSchema = z.object({
-  type: z.literal('background.task.started'),
-  info: taskInfoSchema,
-}) satisfies z.ZodType<BackgroundTaskStartedEvent>;
-
-export const backgroundTaskTerminatedEventSchema = z.object({
-  type: z.literal('background.task.terminated'),
-  info: taskInfoSchema,
-}) satisfies z.ZodType<BackgroundTaskTerminatedEvent>;
-
-export const cronFiredEventSchema = z.object({
-  type: z.literal('cron.fired'),
-  origin: cronJobOriginSchema,
-  prompt: z.string(),
-}) satisfies z.ZodType<CronFiredEvent>;
 
 export const promptSubmittedEventSchema = z.object({
   type: z.literal('prompt.submitted'),
@@ -1849,18 +1492,6 @@ export const promptSteeredEventSchema = z.object({
   content: z.array(messageContentSchema),
   steeredAt: isoDateTimeSchema,
 }) satisfies z.ZodType<PromptSteeredEvent>;
-
-export const toolListUpdatedReasonSchema = z.enum([
-  'mcp.connected',
-  'mcp.disconnected',
-  'mcp.failed',
-]) satisfies z.ZodType<ToolListUpdatedReason>;
-
-export const toolListUpdatedEventSchema = z.object({
-  type: z.literal('tool.list.updated'),
-  reason: toolListUpdatedReasonSchema,
-  serverName: z.string(),
-}) satisfies z.ZodType<ToolListUpdatedEvent>;
 
 export const mcpServerStatusPayloadSchema = z.object({
   name: z.string(),

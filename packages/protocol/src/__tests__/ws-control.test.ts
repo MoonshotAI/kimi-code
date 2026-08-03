@@ -745,16 +745,17 @@ describe('ws-control — operation registry', () => {
 
     expect(
       sessionEventMessageSchema.safeParse({
-        type: 'assistant.delta',
+        type: 'session.turn.ended',
         seq: 1,
         session_id: 'sess_1',
         timestamp: TS,
         payload: {
-          type: 'assistant.delta',
+          type: 'session.turn.ended',
           agentId: 'agent_1',
           sessionId: 'sess_1',
-          turnId: 1,
-          delta: 'hello',
+          turn_id: 3,
+          stop_reason: 'EndTurn',
+          steps: 4,
         },
       }).success,
     ).toBe(true);

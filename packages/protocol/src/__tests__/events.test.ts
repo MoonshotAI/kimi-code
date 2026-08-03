@@ -8,7 +8,7 @@ import {
   agentEventSchema,
   assistantDeltaEventSchema,
   eventSchema,
-  shellCompletedEventSchema,
+  mcpServerStatusEventSchema,
   toolCallStartedEventSchema,
 } from '../events';
 import type { Event } from '../events';
@@ -80,22 +80,6 @@ describe('events / display re-exports', () => {
         display: { kind: 'command', command: 'pwd', language: 'bash' },
       }).success,
     ).toBe(true);
-
-    expect(
-      shellCompletedEventSchema.parse({
-        type: 'shell.completed',
-        commandId: 'cmd-1',
-        isError: false,
-      }),
-    ).toEqual({ type: 'shell.completed', commandId: 'cmd-1', isError: false });
-    expect(
-      agentEventSchema.safeParse({
-        type: 'shell.completed',
-        commandId: 'cmd-1',
-        isError: true,
-        taskId: 'task-1',
-      }).success,
-    ).toBe(true);
   });
 
   it('rejects unknown event types through the full agent event union', () => {
@@ -105,19 +89,6 @@ describe('events / display re-exports', () => {
         turnId: 1,
       }).success,
     ).toBe(false);
-  });
-
-  it('validates session-scoped daemon events with agentId and sessionId', () => {
-    const parsed = eventSchema.parse({
-      type: 'turn.started',
-      agentId: 'agent_1',
-      sessionId: 'sess_1',
-      turnId: 1,
-      origin: { kind: 'user' },
-    });
-
-    expect(parsed.agentId).toBe('agent_1');
-    expect(parsed.sessionId).toBe('sess_1');
   });
 
   it('validates engine turn events', () => {
@@ -277,7 +248,7 @@ describe('events / display re-exports', () => {
   });
 
   it('accepts sse transport on mcp.server.status events', () => {
-    const parsed = agentEventSchema.safeParse({
+    const parsed = mcpServerStatusEventSchema.safeParse({
       type: 'mcp.server.status',
       server: {
         name: 'remote-sse',
