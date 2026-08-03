@@ -170,6 +170,13 @@ export interface GlobalKosongFacade {
 export interface GlobalAuthFacade {
   status(provider?: string): Promise<AuthStatus>;
   summarize(): Promise<readonly AuthStatus[]>;
+  /**
+   * The engine's own auth-readiness probe for a model (the default model when
+   * omitted): resolves config-file apiKey / provider env-bag credentials or an
+   * OAuth token, throwing a typed auth error when nothing resolves. Actual
+   * model usage does not depend on the OAuth-only {@link summarize} view.
+   */
+  ensureReady(modelOverride?: string): Promise<void>;
   startLogin(provider?: string): Promise<OAuthFlowStart>;
   flow(provider?: string): Promise<OAuthFlowSnapshot | undefined>;
   cancelLogin(provider?: string): Promise<OAuthLoginCancelResponse>;
@@ -402,6 +409,8 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
     auth: {
       status: (provider) => call('oauthService', 'status', [provider]) as Promise<AuthStatus>,
       summarize: () => call('authSummaryService', 'summarize', []) as Promise<readonly AuthStatus[]>,
+      ensureReady: (modelOverride) =>
+        call('authSummaryService', 'ensureReady', [modelOverride]) as Promise<void>,
       startLogin: (provider) =>
         call('oauthService', 'startLogin', [provider]) as Promise<OAuthFlowStart>,
       flow: (provider) =>

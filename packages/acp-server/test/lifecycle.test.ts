@@ -432,6 +432,26 @@ describe('acp-server session lifecycle', () => {
   );
 
   it(
+    'apiKey-only config passes the auth gate without any OAuth provider',
+    async () => {
+      // The flat fake-model config carries an inline apiKey and no OAuth
+      // provider at all: the engine's readiness probe (not the OAuth-only
+      // summary) must let session/new through.
+      homeDir = await mkdtemp(join(tmpdir(), 'acp-apikey-gate-'));
+      await writeFakeModelConfig(homeDir);
+      client = await createTestClient({ homeDir, disableAuth: false });
+      const c = client;
+      await c.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
+
+      const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+        sessionId: string;
+      };
+      expect(created.sessionId).toMatch(/^session_/);
+    },
+    30_000,
+  );
+
+  it(
     'session/list filters by cwd when the client supplies one',
     async () => {
       const c = await boot();

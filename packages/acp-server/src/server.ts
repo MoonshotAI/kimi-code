@@ -556,9 +556,22 @@ export class AcpServer {
   /** Auth gate: throws `auth_required` unless authed (or `disableAuth`). */
   private async ensureAuthed(): Promise<void> {
     if (this.disableAuth) return;
+    // Primary: the engine's own readiness probe for the default model —
+    // config-file apiKey / provider env-bag credentials / OAuth token all
+    // count, matching how the model is actually used (the OAuth-only
+    // `summarize()` view is too narrow on its own).
+    try {
+      await this.klient.global.auth.ensureReady();
+      return;
+    } catch (error) {
+      log.info('acp: auth readiness probe failed, trying the OAuth summary', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    // Fallback: any logged-in OAuth provider counts as authed even when the
+    // default model is not usable (the legacy adapter's first branch).
     const summaries = await this.klient.global.auth.summarize();
-    const authed = summaries.some((s) => s.loggedIn);
-    if (!authed) {
+    if (!summaries.some((s) => s.loggedIn)) {
       throw RequestError.authRequired();
     }
   }
