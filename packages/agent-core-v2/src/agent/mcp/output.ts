@@ -16,6 +16,9 @@
  *     fallback guidance already serialize the payload into a text block;
  *     duplicates are detected semantically (parse + deep-equal, so spacing
  *     and key order do not matter) and skipped rather than forwarded twice.
+ *     Pathological payloads fail safe: comparison errors count as non-
+ *     duplicates and unserializable payloads are skipped, so the `content`
+ *     blocks always reach the model.
  *  3. Apply the 100K text/think character budget to the tool's own text.
  *     This runs BEFORE captions exist, so a chatty tool (page text + a
  *     screenshot) can never evict or slice the compression caption — that
@@ -306,24 +309,28 @@ function structuredContentTextPart(
 ): ContentPart | null {
   const structured = result.structuredContent;
   if (structured === undefined) return null;
+  let json: string;
+  try {
+    json = JSON.stringify(structured);
+  } catch {
+    return null;
+  }
   const duplicated = converted.some(
     (part) => part.type === 'text' && textMatchesStructuredContent(part.text, structured),
   );
   if (duplicated) return null;
-  return { type: 'text', text: JSON.stringify(structured) };
+  return { type: 'text', text: json };
 }
 
 function textMatchesStructuredContent(
   text: string,
   structured: Record<string, unknown>,
 ): boolean {
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    return deepJsonEqual(JSON.parse(text), structured);
   } catch {
     return false;
   }
-  return deepJsonEqual(parsed, structured);
 }
 
 function deepJsonEqual(a: unknown, b: unknown): boolean {

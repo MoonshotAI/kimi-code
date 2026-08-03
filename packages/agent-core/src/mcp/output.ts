@@ -389,6 +389,9 @@ function collapseSingleText(parts: readonly ContentPart[]): string | ContentPart
  * token cost, so duplicates are skipped. Comparison is semantic (parse +
  * deep-equal) rather than string-exact, because serializers differ in
  * spacing (Python's `json.dumps` emits `{"total": 2}`) and key order.
+ * Pathological payloads (nesting deep enough to blow the stack) fail safe:
+ * comparison errors count as non-duplicates, and an unserializable payload
+ * is skipped entirely — the `content` blocks always reach the model.
  */
 function structuredContentTextPart(
   result: MCPToolResult,
@@ -396,28 +399,33 @@ function structuredContentTextPart(
 ): ContentPart | null {
   const structured = result.structuredContent;
   if (structured === undefined) return null;
+  let json: string;
+  try {
+    json = JSON.stringify(structured);
+  } catch {
+    return null;
+  }
   const duplicated = converted.some(
     (part) => part.type === 'text' && textMatchesStructuredContent(part.text, structured),
   );
   if (duplicated) return null;
-  return { type: 'text', text: JSON.stringify(structured) };
+  return { type: 'text', text: json };
 }
 
 /**
  * Whether `text` is a JSON serialization of `structured`, regardless of
- * whitespace or key order. Non-JSON text never matches.
+ * whitespace or key order. Non-JSON text and comparison failures (e.g.
+ * stack depth on pathological nesting) never match.
  */
 function textMatchesStructuredContent(
   text: string,
   structured: Record<string, unknown>,
 ): boolean {
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    return deepJsonEqual(JSON.parse(text), structured);
   } catch {
     return false;
   }
-  return deepJsonEqual(parsed, structured);
 }
 
 function deepJsonEqual(a: unknown, b: unknown): boolean {

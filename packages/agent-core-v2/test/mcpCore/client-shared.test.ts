@@ -1,3 +1,12 @@
+/**
+ * `mcpCore` domain tests — `toMcpToolResult` result conversion scenarios.
+ *
+ * Covers `structuredContent` handling at the SDK boundary: a JSON-object
+ * payload rides through to the model untouched, while an absent or
+ * non-object value is dropped. Run with
+ * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/mcpCore/client-shared.test.ts`.
+ */
+
 import { describe, expect, test } from 'vitest';
 
 import { toMcpToolResult } from '#/mcpCore/client-shared';

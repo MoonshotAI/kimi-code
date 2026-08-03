@@ -781,4 +781,18 @@ describe('structuredContent forwarding', () => {
     expect(joined).toContain('summary');
     expect(joined).toContain('Output truncated');
   });
+
+  test('fails safe on pathologically deep structuredContent', async () => {
+    // Nesting deep enough to overflow the JSON serializer must not crash the
+    // pipeline — the content blocks still reach the model.
+    let deep: Record<string, unknown> = { leaf: true };
+    for (let i = 0; i < 200_000; i++) deep = { next: deep };
+
+    const out = await mcpResultToExecutableOutput(
+      { content: [{ type: 'text', text: 'summary' }], isError: false, structuredContent: deep },
+      'mcp__s__t',
+    );
+
+    expect(out).toEqual({ output: 'summary', isError: false });
+  });
 });
