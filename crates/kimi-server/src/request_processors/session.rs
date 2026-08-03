@@ -1255,4 +1255,38 @@ mod create_tests {
         assert!(body.get("error").is_none(), "cancel should not error: {body}");
         assert_eq!(body["result"]["cancelled"], false);
     }
+
+
+    #[tokio::test]
+    async fn run_shell_reaches_bash_runner() {
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = SessionProcessor::with_state(state.clone());
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+
+        server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/create".into(),
+                params: serde_json::json!({ "session_id": "s-shell" }),
+            })
+            .await;
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/run_shell".into(),
+                params: serde_json::json!({
+                    "session_id": "s-shell",
+                    "command": "echo hi",
+                    "command_id": "c1",
+                }),
+            })
+            .await;
+        // Either ran natively (output present) or reported unavailable (no
+        // bash detected) — both are valid; the pipeline must not RPC-error.
+        assert!(body.get("error").is_none(), "run_shell failed: {body}");
+    }
 }

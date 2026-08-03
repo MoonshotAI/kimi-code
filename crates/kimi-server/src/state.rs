@@ -12,7 +12,7 @@ use kimi_agent::persistence::{SessionStore, SqliteStore};
 use kimi_agent::session::manager::SessionManager;
 use tokio::sync::Mutex;
 
-use crate::callbacks::ServerHostCallbacks;
+
 
 /// Open the engine's session store (`$KIMI_AGENT_HOME/sessions.db` or
 /// in-memory) — mirrors `open_session_store` in main.rs.
@@ -36,6 +36,8 @@ pub struct ServerState {
     pub manager: Arc<Mutex<SessionManager>>,
     /// Host back-channel (events fan out here).
     pub callbacks: Arc<dyn HostCallbacks>,
+    /// Engine event fan-out (interface layer subscribes).
+    pub events: crate::callbacks::EventBus,
     /// Web-facing approval store (shared with session agents).
     pub approval: SharedApprovalStore,
     /// Process-wide permission gate (shared with session agents).
@@ -47,14 +49,22 @@ impl ServerState {
     pub fn new() -> anyhow::Result<Self> {
         let store = open_session_store()?;
         let manager = Arc::new(Mutex::new(SessionManager::new(SessionStore::new(store))));
-        let callbacks: Arc<dyn HostCallbacks> = Arc::new(ServerHostCallbacks::new());
+        let events = crate::callbacks::EventBus::new(256);
+        let callbacks: Arc<dyn HostCallbacks> =
+            Arc::new(crate::callbacks::ServerHostCallbacks::with_events(events.clone()));
         let approval = Arc::new(ApprovalStore::new());
         let permission = PermissionGate::from_env();
         Ok(Self {
             manager,
             callbacks,
+            events,
             approval,
             permission,
         })
+    }
+
+    /// Subscribe to engine events (interface layer / tests).
+    pub fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<serde_json::Value> {
+        self.events.subscribe()
     }
 }

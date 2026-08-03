@@ -39,9 +39,12 @@ pub struct ServerHostCallbacks {
 impl ServerHostCallbacks {
     /// Create with a fresh event bus.
     pub fn new() -> Self {
-        Self {
-            events: EventBus::new(256),
-        }
+        Self::with_events(EventBus::new(256))
+    }
+
+    /// Create sharing a caller-provided event bus.
+    pub fn with_events(events: EventBus) -> Self {
+        Self { events }
     }
 
     /// Access the event bus (interface layer subscribes here).
