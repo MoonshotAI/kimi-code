@@ -4,7 +4,8 @@
  * item mapping behind the import service's browse methods.
  */
 
-import { Error2 } from '#/_base/errors/errors';
+import { CoreErrors } from '#/_base/errors/codes';
+import { BugIndicatingError, Error2 } from '#/_base/errors/errors';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ModelRecord } from '#/kosong/model/model';
 
@@ -79,10 +80,14 @@ async function fetchAndCache(): Promise<ModelsDevCatalog> {
       headers: { Accept: 'application/json', 'User-Agent': 'kimi-code-kap-server' },
       signal: AbortSignal.timeout(UPSTREAM_FETCH_TIMEOUT_MS),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      throw new Error2(CoreErrors.codes.INTERNAL, `HTTP ${res.status}`, {
+        details: { status: res.status },
+      });
+    }
     const payload: unknown = await res.json();
     if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-      throw new Error('unexpected catalog payload shape');
+      throw new Error2(CoreErrors.codes.INTERNAL, 'unexpected catalog payload shape');
     }
     cache = { catalog: payload as ModelsDevCatalog, fetchedAt: now };
     return cache.catalog;
@@ -176,7 +181,9 @@ export function toModelsDevProviderItem(
         reject_reason: resolution.reason,
       };
   }
-  throw new Error(`unhandled models.dev import resolution: ${JSON.stringify(resolution)}`);
+  throw new BugIndicatingError(
+    `unhandled models.dev import resolution: ${JSON.stringify(resolution)}`,
+  );
 }
 
 

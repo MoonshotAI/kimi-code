@@ -10,6 +10,7 @@ import { AuthErrors } from '#/app/auth/errors';
 import { TaskErrors } from '#/agent/task/errors';
 import { ProtocolErrors } from '#/kosong/protocol/errors';
 import { ConfigErrors } from '#/app/config/errors';
+import { CronErrors } from '#/app/cron/errors';
 import { FileErrors } from '#/app/file/fileService';
 import { FsErrors } from '#/workspace/workspaceFs/internal/errors';
 import { FullCompactionErrors } from '#/agent/fullCompaction/errors';
@@ -30,6 +31,7 @@ import { SkillErrors } from '#/app/skillCatalog/errors';
 import { StorageErrors } from '#/persistence/interface/storage';
 import { TerminalErrors } from '#/os/interface/terminalErrors';
 import { UsageErrors } from '#/agent/usage/errors';
+import { WebErrors } from '#/app/web/errors';
 import { WireErrors } from '#/wire/errors';
 import { WorkspaceErrors } from '#/app/workspace/errors';
 
@@ -43,6 +45,7 @@ export { AuthErrors } from '#/app/auth/errors';
 export { TaskErrors } from '#/agent/task/errors';
 export { ProtocolErrors } from '#/kosong/protocol/errors';
 export { ConfigErrors } from '#/app/config/errors';
+export { CronErrors } from '#/app/cron/errors';
 export { FileErrors } from '#/app/file/fileService';
 export { FsErrors } from '#/workspace/workspaceFs/internal/errors';
 export { FullCompactionErrors } from '#/agent/fullCompaction/errors';
@@ -63,6 +66,7 @@ export { SkillErrors } from '#/app/skillCatalog/errors';
 export { StorageErrors } from '#/persistence/interface/storage';
 export { TerminalErrors } from '#/os/interface/terminalErrors';
 export { UsageErrors } from '#/agent/usage/errors';
+export { WebErrors } from '#/app/web/errors';
 export { WireErrors } from '#/wire/errors';
 export { WorkspaceErrors } from '#/app/workspace/errors';
 
@@ -73,6 +77,7 @@ export const ErrorCodes = {
   ...TaskErrors.codes,
   ...ProtocolErrors.codes,
   ...ConfigErrors.codes,
+  ...CronErrors.codes,
   ...FileErrors.codes,
   ...FsErrors.codes,
   ...FullCompactionErrors.codes,
@@ -93,6 +98,7 @@ export const ErrorCodes = {
   ...StorageErrors.codes,
   ...TerminalErrors.codes,
   ...UsageErrors.codes,
+  ...WebErrors.codes,
   ...WireErrors.codes,
   ...WorkspaceErrors.codes,
 } as const;

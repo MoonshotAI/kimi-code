@@ -511,7 +511,7 @@ async function withTimeout<T>(
     return await new Promise<T>((resolve, reject) => {
       timer = setTimeout(() => {
         onTimeout?.();
-        reject(new Error(`Timed out after ${timeoutMs}ms`));
+        reject(new Error2(ErrorCodes.MCP_STARTUP_FAILED, `Timed out after ${timeoutMs}ms`));
       }, timeoutMs);
       promise.then(resolve, reject);
     });

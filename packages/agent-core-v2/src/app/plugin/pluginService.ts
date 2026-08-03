@@ -15,7 +15,7 @@ import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { Error2, PluginErrors } from '#/errors';
+import { BugIndicatingError, Error2, PluginErrors } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IProviderService } from '#/kosong/provider/provider';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
@@ -86,7 +86,8 @@ export class PluginService extends Disposable implements IPluginService {
     return this.runSerializedOperation(async () => {
       const record = await this.manager.install(input.source);
       const info = this.manager.info(record.id);
-      if (info === undefined) throw new Error(`Plugin "${record.id}" missing right after install`);
+      if (info === undefined)
+        throw new BugIndicatingError(`Plugin "${record.id}" missing right after install`);
       return info;
     });
   }

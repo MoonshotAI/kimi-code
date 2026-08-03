@@ -15,6 +15,7 @@ import { isAbsolute, relative, resolve } from 'node:path';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
+import { ErrorCodes, Error2 } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
@@ -85,7 +86,9 @@ export class SessionWorkspaceContextService extends Disposable implements ISessi
   assertAllowed(absPath: string, op: PathAccessOperation): string {
     const target = this.resolve(absPath);
     if (!this.isWithin(target)) {
-      throw new Error(`Path outside workspace (${op}): ${target}`);
+      throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `Path outside workspace (${op}): ${target}`, {
+        details: { op, path: target },
+      });
     }
     return target;
   }
