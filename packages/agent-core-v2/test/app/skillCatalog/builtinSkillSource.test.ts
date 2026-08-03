@@ -21,8 +21,19 @@ import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/app/skillCatalog/configSection
 
 import { StubConfigService } from '../../kosong/stubs';
 
-const PRODUCT_SKILLS = BUILTIN_SKILLS.filter((s) => s.productSpecific === true).map((s) => s.name);
-const NEUTRAL_SKILLS = BUILTIN_SKILLS.filter((s) => s.productSpecific !== true).map((s) => s.name);
+// Literal on purpose: deriving these from `productSpecific` would read the same
+// field the production filter does, so a skill silently losing its marker would
+// move sets and keep every assertion green while staying visible to the model.
+const PRODUCT_SKILLS = [
+  'mcp-config',
+  'import-from-cc-codex',
+  'update-config',
+  'custom-theme',
+  'check-kimi-code-docs',
+];
+const NEUTRAL_SKILLS = BUILTIN_SKILLS.map((s) => s.name).filter(
+  (name) => !PRODUCT_SKILLS.includes(name),
+);
 
 async function loadNames(configured?: boolean): Promise<readonly string[]> {
   const ix = new TestInstantiationService();
@@ -37,8 +48,9 @@ async function loadNames(configured?: boolean): Promise<readonly string[]> {
 }
 
 describe('BuiltinSkillSource product-skill switch', () => {
-  it('has both product-specific and neutral builtin skills to distinguish', () => {
-    expect(PRODUCT_SKILLS.length).toBeGreaterThan(0);
+  it('marks exactly the product-documentation skills', () => {
+    expect(BUILTIN_SKILLS.filter((s) => s.productSpecific === true).map((s) => s.name).toSorted())
+      .toEqual([...PRODUCT_SKILLS].toSorted());
     expect(NEUTRAL_SKILLS.length).toBeGreaterThan(0);
   });
 

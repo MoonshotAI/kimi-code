@@ -2,8 +2,8 @@
  * `agentIdentity` domain — resolved identity contract.
  *
  * The identity the agent uses for itself, resolved from the `[identity]`
- * config section over the host's declared display name. It has two faces, and
- * they are deliberately NOT symmetric:
+ * config section over the host's declared display name. Implemented at App
+ * scope. It has two faces, and they are deliberately NOT symmetric:
  *
  * - `displayName` fills the `${product_name}` slot in the system prompt. It is
  *   a *filling* value: `config > host-declared > (consumer's own default)`.
