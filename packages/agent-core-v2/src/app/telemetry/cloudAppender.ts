@@ -4,20 +4,9 @@
  * values, enriches events with common context, and posts them to the
  * telemetry endpoint through `CloudTransport`, which persists failed events
  * through the `storage` byte layer (`IFileSystemStorageService`). Reads host
- * facts (`clientVersion`, env, platform/arch) from `IBootstrapService`;
+ * facts (env, platform/arch) from `IBootstrapService`;
  * `createCloudAppender` assembles one from a `ServicesAccessor` so hosts only
  * supply identity facts.
- *
- * Shutdown lifecycle:
- * - `flush()` is guarded by a chained-promise lock so concurrent periodic /
- *   threshold / manual / shutdown triggers serialize without two waiters
- *   racing on a cleared `flushInFlight` flag.
- * - `shutdown(deadlineMs?)` provides a deadline-bounded, idempotent close:
- *   creates an AbortController deadline, threads the signal through flush and
- *   spool replay, cancels in-flight sends, hands unsent buffer to durable
- *   storage, replays recoverable v2 spool data before completing.
- * - Delivery is at-least-once across ambiguous cancellation boundaries; stable
- *   event IDs preserve the server's deduplication key.
  *
  * App-scoped; independent of `@moonshot-ai/kimi-telemetry`.
  */
@@ -260,8 +249,8 @@ function buildContext(options: CloudAppenderOptions): CloudContext {
   const { bootstrap } = options;
   const context: CloudContext = {
     app_name: options.appName,
-    client_version: bootstrap.clientVersion,
-    version: bootstrap.clientVersion,
+    client_version: bootstrap.clientIdentity.version,
+    version: bootstrap.clientIdentity.version,
     core_version: resolveCoreVersion(),
     runtime: 'node',
     platform: bootstrap.platform,

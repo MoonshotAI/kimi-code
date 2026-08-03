@@ -292,7 +292,6 @@ describe('CloudAppender', () => {
       resetUnexpectedErrorHandler();
     }
   });
-});
 
   describe('shutdown durability', () => {
     it('serializes concurrent flush calls without losing events', async () => {
@@ -416,3 +415,4 @@ describe('CloudAppender', () => {
       expect(sends).toBe(1);
     });
   });
+});
