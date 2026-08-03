@@ -401,13 +401,14 @@ fn chat_goal_lifecycle() {
         use std::io::Write;
         let stdin = child.stdin.as_mut().expect("stdin");
         stdin
-            .write_all(b"/goal do the thing\n/goal-status\n/goal-cancel\n/quit\n")
+            .write_all(b"/goal do the thing\n/goal-pause\n/goal-resume\n/goal-status\n/goal-cancel\n/quit\n")
             .expect("write");
     }
     let output = child.wait_with_output().expect("wait");
     assert!(output.status.success(), "chat exits 0: {}", output.status);
     let out = String::from_utf8_lossy(&output.stdout);
     assert!(out.contains("objective"), "goal create snapshot: {out}");
+    assert!(out.contains("goal paused") && out.contains("goal resumed"), "pause/resume: {out}");
     assert!(out.contains("goal cancelled"), "cancel line: {out}");
 }
 

@@ -210,6 +210,8 @@ async fn handle_chat_command(
             println!("/sessions    list persisted sessions");
             println!("/goal <obj>  create a goal on the session");
             println!("/goal-status show the active goal");
+            println!("/goal-pause  pause the active goal");
+            println!("/goal-resume resume the active goal");
             println!("/goal-cancel cancel the active goal");
             ChatCommand::Handled
         }
@@ -399,6 +401,32 @@ async fn handle_chat_command(
                 return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
             }
             println!("goal cancelled");
+            ChatCommand::Handled
+        }
+        "/goal-pause" => {
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_GOAL_PAUSE,
+                    serde_json::json!({ "session_id": *session_id, "reason": rest }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            println!("goal paused");
+            ChatCommand::Handled
+        }
+        "/goal-resume" => {
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_GOAL_RESUME,
+                    serde_json::json!({ "session_id": *session_id, "reason": rest }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            println!("goal resumed");
             ChatCommand::Handled
         }
         _ => ChatCommand::Error(format!("unknown command {cmd} — try /help")),
