@@ -60,11 +60,19 @@ export async function handleForkCommand(host: SlashCommandHost, args: string): P
       id: session.id,
       title: `Fork: ${sourceTitle}`,
     });
+    const forkId = forked.id;
+    try {
+      await forked.close();
+    } catch (error) {
+      const msg = formatErrorMessage(error);
+      host.showError(`Session forked (${forkId}), but failed to release its runtime: ${msg}`);
+      return;
+    }
     // Stay in the source session: switching to the fork would close the
     // source, killing its in-flight turn and background tasks. The fork is
     // an independent copy the user can switch to explicitly via /sessions.
     host.showStatus(
-      `Session forked (${forked.id}). Still in the original session; switch to the fork via /sessions.`,
+      `Session forked (${forkId}). Still in the original session; switch to the fork via /sessions.`,
     );
   } catch (error) {
     const msg = formatErrorMessage(error);

@@ -5273,6 +5273,7 @@ command = "vim"
       });
       expect(driver.getCurrentSessionId()).toBe('ses-source');
       expect(source.close).not.toHaveBeenCalled();
+      expect(forked.close).toHaveBeenCalledOnce();
       expect(forked.onEvent).not.toHaveBeenCalled();
       expect(setTitle).not.toHaveBeenCalled();
       expect(process.title).toBe('kimi-test-runner');
@@ -5300,6 +5301,25 @@ command = "vim"
         'Failed to fork session: fork unavailable',
       );
     });
+  });
+
+  it('reports when the forked runtime cannot be released', async () => {
+    const source = makeSession({ id: 'ses-source' });
+    const forked = makeSession({ id: 'ses-fork' });
+    forked.close.mockRejectedValueOnce(new Error('close unavailable'));
+    const forkSession = vi.fn(async () => forked);
+    const { driver } = await makeDriver(source, { forkSession });
+
+    driver.handleUserInput('/fork');
+
+    await vi.waitFor(() => {
+      expect(forked.close).toHaveBeenCalledOnce();
+      expect(driver.getCurrentSessionId()).toBe('ses-source');
+      expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
+        'Session forked (ses-fork), but failed to release its runtime: close unavailable',
+      );
+    });
+    expect(source.close).not.toHaveBeenCalled();
   });
 
   it('does not create a thinking component for empty thinking deltas', async () => {
