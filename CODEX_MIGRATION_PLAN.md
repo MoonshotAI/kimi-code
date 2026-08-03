@@ -308,8 +308,8 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - `session/fs` action=list 从不传 Glob `pattern`（main.rs 同款 bug 继承）→ query→pattern 映射 + 缺 pattern 报错
 
 ### 阶段 E — SDK/ACP/OAuth/Config
-1. 🔶 `kimi-sdk`：**`Harness`（内嵌/Remote 引擎生命周期 + `Session` typed 门面，2 集成测试）已落地**；session/harness/auth/catalog 平移继续；klient 并入
-2. 🔶 `kimi-acp`：**最小 stdio 适配器已落地**（initialize 协商 + session/new/load/list/delete + prompt 经 Harness，2 测试）；ACP 兼容测试与通知面继续
+1. 🔶 `kimi-sdk`：**`Harness`（内嵌/Remote + 事件流 + 审批面，3 集成测试）与 `Session`（生命周期全 + transcript/run_prompt）已落地**；`kimi doctor` 已改经 SDK；session/harness/auth/catalog 平移继续；klient 并入
+2. 🔶 `kimi-acp`：**stdio 适配器已落地 + `kimi acp` 命令**（initialize 协商 + session/new/load/list/delete/prompt + **notification 语义**（session/cancel 静默），3 测试）；ACP 兼容测试继续
 3. `kimi-oauth`：流程状态机
 4. `kimi-config`：TOML/env/diagnostics
 5. **验证**：SDK 测试平移（425 用例）；ACP 兼容测试；node-sdk/klient 转薄壳 re-export
@@ -335,7 +335,7 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 
 - [x] 阶段 A 框架落地（kimi-protocol + workspace + wire 类型下沉）✅
 - [x] 阶段 B 宿主协议层（kimi-server 40 测试 + transport/serve 二进制 + client InProcess/Remote 全链路）✅
-- [x] 阶段 C CLI + exec（13 集成测试 + typed client + 配置读写闭环）✅
-- [ ] 阶段 D TUI（kimi-ui 前置完成；ratatui 离线待引入）
-- [ ] 阶段 E SDK/ACP/OAuth/Config
+- [x] 阶段 C CLI + exec（19 集成测试 + typed client + 配置读写闭环 + chat REPL + acp 命令）✅
+- [ ] 阶段 D TUI（kimi-ui 前置完成 + chat 文本 REPL 原型；ratatui 离线待引入）
+- [ ] 阶段 E SDK/ACP/OAuth/Config（kimi-sdk 与 kimi-acp 起步 🔶）
 - [ ] 阶段 F 退役
