@@ -60,6 +60,7 @@ export interface SystemPromptContext extends AgentProfileContext {
 export type ResolvedAgentProfile = AgentProfile;
 
 export interface ProfileData extends AgentConfigData {
+  readonly agentsMdPaths?: readonly string[];
   readonly activeToolNames?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];
@@ -70,6 +71,7 @@ export type ProfileUpdateData = Partial<{
   profileName: string;
   thinkingLevel: string;
   systemPrompt: string;
+  agentsMdPaths: readonly string[];
   disallowedTools: readonly string[];
   activeToolNames: readonly string[];
 }>;
@@ -79,6 +81,7 @@ export interface ProfileBindingSnapshot {
   readonly profileName?: string;
   readonly thinkingLevel: string;
   readonly systemPrompt: string;
+  readonly agentsMdPaths?: readonly string[];
   readonly activeToolNames?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];

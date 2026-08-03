@@ -6,7 +6,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { loadAgentsMd, loadAgentsMdDetailed, prepareSystemPromptContext } from '#/agent/profile/context';
+import {
+  extractAgentsMdPathsFromSystemPrompt,
+  loadAgentsMd,
+  loadAgentsMdDetailed,
+  prepareSystemPromptContext,
+} from '#/agent/profile/context';
 
 function createFs(): IHostFileSystem {
   return new HostFileSystem();
@@ -262,6 +267,14 @@ describe('prepareSystemPromptContext additional directories', () => {
 });
 
 describe('loadAgentsMdDetailed discovered paths', () => {
+  it('recovers AGENTS.md source annotations without treating plugin annotations as files', () => {
+    expect(
+      extractAgentsMdPathsFromSystemPrompt(
+        '<!-- From: /repo/AGENTS.md -->\nroot\n\n<!-- From: plugin example -->\nplugin',
+      ),
+    ).toEqual(['/repo/AGENTS.md']);
+  });
+
   it('returns the normalized paths of every injected file in collection order', async () => {
     await mkdir(join(homeDir, '.kimi-code'), { recursive: true });
     await writeFile(join(homeDir, '.kimi-code', 'AGENTS.md'), 'user branded', 'utf-8');

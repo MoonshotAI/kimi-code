@@ -49,14 +49,13 @@
  * bind/apply/refresh and `sessionInit` re-seeds after `/init`. A prompt can
  * also commit without any of those entry points — session resume and forks
  * restore the already-rendered system prompt (AGENTS.md content included)
- * from the wire journal or a binding snapshot — so the first qualifying call
- * of a never-seeded agent re-runs the init-time discovery itself
- * (`loadAgentsMdDetailed` over the agent cwd, same brand home) and seeds
- * from it, once per agent (`agentsMdReminder.seeded`); a discovery failure
- * leaves the agent unseeded so the next touch retries. The seeded cwd lives
- * in `agentState` as well; fs probes go through the os
- * `IHostFileSystem`, the home directory through `IHostEnvironment`, the
- * brand home through `bootstrap`, syntax
+ * from the wire journal or a binding snapshot. The wire restore hook seeds
+ * the exact persisted paths (legacy prompts recover their source annotations),
+ * so the first qualifying call of a never-seeded agent does not confuse the
+ * current filesystem with the restored prompt. The seeded cwd lives in
+ * `agentState` as well; restored provenance comes from `wire`/`profile`; fs
+ * probes go through the os `IHostFileSystem`, the home directory through
+ * `IHostEnvironment`, the brand home through `bootstrap`, syntax
  * trees through `bashParser`, and the shown-event
  * through `telemetry`. Bound at Agent scope.
  */
@@ -75,17 +74,21 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ExecutableToolOutput, ExecutableToolResult } from '#/tool/toolContract';
+import { normalizeUserPath } from '#/tool/path-access';
 import {
   AGENTS_MD_PLAIN_NAMES,
   agentsMdCandidatePaths,
   dirsRootToLeaf,
   findAgentsMdInDir,
   findProjectRoot,
+  extractAgentsMdPathsFromSystemPrompt,
   loadAgentsMdDetailed,
 } from '#/agent/profile/context';
+import { ProfileModel } from '#/agent/profile/profileOps';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import { IWireService } from '#/wire/wire';
 
 import { IAgentAgentsMdReminderService } from './agentsMdReminder';
 import { extractBashTargetDirs } from './bashTargets';
@@ -122,11 +125,21 @@ export class AgentAgentsMdReminderService
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IBashParserService private readonly bashParser: IBashParserService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IWireService private readonly wire: IWireService,
   ) {
     super();
     this.states.register(agentsMdReminderKnownKey);
     this.states.register(agentsMdReminderCwdKey);
     this.states.register(agentsMdReminderSeededKey);
+    this._register(
+      this.wire.hooks.onDidRestore.register('agentsMdReminder', async (_ctx, next) => {
+        const profile = this.wire.getModel(ProfileModel);
+        const paths =
+          profile.agentsMdPaths ?? extractAgentsMdPathsFromSystemPrompt(profile.systemPrompt);
+        this.seedInjected(paths, this.sessionContext.cwd);
+        await next();
+      }),
+    );
     const handler = async (ctx: ToolDidExecuteContext, next: () => Promise<void>): Promise<void> => {
       ctx.result = await this.augmentWithReminder(ctx);
       await next();
@@ -222,15 +235,29 @@ export class AgentAgentsMdReminderService
         const command = stringArg(args, 'command');
         if (command === undefined) return { dirs: [], selfKnown };
         const cwdArg = stringArg(args, 'cwd');
-        const base = this.sessionContext.cwd;
+        const base = hostPath(this.sessionContext.cwd, this.env.pathClass);
+        const normalizedCwdArg =
+          cwdArg === undefined ? undefined : normalizeUserPath(cwdArg, this.env.pathClass);
         const effectiveCwd =
-          cwdArg === undefined
+          normalizedCwdArg === undefined
             ? base
-            : normalize(isAbsolute(cwdArg) ? cwdArg : join(base, cwdArg));
+            : normalize(
+                isAbsolute(normalizedCwdArg)
+                  ? normalizedCwdArg
+                  : join(base, normalizedCwdArg),
+              );
         const parsed = this.bashParser.parse(command, BASH_PARSE_OPTIONS);
-        if (!parsed.ok || parsed.hasError) return cwdArg === undefined ? { dirs: [], selfKnown } : { dirs: [effectiveCwd], selfKnown };
-        const targets = extractBashTargetDirs(parsed.root, effectiveCwd, this.env.homeDir);
-        if (cwdArg !== undefined && !targets.includes(effectiveCwd)) {
+        if (!parsed.ok || parsed.hasError) {
+          return normalizedCwdArg === undefined
+            ? { dirs: [], selfKnown }
+            : { dirs: [effectiveCwd], selfKnown };
+        }
+        const targets = extractBashTargetDirs(
+          parsed.root,
+          effectiveCwd,
+          this.env.homeDir,
+        ).map((target) => hostPath(target, this.env.pathClass));
+        if (normalizedCwdArg !== undefined && !targets.includes(effectiveCwd)) {
           targets.unshift(effectiveCwd);
         }
         return { dirs: targets, selfKnown };
@@ -291,6 +318,10 @@ export class AgentAgentsMdReminderService
       current = parent;
     }
   }
+}
+
+function hostPath(path: string, pathClass: 'posix' | 'win32'): string {
+  return normalize(normalizeUserPath(path, pathClass));
 }
 
 function stringArg(args: unknown, key: string): string | undefined {

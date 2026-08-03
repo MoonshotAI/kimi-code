@@ -19,7 +19,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ToolCall } from '#/kosong/contract/message';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
   ToolAccesses,
@@ -46,6 +46,8 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import { AgentToolDedupeService } from '#/agent/toolDedupe/toolDedupeService';
+import { OrderedHookSlot } from '#/hooks';
+import { IWireService } from '#/wire/wire';
 import type {
   ResolvedToolExecutionHookContext,
   ToolDidExecuteContext,
@@ -79,6 +81,7 @@ interface Harness {
   readonly ix: TestInstantiationService;
   readonly events: ToolExecutorEventStubs;
   readonly reminder: IAgentAgentsMdReminderService;
+  readonly wire: IWireService;
   readonly telemetryEvents: TelemetryRecord[];
 }
 
@@ -87,6 +90,13 @@ function createHarness(
     readonly withDedupe?: boolean;
     readonly withRealExecutor?: boolean;
     readonly telemetry?: ITelemetryService;
+    readonly cwd?: string;
+    readonly hostFs?: IHostFileSystem;
+    readonly pathClass?: 'posix' | 'win32';
+    readonly restoredProfile?: {
+      readonly systemPrompt: string;
+      readonly agentsMdPaths?: readonly string[];
+    };
   } = {},
 ): Harness {
   const telemetryEvents: TelemetryRecord[] = [];
@@ -114,6 +124,17 @@ function createHarness(
       } else {
         reg.defineInstance(IAgentToolExecutorService, events.executor);
       }
+      const wire: IWireService = {
+        _serviceBrand: undefined,
+        hooks: { onDidRestore: new OrderedHookSlot() },
+        dispatch: () => {},
+        seal: async () => {},
+        restore: async () => {},
+        flush: async () => {},
+        getModel: () =>
+          options.restoredProfile ?? { systemPrompt: '', agentsMdPaths: undefined },
+      } as unknown as IWireService;
+      reg.defineInstance(IWireService, wire);
       reg.defineInstance(IBootstrapService, { homeDir } as unknown as IBootstrapService);
       reg.defineInstance(IAgentStateService, new AgentStateService());
       reg.defineInstance(ISessionContext, {
@@ -122,14 +143,15 @@ function createHarness(
         workspaceId: 'workspace-1',
         sessionDir: workDir,
         metaScope: 'sessions/workspace-1/session-1',
-        cwd: workDir,
+        cwd: options.cwd ?? workDir,
         scope: (sub?: string): string =>
           sub ? `sessions/workspace-1/session-1/${sub}` : 'sessions/workspace-1/session-1',
       } satisfies ISessionContext);
-      reg.defineInstance(IHostFileSystem, new HostFileSystem());
+      reg.defineInstance(IHostFileSystem, options.hostFs ?? new HostFileSystem());
       reg.defineInstance(IHostEnvironment, {
         _serviceBrand: undefined,
         homeDir,
+        pathClass: options.pathClass ?? 'posix',
       } as unknown as IHostEnvironment);
       reg.defineInstance(IBashParserService, new BashParserService());
       reg.defineInstance(
@@ -145,7 +167,8 @@ function createHarness(
     strict: true,
   });
   const reminder = ix.get(IAgentAgentsMdReminderService);
-  return { ix, events, reminder, telemetryEvents };
+  const wire = ix.get(IWireService);
+  return { ix, events, reminder, wire, telemetryEvents };
 }
 
 function didCtx(
@@ -514,6 +537,39 @@ describe('agentsMdReminder lazy seeding after a restore', () => {
     expect(outputText(result)).toBe('original result');
     expect(outputText(result)).not.toContain(brandAgentsMd);
     expect(h.telemetryEvents).toHaveLength(0);
+  });
+});
+
+describe('agentsMdReminder persisted restore provenance', () => {
+  it('keeps a newly created instruction path eligible after restoring persisted paths', async () => {
+    const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
+    const subDir = join(workDir, 'packages', 'kap-server');
+    const subAgentsMd = await writeAgentsMd(subDir, 'package instructions');
+    const h = createHarness({
+      restoredProfile: {
+        systemPrompt: `<!-- From: ${rootAgentsMd} -->\nroot instructions`,
+        agentsMdPaths: [rootAgentsMd],
+      },
+    });
+
+    await h.wire.hooks.onDidRestore.run({});
+    const result = await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
+
+    expect(outputText(result)).toContain(subAgentsMd);
+  });
+
+  it('recovers injected paths from a legacy restored prompt without path provenance', async () => {
+    const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
+    const h = createHarness({
+      restoredProfile: {
+        systemPrompt: `<!-- From: ${rootAgentsMd} -->\nroot instructions`,
+      },
+    });
+
+    await h.wire.hooks.onDidRestore.run({});
+    const result = await fire(h, didCtx('Read', { path: join(workDir, 'index.ts') }));
+
+    expect(outputText(result)).not.toContain('<system-reminder>');
   });
 });
 
@@ -995,6 +1051,51 @@ describe('agentsMdReminder Bash parse degradation', () => {
     const result = await fire(h, didCtx('Bash', { command: "ls '" }));
 
     expect(outputText(result)).toBe('original result');
+  });
+});
+
+describe('agentsMdReminder Windows Bash paths', () => {
+  function windowsProbeFs(
+    targetDir: string,
+    agentsMdPath: string,
+    projectRoot: string,
+  ): IHostFileSystem {
+    const directory: HostFileStat = {
+      isFile: false,
+      isDirectory: true,
+      size: 0,
+    };
+    const stat = vi.fn(async (path: string): Promise<HostFileStat> => {
+      if (path === targetDir || path === join(projectRoot, '.git')) return directory;
+      throw new Error(`missing: ${path}`);
+    });
+    const readText = vi.fn(async (path: string): Promise<string> => {
+      if (path === agentsMdPath) return 'windows instructions';
+      throw new Error(`missing: ${path}`);
+    });
+    return { stat, readText } as unknown as IHostFileSystem;
+  }
+
+  it('converts Git Bash drive paths before probing the host filesystem', async () => {
+    const projectRoot = 'C:/repo';
+    const targetDir = `${projectRoot}/packages/app`;
+    const agentsMdPath = `${targetDir}/AGENTS.md`;
+
+    for (const args of [
+      { command: 'ls /cygdrive/c/repo/packages/app' },
+      { command: 'true', cwd: '/c/repo/packages/app' },
+    ]) {
+      const h = createHarness({
+        cwd: projectRoot,
+        hostFs: windowsProbeFs(targetDir, agentsMdPath, projectRoot),
+        pathClass: 'win32',
+      });
+      h.reminder.seedInjected([], projectRoot);
+
+      const result = await fire(h, didCtx('Bash', args));
+
+      expect(outputText(result)).toContain(agentsMdPath);
+    }
   });
 });
 

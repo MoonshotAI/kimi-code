@@ -168,7 +168,8 @@ describe('AgentProfileService.bind', () => {
     });
     await ctx.get(IWireService).flush();
 
-    expect(persistence.records.find((record) => record.type === 'profile.bind')).toMatchObject({
+    const bindingRecord = persistence.records.find((record) => record.type === 'profile.bind');
+    expect(bindingRecord).toMatchObject({
       profileName: 'delegates-explore',
       subagents: ['explore'],
     });
@@ -199,6 +200,9 @@ describe('AgentProfileService.bind', () => {
       profileName: 'delegates-explore',
       subagents: ['explore'],
     });
+    expect(ctx.get(IAgentProfileService).data().agentsMdPaths).toEqual(
+      bindingRecord?.['agentsMdPaths'],
+    );
   });
 
   it('refreshes the system prompt from the session cwd after a default bind', async () => {
@@ -1118,6 +1122,7 @@ describe('agentsMdReminder seeding', () => {
     await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
 
     expect(seedInjected).toHaveBeenCalledWith([normalize(join(workDir, 'AGENTS.md'))], workDir);
+    expect(profile.data().agentsMdPaths).toEqual([normalize(join(workDir, 'AGENTS.md'))]);
   });
 
   it('does not seed when the prompt build fails before the bind commits', async () => {

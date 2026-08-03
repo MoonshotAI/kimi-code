@@ -21,10 +21,12 @@
  * (surfaced as `agentsMdPaths`), and the per-directory candidate rules
  * (`AGENTS_MD_PLAIN_NAMES` / `dotKimiAgentsMdPath` / `findAgentsMdInDir`)
  * plus the root→leaf chain helpers (`findProjectRoot` / `dirsRootToLeaf`)
- * are exported so discovery probes and injection never drift apart.
+ * are exported so discovery probes and injection never drift apart. Legacy
+ * restored prompts can recover their exact injected paths from the same
+ * rendered source annotations.
  */
 
-import { dirname, join, normalize } from 'pathe';
+import { basename, dirname, join, normalize } from 'pathe';
 
 import { findGitWorkTree } from '#/app/git/workTree';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -110,6 +112,25 @@ export function dotKimiAgentsMdPath(dir: string): string {
 
 export function agentsMdCandidatePaths(dir: string): string[] {
   return [dotKimiAgentsMdPath(dir), ...AGENTS_MD_PLAIN_NAMES.map((name) => join(dir, name))];
+}
+
+export function extractAgentsMdPathsFromSystemPrompt(systemPrompt: string): string[] {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  for (const match of systemPrompt.matchAll(/^<!-- From: (.+) -->$/gm)) {
+    const path = match[1];
+    if (
+      path === undefined ||
+      !AGENTS_MD_PLAIN_NAMES.some((candidate) => candidate === basename(path))
+    ) {
+      continue;
+    }
+    const normalized = normalize(path);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    paths.push(normalized);
+  }
+  return paths;
 }
 
 export async function findAgentsMdInDir(
