@@ -1657,6 +1657,47 @@ mod create_tests {
     }
 
     #[tokio::test]
+    async fn btw_side_agent_roundtrip() {
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = SessionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/create".into(),
+                params: serde_json::json!({ "session_id": "s-btw" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "create failed: {body}");
+
+        // start_btw spawns a side agent (pure state op, no LLM).
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/start_btw".into(),
+                params: serde_json::json!({ "session_id": "s-btw" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "start_btw failed: {body}");
+        let btw_id = body["result"]["btw_id"].as_str().expect("btw_id").to_string();
+        assert!(btw_id.starts_with("btw-"), "side agent id: {btw_id}");
+
+        // end_btw tears it down.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(3),
+                method: "session/end_btw".into(),
+                params: serde_json::json!({ "session_id": "s-btw" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "end_btw failed: {body}");
+    }
+
+    #[tokio::test]
     async fn activate_unknown_skill_errors_fast() {
         let state = crate::state::ServerState::new().expect("state");
         let processor = SessionProcessor::with_state(state);
