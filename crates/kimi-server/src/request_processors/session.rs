@@ -1727,6 +1727,82 @@ mod create_tests {
     }
 
     #[tokio::test]
+    async fn save_load_roundtrip_restores_session() {
+        // Serialized against other store-sensitive tests (env var + shared
+        // file store so load can re-open the persisted record).
+        let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = std::env::temp_dir().join(format!("kimi-saveload-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("mkdir");
+        let previous = std::env::var_os("KIMI_AGENT_HOME");
+        std::env::set_var("KIMI_AGENT_HOME", &home);
+
+        let result = async {
+            let state = crate::state::ServerState::new().expect("state");
+            let processor = SessionProcessor::with_state(state);
+            let mut server = MessageProcessor::new();
+            processor.register(&mut server);
+            let body = server
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(1),
+                    method: "session/create".into(),
+                    params: serde_json::json!({ "session_id": "s-saveload" }),
+                })
+                .await;
+            assert!(body.get("error").is_none(), "create failed: {body}");
+
+            // Persist, then destroy the runtime agent.
+            let body = server
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(2),
+                    method: "session/save".into(),
+                    params: serde_json::json!({ "session_id": "s-saveload" }),
+                })
+                .await;
+            assert!(body.get("error").is_none(), "save failed: {body}");
+            let body = server
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(3),
+                    method: "session/destroy".into(),
+                    params: serde_json::json!({ "session_id": "s-saveload" }),
+                })
+                .await;
+            assert_eq!(body["result"]["destroyed"], true);
+
+            // Loading rehydrates the runtime agent from the persisted record.
+            let body = server
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(4),
+                    method: "session/load".into(),
+                    params: serde_json::json!({ "session_id": "s-saveload" }),
+                })
+                .await;
+            assert!(body.get("error").is_none(), "load failed: {body}");
+            let body = server
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(5),
+                    method: "session/get_status".into(),
+                    params: serde_json::json!({ "session_id": "s-saveload" }),
+                })
+                .await;
+            assert!(body.get("error").is_none(), "status after load: {body}");
+        }
+        .await;
+
+        match previous {
+            Some(v) => std::env::set_var("KIMI_AGENT_HOME", v),
+            None => std::env::remove_var("KIMI_AGENT_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+        result;
+    }
+
+    #[tokio::test]
     async fn export_roundtrip_yields_zip() {
         // Point the store at a temp dir so session/export (which opens the
         // store per call) sees the session created below. Serialized against
