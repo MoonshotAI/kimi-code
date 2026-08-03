@@ -8,6 +8,8 @@
  * Primitives:
  *   - `write`  → `atomicWrite` (tmp + fsync + rename) followed by a directory
  *                fsync, so the replacement is both atomic and durable.
+ *   - `writeStream` → the streamed form of `write` (`atomicWriteStream`), for
+ *                values too large to buffer in memory.
  *   - `append` → `open('a')` + write + `fh.sync()` (when `durable`), plus a
  *                one-time directory fsync per scope.
  *   - `watch`  → chokidar on the parent directory, filtered to the exact key and
@@ -16,9 +18,7 @@
  *
  * It uses raw `node:fs` rather than `kaos`: the storage kernel needs direct
  * control over append offsets, fsync, atomic rename and streaming, which the
- * agent-execution-environment abstraction does not expose. Higher-level code
- * (wire journal, blob store) goes through the Store / Storage interfaces above
- * this backend, never `node:fs` directly.
+ * agent-execution-environment abstraction does not expose.
  */
 
 import { createReadStream, mkdirSync } from 'node:fs';
@@ -29,7 +29,7 @@ import { dirname, join, normalize } from 'pathe';
 import { DisposableStore, combinedDisposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
-import { atomicWrite, syncDir } from '#/_base/utils/fs';
+import { atomicWrite, atomicWriteStream, syncDir } from '#/_base/utils/fs';
 
 import type {
   IFileSystemStorageService,
@@ -96,6 +96,22 @@ export class FileStorageService implements IFileSystemStorageService {
     try {
       await mkdir(dirname(filePath), { recursive: true, mode: this.dirMode });
       await atomicWrite(filePath, data, undefined, this.fileMode);
+      await this.syncDirOnce(dirname(filePath));
+    } catch (error) {
+      throw toStorageIoError(error, { path: filePath, op: 'write' });
+    }
+  }
+
+  async writeStream(
+    scope: string,
+    key: string,
+    source: AsyncIterable<Uint8Array>,
+    _options: StorageWriteOptions = {},
+  ): Promise<void> {
+    const filePath = this.path(scope, key);
+    try {
+      await mkdir(dirname(filePath), { recursive: true, mode: this.dirMode });
+      await atomicWriteStream(filePath, source, this.fileMode);
       await this.syncDirOnce(dirname(filePath));
     } catch (error) {
       throw toStorageIoError(error, { path: filePath, op: 'write' });

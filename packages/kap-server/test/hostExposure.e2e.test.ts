@@ -19,6 +19,7 @@ import { pino, type Logger } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
 const createdDirs: string[] = [];
 const running: RunningServer[] = [];
@@ -67,7 +68,7 @@ describe('public-bind gate', () => {
   it('refuses to bind 0.0.0.0 without --insecure-no-tls', async () => {
     const home = await tmpHome();
     await expect(
-      startServer({ host: '0.0.0.0', port: 0, homeDir: home, logLevel: 'silent' }),
+      startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '0.0.0.0', port: 0, homeDir: home, logLevel: 'silent' }),
     ).rejects.toThrow(/without TLS/);
   });
 
@@ -76,6 +77,7 @@ describe('public-bind gate', () => {
     const home = await tmpHome();
     const { logger, lines } = capturingLogger();
     const server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '0.0.0.0',
       port: 0,
       homeDir: home,
@@ -98,6 +100,7 @@ describe('real password path (verifyPassword)', () => {
     process.env['KIMI_CODE_PASSWORD'] = 'test-pw';
     const home = await tmpHome();
     const server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '0.0.0.0',
       port: 0,
       homeDir: home,
@@ -146,6 +149,7 @@ describe('auth-failure rate limit on a real bind', () => {
     // Inject a fast token-only auth service: this test exercises the rate
     // limiter, not bcrypt — 12 sequential cost-12 compares would take seconds.
     const server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '0.0.0.0',
       port: 0,
       homeDir: home,

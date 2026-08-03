@@ -9,7 +9,7 @@ import { describe, expect, test } from 'vitest';
 import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
 import { convertMCPContentBlock, mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
-import type { MCPClient, MCPContentBlock, MCPToolResult } from '#/agent/mcp/types';
+import type { MCPClient, MCPContentBlock, MCPToolResult } from '#/mcpCore/types';
 import type { ToolExecution } from '#/tool/toolContract';
 import { sniffImageDimensions } from '#/agent/media/file-type';
 

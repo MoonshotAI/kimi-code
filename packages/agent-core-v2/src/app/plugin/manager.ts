@@ -1,17 +1,18 @@
 /**
- * `plugin` domain (L3) — manages installed plugin state and consumption metadata.
+ * `plugin` domain — manages installed plugin state and consumption metadata.
  *
- * Installs, reloads, persists, and summarizes plugins for `PluginService`,
- * using `skillCatalog` discovery to count loadable plugin skills.
+ * Installs, reloads, persists, and summarizes plugins, counting loadable
+ * plugin skills through skill discovery.
  */
 
 import { cp, mkdir, mkdtemp, realpath, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { Error2, PluginErrors } from '#/errors';
+import { BugIndicatingError, Error2, ErrorCodes, PluginErrors } from '#/errors';
 import type { HookDef } from '#/agent/externalHooks/types';
-import type { McpServerConfig } from '#/agent/mcp/config-schema';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
+import type { PluginAgentRoot } from './types';
 import { discoverFileSkills } from '#/app/skillCatalog/fileSkillDiscovery';
 import type { SkillDiscoveryResult } from '#/app/skillCatalog/skillDiscovery';
 import type { SkillRoot } from '#/app/skillCatalog/types';
@@ -25,6 +26,7 @@ import { readInstalled, writeInstalled, type InstalledRecord } from './store';
 import {
   normalizePluginId,
   type EnabledPluginSessionStart,
+  type EnabledPluginSystemPrompt,
   type PluginCapabilityState,
   type PluginCommandDef,
   type PluginGithubMetadata,
@@ -123,10 +125,12 @@ export class PluginManager {
       const parsed = await parseManifest(sourceRoot);
       if (parsed.manifest === undefined) {
         const msg = parsed.diagnostics.find((d) => d.severity === 'error')?.message ?? 'no manifest';
-        throw new Error(
+        throw new Error2(
+          ErrorCodes.PLUGIN_LOAD_FAILED,
           sourceType === 'local-path'
             ? `Cannot install plugin at ${sourceRoot}: ${msg}`
             : `Cannot install plugin from ${originalSource}: ${msg}`,
+          { details: { sourceType } },
         );
       }
 
@@ -163,10 +167,16 @@ export class PluginManager {
         try {
           await rollbackManagedPluginCopy(managedCopy);
         } catch (rollbackError) {
-          throw new AggregateError(
-            [error, rollbackError],
+          throw new Error2(
+            ErrorCodes.PLUGIN_LOAD_FAILED,
             'Plugin installation failed and the previous managed copy could not be restored',
-            { cause: error },
+            {
+              cause: new AggregateError(
+                [error, rollbackError],
+                'Plugin installation failed and the previous managed copy could not be restored',
+                { cause: error },
+              ),
+            },
           );
         }
       }
@@ -194,7 +204,11 @@ export class PluginManager {
     const current = this.records.get(key);
     if (current === undefined) throw pluginNotFound(id);
     if (current.manifest?.mcpServers?.[server] === undefined) {
-      throw new Error(`Plugin "${id}" does not declare MCP server "${server}"`);
+      throw new Error2(
+        ErrorCodes.MCP_SERVER_NOT_FOUND,
+        `Plugin "${id}" does not declare MCP server "${server}"`,
+        { details: { id, server } },
+      );
     }
     const currentMcpServers = current.capabilities?.mcpServers ?? {};
     const nextCapabilities: PluginCapabilityState = {
@@ -312,6 +326,17 @@ export class PluginManager {
     return roots;
   }
 
+  pluginAgentRoots(): readonly PluginAgentRoot[] {
+    const roots: PluginAgentRoot[] = [];
+    for (const record of this.records.values()) {
+      if (!record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
+      for (const dir of record.manifest.agents ?? []) {
+        roots.push({ path: dir, source: 'plugin' });
+      }
+    }
+    return roots;
+  }
+
   enabledSessionStarts(): readonly EnabledPluginSessionStart[] {
     const out: EnabledPluginSessionStart[] = [];
     for (const record of this.records.values()) {
@@ -319,6 +344,17 @@ export class PluginManager {
       const skill = record.manifest?.sessionStart?.skill;
       if (skill === undefined) continue;
       out.push({ pluginId: record.id, skillName: skill });
+    }
+    return out;
+  }
+
+  enabledSystemPrompts(): readonly EnabledPluginSystemPrompt[] {
+    const out: EnabledPluginSystemPrompt[] = [];
+    for (const record of this.records.values()) {
+      if (!record.enabled || record.state !== 'ok') continue;
+      const content = record.manifest?.systemPrompt;
+      if (content === undefined) continue;
+      out.push({ pluginId: record.id, content });
     }
     return out;
   }
@@ -392,7 +428,8 @@ async function installedGithubSha(
 
 async function checkGithubUpdate(record: PluginRecord): Promise<PluginUpdateStatus> {
   const github = record.github;
-  if (github === undefined) throw new Error(`Plugin "${record.id}" has no GitHub metadata`);
+  if (github === undefined)
+    throw new BugIndicatingError(`Plugin "${record.id}" has no GitHub metadata`);
   const current = github.ref;
   const pinned = explicitGithubRef(record);
 
@@ -463,16 +500,25 @@ function pluginNotFound(id: string): Error2 {
 async function normalizeInstallRoot(rootPath: string): Promise<string> {
   const trimmed = rootPath.trim();
   if (!path.isAbsolute(trimmed)) {
-    throw new Error(`Plugin root must be an absolute path (got "${rootPath}")`);
+    throw new Error2(
+      ErrorCodes.VALIDATION_FAILED,
+      `Plugin root must be an absolute path (got "${rootPath}")`,
+      { details: { path: rootPath } },
+    );
   }
   let resolved: string;
   try {
     resolved = await realpath(trimmed);
   } catch (error) {
-    throw new Error(`Plugin root does not exist: ${trimmed}`, { cause: error });
+    throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `Plugin root does not exist: ${trimmed}`, {
+      cause: error,
+      details: { path: trimmed },
+    });
   }
   if (!(await stat(resolved)).isDirectory()) {
-    throw new Error(`Plugin root is not a directory: ${trimmed}`);
+    throw new Error2(ErrorCodes.VALIDATION_FAILED, `Plugin root is not a directory: ${trimmed}`, {
+      details: { path: trimmed },
+    });
   }
   return resolved;
 }
@@ -652,9 +698,6 @@ function withPluginMcpRuntime(
   };
 
   if (config.command === 'node' && isElectron()) {
-    // Electron host: run the entry with the bundled Node (`ELECTRON_RUN_AS_NODE`)
-    // instead of the CLI's `__plugin_run_node` subcommand, which only the CLI
-    // binary implements (Electron would try to open it as an app and fail).
     return {
       ...config,
       command: process.execPath,

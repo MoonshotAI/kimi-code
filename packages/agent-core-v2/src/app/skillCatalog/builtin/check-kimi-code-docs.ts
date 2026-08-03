@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — builtin `check-kimi-code-docs` skill definition.
+ * `skillCatalog` domain — builtin `check-kimi-code-docs` skill definition.
  */
 
 import type { SkillDefinition } from '#/app/skillCatalog/types';

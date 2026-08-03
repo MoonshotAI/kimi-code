@@ -12,7 +12,7 @@ import type { ToolCall } from '#/kosong/contract/message';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
 import { Error2, ErrorCodes, toErrorPayload } from '#/errors';
@@ -24,7 +24,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IConfigRegistry, IConfigService } from '#/app/config/config';
+import { ConfigTarget, IConfigRegistry, IConfigService } from '#/app/config/config';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import '#/app/cron/configSection';
@@ -46,7 +46,9 @@ import {
   type LoopControl,
 } from '#/agent/loop/configSection';
 import {
+  DEFAULT_MODEL_SECTION,
   MODELS_SECTION,
+  PROVIDERS_SECTION,
   SECONDARY_MODEL_EFFORT_ENV,
   SECONDARY_MODEL_ENV,
   SECONDARY_MODEL_SECTION,
@@ -82,14 +84,14 @@ import {
 } from '#/app/auth/configSection';
 import { SECONDARY_DERIVED_MODEL_ID } from '#/app/kosongConfig/secondaryModelOverlay';
 import { type SecondaryModelConfig } from '#/app/kosongConfig/configSection';
-import '#/agent/mcp/configSection';
+import '#/app/mcpConfig/configSection';
 import {
   MCP_SECTION,
   MCP_STARTUP_TIMEOUT_ENV,
   MCP_TOOL_TIMEOUT_ENV,
   McpSectionSchema,
   type McpSection,
-} from '#/agent/mcp/configSection';
+} from '#/app/mcpConfig/configSection';
 import { ILogService } from '#/_base/log/log';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -237,11 +239,13 @@ describe('Agent config', () => {
         created_at: 1,
       },
       {
-        type: 'config.update',
+        type: 'profile.bind',
         cwd: '/restored-cwd',
         modelAlias: 'restored-model',
         profileName: 'restored-profile',
+        thinkingEffort: 'off',
         systemPrompt: 'Restored prompt.',
+        disallowedTools: [],
       },
       {
         type: 'tools.set_active_tools',
@@ -250,7 +254,6 @@ describe('Agent config', () => {
     ]);
 
     expect(profile.data()).toMatchObject({
-      cwd: '/restored-cwd',
       modelAlias: 'restored-model',
       profileName: 'restored-profile',
       systemPrompt: 'Restored prompt.',
@@ -258,7 +261,7 @@ describe('Agent config', () => {
     });
   });
 
-  it('config.update with cwd initializes builtin tools', async () => {
+  it('config.update initializes builtin tools', async () => {
     const tools = await ctx.rpc.getTools({});
 
     expect(toolNames(tools)).toEqual(
@@ -358,6 +361,7 @@ describe('Agent config', () => {
       [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 2, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-5>", "turnId": "0", "step": 2, "stepUuid": "<uuid-4>", "part": { "type": "text", "text": "Still using the original turn config." } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-4>", "turnId": "0", "step": 2, "finishReason": "end_turn", "usage": { "inputOther": 31, "output": 13, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-2", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
+      [wire] turn.ended                  { "turnId": 0, "reason": "completed", "time": "<time>" }
       [emit] turn.ended                  { "turnId": 0, "reason": "completed" }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
@@ -392,6 +396,7 @@ describe('Agent config', () => {
       [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 1, "origin": { "kind": "user" }, "phase": "running", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-7>", "turnId": "1", "step": 1, "stepUuid": "<uuid-6>", "part": { "type": "text", "text": "Now the changed config is active." } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-6>", "turnId": "1", "step": 1, "finishReason": "end_turn", "usage": { "inputOther": 50, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-3", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
+      [wire] turn.ended                  { "turnId": 1, "reason": "completed", "time": "<time>" }
       [emit] turn.ended                  { "turnId": 1, "reason": "completed" }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
@@ -1885,6 +1890,181 @@ describe('ConfigService thinking effort max migration', () => {
 
     expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({ effort: 'low' });
     expect(readMarkers()['thinking-effort-max-to-high']).toBeDefined();
+
+    disposables.dispose();
+  });
+});
+
+describe('ConfigService replaceSections', () => {
+  // Top-level keys must precede every [table] header in TOML.
+  const SEED_TOML = [
+    'default_model = "acme/m1"',
+    '',
+    '[providers.acme]',
+    'type = "openai"',
+    'api_key = "sk-acme"',
+    '',
+    '[models."acme/m1"]',
+    'provider = "acme"',
+    'model = "m1"',
+    'max_context_size = 1000',
+    '',
+    '[thinking]',
+    'enabled = true',
+    '',
+  ].join('\n');
+
+  async function createSectionsConfig(toml = SEED_TOML) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg-replace-sections'));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    const store = ix.get(IAtomicTomlDocumentStore);
+    return { config, disposables, store, storage };
+  }
+
+  it('applies every domain in one transition with a single disk write, clearing undefined domains', async () => {
+    const { config, disposables, store } = await createSectionsConfig();
+    const setSpy = vi.spyOn(store, 'set');
+
+    await config.replaceSections({
+      [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
+      [MODELS_SECTION]: { 'acme/m2': { provider: 'acme', model: 'm2', maxContextSize: 2000 } },
+      [DEFAULT_MODEL_SECTION]: undefined,
+      [THINKING_SECTION]: undefined,
+    });
+
+    expect(setSpy).toHaveBeenCalledTimes(1);
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme-2' },
+    });
+    expect(config.get<Record<string, unknown>>(MODELS_SECTION)).toEqual({
+      'acme/m2': { provider: 'acme', model: 'm2', maxContextSize: 2000 },
+    });
+    expect(config.get(DEFAULT_MODEL_SECTION)).toBeUndefined();
+    expect(config.get(THINKING_SECTION)).toEqual({});
+    expect(config.inspect(DEFAULT_MODEL_SECTION).userValue).toBeUndefined();
+    // `stripThinkingEnv` maps a clear to `{}` (`{...undefined}`), so the user
+    // layer collapses to an empty object instead of disappearing — the
+    // long-standing `replace(domain, undefined)` behavior, unchanged here.
+    expect(config.inspect(THINKING_SECTION).userValue).toEqual({});
+
+    disposables.dispose();
+  });
+
+  it('treats null as clear — the wire encoding JSON transports use for undefined', async () => {
+    const { config, disposables, store } = await createSectionsConfig();
+    const setSpy = vi.spyOn(store, 'set');
+
+    await config.replaceSections({
+      [DEFAULT_MODEL_SECTION]: null,
+      [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
+    });
+
+    expect(setSpy).toHaveBeenCalledTimes(1);
+    expect(config.get(DEFAULT_MODEL_SECTION)).toBeUndefined();
+    expect(config.inspect(DEFAULT_MODEL_SECTION).userValue).toBeUndefined();
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme-2' },
+    });
+
+    // `replace(domain, null)` clears too, so JSON transports behave
+    // identically to in-process `replace(domain, undefined)` callers.
+    await config.replace(DEFAULT_MODEL_SECTION, 'acme/m1');
+    await config.replace(DEFAULT_MODEL_SECTION, null);
+    expect(config.inspect(DEFAULT_MODEL_SECTION).userValue).toBeUndefined();
+
+    disposables.dispose();
+  });
+
+  it('fires change events only after all domains have taken effect', async () => {
+    const { config, disposables } = await createSectionsConfig();
+    const domains: string[] = [];
+    let snapshotDuringFirstEvent:
+      | { providers: unknown; models: unknown; defaultModel: unknown; thinking: unknown }
+      | undefined;
+    config.onDidSectionChange((e) => {
+      domains.push(e.domain);
+      snapshotDuringFirstEvent ??= {
+        providers: config.get(PROVIDERS_SECTION),
+        models: config.get(MODELS_SECTION),
+        defaultModel: config.get(DEFAULT_MODEL_SECTION),
+        thinking: config.get(THINKING_SECTION),
+      };
+    });
+
+    await config.replaceSections({
+      [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
+      [MODELS_SECTION]: { 'acme/m2': { provider: 'acme', model: 'm2', maxContextSize: 2000 } },
+      [DEFAULT_MODEL_SECTION]: undefined,
+      [THINKING_SECTION]: undefined,
+    });
+
+    // Every event — including the very first one — already observes the fully
+    // applied state; no listener can catch the write half-applied. (The
+    // cleared thinking section still resolves to its schema default `{}`.)
+    expect(snapshotDuringFirstEvent).toEqual({
+      providers: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
+      models: { 'acme/m2': { provider: 'acme', model: 'm2', maxContextSize: 2000 } },
+      defaultModel: undefined,
+      thinking: {},
+    });
+    expect([...domains].sort()).toEqual(
+      [PROVIDERS_SECTION, MODELS_SECTION, DEFAULT_MODEL_SECTION, THINKING_SECTION].sort(),
+    );
+
+    disposables.dispose();
+  });
+
+  it('supports the memory target without touching the persisted user layer', async () => {
+    const { config, disposables, store } = await createSectionsConfig();
+    const setSpy = vi.spyOn(store, 'set');
+
+    await config.replaceSections(
+      { [THINKING_SECTION]: { enabled: false, effort: 'low' } },
+      ConfigTarget.Memory,
+    );
+
+    expect(setSpy).not.toHaveBeenCalled();
+    expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({
+      enabled: false,
+      effort: 'low',
+    });
+    expect(config.inspect<ThinkingConfig>(THINKING_SECTION).userValue).toEqual({ enabled: true });
+
+    disposables.dispose();
+  });
+
+  it('leaves the user layer untouched when a later domain fails validation', async () => {
+    const { config, disposables, store } = await createSectionsConfig();
+    const setSpy = vi.spyOn(store, 'set');
+
+    // Providers is applied first in key order and validates fine; thinking
+    // then fails schema validation (`enabled` must be a boolean). The batch
+    // must reject with NO observable partial application.
+    await expect(
+      config.replaceSections({
+        [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
+        [THINKING_SECTION]: { enabled: 'yes' },
+      }),
+    ).rejects.toThrow();
+
+    expect(setSpy).not.toHaveBeenCalled();
+    expect(config.inspect<Record<string, unknown>>(PROVIDERS_SECTION).userValue).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme' },
+    });
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme' },
+    });
+    expect(config.inspect<ThinkingConfig>(THINKING_SECTION).userValue).toEqual({ enabled: true });
 
     disposables.dispose();
   });

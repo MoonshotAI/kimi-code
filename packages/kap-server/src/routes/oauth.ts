@@ -1,10 +1,11 @@
 /**
  * `/oauth/*` REST routes.
  *
- *   POST   /oauth/login   start a device-code flow → OAuthFlowStart
- *   GET    /oauth/login   poll current flow state  → OAuthFlowSnapshot | null
- *   DELETE /oauth/login   cancel pending flow       → { cancelled, status }
- *   POST   /oauth/logout  logout                    → { logged_out, provider }
+ *   POST   /oauth/login     start a device-code flow → OAuthFlowStart
+ *   GET    /oauth/login     poll current flow state  → OAuthFlowSnapshot | null
+ *   DELETE /oauth/login     cancel pending flow       → { cancelled, status }
+ *   POST   /oauth/logout    logout                    → { logged_out, provider }
+ *   GET    /oauth/userinfo  managed-account profile   → ManagedUserInfoResult
  *
  * Backed by the v2 `IOAuthService` (Core scope), which already returns the
  * protocol wire types, so the handlers only swap the v1 accessor
@@ -13,6 +14,7 @@
 
 import { IOAuthService, type Scope } from '@moonshot-ai/agent-core-v2';
 import {
+  managedUserInfoResultSchema,
   managedUsageResultSchema,
   oauthFlowSnapshotSchema,
   oauthFlowStartSchema,
@@ -175,6 +177,27 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     usageRoute.options,
     usageRoute.handler as Parameters<RouteHost['get']>[2],
   );
+
+  // GET /oauth/userinfo — managed-account profile ------------------------------
+  const userInfoRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/oauth/userinfo',
+      querystring: oauthLoginQuerySchema,
+      success: { data: managedUserInfoResultSchema },
+      description: 'Get the managed account profile',
+      tags: ['auth'],
+    },
+    async (req, reply) => {
+      const result = await core.accessor.get(IOAuthService).getManagedUserInfo(req.query.provider);
+      reply.send(okEnvelope(result, req.id));
+    },
+  );
+  app.get(
+    userInfoRoute.path,
+    userInfoRoute.options,
+    userInfoRoute.handler as Parameters<RouteHost['get']>[2],
+  );
 }
 
 /** Domain (camelCase) → wire (snake_case) mapping for the usage payload. */
@@ -201,8 +224,20 @@ function toWireUsage(result: ManagedUsageDomainResult): ManagedUsageResult {
 }
 
 type ManagedUsageDomainResult = Awaited<ReturnType<IOAuthService['getManagedUsage']>>;
-type DomainUsageRow = { label: string; used: number; limit: number; resetHint?: string };
+type DomainUsageRow = {
+  name?: string;
+  window?: { duration: number; unit: 'minute' | 'hour' | 'day' | 'week' };
+  used: number;
+  limit: number;
+  resetAt?: string;
+};
 
 function toWireUsageRow(row: DomainUsageRow): UsageRow {
-  return { label: row.label, used: row.used, limit: row.limit, reset_hint: row.resetHint };
+  return {
+    name: row.name,
+    window: row.window,
+    used: row.used,
+    limit: row.limit,
+    reset_at: row.resetAt,
+  };
 }

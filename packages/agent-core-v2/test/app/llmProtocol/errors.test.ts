@@ -8,6 +8,7 @@ import {
   APIContextOverflowError,
   APIEmptyResponseError,
   APIProviderOverloadedError,
+  APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
   APIRequestTooLargeError,
   APIStatusError,
@@ -705,5 +706,25 @@ describe('isProviderRateLimitError', () => {
     expect(isProviderRateLimitError(new APIStatusError(401, 'unauthorized'))).toBe(false);
     expect(isProviderRateLimitError('APIStatusError: 401 unauthorized')).toBe(false);
     expect(isProviderRateLimitError(new Error('context length exceeded'))).toBe(false);
+  });
+});
+
+describe('quota-exhausted error contract', () => {
+  it.each([
+    'Too many requests',
+    'request reached user+model max RPM: 50',
+    'Your account org-0123456789abcdef <ak-test> is suspended due to insufficient balance, please recharge your account or check your plan and billing details',
+  ])('keeps the vendor-neutral 429 normalization a rate limit for "%s"', (message) => {
+    const error = normalizeAPIStatusError(429, message);
+    expect(error).toBeInstanceOf(APIProviderRateLimitError);
+    expect(error).not.toBeInstanceOf(APIProviderQuotaExhaustedError);
+  });
+
+  it('is neither retryable nor a provider rate limit', () => {
+    const quota = new APIProviderQuotaExhaustedError('quota exhausted', 'req-quota', 1);
+    expect(isRetryableGenerateError(quota)).toBe(false);
+    expect(isProviderRateLimitError(quota)).toBe(false);
+    expect(isRetryableGenerateError(new APIProviderRateLimitError('rate limited'))).toBe(true);
+    expect(isProviderRateLimitError(new APIProviderRateLimitError('rate limited'))).toBe(true);
   });
 });

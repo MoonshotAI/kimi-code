@@ -1,25 +1,24 @@
 /**
- * `contextSize` domain (L4) — wire Model (`ContextSizeModel`) and the
+ * `contextSize` domain — wire Model (`ContextSizeModel`) and the
  * `context_size.measured` (`contextSizeMeasured`) Op for the last measured
  * context token count.
  *
  * Declares the deterministic measured prefix as `{ length, tokens }` (initial
  * `{ 0, 0 }`): the length (in messages) and total token count of the most
  * recent `context_size.measured` record. That record is written from two live
- * paths: `llmRequester` after each measured exchange (a true LLM-reported
- * count), and `contextMemoryService` cascading alongside every context mutation
+ * paths: after each measured LLM exchange (a true LLM-reported count), and
+ * cascading alongside every context mutation
  * that changes the measured prefix (`clear` resets, `applyCompaction` adopts
  * `tokensAfter`, and `undo` rebases to an estimate when the aggregate is
  * truncated); `append` is intentionally not cascaded because new messages are
  * the unmeasured tail. The Op is live-only because `context_size.measured` is
  * not a v1 record type: resume starts from `{ 0, 0 }` and
- * `contextSizeService.get()` estimates until the next measured exchange.
+ * reads estimate until the next measured exchange.
  * `apply` is pure — it normalizes the payload and returns the SAME reference
  * on a no-op so the wire's reference-equality gate stays quiet — and carries no
  * non-determinism (the last measured record wins). The sparse
  * `measuredPrefixTokens` array and the per-message live `estimates` are
- * intentionally NOT in the Model. Consumed by the Agent-scope
- * `contextSizeService`.
+ * intentionally NOT in the Model.
  */
 
 import { z } from 'zod';

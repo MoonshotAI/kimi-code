@@ -1,12 +1,11 @@
 /**
- * `hostProcess` domain (L1) — the OS process-spawning contract.
+ * `hostProcess` domain — the OS process-spawning contract.
  *
  * Defines `IHostProcessService`, the App-scope primitive used by any domain that
  * needs to spawn a child process on the host, plus the `IHostProcess` handle it
  * returns. The contract is deliberately close to Python `subprocess.Popen` /
  * `os.spawn*`: a single `spawn()` call returns a handle exposing stdin/stdout/
- * stderr, the pid, the exit code, and lifecycle methods. Bound at App scope;
- * backends in `os/backends/node-local` provide the Node implementation.
+ * stderr, the pid, the exit code, and lifecycle methods. Bound at App scope.
  */
 
 import type { Readable, Writable } from 'node:stream';
@@ -55,6 +54,7 @@ export const OsProcessErrors = {
   codes: {
     OS_PROCESS_SPAWN_FAILED: 'os.process.spawn_failed',
     OS_PROCESS_KILL_FAILED: 'os.process.kill_failed',
+    SHELL_GIT_BASH_NOT_FOUND: 'shell.git_bash_not_found',
   },
   info: {
     'os.process.spawn_failed': {
@@ -67,6 +67,12 @@ export const OsProcessErrors = {
       title: 'Failed to kill process',
       retryable: false,
       public: true,
+    },
+    'shell.git_bash_not_found': {
+      title: 'Git Bash not found',
+      retryable: false,
+      public: true,
+      action: 'Install Git for Windows so shell commands can run under Git Bash.',
     },
   },
 } as const satisfies ErrorDomain;

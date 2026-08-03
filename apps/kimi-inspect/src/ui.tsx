@@ -41,7 +41,9 @@ export function Badge({
     violet: 'bg-violet-900/60 text-violet-300',
   };
   return (
-    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${tones[tone]}`}>{children}</span>
+    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${tones[tone]}`}>
+      {children}
+    </span>
   );
 }
 
@@ -199,9 +201,7 @@ function TreeNode({
   // undefined — skip them entirely instead of rendering source-less noise.
   const entries = isArray
     ? value.map((item, index) => [String(index), item] as const)
-    : Object.entries(value as Record<string, unknown>).filter(
-        ([, item]) => item !== undefined,
-      );
+    : Object.entries(value as Record<string, unknown>).filter(([, item]) => item !== undefined);
   const [openBrace, closeBrace] = isArray ? ['[', ']'] : ['{', '}'];
   return (
     <div>
@@ -300,5 +300,7 @@ function LeafValue({ value, className }: { readonly value: unknown; readonly cla
   if (typeof value === 'boolean') {
     return <span className={className ?? 'text-violet-300/80'}>{String(value)}</span>;
   }
-  return <span className={className ?? 'text-neutral-500'}>{JSON.stringify(value) ?? 'unknown'}</span>;
+  return (
+    <span className={className ?? 'text-neutral-500'}>{JSON.stringify(value) ?? 'unknown'}</span>
+  );
 }

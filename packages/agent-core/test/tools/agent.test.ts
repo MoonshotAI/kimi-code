@@ -22,7 +22,7 @@ function context<Input>(args: Input, toolCallId = 'call_agent') {
 function mockSubagentHost<T extends Pick<SessionSubagentHost, 'spawn'> & Partial<SessionSubagentHost>>(
   host: T,
 ): T & SessionSubagentHost {
-  return { resume: vi.fn(), ...host } as unknown as T & SessionSubagentHost;
+  return { resume: vi.fn(), delegatableSubagents: vi.fn(() => ({})), ...host } as unknown as T & SessionSubagentHost;
 }
 
 function agentTool(
@@ -136,12 +136,41 @@ describe('AgentTool', () => {
     expect(tool.description).toContain('Default to a foreground subagent');
   });
 
-  it('does not expose a model parameter in the JSON schema', () => {
+  it('exposes a primary/secondary model parameter in the JSON schema when the experiment is enabled', () => {
+    const host = mockSubagentHost({ spawn: vi.fn() });
+    const tool = agentTool(host, createBackgroundManager().manager, undefined, {
+      modelChoiceEnabled: true,
+    });
+    const properties = (
+      tool.parameters as {
+        properties: Record<string, { description?: string; enum?: string[] }>;
+      }
+    ).properties;
+
+    expect(properties['model']?.enum).toEqual(['primary', 'secondary']);
+    expect(properties['model']?.description).toContain('secondary');
+  });
+
+  it('strips the model parameter from the JSON schema by default', () => {
     const host = mockSubagentHost({ spawn: vi.fn() });
     const tool = agentTool(host);
     const properties = (tool.parameters as { properties: Record<string, unknown> }).properties;
 
     expect(properties).not.toHaveProperty('model');
+    expect(properties).toHaveProperty('prompt');
+  });
+
+  it('appends the subagent model description only when provided', () => {
+    const host = mockSubagentHost({ spawn: vi.fn() });
+    const withoutModels = agentTool(host);
+    expect(withoutModels.description).not.toContain('Available models');
+
+    const withModels = agentTool(host, createBackgroundManager().manager, undefined, {
+      subagentModelDescription:
+        'Available models (pass via model):\n- secondary: cheap (default)\n- primary: flagship',
+    });
+    expect(withModels.description).toContain('Available models (pass via model):');
+    expect(withModels.description).toContain('secondary: cheap');
   });
 
   it('renders the tool set for each subagent type', () => {
@@ -275,6 +304,48 @@ describe('AgentTool', () => {
         parentToolCallId: 'call_agent',
         profileName: 'coder',
       }),
+    );
+  });
+
+  it('passes the model choice through to spawn, but not to resume', async () => {
+    const host = mockSubagentHost({
+      spawn: vi.fn().mockResolvedValue({
+        agentId: 'agent-child',
+        profileName: 'coder',
+        resumed: false,
+        completion: Promise.resolve({ result: 'child result' }),
+      }),
+      resume: vi.fn().mockResolvedValue({
+        agentId: 'agent-existing',
+        profileName: 'coder',
+        resumed: true,
+        completion: Promise.resolve({ result: 'resumed result' }),
+      }),
+    });
+    const tool = agentTool(host);
+
+    await executeTool(tool,
+      context({
+        prompt: 'Investigate',
+        description: 'Find cause',
+        model: 'primary',
+      }),
+    );
+    expect(host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ modelChoice: 'primary' }),
+    );
+
+    await executeTool(tool,
+      context({
+        prompt: 'Continue',
+        description: 'Continue work',
+        resume: 'agent-existing',
+        model: 'secondary',
+      }),
+    );
+    expect(host.resume).toHaveBeenCalledWith(
+      'agent-existing',
+      expect.not.objectContaining({ modelChoice: expect.anything() }),
     );
   });
 

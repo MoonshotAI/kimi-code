@@ -331,6 +331,39 @@ describe('FileSessionIndex (read model)', () => {
     expect(got?.title).toBe('cached');
   });
 
+  it('list treats a cache entry missing required fields as a cold miss', async () => {
+    await seedSession('s1', { title: 'on-disk', createdAt: 1, updatedAt: 2 });
+    const store = build();
+    // Mirrors a poisoned entry written before `archived` was normalized to a
+    // boolean (JSON dropped the undefined field entirely).
+    await queryStore.put(SESSION_COLLECTION, 's1', {
+      id: 's1',
+      workspaceId,
+      title: 'stale',
+      createdAt: 1,
+      updatedAt: 2,
+    });
+
+    const page = await store.list({ workspaceIds: [workspaceId] });
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]?.title).toBe('on-disk');
+    expect(page.items[0]?.archived).toBe(false);
+
+    // The bad entry is overwritten by the disk backfill.
+    const cached = await queryStore.get<SessionSummary>(SESSION_COLLECTION, 's1');
+    expect(cached?.archived).toBe(false);
+  });
+
+  it('get falls back to disk when the cached entry fails the shape check', async () => {
+    await seedSession('s1', { title: 'on-disk', createdAt: 1, updatedAt: 2 });
+    const store = build();
+    await queryStore.put(SESSION_COLLECTION, 's1', { id: 's1' });
+
+    const got = await store.get('s1');
+    expect(got?.title).toBe('on-disk');
+    expect(got?.archived).toBe(false);
+  });
+
   it('list filters by childOf from the read model', async () => {
     await seedSession('child-a', {
       createdAt: 2,

@@ -17,7 +17,8 @@ import { recover, catchUpWal, frameToOps } from './recovery.js';
 import { compact, shouldCompact } from './compaction.js';
 import { IndexManager, UniqueViolationError } from './index-manager.js';
 import { DtIndex } from './dt-index.js';
-import { TextIndex } from './text-index.js';
+import { TextIndex, type TextIndexOptions } from './text-index.js';
+import { createNgramTokenizer } from './trigram.js';
 import { CompoundIndexManager } from './compound-index.js';
 import { getPath, match, project } from './query.js';
 import { LockFile, LockError } from './lockfile.js';
@@ -29,12 +30,16 @@ import type { IndexDef, IndexInfo } from './index-manager.js';
 import type { CompoundIndexDef, CompoundIndexInfo } from './compound-index.js';
 import type { DtRangeEntry } from './dt-index.js';
 import type { RangeOptions } from './skiplist.js';
+import type { TextIndexTokenizerName } from './trigram.js';
 
 export { UniqueViolationError } from './index-manager.js';
 export { LockError } from './lockfile.js';
+export { normalizeLiteral, createNgramTokenizer } from './trigram.js';
+export { tokenize } from './text-index.js';
 export type { RecoveryInfo } from './recovery.js';
 export type { IndexDef, IndexInfo, IndexType } from './index-manager.js';
 export type { CompoundIndexDef, CompoundIndexInfo } from './compound-index.js';
+export type { TextIndexTokenizerName } from './trigram.js';
 // ClusterDb (the multi-process sharding layer) lives at the './cluster'
 // subpath export to keep this module free of import cycles.
 
@@ -199,6 +204,34 @@ interface PreparedOp<V> {
   valueDecoded: V | undefined;
 }
 
+/** Persisted shape of one entry in `db.textindexes.json`. `tokenizer` is
+ *  absent in definitions written before n-gram support existed, which means
+ *  'default'; it is also omitted for new default indexes so their definitions
+ *  keep the legacy shape byte-for-byte. */
+interface TextIndexDef {
+  name: string;
+  fields: readonly string[] | null;
+  tokenizer?: TextIndexTokenizerName;
+}
+
+/** Map a persisted tokenizer name to the TextIndex tokenizer pair. 'default'
+ *  (or a legacy definition without the field) returns empty options, keeping
+ *  the built-in tokenizer path untouched. The query side only diverges for
+ *  'ngram' (a length >= 3 query emits only its 3-grams); both sides share the
+ *  same normalization, so candidates stay a superset of the true matches. */
+function textIndexTokenizers(
+  name: TextIndexTokenizerName | undefined,
+): Pick<TextIndexOptions, 'tokenizer' | 'queryTokenizer'> {
+  if (name === undefined || name === 'default') return {};
+  if (name === 'ngram') {
+    return {
+      tokenizer: createNgramTokenizer(),
+      queryTokenizer: createNgramTokenizer({ forQuery: true }),
+    };
+  }
+  throw new RangeError(`unknown text index tokenizer: ${String(name)}`);
+}
+
 export class MiniDb<V = unknown> {
   dir!: string;
   walPath!: string;
@@ -213,7 +246,7 @@ export class MiniDb<V = unknown> {
   readonly dt = new DtIndex();
   readonly compound = new CompoundIndexManager();
   private readonly text = new Map<string, TextIndex>();
-  private textDefs: { name: string; fields: readonly string[] | null }[] = [];
+  private textDefs: TextIndexDef[] = [];
 
   private codec!: ValueCodec<V>;
   private codecName: ValueCodecName = 'buffer';
@@ -253,9 +286,10 @@ export class MiniDb<V = unknown> {
 
   /** Hook called by compaction after the store snapshot + WAL are rotated, so
    *  derived on-disk state (text postings) can be rewritten against the new
-   *  live set. Structural part of the CompactionTarget interface. */
-  onCompacted = (): void => {
-    this.rebuildTextPostings();
+   *  live set. Structural part of the CompactionTarget interface; the
+   *  compaction awaits it, so it may be sync or async. */
+  onCompacted: () => void | Promise<void> = async (): Promise<void> => {
+    await this.rebuildTextPostings();
   };
 
   static async open<V = unknown>(opts: OpenOptions): Promise<MiniDb<V>> {
@@ -362,12 +396,20 @@ export class MiniDb<V = unknown> {
       await db.loadIndexDefinitions();
       await db.loadCompoundIndexDefinitions();
       await db.loadTextIndexDefinitions();
-      db.rebuildAllIndexes();
+      await db.rebuildAllIndexes();
 
       // A read-only instance never compacts: rotation would rename the live
       // writer's snapshot/WAL out from under it and lose its acknowledged data.
-      if (!db.readOnly && db.autoCompact && shouldCompact(db)) await compact(db);
+      // The writer's open-time compaction is fire-and-forget (same as
+      // maybeAutoCompact): recovery already applied the full WAL, so the db is
+      // complete and consistent the moment open() returns. Awaiting the
+      // compaction here blocked open() on the whole snapshot rewrite + text
+      // postings rebuild — tens of seconds of stalled startup on a large db.
+      if (!db.readOnly && db.autoCompact && shouldCompact(db)) compact(db).catch(() => {});
     } catch (err) {
+      // A background open-time compaction may still be in flight: settle it
+      // before tearing down the WAL/store/handles it touches.
+      if (db.compacting && db._compactDone) await db._compactDone.catch(() => {});
       // Release every resource acquired so far: an open that fails after the
       // WAL/store are set up must not leak a file handle or keep the everysec /
       // active-expire timers running.
@@ -457,19 +499,24 @@ export class MiniDb<V = unknown> {
     return path.join(this.dir, `db.text-${safe}.postings`);
   }
 
-  /** Rebuild every text index's on-disk postings from the live Store. Drops
-   *  the in-memory delta + tombstones and reclaims orphaned postings records.
-   *  Invoked after compaction (postings are pure derived state, so this is
-   *  only for space/latency, never for correctness). */
-  private rebuildTextPostings(): void {
-    for (const ti of this.text.values()) ti.build(this.textRecords());
+  /** Rebuild every dirty text index's on-disk postings from the live Store.
+   *  Drops the in-memory delta + tombstones and reclaims orphaned postings
+   *  records. Invoked after compaction (postings are pure derived state, so
+   *  this is only for space/latency, never for correctness). Indexes with an
+   *  empty write buffer are skipped: the open-time build just produced a
+   *  fresh base, so a compaction landing right after open must not redo the
+   *  exact same (expensive) pass. */
+  private async rebuildTextPostings(): Promise<void> {
+    for (const ti of this.text.values()) {
+      if (ti.needsRebuild()) await ti.build(this.textRecords());
+    }
   }
 
-  private rebuildAllIndexes(): void {
+  private async rebuildAllIndexes(): Promise<void> {
     this.indexes.rebuild(this._liveRecordsRaw());
     this.dt.rebuild([...this.liveRecords()].map(({ key, dt }) => ({ key: this.pk(key), dt })));
     this.compound.rebuild(this.liveRecords());
-    for (const [, ti] of this.text) ti.build(this.textRecords());
+    for (const [, ti] of this.text) await ti.build(this.textRecords());
   }
 
   private *_liveRecordsRaw(): Generator<{ key: Buffer; value: unknown }> {
@@ -492,12 +539,13 @@ export class MiniDb<V = unknown> {
   private async loadTextIndexDefinitions(): Promise<void> {
     try {
       const raw = await fs.readFile(this.textIndexPath, 'utf8');
-      this.textDefs = JSON.parse(raw) as { name: string; fields: readonly string[] | null }[];
+      this.textDefs = JSON.parse(raw) as TextIndexDef[];
       for (const d of this.textDefs) {
         this.text.set(
           d.name,
           new TextIndex({
             fields: d.fields,
+            ...textIndexTokenizers(d.tokenizer),
             // A read-only opener must not write to a live writer's postings file;
             // it keeps the base postings in memory instead.
             postingsPath: this.readOnly ? undefined : this.textPostingsPath(d.name),
@@ -1202,18 +1250,30 @@ export class MiniDb<V = unknown> {
 
   // ---- full-text search ---------------------------------------------------
 
-  async createTextIndex(name: string, { fields }: { fields?: readonly string[] } = {}): Promise<void> {
+  async createTextIndex(
+    name: string,
+    { fields, tokenizer }: { fields?: readonly string[]; tokenizer?: TextIndexTokenizerName } = {},
+  ): Promise<void> {
     this.ensureOpen();
     this.ensureWritable();
     if (this.codecName !== 'json') throw new Error('text indexes require valueCodec: "json"');
     if (this.text.has(name)) throw new Error(`text index "${name}" already exists`);
-    const ti = new TextIndex({ fields, postingsPath: this.textPostingsPath(name) });
-    const def = { name, fields: fields ?? null };
-    // Build BEFORE registering: a failed build must leave no phantom index
-    // behind — a registered-but-unbuilt index would both poison every write
-    // path that walks this.text and make a retry fail with "already exists".
-    ti.build(this.textRecords());
+    const ti = new TextIndex({ fields, ...textIndexTokenizers(tokenizer), postingsPath: this.textPostingsPath(name) });
+    const def: TextIndexDef = { name, fields: fields ?? null, tokenizer };
+    // Register BEFORE building: the build yields to the event loop, and
+    // registering makes concurrent writes feed the index's build queue, which
+    // the build replays onto the new base — so the finished index reflects
+    // every write whenever it landed. Until the build completes, searches on
+    // the index see only its post-registration delta. A failed build unwinds
+    // the registration, so a retry cannot hit a phantom "already exists".
     this.text.set(name, ti);
+    try {
+      await ti.build(this.textRecords());
+    } catch (e) {
+      this.text.delete(name);
+      ti.close();
+      throw e;
+    }
     this.textDefs.push(def);
     try {
       await this.persistTextIndexDefinitions();
@@ -1232,6 +1292,9 @@ export class MiniDb<V = unknown> {
     this.ensureOpen();
     this.ensureWritable();
     const ti = this.text.get(name);
+    // Dropping mid-build would orphan the in-flight postings write (the file
+    // is removed while the build is still producing it).
+    if (ti?.building) throw new Error(`text index "${name}" is still building`);
     const ok = this.text.delete(name);
     if (ti) {
       ti.close();

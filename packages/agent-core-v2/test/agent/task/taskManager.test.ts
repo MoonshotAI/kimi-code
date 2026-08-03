@@ -21,6 +21,7 @@ import {
 } from '#/agent/tools/agent/subagent-task';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import { isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
   configServices,
   createTestAgent,
@@ -1276,11 +1277,16 @@ describe('AgentTaskService', () => {
   it('getTask on an unknown id does not create persisted state', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-mgr-missing-'));
     try {
-      const { manager, persistence } = createAgentTaskService({ sessionDir });
+      const { ctx, manager, persistence } = createAgentTaskService({ sessionDir });
 
       expect(manager.getTask('bash-bogusss0')).toBeUndefined();
 
       expect(await persistence!.listTasks()).toEqual([]);
+      // The session scope's initial metadata write is kicked at creation but
+      // not awaited by the (synchronous) harness; settle it before the
+      // cleanup below removes the home dir, the same way session
+      // materialization awaits metadata readiness in production.
+      await ctx.get(ISessionMetadata).ready;
     } finally {
       await rm(sessionDir, { recursive: true, force: true });
     }

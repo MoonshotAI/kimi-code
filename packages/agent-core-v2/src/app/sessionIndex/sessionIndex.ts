@@ -1,13 +1,12 @@
 /**
- * `sessionIndex` domain (L2) — session index contract.
+ * `sessionIndex` domain — session index contract.
  *
  * `ISessionIndex` is a domain-specific persistence Store: a backend-neutral
  * query facade over the set of persisted sessions (open or closed). It
  * enumerates sessions and derives session identity (`workspaceId`), returning
  * data (`SessionSummary`) or counts — never filesystem paths or live handles.
- * Writes (create / archive) live in `sessionLifecycle` / `session`; the index
- * is a read model. Backends are deployment-specific (local filesystem today;
- * database / query store on a server).
+ * The index is a read model. Backends are deployment-specific (local
+ * filesystem today; database / query store on a server).
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -32,13 +31,6 @@ export interface SessionSummary {
 }
 
 export interface SessionListQuery {
-  /**
-   * Restrict to sessions persisted under any of these workspace ids. A single
-   * workspace is `[id]`; callers resolving a legacy split bucket (one
-   * directory, several id spellings — see `IWorkspaceAliases.resolveAliasIds`)
-   * pass the whole alias set and get one merged listing. Absent lists every
-   * bucket.
-   */
   readonly workspaceIds?: readonly string[];
   readonly sessionId?: string;
   readonly includeArchived?: boolean;
@@ -50,10 +42,8 @@ export interface SessionListQuery {
 export interface ISessionIndex {
   readonly _serviceBrand: undefined;
 
-  /** List persisted sessions, optionally filtered by a set of workspace ids. */
   list(query: SessionListQuery): Promise<Page<SessionSummary>>;
   get(id: string): Promise<SessionSummary | undefined>;
-  /** Count non-archived sessions across the given set of workspace ids. */
   countActive(workspaceIds: readonly string[]): Promise<number>;
 }
 

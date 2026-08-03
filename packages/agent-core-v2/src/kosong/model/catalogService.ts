@@ -1,5 +1,5 @@
 /**
- * `kosong/model` domain (L2) — `ModelCatalog`, the single place that builds
+ * `kosong/model` domain — `ModelCatalog`, the single place that builds
  * Models.
  *
  * Reads Model / Provider config, resolves the auth closure (provider-level
@@ -41,8 +41,7 @@
  * config stays visible); `listProviders` / `getProvider` project the
  * provider registry plus credential state. `setDefaultModel` writes the
  * global default-model pointer (through `IModelService`) after a
- * materialization gate — the catalog's only write. The remote-discovery
- * refresh lives in `app/kosongConfig`, not here.
+ * materialization gate — the catalog's only write.
  */
 
 import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
@@ -120,7 +119,6 @@ type MutableProtocolProviderOptions = {
 interface CatalogEntry {
   readonly model: Model;
   readonly requester: ModelRequester;
-  /** The provenance trace of the resolution that produced `model` (same pass). */
   readonly trace: ResolutionTraceCollector;
 }
 
@@ -138,17 +136,10 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     @IHostRequestHeaders private readonly hostRequestHeaders: IHostRequestHeaders,
   ) {
     super();
-    // Cache invalidation rides the two config-change events; any change in
-    // either of them can alter an assembled Model, so the whole cache drops.
     this._register(this.models.onDidChangeModels(() => this.notifyConfigChanged()));
     this._register(this.providers.onDidChangeProviders(() => this.notifyConfigChanged()));
   }
 
-  /**
-   * Drop every assembled entry. Called by the config-change handlers; exposed
-   * so tests and harnesses that mutate config WITHOUT going through the
-   * change events can force re-assembly on the next `get`/`getRequester`.
-   */
   notifyConfigChanged(): void {
     this.cache.clear();
   }
@@ -185,9 +176,6 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   }
 
   inspect(id: string): ModelInspection {
-    // The god object of the SAME resolution `get`/`getRequester` serve: the
-    // entry's trace was captured by that very pass, and the assembly (incl.
-    // secret redaction) re-runs on every call — inspect is never cached.
     const { model, trace } = this.entry(id);
     return assembleModelInspection({ id, model, trace });
   }
@@ -233,8 +221,6 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       try {
         return toProtocolModel(this.get(modelId), record, providerType);
       } catch {
-        // Broken config must stay visible (and fixable) in listings: fall
-        // back to the config-only projection when materialization fails.
         return toProtocolModelFallback(modelId, record, providerType);
       }
     });
@@ -272,8 +258,6 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
         `model ${modelId} does not exist`,
       );
     }
-    // Materialization gate: a model that cannot resolve (dangling provider
-    // reference, conflicting credentials, ...) must not become the default.
     const model = this.get(modelId);
     await this.models.setDefaultModel(modelId);
     return {
@@ -514,12 +498,6 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     };
   }
 
-  /**
-   * The wire protocol: the Model's explicit `protocol` wins; otherwise the
-   * referenced provider's vendor identity resolves it — directly when the
-   * vendor type IS one of the four protocols, or through the vendor's first
-   * registration's `baseProtocol` (e.g. `kimi` → `openai`).
-   */
   private resolveProtocol(
     id: string,
     model: ModelRecord,
@@ -582,9 +560,6 @@ export function resolveOutboundHeaders(
   customHeaders: Readonly<Record<string, string>> | undefined,
   hostHeaders: Readonly<Record<string, string>>,
 ): Readonly<Record<string, string>> {
-  // How much of the host identity a vendor receives is declared on its
-  // provider definition (`hostHeaders: 'full'`); unregistered vendors get the
-  // User-Agent only, so device identity never leaks to unknown endpoints.
   const forwardsAll =
     providerType !== undefined &&
     getProviderDefinition(providerType)?.hostHeaders === 'full';
@@ -644,9 +619,6 @@ function buildProtocolProviderOptions(
       break;
     }
     case 'google-genai': {
-      // Vertex AI is a `providerOptions` mode of this base, not a protocol:
-      // enable it when the provider env bag supplies both coordinates — the
-      // same discovery legacy `protocol: 'vertexai'` configs relied on.
       const project = vertexAIProject(provider);
       const location = vertexAILocation(provider, baseUrl);
       if (project !== undefined && location !== undefined) {
@@ -717,11 +689,6 @@ function locationFromVertexAIBaseUrl(baseUrl: string | undefined): string | unde
   }
 }
 
-/**
- * Credential detection through the provider-definition registry: the inline
- * `apiKey` wins, otherwise the vendor's declared `apiKeyEnv` chain is read
- * from the provider's config env bag.
- */
 function hasConfiguredApiKey(provider: ProviderConfig): boolean {
   if (nonEmpty(provider.apiKey) !== undefined) return true;
   if (provider.type === undefined) return false;

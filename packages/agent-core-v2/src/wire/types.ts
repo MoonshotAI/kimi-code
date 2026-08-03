@@ -1,5 +1,5 @@
 /**
- * `wire` domain (L2) — augmentable Op registries and their derived
+ * `wire` domain — augmentable Op registries and their derived
  * compile-time vocabulary.
  *
  * Domains contribute their defined Ops to `PersistedOpMap` or `TransientOpMap`

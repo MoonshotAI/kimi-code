@@ -1,10 +1,9 @@
 /**
- * `loop` domain (L4) — `loopControl` config-section schema, env bindings, and
+ * `loop` domain — `loopControl` config-section schema, env bindings, and
  * TOML transforms.
  *
  * Owns the `[loop_control]` configuration section (step / retry / context-size
- * limits) consumed by `AgentLoopService` (step + retry budgets) and `AgentProfileService`
- * (context sizing), plus the snake_case ↔ camelCase TOML transforms (including
+ * limits), plus the snake_case ↔ camelCase TOML transforms (including
  * the legacy `max_steps_per_run` → `maxStepsPerTurn` rename). The step and retry
  * budgets also accept operational env overrides (`KIMI_LOOP_MAX_STEPS_PER_TURN`
  * / `KIMI_LOOP_MAX_RETRIES_PER_STEP`); `config` resolves each field as

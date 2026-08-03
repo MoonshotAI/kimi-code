@@ -45,7 +45,7 @@ Beyond the three built-in sub-agents, you can define your own agents as Markdown
 
 ### Agent Locations
 
-Kimi Code CLI discovers agent files by scope; more specific scopes take higher priority: **Explicit (`--agent-file`) > Project > Extra > User > Built-in**. When two files define the same `name`, the higher-priority scope wins. Each directory is scanned recursively for `.md` files.
+Kimi Code CLI discovers agent files by scope; more specific scopes take higher priority: **Explicit (`--agent-file`) > Project > Extra > User > Plugin > Built-in**. When two files define the same `name`, the higher-priority scope wins. Each directory is scanned recursively for `.md` files.
 
 **User level** (applies to all projects):
 - `$KIMI_CODE_HOME/agents/` (default: `~/.kimi-code/agents/`)
@@ -62,6 +62,8 @@ The Kimi-specific user agent directory moves with `KIMI_CODE_HOME`, while the ge
 ```toml
 extra_agent_dirs = ["~/team-agents", ".agents/team-agents"]
 ```
+
+**Plugin level**: directories declared in an enabled plugin's manifest `agents` field (when omitted, the `agents/` directory under the plugin root is picked up automatically); see [Plugin Agents](./plugins.md#plugin-agents). Plugin agents outrank only the built-in agents.
 
 **Built-in agents** are distributed with the CLI and have the lowest priority. A directory-discovered file does not override a same-name built-in Agent unless its frontmatter declares `override: true`. A file loaded through `--agent-file` is treated as explicit launch intent, may override a same-name built-in Agent, outranks every directory scope, and applies to the current launch only. Separately, `$KIMI_CODE_HOME/SYSTEM.md` permanently overrides the default main agent's system prompt (it is not part of agent-file discovery); its precedence interactions are covered in the SYSTEM.md section below.
 
@@ -98,18 +100,18 @@ You are a strict code reviewer. Read the diff, then report findings grouped by s
 | `description` | yes | What the agent does. Shown to the main Agent when it picks a sub-agent, so write it to guide delegation decisions |
 | `whenToUse` | no | Extra hint describing when the agent should be used |
 | `override` | no | Whether this file may replace a same-name built-in Agent. Defaults to `false`; `--agent-file` is already explicit and does not require this field |
-| `model_preference` | no | Symbolic default used when `Agent` or `AgentSwarm` spawns this profile: `primary` selects the caller's main model, while `secondary` selects `[secondary_model] model`. An explicit tool-call `model` wins; without either setting, the configured secondary model remains the default. If no secondary model is configured, the subagent inherits the caller's model |
+| `model_preference` | no | Symbolic default used when `Agent` or `AgentSwarm` spawns this profile: `primary` selects the model the caller is currently running, while `secondary` selects [`[secondary_model] model`](../configuration/config-files.md#secondary-model). An explicit tool-call `model` (which likewise accepts only `"primary"` / `"secondary"`) wins over this field; without either setting, the configured secondary model remains the default. If no secondary model is configured, the subagent inherits the caller's model |
 | `tools` | no | Allowlist of tool names such as `Read` or `Bash`; MCP tools are matched with globs such as `mcp__github__*`. Accepts a YAML list or a comma-separated string (`tools: Read, Grep`). Omit to allow all tools; a lone `*` also allows all tools; an empty list (`tools: []`) disables all tools |
 | `disallowedTools` | no | Denylist with the same syntax and matching rules, applied after `tools` |
 | `subagents` | no | Allowlist of sub-agent names this agent may delegate to, with the same syntax as `tools` (YAML list or comma-separated string). Omit to allow every type; a lone `*` also allows all types |
 
 Built-in and user tools match by exact, case-sensitive name; entries starting with `mcp__` match MCP tools as globs. Three entry shapes never match anything and are reported with a warning when the profile takes effect: a wildcard outside an `mcp__` pattern (a bare `*` in `disallowedTools` disables nothing), an `mcp__` literal that is not a full `mcp__<server>__<tool>` name (`mcp__github` matches nothing — use `mcp__github__*` for the whole server), and a name no registered or built-in tool has (usually a typo, such as `read` instead of `Read`).
 
-The body is the agent's system prompt, and it is rendered as a template each time the prompt is built: `${var}` placeholders substitute live context values — unknown variables stay verbatim, a bare `$` is never special, and a variable with no context value renders as an empty string. `${base_prompt}` embeds the effective default system prompt (the built-in default, or your `SYSTEM.md` override when present), so a file can wrap the default behavior instead of replacing it. The available variables are listed in the SYSTEM.md section below.
+The body is the agent's system prompt, and it is rendered as a template each time the prompt is built: `${var}` placeholders substitute live context values — unknown variables stay verbatim, a bare `$` is never special, and a variable with no context value renders as an empty string. `${base_prompt}` embeds the effective default system prompt (the built-in default, or your `SYSTEM.md` override when present), so a file can wrap the default behavior instead of replacing it. If the file replaces the default prompt but should still honor instructions contributed by enabled plugins, place `${plugin_sections}` where those instructions should appear. The available variables are listed in the SYSTEM.md section below.
 
 Unknown fields are ignored, so newer files stay readable by older versions. Fields from other agent tools (such as Claude Code's `model` or OpenCode's `mode`) are ignored the same way, the comma-separated `tools` form keeps Claude Code-style agent files loadable, and a missing `name` falls back to the file name so OpenCode-style files load too — a minimal file with `description` and a body works across tools.
 
-`model_preference` applies only to newly spawned subagents when the secondary-model experiment is enabled. Under `kimi web`, set `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1`; under experimental `kimi -p`, the required `KIMI_CODE_EXPERIMENTAL_FLAG=1` also enables it. The TUI currently ignores this field. It never names a concrete model alias, and resumed subagents keep their existing model. The selected preference is shown to the main agent alongside the profile description so it can still pass an explicit `model` when a task needs a different choice.
+`model_preference` applies only to newly spawned subagents when the secondary-model experiment is enabled — set `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1`, or the master `KIMI_CODE_EXPERIMENTAL_FLAG=1`. It takes effect in every launch mode, including the interactive TUI. The field never names a concrete model alias, and resumed subagents keep their existing model. The selected preference is shown to the main agent alongside the profile description so it can still pass an explicit `model` when a task needs a different choice.
 
 A file with invalid content discovered in a directory is skipped with a warning and does not affect other files. A file passed explicitly via `--agent-file` must be valid — otherwise the CLI reports the error and exits.
 
@@ -121,24 +123,27 @@ Custom agents delegated as sub-agents run without the built-in sub-agent framing
 
 ### Selecting the Main Agent
 
-Two CLI flags select which agent drives the session. **Both are currently available only under `kimi -p` with `KIMI_CODE_EXPERIMENTAL_FLAG=1`**; the interactive TUI rejects them with a clear error for now:
+Two CLI flags select which agent drives a new session, in both print mode (`kimi -p`) and the interactive TUI:
 
 - **`--agent <name>`**: Start the session with the named agent as the main Agent. The name can refer to a built-in agent or to any discovered file; an unknown name fails with an error listing the available agents.
 - **`--agent-file <path>`**: Load one agent file at the highest priority for this launch and start with it. The flag accepts exactly one file: it cannot be repeated, and it cannot be combined with `--agent`.
 
-For example, in print mode:
+Both flags only apply when starting a new session — neither can be combined with `--session`/`--continue`. The agent is bound at session creation, and resuming restores the bound agent automatically, so no flag is needed (or allowed) on resume.
+
+For example:
 
 ```sh
-KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "Review the changes on this branch"
+kimi --agent reviewer
+kimi -p --agent reviewer "Review the changes on this branch"
 ```
 
-The bound agent is the session's identity: it is fixed at the session's first bind and cannot be switched later. Re-selecting the already-bound agent (for example resuming with the same `--agent`) is a no-op; selecting a different one fails with an "already bound" error.
+The bound agent is the session's identity: it is fixed at the session's first bind and cannot be switched later. In the TUI the flags bind only the startup session; a session created later in the same process (for example via `/new`) starts with the default agent.
 
-For main-agent customization, reference `${base_prompt}` in the body so the environment, workspace-instruction, and Skill injections from the default prompt stay in effect; a body without `${base_prompt}` owns the entire prompt, which fits self-contained sub-agents.
+For main-agent customization, reference `${base_prompt}` in the body so the environment, workspace-instruction, Skill, and plugin injections already present in the effective default prompt stay in effect. When you want to replace the default prompt but keep only plugin-contributed instructions, use `${plugin_sections}` instead. A body without `${base_prompt}` or `${plugin_sections}` owns the entire prompt and excludes plugin instructions, which fits self-contained sub-agents.
 
 ### Overriding the main agent's system prompt with SYSTEM.md
 
-To override the main agent's system prompt permanently — without passing `--agent` or `--agent-file` on every launch — write a `$KIMI_CODE_HOME/SYSTEM.md` file (default: `~/.kimi-code/SYSTEM.md`; it moves with `KIMI_CODE_HOME`). While the file exists and is non-empty, it replaces the built-in default main agent's system prompt in full — and only the prompt: the description and tool set are inherited from the built-in defaults. SYSTEM.md currently takes effect only under `kimi web` and under `kimi -p` with `KIMI_CODE_EXPERIMENTAL_FLAG=1`; the interactive TUI ignores the file.
+To override the main agent's system prompt permanently — without passing `--agent` or `--agent-file` on every launch — write a `$KIMI_CODE_HOME/SYSTEM.md` file (default: `~/.kimi-code/SYSTEM.md`; it moves with `KIMI_CODE_HOME`). While the file exists and is non-empty, it replaces the built-in default main agent's system prompt in full — and only the prompt: the description, tool set, and sub-agent delegation allowlist are inherited from the built-in defaults. SYSTEM.md takes effect in every launch mode, including interactive TUI sessions.
 
 SYSTEM.md is a plain Markdown body — no frontmatter is required or read. A missing or empty file has no effect, and a read failure falls back to the built-in prompt with a warning. Explicit intent still outranks it: a project-scoped same-name agent file declaring `override: true` and any file passed via `--agent-file` take precedence, and selecting another agent with `--agent` bypasses it entirely. Within the user scope itself, SYSTEM.md wins over a same-name file discovered in the `agents/` directories.
 
@@ -155,8 +160,9 @@ Like the body of a regular agent file, SYSTEM.md is rendered as a template each 
 | `${now}` | Current time in ISO format |
 | `${additional_dirs_info}` | Additional directories added to the workspace; empty when there are none |
 | `${base_prompt}` | The default system prompt. Inside `SYSTEM.md` itself this is the built-in default; inside an agent file it is the effective default — the built-in default, or your `SYSTEM.md` override when present |
+| `${plugin_sections}` | A complete Plugin Instructions block contributed by enabled plugins; empty when no enabled plugin contributes instructions |
 
-Unknown variables stay verbatim, a bare `$` is never special, and a variable with no context value renders as an empty string. Three pre-composed blocks — `${windows_notes}`, `${additional_dirs_section}`, and `${skills_section}` — render the matching built-in prompt section, or an empty string when it does not apply. The variables are enough to rebuild the skeleton of the built-in prompt, for example:
+Unknown variables stay verbatim, a bare `$` is never special, and a variable with no context value renders as an empty string. Four pre-composed blocks — `${windows_notes}`, `${additional_dirs_section}`, `${skills_section}`, and `${plugin_sections}` — render the matching built-in prompt section, or an empty string when it does not apply. The built-in default prompt already includes `${plugin_sections}`, so do not add it again when `${base_prompt}` already expands to that prompt. The variables are enough to rebuild the skeleton of the built-in prompt, for example:
 
 ```markdown
 You are Kimi, running at ${cwd} on ${os}.
@@ -164,6 +170,8 @@ You are Kimi, running at ${cwd} on ${os}.
 ${agents_md}
 
 ${skills}
+
+${plugin_sections}
 ```
 
 ## Instruction Files

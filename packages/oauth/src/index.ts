@@ -78,9 +78,24 @@ export type {
 } from './managed-kimi-code';
 
 export {
+  fetchManagedUserInfo,
+  kimiCodeUserInfoUrl,
+  managedUserInfoPhoneSchema,
+  managedUserInfoResultSchema,
+  managedUserInfoSchema,
+  parseManagedUserInfoPayload,
+} from './managed-userinfo';
+export type {
+  FetchManagedUserInfoError,
+  FetchManagedUserInfoResult,
+  ManagedUserInfo,
+  ManagedUserInfoPhone,
+  ManagedUserInfoResult,
+} from './managed-userinfo';
+
+export {
   fetchManagedUsage,
   formatDuration,
-  formatResetTime,
   isManagedKimiCode,
   isManagedKimiCodeBaseUrl,
   kimiCodeBaseUrl,
@@ -92,6 +107,7 @@ export type {
   FetchManagedUsageResult,
   ParsedManagedUsage,
   UsageRow,
+  UsageWindow,
 } from './managed-usage';
 
 export { fetchSubmitFeedback, kimiCodeFeedbackUrl } from './managed-feedback';
@@ -153,6 +169,7 @@ export type {
 
 export { KimiOAuthToolkit, resolveKimiTokenStorageName } from './toolkit';
 export type {
+  AuthManagedUserInfoResult,
   AuthManagedUsageResult,
   AuthProviderStatus,
   AuthStatus,

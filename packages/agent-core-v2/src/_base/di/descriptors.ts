@@ -1,5 +1,5 @@
 /**
- * `di` domain (L0) — `SyncDescriptor` packaging a constructor and its static arguments.
+ * `di` domain — `SyncDescriptor` packaging a constructor and its static arguments.
  */
 
 export class SyncDescriptor<T> {

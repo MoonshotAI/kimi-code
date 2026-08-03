@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — builtin `mcp-config` skill definition.
+ * `skillCatalog` domain — builtin `mcp-config` skill definition.
  */
 
 import type { SkillDefinition } from '#/app/skillCatalog/types';

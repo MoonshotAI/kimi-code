@@ -12,6 +12,8 @@ import path from 'node:path';
 
 import { z } from 'zod';
 
+import { Error2, ErrorCodes } from '#/errors';
+
 import type { PluginCapabilityState, PluginGithubMetadata, PluginSource } from './types';
 
 const INSTALLED_REL = path.join('plugins', 'installed.json');
@@ -72,25 +74,35 @@ export async function readInstalled(kimiHomeDir: string): Promise<InstalledFile>
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return EMPTY;
     throw error;
   }
+  let parsed: InstalledFile;
   try {
-    const parsed = JSON.parse(text) as InstalledFile;
-    if (typeof parsed !== 'object' || parsed === null || !Array.isArray(parsed.plugins)) {
-      throw new Error('installed.json is not a valid InstalledFile object');
-    }
-    const plugins = parsed.plugins.map((entry, index) => {
-      const record = InstalledRecordSchema.safeParse(entry);
-      if (!record.success) {
-        throw new Error(
-          `plugins[${index}] is not a valid installed record: ${record.error.message}`,
-          { cause: record.error },
-        );
-      }
-      return record.data as InstalledRecord;
-    });
-    return { ...parsed, plugins };
+    parsed = JSON.parse(text) as InstalledFile;
   } catch (error) {
-    throw new Error(`Failed to parse ${filePath}: ${(error as Error).message}`, { cause: error });
+    throw new Error2(
+      ErrorCodes.PLUGIN_LOAD_FAILED,
+      `Failed to parse ${filePath}: ${(error as Error).message}`,
+      { cause: error, details: { path: filePath } },
+    );
   }
+  if (typeof parsed !== 'object' || parsed === null || !Array.isArray(parsed.plugins)) {
+    throw new Error2(
+      ErrorCodes.PLUGIN_LOAD_FAILED,
+      `Failed to parse ${filePath}: installed.json is not a valid InstalledFile object`,
+      { details: { path: filePath } },
+    );
+  }
+  const plugins = parsed.plugins.map((entry, index) => {
+    const record = InstalledRecordSchema.safeParse(entry);
+    if (!record.success) {
+      throw new Error2(
+        ErrorCodes.PLUGIN_LOAD_FAILED,
+        `Failed to parse ${filePath}: plugins[${index}] is not a valid installed record: ${record.error.message}`,
+        { cause: record.error, details: { path: filePath } },
+      );
+    }
+    return record.data as InstalledRecord;
+  });
+  return { ...parsed, plugins };
 }
 
 export async function writeInstalled(kimiHomeDir: string, data: InstalledFile): Promise<void> {

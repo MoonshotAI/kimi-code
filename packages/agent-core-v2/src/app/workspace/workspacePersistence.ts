@@ -1,12 +1,11 @@
 /**
- * `workspace` domain (L2) — `IWorkspacePersistence` contract.
+ * `workspace` domain — `IWorkspacePersistence` contract.
  *
  * Domain-specific persistence Store for the known-workspaces catalog. It hides
  * the on-disk document layout (`<homeDir>/workspaces.json`, the v1-compatible
  * `{ version, workspaces: { [id]: entry }, deleted_workspace_ids: string[] }`
- * shape — shared with agent-core, which reads and writes the same file) and
- * its serialization concerns (ISO ↔ epoch-ms, record ↔ array) from the
- * workspace service. The generic `IAtomicDocumentStore` it builds on stays
+ * shape) and its serialization concerns (ISO ↔ epoch-ms, record ↔ array)
+ * from the workspace service. The generic `IAtomicDocumentStore` it builds on stays
  * schema-agnostic.
  *
  * `deleted_workspace_ids` is the soft-delete tombstone list: ids the user

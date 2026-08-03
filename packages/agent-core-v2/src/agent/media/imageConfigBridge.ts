@@ -1,21 +1,20 @@
 /**
- * `media` domain (L4) — bridge from the `image` config section into the
+ * `media` domain — bridge from the `image` config section into the
  * compression support module's resolver seam.
  *
- * `image-compress` (`#/agent/media/image-compress`) is deliberately
- * config-agnostic so foundational code never imports the config domain: it
- * exposes `setConfiguredMaxImageEdgePx` / `setConfiguredReadImageByteBudget`
- * and resolves its defaults as `configured ?? built-in`. This bridge is the
+ * The compression module is deliberately config-agnostic so foundational
+ * code never imports the config domain: it exposes
+ * `setConfiguredMaxImageEdgePx` / `setConfiguredReadImageByteBudget` and
+ * resolves its defaults as `configured ?? built-in`. This bridge is the
  * single owner that populates that seam from the env-resolved `[image]`
  * section — env (`KIMI_IMAGE_MAX_EDGE_PX` / `KIMI_IMAGE_READ_BYTE_BUDGET`) is
  * already folded into `config.get('image')` by the config layer, so nothing
  * here reads `process.env`.
  *
- * Constructed eagerly at Agent scope (ignited alongside the media-tools
- * registrar, before the first turn) and kept in sync via
- * `onDidSectionChange`, so every compression call site — including the apps'
- * prompt ingestion that relies on the implicit default — honors config/env.
- * Pushes are idempotent (one global config), so multiple agents are harmless.
+ * Constructed eagerly at Agent scope (before the first turn) and kept in
+ * sync via `onDidSectionChange`, so every compression call site honors
+ * config/env. Pushes are idempotent (one global config), so multiple agents
+ * are harmless.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

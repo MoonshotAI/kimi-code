@@ -1,17 +1,16 @@
 /**
- * `subagent` domain (L6) — `ISessionSubagentService` implementation.
+ * `subagent` domain — `ISessionSubagentService` implementation.
  *
  * Owns the "drive a turn on another agent" operation (`run`) and the
  * requester-side announcement surface those runs share: the
- * `onWillStartAgentTask` hook slot and the `onDidStopAgentTask` event that
- * `mirrorAgentRun` fires and the Session-scope `externalHooks` adapter
- * translates into the `SubagentStart` / `SubagentStop` external hook
- * commands. Turn driving itself lives in the pure `runAgentTurn` helper; this
- * service only resolves the target agent from the lifecycle registry and
- * picks its summary policy from the profile catalog. Bound at Session scope.
+ * `onWillStartAgentTask` hook slot and the `onDidStopAgentTask` event fired
+ * around each mirrored run. The service resolves the target agent from the
+ * lifecycle registry and picks its summary policy from the profile catalog;
+ * turn driving itself is delegated to a pure helper. Bound at Session scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
+import { Error2, ErrorCodes } from '#/errors';
 import {
   type IAgentScopeHandle,
   LifecycleScope,
@@ -56,7 +55,11 @@ export class SessionSubagentService extends Disposable implements ISessionSubage
 
   run(agentId: string, request: AgentRunRequest, opts: RunAgentOptions): Promise<AgentRunHandle> {
     const handle = this.agentLifecycle.get(agentId);
-    if (handle === undefined) throw new Error(`Agent "${agentId}" does not exist`);
+    if (handle === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agentId}" does not exist`, {
+        details: { agentId },
+      });
+    }
     return runAgentTurn(handle, request, {
       summaryPolicy: opts.summaryPolicy ?? this.summaryPolicyFor(handle),
       signal: opts.signal,

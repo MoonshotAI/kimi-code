@@ -18,7 +18,9 @@
  *
  * The `POST /sessions/{tail}` actions split into two groups. The thin
  * pass-throughs — `fork` / `compact` / `abort` / `archive` / `restore` — call
- * the native v2 services directly (`ISessionLifecycleService.fork` / `archive` / `restore`,
+ * the native v2 services directly (the workspace handler's
+ * `ISessionLifecycleService.fork` / `archive` / `restore`, reached through the
+ * `sessionIndex` → `IWorkspaceLifecycleService.handlerFor` composition,
  * `IAgentFullCompactionService.begin`, `IAgentRPCService.cancel`); there is no
  * v1-only projection to centralize, so no adapter is involved. `undo` likewise
  * calls `IAgentConversationUndoService.undo` directly (it throws
@@ -85,13 +87,17 @@ import {
   ISessionBtwService,
   ISessionContext,
   ISessionIndex,
-  ISessionLifecycleService,
   ISessionMetadata,
   ISessionLegacyService,
   ISessionSecondaryModelWarningService,
   IEventService,
   IWorkspaceAliases,
+  ISessionLifecycleService,
+  IWorkspaceLifecycleService,
   IWorkspaceService,
+  getLiveSessionById,
+  handlerForSession,
+  resumeSessionById,
   isError2,
   Error2,
   toProtocolMessage,
@@ -310,11 +316,17 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       }
 
       // Ensure the workspace is registered so `metadata.cwd` is resolvable on
-      // read (gap G3 — v2 does not store workDir on the session).
+      // read (gap G3 — v2 does not store workDir on the session). The session
+      // is created through the workspace's handler (`handlerFor` → the
+      // handler's `ISessionLifecycleService`) — there is no App-scope session
+      // lifecycle entry point.
       try {
         const touched = await registry.createOrTouch(workDir);
 
-        const handle = await core.accessor.get(ISessionLifecycleService).create({
+        const handler = await core.accessor.get(IWorkspaceLifecycleService).handlerFor({
+          root: workDir,
+        });
+        const handle = await handler.accessor.get(ISessionLifecycleService).create({
           workDir,
         });
         if (typeof body.title === 'string') {
@@ -648,9 +660,17 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
 
         if (parsed.action === 'fork') {
           const body = forkSessionRequestSchema.parse(req.body);
-          // `lifecycle.fork` throws `session.not_found` for an unknown source,
-          // so no explicit existence check is needed here.
-          const handle = await core.accessor.get(ISessionLifecycleService).fork({
+          // Fork lives on the source session's handler; the index routes us
+          // there (`session.not_found` for an unknown source, same as the
+          // lifecycle's own guard).
+          const forkHandler = await handlerForSession(core.accessor, parsed.id);
+          if (forkHandler === undefined) {
+            throw new Error2(
+              ErrorCodes.SESSION_NOT_FOUND,
+              `session ${parsed.id} does not exist`,
+            );
+          }
+          const handle = await forkHandler.accessor.get(ISessionLifecycleService).fork({
             sourceSessionId: parsed.id,
             title: body.title,
             metadata: body.metadata,
@@ -732,7 +752,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         if (parsed.action === 'btw') {
           // `resume` (not `get`) so a freshly-opened cold session can start a
           // side-channel agent; matches v1's `startBtw` which resumes first.
-          const session = await core.accessor.get(ISessionLifecycleService).resume(parsed.id);
+          const session = await resumeSessionById(core.accessor, parsed.id);
           if (session === undefined) {
             throw new Error2(
               ErrorCodes.SESSION_NOT_FOUND,
@@ -746,7 +766,11 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         }
 
         if (parsed.action === 'restore') {
-          const restored = await core.accessor.get(ISessionLifecycleService).restore(parsed.id);
+          const restoreHandler = await handlerForSession(core.accessor, parsed.id);
+          const restored =
+            restoreHandler === undefined
+              ? undefined
+              : await restoreHandler.accessor.get(ISessionLifecycleService).restore(parsed.id);
           if (restored === undefined) {
             throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
           }
@@ -765,11 +789,15 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         // archive — `resume` (not `get`) so archiving a freshly-opened cold
         // session still works; `resume` returns undefined only when the session
         // is unknown or its workspace is gone, reported as `session.not_found`.
-        const archived = await core.accessor.get(ISessionLifecycleService).resume(parsed.id);
-        if (archived === undefined) {
+        const archiveHandler = await handlerForSession(core.accessor, parsed.id);
+        const archived =
+          archiveHandler === undefined
+            ? undefined
+            : await archiveHandler.accessor.get(ISessionLifecycleService).resume(parsed.id);
+        if (archived === undefined || archiveHandler === undefined) {
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
         }
-        await core.accessor.get(ISessionLifecycleService).archive(parsed.id);
+        await archiveHandler.accessor.get(ISessionLifecycleService).archive(parsed.id);
         requestLog(req)?.info({ session_id: parsed.id, action: 'archive' }, 'session action completed');
         reply.send(okEnvelope({ archived: true }, req.id));
       } catch (error) {
@@ -803,7 +831,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         // 404 when the parent is unknown — the live handle wins, otherwise the
         // persisted index (a closed parent can still list children, like v1).
         const exists =
-          core.accessor.get(ISessionLifecycleService).get(session_id) !== undefined ||
+          getLiveSessionById(core.accessor, session_id) !== undefined ||
           (await core.accessor.get(ISessionIndex).get(session_id)) !== undefined;
         if (!exists) {
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
@@ -887,8 +915,12 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         // `createChild` throws `session.not_found` for an unknown source (via
         // `fork`), so no explicit existence check is needed here. The child
         // markers (`parent_session_id` / `child_session_kind`) and the default
-        // `Child: <parent>` title are applied by the lifecycle.
-        const handle = await core.accessor.get(ISessionLifecycleService).createChild({
+        // `Child: <parent>` title are applied by the handler's lifecycle.
+        const childHandler = await handlerForSession(core.accessor, session_id);
+        if (childHandler === undefined) {
+          throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
+        }
+        const handle = await childHandler.accessor.get(ISessionLifecycleService).createChild({
           sourceSessionId: session_id,
           title: req.body.title,
           metadata: req.body.metadata,
@@ -991,7 +1023,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       const { session_id } = req.params;
       // `resume` (not `get`) so a freshly-opened cold session still computes its
       // warnings; matches v1's best-effort `resumeSession` before reading them.
-      const session = await core.accessor.get(ISessionLifecycleService).resume(session_id);
+      const session = await resumeSessionById(core.accessor, session_id);
       if (session === undefined) {
         reply.send(
           errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
@@ -1103,7 +1135,7 @@ export interface SessionFacts {
  * outcome.
  */
 export function resolveSessionFacts(core: Scope, sessionId: string): SessionFacts {
-  const handle = core.accessor.get(ISessionLifecycleService).get(sessionId);
+  const handle = getLiveSessionById(core.accessor, sessionId);
   if (handle === undefined) {
     return {
       busy: false,
@@ -1122,7 +1154,7 @@ export function resolveSessionFacts(core: Scope, sessionId: string): SessionFact
  * `ISessionLegacyService`.
  */
 async function resolveMainAgent(core: Scope, sessionId: string): Promise<IAgentScopeHandle> {
-  const session = await core.accessor.get(ISessionLifecycleService).resume(sessionId);
+  const session = await resumeSessionById(core.accessor, sessionId);
   if (session === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
   }

@@ -1,5 +1,5 @@
 /**
- * `task` domain (L1) — managed concurrent execution primitive.
+ * `task` domain — managed concurrent execution primitive.
  *
  * Two creation modes:
  *
@@ -8,9 +8,9 @@
  *   - `defer()` — passive wait: the caller controls when the handle
  *     settles via `resolve` / `reject`.
  *
- * Consumers that need to track handles across turns (e.g. `agent/task`)
- * compose on top of these primitives; `ITaskService` itself is stateless
- * beyond the set of live handles.
+ * Consumers that need to track handles across turns compose on top of these
+ * primitives; `ITaskService` itself is stateless beyond the set of live
+ * handles.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

@@ -1,17 +1,15 @@
 /**
- * `kosong/provider` domain (L2) — the provider-definition registry.
+ * `kosong/provider` domain — the provider-definition registry.
  *
  * A `ProviderDefinition` is the declarative answer to "who is this vendor and
  * where do its key/url come from": the protocol base this registration
  * composes with, its deviation traits (applying to that protocol only), its
  * endpoint fallback chain, how much of the host's request headers it
  * receives, and how its models are discovered. Registration happens once per
- * vendor × protocol pair, in the vendor's `*.contrib.ts` side-effect module:
- * a vendor running over several transports registers one definition per
- * protocol (Kimi composes with `openai` on its native transport and registers
- * a second definition over `anthropic`). Vendor-level facts (endpoint, host
- * headers, model source) are declared identically on every registration of
- * the same id via shared constants, so id-level queries can read any of them.
+ * vendor × protocol pair: a vendor running over several transports registers
+ * one definition per protocol. Vendor-level facts (endpoint, host headers,
+ * model source) are declared identically on every registration of the same id
+ * via shared constants, so id-level queries can read any of them.
  *
  * `resolveProviderEndpoint` is the single authority on the endpoint fallback
  * chain: definition-level `endpoint` first, otherwise the aggregation of the
@@ -19,6 +17,7 @@
  * bag (defaulting to `process.env`).
  */
 
+import { BugIndicatingError } from '#/_base/errors/errors';
 import type { Protocol, ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
 import type {
   ProtocolEndpoint,
@@ -30,34 +29,15 @@ import type { ModelSource } from './provider';
 
 export interface ProviderDefinition {
   readonly id: string;
-  /**
-   * The protocol base this registration composes with; the traits apply to
-   * this protocol only.
-   */
   readonly baseProtocol: Protocol;
-  /** Deviations from the base, in composition order. */
   readonly traits: readonly ProtocolTrait[];
-  /** Definition-level endpoint declaration (alternative to trait hooks). */
   readonly endpoint?: ProtocolEndpoint;
-  /**
-   * How much of the host's request headers (UA/identity) this vendor
-   * receives: `'full'` forwards them all, `'user-agent'` (the default)
-   * forwards only the User-Agent.
-   */
   readonly hostHeaders?: 'full' | 'user-agent';
-  /** How the runtime should discover the vendor's models. */
   readonly modelSource?: ModelSource;
 }
 
 const providerDefinitions = new Map<string, Map<Protocol, ProviderDefinition>>();
 
-/**
- * Register a provider definition. Called only from `*.contrib.ts` side-effect
- * modules at import time. The same vendor id may register once per protocol;
- * duplicate registration of the same `(id, baseProtocol)` pair is a
- * programming error and throws — silently overwriting a registration would
- * make composed providers depend on import order.
- */
 export function registerProviderDefinition(definition: ProviderDefinition): void {
   let byProtocol = providerDefinitions.get(definition.id);
   if (byProtocol === undefined) {
@@ -65,20 +45,13 @@ export function registerProviderDefinition(definition: ProviderDefinition): void
     providerDefinitions.set(definition.id, byProtocol);
   }
   if (byProtocol.has(definition.baseProtocol)) {
-    throw new Error(
+    throw new BugIndicatingError(
       `provider definition '${definition.id}' is already registered for protocol '${definition.baseProtocol}'`,
     );
   }
   byProtocol.set(definition.baseProtocol, definition);
 }
 
-/**
- * Pair-level exact lookup when `protocol` is given; the id-level
- * (vendor-level) view when it is not — the vendor's first registration.
- * Vendor-level facts are declared identically on every registration of the
- * same id (see the module header), so any registration answers an id-level
- * query.
- */
 export function getProviderDefinition(
   id: string,
   protocol?: Protocol,
@@ -89,7 +62,6 @@ export function getProviderDefinition(
   return byProtocol.values().next().value;
 }
 
-/** Every registration of one vendor id, in registration order. */
 export function getProviderDefinitions(id: string): readonly ProviderDefinition[] {
   const byProtocol = providerDefinitions.get(id);
   return byProtocol === undefined ? [] : [...byProtocol.values()];
@@ -99,12 +71,6 @@ export function hasProviderDefinition(id: string): boolean {
   return providerDefinitions.has(id);
 }
 
-/**
- * Whether any registration of the vendor declares `modelSource:
- * 'oauth-catalog'` — the registry answer to "is this vendor backed by the
- * managed OAuth model catalog", so callers never compare the vendor id
- * string.
- */
 export function isOAuthCatalogVendor(id: string | undefined): boolean {
   if (id === undefined) return false;
   return getProviderDefinitions(id).some(
@@ -123,21 +89,12 @@ export interface ResolvedProviderEndpoint {
 
 export interface ExplainedProviderEndpoint {
   readonly apiKey?: string;
-  /** The env-bag name that supplied the apiKey (absent when it did not). */
   readonly apiKeyEnvName?: string;
   readonly baseUrl?: string;
-  /** The env-bag name that supplied the baseUrl (absent when it did not). */
   readonly baseUrlEnvName?: string;
-  /** True when the baseUrl is the definition's `defaultBaseUrl`, not env. */
   readonly baseUrlIsDefault?: boolean;
 }
 
-/**
- * The provenance-preserving twin of `resolveProviderEndpoint` — same chain,
- * but reports WHICH env-bag name supplied each value (and whether the baseUrl
- * is the definition's built-in default), so inspection views can attribute
- * endpoints without re-walking the declaration.
- */
 export function explainProviderEndpoint(
   providerType: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
@@ -161,14 +118,6 @@ export function explainProviderEndpoint(
   };
 }
 
-/**
- * Resolve a vendor's endpoint from its definition: the env fallback chain
- * declared at the definition level or aggregated from its traits, read from
- * `env` (a provider config's env bag, or `process.env` by default). This is
- * an id-level query — the endpoint is a vendor-level fact, declared
- * identically on each of the vendor's registrations. Returns `{}` for
- * unregistered vendors and for definitions that declare no endpoint at all.
- */
 export function resolveProviderEndpoint(
   providerType: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
@@ -200,8 +149,6 @@ function normalizeEndpointDeclaration(
 function aggregateTraitEndpoints(
   definition: ProviderDefinition,
 ): AggregatedEndpointDeclaration | undefined {
-  // Trait endpoint hooks receive a stub context: endpoint declarations are
-  // static env-name/base-url declarations that never read the live config.
   const config: ProtocolAdapterConfig = {
     protocol: definition.baseProtocol,
     providerType: definition.id,

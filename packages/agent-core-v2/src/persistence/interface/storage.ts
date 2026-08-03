@@ -1,9 +1,8 @@
 /**
  * `storage` domain — the filesystem persistence backend.
  *
- * `IFileSystemStorageService` is the filesystem-specific byte store that the
- * `node-fs` Store implementations are built on. It exposes two irreducible
- * durable primitives side by side:
+ * `IFileSystemStorageService` is the filesystem-specific byte store. It
+ * exposes two irreducible durable primitives side by side:
  *
  *   - `write`  — atomic whole-value replacement (the `Config` access pattern).
  *   - `append` — ordered, durable byte extension   (the `Record` access pattern).
@@ -13,10 +12,14 @@
  * the last value" semantics. Keeping both as first-class primitives lets each
  * implementation implement them optimally (file: `open('a')` vs tmp+rename).
  *
+ * `writeStream` is the streamed form of `write` for values too large to hold
+ * in memory: same whole-value replacement semantics (tmp + rename on the file
+ * backend), but the bytes arrive as an `AsyncIterable`.
+ *
  * The service is byte-oriented and scope/key-addressed: `scope` maps to a
  * directory, `key` maps to a filename. It knows nothing about JSON, records,
  * configs, versions or framing. Those concerns live in the typed Store facades
- * above it (`IAppendLogStore`, `IAtomicDocumentStore`, `IBlobStore`).
+ * above it.
  *
  * Non-filesystem backends (Postgres, S3, Redis) do not implement this
  * interface — they implement the Store interfaces directly via their own
@@ -38,6 +41,8 @@ export const StorageErrors = {
     STORAGE_CORRUPTED: 'storage.corrupted',
     STORAGE_IO_FAILED: 'storage.io_failed',
     STORAGE_LOCKED: 'storage.locked',
+    STORAGE_PERMISSION_DENIED: 'storage.permission_denied',
+    STORAGE_DISK_FULL: 'storage.disk_full',
   },
   retryable: ['storage.io_failed', 'storage.locked'],
   info: {
@@ -69,6 +74,18 @@ export const StorageErrors = {
       public: true,
       action: 'Another process holds the store; close it or retry later.',
     },
+    'storage.permission_denied': {
+      title: 'Storage permission denied',
+      retryable: false,
+      public: true,
+      action: 'Check the permissions of the storage directory.',
+    },
+    'storage.disk_full': {
+      title: 'Storage disk full',
+      retryable: false,
+      public: true,
+      action: 'Free up disk space and retry.',
+    },
   },
 } as const satisfies ErrorDomain;
 
@@ -93,16 +110,41 @@ function readErrno(error: unknown): string | undefined {
   return typeof code === 'string' ? code : undefined;
 }
 
+type StorageIoErrorCode =
+  | typeof StorageErrors.codes.STORAGE_NOT_FOUND
+  | typeof StorageErrors.codes.STORAGE_IO_FAILED
+  | typeof StorageErrors.codes.STORAGE_PERMISSION_DENIED
+  | typeof StorageErrors.codes.STORAGE_DISK_FULL;
+
+const REASONS: Record<StorageIoErrorCode, string> = {
+  'storage.not_found': 'path does not exist',
+  'storage.io_failed': 'unrecognized I/O error',
+  'storage.permission_denied': 'permission denied',
+  'storage.disk_full': 'no space left on device',
+};
+
+function mapErrno(errno: string | undefined): StorageIoErrorCode {
+  switch (errno) {
+    case 'ENOENT':
+      return StorageErrors.codes.STORAGE_NOT_FOUND;
+    case 'EACCES':
+    case 'EPERM':
+      return StorageErrors.codes.STORAGE_PERMISSION_DENIED;
+    case 'ENOSPC':
+      return StorageErrors.codes.STORAGE_DISK_FULL;
+    default:
+      return StorageErrors.codes.STORAGE_IO_FAILED;
+  }
+}
+
 export function toStorageIoError(error: unknown, ctx: { path: string; op: string }): StorageError {
   if (error instanceof StorageError) return error;
-  return new StorageError(
-    StorageErrors.codes.STORAGE_IO_FAILED,
-    `storage ${ctx.op} failed`,
-    {
-      details: { path: ctx.path, op: ctx.op, errno: readErrno(error) },
-      cause: error,
-    },
-  );
+  const errno = readErrno(error);
+  const code = mapErrno(errno);
+  return new StorageError(code, `storage ${ctx.op} failed: ${REASONS[code]}`, {
+    details: { path: ctx.path, op: ctx.op, errno },
+    cause: error,
+  });
 }
 
 export interface StorageWriteOptions {
@@ -124,6 +166,12 @@ export interface IFileSystemStorageService {
   read(scope: string, key: string): Promise<Uint8Array | undefined>;
   readStream(scope: string, key: string, range?: StorageReadRange): AsyncIterable<Uint8Array>;
   write(scope: string, key: string, data: Uint8Array, options?: StorageWriteOptions): Promise<void>;
+  writeStream(
+    scope: string,
+    key: string,
+    source: AsyncIterable<Uint8Array>,
+    options?: StorageWriteOptions,
+  ): Promise<void>;
   append(scope: string, key: string, data: Uint8Array, options?: StorageAppendOptions): Promise<void>;
   list(scope: string, prefix?: string): Promise<readonly string[]>;
   delete(scope: string, key: string): Promise<void>;

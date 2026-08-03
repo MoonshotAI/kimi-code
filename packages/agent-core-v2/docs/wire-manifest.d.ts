@@ -21,51 +21,53 @@
 // owning model offloads inline media to blob storage), cross-reducers
 // (foreign models that also reduce this record on dispatch and replay).
 
-// Index (44 record types)
-//   config.update                      profile              persisted  src/agent/profile/profileOps.ts
-//   context_size.measured              contextSize          transient  src/agent/contextSize/contextSizeOps.ts
-//   context.append_loop_event          contextMemory        persisted  src/agent/contextMemory/contextOps.ts
-//   context.append_message             contextMemory        persisted  src/agent/contextMemory/contextOps.ts
-//   context.apply_compaction           contextMemory        persisted  src/agent/contextMemory/contextOps.ts
-//   context.clear                      contextMemory        persisted  src/agent/contextMemory/contextOps.ts
-//   context.undo                       contextMemory        persisted  src/agent/contextMemory/contextOps.ts
-//   cron.add                           cron                 transient  src/session/cron/cronOps.ts
-//   cron.cursor                        cron                 transient  src/session/cron/cronOps.ts
-//   cron.delete                        cron                 transient  src/session/cron/cronOps.ts
-//   forked                             goal                 persisted  src/agent/goal/goalOps.ts
-//   full_compaction.begin              fullCompaction       persisted  src/agent/fullCompaction/compactionOps.ts
-//   full_compaction.cancel             fullCompaction       persisted  src/agent/fullCompaction/compactionOps.ts
-//   full_compaction.complete           fullCompaction       persisted  src/agent/fullCompaction/compactionOps.ts
-//   goal.clear                         goal                 persisted  src/agent/goal/goalOps.ts
-//   goal.create                        goal                 persisted  src/agent/goal/goalOps.ts
-//   goal.update                        goal                 persisted  src/agent/goal/goalOps.ts
-//   interaction.request                interaction          persisted  src/session/interaction/interactionOps.ts
-//   interaction.resolved               interaction          persisted  src/session/interaction/interactionOps.ts
-//   llm.request                        llm.requestTrace     persisted  src/agent/llmRequester/llmRequestOps.ts
-//   llm.tools_snapshot                 llm.requestTrace     persisted  src/agent/llmRequester/llmRequestOps.ts
-//   mcp.tools_discovered               mcp.discovery        persisted  src/agent/mcp/mcpDiscoveryOps.ts
-//   permission.record_approval_result  permissionRules      persisted  src/agent/permissionRules/permissionRulesOps.ts
-//   permission.rules.add               permissionRules      transient  src/agent/permissionRules/permissionRulesOps.ts
-//   permission.set_mode                permissionMode       persisted  src/agent/permissionMode/permissionModeOps.ts
-//   plan_mode.cancel                   plan                 persisted  src/agent/plan/planOps.ts
-//   plan_mode.enter                    plan                 persisted  src/agent/plan/planOps.ts
-//   plan_mode.exit                     plan                 persisted  src/agent/plan/planOps.ts
-//   plan.revision                      plan                 persisted  src/agent/plan/planOps.ts
-//   profile.bind                       profile              persisted  src/agent/profile/profileOps.ts
-//   skill.activate                     skill                transient  src/agent/skill/skillOps.ts
-//   swarm_mode.enter                   swarm                persisted  src/agent/swarm/swarmOps.ts
-//   swarm_mode.exit                    swarm                persisted  src/agent/swarm/swarmOps.ts
-//   task.started                       task                 persisted  src/agent/task/taskOps.ts
-//   task.terminated                    task                 persisted  src/agent/task/taskOps.ts
-//   tools.register_user_tool           userTool             persisted  src/agent/userTool/userToolOps.ts
-//   tools.reset_active_tools           profile.activeTools  persisted  src/agent/profile/profileOps.ts
-//   tools.set_active_tools             profile.activeTools  persisted  src/agent/profile/profileOps.ts
-//   tools.unregister_user_tool         userTool             persisted  src/agent/userTool/userToolOps.ts
-//   tools.update_store                 todo                 persisted  src/session/todo/todoOps.ts
-//   turn.cancel                        turn                 persisted  src/agent/loop/turnOps.ts
-//   turn.prompt                        turn                 persisted  src/agent/loop/turnOps.ts
-//   turn.steer                         turn                 persisted  src/agent/loop/turnOps.ts
-//   usage.record                       usage                persisted  src/agent/usage/usageOps.ts
+// Index (46 record types)
+//   config.update                      profile               persisted  src/agent/profile/profileOps.ts
+//   context_size.measured              contextSize           transient  src/agent/contextSize/contextSizeOps.ts
+//   context.append_loop_event          contextMemory         persisted  src/agent/contextMemory/contextOps.ts
+//   context.append_message             contextMemory         persisted  src/agent/contextMemory/contextOps.ts
+//   context.apply_compaction           contextMemory         persisted  src/agent/contextMemory/contextOps.ts
+//   context.clear                      contextMemory         persisted  src/agent/contextMemory/contextOps.ts
+//   context.undo                       contextMemory         persisted  src/agent/contextMemory/contextOps.ts
+//   cron.add                           cron                  transient  src/session/cron/cronOps.ts
+//   cron.cursor                        cron                  transient  src/session/cron/cronOps.ts
+//   cron.delete                        cron                  transient  src/session/cron/cronOps.ts
+//   forked                             goal                  persisted  src/agent/goal/goalOps.ts
+//   full_compaction.begin              fullCompaction        persisted  src/agent/fullCompaction/compactionOps.ts
+//   full_compaction.cancel             fullCompaction        persisted  src/agent/fullCompaction/compactionOps.ts
+//   full_compaction.complete           fullCompaction        persisted  src/agent/fullCompaction/compactionOps.ts
+//   goal.clear                         goal                  persisted  src/agent/goal/goalOps.ts
+//   goal.create                        goal                  persisted  src/agent/goal/goalOps.ts
+//   goal.update                        goal                  persisted  src/agent/goal/goalOps.ts
+//   interaction.request                interaction           persisted  src/session/interaction/interactionOps.ts
+//   interaction.resolved               interaction           persisted  src/session/interaction/interactionOps.ts
+//   interruptionReminder.recorded      interruptionReminder  persisted  src/agent/interruptionReminder/interruptionReminderOps.ts
+//   llm.request                        llm.requestTrace      persisted  src/agent/llmRequester/llmRequestOps.ts
+//   llm.tools_snapshot                 llm.requestTrace      persisted  src/agent/llmRequester/llmRequestOps.ts
+//   mcp.tools_discovered               mcp.discovery         persisted  src/agent/mcp/mcpDiscoveryOps.ts
+//   permission.record_approval_result  permissionRules       persisted  src/agent/permissionRules/permissionRulesOps.ts
+//   permission.rules.add               permissionRules       transient  src/agent/permissionRules/permissionRulesOps.ts
+//   permission.set_mode                permissionMode        persisted  src/agent/permissionMode/permissionModeOps.ts
+//   plan_mode.cancel                   plan                  persisted  src/agent/plan/planOps.ts
+//   plan_mode.enter                    plan                  persisted  src/agent/plan/planOps.ts
+//   plan_mode.exit                     plan                  persisted  src/agent/plan/planOps.ts
+//   plan.revision                      plan                  persisted  src/agent/plan/planOps.ts
+//   profile.bind                       profile               persisted  src/agent/profile/profileOps.ts
+//   skill.activate                     skill                 transient  src/agent/skill/skillOps.ts
+//   swarm_mode.enter                   swarm                 persisted  src/agent/swarm/swarmOps.ts
+//   swarm_mode.exit                    swarm                 persisted  src/agent/swarm/swarmOps.ts
+//   task.started                       task                  persisted  src/agent/task/taskOps.ts
+//   task.terminated                    task                  persisted  src/agent/task/taskOps.ts
+//   tools.register_user_tool           userTool              persisted  src/agent/userTool/userToolOps.ts
+//   tools.reset_active_tools           profile.activeTools   persisted  src/agent/profile/profileOps.ts
+//   tools.set_active_tools             profile.activeTools   persisted  src/agent/profile/profileOps.ts
+//   tools.unregister_user_tool         userTool              persisted  src/agent/userTool/userToolOps.ts
+//   tools.update_store                 todo                  persisted  src/session/todo/todoOps.ts
+//   turn.cancel                        turn                  persisted  src/agent/loop/turnOps.ts
+//   turn.ended                         turn                  persisted  src/agent/loop/turnOps.ts
+//   turn.prompt                        turn                  persisted  src/agent/loop/turnOps.ts
+//   turn.steer                         turn                  persisted  src/agent/loop/turnOps.ts
+//   usage.record                       usage                 persisted  src/agent/usage/usageOps.ts
 
 /**
  * model: profile · persisted
@@ -73,7 +75,6 @@
  */
 interface ConfigUpdatePayload {
   _name: 'config.update';
-  cwd?: string;
   modelAlias?: string;
   profileName?: string;
   /** ThinkingEffort */
@@ -307,6 +308,15 @@ interface InteractionResolvedPayload {
 }
 
 /**
+ * model: interruptionReminder · persisted
+ * owner: src/agent/interruptionReminder/interruptionReminderOps.ts
+ */
+interface InterruptionReminderRecordedPayload {
+  _name: 'interruptionReminder.recorded';
+  turnId: number;
+}
+
+/**
  * model: llm.requestTrace · persisted
  * owner: src/agent/llmRequester/llmRequestOps.ts
  */
@@ -445,7 +455,6 @@ interface PlanRevisionPayload {
  */
 interface ProfileBindPayload {
   _name: 'profile.bind';
-  cwd?: string;
   modelAlias?: string;
   profileName?: string;
   /** ThinkingEffort */
@@ -564,13 +573,69 @@ interface ToolsUpdateStorePayload {
 }
 
 /**
- * model: turn · persisted
+ * model: turn · persisted · cross-reducers: interruptionReminder
  * owner: src/agent/loop/turnOps.ts
  */
 interface TurnCancelPayload {
   _name: 'turn.cancel';
   turnId?: number;
   target?: 'active' | 'queued';
+  reason?: 'user_cancelled' | 'aborted';
+}
+
+/**
+ * model: turn · persisted
+ * owner: src/agent/loop/turnOps.ts
+ */
+interface TurnEndedPayload {
+  _name: 'turn.ended';
+  turnId: number;
+  reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
+  /** KimiErrorPayload */
+  error?: {
+    code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+    message: string;
+    name?: string;
+    details?: Readonly<Record<string, unknown>>;
+    retryable: boolean;
+    cause?: {
+      code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+      message: string;
+      name?: string;
+      details?: Readonly<Record<string, unknown>>;
+      retryable: boolean;
+      cause?: {
+        code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+        message: string;
+        name?: string;
+        details?: Readonly<Record<string, unknown>>;
+        retryable: boolean;
+        cause?: {
+          code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+          message: string;
+          name?: string;
+          details?: Readonly<Record<string, unknown>>;
+          retryable: boolean;
+          cause?: {
+            code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+            message: string;
+            name?: string;
+            details?: Readonly<Record<string, unknown>>;
+            retryable: boolean;
+            cause?: {
+              code: ErrorCode;
+              message: string;
+              name?: string;
+              details?: Readonly<Record<string, unknown>>;
+              retryable: boolean;
+              cause?: ErrorPayload;
+            };
+          };
+        };
+      };
+    };
+  };
+  durationMs?: number;
 }
 
 /**
@@ -634,6 +699,7 @@ interface WirePayloadMap {
   "goal.update": GoalUpdatePayload;
   "interaction.request": InteractionRequestPayload;
   "interaction.resolved": InteractionResolvedPayload;
+  "interruptionReminder.recorded": InterruptionReminderRecordedPayload;
   "llm.request": LlmRequestPayload;
   "llm.tools_snapshot": LlmToolsSnapshotPayload;
   "mcp.tools_discovered": McpToolsDiscoveredPayload;
@@ -656,6 +722,7 @@ interface WirePayloadMap {
   "tools.unregister_user_tool": ToolsUnregisterUserToolPayload;
   "tools.update_store": ToolsUpdateStorePayload;
   "turn.cancel": TurnCancelPayload;
+  "turn.ended": TurnEndedPayload;
   "turn.prompt": TurnPromptPayload;
   "turn.steer": TurnSteerPayload;
   "usage.record": UsageRecordPayload;

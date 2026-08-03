@@ -19,8 +19,6 @@
  * the first failure in stable key insertion order.
  *
  * This file ships the interface, error class, and DI token only.
- * The concrete `AppendLogStore` implementation lives in
- * `persistence/backends/node-fs/appendLogStore.ts`.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
