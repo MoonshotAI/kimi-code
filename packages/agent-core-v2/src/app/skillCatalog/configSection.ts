@@ -1,9 +1,8 @@
 /**
  * `skillCatalog` domain — skill config sections.
  *
- * Registers the v1-compatible top-level config domains `extraSkillDirs` and
- * `mergeAllAvailableSkills`. Values stay camelCase in memory; TOML uses the
- * snake_case keys `extra_skill_dirs` and `merge_all_available_skills`.
+ * Registers skill configuration sections. Values stay camelCase in memory;
+ * TOML uses snake_case keys.
  */
 
 import { z } from 'zod';
@@ -24,4 +23,29 @@ export type MergeAllAvailableSkillsConfig = z.infer<typeof MergeAllAvailableSkil
 
 registerConfigSection(MERGE_ALL_AVAILABLE_SKILLS_SECTION, MergeAllAvailableSkillsConfigSchema, {
   defaultValue: true,
+});
+
+export const SKILL_SOURCES_SECTION = 'skillSources';
+export const SkillSourcesConfigSchema = z
+  .object({
+    workspace: z.boolean().optional(),
+    user: z.boolean().optional(),
+    explicit: z.boolean().optional(),
+    extra: z.boolean().optional(),
+    plugin: z.boolean().optional(),
+    builtin: z.boolean().optional(),
+  })
+  .optional();
+export type SkillSourcesConfig = z.infer<typeof SkillSourcesConfigSchema>;
+
+registerConfigSection(SKILL_SOURCES_SECTION, SkillSourcesConfigSchema, {
+  defaultValue: {},
+});
+
+export const EXCLUDE_SKILL_NAMES_SECTION = 'excludeSkillNames';
+export const ExcludeSkillNamesConfigSchema = z.array(z.string()).optional();
+export type ExcludeSkillNamesConfig = z.infer<typeof ExcludeSkillNamesConfigSchema>;
+
+registerConfigSection(EXCLUDE_SKILL_NAMES_SECTION, ExcludeSkillNamesConfigSchema, {
+  defaultValue: [],
 });

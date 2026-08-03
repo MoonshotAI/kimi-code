@@ -18,10 +18,17 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
+import { IConfigService } from '#/app/config/config';
 import { IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
+import {
+  EXCLUDE_SKILL_NAMES_SECTION,
+  type ExcludeSkillNamesConfig,
+  SKILL_SOURCES_SECTION,
+  type SkillSourcesConfig,
+} from '#/app/skillCatalog/configSection';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import type { ISkillSource, SkillContribution } from '#/app/skillCatalog/skillSource';
-import type { SkillCatalog } from '#/app/skillCatalog/types';
+import { normalizeSkillName, type SkillCatalog } from '#/app/skillCatalog/types';
 import { IUserFileSkillSource } from '#/app/skillCatalog/userFileSkillSource';
 import type { ISessionSkillCatalogData } from '#/session/sessionSkillCatalog/skillCatalogData';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
@@ -56,6 +63,7 @@ export class WorkspaceSkillCatalogService extends Disposable implements IWorkspa
     @IExtraFileSkillSource extra: IExtraFileSkillSource,
     @IWorkspaceRootSkillSource workspace: IWorkspaceRootSkillSource,
     @IPluginSkillSource plugin: IPluginSkillSource,
+    @IConfigService private readonly config: IConfigService,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
   ) {
     super();
@@ -72,6 +80,17 @@ export class WorkspaceSkillCatalogService extends Disposable implements IWorkspa
           }),
         );
     }
+    this._register(
+      this.config.onDidSectionChange((event) => {
+        if (
+          event.domain === SKILL_SOURCES_SECTION ||
+          event.domain === EXCLUDE_SKILL_NAMES_SECTION
+        ) {
+          this.remerge();
+          this.onDidChangeEmitter.fire('config');
+        }
+      }),
+    );
     this.ready = this.loadAll();
   }
 
@@ -150,13 +169,34 @@ export class WorkspaceSkillCatalogService extends Disposable implements IWorkspa
 
   private remerge(): void {
     const m = new InMemorySkillCatalog();
-    const ordered = [...this.contributions.values()].toSorted((a, b) => a.priority - b.priority);
-    for (const { c } of ordered) {
-      for (const skill of c.skills) m.register(skill, { replace: true });
+    const disabledSources = this.disabledSourceIds();
+    const excludedNames = this.excludedSkillNames();
+    const ordered = [...this.contributions.entries()].toSorted(([, a], [, b]) => a.priority - b.priority);
+    // Filter after discovery so the policy applies to every source, including extra_skill_dirs.
+    for (const [sourceId, { c }] of ordered) {
+      if (disabledSources.has(sourceId)) continue;
+      for (const skill of c.skills) {
+        if (excludedNames.has(normalizeSkillName(skill.name))) continue;
+        m.register(skill, { replace: true });
+      }
       m.addRoots(c.scannedRoots ?? []);
       m.recordSkipped(c.skipped ?? []);
     }
     this.merged = m;
+  }
+
+  private disabledSourceIds(): Set<string> {
+    const sources = this.config.get<SkillSourcesConfig>(SKILL_SOURCES_SECTION) ?? {};
+    return new Set(
+      Object.entries(sources)
+        .filter(([, enabled]) => enabled === false)
+        .map(([id]) => id),
+    );
+  }
+
+  private excludedSkillNames(): Set<string> {
+    const names = this.config.get<ExcludeSkillNamesConfig>(EXCLUDE_SKILL_NAMES_SECTION) ?? [];
+    return new Set(names.map((name) => normalizeSkillName(name)));
   }
 }
 

@@ -8,11 +8,12 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (22 sections · 3 overlay(s))
+# Index (24 sections · 3 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   cron                     src/app/cron/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
 #   defaultPlanMode          src/agent/plan/configSection.ts
+#   excludeSkillNames        src/app/skillCatalog/configSection.ts
 #   experimental             src/app/flag/flag.ts
 #   extraAgentDirs           src/workspace/workspaceAgentProfileLoader/configSection.ts
 #   extraSkillDirs           src/app/skillCatalog/configSection.ts
@@ -27,6 +28,7 @@
 #   providers                src/app/kosongConfig/configSection.ts
 #   secondaryModel           src/app/kosongConfig/configSection.ts
 #   services                 src/app/auth/configSection.ts
+#   skillSources             src/app/skillCatalog/configSection.ts
 #   subagent                 src/session/subagent/configSection.ts
 #   task                     src/agent/task/configSection.ts
 #   thinking                 src/app/kosongConfig/configSection.ts
@@ -93,6 +95,14 @@ manual_tick = false
 # ##########################################################################
 
 default_plan_mode = false
+
+# ##########################################################################
+# excludeSkillNames (config.toml: exclude_skill_names)
+#   owner: src/app/skillCatalog/configSection.ts
+#   scope: core
+# ##########################################################################
+
+exclude_skill_names = []
 
 # ##########################################################################
 # experimental
@@ -339,6 +349,20 @@ merge_all_available_skills = true
     # key: string
     # oauth_host: string
   # custom_headers: record<string, string>
+
+# ##########################################################################
+# skillSources (config.toml: skill_sources)
+#   owner: src/app/skillCatalog/configSection.ts
+#   scope: core
+# ##########################################################################
+
+[skill_sources]
+# workspace: boolean
+# user: boolean
+# explicit: boolean
+# extra: boolean
+# plugin: boolean
+# builtin: boolean
 
 # ##########################################################################
 # subagent
