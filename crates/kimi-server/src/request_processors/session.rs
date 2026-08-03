@@ -1657,6 +1657,47 @@ mod create_tests {
     }
 
     #[tokio::test]
+    async fn mcp_servers_and_warnings_empty_states() {
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = SessionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/create".into(),
+                params: serde_json::json!({ "session_id": "s-mcp" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "create failed: {body}");
+
+        // A fresh session lists no MCP servers.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/list_mcp_servers".into(),
+                params: serde_json::json!({ "session_id": "s-mcp" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "list_mcp_servers failed: {body}");
+        assert!(body["result"]["servers"].is_array());
+
+        // And no warnings.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(3),
+                method: "session/get_warnings".into(),
+                params: serde_json::json!({ "session_id": "s-mcp" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "get_warnings failed: {body}");
+        assert!(body["result"].is_array() || body["result"].is_object());
+    }
+
+    #[tokio::test]
     async fn swarm_mode_and_undo_empty_state() {
         let state = crate::state::ServerState::new().expect("state");
         let processor = SessionProcessor::with_state(state);
