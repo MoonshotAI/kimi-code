@@ -67,8 +67,48 @@ impl Processor for SessionProcessor {
                     .map_err(|e| JsonRpcError::internal_error(format!("serialize: {e}")))
             })
         });
+
+        // `session/list` — persisted session summaries.
+        let mgr = self.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_LIST, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionListParams =
+                    serde_json::from_value(params).unwrap_or_default();
+                let manager = mgr.lock().await;
+                let sessions = manager
+                    .list_persisted(input.limit.unwrap_or(50), input.offset.unwrap_or(0))
+                    .map_err(|e| JsonRpcError::internal_error(e.to_string()))?
+                    .into_iter()
+                    .map(|record| {
+                        // The rich session record (work_dir/title) lives inside
+                        // state_json; degrade gracefully to the id-only shape.
+                        let rich =
+                            serde_json::from_value::<kimi_agent::session::types::SessionRecord>(
+                                record.state_json.clone(),
+                            )
+                            .unwrap_or_else(|_| {
+                                kimi_agent::session::types::SessionRecord::new(
+                                    record.id.clone(),
+                                    kimi_agent::session::types::ModelConfig::default(),
+                                )
+                            });
+                        kimi_protocol::wire_types::SessionSummaryRpc {
+                            id: record.id,
+                            created_at: record.created_at,
+                            updated_at: record.updated_at,
+                            title: rich.title,
+                            work_dir: rich.work_dir,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                serde_json::to_value(kimi_protocol::wire_types::SessionListResult { sessions })
+                    .map_err(|e| JsonRpcError::internal_error(format!("session/list serialize failed: {e}")))
+            })
+        });
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -89,5 +129,22 @@ mod tests {
             })
             .await;
         assert_eq!(body["error"]["message"], "no agent for session: does-not-exist");
+    }
+
+    #[tokio::test]
+    async fn list_returns_empty_page() {
+        let processor = SessionProcessor::new().expect("session processor");
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/list".into(),
+                params: serde_json::json!({ "limit": 5 }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "session/list should not error: {body}");
+        assert_eq!(body["result"]["sessions"], serde_json::json!([]));
     }
 }
