@@ -322,6 +322,33 @@ fn chat_export_writes_zip() {
 }
 
 #[test]
+fn chat_sessions_lists_persisted() {
+    // `kimi chat -s <id>` persists the session at create; `/sessions` lists
+    // it. KIMI_AGENT_HOME keeps the store shared within the process.
+    let home = temp_dir("chat-sessions");
+    let cwd = temp_dir("chat-sessions-cwd");
+    let mut child = Command::new(binary())
+        .args(["chat", "-s", "s-chat-list"])
+        .current_dir(&cwd)
+        .env("KIMI_AGENT_HOME", &home)
+        .env("HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn kimi chat");
+    {
+        use std::io::Write;
+        let stdin = child.stdin.as_mut().expect("stdin");
+        stdin.write_all(b"/sessions\n/quit\n").expect("write");
+    }
+    let output = child.wait_with_output().expect("wait");
+    assert!(output.status.success(), "chat exits 0: {}", output.status);
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(out.contains("s-chat-list"), "session listed: {out}");
+}
+
+#[test]
 fn server_mode_verbose_emits_events() {
     // `--verbose` over the Remote path: the serve binary fans engine events
     // to stderr (session.turn.started fires before the LLM call, so it lands

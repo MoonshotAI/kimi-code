@@ -197,6 +197,7 @@ async fn handle_chat_command(
             println!("/clear       clear the session context");
             println!("/compact     compact the session context");
             println!("/export      export the session as <session_id>.zip");
+            println!("/sessions    list persisted sessions");
             ChatCommand::Handled
         }
         "/resume" => {
@@ -314,6 +315,28 @@ async fn handle_chat_command(
                 return ChatCommand::Error(format!("write {path}: {e}"));
             }
             println!("exported to {path}");
+            ChatCommand::Handled
+        }
+        "/sessions" => {
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_LIST,
+                    serde_json::json!({ "limit": 50 }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            let sessions = body["result"]["sessions"].as_array().cloned().unwrap_or_default();
+            if sessions.is_empty() {
+                println!("no sessions");
+            }
+            for session in sessions {
+                let id = session["id"].as_str().unwrap_or("");
+                let title = session["title"].as_str().unwrap_or("");
+                let title = if title.is_empty() { "(untitled)" } else { title };
+                println!("{id}  {title}");
+            }
             ChatCommand::Handled
         }
         _ => ChatCommand::Error(format!("unknown command {cmd} — try /help")),
