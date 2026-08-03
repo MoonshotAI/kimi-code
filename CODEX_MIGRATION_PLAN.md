@@ -309,7 +309,7 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 
 ### 阶段 E — SDK/ACP/OAuth/Config
 1. 🔶 `kimi-sdk`：**`Harness`（内嵌/Remote + 事件流 + 审批面，3 集成测试）与 `Session`（生命周期全 + goal 系列 + transcript/run_prompt）已落地**；`kimi doctor` 已改经 SDK；klient 并入
-2. 🔶 `kimi-acp`：**stdio 适配器已落地 + `kimi acp` 命令**（initialize 协商 + session/new/load/list/delete/prompt + notification 语义，3 测试）；ACP 兼容测试继续
+2. 🔶 `kimi-acp`：**stdio 适配器已落地 + `kimi acp` 命令**（initialize 协商 + session/new/load/**resume**/list/delete/prompt + notification 语义，4 测试）；ACP 兼容测试继续
 3. `kimi-oauth`：流程状态机——**离线调研结论**：node-sdk `auth.ts` 完全基于 `kimi-code-oauth`（device flow / auth server 交互），PKCE 已在 kimi-shared（Rust）；真实流程需联网验证，离线可先做状态机骨架 + fixture 测试
 4. `kimi-config`：TOML/env/diagnostics——**离线调研结论**：`catalog.ts` 从 `https://models.dev/api.json` 网络拉取；离线可做类型/接口骨架 + 缓存 fixture 测试，拉取需联网
 5. **验证**：SDK 测试平移（425 用例）；ACP 兼容测试；node-sdk/klient 转薄壳 re-export
@@ -348,7 +348,7 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - `kimi-server`：51 测试（12 方法族全覆盖：session 24+ 方法、bg 全、cron 全、approval 全、permission/plugin/fs/git/config/health/task）
 - `kimi-cli`：9 子命令（print/sessions/resume/config/doctor/health/export/chat/acp）+ 全局 `--server` Remote 模式 + 21 二进制级集成测试
 - `kimi-ui`：渲染原语（render_event/last_assistant_text）+ `EventSource` 统一事件源（内嵌/Remote），6 测试
-- `kimi-sdk`：Harness（内嵌/Remote + 事件流 + 审批 + 列表/配置/导出）+ Session（25+ 方法：生命周期全 + goal + 模式控制 + steer/undo + skill/plan/usage 读面），3 集成测试
+- `kimi-sdk`：Harness（内嵌/Remote + 事件流 + 审批 + 列表/配置/导出 + **list_models**）+ Session（30+ 方法：生命周期全 + goal + 模式控制 + steer/undo + fork/import/clear + skill/plan/usage 读面），3 集成测试
 - `kimi-acp`：stdio 适配器 + `kimi acp` 命令（initialize 协商 + session 生命周期 + notification 语义），3 测试
 - 全 workspace 测试基线 **2823+**（kimi-agent 2027 + native-tools 617 + 宿主/CLI/SDK/ACP/UI 200+）
 
