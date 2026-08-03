@@ -261,6 +261,19 @@ impl Session {
         self.simple_call(kimi_protocol::methods::SESSION_GET_USAGE).await
     }
 
+    /// Fork this session into a new id (copies the persisted record).
+    pub async fn fork(&mut self, fork_id: &str, title: Option<&str>) -> anyhow::Result<()> {
+        let mut params = serde_json::json!({ "session_id": self.id, "fork_id": fork_id });
+        if let Some(title) = title {
+            params["title"] = serde_json::json!(title);
+        }
+        let body = self.client.lock().await.call(kimi_protocol::methods::SESSION_FORK, params).await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("fork: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(())
+    }
+
     async fn simple_call(&mut self, method: &str) -> anyhow::Result<serde_json::Value> {
         let body = self
             .client

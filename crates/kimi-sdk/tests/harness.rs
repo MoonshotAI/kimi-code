@@ -115,6 +115,11 @@ async fn harness_exposes_engine_events() {
     let (aliases, default_model) = harness.list_models().await.expect("list_models");
     assert!(aliases.iter().any(|a| !a.is_empty()), "aliases: {aliases:?}");
     assert!(default_model.is_none() || default_model.as_deref().is_some_and(|d| !d.is_empty()));
+
+    // Fork copies the session; both ids are listed afterwards.
+    session.fork("s-goal-fork", Some("forked")).await.expect("fork");
+    let sessions = harness.list_sessions(50).await.expect("list");
+    assert!(sessions.iter().any(|s| s["id"] == "s-goal-fork"), "fork listed: {sessions:?}");
 }
 
 #[tokio::test]
