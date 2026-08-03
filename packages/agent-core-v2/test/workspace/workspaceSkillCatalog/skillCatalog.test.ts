@@ -34,8 +34,11 @@ import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IConfigService } from '#/app/config/config';
 import {
+  EXCLUDE_SKILL_NAMES_SECTION,
   EXTRA_SKILL_DIRS_SECTION,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
+  SKILL_SOURCES_SECTION,
+  type SkillSourcesConfig,
 } from '#/app/skillCatalog/configSection';
 import { BuiltinSkillSource, IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
 import { IUserFileSkillSource, UserFileSkillSource } from '#/app/skillCatalog/userFileSkillSource';
@@ -67,10 +70,14 @@ const bootstrapStub = stubBootstrap('/home');
 function configStub(): IConfigService & {
   setExtraSkillDirs(dirs: readonly string[]): void;
   setMergeAllAvailableSkills(value: boolean): void;
+  setSkillSources(value: NonNullable<SkillSourcesConfig>): void;
+  setExcludedSkillNames(names: readonly string[]): void;
   fireSectionChange(domain: string): void;
 } {
   let extraSkillDirs: readonly string[] = [];
   let mergeAllAvailableSkills = true;
+  let skillSources: NonNullable<SkillSourcesConfig> = {};
+  let excludedSkillNames: readonly string[] = [];
   const sectionChangeListeners: Array<(event: unknown) => void> = [];
   return {
     _serviceBrand: undefined,
@@ -83,6 +90,8 @@ function configStub(): IConfigService & {
     get: (domain: string) => {
       if (domain === EXTRA_SKILL_DIRS_SECTION) return [...extraSkillDirs];
       if (domain === MERGE_ALL_AVAILABLE_SKILLS_SECTION) return mergeAllAvailableSkills;
+      if (domain === SKILL_SOURCES_SECTION) return { ...skillSources };
+      if (domain === EXCLUDE_SKILL_NAMES_SECTION) return [...excludedSkillNames];
       return undefined;
     },
     inspect: () => ({ value: undefined, defaultValue: undefined, userValue: undefined, memoryValue: undefined }),
@@ -97,6 +106,12 @@ function configStub(): IConfigService & {
     setMergeAllAvailableSkills: (value: boolean) => {
       mergeAllAvailableSkills = value;
     },
+    setSkillSources: (value: NonNullable<SkillSourcesConfig>) => {
+      skillSources = { ...value };
+    },
+    setExcludedSkillNames: (names: readonly string[]) => {
+      excludedSkillNames = [...names];
+    },
     fireSectionChange: (domain: string) => {
       for (const listener of sectionChangeListeners) {
         listener({ domain, source: 'set', value: undefined, previousValue: undefined });
@@ -105,6 +120,8 @@ function configStub(): IConfigService & {
   } as unknown as IConfigService & {
     setExtraSkillDirs(dirs: readonly string[]): void;
     setMergeAllAvailableSkills(value: boolean): void;
+    setSkillSources(value: NonNullable<SkillSourcesConfig>): void;
+    setExcludedSkillNames(names: readonly string[]): void;
     fireSectionChange(domain: string): void;
   };
 }
@@ -209,7 +226,7 @@ async function withSkillCatalogWorkspace(
   const skillRoot = join(workDir, '.kimi-code', 'skills');
   await mkdir(skillRoot, { recursive: true });
   try {
-    await run({ workDir, skillRoot: await realpath(skillRoot) });
+    await run({ workDir, skillRoot: (await realpath(skillRoot)).replaceAll('\\', '/') });
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }
@@ -258,6 +275,81 @@ describe('WorkspaceSkillCatalogService', () => {
     expect(names).toContain('project-only');
     expect(names).toContain('shared');
     expect(catalog.catalog.getSkill('shared')?.description).toBe('from project');
+    host.dispose();
+  });
+
+  it('remerges when a source is disabled or enabled through config', async () => {
+    await withSkillCatalogWorkspace(async ({ workDir }) => {
+      class ProjectSkillDiscovery implements ISkillDiscovery {
+        declare readonly _serviceBrand: undefined;
+
+        async discover(roots: readonly SkillRoot[]) {
+          return {
+            skills: roots.some((root) => root.source === 'project')
+              ? [stubSkill('project-only')]
+              : [],
+            skipped: [],
+            scannedRoots: [],
+          };
+        }
+      }
+
+      const ws = workspaceContextStub(workDir);
+      const { host, workspace, config } = makeHost(new ProjectSkillDiscovery(), ws);
+      try {
+        const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+        await catalog.load();
+        expect(catalog.catalog.getSkill('project-only')).toBeDefined();
+
+        const disabled = new Promise<string>((resolve) => {
+          const subscription = catalog.onDidChange((sourceId) => {
+            subscription.dispose();
+            resolve(sourceId);
+          });
+        });
+        config.setSkillSources({ workspace: false });
+        config.fireSectionChange(SKILL_SOURCES_SECTION);
+
+        await expect(disabled).resolves.toBe('config');
+        expect(catalog.catalog.getSkill('project-only')).toBeUndefined();
+
+        const enabled = new Promise<string>((resolve) => {
+          const subscription = catalog.onDidChange((sourceId) => {
+            subscription.dispose();
+            resolve(sourceId);
+          });
+        });
+        config.setSkillSources({});
+        config.fireSectionChange(SKILL_SOURCES_SECTION);
+
+        await expect(enabled).resolves.toBe('config');
+        expect(catalog.catalog.getSkill('project-only')).toBeDefined();
+      } finally {
+        host.dispose();
+      }
+    });
+  });
+
+  it('excludes skill names case-insensitively without removing other skills', async () => {
+    const store = new InMemorySkillDiscovery();
+    store.setProjectSkills([stubSkill('skill-a'), stubSkill('skill-b')]);
+    const ws = workspaceContextStub('/work');
+    const { host, workspace, config } = makeHost(store, ws);
+
+    const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+    await catalog.load();
+    const changed = new Promise<string>((resolve) => {
+      const subscription = catalog.onDidChange((sourceId) => {
+        subscription.dispose();
+        resolve(sourceId);
+      });
+    });
+    config.setExcludedSkillNames(['SKILL-A']);
+    config.fireSectionChange(EXCLUDE_SKILL_NAMES_SECTION);
+
+    await expect(changed).resolves.toBe('config');
+    expect(catalog.catalog.getSkill('skill-a')).toBeUndefined();
+    expect(catalog.catalog.getSkill('skill-b')).toBeDefined();
     host.dispose();
   });
 

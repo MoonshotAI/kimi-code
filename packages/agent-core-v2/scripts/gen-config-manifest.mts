@@ -71,7 +71,7 @@ function scanSectionOwners(): Map<string, string> {
     for (const match of source.matchAll(/registerConfigSection\(\s*(?:'([^']+)'|([A-Za-z0-9_$]+))/g)) {
       const ident = match[2];
       const domain = match[1] ?? (ident === undefined ? undefined : constStringValue(source, ident));
-      if (domain !== undefined) owners.set(domain, relative(PKG, file));
+      if (domain !== undefined) owners.set(domain, relative(PKG, file).replaceAll('\\', '/'));
     }
   }
   return owners;
@@ -88,7 +88,7 @@ function scanOverlayOwners(): Map<string, string> {
     if (!source.includes('registerConfigOverlay(')) continue;
     for (const match of source.matchAll(/registerConfigOverlay\(\s*([A-Za-z0-9_$]+)/g)) {
       const ident = match[1];
-      if (ident !== undefined) owners.set(ident, relative(PKG, file));
+      if (ident !== undefined) owners.set(ident, relative(PKG, file).replaceAll('\\', '/'));
     }
   }
   return owners;

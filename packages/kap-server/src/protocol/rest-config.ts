@@ -22,8 +22,19 @@ export const configResponseSchema = z.object({
   permission: z.unknown().optional(),
   hooks: z.array(z.unknown()).optional(),
   services: z.unknown().optional(),
+  skill_sources: z
+    .object({
+      workspace: z.boolean().optional(),
+      user: z.boolean().optional(),
+      explicit: z.boolean().optional(),
+      extra: z.boolean().optional(),
+      plugin: z.boolean().optional(),
+      builtin: z.boolean().optional(),
+    })
+    .optional(),
   merge_all_available_skills: z.boolean().optional(),
   extra_skill_dirs: z.array(z.string()).optional(),
+  exclude_skill_names: z.array(z.string()).optional(),
   loop_control: z.unknown().optional(),
   background: z.unknown().optional(),
   experimental: z.record(z.string(), z.boolean()).optional(),
@@ -46,8 +57,19 @@ export const patchConfigRequestSchema = z.object({
   permission: z.unknown().optional(),
   hooks: z.array(z.unknown()).optional(),
   services: z.unknown().optional(),
+  skill_sources: z
+    .object({
+      workspace: z.boolean().optional(),
+      user: z.boolean().optional(),
+      explicit: z.boolean().optional(),
+      extra: z.boolean().optional(),
+      plugin: z.boolean().optional(),
+      builtin: z.boolean().optional(),
+    })
+    .optional(),
   merge_all_available_skills: z.boolean().optional(),
   extra_skill_dirs: z.array(z.string()).optional(),
+  exclude_skill_names: z.array(z.string()).optional(),
   loop_control: z.unknown().optional(),
   background: z.unknown().optional(),
   experimental: z.record(z.string(), z.boolean()).optional(),
