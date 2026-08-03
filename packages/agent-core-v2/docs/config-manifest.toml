@@ -129,7 +129,7 @@ extra_skill_dirs = []
 
 # one [[hooks]] table per entry:
 # [[hooks]]
-  # event: "PreToolUse" | "PostToolUse" | "PostToolUseFailure" | "PermissionRequest" | "PermissionResult" | "UserPromptSubmit" | "Stop" | "StopFailure" | "Interrupt" | "SessionStart" | "SessionEnd" | "SubagentStart" | "SubagentStop" | "PreCompact" | "PostCompact" | "Notification"
+  # event: "PreToolUse" | "PostToolUse" | "PostToolUseFailure" | "PermissionRequest" | "PermissionResult" | "UserPromptSubmit" | "UserPromptQueued" | "TurnStarted" | "Stop" | "StopFailure" | "Interrupt" | "SessionStart" | "SessionEnd" | "SessionHeartbeat" | "SubagentStart" | "SubagentStop" | "TaskStarted" | "PreCompact" | "PostCompact" | "Notification"
   # matcher: string
   # command: string
   # timeout: integer
