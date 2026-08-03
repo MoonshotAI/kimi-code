@@ -46,6 +46,23 @@ impl Processor for FsProcessor {
                 if let Some(limit) = input.limit {
                     args.insert("limit".to_string(), serde_json::json!(limit));
                 }
+                // The Glob tool requires a `pattern` argument and treats
+                // `path` as the search-root directory (must be a real dir).
+                // The wire surface carries the pattern as `query` for the
+                // list action; mapping it here fixes a refusal inherited from
+                // main.rs, where pattern was never set.
+                if tool_name == "Glob" {
+                    match input.query.clone() {
+                        Some(q) => {
+                            args.insert("pattern".to_string(), serde_json::Value::String(q));
+                        }
+                        None => {
+                            return Err(JsonRpcError::internal_error(
+                                "fs: list requires a query (glob pattern)".into(),
+                            ));
+                        }
+                    }
+                }
                 let result = toolset
                     .execute(tool_name, &serde_json::Value::Object(args))
                     .unwrap_or_else(|| {
@@ -116,5 +133,74 @@ mod tests {
             })
             .await;
         assert_eq!(body["error"]["message"], "fs: unsupported action bogus");
+    }
+
+    #[tokio::test]
+    async fn fs_read_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("kimi-fs-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("hello.txt"), "line one\nline two\n").expect("write");
+
+        let mut server = MessageProcessor::new();
+        FsProcessor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/fs".into(),
+                params: serde_json::json!({
+                    "session_id": "x",
+                    "action": "read",
+                    "homedir": dir.to_string_lossy(),
+                    "path": "hello.txt",
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "fs read failed: {body}");
+        assert_eq!(body["result"]["action"], "read");
+        assert_eq!(body["result"]["is_error"], false);
+        assert!(
+            body["result"]["content"].as_str().unwrap_or("").contains("line two"),
+            "read content: {body}"
+        );
+
+        // `list` (Glob) surfaces the file under the root; the glob pattern
+        // rides in `query`, `path` is the (optional) search-root directory.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/fs".into(),
+                params: serde_json::json!({
+                    "session_id": "x",
+                    "action": "list",
+                    "homedir": dir.to_string_lossy(),
+                    "query": "*.txt",
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "fs list failed: {body}");
+        assert!(
+            body["result"]["content"].as_str().unwrap_or("").contains("hello.txt"),
+            "listed file: {body}"
+        );
+
+        // A list without a pattern is rejected with a clear message.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(3),
+                method: "session/fs".into(),
+                params: serde_json::json!({
+                    "session_id": "x",
+                    "action": "list",
+                    "homedir": dir.to_string_lossy(),
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_some(), "list without pattern errors: {body}");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
