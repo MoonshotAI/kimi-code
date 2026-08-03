@@ -141,6 +141,7 @@ fn doctor_reports_health_and_config_files() {
     assert!(output.status.success(), "doctor exited {}", output.status);
     let out = stdout(&output);
     assert!(out.contains("health: ok"), "health line: {out}");
+    assert!(out.contains("version:"), "version line: {out}");
     assert!(
         out.contains("config parse:") && out.contains("config file:"),
         "config checks present: {out}"

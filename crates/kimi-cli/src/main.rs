@@ -659,6 +659,7 @@ async fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
 
+            println!("version: {}", env!("CARGO_PKG_VERSION"));
             let harness = connect_harness(&server)?;
             match harness.health().await {
                 Ok(status) => println!("health: {status}"),
