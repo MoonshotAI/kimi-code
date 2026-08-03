@@ -6,12 +6,12 @@
  * sources by priority ONCE per handler, serializing refreshes for each
  * source; afterwards a source's `onDidChange` (fs watch / config section /
  * plugin reload) re-scans that source alone and re-fires the merged change
- * event — no full rescan ever leaves the build-time load. The merged view is
- * shared by every session of the handler through the
- * `ISessionSkillCatalogData` seed (`sessionData()`), a live read view over
- * this service. The plain-data state (`contributions`, `merged`) is
- * registered into `workspaceState` (`IWorkspaceStateService`) and
- * read/written through it. Bound at Workspace scope.
+ * event — no full rescan ever leaves the build-time load. Filters
+ * contributions by disabled source and excluded name through `config` after
+ * discovery so the policy applies uniformly to every source, including
+ * extra_skill_dirs. Registers plain-data state into `workspaceState` and
+ * provides a live read view through `ISessionSkillCatalogData`. Bound at
+ * Workspace scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -172,7 +172,6 @@ export class WorkspaceSkillCatalogService extends Disposable implements IWorkspa
     const disabledSources = this.disabledSourceIds();
     const excludedNames = this.excludedSkillNames();
     const ordered = [...this.contributions.entries()].toSorted(([, a], [, b]) => a.priority - b.priority);
-    // Filter after discovery so the policy applies to every source, including extra_skill_dirs.
     for (const [sourceId, { c }] of ordered) {
       if (disabledSources.has(sourceId)) continue;
       for (const skill of c.skills) {
