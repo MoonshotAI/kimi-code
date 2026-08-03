@@ -1657,6 +1657,55 @@ mod create_tests {
     }
 
     #[tokio::test]
+    async fn import_context_appends_transcript() {
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = SessionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/create".into(),
+                params: serde_json::json!({ "session_id": "s-import" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "create failed: {body}");
+
+        // Import a transcript chunk (no LLM involved).
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/import_context".into(),
+                params: serde_json::json!({
+                    "session_id": "s-import",
+                    "content": "imported transcript text",
+                    "source": "test",
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "import_context failed: {body}");
+
+        // The context now contains the imported text.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(3),
+                method: "session/get_context".into(),
+                params: serde_json::json!({ "session_id": "s-import" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "get_context failed: {body}");
+        assert!(
+            serde_json::to_string(&body["result"])
+                .unwrap_or_default()
+                .contains("imported transcript text"),
+            "imported text in context: {body}"
+        );
+    }
+
+    #[tokio::test]
     async fn session_controls_roundtrip() {
         let state = crate::state::ServerState::new().expect("state");
         let processor = SessionProcessor::with_state(state);
