@@ -156,10 +156,11 @@ import { loadMcpServers } from '@moonshot-ai/agent-core-v2/workspace/workspaceMc
 import {
   applyPromptMetadataUpdate,
   bootstrap,
-  BUILTIN_SKILLS,
+  builtinProductSkillsEnabled,
   DEFAULT_AGENT_PROFILE_NAME,
   ensureKimiHome,
   ensureMainAgent,
+  visibleBuiltinSkills,
   IAgentActivityView,
   IAgentContextMemoryService,
   IAgentContextSizeService,
@@ -538,12 +539,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /**
    * klient has no skills facade; composed directly from the engine's
    * app-scope `ISkillDiscovery` plus the v2 root helpers (user + project
-   * roots) and the code-defined `BUILTIN_SKILLS` via {@link engineAccessor}.
+   * roots) and the code-defined builtin skills via {@link engineAccessor},
+   * filtered by `builtin_product_skills` so this session-less listing matches
+   * what a session's catalog will offer.
    * `skillDirs` (explicit dirs) replaces the default user / project roots,
    * matching the engine's session skill catalog. Gap vs the v1
    * implementation: plugin skills are not included.
    */
   override async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
+    await this.configReady;
     const bootstrapService = this.engineAccessor.get(IBootstrapService);
     const discovery = this.engineAccessor.get(ISkillDiscovery);
     const explicitDirs = bootstrapService.args.skillDirs ?? [];
@@ -558,7 +562,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     // Builtins are the lowest-priority contribution: a discovered skill with
     // the same name shadows the builtin (v1 registry semantics).
     const byName = new Map<string, SkillSummary>();
-    for (const skill of [...BUILTIN_SKILLS, ...skills]) {
+    const builtins = visibleBuiltinSkills(
+      builtinProductSkillsEnabled(this.engineAccessor.get(IConfigService)),
+    );
+    for (const skill of [...builtins, ...skills]) {
       byName.set(skill.name, {
         name: skill.name,
         description: skill.description,
@@ -2079,6 +2086,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async beginGlobalMcpServerAuth(name: string): Promise<BeginGlobalMcpServerAuthResult> {
     const server = await this.globalMcpConfig.get(name);
     const config = requireOAuthMcpServer(server);
+    // `McpOAuthService` caches providers by store key and stamps the client
+    // name when it first builds one, so reading the identity before config
+    // has loaded would pin the built-in label for the rest of the process.
+    await this.configReady;
     try {
       const flow = await this.globalMcpOAuthService.beginAuthorization(server.name, config.url);
       const flowId = randomUUID();
