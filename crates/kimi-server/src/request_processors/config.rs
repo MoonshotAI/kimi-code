@@ -86,6 +86,13 @@ impl Processor for ConfigProcessor {
                     .into_iter()
                     .next()
                     .ok_or_else(|| JsonRpcError::internal_error("no config path found".into()))?;
+                // The project-level target lives in `.kimi-code/`, which may
+                // not exist on a fresh checkout — create it so the write lands
+                // (main.rs parity gap fixed here).
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| JsonRpcError::internal_error(format!("mkdir: {e}")))?;
+                }
                 std::fs::write(&path, toml_str)
                     .map_err(|e| JsonRpcError::internal_error(format!("write: {e}")))?;
                 Ok(serde_json::json!({ "ok": true, "path": path.display().to_string() }))

@@ -62,8 +62,13 @@ enum Commands {
         #[arg(long)]
         verbose: bool,
     },
-    /// Show the current engine config (model/provider).
-    Config,
+    /// Show the engine config (model/provider); with `--set`, write a value.
+    Config {
+        /// Set a config value (repeatable), e.g. `--set defaultModel=kimi-k2`
+        /// or `--set providers.anthropic.apiKey=sk-…`. Values are strings.
+        #[arg(long = "set", value_name = "KEY=VALUE")]
+        set: Vec<String>,
+    },
     /// Environment + config diagnostics.
     Doctor {
         /// Validate a specific config.toml file (TS `kimi doctor config`
@@ -275,8 +280,49 @@ async fn main() -> anyhow::Result<()> {
             }
             println!("{result}");
         }
-        Commands::Config => {
+        Commands::Config { set } => {
             let mut client = connect(&server)?;
+            if !set.is_empty() {
+                // `kimi config --set key=value`: build a nested patch from
+                // dot-paths ("providers.x.apiKey") and hand it to config/set,
+                // which merges with the loaded config and writes it back.
+                let mut patch = serde_json::json!({});
+                for kv in &set {
+                    let (key, value) = kv.split_once('=').ok_or_else(|| {
+                        anyhow::anyhow!("--set expects KEY=VALUE, got: {kv}")
+                    })?;
+                    let parts: Vec<&str> = key.split('.').collect();
+                    if parts.is_empty() || parts.iter().any(|p| p.is_empty()) {
+                        anyhow::bail!("invalid config key: {key}");
+                    }
+                    let mut obj = patch
+                        .as_object_mut()
+                        .expect("patch starts as an object");
+                    for part in &parts[..parts.len() - 1] {
+                        obj = obj
+                            .entry((*part).to_string())
+                            .or_insert_with(|| serde_json::json!({}))
+                            .as_object_mut()
+                            .expect("intermediate nodes are objects");
+                    }
+                    obj.insert(
+                        parts.last().expect("non-empty").to_string(),
+                        serde_json::json!(value),
+                    );
+                }
+                let body = client
+                    .call(kimi_protocol::methods::CONFIG_SET, serde_json::json!({ "patch": patch }))
+                    .await;
+                if let Some(error) = body.get("error") {
+                    eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
+                    std::process::exit(1);
+                }
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&body["result"]).unwrap_or_default()
+                );
+                return Ok(());
+            }
             let config = client
                 .call(kimi_protocol::methods::CONFIG_GET, serde_json::Value::Null)
                 .await;

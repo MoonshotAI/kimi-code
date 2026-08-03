@@ -167,6 +167,53 @@ fn doctor_config_validates_specific_file() {
 }
 
 #[test]
+fn config_set_writes_and_persists() {
+    // --set writes `.kimi-code/config.toml` under the cwd; both invocations
+    // must share the cwd (unlike the `run` helper which mints a fresh one).
+    let home = temp_dir("config-set");
+    let cwd = temp_dir("config-set-cwd");
+    let run_here = |args: &[&str]| {
+        Command::new(binary())
+            .args(args)
+            .current_dir(&cwd)
+            .env("KIMI_AGENT_HOME", &home)
+            .env("HOME", &home)
+            .env_remove("KIMI_MODEL")
+            .env_remove("KIMI_MODEL_API_KEY")
+            .output()
+            .expect("spawn kimi")
+    };
+    let output = run_here(&[
+        "config",
+        "--set",
+        "defaultModel=test-model",
+        "--set",
+        "providers.mock.apiKey=sk-test",
+    ]);
+    assert!(output.status.success(), "config --set failed: {}", stderr(&output));
+    assert!(stdout(&output).contains("\"ok\": true"), "result: {}", stdout(&output));
+    assert!(
+        cwd.join(".kimi-code/config.toml").exists(),
+        "config file written under cwd"
+    );
+
+    let output = run_here(&["config"]);
+    assert!(output.status.success());
+    let value: serde_json::Value =
+        serde_json::from_str(stdout(&output).trim()).expect("config JSON");
+    assert_eq!(value["defaultModel"], "test-model");
+    assert_eq!(value["providers"]["mock"]["apiKey"], "sk-test");
+}
+
+#[test]
+fn config_set_rejects_malformed_key() {
+    let home = temp_dir("config-set-bad");
+    let output = run(&home, &["config", "--set", "no-equals-sign"]);
+    assert_eq!(output.status.code(), Some(1), "malformed KEY=VALUE should fail");
+    assert!(stderr(&output).contains("KEY=VALUE"), "hint: {}", stderr(&output));
+}
+
+#[test]
 fn server_mode_verbose_emits_events() {
     // `--verbose` over the Remote path: the serve binary fans engine events
     // to stderr (session.turn.started fires before the LLM call, so it lands
