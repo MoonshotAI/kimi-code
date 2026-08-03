@@ -93,6 +93,17 @@ impl Harness {
         Ok(body["result"].clone())
     }
 
+    /// Configured model aliases (keys) plus the default model, if any.
+    pub async fn list_models(&self) -> anyhow::Result<(Vec<String>, Option<String>)> {
+        let config = self.config().await?;
+        let aliases = config["models"]
+            .as_object()
+            .map(|m| m.keys().cloned().collect())
+            .unwrap_or_default();
+        let default_model = config["defaultModel"].as_str().map(|s| s.to_string());
+        Ok((aliases, default_model))
+    }
+
     /// Permanently delete a persisted session (engine-side `session/delete`).
     pub async fn delete_session(&self, session_id: &str) -> anyhow::Result<bool> {
         let body = self

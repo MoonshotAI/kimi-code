@@ -110,6 +110,11 @@ async fn harness_exposes_engine_events() {
     session.get_plan().await.expect("get_plan");
     let usage = session.get_usage().await.expect("get_usage");
     assert!(usage.is_object(), "usage: {usage}");
+
+    // list_models returns aliases + default from the merged config.
+    let (aliases, default_model) = harness.list_models().await.expect("list_models");
+    assert!(aliases.iter().any(|a| !a.is_empty()), "aliases: {aliases:?}");
+    assert!(default_model.is_none() || default_model.as_deref().is_some_and(|d| !d.is_empty()));
 }
 
 #[tokio::test]
