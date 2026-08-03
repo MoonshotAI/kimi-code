@@ -587,6 +587,38 @@ impl Processor for SessionProcessor {
             })
         });
 
+        // `session/goal_pause` / `goal_resume` / `goal_cancel` — goal lifecycle.
+        for (method, op) in [
+            (kimi_protocol::methods::SESSION_GOAL_PAUSE, "pause" as &str),
+            (kimi_protocol::methods::SESSION_GOAL_RESUME, "resume" as &str),
+            (kimi_protocol::methods::SESSION_GOAL_CANCEL, "cancel" as &str),
+        ] {
+            let mgr = self.state.manager.clone();
+            processor.register(method, move |params| {
+                let mgr = mgr.clone();
+                Box::pin(async move {
+                    let input: kimi_protocol::wire_types::SessionGoalReasonParams =
+                        serde_json::from_value(params)
+                            .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                    let mut manager = mgr.lock().await;
+                    let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                        JsonRpcError::internal_error(format!(
+                            "no agent for session: {}",
+                            input.session_id
+                        ))
+                    })?;
+                    let snapshot = match op {
+                        "pause" => agent.goal_pause(input.reason),
+                        "resume" => agent.goal_resume(input.reason),
+                        _ => agent.goal_cancel(),
+                    }
+                    .map_err(JsonRpcError::internal_error)?;
+                    serde_json::to_value(&snapshot)
+                        .map_err(|e| JsonRpcError::internal_error(e.to_string()))
+                })
+            });
+        }
+
         // `session/save` — persist the session agent state.
         let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_SAVE, move |params| {
