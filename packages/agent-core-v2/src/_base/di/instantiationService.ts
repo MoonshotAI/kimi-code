@@ -3,7 +3,7 @@
  */
 
 import { SyncDescriptor } from './descriptors';
-import { CascadeEngine, type CascadeChange, type CascadeHost } from './cascadeEngine';
+import { CascadeEngine, CascadeTree, type CascadeChange, type CascadeHost } from './cascadeEngine';
 import { DependencyGraph } from './dependencyGraph';
 import { CascadeConflictError, CyclicDependencyError } from './errors';
 import { Graph } from './graph';
@@ -116,10 +116,14 @@ export class InstantiationService implements IInstantiationService {
 
   protected readonly _ledger = new Ledger('InstantiationService');
 
-  /** Persistent dependency graph: mirrors every live service instance's edges. */
-  readonly dependencyGraph = new DependencyGraph();
+  /** Tree-global persistent dependency graph (shared by the whole scope tree). */
+  get dependencyGraph(): DependencyGraph {
+    return this._tree.graph;
+  }
 
-  /** Cascade engine (L2): one per container, drives provide/unprovide transactions. */
+  private readonly _tree: CascadeTree;
+
+  /** Cascade engine (L2): one per container; tree-wide orchestrated transactions. */
   readonly cascade: CascadeEngine;
 
   private _parentLedgerEntry: LedgerEntry | undefined;
@@ -153,8 +157,10 @@ export class InstantiationService implements IInstantiationService {
     this._parent = parent;
     this._globalGraph = _enableTracing ? parent?._globalGraph ?? new Graph(e => e) : undefined;
     this._services.set(IInstantiationServiceDecorator, this);
+    this._tree = parent?._tree ?? new CascadeTree(new DependencyGraph());
     const host: CascadeHost = {
       isRegistered: (token) => this._getServiceInstanceOrDescriptor(token) !== undefined,
+      ownerScopeOf: (token) => this._ownerOf(token),
       isMaterialized: (token) => {
         const value = this._services.get(token);
         return value !== undefined && !(value instanceof SyncDescriptor);
@@ -189,11 +195,27 @@ export class InstantiationService implements IInstantiationService {
       },
       dependenciesOf: (recipe) =>
         _util.getServiceDependencies(recipe.ctor).map((dependency) => dependency.id),
-      affectedSet: (tokens) => this.dependencyGraph.affectedSet(tokens),
-      topoOrder: (tokens) => this.dependencyGraph.topoOrder(tokens),
-      reverseTopoOrder: (tokens) => this.dependencyGraph.reverseTopoOrder(tokens),
     };
-    this.cascade = new CascadeEngine(host);
+    this.cascade = new CascadeEngine(host, this, this._tree);
+  }
+
+  /** Structural handle for the cascade engine's scoped tokens. */
+  get cascadeDisposed(): boolean {
+    return this._disposed;
+  }
+
+  /** Distance from the tree root (root = 0). */
+  get cascadeDepth(): number {
+    return (this._parent?.cascadeDepth ?? -1) + 1;
+  }
+
+  /** The container owning a token in this container's resolution chain. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private _ownerOf(id: ServiceIdentifier<any>): InstantiationService | undefined {
+    if (this._services.has(id)) {
+      return this;
+    }
+    return this._parent?._ownerOf(id);
   }
 
   invokeFunction<R, TS extends any[] = []>(
@@ -408,7 +430,6 @@ export class InstantiationService implements IInstantiationService {
       this._children.clear();
       void this._ledger.teardown('scope-close');
       this._services.dispose();
-      this.dependencyGraph.clear();
       this.cascade.dispose();
     } finally {
       this._children.clear();
@@ -610,11 +631,20 @@ export class InstantiationService implements IInstantiationService {
     root._inProgress.push(id);
     try {
       const result = this._createInstance<T>(ctor, args.slice(), _trace);
-      // Persistent graph: record the instance and its constructor-injection
-      // (instance) edges; the ledger entry removes them again at teardown.
-      this.dependencyGraph.addInstance(result as object, id);
+      // Persistent tree-global graph: record the instance and its
+      // constructor-injection (instance) edges, both ends scope-tagged; the
+      // ledger entry removes them again at teardown. Edges point child →
+      // parent (a dependency's owner is always this container or an ancestor).
+      this.dependencyGraph.addInstance(result as object, this, id);
       for (const dependency of _util.getServiceDependencies(ctor)) {
-        this.dependencyGraph.addEdge(result as object, dependency.id, 'instance');
+        const owner = this._ownerOf(dependency.id);
+        if (owner !== undefined) {
+          this.dependencyGraph.addEdge(
+            result as object,
+            { scope: owner, token: dependency.id },
+            'instance',
+          );
+        }
       }
       const entry = this._ledger.register(() => {
         this._instanceEntries.delete(result);

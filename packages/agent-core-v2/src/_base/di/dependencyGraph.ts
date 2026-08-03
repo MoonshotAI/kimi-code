@@ -1,64 +1,116 @@
 /**
- * `di` domain — persistent dependency graph (L2 substrate).
+ * `di` domain — persistent dependency graph (L2 substrate), tree-global.
  *
- * Edges are recorded when a service's constructor dependencies are resolved
- * and removed when the consumer is torn down, so the graph always mirrors the
- * live container. Instance edges bind a consumer to its dependency's
- * generation (the dependency changes → the consumer is torn down and rebuilt);
- * collection edges (Phase 3) are recorded for introspection but never join a
- * cascade contagion set.
+ * One graph is shared by every container of a scope tree. Edges are recorded
+ * when a service's constructor dependencies are resolved and removed when the
+ * consumer is torn down, so the graph always mirrors the live containers.
+ * Both ends of an edge are scope-tagged: a consumer in a child scope may bind
+ * a token owned by an ancestor scope (child → parent only — a parent can never
+ * resolve a child's token, so cross-tree cycles are impossible by
+ * construction). Instance edges bind a consumer to its dependency's
+ * generation (the dependency changes → the consumer is torn down and rebuilt,
+ * across scopes); collection edges (Phase 3) are recorded for introspection
+ * but never join a cascade contagion set.
  */
 
 import type { ServiceIdentifier } from './instantiation';
 
+/** A token as seen from the tree: the owning container plus the identifier. */
+export interface ScopedToken {
+  /** The container whose collection owns the registration. */
+  readonly scope: object;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly token: ServiceIdentifier<any>;
+}
+
 export type DependencyEdgeKind = 'instance' | 'collection';
 
 export interface DependencyEdge {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly consumer: ServiceIdentifier<any>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly dependency: ServiceIdentifier<any>;
+  readonly consumer: ScopedToken;
+  readonly dependency: ScopedToken;
   readonly kind: DependencyEdgeKind;
 }
 
-export class DependencyGraph {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private readonly _tokenByInstance = new Map<object, ServiceIdentifier<any>>();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private readonly _instanceByToken = new Map<ServiceIdentifier<any>, object>();
-  /** consumer instance → (dependency token → edge kind) */
-  private readonly _out = new Map<object, Map<
+/** Nested scope → token maps, so scoped tokens stay structural (no interning). */
+export class PairIndex<V> {
+  private readonly _map = new Map<object, Map<
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ServiceIdentifier<any>,
-    DependencyEdgeKind
+    V
   >>();
-  /** dependency token → (consumer instance → edge kind) */
-  private readonly _in = new Map<
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ServiceIdentifier<any>,
-    Map<object, DependencyEdgeKind>
-  >();
 
-  /** Register a materialized service instance so its edges can be tracked. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  addInstance(instance: object, token: ServiceIdentifier<any>): void {
-    this._tokenByInstance.set(instance, token);
-    this._instanceByToken.set(token, instance);
+  get(scope: object, token: ServiceIdentifier<unknown>): V | undefined {
+    return this._map.get(scope)?.get(token);
   }
 
-  /** Drop a consumer: its outbound edges and token mapping (inbound token edges stay). */
+  set(scope: object, token: ServiceIdentifier<unknown>, value: V): void {
+    let inner = this._map.get(scope);
+    if (inner === undefined) {
+      inner = new Map();
+      this._map.set(scope, inner);
+    }
+    inner.set(token, value);
+  }
+
+  delete(scope: object, token: ServiceIdentifier<unknown>): void {
+    const inner = this._map.get(scope);
+    if (inner === undefined) return;
+    inner.delete(token);
+    if (inner.size === 0) {
+      this._map.delete(scope);
+    }
+  }
+
+  entries(): Array<[ScopedToken, V]> {
+    const out: Array<[ScopedToken, V]> = [];
+    for (const [scope, inner] of this._map) {
+      for (const [token, value] of inner) {
+        out.push([{ scope, token }, value]);
+      }
+    }
+    return out;
+  }
+
+  clear(): void {
+    this._map.clear();
+  }
+}
+
+export class DependencyGraph {
+  /** live instance → its scoped token */
+  private readonly _refByInstance = new Map<object, ScopedToken>();
+  /** scoped token → live instance */
+  private readonly _instanceByRef = new PairIndex<object>();
+  /** consumer instance → (dependency scoped token → edge kind) */
+  private readonly _out = new Map<object, PairIndex<DependencyEdgeKind>>();
+  /** dependency scoped token → (consumer instance → edge kind) */
+  private readonly _in = new PairIndex<Map<object, DependencyEdgeKind>>();
+
+  /** Register a materialized service instance so its edges can be tracked. */
+  addInstance(
+    instance: object,
+    scope: object,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    token: ServiceIdentifier<any>,
+  ): void {
+    const ref: ScopedToken = { scope, token };
+    this._refByInstance.set(instance, ref);
+    this._instanceByRef.set(scope, token, instance);
+  }
+
+  /** Drop a consumer: its outbound edges and token mapping (inbound edges stay). */
   removeInstance(instance: object): void {
-    const token = this._tokenByInstance.get(instance);
-    if (token !== undefined) {
-      this._tokenByInstance.delete(instance);
-      if (this._instanceByToken.get(token) === instance) {
-        this._instanceByToken.delete(token);
+    const ref = this._refByInstance.get(instance);
+    if (ref !== undefined) {
+      this._refByInstance.delete(instance);
+      if (this._instanceByRef.get(ref.scope, ref.token) === instance) {
+        this._instanceByRef.delete(ref.scope, ref.token);
       }
     }
     const out = this._out.get(instance);
     if (out !== undefined) {
-      for (const dependency of out.keys()) {
-        this._in.get(dependency)?.delete(instance);
+      for (const [dependency] of out.entries()) {
+        this._in.get(dependency.scope, dependency.token)?.delete(instance);
       }
       this._out.delete(instance);
     }
@@ -66,144 +118,123 @@ export class DependencyGraph {
 
   addEdge(
     consumerInstance: object,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    dependency: ServiceIdentifier<any>,
+    dependency: ScopedToken,
     kind: DependencyEdgeKind = 'instance',
   ): void {
     let out = this._out.get(consumerInstance);
     if (out === undefined) {
-      out = new Map();
+      out = new PairIndex();
       this._out.set(consumerInstance, out);
     }
-    out.set(dependency, kind);
+    out.set(dependency.scope, dependency.token, kind);
 
-    let inbound = this._in.get(dependency);
+    let inbound = this._in.get(dependency.scope, dependency.token);
     if (inbound === undefined) {
       inbound = new Map();
-      this._in.set(dependency, inbound);
+      this._in.set(dependency.scope, dependency.token, inbound);
     }
     inbound.set(consumerInstance, kind);
   }
 
   /**
-   * The contagion set: the changed tokens plus every token whose live instance
-   * transitively depends on them through instance edges.
+   * The contagion set: the changed scoped tokens plus every scoped token whose
+   * live instance transitively depends on them through instance edges —
+   * computed across the whole tree (dependents always live in the changed
+   * scope's subtree, since edges point child → parent).
    */
-  affectedSet(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    changed: Iterable<ServiceIdentifier<any>>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ): Set<ServiceIdentifier<any>> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const affected = new Set<ServiceIdentifier<any>>();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const queue: ServiceIdentifier<any>[] = [];
-    for (const token of changed) {
-      if (!affected.has(token)) {
-        affected.add(token);
-        queue.push(token);
-      }
+  affectedSet(changed: Iterable<ScopedToken>): ScopedToken[] {
+    const seen = new PairIndex<true>();
+    const queue: ScopedToken[] = [];
+    const push = (ref: ScopedToken): void => {
+      if (seen.get(ref.scope, ref.token) !== undefined) return;
+      seen.set(ref.scope, ref.token, true);
+      queue.push(ref);
+    };
+    for (const ref of changed) {
+      push(ref);
     }
+    const affected: ScopedToken[] = [];
     while (queue.length > 0) {
-      const token = queue.pop()!;
-      const inbound = this._in.get(token);
+      const ref = queue.pop()!;
+      affected.push(ref);
+      const inbound = this._in.get(ref.scope, ref.token);
       if (inbound === undefined) continue;
       for (const [consumerInstance, kind] of inbound) {
         if (kind !== 'instance') continue;
-        const consumerToken = this._tokenByInstance.get(consumerInstance);
-        if (consumerToken === undefined || affected.has(consumerToken)) continue;
-        affected.add(consumerToken);
-        queue.push(consumerToken);
+        const consumer = this._refByInstance.get(consumerInstance);
+        if (consumer === undefined) continue;
+        push(consumer);
       }
     }
     return affected;
   }
 
-  /** Dependencies-first order over the given token subset (instance edges only). */
-  topoOrder(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    tokens: Iterable<ServiceIdentifier<any>>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ): ServiceIdentifier<any>[] {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const subset = new Set<ServiceIdentifier<any>>(tokens);
-    // token → in-subset dependencies
-    const dependencies = new Map<
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ServiceIdentifier<any>,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      Set<ServiceIdentifier<any>>
-    >();
-    for (const token of subset) {
-      dependencies.set(token, this._dependenciesOf(token, subset));
+  /** Dependencies-first order over the given scoped-token subset (instance edges). */
+  topoOrder(tokens: Iterable<ScopedToken>): ScopedToken[] {
+    const subset = new PairIndex<ScopedToken>();
+    for (const ref of tokens) {
+      subset.set(ref.scope, ref.token, ref);
     }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const ordered: ServiceIdentifier<any>[] = [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const permanent = new Set<ServiceIdentifier<any>>();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const visit = (token: ServiceIdentifier<any>): void => {
-      if (permanent.has(token)) return;
-      permanent.add(token);
-      for (const dependency of dependencies.get(token) ?? []) {
+    const ordered: ScopedToken[] = [];
+    const done = new PairIndex<true>();
+    const visit = (ref: ScopedToken): void => {
+      if (done.get(ref.scope, ref.token) !== undefined) return;
+      done.set(ref.scope, ref.token, true);
+      for (const dependency of this._dependenciesOf(ref, subset)) {
         visit(dependency);
       }
-      ordered.push(token);
+      ordered.push(ref);
     };
-    for (const token of subset) {
-      visit(token);
+    for (const [, ref] of subset.entries()) {
+      visit(ref);
     }
     return ordered;
   }
 
-  /** Dependents-first order (teardown order) over the given token subset. */
-  reverseTopoOrder(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    tokens: Iterable<ServiceIdentifier<any>>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ): ServiceIdentifier<any>[] {
+  /** Dependents-first order (teardown order) over the given scoped-token subset. */
+  reverseTopoOrder(tokens: Iterable<ScopedToken>): ScopedToken[] {
     return this.topoOrder(tokens).toReversed();
   }
 
   /** Instance-edge cycle check over the live graph; returns the cycle path or null. */
-  findCycle(): string[] | null {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const state = new Map<ServiceIdentifier<any>, 'visiting' | 'done'>();
-    const path: string[] = [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const visit = (token: ServiceIdentifier<any>): string[] | null => {
-      state.set(token, 'visiting');
-      path.push(token.toString());
-      for (const dependency of this._dependenciesOf(token, undefined)) {
-        const mark = state.get(dependency);
+  findCycle(label: (ref: ScopedToken) => string): string[] | null {
+    const state = new PairIndex<'visiting' | 'done'>();
+    const path: ScopedToken[] = [];
+    const visit = (ref: ScopedToken): string[] | null => {
+      state.set(ref.scope, ref.token, 'visiting');
+      path.push(ref);
+      for (const dependency of this._dependenciesOf(ref, undefined)) {
+        const mark = state.get(dependency.scope, dependency.token);
         if (mark === 'done') continue;
         if (mark === 'visiting') {
-          const start = path.indexOf(dependency.toString());
-          return [...path.slice(start), dependency.toString()];
+          const start = path.findIndex(
+            (entry) =>
+              entry.scope === dependency.scope && entry.token === dependency.token,
+          );
+          return [...path.slice(start), dependency].map(label);
         }
         const cycle = visit(dependency);
         if (cycle !== null) return cycle;
       }
       path.pop();
-      state.set(token, 'done');
+      state.set(ref.scope, ref.token, 'done');
       return null;
     };
-    for (const token of this._instanceByToken.keys()) {
-      if (state.has(token)) continue;
-      const cycle = visit(token);
+    for (const [ref] of this._instanceByRef.entries()) {
+      if (state.get(ref.scope, ref.token) !== undefined) continue;
+      const cycle = visit(ref);
       if (cycle !== null) return cycle;
     }
     return null;
   }
 
-  /** Introspection: every live edge (both kinds), token-level. */
+  /** Introspection: every live edge (both kinds), scoped on both ends. */
   edges(): DependencyEdge[] {
     const edges: DependencyEdge[] = [];
     for (const [consumerInstance, out] of this._out) {
-      const consumer = this._tokenByInstance.get(consumerInstance);
+      const consumer = this._refByInstance.get(consumerInstance);
       if (consumer === undefined) continue;
-      for (const [dependency, kind] of out) {
+      for (const [dependency, kind] of out.entries()) {
         edges.push({ consumer, dependency, kind });
       }
     }
@@ -211,30 +242,28 @@ export class DependencyGraph {
   }
 
   clear(): void {
-    this._tokenByInstance.clear();
-    this._instanceByToken.clear();
+    this._refByInstance.clear();
+    this._instanceByRef.clear();
     this._out.clear();
     this._in.clear();
   }
 
-  /** In-subset instance-edge dependencies of a token's live instance. */
+  /** In-subset instance-edge dependencies of a scoped token's live instance. */
   private _dependenciesOf(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    token: ServiceIdentifier<any>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    subset: Set<ServiceIdentifier<any>> | undefined,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ): Set<ServiceIdentifier<any>> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = new Set<ServiceIdentifier<any>>();
-    const instance = this._instanceByToken.get(token);
-    if (instance === undefined) return result;
+    ref: ScopedToken,
+    subset: PairIndex<ScopedToken> | undefined,
+  ): ScopedToken[] {
+    const instance = this._instanceByRef.get(ref.scope, ref.token);
+    if (instance === undefined) return [];
     const out = this._out.get(instance);
-    if (out === undefined) return result;
-    for (const [dependency, kind] of out) {
+    if (out === undefined) return [];
+    const result: ScopedToken[] = [];
+    for (const [dependency, kind] of out.entries()) {
       if (kind !== 'instance') continue;
-      if (subset !== undefined && !subset.has(dependency)) continue;
-      result.add(dependency);
+      if (subset !== undefined && subset.get(dependency.scope, dependency.token) === undefined) {
+        continue;
+      }
+      result.push(dependency);
     }
     return result;
   }

@@ -346,7 +346,7 @@ describe('cascade engine — mechanism matrix', () => {
     ix.cascade.configure({
       abortWaitMs: 30,
       onWillCascade: (affected, reason) => {
-        seen.push({ affected: affected.map(String), reason });
+        seen.push({ affected: affected.map((ref) => ref.token.toString()), reason });
         gate = deferred();
         return gate.promise;
       },
@@ -426,7 +426,7 @@ describe('cascade engine — mechanism matrix', () => {
     ix.provide(IB, new SyncDescriptor(B));
     expect(ix.cascade.unitState(IA)).toBe('Pending');
     expect(ix.cascade.unitState(IB)).toBe('Pending');
-    expect(ix.dependencyGraph.findCycle()).toBeNull();
+    expect(ix.dependencyGraph.findCycle((ref) => ref.token.toString())).toBeNull();
 
     // Break the cycle: replace A with an independent recipe; both activate.
     class A2 {
@@ -435,13 +435,13 @@ describe('cascade engine — mechanism matrix', () => {
     ix.provide(IA, new SyncDescriptor(A2));
     expect(ix.cascade.unitState(IA)).toBe('Active');
     expect(ix.cascade.unitState(IB)).toBe('Active');
-    expect(ix.dependencyGraph.findCycle()).toBeNull();
+    expect(ix.dependencyGraph.findCycle((ref) => ref.token.toString())).toBeNull();
 
     // Dynamic chain teardown keeps the graph acyclic and edge-free.
     ix.unprovide(IA);
     expect(ix.cascade.unitState(IB)).toBe('Pending');
     expect(ix.dependencyGraph.edges()).toHaveLength(0);
-    expect(ix.dependencyGraph.findCycle()).toBeNull();
+    expect(ix.dependencyGraph.findCycle((ref) => ref.token.toString())).toBeNull();
     ix.dispose();
   });
 
@@ -470,7 +470,7 @@ describe('cascade engine — mechanism matrix', () => {
     ix.unprovide(IRoot);
     expect(ledgerOf(ix).size).toBe(0);
     expect(ix.dependencyGraph.edges()).toHaveLength(0);
-    expect(ix.dependencyGraph.findCycle()).toBeNull();
+    expect(ix.dependencyGraph.findCycle((ref) => ref.token.toString())).toBeNull();
     expect(ix.cascade.pendingSnapshot().size).toBe(0);
 
     ix.dispose();
@@ -519,5 +519,135 @@ describe('cascade engine — mechanism matrix', () => {
     } finally {
       resetUnexpectedErrorHandler();
     }
+  });
+});
+
+describe('cascade engine — cross-scope orchestration (D9)', () => {
+  it('a parent change cascades into child-scope dependents and rebuilds them', () => {
+    const parent = makeContainer();
+    parent.provide(IRoot, new SyncDescriptor(Root));
+    const child = parent.createChild(new ServiceCollection());
+    child.provide(IMid, new SyncDescriptor(Mid));
+    events = [];
+
+    parent.unprovide(IRoot);
+    // Global reverse topo: the child unit dies before its parent dependency.
+    expect(events).toEqual(['-mid', '-root']);
+    expect(child.cascade.unitState(IMid)).toBe('Pending');
+    expect(parent.cascade.unitState(IRoot)).toBeUndefined();
+
+    parent.provide(IRoot, new SyncDescriptor(Root));
+    // Global topo rebuild: parent first, then the child dependent.
+    expect(events).toEqual(['-mid', '-root', '+root', '+mid']);
+    const mid = child.invokeFunction((a) => a.get(IMid));
+    expect(mid.root).toBe(parent.invokeFunction((a) => a.get(IRoot)));
+    parent.dispose();
+  });
+
+  it('orders a three-level chain globally: deepest first for teardown, reverse for rebuild', () => {
+    const parent = makeContainer();
+    parent.provide(IRoot, new SyncDescriptor(Root));
+    const child = parent.createChild(new ServiceCollection());
+    child.provide(IMid, new SyncDescriptor(Mid));
+    const grandchild = child.createChild(new ServiceCollection());
+    grandchild.provide(ILeaf, new SyncDescriptor(Leaf));
+    events = [];
+
+    parent.unprovide(IRoot);
+    expect(events).toEqual(['-leaf', '-mid', '-root']);
+
+    parent.provide(IRoot, new SyncDescriptor(Root));
+    expect(events).toEqual(['-leaf', '-mid', '-root', '+root', '+mid', '+leaf']);
+    parent.dispose();
+  });
+
+  it('shadowing: a child shadow of the changed token is not in the contagion set', () => {
+    const parent = makeContainer();
+    parent.provide(IRoot, new SyncDescriptor(Root));
+    const child = parent.createChild(new ServiceCollection());
+    // The child registers its own IRoot; the child's Mid binds the shadow.
+    child.provide(IRoot, new SyncDescriptor(Root, ['shadow']));
+    child.provide(IMid, new SyncDescriptor(Mid));
+    events = [];
+
+    parent.unprovide(IRoot);
+    // Only the parent's own root is retired; the child's shadow and its
+    // dependent are untouched.
+    expect(events).toEqual(['-root']);
+    expect(child.cascade.unitState(IMid)).toBe('Active');
+    expect(child.cascade.unitState(IRoot)).toBe('Active');
+    const mid = child.invokeFunction((a) => a.get(IMid));
+    expect(mid.root).toBe(child.invokeFunction((a) => a.get(IRoot)));
+    parent.dispose();
+  });
+
+  it('siblings are isolated: one child scope\'s change never touches the other', () => {
+    const parent = makeContainer();
+    parent.provide(IRoot, new SyncDescriptor(Root));
+    const childA = parent.createChild(new ServiceCollection());
+    const childB = parent.createChild(new ServiceCollection());
+    childA.provide(IMid, new SyncDescriptor(Mid));
+    childB.provide(IMid, new SyncDescriptor(Mid));
+    events = [];
+
+    childA.unprovide(IMid);
+    expect(events).toEqual(['-mid']);
+    expect(childB.cascade.unitState(IMid)).toBe('Active');
+
+    // But a parent change reaches both subtrees.
+    parent.unprovide(IRoot);
+    expect(events).toEqual(['-mid', '-mid', '-root']);
+    expect(childB.cascade.unitState(IMid)).toBe('Pending');
+    parent.dispose();
+  });
+
+  it('a descendant scope dying mid-transaction is skipped idempotently', () => {
+    const parent = makeContainer();
+    parent.provide(IRoot, new SyncDescriptor(Root));
+    const child = parent.createChild(new ServiceCollection());
+    child.provide(IMid, new SyncDescriptor(Mid));
+    events = [];
+    parent.cascade.configure({
+      onWillCascade: () => {
+        child.dispose();
+      },
+    });
+
+    parent.unprovide(IRoot);
+
+    // The child's own dispose already retired mid; the cascade skips the dead
+    // scope's units and completes its own teardown.
+    expect(events).toEqual(['-mid', '-root']);
+    const entry = parent.cascade.history().at(-1)!;
+    expect(entry.tornDown).toEqual(['cascade-root']);
+    expect(parent.cascade.unitState(IRoot)).toBeUndefined();
+    parent.dispose();
+  });
+
+  it('the in-flight guard and suspension work across scopes', async () => {
+    const parent = makeContainer();
+    parent.provide(IRoot, new SyncDescriptor(Root));
+    const child = parent.createChild(new ServiceCollection());
+    child.provide(IMid, new SyncDescriptor(Mid));
+    const gate = deferred();
+    parent.cascade.configure({ onWillCascade: () => gate.promise });
+
+    const tx = parent.cascade.submit({
+      action: 'provide',
+      token: IRoot,
+      descriptor: new SyncDescriptor(Root),
+      reason: 'replace root',
+    });
+    // The child sees its ancestor's token as in flight.
+    expect(child.cascade.isInFlight(IRoot)).toBe(true);
+    expect(() => child.invokeFunction((a) => a.get(IRoot))).toThrow(CascadeConflictError);
+
+    const suspended = child.cascade.resolveWhenAvailable<IRoot>(IRoot);
+    gate.resolve();
+    await tx;
+    const root = await suspended;
+    expect(root).toBeInstanceOf(Root);
+    expect(child.cascade.unitState(IMid)).toBe('Active');
+    parent.dispose();
   });
 });

@@ -146,7 +146,11 @@ describe('persistent dependency graph (L2 substrate)', () => {
 
     const edges = ix.dependencyGraph.edges();
     expect(edges).toHaveLength(1);
-    expect(edges[0]).toMatchObject({ consumer: IBar, dependency: IFoo, kind: 'instance' });
+    expect(edges[0]).toMatchObject({
+      consumer: { scope: ix, token: IBar },
+      dependency: { scope: ix, token: IFoo },
+      kind: 'instance',
+    });
     ix.dispose();
   });
 
@@ -156,8 +160,10 @@ describe('persistent dependency graph (L2 substrate)', () => {
     ix.provide(IBar, new SyncDescriptor(Bar));
     ix.invokeFunction((a) => a.get(IBar));
 
-    expect([...ix.dependencyGraph.affectedSet([IFoo])]).toEqual([IFoo, IBar]);
-    expect([...ix.dependencyGraph.affectedSet([IBar])]).toEqual([IBar]);
+    const tokens = (refs: readonly { token: unknown }[]): unknown[] =>
+      refs.map((ref) => ref.token);
+    expect(tokens(ix.dependencyGraph.affectedSet([{ scope: ix, token: IFoo }]))).toEqual([IFoo, IBar]);
+    expect(tokens(ix.dependencyGraph.affectedSet([{ scope: ix, token: IBar }]))).toEqual([IBar]);
     ix.dispose();
   });
 
@@ -167,9 +173,11 @@ describe('persistent dependency graph (L2 substrate)', () => {
     ix.provide(IBar, new SyncDescriptor(Bar));
     ix.invokeFunction((a) => a.get(IBar));
 
-    const affected = ix.dependencyGraph.affectedSet([IFoo]);
-    expect(ix.dependencyGraph.reverseTopoOrder(affected)).toEqual([IBar, IFoo]);
-    expect(ix.dependencyGraph.topoOrder(affected)).toEqual([IFoo, IBar]);
+    const affected = ix.dependencyGraph.affectedSet([{ scope: ix, token: IFoo }]);
+    const tokens = (refs: readonly { token: unknown }[]): unknown[] =>
+      refs.map((ref) => ref.token);
+    expect(tokens(ix.dependencyGraph.reverseTopoOrder(affected))).toEqual([IBar, IFoo]);
+    expect(tokens(ix.dependencyGraph.topoOrder(affected))).toEqual([IFoo, IBar]);
     ix.dispose();
   });
 
@@ -181,7 +189,8 @@ describe('persistent dependency graph (L2 substrate)', () => {
 
     ix.unprovide(IBar);
     expect(ix.dependencyGraph.edges()).toHaveLength(0);
-    expect([...ix.dependencyGraph.affectedSet([IFoo])]).toEqual([IFoo]);
+    const remaining = ix.dependencyGraph.affectedSet([{ scope: ix, token: IFoo }]);
+    expect(remaining.map((ref) => ref.token)).toEqual([IFoo]);
     ix.dispose();
   });
 

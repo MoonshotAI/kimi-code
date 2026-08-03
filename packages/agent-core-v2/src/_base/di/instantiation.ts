@@ -3,6 +3,7 @@
  */
 
 import type { SyncDescriptor, SyncDescriptor0 } from './descriptors';
+import type { CascadeEngine } from './cascadeEngine';
 import type { DisposableStore, IDisposable } from './lifecycle';
 import type { ServiceCollection } from './serviceCollection';
 
@@ -131,6 +132,9 @@ export interface ProvideHandle extends IDisposable {
 
 export interface IInstantiationService {
   readonly _serviceBrand: undefined;
+
+  /** Cascade engine (L2): per-container facade over the tree-wide orchestrated transactions. */
+  readonly cascade: CascadeEngine;
 
   invokeFunction<R, TS extends any[] = []>(
     fn: (accessor: ServicesAccessor, ...args: TS) => R,
