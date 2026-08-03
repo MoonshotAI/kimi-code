@@ -19,6 +19,8 @@ pub struct SessionProcessor {
     steer: Arc<std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::Mutex<Vec<kimi_agent::context::types::ContentPart>>>>>>,
     /// Per-session busy flags (prompt marks; fork/compact check).
     busy: Arc<std::sync::Mutex<std::collections::HashMap<String, bool>>>,
+    /// Per-command shell cancel flags.
+    shell_cancels: Arc<std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>>>,
 }
 
 impl SessionProcessor {
@@ -34,6 +36,7 @@ impl SessionProcessor {
             cancel: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             steer: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             busy: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            shell_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -751,6 +754,108 @@ impl Processor for SessionProcessor {
                 let mut manager = mgr.lock().await;
                 let ended = manager.end_btw(&input.session_id);
                 Ok(serde_json::json!({ "ended": ended }))
+            })
+        });
+
+        // `session/run_shell` — run a `!` shell command (streaming or not).
+        let mgr = self.state.manager.clone();
+        let shc = self.shell_cancels.clone();
+        processor.register(kimi_protocol::methods::SESSION_RUN_SHELL, move |params| {
+            let mgr = mgr.clone();
+            let shc = shc.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionRunShellParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                // Capture what the streaming run needs, then release the lock.
+                let (callbacks, cwd) = {
+                    let mut manager = mgr.lock().await;
+                    let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                        JsonRpcError::internal_error(format!(
+                            "no agent for session: {}",
+                            input.session_id
+                        ))
+                    })?;
+                    (agent.callbacks.clone(), agent.config.cwd.clone())
+                };
+                let runner = match kimi_agent::tools::bash::BashRunner::detect() {
+                    Some(r) => r,
+                    None => {
+                        return Ok(serde_json::json!({
+                            "output": null, "is_error": false, "unavailable": true
+                        }));
+                    }
+                };
+                use std::sync::atomic::AtomicBool;
+                match input.command_id {
+                    Some(command_id) => {
+                        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+                        shc.lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(command_id.clone(), cancel.clone());
+                        let session_id = input.session_id.clone();
+                        let cid = command_id.clone();
+                        let outcome = runner
+                            .run_streaming(
+                                &input.command,
+                                std::path::Path::new(&cwd),
+                                input.timeout_s,
+                                cancel,
+                                |chunk| {
+                                    callbacks.emit_event(serde_json::json!({
+                                        "type": "session.shell.output",
+                                        "session_id": session_id,
+                                        "command_id": cid,
+                                        "chunk": chunk,
+                                    }));
+                                },
+                            )
+                            .await;
+                        shc.lock().unwrap_or_else(|e| e.into_inner()).remove(&command_id);
+                        Ok(serde_json::json!({
+                            "output": outcome.output,
+                            "is_error": outcome.is_error,
+                            "cancelled": outcome.cancelled,
+                        }))
+                    }
+                    None => {
+                        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+                        let outcome = runner
+                            .run_streaming(
+                                &input.command,
+                                std::path::Path::new(&cwd),
+                                input.timeout_s,
+                                cancel,
+                                |_chunk| {},
+                            )
+                            .await;
+                        Ok(serde_json::json!({
+                            "output": outcome.output,
+                            "is_error": outcome.is_error,
+                        }))
+                    }
+                }
+            })
+        });
+
+        // `session/cancel_shell_command` — flag a streaming command to stop.
+        let shc = self.shell_cancels.clone();
+        processor.register(kimi_protocol::methods::SESSION_CANCEL_SHELL_COMMAND, move |params| {
+            let shc = shc.clone();
+            Box::pin(async move {
+                use std::sync::atomic::Ordering;
+                let input: kimi_protocol::wire_types::SessionCancelShellParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let flag = shc
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(&input.command_id)
+                    .cloned();
+                if let Some(flag_ref) = flag.as_ref() {
+                    flag_ref.store(true, Ordering::Relaxed);
+                }
+                Ok(serde_json::json!({ "cancelled": flag.is_some() }))
             })
         });
 
