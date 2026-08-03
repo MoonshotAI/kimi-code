@@ -6,8 +6,10 @@
 //! SDK) consumes this protocol — in-process via a bounded channel, or across
 //! a transport (stdio / unix socket / websocket, added in stage B3+).
 
+pub mod callbacks;
 pub mod in_process;
 pub mod processor;
 pub mod request_processors;
 
+pub use callbacks::{EventBus, ServerHostCallbacks};
 pub use processor::{JsonRpcHandler, MessageProcessor};
