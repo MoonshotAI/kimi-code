@@ -3,8 +3,7 @@
  *
  * Code-defined builtin skills are constants (not discovered from storage), so
  * they bypass `ISkillDiscovery`: `BUILTIN_SKILLS` feeds the builtin
- * `ISkillSource`, and `registerBuiltinSkills` stamps them into an in-memory
- * catalog for edge composition without a Session.
+ * `ISkillSource`.
  *
  * `visibleBuiltinSkills` is the one place that decides which of them the
  * `builtin_product_skills` switch hides. Every consumer goes through it — the
@@ -13,7 +12,6 @@
  * being filtered on another.
  */
 
-import type { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import type { SkillDefinition } from '#/app/skillCatalog/types';
 import { CHECK_KIMI_CODE_DOCS_SKILL } from './check-kimi-code-docs';
 import { CUSTOM_THEME_SKILL } from './custom-theme';
@@ -42,12 +40,6 @@ export const BUILTIN_SKILLS: readonly SkillDefinition[] = [
 export function visibleBuiltinSkills(productSkillsEnabled: boolean): readonly SkillDefinition[] {
   if (productSkillsEnabled) return BUILTIN_SKILLS;
   return BUILTIN_SKILLS.filter((skill) => skill.productSpecific !== true);
-}
-
-export function registerBuiltinSkills(registry: InMemorySkillCatalog): void {
-  for (const skill of BUILTIN_SKILLS) {
-    registry.registerBuiltinSkill(skill);
-  }
 }
 
 export {
