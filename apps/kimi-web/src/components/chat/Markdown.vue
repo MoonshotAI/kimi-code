@@ -15,6 +15,7 @@ import type { MarkdownIt } from 'markstream-vue';
 import { useIsDark } from '../../composables/useIsDark';
 import type { FilePreviewRequest } from '../../types';
 import { collectFilePathAliases, findFilePathLinks } from '../../lib/filePathLinks';
+import { injectMermaidHtmlLabelsOff } from '../../lib/mermaidDirectives';
 import { markdownRenderPlan } from '../../lib/markdownPerformance';
 import { copyCodeBlockFallback, copyTextToClipboard } from '../../lib/clipboard';
 import * as katexWorkerModule from 'markstream-vue/workers/katexRenderer.worker?worker&type=module';
@@ -386,7 +387,10 @@ type Segment =
 const DIFF_FENCE_RE = /(^|\n)(?:```|~~~)diff\b[^\n]*\n([\s\S]*?)(?:\n)?(?:```|~~~)(?=\n|$)/g;
 
 const segments = computed<Segment[]>(() => {
-  const text = rewriteImageSrcs(props.text ?? '');
+  // htmlLabels-off injection runs before the diff split so every mermaid
+  // fence (streaming or settled) renders with native SVG text — see
+  // mermaidDirectives.ts for why.
+  const text = injectMermaidHtmlLabelsOff(rewriteImageSrcs(props.text ?? ''));
   const out: Segment[] = [];
   let lastIndex = 0;
   DIFF_FENCE_RE.lastIndex = 0;
