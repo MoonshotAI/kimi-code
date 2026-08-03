@@ -45,6 +45,9 @@ enum Commands {
         /// Print engine events (progress/deltas) as they arrive.
         #[arg(long)]
         verbose: bool,
+        /// Print the raw RPC result JSON instead of the rendered transcript.
+        #[arg(long)]
+        json: bool,
     },
     /// List persisted sessions.
     Sessions {
@@ -212,14 +215,36 @@ fn connect_with_renderer(
     Ok((client, Some(renderer)))
 }
 
+/// Extract the last assistant message's text from a `session/get_context`
+/// result (TS print-mode parity: `kimi -p` renders the transcript, not the
+/// RPC envelope). Returns `None` when the context has no assistant text.
+fn last_assistant_text(context: &serde_json::Value) -> Option<String> {
+    let history = context["history"].as_array()?;
+    for message in history.iter().rev() {
+        if message["role"].as_str() != Some("assistant") {
+            continue;
+        }
+        let text: String = message["content"]
+            .as_array()?
+            .iter()
+            .filter_map(|part| part["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("");
+        if !text.is_empty() {
+            return Some(text);
+        }
+    }
+    None
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let Cli { server, command } = Cli::parse();
     match command {
-        Commands::Print { prompt, verbose } => {
+        Commands::Print { prompt, verbose, json } => {
             // Progress on stderr: always with `--verbose`, and by default when
             // stderr is a terminal (script pipes stay clean — stdout keeps the
-            // result JSON contract either way).
+            // result contract either way).
             let capture = verbose || std::io::stderr().is_terminal();
             let (mut client, renderer) = connect_with_renderer(&server, capture)?;
             let result = kimi_exec::run_prompt(&mut client, "kimi-exec", &prompt, kimi_exec::native_llm_from_config()).await;
@@ -230,7 +255,22 @@ async fn main() -> anyhow::Result<()> {
                 eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
                 std::process::exit(1);
             }
-            println!("{result}");
+            if json {
+                println!("{result}");
+            } else {
+                // Default: render the transcript — the last assistant text
+                // from the session context (raw RPC envelope via `--json`).
+                let ctx = client
+                    .call(
+                        kimi_protocol::methods::SESSION_GET_CONTEXT,
+                        serde_json::json!({ "session_id": "kimi-exec" }),
+                    )
+                    .await;
+                match last_assistant_text(&ctx["result"]) {
+                    Some(text) => println!("{text}"),
+                    None => println!("{result}"),
+                }
+            }
         }
         Commands::Sessions { limit } => {
             let mut client = connect(&server)?;
@@ -454,7 +494,7 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::render_event;
+    use super::{last_assistant_text, render_event};
 
     #[test]
     fn render_known_event_types() {
@@ -493,5 +533,32 @@ mod tests {
     fn render_unknown_event_passes_through() {
         let event = serde_json::json!({ "type": "mystery.thing", "x": 1 });
         assert_eq!(render_event(&event), None);
+    }
+
+    #[test]
+    fn last_assistant_text_extracts_transcript() {
+        let context = serde_json::json!({
+            "history": [
+                { "role": "user", "content": [{ "type": "text", "text": "hi" }] },
+                { "role": "assistant", "content": [{ "type": "text", "text": "hello " }, { "type": "text", "text": "world" }] },
+                { "role": "user", "content": [{ "type": "text", "text": "again" }] },
+                { "role": "assistant", "content": [] },
+            ],
+            "token_count": 10,
+        });
+        assert_eq!(
+            last_assistant_text(&context).as_deref(),
+            Some("hello world"),
+            "joins text parts of the last assistant message with text"
+        );
+    }
+
+    #[test]
+    fn last_assistant_text_none_when_no_text() {
+        assert_eq!(last_assistant_text(&serde_json::json!({ "history": [] })), None);
+        let context = serde_json::json!({
+            "history": [{ "role": "user", "content": [{ "type": "text", "text": "hi" }] }]
+        });
+        assert_eq!(last_assistant_text(&context), None);
     }
 }
