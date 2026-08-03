@@ -7,6 +7,7 @@ import { traceKeyEvent } from '../../debug/trace';
 import type {
   AppConfig,
   AppGoal,
+  AppMcpServerConfig,
   AppMessage,
   AppMessageRole,
   AppModel,
@@ -14,6 +15,7 @@ import type {
   ProviderRefreshResult,
   AppSession,
   AppSkill,
+  AppUserSkill,
   AppSessionCursor,
   AppSessionRuntimeStatus,
   AppSessionSnapshot,
@@ -27,7 +29,6 @@ import type {
   KimiEventConnection,
   KimiEventHandlers,
   KimiWebApi,
-  OAuthLoginStartResult,
   Page,
   PageRequest,
   PromptSubmission,
@@ -65,11 +66,10 @@ import type {
   WireFsEntry,
   WireFsHomeResult,
   WireGoalSnapshot,
+  WireListMcpServersResponse,
   WireMessage,
+  WireMcpServerConfig,
   WireModel,
-  WireOAuthCancelResult,
-  WireOAuthLoginPollResult,
-  WireOAuthLoginStartResult,
   WirePage,
   WirePromptSubmitResult,
   WirePromptSteerResult,
@@ -184,6 +184,12 @@ interface WireSkillDescriptor {
   source: string;
   type?: string;
   disable_model_invocation?: boolean;
+}
+
+interface WireUserSkill {
+  name: string;
+  description: string;
+  content: string;
 }
 
 interface WireArchiveResult {
@@ -899,6 +905,33 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return { activated: data.activated, skillName: data.skill_name };
   }
 
+  // User-level SKILL.md management (config surface)
+  // GET    /skills/config/user-skills             → { skills: WireUserSkill[] }
+  // POST   /skills/config/user-skills/{name}      body { description, content } → WireUserSkill
+  // DELETE /skills/config/user-skills/{name}      → {}
+
+  async listUserSkills(): Promise<AppUserSkill[]> {
+    const data = await this.http.get<{ skills: WireUserSkill[] }>(
+      `/skills/config/user-skills`,
+    );
+    return data.skills ?? [];
+  }
+
+  async upsertUserSkill(
+    name: string,
+    input: { description: string; content: string },
+  ): Promise<AppUserSkill> {
+    const data = await this.http.post<WireUserSkill>(
+      `/skills/config/user-skills/${encodeURIComponent(name)}`,
+      { description: input.description, content: input.content },
+    );
+    return { name: data.name, description: data.description, content: data.content };
+  }
+
+  async deleteUserSkill(name: string): Promise<void> {
+    await this.http.delete(`/skills/config/user-skills/${encodeURIComponent(name)}`);
+  }
+
   // -------------------------------------------------------------------------
   // File System
   // -------------------------------------------------------------------------
@@ -1063,6 +1096,24 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return { path: data.path, diff: data.diff };
   }
 
+  // POST /sessions/{id}:git-branches → { branches: string[] }
+  // POST /sessions/{id}:git-checkout body { branch } → { branch: string }
+  async listBranches(sessionId: string): Promise<string[]> {
+    const data = await this.http.post<{ branches: string[] }>(
+      `/sessions/${encodeURIComponent(sessionId)}:git-branches`,
+      {},
+    );
+    return data.branches ?? [];
+  }
+
+  async switchBranch(sessionId: string, branch: string): Promise<{ branch: string }> {
+    const data = await this.http.post<{ branch: string }>(
+      `/sessions/${encodeURIComponent(sessionId)}:git-checkout`,
+      { branch },
+    );
+    return { branch: data.branch };
+  }
+
   getFileDownloadUrl(sessionId: string, path: string): string {
     const encodedPath = path.split('/').map((part) => encodeURIComponent(part)).join('/');
     return buildRestUrl(
@@ -1207,7 +1258,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
   }
 
   async listProviders(): Promise<AppProvider[]> {
-    // PRESUMED endpoint: GET /v1/providers → { items: WireProvider[] }
+    // GET /v1/providers → { items: WireProvider[] } (kap-server modelCatalog)
     const data = await this.http.get<{ items: WireProvider[] }>('/providers');
     return data.items.map(toAppProvider);
   }
@@ -1218,17 +1269,52 @@ export class DaemonKimiWebApi implements KimiWebApi {
     baseUrl?: string;
     defaultModel?: string;
   }): Promise<AppProvider> {
-    // PRESUMED endpoint: POST /v1/providers → WireProvider
-    const body: Record<string, unknown> = { type: input.type };
-    if (input.apiKey !== undefined) body['api_key'] = input.apiKey;
-    if (input.baseUrl !== undefined) body['base_url'] = input.baseUrl;
-    if (input.defaultModel !== undefined) body['default_model'] = input.defaultModel;
+    // POST /v1/providers → WireProvider (kap-server modelCatalog)
+    // 后端 schema 要求 id（providers 表 key）和 models（至少 1 项）必需，
+    // 且 default_model 必须能在 models[].model 中找到。这里用 type 作为 id
+    // （与 vendors.contrib.ts 注册名一致），用 defaultModel 作为初始 model，
+    // 创建后由 useModelProviderState 触发 refreshProvider 自动发现完整列表。
+    const id = input.type;
+    const trimmedDefault = input.defaultModel?.trim() ?? '';
+    const initialModel = trimmedDefault.length > 0 ? trimmedDefault : input.type;
+    const body: Record<string, unknown> = {
+      id,
+      type: input.type,
+      models: [
+        {
+          model: initialModel,
+          max_context_size: 128000,
+        },
+      ],
+    };
+    if (input.apiKey !== undefined && input.apiKey.length > 0) body['api_key'] = input.apiKey;
+    if (input.baseUrl !== undefined && input.baseUrl.trim().length > 0) {
+      body['base_url'] = input.baseUrl.trim();
+    }
+    if (trimmedDefault.length > 0) body['default_model'] = trimmedDefault;
     const data = await this.http.post<WireProvider>('/providers', body);
     return toAppProvider(data);
   }
 
+  async updateProvider(id: string, input: {
+    type?: string;
+    apiKey?: string;
+    baseUrl?: string;
+    defaultModel?: string;
+  }): Promise<AppProvider> {
+    // PATCH /v1/providers/{id} → WireProvider (kap-server modelCatalog, partial
+    // merge — absent fields keep their stored value, models untouched).
+    const body: Record<string, unknown> = {};
+    if (input.type !== undefined) body['type'] = input.type;
+    if (input.apiKey !== undefined) body['api_key'] = input.apiKey;
+    if (input.baseUrl !== undefined) body['base_url'] = input.baseUrl;
+    if (input.defaultModel !== undefined) body['default_model'] = input.defaultModel;
+    const data = await this.http.patch<WireProvider>(`/providers/${encodeURIComponent(id)}`, body);
+    return toAppProvider(data);
+  }
+
   async deleteProvider(id: string): Promise<{ deleted: true }> {
-    // PRESUMED endpoint: DELETE /v1/providers/{id} → { deleted: true }
+    // DELETE /v1/providers/{id} → 204 (kap-server modelCatalog)
     return this.http.delete<{ deleted: true }>(`/providers/${encodeURIComponent(id)}`);
   }
 
@@ -1241,11 +1327,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
 
   async refreshAllProviders(): Promise<ProviderRefreshResult> {
     const data = await this.http.post<WireProviderRefreshResult>('/providers:refresh');
-    return toProviderRefreshResult(data);
-  }
-
-  async refreshOAuthProviderModels(): Promise<ProviderRefreshResult> {
-    const data = await this.http.post<WireProviderRefreshResult>('/providers:refresh_oauth');
     return toProviderRefreshResult(data);
   }
 
@@ -1292,6 +1373,31 @@ export class DaemonKimiWebApi implements KimiWebApi {
   }
 
   // -------------------------------------------------------------------------
+  // MCP server config — REAL endpoints (user-level mcp.json management)
+  // -------------------------------------------------------------------------
+
+  async listMcpServers(): Promise<Record<string, AppMcpServerConfig>> {
+    const data = await this.http.get<WireListMcpServersResponse>('/mcp/config/servers');
+    return toAppMcpServerMap(data.servers);
+  }
+
+  async upsertMcpServer(
+    name: string,
+    config: AppMcpServerConfig,
+  ): Promise<Record<string, AppMcpServerConfig>> {
+    const wire = toWireMcpServerConfig(config);
+    const data = await this.http.post<WireListMcpServersResponse>(
+      `/mcp/config/servers/${encodeURIComponent(name)}`,
+      wire,
+    );
+    return toAppMcpServerMap(data.servers);
+  }
+
+  async deleteMcpServer(name: string): Promise<void> {
+    await this.http.delete<unknown>(`/mcp/config/servers/${encodeURIComponent(name)}`);
+  }
+
+  // -------------------------------------------------------------------------
   // Auth — REAL endpoints
   // -------------------------------------------------------------------------
 
@@ -1310,48 +1416,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
         ? { status: data.managed_provider.status }
         : null,
     };
-  }
-
-  async startOAuthLogin(): Promise<OAuthLoginStartResult> {
-    const data = await this.http.post<WireOAuthLoginStartResult>('/oauth/login', {});
-    if (data.status === 'authenticated') {
-      return {
-        flowId: data.flow_id,
-        provider: data.provider,
-        status: 'authenticated',
-      };
-    }
-    return {
-      flowId: data.flow_id,
-      provider: data.provider,
-      status: 'pending',
-      verificationUri: data.verification_uri,
-      verificationUriComplete: data.verification_uri_complete,
-      userCode: data.user_code,
-      expiresIn: data.expires_in,
-      interval: data.interval,
-      expiresAt: data.expires_at,
-    };
-  }
-
-  async pollOAuthLogin(): Promise<{
-    flowId: string;
-    status: 'pending' | 'authenticated' | 'expired' | 'cancelled';
-    resolvedAt?: string;
-  } | null> {
-    // data may be null if no flow is active
-    const data = await this.http.get<WireOAuthLoginPollResult | null>('/oauth/login');
-    if (!data) return null;
-    return {
-      flowId: data.flow_id,
-      status: data.status,
-      resolvedAt: data.resolved_at,
-    };
-  }
-
-  async cancelOAuthLogin(): Promise<{ cancelled: boolean; status: string }> {
-    const data = await this.http.delete<WireOAuthCancelResult>('/oauth/login');
-    return { cancelled: data.cancelled, status: data.status };
   }
 
   async logout(): Promise<{ loggedOut: boolean }> {
@@ -1558,5 +1622,58 @@ function toProviderRefreshResult(data: WireProviderRefreshResult): ProviderRefre
     })),
     unchanged: data.unchanged,
     failed: data.failed,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// MCP server config mappers — snake_case wire ↔ camelCase AppMcpServerConfig.
+// Only the leaf keys differ; transport is preserved as the discriminator.
+// ---------------------------------------------------------------------------
+
+function toAppMcpServerMap(
+  wire: Record<string, WireMcpServerConfig>,
+): Record<string, AppMcpServerConfig> {
+  const out: Record<string, AppMcpServerConfig> = {};
+  for (const [name, cfg] of Object.entries(wire)) {
+    out[name] = toAppMcpServerConfig(cfg);
+  }
+  return out;
+}
+
+function toAppMcpServerConfig(wire: WireMcpServerConfig): AppMcpServerConfig {
+  return {
+    transport: wire.transport,
+    command: wire.command,
+    args: wire.args,
+    env: wire.env,
+    cwd: wire.cwd,
+    executor: wire.executor,
+    url: wire.url,
+    headers: wire.headers,
+    bearerTokenEnvVar: wire.bearer_token_env_var,
+    enabled: wire.enabled,
+    startupTimeoutMs: wire.startup_timeout_ms,
+    toolTimeoutMs: wire.tool_timeout_ms,
+    enabledTools: wire.enabled_tools,
+    disabledTools: wire.disabled_tools,
+  };
+}
+
+function toWireMcpServerConfig(app: AppMcpServerConfig): WireMcpServerConfig {
+  return {
+    transport: app.transport,
+    command: app.command,
+    args: app.args,
+    env: app.env,
+    cwd: app.cwd,
+    executor: app.executor,
+    url: app.url,
+    headers: app.headers,
+    bearer_token_env_var: app.bearerTokenEnvVar,
+    enabled: app.enabled,
+    startup_timeout_ms: app.startupTimeoutMs,
+    tool_timeout_ms: app.toolTimeoutMs,
+    enabled_tools: app.enabledTools,
+    disabled_tools: app.disabledTools,
   };
 }

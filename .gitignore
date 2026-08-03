@@ -44,3 +44,8 @@ handover.md
 *-mockup.html
 *-demo.html
 *-demos.html
+
+# 损坏/备份目录（F: 盘文件系统损坏，禁止 git 遍历）
+*.bak-corrupt/
+.omo/run-continuation/
+

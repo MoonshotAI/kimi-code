@@ -1,5 +1,12 @@
 # @moonshot-ai/kimi-code-oauth
 
+## 未发布
+
+### Patch Changes（二开 fork）
+
+- `refreshProviderModels` 新增分支 2.6：对 `openai` / `deepseek` / `qwen` / `zhipu` / `baichuan` / `minimax` / `ollama` / `custom` 等 OpenAI 兼容 vendor 类型，统一走 `{baseUrl}/models` 自动发现模型列表；`fetchGenericOpenAIModels` 支持无 API key 的本地端点（Ollama / custom）。
+- `refreshProviderModels` 分支 1（Managed Kimi Code OAuth）catch 块：`ManagedKimiCodeModelsAuthError`（401/402/403）或 membership / subscription / benefit 关键词错误降级为 `unchanged`，不进 `failed` 列表——fork 仓库本地未登录官方 OAuth 是常态，避免每次 `refreshAllProviders` 都弹告警 toast 干扰 API-key provider 工作流。
+
 ## 0.3.0
 
 ### Minor Changes

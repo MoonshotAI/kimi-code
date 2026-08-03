@@ -136,6 +136,18 @@ export type FsMkdirRequest = z.infer<typeof fsMkdirRequestSchema>;
 export const fsMkdirResponseSchema = fsEntrySchema;
 export type FsMkdirResponse = z.infer<typeof fsMkdirResponseSchema>;
 
+export const fsWriteRequestSchema = z.object({
+  path: z.string().min(1),
+  content: z.string(),
+});
+export type FsWriteRequest = z.infer<typeof fsWriteRequestSchema>;
+
+export const fsWriteResponseSchema = z.object({
+  path: z.string(),
+  size: z.number().int().nonnegative(),
+});
+export type FsWriteResponse = z.infer<typeof fsWriteResponseSchema>;
+
 export const fsListManyRequestSchema = z.object({
   paths: z.array(z.string().min(1)).min(1).max(100),
   depth: z.number().int().min(1).max(10).default(1),
@@ -240,6 +252,7 @@ export interface IWorkspaceFsService {
   stat(req: FsStatRequest): Promise<FsStatResponse>;
   statMany(req: FsStatManyRequest): Promise<FsStatManyResponse>;
   mkdir(req: FsMkdirRequest): Promise<FsMkdirResponse>;
+  write(req: FsWriteRequest): Promise<FsWriteResponse>;
   search(req: FsSearchRequest): Promise<FsSearchResponse>;
   grep(req: FsGrepRequest): Promise<FsGrepResponse>;
   gitStatus(req: FsGitStatusRequest): Promise<FsGitStatusResponse>;

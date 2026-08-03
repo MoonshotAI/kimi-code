@@ -116,6 +116,12 @@ export interface ServerStartOptions {
   readonly allowRemoteShutdown?: boolean;
   readonly allowRemoteTerminals?: boolean;
   readonly authTokenService?: IAuthTokenService;
+  /**
+   * Skip the bearer-token gate on every REST and WebSocket route. Defaults to
+   * true (unauthenticated access — the web UI connects without a token); pass
+   * `false` to enforce the bearer token (requires `authTokenService`). The
+   * `/api/v1/meta` payload reports the live state as `dangerous_bypass_auth`.
+   */
   readonly disableAuth?: boolean;
   /**
    * Optional *additional* credential accepted on the RPC surface (debug REST +
@@ -330,22 +336,24 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const allowedOrigins = opts.corsOrigins ?? parseCorsOrigins();
   app.addHook('onRequest', hostCheck.onRequest);
   app.addHook('onRequest', createOriginHook({ allowedOrigins }));
-  if (opts.disableAuth !== true) {
+  if (opts.disableAuth === false) {
     app.addHook(
       'onRequest',
       createAuthHook(authTokenService, { limiter: authFailureLimiter, validateCredential }),
     );
   } else {
-    // `--dangerous-bypass-auth`: the operator explicitly disabled the
-    // bearer-token gate on every REST and WebSocket route. Warn loudly —
-    // especially on a non-loopback bind, where this grants unauthenticated
-    // remote session / filesystem / shell access to anyone who can reach the
-    // port. The `/api/v1/meta` payload advertises the state so the web UI can
-    // connect without a token.
-    logger.warn(
-      { host, exposureClass },
-      'DANGEROUS: bearer-token auth is DISABLED (--dangerous-bypass-auth) — every REST and WebSocket route accepts unauthenticated requests',
-    );
+    // Bearer-token auth is disabled by default — every REST and WebSocket
+    // route accepts unauthenticated requests (the web UI connects without a
+    // token). On a non-loopback bind this grants unauthenticated remote
+    // session / filesystem / shell access to anyone who can reach the port,
+    // so warn loudly there; the `/api/v1/meta` payload advertises the state
+    // so the web UI can connect without a token.
+    if (exposureClass !== 'loopback') {
+      logger.warn(
+        { host, exposureClass },
+        'bearer-token auth is DISABLED (default) — every REST and WebSocket route accepts unauthenticated requests',
+      );
+    }
   }
   if (exposureClass !== 'loopback') {
     app.addHook('onSend', createSecurityHeadersHook({ tls: false }));
@@ -477,7 +485,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     connectionRegistry,
     broadcaster,
     transcriptService,
-    dangerousBypassAuth: opts.disableAuth === true,
+    dangerousBypassAuth: true,
   });
 
   const wssV1 = registerWsV1(core, {
@@ -524,7 +532,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       return;
     }
 
-    if (opts.disableAuth !== true) {
+    if (opts.disableAuth === false) {
       const authHeader = req.headers.authorization;
       const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : null;
       const protocolToken = extractWsBearerToken(req.headers['sec-websocket-protocol']);

@@ -42,8 +42,12 @@ export type GetProviderResponse = z.infer<typeof getProviderResponseSchema>;
 // ---------------------------------------------------------------------------
 
 /**
- * The six wire protocols the core config schema accepts as a provider `type`.
- * (`vertexai` resolves through the google-genai base's vertex mode at runtime.)
+ * The wire protocols the core config schema accepts as a provider `type`,
+ * plus the contributed vendor ids registered in agent-core-v2's
+ * `vendors.contrib.ts` — each of those speaks the OpenAI wire protocol via
+ * its registered `baseProtocol`, so they are accepted here directly and the
+ * client no longer needs a wire-type alias map. (`vertexai` resolves through
+ * the google-genai base's vertex mode at runtime.)
  */
 export const providerWireTypeSchema = z.enum([
   'kimi',
@@ -52,6 +56,13 @@ export const providerWireTypeSchema = z.enum([
   'anthropic',
   'google-genai',
   'vertexai',
+  'deepseek',
+  'qwen',
+  'zhipu',
+  'baichuan',
+  'minimax',
+  'ollama',
+  'custom',
 ]);
 export type ProviderWireType = z.infer<typeof providerWireTypeSchema>;
 
@@ -172,6 +183,25 @@ export const replaceProviderResponseSchema = z.object({
   provider: providerCatalogItemSchema,
 });
 export type ReplaceProviderResponse = z.infer<typeof replaceProviderResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// PATCH /v1/providers/{provider_id} — partial provider edit
+// ---------------------------------------------------------------------------
+
+/**
+ * The web client's "edit one field" payload: every field is optional, absent
+ * means "keep the stored value". `models` is intentionally absent — a partial
+ * patch never rebuilds the alias set (use PUT for that). `api_key` keeps the
+ * tri-state semantics of PUT: omitted preserves, `""` clears, else replaces.
+ * `new_id` is not supported here — rename is a full-replace concern (PUT).
+ */
+export const patchProviderRequestSchema = z.object({
+  type: providerWireTypeSchema.optional(),
+  api_key: z.string().optional(),
+  base_url: z.string().trim().optional(),
+  default_model: z.string().min(1).optional(),
+});
+export type PatchProviderRequest = z.infer<typeof patchProviderRequestSchema>;
 
 // ---------------------------------------------------------------------------
 // GET /v1/catalog/providers[{catalog_id}] — models.dev directory (proxied)

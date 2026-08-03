@@ -71,6 +71,8 @@ export interface IGitService {
   status(cwd: string, pathFilter?: ReadonlySet<string>): Promise<FsGitStatusResponse>;
   diff(cwd: string, relPath: string, absPath: string): Promise<FsDiffResponse>;
   findWorkTree(cwd: string): Promise<GitWorkTree | null>;
+  listBranches(cwd: string): Promise<string[]>;
+  checkout(cwd: string, branch: string): Promise<void>;
 }
 
 export const IGitService: ServiceIdentifier<IGitService> =

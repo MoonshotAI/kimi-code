@@ -1276,6 +1276,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
       @fork-session="(id) => emit('forkSession', id)"
       @archive-session="(id) => emit('archiveSession', id)"
       @export-session="(id) => emit('exportSession', id)"
+      @git-refresh="emit('refreshGitStatus')"
     />
 
     <!-- Conversation outline: right edge rail of vertical bars (one per user

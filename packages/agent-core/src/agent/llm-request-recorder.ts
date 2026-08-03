@@ -10,7 +10,7 @@
  * `records/types.ts` for the persistence contract.
  */
 
-import { KimiChatProvider, type ChatProvider, type Message, type Tool } from '@moonshot-ai/kosong';
+import { type ChatProvider, type Message, type Tool } from '@moonshot-ai/kosong';
 
 import { parseFloatEnv } from '#/config/resolve';
 import { resolveThinkingKeep } from '#/config/kimi-env-params';
@@ -70,7 +70,7 @@ export class LlmRequestRecorder {
     // helpers used at construction. thinkingEffort needs no mirroring — the
     // Kimi provider derives it from the request body's thinking payload, so
     // env effort overrides are already reflected in the read value.
-    const isKimiProvider = provider instanceof KimiChatProvider;
+    const isKimiProvider = provider.name === 'kimi';
     this.agent.records.logRecord({
       type: 'llm.request',
       kind: fields.kind ?? 'loop',

@@ -3,10 +3,11 @@
      status, "open in editor", and a ⋮ more-menu that bundles copy-all plus
      the same session actions available from the sidebar session row. -->
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onUnmounted, ref, Teleport, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import { isMacosDesktop } from '../../lib/desktopFlag';
+import { getKimiWebApi } from '../../api';
 import Menu from '../ui/Menu.vue';
 import MenuItem from '../ui/MenuItem.vue';
 import IconButton from '../ui/IconButton.vue';
@@ -43,6 +44,8 @@ const emit = defineEmits<{
   forkSession: [id: string];
   archiveSession: [id: string];
   exportSession: [id: string];
+  /** Emitted after a successful branch switch so the parent re-fetches git status. */
+  'git-refresh': [];
 }>();
 
 const ahead = computed(() => props.ahead ?? 0);
@@ -82,10 +85,13 @@ function onDocClick(e: MouseEvent): void {
   const target = e.target as Node;
   if (menuRef.value?.el?.contains(target) || kebabRef.value?.el?.contains(target)) return;
   closeMenu();
+  if (branchMenuRef.value?.contains(target) || branchBtnRef.value?.contains(target)) return;
+  closeBranchMenu();
 }
 
 function onScrollOrResize(): void {
   closeMenu();
+  closeBranchMenu();
 }
 
 async function toggleMenu(e: Event): Promise<void> {
@@ -216,6 +222,117 @@ function startArchive(): void {
   closeMenu();
   emit('archiveSession', props.sessionId);
 }
+
+// ---------------------------------------------------------------------------
+// Branch dropdown — loads local branches via POST /sessions/{id}:git-branches
+// and switches via :git-checkout. Rendered with Teleport so it escapes the
+// header's overflow / drag region. Closing the menu drops the cached list so a
+// reopen refetches (branches may have changed in the meantime).
+// ---------------------------------------------------------------------------
+const branchMenuOpen = ref(false);
+const branchBtnRef = ref<HTMLButtonElement | null>(null);
+const branchMenuRef = ref<HTMLDivElement | null>(null);
+const branchMenuStyle = ref<Record<string, string>>({});
+const branches = ref<string[] | undefined>(undefined);
+const branchesLoading = ref(false);
+const branchesError = ref(false);
+const switchingBranch = ref<string | null>(null);
+
+watch(
+  () => props.sessionId,
+  () => closeBranchMenu(),
+);
+
+async function toggleBranchMenu(e: Event): Promise<void> {
+  e.stopPropagation();
+  if (branchMenuOpen.value) {
+    closeBranchMenu();
+    return;
+  }
+  if (!props.sessionId) return;
+  branchMenuOpen.value = true;
+  document.addEventListener('mousedown', onDocClick);
+  window.addEventListener('resize', onScrollOrResize);
+  await nextTick();
+  positionBranchMenu();
+  void loadBranches();
+}
+
+function positionBranchMenu(): void {
+  const btn = branchBtnRef.value;
+  const menu = branchMenuRef.value;
+  if (!btn || !menu) return;
+  const r = btn.getBoundingClientRect();
+  const gap = 4;
+  const margin = 8;
+  const menuW = menu.offsetWidth;
+  const menuH = menu.offsetHeight;
+  let top = r.bottom + gap;
+  if (top + menuH > window.innerHeight - margin) {
+    top = Math.max(margin, r.top - menuH - gap);
+  }
+  let left = r.left;
+  if (left + menuW > window.innerWidth - margin) {
+    left = Math.max(margin, r.right - menuW);
+  }
+  branchMenuStyle.value = {
+    top: `${Math.round(top)}px`,
+    left: `${Math.round(left)}px`,
+  };
+}
+
+async function loadBranches(): Promise<void> {
+  if (!props.sessionId) return;
+  branchesLoading.value = true;
+  branchesError.value = false;
+  try {
+    const api = getKimiWebApi();
+    branches.value = await api.listBranches(props.sessionId);
+  } catch {
+    branchesError.value = true;
+    branches.value = undefined;
+  } finally {
+    branchesLoading.value = false;
+    await nextTick();
+    positionBranchMenu();
+  }
+}
+
+async function selectBranch(branch: string): Promise<void> {
+  if (!props.sessionId) return;
+  if (branch === props.branch) {
+    closeBranchMenu();
+    return;
+  }
+  if (switchingBranch.value !== null) return;
+  switchingBranch.value = branch;
+  try {
+    const api = getKimiWebApi();
+    await api.switchBranch(props.sessionId, branch);
+    emit('git-refresh');
+    closeBranchMenu();
+  } catch {
+    // Surface a transient error state in the dropdown; keep it open so the
+    // user can retry or pick another branch.
+    branchesError.value = true;
+  } finally {
+    switchingBranch.value = null;
+  }
+}
+
+function closeBranchMenu(): void {
+  branchMenuOpen.value = false;
+  branches.value = undefined;
+  branchesLoading.value = false;
+  branchesError.value = false;
+  switchingBranch.value = null;
+  // Only detach the global listeners when BOTH menus are closed — the more-menu
+  // shares the same onDocClick/onScrollOrResize registration.
+  if (!menuOpen.value) {
+    document.removeEventListener('mousedown', onDocClick);
+    window.removeEventListener('resize', onScrollOrResize);
+  }
+}
 </script>
 
 <template>
@@ -296,30 +413,82 @@ function startArchive(): void {
 
     <div class="ch-spacer" />
 
-    <!-- Git branch + status — plain text with semantic colors. Renders for any
-         git repo, even a detached HEAD (empty branch → "detached" label), so the
-         diff counter below is never hidden just because there's no branch name. -->
-    <button
-      v-if="isGitRepo"
-      type="button"
-      class="ch-git"
-      @click="emit('openChanges')"
-    >
-      <span
-        class="ch-branch"
-        :class="{ 'ch-detached': !branch }"
+    <!-- Git branch + status — the branch name is a clickable dropdown that
+         lists local branches and switches via :git-checkout. The diff/sync
+         pills stay a separate click target that opens the Changes panel.
+         Renders for any git repo, even a detached HEAD (empty branch →
+         "detached" label), so the diff counter is never hidden just because
+         there's no branch name. -->
+    <div v-if="isGitRepo" class="ch-git">
+      <button
+        ref="branchBtnRef"
+        type="button"
+        class="ch-branch-btn"
+        :class="{ 'ch-detached': !branch, 'is-open': branchMenuOpen }"
+        :disabled="!sessionId"
+        :aria-expanded="branchMenuOpen"
+        :aria-label="t('header.branchSwitch')"
+        :title="t('header.branchSwitch')"
+        @click.stop="toggleBranchMenu($event)"
       >
-        {{ branch || t('header.detached') }}
-      </span>
-      <span v-if="ahead > 0 || behind > 0" class="ch-pill ch-sync-pill">
-        <span v-if="ahead > 0" class="ch-ahead">↑{{ ahead }}</span>
-        <span v-if="behind > 0" class="ch-behind">↓{{ behind }}</span>
-      </span>
-      <span v-if="hasLineStats" class="ch-pill ch-diff-pill">
-        <span v-if="adds > 0" class="ch-add">+{{ adds }}</span>
-        <span v-if="dels > 0" class="ch-del">-{{ dels }}</span>
-      </span>
-    </button>
+        <span class="ch-branch-text">{{ branch || t('header.detached') }}</span>
+        <Icon name="chevron-down" size="sm" class="ch-branch-caret" />
+      </button>
+      <button
+        v-if="ahead > 0 || behind > 0 || hasLineStats"
+        type="button"
+        class="ch-pills-btn"
+        :title="t('header.gitTooltip')"
+        @click="emit('openChanges')"
+      >
+        <span v-if="ahead > 0 || behind > 0" class="ch-pill ch-sync-pill">
+          <span v-if="ahead > 0" class="ch-ahead">↑{{ ahead }}</span>
+          <span v-if="behind > 0" class="ch-behind">↓{{ behind }}</span>
+        </span>
+        <span v-if="hasLineStats" class="ch-pill ch-diff-pill">
+          <span v-if="adds > 0" class="ch-add">+{{ adds }}</span>
+          <span v-if="dels > 0" class="ch-del">-{{ dels }}</span>
+        </span>
+      </button>
+    </div>
+
+    <!-- Branch dropdown — Teleport to body so it escapes the header's overflow
+         and (on macOS) the window-drag region. -->
+    <Teleport to="body">
+      <div
+        v-if="branchMenuOpen"
+        ref="branchMenuRef"
+        class="ch-branch-menu"
+        :style="branchMenuStyle"
+        @click.stop
+      >
+        <div v-if="branchesLoading" class="ch-branch-state">{{ t('header.branchLoading') }}</div>
+        <template v-else-if="branchesError">
+          <div class="ch-branch-state ch-branch-error">{{ t('header.branchLoadFailed') }}</div>
+          <button type="button" class="ch-branch-retry" @click="loadBranches">
+            {{ t('header.branchSwitch') }}
+          </button>
+        </template>
+        <template v-else-if="branches && branches.length > 0">
+          <button
+            v-for="b in branches"
+            :key="b"
+            type="button"
+            class="ch-branch-item"
+            :class="{ 'is-current': b === branch, 'is-switching': switchingBranch === b }"
+            :disabled="switchingBranch !== null"
+            @click="selectBranch(b)"
+          >
+            <Icon v-if="b === branch" name="check" size="sm" />
+            <span v-else class="ch-branch-dot" aria-hidden="true" />
+            <span class="ch-branch-name">{{ b }}</span>
+          </button>
+        </template>
+        <div v-else-if="branches && branches.length === 0" class="ch-branch-state">
+          {{ t('header.branchEmpty') }}
+        </div>
+      </div>
+    </Teleport>
 
     <!-- GitHub PR status -->
     <button
@@ -386,27 +555,48 @@ function startArchive(): void {
   display: flex;
   align-items: center;
   gap: 4px;
-  border: none;
-  background: transparent;
-  padding: 0;
   color: var(--muted);
   font-family: var(--mono);
   font-size: calc(var(--ui-font-size) - 2px);
   flex: 0 1 auto;
-  max-width: none;
   min-width: 0;
-  cursor: pointer;
 }
-.ch-git:hover .ch-branch { color: var(--color-text); }
-.ch-branch {
+.ch-branch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 220px;
+  border: none;
+  background: transparent;
+  padding: 2px 4px;
+  border-radius: var(--radius-xs);
   color: var(--dim);
+  font: inherit;
+  cursor: pointer;
+  min-width: 0;
+}
+.ch-branch-btn:hover { background: var(--color-surface-sunken); color: var(--color-text); }
+.ch-branch-btn.is-open { background: var(--color-surface-sunken); color: var(--color-text); }
+.ch-branch-btn:disabled { cursor: default; opacity: 0.6; }
+.ch-branch-text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin-right: 4px;
 }
+.ch-branch-caret { flex: none; opacity: 0.7; }
 .ch-detached { color: var(--muted); font-style: italic; }
+.ch-pills-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  min-width: 0;
+}
 .ch-pill {
   display: inline-flex;
   align-items: center;
@@ -461,6 +651,69 @@ function startArchive(): void {
   top: 0;
   left: 0;
   z-index: var(--z-dropdown);
+}
+
+/* Branch dropdown — Teleport'd to body, fixed-positioned under the trigger. */
+.ch-branch-menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: var(--z-dropdown);
+  min-width: 180px;
+  max-width: 320px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  font-family: var(--mono);
+  font-size: calc(var(--ui-font-size) - 2px);
+}
+.ch-branch-state {
+  padding: 8px 10px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+.ch-branch-error { color: var(--color-danger); }
+.ch-branch-retry {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 6px 10px;
+  color: var(--color-accent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+}
+.ch-branch-retry:hover { background: var(--color-surface-sunken); }
+.ch-branch-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 6px 10px;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  min-width: 0;
+}
+.ch-branch-item:hover:not(:disabled) { background: var(--color-surface-sunken); }
+.ch-branch-item.is-current { color: var(--color-text-muted); }
+.ch-branch-item.is-switching { opacity: 0.5; }
+.ch-branch-item:disabled { cursor: default; }
+.ch-branch-dot { width: 14px; flex: none; }
+.ch-branch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* On a narrow conversation column, the action labels collapse to icons. */

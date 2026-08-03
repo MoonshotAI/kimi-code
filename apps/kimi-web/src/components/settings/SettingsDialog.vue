@@ -9,16 +9,18 @@ import { useKimiWebClient } from '../../composables/useKimiWebClient';
 import type { AppSession } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
 import LanguageSwitcher from './LanguageSwitcher.vue';
+import ProviderManager from './ProviderManager.vue';
 import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
 import type { Accent, ColorScheme } from '../../composables/useKimiWebClient';
-import type { AppConfig, AppModel } from '../../api/types';
+import type { AppConfig, AppModel, AppMcpServerConfig, AppMcpTransport, AppProvider } from '../../api/types';
 import Dialog from '../ui/Dialog.vue';
 import Switch from '../ui/Switch.vue';
 import Button from '../ui/Button.vue';
 import SegmentedControl from '../ui/SegmentedControl.vue';
 import Select from '../ui/Select.vue';
 import Tooltip from '../ui/Tooltip.vue';
+import Input from '../ui/Input.vue';
 
 const { t } = useI18n();
 
@@ -26,7 +28,7 @@ const props = defineProps<{
   colorScheme: ColorScheme;
   accent: Accent;
   uiFontSize: number;
-  authReady: boolean;
+  authReady?: boolean;
   accountModel?: string | null;
   /** Browser-notification-on-completion preference. */
   notify: boolean;
@@ -50,6 +52,12 @@ const props = defineProps<{
   serverVersion?: string;
   /** Backend engine generation from GET /api/v1/meta ('v1' legacy, 'v2' kap-server). */
   backend?: 'v1' | 'v2';
+  /** Provider list for the Providers tab (embedded ProviderManager). */
+  providers?: AppProvider[];
+  /** True while providers are being fetched. */
+  providersLoading?: boolean;
+  /** True when providers could not be fetched (daemon 404 / unsupported). */
+  providersUnavailable?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -65,18 +73,25 @@ const emit = defineEmits<{
   logout: [];
   openOnboarding: [];
   openProviders: [];
+  loadProviders: [];
   updateConfig: [patch: Partial<AppConfig>];
+  addProvider: [input: { type: string; apiKey?: string; baseUrl?: string; defaultModel?: string }];
+  updateProvider: [id: string, input: { type?: string; apiKey?: string; baseUrl?: string; defaultModel?: string }];
+  refreshProvider: [id: string];
+  deleteProvider: [id: string];
   close: [];
 }>();
 
-type SettingsTab = 'general' | 'agent' | 'account' | 'advanced' | 'archived';
+type SettingsTab = 'preferences' | 'agent' | 'providers' | 'mcp' | 'skills' | 'advanced' | 'archived';
 
-const activeTab = ref<SettingsTab>('general');
+const activeTab = ref<SettingsTab>('preferences');
 
 const tabs: { id: SettingsTab; labelKey: string }[] = [
-  { id: 'general', labelKey: 'settings.tabs.general' },
+  { id: 'preferences', labelKey: 'settings.tabs.preferences' },
   { id: 'agent', labelKey: 'settings.tabs.agent' },
-  { id: 'account', labelKey: 'settings.tabs.account' },
+  { id: 'providers', labelKey: 'settings.tabs.providers' },
+  { id: 'mcp', labelKey: 'settings.tabs.mcp' },
+  { id: 'skills', labelKey: 'settings.tabs.skills' },
   { id: 'advanced', labelKey: 'settings.tabs.advanced' },
   { id: 'archived', labelKey: 'settings.tabs.archived' },
 ];
@@ -266,6 +281,25 @@ watch(activeTab, (tab) => {
   if (tab === 'archived' && !archivedLoaded.value) {
     void loadAllArchived();
   }
+  if (
+    tab === 'mcp' &&
+    client.mcpServers.value === undefined &&
+    !client.mcpServersLoading.value
+  ) {
+    void client.loadMcpServers();
+  }
+  if (
+    tab === 'skills' &&
+    client.userSkills.value === undefined &&
+    !client.userSkillsLoading.value
+  ) {
+    void client.loadUserSkills();
+  }
+  // Providers tab: 触发 App.vue 加载 provider 列表（embedded ProviderManager
+  // 自身是纯展示组件，不调 API）。每次切到该 tab 都刷新，确保最新数据。
+  if (tab === 'providers') {
+    emit('loadProviders');
+  }
 });
 
 const archiveWorkspaces = computed<string[]>(() => {
@@ -318,6 +352,539 @@ function archiveTime(iso: string): string {
   const pad = (n: number): string => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+// ---------------------------------------------------------------------------
+// Extensions tab — MCP server CRUD (user-level mcp.json via kap-server) +
+// read-only skills directory (auto-discovered for the current session /
+// workspace). MCP state and actions live on the shared client composable;
+// only the edit form state is local to this dialog.
+// ---------------------------------------------------------------------------
+interface McpEnvRow { key: string; value: string }
+interface McpFormState {
+  mode: 'add' | 'edit';
+  originalName: string;
+  name: string;
+  transport: AppMcpTransport;
+  command: string;
+  argsText: string;
+  env: McpEnvRow[];
+  url: string;
+  headers: McpEnvRow[];
+  enabled: boolean;
+  toolTimeoutSec: string;
+}
+
+const mcpForm = ref<McpFormState | null>(null);
+const mcpSaving = ref(false);
+const mcpFormError = ref<string>('');
+
+const mcpTransports: AppMcpTransport[] = ['stdio', 'http', 'sse'];
+
+// JSONC 编辑模式：直接编辑完整 mcp.json 文本（含注释），保存时与当前 map 对比
+// 后对差异项分别调用 upsert / delete。无后端改动，仅前端 diff。
+type McpViewMode = 'list' | 'jsonc';
+const mcpViewMode = ref<McpViewMode>('list');
+const mcpJsoncText = ref<string>('');
+const mcpJsoncError = ref<string>('');
+const mcpJsoncSaving = ref<boolean>(false);
+
+function startJsoncMode(): void {
+  mcpJsoncText.value = serializeMcpServersAsJsonc(client.mcpServers.value ?? {});
+  mcpJsoncError.value = '';
+  mcpViewMode.value = 'jsonc';
+  mcpForm.value = null;
+}
+
+function cancelJsoncMode(): void {
+  mcpViewMode.value = 'list';
+  mcpJsoncText.value = '';
+  mcpJsoncError.value = '';
+}
+
+/** SegmentedControl 切换处理：进入 JSONC 模式时序列化当前 map，离开时丢弃草稿。 */
+function toggleMcpViewMode(value: unknown): void {
+  const mode = value as McpViewMode;
+  if (mode === mcpViewMode.value) return;
+  if (mode === 'jsonc') startJsoncMode();
+  else cancelJsoncMode();
+}
+
+/** 把当前 MCP 服务器 map 序列化为带注释提示的 JSONC 文本。 */
+function serializeMcpServersAsJsonc(map: Record<string, AppMcpServerConfig>): string {
+  const ordered: Record<string, AppMcpServerConfig> = {};
+  for (const name of Object.keys(map).sort()) {
+    ordered[name] = stripUndefined(map[name]!);
+  }
+  const header = '// MCP 服务器配置（JSONC：支持 // 与 /* */ 注释、尾随逗号）\n'
+    + '// transport: stdio | http | sse\n'
+    + '// stdio: command / args / env / cwd\n'
+    + '// http|sse: url / headers / bearerTokenEnvVar\n'
+    + '// 通用: enabled / toolTimeoutMs / startupTimeoutMs / enabledTools / disabledTools\n';
+  return header + JSON.stringify(ordered, null, 2);
+}
+
+function stripUndefined<T>(obj: T): T {
+  if (obj === null || typeof obj !== 'object') return obj;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+    if (v === undefined) continue;
+    out[k] = v;
+  }
+  return out as T;
+}
+
+/** 解析 JSONC 文本（容忍行注释、块注释、尾随逗号）。失败抛出 Error。 */
+function parseJsonc(text: string): unknown {
+  // 逐字符扫描，跳过字符串内的所有符号；仅在字符串外剥离注释与尾随逗号。
+  let inString = false;
+  let escape = false;
+  let result = '';
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i]!;
+    const next = text[i + 1];
+    if (inString) {
+      result += ch;
+      if (escape) {
+        escape = false;
+      } else if (ch === '\\') {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      result += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === '/' && next === '/') {
+      // 行注释：跳到行尾
+      while (i < text.length && text[i] !== '\n') i += 1;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      // 块注释：跳到 */
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i += 1;
+      i += 2;
+      continue;
+    }
+    result += ch;
+    i += 1;
+  }
+  // 去除尾随逗号：仅匹配 } 或 ] 前的逗号（含中间空白）
+  const cleaned = result.replace(/,(\s*[}\]])/g, '$1');
+  return JSON.parse(cleaned);
+}
+
+async function saveJsoncMode(): Promise<void> {
+  mcpJsoncError.value = '';
+  let parsed: unknown;
+  try {
+    parsed = parseJsonc(mcpJsoncText.value);
+  } catch (err) {
+    mcpJsoncError.value = err instanceof Error ? err.message : String(err);
+    return;
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    mcpJsoncError.value = t('settings.mcpJsoncNotObject');
+    return;
+  }
+  const nextMap = parsed as Record<string, unknown>;
+  const current = client.mcpServers.value ?? {};
+
+  // 校验每个值必须是对象（结构不深校验，由后端兜底）
+  for (const [name, value] of Object.entries(nextMap)) {
+    if (!name.trim()) {
+      mcpJsoncError.value = t('settings.mcpJsoncEmptyName');
+      return;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      mcpJsoncError.value = t('settings.mcpJsoncInvalidServer', { name });
+      return;
+    }
+  }
+
+  const nextNames = new Set(Object.keys(nextMap));
+  const currentNames = new Set(Object.keys(current));
+
+  mcpJsoncSaving.value = true;
+  try {
+    // 先处理删除（旧 name 不在新 map 中）
+    for (const name of currentNames) {
+      if (!nextNames.has(name)) {
+        await client.deleteMcpServer(name);
+      }
+    }
+    // 再处理 upsert（新 name 或内容变化）
+    for (const [name, value] of Object.entries(nextMap)) {
+      const newCfg = value as AppMcpServerConfig;
+      const oldCfg = current[name];
+      if (!oldCfg || !shallowEqualMcp(oldCfg, newCfg)) {
+        await client.upsertMcpServer(name, newCfg);
+      }
+    }
+    mcpViewMode.value = 'list';
+    mcpJsoncText.value = '';
+  } catch (err) {
+    mcpJsoncError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    mcpJsoncSaving.value = false;
+  }
+}
+
+/** 浅比较两个 MCP 配置是否一致（仅看顶层 key/value）。 */
+function shallowEqualMcp(a: AppMcpServerConfig, b: AppMcpServerConfig): boolean {
+  const aKeys = Object.keys(stripUndefined(a as Record<string, unknown>)).sort();
+  const bKeys = Object.keys(stripUndefined(b as Record<string, unknown>)).sort();
+  if (aKeys.length !== bKeys.length) return false;
+  for (let i = 0; i < aKeys.length; i++) {
+    const k = aKeys[i]!;
+    if (k !== bKeys[i]) return false;
+    const av = (a as Record<string, unknown>)[k];
+    const bv = (b as Record<string, unknown>)[k];
+    if (typeof av === 'object' && av !== null && typeof bv === 'object' && bv !== null) {
+      if (JSON.stringify(av) !== JSON.stringify(bv)) return false;
+    } else if (av !== bv) {
+      return false;
+    }
+  }
+  return true;
+}
+
+const mcpServerEntries = computed<Array<{ name: string; config: AppMcpServerConfig }>>(() => {
+  const map = client.mcpServers.value;
+  if (!map) return [];
+  return Object.entries(map)
+    .map(([name, config]) => ({ name, config }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+});
+
+const mcpServersCount = computed<number>(() => Object.keys(client.mcpServers.value ?? {}).length);
+
+function startAddMcp(): void {
+  mcpForm.value = {
+    mode: 'add',
+    originalName: '',
+    name: '',
+    transport: 'stdio',
+    command: '',
+    argsText: '',
+    env: [],
+    url: '',
+    headers: [],
+    enabled: true,
+    toolTimeoutSec: '',
+  };
+  mcpFormError.value = '';
+}
+
+function startEditMcp(name: string, config: AppMcpServerConfig): void {
+  mcpForm.value = {
+    mode: 'edit',
+    originalName: name,
+    name,
+    transport: config.transport ?? 'stdio',
+    command: config.command ?? '',
+    argsText: (config.args ?? []).join('\n'),
+    env: Object.entries(config.env ?? {}).map(([key, value]) => ({ key, value })),
+    url: config.url ?? '',
+    headers: Object.entries(config.headers ?? {}).map(([key, value]) => ({ key, value })),
+    enabled: config.enabled !== false,
+    toolTimeoutSec: config.toolTimeoutMs ? String(Math.round(config.toolTimeoutMs / 1000)) : '',
+  };
+  mcpFormError.value = '';
+}
+
+function cancelMcpForm(): void {
+  mcpForm.value = null;
+  mcpFormError.value = '';
+}
+
+function addMcpEnvRow(): void {
+  mcpForm.value?.env.push({ key: '', value: '' });
+}
+function removeMcpEnvRow(i: number): void {
+  mcpForm.value?.env.splice(i, 1);
+}
+function addMcpHeaderRow(): void {
+  mcpForm.value?.headers.push({ key: '', value: '' });
+}
+function removeMcpHeaderRow(i: number): void {
+  mcpForm.value?.headers.splice(i, 1);
+}
+
+async function saveMcpForm(): Promise<void> {
+  const form = mcpForm.value;
+  if (!form) return;
+  const name = form.name.trim();
+  if (!name) {
+    mcpFormError.value = t('settings.mcpNameRequired');
+    return;
+  }
+  const existing = client.mcpServers.value ?? {};
+  if (form.mode === 'add' && existing[name]) {
+    mcpFormError.value = t('settings.mcpNameExists');
+    return;
+  }
+  if (form.mode === 'edit' && form.originalName !== name && existing[name]) {
+    mcpFormError.value = t('settings.mcpNameExists');
+    return;
+  }
+
+  const config: AppMcpServerConfig = {
+    transport: form.transport,
+    enabled: form.enabled,
+  };
+  if (form.transport === 'stdio') {
+    if (form.command.trim()) config.command = form.command.trim();
+    const args = form.argsText
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (args.length) config.args = args;
+    const env: Record<string, string> = {};
+    for (const row of form.env) {
+      const k = row.key.trim();
+      if (k) env[k] = row.value;
+    }
+    if (Object.keys(env).length) config.env = env;
+  } else {
+    if (form.url.trim()) config.url = form.url.trim();
+    const headers: Record<string, string> = {};
+    for (const row of form.headers) {
+      const k = row.key.trim();
+      if (k) headers[k] = row.value;
+    }
+    if (Object.keys(headers).length) config.headers = headers;
+  }
+  if (form.toolTimeoutSec.trim()) {
+    const sec = Number(form.toolTimeoutSec);
+    if (Number.isFinite(sec) && sec > 0) config.toolTimeoutMs = Math.round(sec * 1000);
+  }
+
+  mcpSaving.value = true;
+  mcpFormError.value = '';
+  try {
+    // Rename: delete the old entry first, then upsert under the new name.
+    if (form.mode === 'edit' && form.originalName !== name) {
+      await client.deleteMcpServer(form.originalName);
+    }
+    const ok = await client.upsertMcpServer(name, config);
+    if (ok) {
+      mcpForm.value = null;
+    } else {
+      mcpFormError.value = t('settings.mcpLoadError');
+    }
+  } catch (err) {
+    mcpFormError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    mcpSaving.value = false;
+  }
+}
+
+async function removeMcp(name: string): Promise<void> {
+  if (!window.confirm(t('settings.mcpDeleteConfirm'))) return;
+  await client.deleteMcpServer(name);
+}
+
+function mcpTransportLabel(transport: AppMcpTransport | undefined): string {
+  if (transport === 'http') return t('settings.mcpTransportHttp');
+  if (transport === 'sse') return t('settings.mcpTransportSse');
+  return t('settings.mcpTransportStdio');
+}
+
+// Skills directory — read-only listing grouped by source. client.skills is the
+// computed that mirrors the active session's skills (or the workspace's before
+// a session exists).
+const skillGroups = computed<Array<{ source: string; label: string; items: Array<{ name: string; description: string }> }>>(() => {
+  const groups = new Map<string, Array<{ name: string; description: string }>>();
+  for (const skill of client.skills.value) {
+    const list = groups.get(skill.source) ?? [];
+    list.push({ name: skill.name, description: skill.description });
+    groups.set(skill.source, list);
+  }
+  const order = ['builtin', 'project', 'plugin', 'user'];
+  const result: Array<{ source: string; label: string; items: Array<{ name: string; description: string }> }> = [];
+  for (const source of order) {
+    const items = groups.get(source);
+    if (!items || items.length === 0) continue;
+    items.sort((a, b) => a.name.localeCompare(b.name));
+    result.push({ source, label: skillSourceLabel(source), items });
+  }
+  // Any unknown sources, appended after the known ones.
+  for (const [source, items] of groups) {
+    if (order.includes(source)) continue;
+    items.sort((a, b) => a.name.localeCompare(b.name));
+    result.push({ source, label: skillSourceLabel(source), items });
+  }
+  return result;
+});
+
+function skillSourceLabel(source: string): string {
+  if (source === 'builtin') return t('settings.skillsSourceBuiltin');
+  if (source === 'project') return t('settings.skillsSourceProject');
+  if (source === 'plugin') return t('settings.skillsSourcePlugin');
+  if (source === 'user') return t('settings.skillSourceUser');
+  return source;
+}
+
+const skillsCount = computed<number>(() => client.skills.value.length);
+
+// 用户技能目录管理（extraSkillDirs 配置项 CRUD）。后端没有 user skills 写入 API，
+// 但有 extra_skill_dirs 配置项 —— 用户添加的目录会被 daemon 自动扫描，等价于
+// "增加一组用户技能"。这是当前能在前端持久化且真正生效的最小可用方案。
+const skillDirList = computed<string[]>(() => props.config?.extraSkillDirs ?? []);
+const skillDirEditing = ref<boolean>(false);
+const skillDirDraft = ref<string[]>([]);
+const skillDirNewPath = ref<string>('');
+const skillDirError = ref<string>('');
+
+function startEditSkillDirs(): void {
+  skillDirDraft.value = [...skillDirList.value];
+  skillDirNewPath.value = '';
+  skillDirError.value = '';
+  skillDirEditing.value = true;
+}
+
+function cancelEditSkillDirs(): void {
+  skillDirEditing.value = false;
+  skillDirDraft.value = [];
+  skillDirNewPath.value = '';
+  skillDirError.value = '';
+}
+
+function skillDirAdd(): void {
+  const path = skillDirNewPath.value.trim();
+  if (!path) {
+    skillDirError.value = t('settings.skillDirEmptyPath');
+    return;
+  }
+  if (skillDirDraft.value.includes(path)) {
+    skillDirError.value = t('settings.skillDirDuplicate');
+    return;
+  }
+  skillDirDraft.value = [...skillDirDraft.value, path];
+  skillDirNewPath.value = '';
+  skillDirError.value = '';
+}
+
+function skillDirRemove(idx: number): void {
+  skillDirDraft.value = skillDirDraft.value.filter((_, i) => i !== idx);
+}
+
+function skillDirMove(idx: number, direction: -1 | 1): void {
+  const next = idx + direction;
+  if (next < 0 || next >= skillDirDraft.value.length) return;
+  const arr = [...skillDirDraft.value];
+  const tmp = arr[idx]!;
+  arr[idx] = arr[next]!;
+  arr[next] = tmp;
+  skillDirDraft.value = arr;
+}
+
+function saveSkillDirs(): void {
+  const trimmed = skillDirDraft.value.map((p) => p.trim()).filter((p) => p.length > 0);
+  emit('updateConfig', { extraSkillDirs: trimmed });
+  cancelEditSkillDirs();
+}
+
+function removeSkillDirImmediate(path: string): void {
+  const next = skillDirList.value.filter((p) => p !== path);
+  emit('updateConfig', { extraSkillDirs: next });
+}
+
+// 用户自定义技能（<kimi-home>/skills/<name>/SKILL.md）的增删改。后端 REST
+// 路由已就绪：GET/POST/DELETE /api/v1/skills。这里维护一个内联表单状态：
+// skillFormMode = 'idle' | 'create' | 'edit'，编辑态记录 originalName 以便
+// 改名（先删旧再建新，因为后端 upsert 以 name 为键）。
+type SkillFormMode = 'idle' | 'create' | 'edit';
+const skillFormMode = ref<SkillFormMode>('idle');
+const skillFormOriginalName = ref<string>('');
+const skillFormName = ref<string>('');
+const skillFormDescription = ref<string>('');
+const skillFormContent = ref<string>('');
+const skillFormError = ref<string>('');
+const skillFormSaving = ref<boolean>(false);
+
+function startCreateUserSkill(): void {
+  skillFormMode.value = 'create';
+  skillFormOriginalName.value = '';
+  skillFormName.value = '';
+  skillFormDescription.value = '';
+  skillFormContent.value = '';
+  skillFormError.value = '';
+}
+
+function startEditUserSkill(skill: { name: string; description: string; content: string }): void {
+  skillFormMode.value = 'edit';
+  skillFormOriginalName.value = skill.name;
+  skillFormName.value = skill.name;
+  skillFormDescription.value = skill.description;
+  skillFormContent.value = skill.content;
+  skillFormError.value = '';
+}
+
+function cancelUserSkillForm(): void {
+  skillFormMode.value = 'idle';
+  skillFormOriginalName.value = '';
+  skillFormName.value = '';
+  skillFormDescription.value = '';
+  skillFormContent.value = '';
+  skillFormError.value = '';
+}
+
+async function saveUserSkillForm(): Promise<void> {
+  const name = skillFormName.value.trim();
+  if (!name) {
+    skillFormError.value = t('settings.skillEmptyName');
+    return;
+  }
+  // 同名校验：编辑态下若未改名则跳过；改名或新建时检查是否已存在同名技能。
+  const existing = client.userSkills.value ?? [];
+  const isRename = skillFormMode.value === 'edit' && name !== skillFormOriginalName.value;
+  if (skillFormMode.value === 'create' || isRename) {
+    if (existing.some((s) => s.name === name)) {
+      skillFormError.value = t('settings.skillDuplicateName');
+      return;
+    }
+  }
+  skillFormSaving.value = true;
+  skillFormError.value = '';
+  try {
+    // 改名场景：后端 upsert 以 name 为键，无法原地改名，需先删旧再建新。
+    if (isRename) {
+      const deleted = await client.deleteUserSkill(skillFormOriginalName.value);
+      if (!deleted) {
+        skillFormError.value = t('settings.skillSaving');
+        return;
+      }
+    }
+    const ok = await client.upsertUserSkill(name, {
+      description: skillFormDescription.value.trim(),
+      content: skillFormContent.value,
+    });
+    if (!ok) {
+      skillFormError.value = t('settings.skillSaving');
+      return;
+    }
+    cancelUserSkillForm();
+  } finally {
+    skillFormSaving.value = false;
+  }
+}
+
+async function removeUserSkill(name: string): Promise<void> {
+  await client.deleteUserSkill(name);
+}
+
+function reloadUserSkills(): void {
+  void client.loadUserSkills();
+}
 </script>
 
 <template>
@@ -340,7 +907,7 @@ function archiveTime(iso: string): string {
 
       <div class="body">
         <!-- General: Appearance + Notifications -->
-        <section v-show="activeTab === 'general'" class="panel">
+        <section v-show="activeTab === 'preferences'" class="panel">
           <section class="sec">
             <h3 class="sec-title">{{ t('settings.appearance') }}</h3>
             <div class="row">
@@ -446,22 +1013,16 @@ function archiveTime(iso: string): string {
               />
             </div>
           </section>
-        </section>
 
-        <!-- Account -->
-        <section v-show="activeTab === 'account'" class="panel">
+          <!-- Onboarding / 引导 -->
           <section class="sec">
-            <h3 class="sec-title">{{ t('settings.account') }}</h3>
+            <h3 class="sec-title">{{ t('settings.onboardingSection') }}</h3>
             <div class="row">
-              <span class="rlabel">{{ authReady ? 'managed:kimi-code' : t('sidebar.notSignedIn') }}</span>
-              <Tooltip :text="accountModel">
-                <span v-if="authReady && accountModel" class="rvalue">{{ accountModel }}</span>
-              </Tooltip>
-            </div>
-            <div class="actions">
+              <span class="rlabel">
+                {{ t('settings.onboardingSection') }}
+                <span class="hint">{{ t('settings.onboardingHint') }}</span>
+              </span>
               <Button variant="secondary" size="sm" @click="emit('openOnboarding'); emit('close')">{{ t('onboarding.reopen') }}</Button>
-              <Button v-if="authReady" variant="danger-soft" size="sm" @click="emit('logout')">{{ t('sidebar.signOut') }}</Button>
-              <Button v-else variant="primary" size="sm" @click="emit('login')">{{ t('sidebar.signIn') }}</Button>
             </div>
           </section>
         </section>
@@ -556,6 +1117,373 @@ function archiveTime(iso: string): string {
           </section>
         </section>
 
+        <!-- Providers (embedded ProviderManager — list / add / edit / refresh / delete) -->
+        <section v-show="activeTab === 'providers'" class="panel">
+          <div class="panel-head">
+            <div class="panel-kicker">{{ t('settings.tabs.providers') }}</div>
+            <h4 class="panel-title">
+              {{ t('settings.providers') }}
+              <span class="ext-count">{{ (providers ?? []).length }}</span>
+            </h4>
+            <p class="panel-desc">{{ t('settings.providersHint') }}</p>
+          </div>
+          <ProviderManager
+            embedded
+            :providers="providers ?? []"
+            :loading="providersLoading"
+            :unavailable="providersUnavailable"
+            @add="emit('addProvider', $event)"
+            @update="(id, input) => emit('updateProvider', id, input)"
+            @refresh="emit('refreshProvider', $event)"
+            @delete="emit('deleteProvider', $event)"
+          />
+        </section>
+
+        <!-- MCP servers (CRUD against user-level mcp.json) -->
+        <section v-show="activeTab === 'mcp'" class="panel">
+          <div class="panel-head">
+            <div class="panel-kicker">{{ t('settings.tabs.mcp') }}</div>
+            <h4 class="panel-title">
+              {{ t('settings.mcpTitle') }}
+              <span class="ext-count">{{ t('settings.mcpServersCount', { count: mcpServersCount }) }}</span>
+            </h4>
+            <p class="panel-desc">{{ t('settings.mcpDesc') }}</p>
+            <div class="panel-head-actions">
+              <SegmentedControl
+                :model-value="mcpViewMode"
+                :options="[
+                  { value: 'list', label: t('settings.mcpViewList') },
+                  { value: 'jsonc', label: t('settings.mcpViewJsonc') },
+                ]"
+                :disabled="client.mcpServers.value === undefined || mcpForm !== null || mcpJsoncSaving"
+                @update:model-value="toggleMcpViewMode"
+              />
+            </div>
+          </div>
+
+          <!-- JSONC 编辑模式 -->
+          <section v-if="mcpViewMode === 'jsonc'" class="sec">
+            <p class="ext-form-hint">{{ t('settings.mcpJsoncHint') }}</p>
+            <textarea
+              v-model="mcpJsoncText"
+              class="ext-textarea ext-jsonc-textarea"
+              rows="20"
+              spellcheck="false"
+              :aria-label="t('settings.mcpViewJsonc')"
+            ></textarea>
+            <div v-if="mcpJsoncError" class="ext-error ext-form-error">{{ mcpJsoncError }}</div>
+            <div class="ext-form-actions">
+              <Button variant="secondary" size="sm" :disabled="mcpJsoncSaving" @click="cancelJsoncMode">{{ t('settings.mcpCancelBtn') }}</Button>
+              <Button variant="primary" size="sm" :disabled="mcpJsoncSaving" @click="saveJsoncMode">{{ mcpJsoncSaving ? t('settings.mcpSaving') : t('settings.mcpSaveBtn') }}</Button>
+            </div>
+          </section>
+
+          <!-- 列表模式（默认） -->
+          <section v-else class="sec">
+            <!-- Load error banner -->
+            <div v-if="client.mcpServersLoadError.value" class="ext-error">
+              {{ t('settings.mcpLoadError') }}
+            </div>
+
+            <!-- Loading skeleton -->
+            <div v-if="client.mcpServersLoading.value && client.mcpServers.value === undefined" class="archive-empty">
+              {{ t('settings.archivedLoading') }}
+            </div>
+
+            <!-- Server list -->
+            <template v-else>
+              <div v-if="mcpServerEntries.length > 0" class="ext-list">
+                <div v-for="entry in mcpServerEntries" :key="entry.name" class="ext-card">
+                  <div class="ext-card-head">
+                    <div class="ext-card-name">
+                      <span class="ext-name">{{ entry.name }}</span>
+                      <span class="ext-badge">{{ mcpTransportLabel(entry.config.transport) }}</span>
+                      <span v-if="entry.config.enabled === false" class="ext-badge ext-badge-muted">{{ t('settings.mcpEnabled') }}: off</span>
+                    </div>
+                    <div class="ext-card-actions">
+                      <Button variant="secondary" size="sm" :disabled="mcpForm !== null" @click="startEditMcp(entry.name, entry.config)">{{ t('settings.mcpEditBtn') }}</Button>
+                      <Button variant="danger-soft" size="sm" :disabled="mcpForm !== null" @click="removeMcp(entry.name)">{{ t('settings.mcpDeleteBtn') }}</Button>
+                    </div>
+                  </div>
+                  <div class="ext-card-body">
+                    <template v-if="entry.config.transport === 'http' || entry.config.transport === 'sse'">
+                      <div class="ext-field"><span class="ext-field-label">{{ t('settings.mcpUrl') }}</span><span class="ext-field-value mono">{{ entry.config.url || '—' }}</span></div>
+                    </template>
+                    <template v-else>
+                      <div class="ext-field"><span class="ext-field-label">{{ t('settings.mcpCommand') }}</span><span class="ext-field-value mono">{{ entry.config.command || '—' }}</span></div>
+                      <div v-if="entry.config.args && entry.config.args.length" class="ext-field"><span class="ext-field-label">{{ t('settings.mcpArgs') }}</span><span class="ext-field-value mono">{{ entry.config.args.join(' ') }}</span></div>
+                    </template>
+                  </div>
+                </div>
+              </div>
+              <div v-else-if="!mcpForm" class="archive-empty">
+                {{ t('settings.mcpNoServers') }}
+              </div>
+            </template>
+
+            <!-- Add button (hidden while editing) -->
+            <div v-if="!mcpForm" class="ext-add-row">
+              <Button variant="primary" size="sm" :disabled="client.mcpServers.value === undefined" @click="startAddMcp">{{ t('settings.mcpAddBtn') }}</Button>
+            </div>
+
+            <!-- Inline add/edit form -->
+            <div v-if="mcpForm" class="ext-form">
+              <div class="ext-form-head">
+                <span class="ext-form-title">{{ mcpForm.mode === 'add' ? t('settings.mcpAddBtn') : t('settings.mcpServerForm') }}</span>
+              </div>
+
+              <div class="ext-form-row">
+                <label class="ext-field-label">{{ t('settings.mcpServerName') }}</label>
+                <input v-model="mcpForm.name" class="ext-input" :placeholder="t('settings.mcpAddPlaceholder')" :aria-label="t('settings.mcpServerName')" />
+              </div>
+
+              <div class="ext-form-row">
+                <label class="ext-field-label">{{ t('settings.mcpTransport') }}</label>
+                <SegmentedControl
+                  :model-value="mcpForm.transport"
+                  :options="mcpTransports.map((tr) => ({ value: tr, label: t('settings.mcpTransport' + (tr === 'stdio' ? 'Stdio' : tr === 'http' ? 'Http' : 'Sse')) }))"
+                  @update:model-value="mcpForm!.transport = $event as AppMcpTransport"
+                />
+              </div>
+              <div class="ext-form-hint">{{ t('settings.mcpTransportHint') }}</div>
+
+              <!-- stdio fields -->
+              <template v-if="mcpForm.transport === 'stdio'">
+                <div class="ext-form-row">
+                  <label class="ext-field-label">{{ t('settings.mcpCommand') }}</label>
+                  <input v-model="mcpForm.command" class="ext-input" :placeholder="t('settings.mcpCommandPlaceholder')" :aria-label="t('settings.mcpCommand')" />
+                </div>
+                <div class="ext-form-row ext-form-row-stack">
+                  <label class="ext-field-label">{{ t('settings.mcpArgs') }}</label>
+                  <textarea v-model="mcpForm.argsText" class="ext-textarea" rows="3" :placeholder="t('settings.mcpArgPlaceholder')" :aria-label="t('settings.mcpArgs')"></textarea>
+                  <span class="ext-form-hint">{{ t('settings.mcpArgsHint') }}</span>
+                </div>
+                <div class="ext-form-row ext-form-row-stack">
+                  <div class="ext-kv-head">
+                    <label class="ext-field-label">{{ t('settings.mcpEnv') }}</label>
+                    <Button variant="ghost" size="sm" @click="addMcpEnvRow">{{ t('settings.mcpAddEnv') }}</Button>
+                  </div>
+                  <div v-if="mcpForm.env.length === 0" class="ext-form-hint">{{ t('settings.mcpEnvHint') }}</div>
+                  <div v-for="(row, i) in mcpForm.env" :key="i" class="ext-kv-row">
+                    <input v-model="row.key" class="ext-input ext-kv-key" :placeholder="t('settings.mcpEnvKey')" :aria-label="t('settings.mcpEnvKey')" />
+                    <input v-model="row.value" class="ext-input ext-kv-value" :placeholder="t('settings.mcpEnvValue')" :aria-label="t('settings.mcpEnvValue')" />
+                    <Button variant="ghost" size="sm" @click="removeMcpEnvRow(i)">×</Button>
+                  </div>
+                </div>
+              </template>
+
+              <!-- http / sse fields -->
+              <template v-else>
+                <div class="ext-form-row">
+                  <label class="ext-field-label">{{ t('settings.mcpUrl') }}</label>
+                  <input v-model="mcpForm.url" class="ext-input" :placeholder="t('settings.mcpUrlPlaceholder')" :aria-label="t('settings.mcpUrl')" />
+                </div>
+                <div class="ext-form-row ext-form-row-stack">
+                  <div class="ext-kv-head">
+                    <label class="ext-field-label">{{ t('settings.mcpHeaders') }}</label>
+                    <Button variant="ghost" size="sm" @click="addMcpHeaderRow">{{ t('settings.mcpAddHeader') }}</Button>
+                  </div>
+                  <div v-if="mcpForm.headers.length === 0" class="ext-form-hint">{{ t('settings.mcpHeadersHint') }}</div>
+                  <div v-for="(row, i) in mcpForm.headers" :key="i" class="ext-kv-row">
+                    <input v-model="row.key" class="ext-input ext-kv-key" :placeholder="t('settings.mcpHeaderKey')" :aria-label="t('settings.mcpHeaderKey')" />
+                    <input v-model="row.value" class="ext-input ext-kv-value" :placeholder="t('settings.mcpHeaderValue')" :aria-label="t('settings.mcpHeaderValue')" />
+                    <Button variant="ghost" size="sm" @click="removeMcpHeaderRow(i)">×</Button>
+                  </div>
+                </div>
+              </template>
+
+              <!-- common fields -->
+              <div class="ext-form-row">
+                <label class="ext-field-label">{{ t('settings.mcpToolTimeout') }}</label>
+                <input v-model="mcpForm.toolTimeoutSec" class="ext-input ext-input-num" type="number" min="0" step="1" :placeholder="''" :aria-label="t('settings.mcpToolTimeout')" />
+                <span class="ext-form-hint">{{ t('settings.mcpToolTimeoutHint') }}</span>
+              </div>
+
+              <div class="ext-form-row">
+                <label class="ext-field-label">{{ t('settings.mcpEnabled') }}</label>
+                <Switch :model-value="mcpForm.enabled" :label="t('settings.mcpEnabled')" @update:model-value="mcpForm!.enabled = $event" />
+              </div>
+
+              <div v-if="mcpFormError" class="ext-error ext-form-error">{{ mcpFormError }}</div>
+
+              <div class="ext-form-actions">
+                <Button variant="secondary" size="sm" :disabled="mcpSaving" @click="cancelMcpForm">{{ t('settings.mcpCancelBtn') }}</Button>
+                <Button variant="primary" size="sm" :disabled="mcpSaving" @click="saveMcpForm">{{ mcpSaving ? t('settings.mcpSaving') : t('settings.mcpSaveBtn') }}</Button>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <!-- Skills directory (auto-discovered, read-only listing) + 用户技能目录 CRUD -->
+        <section v-show="activeTab === 'skills'" class="panel">
+          <div class="panel-head">
+            <div class="panel-kicker">{{ t('settings.tabs.skills') }}</div>
+            <h4 class="panel-title">
+              {{ t('settings.skillsTitle') }}
+              <span class="ext-count">{{ t('settings.skillsCount', { count: skillsCount }) }}</span>
+            </h4>
+            <p class="panel-desc">{{ t('settings.skillsDesc') }}</p>
+          </div>
+
+          <!-- 用户自定义技能（单个技能 CRUD） -->
+          <section class="sec">
+            <div class="sec-head-row">
+              <h3 class="sec-title">{{ t('settings.skillUserSkills') }}</h3>
+              <div v-if="skillFormMode === 'idle'" class="sec-head-actions">
+                <Button variant="secondary" size="sm" :disabled="client.userSkillsLoading.value" @click="reloadUserSkills">{{ t('settings.skillRefreshBtn') }}</Button>
+                <Button variant="primary" size="sm" @click="startCreateUserSkill">{{ t('settings.skillCreateBtn') }}</Button>
+              </div>
+            </div>
+
+            <div v-if="client.userSkillsLoading.value && client.userSkills.value === undefined" class="archive-empty">
+              {{ t('settings.archivedLoading') }}
+            </div>
+            <div v-else-if="client.userSkillsError.value" class="archive-empty">
+              {{ t('settings.skillsLoadFailed') }}
+              <Button variant="secondary" size="sm" @click="reloadUserSkills">{{ t('settings.skillRefreshBtn') }}</Button>
+            </div>
+
+            <template v-else>
+              <!-- 技能列表 -->
+              <div v-if="(client.userSkills.value ?? []).length > 0" class="ext-list">
+                <div v-for="skill in client.userSkills.value" :key="skill.name" class="ext-card">
+                  <div class="ext-card-head">
+                    <div class="ext-card-name">
+                      <span class="ext-name mono">{{ skill.name }}</span>
+                      <span v-if="skill.description" class="ext-skill-desc">{{ skill.description }}</span>
+                    </div>
+                    <div class="ext-card-actions">
+                      <Button variant="secondary" size="sm" :disabled="skillFormMode !== 'idle'" @click="startEditUserSkill(skill)">{{ t('settings.skillEditBtn') }}</Button>
+                      <Button variant="danger-soft" size="sm" :disabled="skillFormMode !== 'idle'" @click="removeUserSkill(skill.name)">{{ t('settings.skillDeleteBtn') }}</Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div v-else-if="skillFormMode === 'idle'" class="archive-empty">{{ t('settings.skillNoUserSkills') }}</div>
+
+              <!-- 新增/编辑表单 -->
+              <div v-if="skillFormMode !== 'idle'" class="ext-form ext-user-skill-form">
+                <div class="ext-form-row">
+                  <label class="ext-field-label">{{ t('settings.skillNameLabel') }}</label>
+                  <Input
+                    v-model="skillFormName"
+                    :placeholder="t('settings.skillNamePlaceholder')"
+                  />
+                </div>
+                <div class="ext-form-row">
+                  <label class="ext-field-label">{{ t('settings.skillDesc') }}</label>
+                  <Input
+                    v-model="skillFormDescription"
+                    :placeholder="t('settings.skillDescPlaceholder')"
+                  />
+                </div>
+                <div class="ext-form-row ext-form-row-stack">
+                  <label class="ext-field-label">{{ t('settings.skillContentLabel') }}</label>
+                  <textarea
+                    v-model="skillFormContent"
+                    class="ext-textarea"
+                    rows="8"
+                    :placeholder="t('settings.skillContentPlaceholder')"
+                  />
+                </div>
+                <div v-if="skillFormError" class="ext-error ext-form-error">{{ skillFormError }}</div>
+                <div class="ext-form-actions">
+                  <Button variant="secondary" size="sm" :disabled="skillFormSaving" @click="cancelUserSkillForm">{{ t('settings.skillCancelBtn') }}</Button>
+                  <Button variant="primary" size="sm" :disabled="skillFormSaving" @click="saveUserSkillForm">{{ skillFormSaving ? t('settings.skillSaving') : t('settings.skillSaveBtn') }}</Button>
+                </div>
+              </div>
+            </template>
+          </section>
+
+          <!-- 用户技能目录（extraSkillDirs）：增删改 -->
+          <section class="sec">
+            <div class="sec-head-row">
+              <h3 class="sec-title">{{ t('settings.skillExtDirs') }}</h3>
+              <div v-if="!skillDirEditing" class="sec-head-actions">
+                <Button variant="primary" size="sm" @click="startEditSkillDirs">{{ t('settings.skillDirEditBtn') }}</Button>
+              </div>
+            </div>
+            <p class="ext-form-hint">{{ t('settings.skillDirHint') }}</p>
+
+            <!-- 只读列表 -->
+            <template v-if="!skillDirEditing">
+              <div v-if="skillDirList.length > 0" class="ext-list">
+                <div v-for="dir in skillDirList" :key="dir" class="ext-card">
+                  <div class="ext-card-head">
+                    <div class="ext-card-name">
+                      <span class="ext-name mono ext-skill-dir-path">{{ dir }}</span>
+                    </div>
+                    <div class="ext-card-actions">
+                      <Button variant="danger-soft" size="sm" @click="removeSkillDirImmediate(dir)">{{ t('settings.skillDirDeleteBtn') }}</Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="archive-empty">{{ t('settings.skillNoExtDirs') }}</div>
+            </template>
+
+            <!-- 编辑模式：可增删改 + 排序 -->
+            <template v-else>
+              <div v-if="skillDirDraft.length > 0" class="ext-list">
+                <div v-for="(dir, idx) in skillDirDraft" :key="idx" class="ext-card ext-card-row">
+                  <div class="ext-card-head">
+                    <div class="ext-card-name ext-card-name-grow">
+                      <span class="ext-skill-dir-index">{{ idx + 1 }}.</span>
+                      <span class="ext-name mono ext-skill-dir-path">{{ dir }}</span>
+                    </div>
+                    <div class="ext-card-actions">
+                      <Button variant="secondary" size="sm" :disabled="idx === 0" @click="skillDirMove(idx, -1)">↑</Button>
+                      <Button variant="secondary" size="sm" :disabled="idx === skillDirDraft.length - 1" @click="skillDirMove(idx, 1)">↓</Button>
+                      <Button variant="danger-soft" size="sm" @click="skillDirRemove(idx)">{{ t('settings.skillDirDeleteBtn') }}</Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="archive-empty">{{ t('settings.skillNoExtDirs') }}</div>
+
+              <!-- 添加新目录 -->
+              <div class="ext-add-row ext-add-row-inline">
+                <Input
+                  v-model="skillDirNewPath"
+                  class="ext-add-input"
+                  :placeholder="t('settings.skillAddPlaceholder')"
+                />
+                <Button variant="secondary" size="sm" @click="skillDirAdd">{{ t('settings.skillDirAddBtn') }}</Button>
+              </div>
+              <div v-if="skillDirError" class="ext-error ext-form-error">{{ skillDirError }}</div>
+
+              <div class="ext-form-actions">
+                <Button variant="secondary" size="sm" @click="cancelEditSkillDirs">{{ t('settings.skillDirCancelBtn') }}</Button>
+                <Button variant="primary" size="sm" @click="saveSkillDirs">{{ t('settings.skillDirSaveBtn') }}</Button>
+              </div>
+            </template>
+          </section>
+
+          <!-- 自动发现的技能（按来源分组，只读，单行显示） -->
+          <section class="sec">
+            <h3 class="sec-title">{{ t('settings.skillsAutoDiscovered') }}</h3>
+            <p class="ext-form-hint ext-skills-hint">{{ t('settings.skillsLoadHint') }}</p>
+
+            <div v-if="skillGroups.length === 0" class="archive-empty">{{ t('settings.skillsEmpty') }}</div>
+            <div v-else class="ext-list">
+              <div v-for="g in skillGroups" :key="g.source" class="ext-card">
+                <div class="ext-card-head">
+                  <div class="ext-card-name">
+                    <span class="ext-name">{{ g.label }}</span>
+                    <span class="ext-badge ext-badge-muted">{{ g.items.length }}</span>
+                  </div>
+                </div>
+                <div class="ext-card-body">
+                  <div v-for="item in g.items" :key="item.name" class="ext-skill-row" :title="item.description">
+                    <span class="ext-skill-name mono">{{ item.name }}</span>
+                    <span v-if="item.description" class="ext-skill-desc">{{ item.description }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </section>
+
         <!-- Advanced: diagnostics + data/privacy -->
         <section v-show="activeTab === 'advanced'" class="panel">
           <section class="sec">
@@ -571,6 +1499,12 @@ function archiveTime(iso: string): string {
             <div class="row">
               <span class="rlabel">{{ t('settings.serverVersion') }}</span>
               <span class="rvalue mono">{{ serverVersion || '-' }}</span>
+            </div>
+            <div class="row">
+              <span class="rlabel">{{ t('settings.account') }}</span>
+              <Tooltip :text="accountModel || ''">
+                <span class="rvalue">{{ authReady ? (accountModel || 'managed:kimi-code') : t('sidebar.notSignedIn') }}</span>
+              </Tooltip>
             </div>
             <div v-if="config" class="row">
               <span class="rlabel">
@@ -809,6 +1743,8 @@ function archiveTime(iso: string): string {
 /* Archived-sessions tab */
 .setting-card { border: 1px solid var(--color-line); border-radius: var(--radius-xl); overflow: hidden; background: var(--color-bg); }
 .panel-head { margin-bottom: var(--space-4); }
+.panel-head-actions { margin-top: var(--space-3); display: flex; justify-content: flex-end; }
+.ext-jsonc-textarea { min-height: 360px; font-family: var(--font-mono); font-size: var(--text-sm); line-height: var(--leading-normal); tab-size: 2; }
 .panel-kicker { font-size: var(--text-xs); letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-faint); margin-bottom: var(--space-1); }
 .panel-title { margin: 0 0 var(--space-2); font-family: var(--font-ui); font-size: var(--text-2xl); font-weight: var(--weight-semibold); letter-spacing: -0.01em; color: var(--color-text); }
 .panel-desc { margin: 0; font-family: var(--font-ui); font-size: var(--text-sm); line-height: var(--leading-normal); color: var(--color-text-muted); max-width: 560px; }
@@ -839,4 +1775,68 @@ function archiveTime(iso: string): string {
    680px). Scoped to this dialog only. */
 :deep(.ui-dialog) { width: min(980px, 96vw); }
 :deep(.ui-dialog--fixed-height) { height: min(780px, calc(100vh - var(--space-8) * 2)); }
+
+/* MCP tab + Skills tab (shared card / form / badge styles) */
+.ext-count { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--color-text-faint); flex: none; margin-left: var(--space-2); vertical-align: middle; font-weight: var(--weight-regular); }
+.ext-error { margin-bottom: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--color-danger-soft, rgba(220, 38, 38, 0.08)); color: var(--color-danger, #dc2626); font-size: var(--text-sm); }
+.ext-list { display: flex; flex-direction: column; gap: var(--space-3); }
+.ext-card { border: 1px solid var(--color-line); border-radius: var(--radius-lg); background: var(--color-bg); overflow: hidden; }
+.ext-card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-line); }
+.ext-card-name { display: flex; align-items: center; gap: var(--space-2); min-width: 0; flex-wrap: wrap; }
+.ext-name { font-family: var(--font-ui); font-size: var(--text-base); font-weight: var(--weight-medium); color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext-badge { flex: none; padding: 2px 8px; border-radius: 9999px; background: var(--color-accent-soft); color: var(--color-accent); font-size: var(--text-xs); font-weight: var(--weight-medium); font-family: var(--font-mono); }
+.ext-badge-muted { background: var(--color-surface-sunken); color: var(--color-text-muted); }
+.ext-card-actions { display: flex; gap: var(--space-2); flex: none; }
+.ext-card-body { padding: var(--space-3) var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
+.ext-field { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; }
+.ext-field-label { flex: none; width: 88px; font-family: var(--font-ui); font-size: var(--text-xs); color: var(--color-text-faint); text-transform: uppercase; letter-spacing: 0.04em; }
+.ext-field-value { font-size: var(--text-sm); color: var(--color-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext-field-value.mono { font-family: var(--font-mono); font-size: var(--text-xs); }
+.ext-add-row { margin-top: var(--space-3); }
+
+.ext-form { margin-top: var(--space-4); padding: var(--space-4); border: 1px solid var(--color-accent); border-radius: var(--radius-lg); background: var(--color-surface-raised); display: flex; flex-direction: column; gap: var(--space-3); }
+.ext-form-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-1); }
+.ext-form-title { font-family: var(--font-ui); font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--color-text); }
+.ext-form-row { display: flex; align-items: center; gap: var(--space-3); }
+.ext-form-row-stack { flex-direction: column; align-items: stretch; gap: var(--space-2); }
+.ext-form-hint { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--color-text-faint); }
+.ext-form-error { margin-top: var(--space-1); }
+.ext-input { flex: 1; min-width: 0; height: 36px; padding: 0 var(--space-3); border: 1px solid var(--color-line); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-text); font-family: var(--font-ui); font-size: var(--text-sm); transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
+.ext-input:hover { border-color: var(--color-line-strong); }
+.ext-input:focus { outline: none; border-color: var(--color-accent); box-shadow: var(--p-focus-ring); }
+.ext-input.mono, .ext-input-num { font-family: var(--font-mono); }
+.ext-input-num { flex: none; width: 96px; }
+.ext-textarea { flex: 1; min-width: 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--color-line); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-text); font-family: var(--font-mono); font-size: var(--text-xs); line-height: var(--leading-normal); resize: vertical; transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
+.ext-textarea:hover { border-color: var(--color-line-strong); }
+.ext-textarea:focus { outline: none; border-color: var(--color-accent); box-shadow: var(--p-focus-ring); }
+.ext-kv-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.ext-kv-row { display: flex; align-items: center; gap: var(--space-2); }
+.ext-kv-key { flex: 0 0 160px; }
+.ext-kv-value { flex: 1; }
+.ext-form-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+
+.ext-skills-hint { margin: 0 0 var(--space-2); font-family: var(--font-ui); font-size: var(--text-sm); color: var(--color-text-muted); max-width: 560px; line-height: var(--leading-normal); }
+.ext-skill-row { display: flex; align-items: baseline; gap: var(--space-3); padding: var(--space-1) 0; border-top: 1px solid var(--color-line); }
+.ext-skill-row:first-child { border-top: none; }
+.ext-skill-name { flex: none; max-width: 240px; font-size: var(--text-xs); color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext-skill-desc { flex: 1 1 auto; min-width: 0; font-family: var(--font-ui); font-size: var(--text-sm); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sec-head-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-2); }
+.sec-head-actions { display: flex; gap: var(--space-2); flex: none; }
+.ext-card-row { padding: var(--space-2) var(--space-3); }
+.ext-card-name-grow { flex: 1 1 auto; min-width: 0; }
+.ext-skill-dir-index { flex: none; color: var(--color-text-faint); font-size: var(--text-xs); }
+.ext-skill-dir-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext-add-row-inline { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); }
+.ext-add-input { flex: 1 1 auto; min-width: 0; }
+
+@media (max-width: 640px) {
+  .ext-card-head { flex-direction: column; align-items: stretch; }
+  .ext-card-actions { justify-content: flex-end; }
+  .ext-form-row { flex-direction: column; align-items: stretch; }
+  .ext-input-num { width: 100%; }
+  .ext-kv-key { flex: 1; }
+  .ext-kv-row { flex-wrap: wrap; }
+  .ext-field { flex-direction: column; gap: var(--space-1); }
+  .ext-field-label { width: auto; }
+}
 </style>

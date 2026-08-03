@@ -1,89 +1,120 @@
-# Repository-level Agent Guide
+# 仓库级 Agent 指南
 
-Reply in the same language as the user.
+使用中文回复。
 
-This is a TypeScript monorepo built for agent-assisted development. Keep the root `AGENTS.md` limited to hot-path rules: the project map, hard constraints, and workflow requirements — things every task needs to know.
+Kimi Code CLI 的 TypeScript monorepo。AI agent 辅助开发是工作流的一部分——本文件只包含跨包的关键规则，每一条回答"没有这个提示 agent 是否可能出错"。
 
-## Working Principles
+## 环境要求
 
-- Think from first principles. Start from real requirements, code facts, and verification results; if the goal is unclear, discuss it with the user first.
-- Treat code, not documentation, as the source of truth. Unless the user explicitly says otherwise, do not read ordinary Markdown just to understand the implementation.
-- Before making code changes, read the relevant code and the most recent constraints, and follow the nearest `AGENTS.md` in the directory tree.
-- Keep changes focused. Do not slip in unrelated refactors along the way.
-- When committing, do not add any co-author attribution, and do not reveal the identity of the agent in commit messages, PR descriptions, or any explanatory text.
+- Node.js >= 24.15.0（`.nvmrc` 锁定 24.15.0）
+- pnpm 10.33.0（`packageManager` 字段）
+- `.npmrc` 设 `engine-strict=true`，版本不满足时 `pnpm install` 直接失败
 
-## Project Map
+## 项目地图
 
-- `apps/kimi-code`: the CLI / TUI application. It consumes core capabilities through `@moonshot-ai/kimi-code-sdk` and must not depend directly on `@moonshot-ai/agent-core`. When writing or modifying its terminal UI, use the `write-tui` skill (`.agents/skills/write-tui/SKILL.md`).
-- `apps/kimi-web`: the browser web UI, a peer to the TUI. Vue 3 + Vite + vue-i18n; talks to the server over REST + WebSocket under `/api/v1`. It must not depend on `@moonshot-ai/agent-core` (wire types are re-implemented locally). Debug against the two engines via the root `pnpm dev:v1` / `pnpm dev:v2` backend scripts — the dev Sidebar shows the active backend and switches it at runtime. See `apps/kimi-web/AGENTS.md`.
-- `apps/vis`, `apps/vis/server`, `apps/vis/web`: visual debugging tools for sessions and replays.
-- `apps/kimi-inspect`: web inspector for the kap-server `/api/v1/debug` RPC surface — workspace/session browser, per-session chat, and Service panels (data + trigger buttons) for the Session and Agent scopes. A left icon rail (`src/components/NavRail.tsx`) switches top-level views: the Chat workspace, the global message search (`src/components/SearchView.tsx` — cross-session full-text search over `POST /api/v1/search`, cursor-paged via a manual Load more; an exact-match checkbox maps to the API's `mode: 'literal'` substring search, which ignores sort and orders newest-first; a `live`/`index` badge on the results shows which server route served them (in-memory session transcript vs the persisted index)), the Model Catalog (`src/components/ModelCatalogView.tsx` — every Provider with its Models and the default marker, via `IModelCatalog` / `IModelService` channel proxies), and App Services (`src/components/AppServicesView.tsx` — the app-scope Service reflection, full width, joined by the Workspace Services view (`src/components/WorkspaceServicesView.tsx`) — the workspace-scope counterpart with a left sidebar directory browser (`src/components/WorkspaceDirBrowser.tsx` — server-side fs browsing over the App-scope `IHostFolderBrowser`, marking entries that are registered workspaces with their `IWorkspaceTrust` trust state, and registering a picked folder on demand via `IWorkspaceService.createOrTouch`), its proxies riding the `/workspace/:id` route, which materializes the handler on demand via `IWorkspaceLifecycleService.handlerFor`; the Agent scope stays in the Chat view's right dock (`src/components/RightPanel.tsx`) across two tabs: the `Agent` tab (`Inspector`: agent switcher + a Plan lookup card — `PlanCard` in `src/components/Inspector.tsx` — querying `GET /sessions/{id}/transcript/plan` (one tool_call_id, or every plan of the agent) via `src/transcript/api.ts`'s `fetchTranscriptPlan` — plus the agent Service panels) and the `State` tab (every key an Agent Service registered into the agent-state container, polled live via `IAgentStateService.snapshot()` — the same live diff-tree view as the session State tab, sharing `StateCard` from `src/components/StateCard.tsx`), while the Session scope has its own column right next to the session-list sidebar (`src/components/SessionPane.tsx`) with two tabs: Services (the pending-interactions card — `src/components/InteractionsCard.tsx` — plus the session Service panels) and State (every key a Session Service registered into the session-state container, read on demand via `ISessionStateService.snapshot()`)). Expanding a Model opens the model inspector inside that view: provider/model config layers plus the resolved runtime view with per-value provenance (config / override / builtin / env / synthesized), served on demand by `IModelCatalog.inspect` — the same resolution pass the runtime's `get` serves, traced via `ResolutionTraceCollector` and assembled by `kosong/model/inspection.ts`. Built on its own old-klient-style channel layer (`src/channel/`: the VS Code `ProxyChannel` model — service-bound `IChannel`, HTTP `ProxyChannel` for calls routed to `/api/v1/debug`), typed by `agent-core-v2` Service interfaces; `GET /api/v1/debug/channels` loads the whole wire protocol 1:1 (every scoped Service, no whitelist). There is no Service-event push channel: panels fetch/refresh on demand (`Sidebar` polls react-query on a 15 s interval), and a connection failure shows a blocking "Debug surface unavailable" screen instead of falling back anywhere. Session-level coarse status is the one exception: `src/activity/` holds a second `/api/v1/ws` client (`GlobalEventsWs`) that subscribes to nothing and consumes the server-pushed global facts — `event.session.work_changed` updates a per-session activity map (`SessionActivityHub` + subscribe/version store, seeded on connect/reconnect from `GET /api/v1/sessions`), while `event.session.created` / `session.meta.updated` invalidate the `['sessions']` query; the `Sidebar` session rows render `running` / `approval` / `question` / `failed` badges from it via `useSessionActivities`. The Vite dev server proxies `/api` to a running kap-server (`KIMI_SERVER_URL`, default `http://127.0.0.1:58627`) and exposes `GET /__inspect/servers` (`vite/serverDiscovery.ts`), which scans the local kap-server instance registry (`~/.kimi-code/server/instances` + legacy `lock`) and the home token so the app can zero-config auto-connect and switch servers from the header dropdown at runtime. The per-session chat (`src/components/ChatView.tsx`) renders turn-granularly from the **transcript** surface instead of context memory and carries an in-chat search bar (`src/components/ChatSearchBar.tsx`): it searches the current session via `POST /api/v1/search` with `container: { session_id }` (usually served by the live route, since selecting a session resumes it), and a result click funnels through the app shell's `openSearchHit` — the same agent-switch + `ChatJump` (page-back, scroll, flash) path the global search view uses; full state is read from `GET /api/v1/sessions/{id}/transcript` (initial load = newest page, refreshes re-read from the tail backwards), older history auto-pages with `before_turn` via an IntersectionObserver sentinel at the top of the scroll view, and each timeline item is wrapped in `content-visibility: auto` + `contain-intrinsic-size` so the browser virtualizes off-screen rendering natively (no windowing library); `/api/v1/ws` is an incremental channel (`transcript.ops`, grade `block` — the cheapest grade that still carries whole-state frame upserts, dropping per-token `append` frames; `transcript.reset` is ignored by the store, surfaced only to the audit recorder via the optional `onReset` handler). The channel tracks the op-batch watermark: a dedicated `subscribe_v2` control frame carries the per-agent grades and the `transcript_since` cursor, a seq gap / reconnect / `resync_required` / append gap triggers a point-to-point catch-up (`fetchTranscriptOps` → `GET .../transcript/ops?since_seq=`), and any legacy/incomplete answer falls back to the full REST refresh. Convergence reuses `@moonshot-ai/transcript`'s L2 reducer (`src/transcript/`: REST/WS clients + store; the data model and reducer come from the package, nothing is re-implemented locally). The Transcript audit panel (`src/components/audit/`, the `Audit` tab of the chat view's right dock — `src/components/RightPanel.tsx`, fed the trail by `ChatView`'s `onTrailChange`) replays how the visible store was built: an `AuditTrail` (`src/audit/`) records every step — each REST page (request + replace/prepend), every WS frame (`transcript.ops` live/buffered/flushed/catchup, `transcript.reset`), loss signals, and prompt/cancel actions — with the resulting immutable `AgentState` per entry; the panel offers a draggable timeline plus a Diff tab (structural diff vs the previous entry: added/modified/removed colored, long strings tail-truncated, all fields kept), a full State view, and the raw Event payload.
-- `packages/agent-core`: the unified agent engine, including Agent, Session, profile, skills, tools, plan, permission, background, records, the in-process DI service layer (`src/services/`), and other core capabilities.
-- `packages/agent-core-v2`: the DI × Scope agent engine (the v2 port behind kap-server). Four `LifecycleScope` tiers — `App` / `Workspace` / `Session` / `Agent` (`_base/di/scope.ts`). The `workspace/` domain owns one Workspace scope per materialized workspace handler: the App-scope `IWorkspaceLifecycleService` keeps the live handler registry (create-or-get + join, handlers never closed), and each handler's `ISessionLifecycleService` owns session create/resume/fork/close as its child scopes — there is no App-level session lifecycle facade, callers compose `ISessionIndex` → `handlerFor` → the handler. Workspace-scope services hold the handler-shared resources loaded once per handler and refreshed by fs watch: skills / AGENTS.md (`workspaceSkillCatalog` / `workspaceInstructions`), the workspace agent-profile loader (`workspaceAgentProfileLoader` — agent profiles follow the Contribution / Registry / Catalog extension point: the domain owns agent-file discovery end to end (parse / roots / SYSTEM.md / explicit files) and its Workspace-scope loaders (`workspace` / `user` / `plugin` / `extra` / `explicit`) register `AgentProfileContribution`s into the App-scope `IAgentProfileRegistry`, tagged with the handler's `workspaceId`; the App-scope `builtinAgentProfileLoader` contributes the code-defined profiles, and each Session-scope `sessionAgentProfileCatalog` projects the registry directly (name-level dedup + builtin-override rule in the projection), seeded with only the workspace key), one shared MCP connection set (`workspaceMcp`, pure connection orchestration over the scope-agnostic `mcpCore` layer; the effective server set is owned by `workspaceMcpConfig` — mcp.json files + plugin contributions, fs-watch refreshed — and MCP persistence, the `[mcp]` config section plus OAuth credentials, lives in `app/mcpConfig`, the same wrapper shape as `kosongConfig` over kosong), fs / fs-watch / process runner / git (`workspaceFs` / `workspaceFsWatch` / `workspaceProcess` / `workspaceGit`), the additional-directory set (`workspaceDirs`, backed by `.kimi-code/local.toml`), the os-level tool veto (`workspaceToolPolicy`), and the trust marker (`workspaceTrust` — persisted under the home, keyed by `encodeWorkDirKey(root)`; while a workspace is untrusted, `workspaceMcpConfig` skips the project-level `.mcp.json` / `.kimi-code/mcp.json` files, and the state flips through kap-server's `GET|POST /workspaces/{id}/trust` + `POST /workspaces/{id}/untrust` routes). Session/Agent scopes consume these through session-domain seed contracts with change events (`session/mcp`, `session/workspaceInfo`, `session/sessionSkillCatalog` data, …). See `packages/agent-core-v2/AGENTS.md` and use the `agent-core-dev` skill (`.agents/skills/agent-core-dev/SKILL.md`) when developing here.
-- `packages/node-sdk`: the public TypeScript SDK and harness.
-- `packages/kosong`: the LLM / provider abstraction layer.
-- `packages/kaos`: the execution environment and file/process abstractions.
-- `packages/oauth`: Kimi OAuth and managed auth utilities.
-- `packages/telemetry`: shared client-side telemetry infrastructure.
-- `packages/transcript`: the isomorphic transcript rendering data layer — agent-granular L1 store, idempotent L2 operations, `off/turn/block/delta` L3 subscription granularity, framework-free L4 view registry, and turn-cursor pagination. Pure TypeScript (browser-safe, no engine imports) and the sole owner of all transcript contract types (`src/contract/`); consumed by `packages/kap-server` (engine events → transcript, REST + WS surface; live stores backfill history from the persisted per-agent wire records — main on first attach, any agent on demand, cold sessions rebuild any agent — with 0-based turn ordinals matching the engine's). The cold rebuild is a two-level fold over `wire.jsonl` as the single source of truth: `history/groupTurns.ts` (context messages → turn tree) plus `history/foldFacts.ts` (non-context records → tasks, interactions, todos, goal/plan/swarm meta, and end-appended markers/taskrefs; interactions left pending at shutdown fold to `cancelled`). Plan content is a recorded fact too: each ExitPlanMode review submission offloads the document to `agents/<agentId>/plan/<planId>/v<N>.md` and persists a reference-only `plan.revision` record (`{id, version, path, sha256, bytes}`), which projects — live and cold — to a `plan.revision` marker and the `modes.plan` badge (`{reviewPath, version}`). It also owns the op-batch sequencing contract (`transcriptSeqSchema` in `contract/schema.ts`): a per-(session, agent) monotonic batch `seq` on `transcript.ops` / `transcript.reset` / the REST transcript response, the `transcript_since` subscription cursor, and the `GET .../transcript/ops` catch-up response shape — every field optional so pre-seq peers fall back to loss-signal-driven refreshes. Beyond the timeline, the model carries wire-equivalent detail: steps carry `usage` / `finishReason` / `timing` (LLM latencies) / `retry` / interrupt reason, turns carry `durationMs` / `error` / `usage`, tool frames carry the streamed `inputText` and the latest `progress`, tasks carry subagent `resultSummary` / `error` / `stateReason` / `usage`, `meta.agent` mirrors the agent status slices (model / usage / context / permission / phase), a global `prompts` entity (op `prompt.upsert`) tracks the prompt queue, and `hook.result` lands as a `'hook'` marker. These live-projected fields are NOT backfilled by the cold rebuild (known limitation).
-- `packages/kap-server`: the Kimi Code server, backed by the DI × Scope agent engine (`@moonshot-ai/agent-core-v2` — four scopes, App/Workspace/Session/Agent; session create/resume/fork routes compose `ISessionIndex` → `IWorkspaceLifecycleService.handlerFor` → the handler's `ISessionLifecycleService`, and the fs routes resolve session → handler → the Workspace-scope fs services, with one exception: `fs:search` also accepts a workspace reference (registered id or absolute root) in the `{session_id}` slot, so a not-yet-created draft session's `@` file mention resolves the workspace handler directly; the first-class session-less form is `POST /api/v1/workspace/fs:search` (the workspace reference travels in the body)). Exposes sessions over REST + WebSocket (`/api/v1` + `/api/v1/ws`); bootstrapped from `src/start.ts` and consumed by `apps/kimi-code`. The RPC surface is `/api/v1/debug/*` — a reflection dispatcher over the ENTIRE scoped DI registry (every Service callable, no whitelist, Workspace scope addressable alongside App/Session/Agent; `src/transport/registerDebugRoutes.ts` + `serviceDispatcherRoutes.ts`), mounted only with `--debug-endpoints` on a loopback bind and gated by the global bearer auth; repo dev scripts pass the flag. Its transcript surface implements the op-batch sequencing contract: `TranscriptService.dispatchOps` assigns every dispatched batch a per-agent consecutive `seq` and retains it in a bounded in-memory journal (`TRANSCRIPT_OPS_JOURNAL_CAPACITY`, dies with the live store); WS `transcript.ops`/`transcript.reset` payloads carry the seq/watermark, a `transcript_since` subscription cursor (carried, with the per-agent grades, by the `subscribe_v2` control frame — the only transcript subscription channel; its agent-grained counterpart `unsubscribe_v2` detaches listed agents' streams, or the whole session's when `agent_ids` is absent, letting the detached agents' legacy events flow again) replays journaled batches instead of a baseline reset when the journal covers it, and `GET /sessions/{id}/transcript/ops?since_seq=` serves point-to-point catch-up (`complete: false` = journal can't cover or session cold → caller falls back to a full refresh). Beside the paged route, `GET /sessions/{id}/transcript/plan?agent_id=[&tool_call_id=]` projects an agent's ExitPlanMode plan info (content / path / options / review outcome; `tool_call_id` narrows to one call, omitted lists every recoverable plan) from the first available fact — the linked approval interaction's persisted request display, the live tool frame's display, or the tool result output text. The baseline `transcript.reset` itself is items-empty (`TRANSCRIPT_RESET_TAIL_TURNS = 0`): it carries only global state + the watermark + `has_more_older`, because history always pages in over REST. When a WS connection subscribes to the transcript protocol (grade ≠ `off` for an agent), the broadcaster suppresses the transcript-projected `session_event` types for that connection × agent (`TRANSCRIPT_PROJECTED_EVENT_TYPES` + `suppressedByTranscript` in `sessionEventBroadcaster.ts`; cursor replay via `getBufferedSince` applies the same filter). Suppression is only a per-connection send view — the journal still records everything, and connections without transcript grades are unaffected. The session's work aggregate behind `event.session.work_changed` (`busy` / `main_turn_active` / `pending_interaction` / `last_turn_reason`) is owned by the core's `ISessionActivityView` (`sessionActivity` domain, Session scope): the broadcaster only schedules the wire emission around turn frames (`busy:false` lands after `turn.ended`), and `resolveSessionFacts` (`src/routes/sessions.ts`) reads the same view — never fold per-agent activity at the edge. Delivery split on `/api/v1/ws`: global events (`session.meta.updated` and the `event.session.*` / `event.workspace.*` / `event.config.*` families, including every activated session's `event.session.work_changed`) fan out to EVERY established connection — `WsConnectionV1` registers itself via `broadcaster.addGlobalTarget` on construction and unregisters on close — while session/agent-grained events only reach connections subscribed to that session (subject to `agent_filter` and the transcript suppression above); transcript frames are a separate channel governed by the per-agent grades alone and bypass `agent_filter` entirely. The global search surface is `POST /api/v1/search` (`src/search/` + `src/routes/search.ts`): a cross-session full-text search over user messages, assistant text, and session titles, backed by a single minidb database at `<home>/search-index` (`IGlobalSearchService`, App scope — the write-lock holder is the indexer, other processes open read-only and catch up via WAL). It serves two modes: `terms` (the default — minidb's inverted text index over ASCII words + CJK uni/bigrams, no positions, term-level AND) and `literal` (substring-exact search: a hashed 2/3-gram index supplies candidates, every candidate's text is then confirmed with `includes`, so hits carry zero false positives; literal ignores `sort` and returns newest-first, and a candidate set truncated at `LITERAL_CANDIDATE_CAP` is flagged `incomplete: 'candidate_cap'`). When `container.session_id` is provided and that session is live in this process (`TranscriptService.forSessionLive` returns a store, wired via `setLiveTranscriptSource` in `start.ts`), BOTH modes instead scan the in-memory transcript store (turn prompts + assistant text frames, history established via `whenReady`/`ensureAgentHistory`) — no index involved; terms-mode live hits are scored Σ log(1+tf) (comparable only within a route, per the `GlobalSearchSource` contract), live-route errors never fall back to the index, and the response's `source: 'live' | 'index'` field (also mixed into the page-token fingerprint, so a mid-pagination route flip invalidates the old token) tells the caller which route served the page.
-- `packages/klient`: the client SDK — a contract-driven facade over agent-core-v2 with aggregated `global.*` / `session(id).*` / `agent(id).*` methods, zod validation on every call, and klient-level typed event forwarding. Transport is chosen once at creation via subpath entry (`@moonshot-ai/klient/ipc|memory`); both return the same `Klient`. The package also hosts the e2e suites: the legacy `/api/v1` live suites (`test/e2e/legacy/`) and the docker e2e runner (`pnpm --filter @moonshot-ai/klient docker:e2e`). See `packages/klient/AGENTS.md`.
-- `packages/server-e2e`: live e2e tests and scenarios against a running server (`KIMI_SERVER_URL`, default `http://127.0.0.1:58627`). See `packages/server-e2e/AGENTS.md`.
-- `packages/tree-sitter-bash`: a pure-TypeScript bash parser (no runtime deps, no wasm) that produces a syntax tree with tree-sitter-bash 0.25.0 named-node type names and UTF-16 code-unit offsets. `parse(source, { timeoutMs, maxNodes })` runs under a deterministic budget (default 50 ms / 50k nodes, plus per-chain recursion depth caps) and returns a discriminated `ParseResult` (`{ ok, rootNode, hasError }` or `{ ok: false, reason: 'aborted' }`) — callers must treat aborted/hasError trees as "cannot analyze" and degrade. Parser only, no safety judgments; consumers (e.g. Bash tool permission matching) live elsewhere. Known deviations from the reference are tracked in the package README's "Known differences" section, pinned by differential fixtures tested against the real `tree-sitter-bash` wasm (dev-only).
-- `packages/minidb`: the embedded JSON document store (`MiniDb`) behind kap-server's search index — snapshot + WAL persistence with an exclusive write lock (losers open read-only and catch up from the WAL), plus a larger-than-RAM full-text layer: `src/text-index.ts` is the inverted index (in-RAM dictionary + delta, on-disk postings in `src/text-postings.ts`, rebuilt from the Store on open and on compaction) with an injectable `tokenizer`/`queryTokenizer`; the default tokenizer keeps ASCII words and CJK uni/bigrams, while `src/trigram.ts` provides the hashed 2/3-gram tokenizer (NFKC + lowercase, code-point windows) that backs substring-exact search. Text-index definitions (including the tokenizer name) persist in `db.textindexes.json`.
+**应用层（apps/）：**
+- `kimi-code` — CLI/TUI。入口链: `main.ts → cli/commands.ts → KimiHarness → tui/kimi-tui.ts`。修改 TUI 请加载 `write-tui` skill。禁止直接 import `@moonshot-ai/agent-core`，只能通过 `@moonshot-ai/kimi-code-sdk`。
+- `kimi-web` — Vue 3 + Vite + vue-i18n 浏览器 UI，通过 REST + WebSocket (`/api/v1`) 与 server 通信。见 `apps/kimi-web/AGENTS.md`。
+- `kimi-inspect` — kap-server debug RPC 的 Web Inspector（`/api/v1/debug/*`）。
+- `vis` / `vis/server` / `vis/web` — 会话回放和调试可视化。
+- `vscode` — VS Code 扩展。
 
-## Environment Requirements
+**核心包（packages/）：**
+- `agent-core` (v1) — 旧版引擎。`agent-core-v2` — 新引擎（DI × Scope 架构，WIP 迁移中）。见 `packages/agent-core-v2/AGENTS.md`。
+- `kap-server` — 服务端，由 v2 驱动。暴露 REST + WebSocket (`/api/v1` + `/api/v1/ws`)。
+- `kosong` — LLM / provider 抽象层。
+- `kaos` — 执行环境和文件/进程抽象。
+- `klient` — 客户端 SDK，v2 的契约门面。两种传输 (`/ipc` 和 `/memory`)。见 `packages/klient/AGENTS.md`。
+- `transcript` — 跨平台 transcript 渲染数据层（纯 TS，无引擎依赖）。
+- `minidb` — 嵌入式 JSON 文档存储+全文索引。
+- `node-sdk` — 公开 SDK（`@moonshot-ai/kimi-code-sdk`）。
+- `pi-tui` — TUI 底层框架。
+- `tree-sitter-bash` — TypeScript bash 解析器（无 wasm）。
+- `acp-adapter` — Agent Client Protocol 适配器。
+- `migration-legacy` — v1→v2 迁移工具。
+- `oauth` / `telemetry` / `protocol` — 基础设施包。
 
-- **Node.js**: `>=24.15.0` (from the root `package.json` `engines`; `.nvmrc` is `24.15.0`, used by nvm / fnm / mise to pick the minimum recommended version).
-- **pnpm**: `10.33.0` (from the root `package.json` `packageManager`).
-- `pnpm install` will fail when the Node version is not satisfied, because `.npmrc` sets `engine-strict=true`.
+**其他：**
+- `docs/` — VitePress 双语文档站点。见 `docs/AGENTS.md`。
+- `.agents/skills/` — 8 个项目级 skill（`write-tui`、`agent-core-dev`、`gen-changesets` 等）。
+- `plugins/` — 插件目录。
 
-## Monorepo Workspace Maintenance
+## 开发命令
 
-- `pnpm-workspace.yaml` is the source of truth for workspace membership, but `flake.nix` also contains **hardcoded** `workspacePaths` and `workspaceNames` lists.
-- **Whenever you add or remove a workspace package, you MUST update both `pnpm-workspace.yaml` and `flake.nix` — for every package, including leaf / test / e2e packages that nothing depends on.**
-  - `pnpm-workspace.yaml` uses globs (`packages/*`, `apps/*`), so most packages land there automatically; `flake.nix` is fully manual and is where omissions happen.
-  - Missing a path in `flake.nix`'s `workspacePaths` will silently drop files from the Nix build's `src` fileset.
-  - Missing a name in `flake.nix`'s `workspaceNames` will break `pnpmConfigHook` because dependencies for that workspace will not be fetched.
-- The automated "Check flake.nix workspace sync" (`scripts/check-nix-workspace.mjs`) only validates the transitive dependency **closure of `@moonshot-ai/kimi-code`**. A leaf package outside that closure (e.g. an e2e package nobody imports) slips through even when it is missing from `flake.nix`. A green check is therefore NOT proof that `flake.nix` is fully in sync — keep it updated by hand on every add/remove, do not rely on the check to catch omissions.
+```bash
+pnpm install         # 安装依赖
+pnpm build           # 构建所有包
+pnpm test            # vitest（CI 分 5 shard 运行）
+pnpm typecheck       # 先 build:packages，再类型检查
+pnpm lint            # oxlint --type-aware
+pnpm lint:fix        # oxlint --type-aware --fix
+pnpm sherif          # monorepo 一致性校验
 
-## General Coding Rules
+pnpm dev:cli         # CLI dev 模式
+pnpm dev:cli:v2      # 实验性标志 CLI（KIMI_CODE_EXPERIMENTAL_FLAG=1）
+pnpm dev:web         # Web UI dev（端口 5175）
+pnpm dev:server      # kap-server（端口 58627）
+pnpm dev:v2          # kap-server 多实例（端口 58628）
 
-- For optional object properties, pass `undefined` directly instead of using conditional spread.
-  - YES: `{ user }`
-  - NO: `{ ...(user ? { user } : undefined) }`
-- Optional object properties do not need to additionally allow `undefined` in the type.
-  - YES: `interface Options { user?: User }`
-  - NO: `interface Options { user?: User | undefined }`
-- Internal methods with only a single parameter should not be turned into options objects just for stylistic uniformity.
-- Except for a package's `index.ts`, other `index.ts` files should prefer `export * from './module';`.
-- The `Agent` class in `packages/agent-core/src/agent` must be usable on its own. The constructor must not force the caller to create a `Session` instance, nor require an `agentId` or `session`. It may accept an optional `sessionId` as a request-config hint — for example mapped to the provider's `prompt_cache_key` — but the instance must not hold `sessionId`, and must not depend on the Session lifecycle, metadata, or parent/child relationship logic.
-- Do not add too many new test files. Prefer adding tests to the existing test file of the corresponding component or module.
-- When a test fails because of a user modification, default to fixing the test first; do not change the implementation to satisfy an old test unless the implementation truly has a bug.
-- Do not sacrifice code quality for external compatibility unless the user explicitly asks for it. Breaking changes go through changesets and a `major` bump, gated by the rule below.
+pnpm --filter <pkg> test      # 包级测试
+pnpm --filter <pkg> typecheck # 包级类型检查
+```
 
-## Experimental Features
+**注意：**
+- `typecheck` 会先构建所有包——不要跳过构建步骤直接运行。
+- `pi-tui` 用 `node:test` 而非 vitest，需要独立运行: `pnpm --filter @moonshot-ai/pi-tui test`。
+- Windows CI 当前禁用（`if: false`）。
 
-- Gate a not-yet-public feature behind an experimental flag. Add the flag to the registry at `packages/agent-core/src/flags/registry.ts`, then check it with `flags.enabled('my-feature')`. Flags are env-driven and default off: `KIMI_CODE_EXPERIMENTAL_<NAME>` toggles one, `KIMI_CODE_EXPERIMENTAL_FLAG` enables all. Release by flipping the entry's `default` to `true`.
+## 工具链
 
-## Where to Update Instructions
+| 用途 | 工具 | 配置 |
+|---|---|---|
+| 格式化 | oxfmt（内置在 oxlint 中） | `.oxfmtrc.json`（printWidth 100, singleQuote, trailingComma all） |
+| 类型检查 | TypeScript 6.0.2 | `module: preserve`, `moduleResolution: bundler`, `target: ES2024`, `strict: true` |
+| 测试 | vitest 4.1.4 | 根配置分 projects: `packages/*`, `apps/kimi-code`, `apps/vscode` |
+| 构建 | tsdown 0.22.0 | 各包独立 `tsdown.config.ts` |
+| lint-staged | oxlint --fix → oxlint --type-aware | 提交前自动检查 |
+| 包管理 | pnpm 10.33.0 | workspace `catalog` 共享 `zod` 等依赖 |
 
-- Hard rules that affect almost every task: update the root `AGENTS.md`.
-- Rules that only affect a specific directory: update the nearest sub-directory `AGENTS.md`.
-- Keep instruction updates focused and supported by code facts.
+## 工作区维护
 
-## Workflow Requirements
+- `pnpm-workspace.yaml` 是成员真实来源。
+- `flake.nix` 中**硬编码**了 `workspacePaths` 和 `workspaceNames`——增删包时**必须**同步更新。
+- 检查脚本 `scripts/check-nix-workspace.mjs` 只校验 `@moonshot-ai/kimi-code` 的传递闭包。叶子包缺失 nix 配置不会被检测到——不要依赖检查结果，手动保持同步。
+- Nix 构建会先 build Web 资产，再产出 SEA 单二进制。
 
-- Prefer `rg` / `rg --files` when reading code.
-- When designing changes, follow existing boundaries and local patterns first.
-- In public text and test data, replace real internal identifiers with neutral placeholders such as `example.com`, `example.test`, and `YOUR_API_KEY`. Before opening a PR, ask a read-only agent to audit the diff for context-specific internal identifiers.
-- When creating a PR, the PR title must follow Conventional Commit style, e.g. `chore: remove legacy format commands`.
-- When an AI agent opens or updates a PR, fill in `.github/pull_request_template.md` — link the related issue or explain the problem, then describe what changed. Do not leave placeholder text or submit a generic summary of the diff.
-- Do not submit vague AI-generated PR text. The human author must understand the change well enough to explain the code, edge cases, and why the approach fits this repository.
-- After finishing a task and before submitting a PR, you must run the `gen-changesets` skill (see `.agents/skills/gen-changesets/SKILL.md`) and generate a changeset under `.changeset/` according to its rules.
-- When generating a changeset, **never** decide on a `major` bump on your own. When you judge a change to meet the major criteria (breaking changes, incompatible user configuration, renamed or removed commands/arguments, changed behavior semantics, etc.), you must stop and explain it to the user and ask for confirmation. **Only write `major` after the user has explicitly agreed.** Otherwise default to `minor` (and fall back to `patch` if `minor` is unclear). See the "Hard rule: confirm with the user before writing `major`" section in `.agents/skills/gen-changesets/SKILL.md` for details.
-- Prefer importing via `import ... from '#/...'`, which serves the same purpose as `import ... from '@/...'`.
-- Do not commit throwaway scratch or exploratory files. Never stage:
-  - Agent working notes or handoff/summary documents (e.g. `HANDOVER-*.md`, `HANDOFF-*.md`, `handoff.md`).
-  - Throwaway UI/UX prototypes or design mockups (e.g. `*-designs.html`, `*-mockup.html`, `*-demo(s).html`) at the repo root or under a `design/` folder. The only tracked `.html` files should be Vite `index.html` entrypoints.
-  Before committing or opening a PR, run `git status` and `git diff --staged --stat` and remove anything matching these patterns. Put scratch work under `.tmp/` (gitignored) instead of the repo root or the source tree.
+## 编码约定
+
+- 可选属性直接传 `undefined`，不要条件展开。`{ user }` ✓, `{ ...(user ? { user } : undefined) }` ✗。
+- 可选属性类型不需要 `| undefined`。`user?: User` ✓, `user?: User | undefined` ✗。
+- 单参数内部方法不要改为 options 对象。
+- 非 `index.ts` 的 `index.ts` 用 `export * from './module'`。
+- 优先用 `#/` 导入别名（等同 `@/`）。
+- 优先追加到现有测试文件，不新建。
+- 测试失败优先修复测试，不改实现（除非实现真有 bug）。
+- 读代码优先用 `rg` / `rg --files`。
+
+## 实验性功能
+
+在 `packages/agent-core/src/flags/registry.ts` 注册 flag，用 `flags.enabled('name')` 检查。环境变量驱动：
+- `KIMI_CODE_EXPERIMENTAL_<NAME>` — 开启单个
+- `KIMI_CODE_EXPERIMENTAL_FLAG` — 开启所有
+- 发布时改 registry 中 `default` 为 `true`。
+
+## 提交与 PR
+
+- PR 标题必须遵循 Conventional Commit（`feat:`、`fix:`、`chore:` 等），CI 强制检查。
+- 填写 PR template——链接 issue、解释问题、描述变更。不留占位文本。
+- commit/PR 中不暴露 AI agent 身份（不加 co-author 或 agent 标识）。
+- 提交前检查 staged 文件，不提交草稿（handoff.md、*-designs.html 等）。临时文件放 `.tmp/`。
+
+### Changesets
+
+- 所有影响发布产物的 PR 必须包含 changeset。
+- 用 `gen-changesets` skill 生成。**禁止自行判定 `major`**——breaking change 时停下面向用户确认。默认 `minor`，不确定时 `patch`。
+
+## 指令文件维护
+
+- 全局规则 → 根 `AGENTS.md`。
+- 局部规则 → 最近子目录的 `AGENTS.md`（如 `apps/kimi-code/AGENTS.md`、`packages/klient/AGENTS.md`）。
+- 优先从可执行来源（代码、配置、脚本）验证事实，而非文档 prose。

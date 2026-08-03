@@ -105,14 +105,19 @@ export function createKimiUserAgent(options: {
     : `${product}/${version} (${suffix})`;
 }
 
-export function createKimiDefaultHeaders(options: KimiIdentityOptions): Record<string, string> {
+export function createKimiDefaultHeaders(
+  options: KimiIdentityOptions,
+  includeDeviceHeaders = true,
+): Record<string, string> {
   return {
     'User-Agent': createKimiUserAgent(options),
-    ...createKimiDeviceHeaders({
-      homeDir: options.homeDir,
-      version: options.version,
-      platform: options.platform,
-    }),
+    ...(includeDeviceHeaders
+      ? createKimiDeviceHeaders({
+          homeDir: options.homeDir,
+          version: options.version,
+          platform: options.platform,
+        })
+      : {}),
   };
 }
 

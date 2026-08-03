@@ -4,4 +4,8 @@ export default {
   /** Generic confirm / cancel button labels (used by ConfirmDialog). */
   confirm: '确认',
   cancel: '取消',
+  save: '保存',
+  edit: '编辑',
+  delete: '删除',
+  add: '添加',
 } as const;

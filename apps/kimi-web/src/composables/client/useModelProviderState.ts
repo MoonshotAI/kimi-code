@@ -13,7 +13,7 @@ import type {
   AppProvider,
   AppSession,
   AppSkill,
-  OAuthLoginStartResult,
+  AppUserSkill,
   ThinkingLevel,
 } from '../../api/types';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
@@ -112,6 +112,11 @@ export function useModelProviderState(
   // Workspace-scoped skills, used to populate the `/` menu before a session exists
   // (onboarding composer). Keyed by workspace id; loaded once per workspace.
   const skillsByWorkspace = ref<Record<string, AppSkill[]>>({});
+  // User-authored skills (<kimi-home>/skills/<name>/SKILL.md). Loaded on demand
+  // by Settings → Skills; undefined until first load, empty array after.
+  const userSkills = ref<AppUserSkill[] | undefined>(undefined);
+  const userSkillsLoading = ref(false);
+  const userSkillsError = ref(false);
   const providers = ref<AppProvider[]>([]);
 
   // Model picked while in the "new session draft" state (onboarding composer —
@@ -277,6 +282,52 @@ export function useModelProviderState(
     } catch {
       // Side data; an older daemon without /workspaces/{id}/skills just yields
       // no slash-skills for the onboarding composer.
+    }
+  }
+
+  async function loadUserSkills(): Promise<void> {
+    userSkillsLoading.value = true;
+    userSkillsError.value = false;
+    try {
+      const api = getKimiWebApi();
+      userSkills.value = await api.listUserSkills();
+    } catch (err) {
+      userSkillsError.value = true;
+      pushOperationFailure('loadUserSkills', err);
+    } finally {
+      userSkillsLoading.value = false;
+    }
+  }
+
+  async function upsertUserSkill(
+    name: string,
+    input: { description: string; content: string },
+  ): Promise<boolean> {
+    try {
+      const api = getKimiWebApi();
+      const skill = await api.upsertUserSkill(name, input);
+      const idx = userSkills.value?.findIndex((s) => s.name === name) ?? -1;
+      if (idx >= 0 && userSkills.value) {
+        userSkills.value = userSkills.value.map((s, i) => (i === idx ? skill : s));
+      } else {
+        userSkills.value = [...(userSkills.value ?? []), skill];
+      }
+      return true;
+    } catch (err) {
+      pushOperationFailure('upsertUserSkill', err);
+      return false;
+    }
+  }
+
+  async function deleteUserSkill(name: string): Promise<boolean> {
+    try {
+      const api = getKimiWebApi();
+      await api.deleteUserSkill(name);
+      userSkills.value = (userSkills.value ?? []).filter((s) => s.name !== name);
+      return true;
+    } catch (err) {
+      pushOperationFailure('deleteUserSkill', err);
+      return false;
     }
   }
 
@@ -470,7 +521,10 @@ export function useModelProviderState(
     }
   }
 
-  /** Add a provider, then reload providers + models */
+  /** Add a provider, then reload providers + models. 创建后自动触发
+   *  refreshProvider 让后端调上游 /v1/models 拉取完整模型列表（"模型自动
+   *  发现"）——表单里只填了 defaultModel 一个种子，真正的模型列表靠 refresh
+   *  填充。refresh 失败不阻断：provider 已经创建成功，用户可稍后手动 Refresh。 */
   async function addProvider(input: {
     type: string;
     apiKey?: string;
@@ -479,21 +533,46 @@ export function useModelProviderState(
   }): Promise<void> {
     try {
       const api = getKimiWebApi();
-      await api.addProvider(input);
+      const provider = await api.addProvider(input);
       await Promise.all([loadProviders(), loadModels()]);
+      try {
+        await api.refreshProvider(provider.id);
+        await Promise.all([loadProviders(), loadModels()]);
+      } catch {
+        // 模型自动发现失败不阻断添加流程 —— provider 已持久化，用户可手动 Refresh。
+      }
     } catch (err) {
       pushOperationFailure('addProvider', err);
     }
   }
 
-  /** Delete a provider, then reload providers + models */
+  /** Delete a provider, then reload providers + models. Even on failure the
+   *  list is reloaded so a provider that no longer exists server-side (404)
+   *  drops out of the UI instead of lingering. */
   async function deleteProvider(id: string): Promise<void> {
     try {
       const api = getKimiWebApi();
       await api.deleteProvider(id);
-      await Promise.all([loadProviders(), loadModels()]);
     } catch (err) {
       pushOperationFailure('deleteProvider', err);
+    } finally {
+      await Promise.all([loadProviders(), loadModels()]);
+    }
+  }
+
+  /** Update a provider's config, then reload providers + models */
+  async function updateProvider(id: string, input: {
+    type?: string;
+    apiKey?: string;
+    baseUrl?: string;
+    defaultModel?: string;
+  }): Promise<void> {
+    try {
+      const api = getKimiWebApi();
+      await api.updateProvider(id, input);
+      await Promise.all([loadProviders(), loadModels()]);
+    } catch (err) {
+      pushOperationFailure('updateProvider', err);
     }
   }
 
@@ -527,43 +606,6 @@ export function useModelProviderState(
     }
   }
 
-  /** Start managed Kimi OAuth device flow. Returns flow data or null on error. */
-  async function startOAuthLogin(): Promise<OAuthLoginStartResult | null> {
-    try {
-      const api = getKimiWebApi();
-      return await api.startOAuthLogin();
-    } catch {
-      return null;
-    }
-  }
-
-  /** Poll the singleton OAuth flow. Returns null on error or no active flow. */
-  async function pollOAuthLogin(): Promise<{
-    flowId: string;
-    status: 'pending' | 'authenticated' | 'expired' | 'cancelled';
-    resolvedAt?: string;
-  } | null> {
-    try {
-      const api = getKimiWebApi();
-      return await api.pollOAuthLogin();
-    } catch (err) {
-      // The dialog counts consecutive nulls and gives up after a few; keep the
-      // cause in the log so a dead daemon is diagnosable.
-      console.warn('[kimi-web] pollOAuthLogin failed', err);
-      return null;
-    }
-  }
-
-  /** Cancel the current OAuth flow (best-effort). */
-  async function cancelOAuthLogin(): Promise<void> {
-    try {
-      const api = getKimiWebApi();
-      await api.cancelOAuthLogin();
-    } catch {
-      // Best-effort
-    }
-  }
-
   /** Persist and apply a new extended-thinking level (also pushed to the active
    *  session profile so the daemon's /status reflects it; still sent per-prompt). */
   function setThinking(level: ThinkingLevel): void {
@@ -580,9 +622,15 @@ export function useModelProviderState(
     draftModel,
     skillsBySession,
     skillsByWorkspace,
+    userSkills,
+    userSkillsLoading,
+    userSkillsError,
     // actions
     loadSkillsForSession,
     loadSkillsForWorkspace,
+    loadUserSkills,
+    upsertUserSkill,
+    deleteUserSkill,
     loadModels,
     loadProviders,
     setModel,
@@ -592,12 +640,10 @@ export function useModelProviderState(
     toggleStarModel,
     activateSkill,
     addProvider,
+    updateProvider,
     deleteProvider,
     refreshProvider,
     refreshAllProviders,
-    startOAuthLogin,
-    pollOAuthLogin,
-    cancelOAuthLogin,
     setThinking,
   };
 }

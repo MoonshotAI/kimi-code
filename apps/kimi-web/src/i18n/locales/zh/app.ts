@@ -6,5 +6,6 @@ export default {
   authPageLogin: '登录',
   connecting: '连接中…',
   connectRetrying: '无法连接服务器，正在重试…',
+  backendNotRunning: '后端服务未启动，请先运行 pnpm dev:server 再刷新页面',
   internalBuildBanner: '仅供内部测试',
 } as const;

@@ -599,7 +599,8 @@ export interface KimiEventConnection {
 
 // ---------------------------------------------------------------------------
 // Model + Provider (app-facing, camelCase)
-// PRESUMED — not in current daemon docs; isolated in adapter, swap when backend defines them.
+// Implemented in kap-server (modelCatalog routes: /providers, /providers/{id},
+// /providers:refresh). Adapter-isolated for swap-friendliness.
 // ---------------------------------------------------------------------------
 
 export interface AppModel {
@@ -679,12 +680,43 @@ export interface AppConfig {
   raw?: Record<string, unknown>;
 }
 
+/** camelCase App form of `WireMcpServerConfig` (snake_case on the wire). */
+export type AppMcpTransport = 'stdio' | 'http' | 'sse';
+
+export interface AppMcpServerConfig {
+  transport?: AppMcpTransport;
+  // stdio fields
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  executor?: 'local' | 'kaos';
+  // http / sse fields
+  url?: string;
+  headers?: Record<string, string>;
+  bearerTokenEnvVar?: string;
+  // common fields
+  enabled?: boolean;
+  startupTimeoutMs?: number;
+  toolTimeoutMs?: number;
+  enabledTools?: string[];
+  disabledTools?: string[];
+}
+
 /** A session-scoped skill the user can invoke from the slash menu. */
 export interface AppSkill {
   name: string;
   description: string;
   /** Skill source (e.g. 'builtin' | 'project' | 'plugin') for grouping/labels. */
   source: string;
+}
+
+/** A user-authored skill stored at `<kimi-home>/skills/<name>/SKILL.md`. */
+export interface AppUserSkill {
+  name: string;
+  description: string;
+  /** Markdown body (everything after the frontmatter close fence). */
+  content: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -738,6 +770,12 @@ export interface KimiWebApi {
   /** List skills for a workspace (no session required) — GET /workspaces/{id}/skills. */
   listSkillsForWorkspace(workspaceId: string): Promise<AppSkill[]>;
   activateSkill(sessionId: string, skillName: string, args?: string): Promise<{ activated: true; skillName: string }>;
+  /** List user-level skills at <kimi-home>/skills/<name>/SKILL.md. */
+  listUserSkills(): Promise<AppUserSkill[]>;
+  /** Create or update a user-level skill (upsert). */
+  upsertUserSkill(name: string, input: { description: string; content: string }): Promise<AppUserSkill>;
+  /** Remove a user-level skill directory. */
+  deleteUserSkill(name: string): Promise<void>;
   listTasks(sessionId: string, status?: AppTaskStatus): Promise<AppTask[]>;
   getTask(sessionId: string, taskId: string, input?: { withOutput?: boolean; outputBytes?: number }): Promise<AppTask>;
   cancelTask(sessionId: string, taskId: string): Promise<{ cancelled: true }>;
@@ -752,6 +790,10 @@ export interface KimiWebApi {
   grepFiles(sessionId: string, input: { pattern: string; regex?: boolean; caseSensitive?: boolean }): Promise<{ files: Array<{ path: string; matches: Array<{ line: number; col: number; text: string; before: string[]; after: string[] }> }>; filesScanned: number; truncated: boolean; elapsedMs: number }>;
   getGitStatus(sessionId: string, paths?: string[]): Promise<{ branch: string; ahead: number; behind: number; entries: Record<string, string>; additions: number; deletions: number; pullRequest: { number: number; state: string; url: string } | null }>;
   getFileDiff(sessionId: string, path: string): Promise<{ path: string; diff: string }>;
+  /** List local git branches for the session's cwd — POST /sessions/{id} action=git-branches. */
+  listBranches(sessionId: string): Promise<string[]>;
+  /** Switch the session's cwd to an existing branch — POST /sessions/{id} action=git-checkout. */
+  switchBranch(sessionId: string, branch: string): Promise<{ branch: string }>;
   getFileDownloadUrl(sessionId: string, path: string): string;
   openFile(sessionId: string, input: { path: string; line?: number }): Promise<{ opened: true }>;
   revealFile(sessionId: string, input: { path: string }): Promise<{ revealed: true }>;
@@ -768,14 +810,15 @@ export interface KimiWebApi {
   browseFs(path?: string): Promise<FsBrowseResult>;
   getFsHome(): Promise<{ home: string; recentRoots: string[] }>;
 
-  // PRESUMED — not in current daemon docs; isolated in adapter, swap when backend defines them.
+  // Implemented in kap-server (modelCatalog routes: /providers, /providers/{id},
+// /providers:refresh). Adapter-isolated for swap-friendliness.
   listModels(): Promise<AppModel[]>;
   listProviders(): Promise<AppProvider[]>;
   addProvider(input: { type: string; apiKey?: string; baseUrl?: string; defaultModel?: string }): Promise<AppProvider>;
+  updateProvider(id: string, input: { type?: string; apiKey?: string; baseUrl?: string; defaultModel?: string }): Promise<AppProvider>;
   deleteProvider(id: string): Promise<{ deleted: true }>;
   refreshProvider(id: string): Promise<ProviderRefreshResult>;
   refreshAllProviders(): Promise<ProviderRefreshResult>;
-  refreshOAuthProviderModels(): Promise<ProviderRefreshResult>;
 
   // File upload / download
   uploadFile(input: { file: Blob; name?: string }): Promise<{ id: string; name: string; mediaType: string; size: number }>;
@@ -787,6 +830,14 @@ export interface KimiWebApi {
   getConfig(): Promise<AppConfig>;
   setConfig(patch: Partial<AppConfig>): Promise<AppConfig>;
 
+  // MCP server config — REAL endpoints (user-level mcp.json management)
+  /** List MCP servers configured at the user level (<kimi-home>/mcp.json). */
+  listMcpServers(): Promise<Record<string, AppMcpServerConfig>>;
+  /** Upsert a user-level MCP server entry by name. Returns the updated full map. */
+  upsertMcpServer(name: string, config: AppMcpServerConfig): Promise<Record<string, AppMcpServerConfig>>;
+  /** Remove a user-level MCP server entry by name. */
+  deleteMcpServer(name: string): Promise<void>;
+
   // Auth — REAL endpoints
   getAuth(): Promise<{
     ready: boolean;
@@ -794,31 +845,8 @@ export interface KimiWebApi {
     defaultModel: string | null;
     managedProvider: { status: string } | null;
   }>;
-  startOAuthLogin(): Promise<OAuthLoginStartResult>;
-  pollOAuthLogin(): Promise<{
-    flowId: string;
-    status: 'pending' | 'authenticated' | 'expired' | 'cancelled';
-    resolvedAt?: string;
-  } | null>;
-  cancelOAuthLogin(): Promise<{ cancelled: boolean; status: string }>;
   logout(): Promise<{ loggedOut: boolean }>;
 }
 
-/** Result of `startOAuthLogin()`, mirroring the wire discriminated union. */
-export type OAuthLoginStartResult =
-  | {
-      flowId: string;
-      provider: string;
-      status: 'pending';
-      verificationUri: string;
-      verificationUriComplete: string;
-      userCode: string;
-      expiresIn: number;
-      interval: number;
-      expiresAt: string;
-    }
-  | {
-      flowId: string;
-      provider: string;
-      status: 'authenticated';
-    };
+// ---------------------------------------------------------------------------
+// Model + Provider

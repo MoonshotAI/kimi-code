@@ -10,6 +10,7 @@ import {
   fetchManagedKimiCodeModels,
   KIMI_CODE_PLATFORM_ID,
   KIMI_CODE_PROVIDER_NAME,
+  ManagedKimiCodeModelsAuthError,
   resolveKimiCodeRuntimeAuth,
   type ManagedKimiConfigShape,
   type ManagedKimiModelAlias,
@@ -18,10 +19,12 @@ import {
 import { isManagedKimiCodeBaseUrl } from './managed-usage';
 import {
   applyOpenPlatformConfig,
+  fetchGenericOpenAIModels,
   fetchOpenPlatformModels,
   filterModelsByPrefix,
   getOpenPlatformById,
   isOpenPlatformId,
+  type OpenPlatformDefinition,
 } from './open-platform';
 import { isRecord } from './utils';
 
@@ -453,10 +456,25 @@ export async function refreshProviderModels(
         }
       }
     } catch (error) {
-      failed.push({
-        provider: KIMI_CODE_PROVIDER_NAME,
-        reason: error instanceof Error ? error.message : String(error),
-      });
+      // Managed Kimi Code OAuth 的鉴权失败（401 无有效 OAuth token、402/403 会员权益未
+      // 开通、或服务端报 "unable to verify your membership"）不进入 failed 列表：
+      //   1. 这是 fork 仓库的常态（本地未登录官方 Kimi 账号，OAuth 凭据无效）；
+      //   2. 每次 refreshAllProviders（如打开模型切换弹窗）都会给用户弹告警 toast，
+      //      干扰正常使用 API-key provider 的工作流；
+      //   3. 用户侧也没有可执行的修复操作（此分支是自动走的 OAuth 凭据流）。
+      // 其它网络错误 / JSON 解析错误等仍正常报 failed 以便排查。
+      if (
+        error instanceof ManagedKimiCodeModelsAuthError ||
+        (error instanceof Error &&
+          /membership|subscription|benefit|verify your membership/i.test(error.message))
+      ) {
+        unchanged.push(KIMI_CODE_PROVIDER_NAME);
+      } else {
+        failed.push({
+          provider: KIMI_CODE_PROVIDER_NAME,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
@@ -598,6 +616,94 @@ export async function refreshProviderModels(
           // The v1 `removeProvider` RPC clears `defaultProvider` when it points
           // at this provider; the clone still holds the original value, so
           // write it back — a refresh must not silently drop the fallback.
+          defaultProvider: next['defaultProvider'],
+        });
+        changed.push({
+          providerId,
+          providerName: providerId,
+          added,
+          removed,
+        });
+      }
+    } catch (error) {
+      failed.push({
+        provider: providerId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 2.6. Generic OpenAI-compatible providers (user-configured, non-Kimi)
+  // ---------------------------------------------------------------------------
+  // A hand-configured provider with type 'openai' (or any non-'kimi' / non-
+  // 'anthropic' type that talks a standard Chat Completions API) gets its model
+  // list refreshed from `{baseUrl}/models` using OpenAI-compatible semantics.
+  // Custom registries are detected first so a provider carrying a `source`
+  // pointing at a models.dev-style api.json is routed to branch 3.
+  for (const providerId of Object.keys(config.providers)) {
+    if (isOpenPlatformId(providerId)) continue;
+    if (targetId !== undefined && targetId !== providerId) continue;
+    const provider = readProvider(config, providerId);
+    if (provider === undefined) continue;
+    if (provider.type === 'kimi') continue; // handled by branch 2.5
+    if (provider.oauth !== undefined) continue;
+    if (readCustomRegistrySource(provider) !== undefined) continue;
+    // vendors.contrib.ts 注册的 deepseek/qwen/zhipu/baichuan/minimax/ollama/
+    // custom 都是 OpenAI 兼容端点（baseProtocol: 'openai'），同样走
+    // {baseUrl}/models 自动发现。'anthropic' 用自有协议，不在此列。
+    const OPENAI_COMPATIBLE_VENDOR_TYPES = new Set([
+      'openai', 'openai_responses',
+      'deepseek', 'qwen', 'moonshot', 'zhipu', 'baichuan', 'minimax',
+      'ollama', 'custom',
+    ]);
+    if (!OPENAI_COMPATIBLE_VENDOR_TYPES.has(provider.type)) continue;
+    if (provider.baseUrl === undefined) continue;
+    const apiKey = resolveProviderApiKey(provider);
+    // Ollama / custom 等本地端点可能不需要 API key —— 允许空 key 调 /models。
+    if (apiKey === undefined && provider.type !== 'ollama' && provider.type !== 'custom') continue;
+
+    try {
+      const platform: OpenPlatformDefinition = {
+        id: providerId,
+        name: providerId,
+        baseUrl: provider.baseUrl,
+        providerType: provider.type,
+      };
+      const models = await fetchGenericOpenAIModels(platform, apiKey);
+      if (models.length === 0) continue;
+
+      const selectedModelId = pickDefaultModel(config, providerId, models);
+      const selectedModel = models.find((m) => m.id === selectedModelId);
+      if (selectedModel === undefined) continue;
+      const next = structuredClone(config);
+      applyOpenPlatformConfig(next, {
+        platform,
+        models,
+        selectedModel,
+        thinking: false,
+        apiKey,
+      });
+      const aliasPrefix = `${providerId}/`;
+      const refreshedAliasKeys = providerRefreshAliasKeys(config, next, providerId, aliasPrefix);
+      restoreProviderAliases(next, preserveUserProviderAliases(config, providerId, refreshedAliasKeys));
+      restoreDefaultSelection(next, config.defaultModel, config.thinking?.enabled);
+      clampDanglingDefault(next);
+      clearDefaultThinkingWhenDefaultRemoved(next, config.defaultModel);
+
+      if (providerModelsEqual(config, next, providerId, refreshedAliasKeys)) {
+        unchanged.push(providerId);
+      } else {
+        const { added, removed } = computeChanges(
+          collectModelIdsForAliases(config, refreshedAliasKeys),
+          collectModelIdsForAliases(next, refreshedAliasKeys),
+        );
+        await host.removeProvider(providerId);
+        config = await host.setConfig({
+          providers: next.providers,
+          models: next.models,
+          defaultModel: next.defaultModel,
+          thinking: next.thinking,
           defaultProvider: next['defaultProvider'],
         });
         changed.push({

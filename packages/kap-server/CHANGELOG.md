@@ -12,6 +12,16 @@
   - @moonshot-ai/kimi-code-oauth@0.3.0
   - @moonshot-ai/agent-core-v2@0.3.0
 
+## 0.1.1
+
+### Minor Changes
+
+- [`5cc0efa2`](https://github.com/MoonshotAI/kimi-code/commit/5cc0efa2) - **session actions: add `exec`, `git-branches`, `git-checkout`.** `POST /sessions/{id}:exec` runs a shell command in the session working directory (`command`, optional `cwd` / `timeoutMs` request fields) and returns `{ stdout, stderr, code }` — a non-zero exit code or a timeout kill is a successful result (code `null` when killed), so clients can render partial output. `POST /sessions/{id}:git-branches` lists the local branches of the session repository and `POST /sessions/{id}:git-checkout` switches the current branch, both through `IGitService.listBranches` / `checkout`. Changed files:
+  - `packages/kap-server/src/routes/sessions.ts`
+
+- [`5cc0efa2`](https://github.com/MoonshotAI/kimi-code/commit/5cc0efa2) - **session fs `write` action.** `POST /sessions/{id}/fs:write` writes a file under the session working directory from `{ path, content }`, backed by `ISessionFsService.write` (`IHostFileSystem.writeText`) with the same path-confinement and error handling as the read action. Changed files:
+  - `packages/kap-server/src/routes/fs.ts`
+
 ## 0.1.0
 
 ### Minor Changes

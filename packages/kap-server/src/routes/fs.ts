@@ -52,6 +52,7 @@ import {
   fsSearchResponseSchema,
   fsStatManyRequestSchema,
   fsStatRequestSchema,
+  fsWriteRequestSchema,
 } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { z } from 'zod';
 
@@ -121,6 +122,7 @@ const FS_ACTIONS = [
   'stat',
   'stat_many',
   'mkdir',
+  'write',
   'search',
   'grep',
   'git_status',
@@ -186,9 +188,10 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         [ErrorCode.FS_GREP_TIMEOUT]: {},
         [ErrorCode.FS_GIT_UNAVAILABLE]: {},
         [ErrorCode.FS_ALREADY_EXISTS]: {},
+        [ErrorCode.FS_PERMISSION_DENIED]: {},
       },
       description:
-        'Filesystem action dispatcher. Supported actions: list, read, list_many, stat, stat_many, mkdir, search, grep, git_status, diff, open, open-in, reveal.',
+        'Filesystem action dispatcher. Supported actions: list, read, list_many, stat, stat_many, mkdir, write, search, grep, git_status, diff, open, open-in, reveal.',
       tags: ['fs'],
       operationId: 'fsAction',
     },
@@ -248,6 +251,9 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
             return;
           case 'mkdir':
             await handleMkdir(core, session_id, req, reply);
+            return;
+          case 'write':
+            await handleWrite(core, session_id, req, reply);
             return;
           case 'search':
             await handleSearch(workspaceFs ?? resolveFs(core, session_id), req, reply);
@@ -510,6 +516,16 @@ async function handleMkdir(core: Scope, sessionId: string, req: Req, reply: Repl
     return;
   }
   const data = await resolveFs(core, sessionId).mkdir(parsed.data);
+  reply.send(okEnvelope(data, req.id));
+}
+
+async function handleWrite(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
+  const parsed = fsWriteRequestSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
+    return;
+  }
+  const data = await resolveFs(core, sessionId).write(parsed.data);
   reply.send(okEnvelope(data, req.id));
 }
 

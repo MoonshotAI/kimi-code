@@ -9,7 +9,8 @@
  *   GET    /sessions/{session_id}/profile
  *   POST   /sessions/{session_id}/profile      update title / metadata / agent_config
  *   POST   /sessions/{tail}                    action: fork / compact / undo /
- *                                              abort / btw / archive / restore
+ *                                              abort / btw / archive / restore /
+ *                                              exec / git-branches / git-checkout
  *   GET    /sessions/{session_id}/children     list child sessions
  *   POST   /sessions/{session_id}/children     create child session (fork+tag)
  *   GET    /sessions/{session_id}/status       best-effort
@@ -91,6 +92,7 @@ import {
   ISessionLegacyService,
   ISessionSecondaryModelWarningService,
   IEventService,
+  IGitService,
   IWorkspaceAliases,
   ISessionLifecycleService,
   IWorkspaceLifecycleService,
@@ -131,6 +133,10 @@ import {
   type SessionPendingInteraction,
 } from '../protocol/session';
 import { workspaceIdSchema } from '../protocol/workspace';
+
+import { exec as execChildProcess } from 'node:child_process';
+import { resolve as pathResolve } from 'node:path';
+
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -248,8 +254,62 @@ const sessionActionRequestSchema = z.preprocess(
     instruction: z.string().optional(),
     count: z.number().int().positive().optional(),
     page_size: z.number().int().min(1).max(100).optional(),
+    command: z.string().min(1).optional(),
+    cwd: z.string().min(1).optional(),
+    timeoutMs: z.number().int().positive().optional(),
+    branch: z.string().min(1).optional(),
   }),
 );
+
+/**
+ * `exec` session action wire shapes. There is no v1 protocol counterpart (the
+ * v1 daemon ran shell commands through a bespoke terminal channel), so these
+ * are inline here rather than in `rest-session`.
+ */
+const execSessionRequestSchema = z.object({
+  command: z.string().min(1),
+  cwd: z.string().min(1).optional(),
+  timeoutMs: z.number().int().positive().optional(),
+});
+export const execSessionResponseSchema = z.object({
+  stdout: z.string(),
+  stderr: z.string(),
+  /** Process exit code; `null` when the process was killed (e.g. timeout). */
+  code: z.number().nullable(),
+});
+
+/** `git-branches` / `git-checkout` session action wire shapes. */
+const gitBranchesResponseSchema = z.object({
+  branches: z.array(z.string().min(1)),
+});
+const gitCheckoutRequestSchema = z.object({
+  branch: z.string().min(1),
+});
+const gitCheckoutResponseSchema = z.object({
+  branch: z.string(),
+});
+
+// `node:child_process.exec` with the shell semantics the skill-install flow
+// needs (`npx superpowers-zh …`). Non-zero exit codes and timeouts are NOT
+// treated as errors — the caller still needs the partial output and the exit
+// status, so both are surfaced as a successful result (`code` carries the
+// status, `null` when the process was killed).
+function execCommandAsync(
+  command: string,
+  options: { cwd: string; timeout?: number },
+): Promise<{ stdout: string; stderr: string; code: number | null }> {
+  return new Promise((resolve) => {
+    execChildProcess(command, { cwd: options.cwd, timeout: options.timeout }, (error, stdout, stderr) => {
+      if (error === null) {
+        resolve({ stdout, stderr, code: 0 });
+        return;
+      }
+      // Non-zero exit carries `code`; a timeout kill leaves it `null`.
+      const code = typeof error.code === 'number' ? error.code : null;
+      resolve({ stdout, stderr, code });
+    });
+  });
+}
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
@@ -629,6 +689,9 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           sessionAbortResponseSchema,
           startBtwSessionResponseSchema,
           archiveSessionResponseSchema,
+          execSessionResponseSchema,
+          gitBranchesResponseSchema,
+          gitCheckoutResponseSchema,
         ]),
       },
       errors: {
@@ -647,7 +710,18 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         const { tail } = req.params;
         const parsed = parseActionSuffix({
           tail,
-          allowedActions: ['fork', 'compact', 'undo', 'abort', 'btw', 'archive', 'restore'] as const,
+          allowedActions: [
+            'fork',
+            'compact',
+            'undo',
+            'abort',
+            'btw',
+            'archive',
+            'restore',
+            'exec',
+            'git-branches',
+            'git-checkout',
+          ] as const,
           resourceLabel: 'session',
         });
         if (parsed.kind !== 'action') {
@@ -783,6 +857,87 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           );
           requestLog(req)?.info({ session_id: parsed.id, action: 'restore' }, 'session action completed');
           reply.send(okEnvelope(session, req.id));
+          return;
+        }
+
+        if (parsed.action === 'exec') {
+          const body = execSessionRequestSchema.parse(req.body);
+          // `resume` (not `get`) so a freshly-opened cold session can run the
+          // command; unknown sessions surface as `session.not_found`.
+          const session = await core.accessor.get(ISessionLifecycleService).resume(parsed.id);
+          if (session === undefined) {
+            throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
+          }
+          const cwd =
+            body.cwd !== undefined ? pathResolve(body.cwd) : session.accessor.get(ISessionContext).cwd;
+          try {
+            // Non-zero exit codes and timeouts resolve (not reject) — the wire
+            // payload carries `code` (`null` when killed) plus the partial
+            // output, so the caller can render the result either way.
+            const result = await execCommandAsync(body.command, {
+              cwd,
+              timeout: body.timeoutMs,
+            });
+            requestLog(req)?.info(
+              {
+                session_id: parsed.id,
+                action: 'exec',
+                cwd,
+                code: result.code,
+                timed_out: result.code === null,
+              },
+              'session action completed',
+            );
+            reply.send(okEnvelope(result, req.id));
+          } catch (error) {
+            // Spawn failures (command not found, invalid cwd, …) reject and
+            // are logged with the full context before re-throwing.
+            requestLog(req)?.error(
+              {
+                session_id: parsed.id,
+                action: 'exec',
+                cwd,
+                command: body.command,
+                err: error instanceof Error ? error.message : String(error),
+              },
+              'session exec failed to spawn',
+            );
+            throw new Error2(
+              ErrorCodes.INTERNAL,
+              `exec failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+          return;
+        }
+
+        if (parsed.action === 'git-branches') {
+          const session = await core.accessor.get(ISessionLifecycleService).resume(parsed.id);
+          if (session === undefined) {
+            throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
+          }
+          const cwd = session.accessor.get(ISessionContext).cwd;
+          const branches = await core.accessor.get(IGitService).listBranches(cwd);
+          requestLog(req)?.info(
+            { session_id: parsed.id, action: 'git-branches', cwd, count: branches.length },
+            'session action completed',
+          );
+          reply.send(okEnvelope({ branches }, req.id));
+          return;
+        }
+
+        if (parsed.action === 'git-checkout') {
+          const body = gitCheckoutRequestSchema.parse(req.body);
+          const session = await core.accessor.get(ISessionLifecycleService).resume(parsed.id);
+          if (session === undefined) {
+            throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
+          }
+          const cwd = session.accessor.get(ISessionContext).cwd;
+          await core.accessor.get(IGitService).checkout(cwd, body.branch);
+          requestLog(req)?.info(
+            { session_id: parsed.id, action: 'git-checkout', cwd, branch: body.branch },
+            'session action completed',
+          );
+          reply.send(okEnvelope({ branch: body.branch }, req.id));
           return;
         }
 
