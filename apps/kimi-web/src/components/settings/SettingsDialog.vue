@@ -40,6 +40,8 @@ const props = defineProps<{
   sound: boolean;
   /** Conversation outline (proportional bubbles, viewport indicator, hover tooltip). */
   conversationToc?: boolean;
+  /** Hide ACP-created sessions/workspaces from the sidebar preference. */
+  hideAcpSessions?: boolean;
   /** Global daemon config from GET /api/v1/config. Secrets are redacted server-side. */
   config?: AppConfig | null;
   /** Models from the daemon catalog, used to label default-model choices. */
@@ -61,6 +63,7 @@ const emit = defineEmits<{
   setNotifyApproval: [on: boolean];
   setSound: [on: boolean];
   setConversationToc: [on: boolean];
+  setHideAcpSessions: [on: boolean];
   login: [];
   logout: [];
   openOnboarding: [];
@@ -280,6 +283,7 @@ const filteredArchived = computed<AppSession[]>(() => {
   // even if an older server ignores `archived_only` and falls back to the
   // default (unarchived) list. Filter again on the client.
   let rows = archivedItems.value.filter((s) => s.archived === true);
+  if (client.hideAcpSessions.value) rows = rows.filter((s) => s.source !== 'acp');
   if (archiveWsFilter.value !== 'all') {
     rows = rows.filter((s) => s.cwd === archiveWsFilter.value);
   }
@@ -395,6 +399,17 @@ function archiveTime(iso: string): string {
                 :model-value="conversationToc ?? true"
                 :label="t('settings.conversationToc')"
                 @update:model-value="emit('setConversationToc', $event)"
+              />
+            </div>
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.hideAcpSessions') }}
+                <span class="hint">{{ t('settings.hideAcpSessionsHint') }}</span>
+              </span>
+              <Switch
+                :model-value="hideAcpSessions ?? true"
+                :label="t('settings.hideAcpSessions')"
+                @update:model-value="emit('setHideAcpSessions', $event)"
               />
             </div>
           </section>

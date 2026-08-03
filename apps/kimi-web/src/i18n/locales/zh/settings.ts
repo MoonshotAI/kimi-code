@@ -54,6 +54,8 @@ export default {
   exportLogBtn: '导出日志',
   conversationToc: '显示对话目录',
   conversationTocHint: '在右侧显示可点击跳转的对话目录',
+  hideAcpSessions: '隐藏 ACP 会话',
+  hideAcpSessionsHint: '不在会话列表显示由 ACP 客户端（如自动化 bot）创建的工作区和会话',
   archivedTitle: '已归档会话',
   archivedDesc: '查看已归档会话，确认其所属工作区路径、会话名称和归档时间，并可恢复到会话列表。',
   archivedSearch: '搜索已归档会话',

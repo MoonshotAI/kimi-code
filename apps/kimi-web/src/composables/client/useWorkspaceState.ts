@@ -245,6 +245,13 @@ export interface UseWorkspaceStateDeps {
   mergedWorkspaces: ComputedRef<AppWorkspace[]>;
   /** Sidebar-facing workspaces in the user's (dragged) display order. */
   workspacesView: ComputedRef<WorkspaceView[]>;
+  /**
+   * Sessions hidden from the sidebar list by preference (e.g. ACP-created
+   * sessions when `hideAcpSessions` is on). Fresh-load auto-selection skips
+   * these so the user never lands on a session the sidebar does not render.
+   * Defaults to "nothing hidden" when the facade does not wire a preference.
+   */
+  isSessionHiddenFromList?: (session: AppSession) => boolean;
   status: ComputedRef<ConversationStatus>;
   workspaceIdForSession: (s: { workspaceId?: string; cwd: string }) => string;
   savePermissionToStorage: (mode: PermissionMode) => void;
@@ -295,6 +302,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     persistSessionProfile,
     mergedWorkspaces,
     workspacesView,
+    isSessionHiddenFromList = () => false,
     status,
     workspaceIdForSession,
     savePermissionToStorage,
@@ -878,7 +886,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
       // First load: pick the workspace of the most-recent session, unless the
       // user already has a persisted active workspace that still exists.
-      const mostRecent = sessions[0];
+      // Sessions hidden from the sidebar (e.g. ACP-created) are skipped — the
+      // user should not land on a session the sidebar does not render.
+      const mostRecent = sessions.find((s) => !isSessionHiddenFromList(s));
       const persisted = rawState.activeWorkspaceId;
       const persistedStillExists =
         persisted !== null && mergedWorkspaces.value.some((w) => w.id === persisted);
@@ -903,8 +913,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
       // Auto-select first session if none selected (also the fallback for a dead
       // deep link — 'replace' rewrites the URL to the session actually shown).
+      // Skip sessions hidden from the sidebar; when everything is hidden there
+      // is simply nothing to auto-select.
       if (!rawState.activeSessionId && sessions.length > 0) {
-        await selectSession(sessions[0]!.id, { urlMode: 'replace' });
+        const firstVisible = sessions.find((s) => !isSessionHiddenFromList(s));
+        if (firstVisible) {
+          await selectSession(firstVisible.id, { urlMode: 'replace' });
+        }
       }
     } catch (err) {
       traceStatus = 'failed';
@@ -965,10 +980,15 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     selectWorkspace(id);
     const sessionsInWs = rawState.sessions.filter((s) => workspaceIdForSession(s) === id);
     if (sessionsInWs.length > 0) {
-      const mostRecent = sessionsInWs[0];
+      // Skip sessions hidden from the sidebar (e.g. ACP-created) — clicking a
+      // workspace must not land on a session the sidebar does not render.
+      const mostRecent = sessionsInWs.find((s) => !isSessionHiddenFromList(s));
       if (mostRecent && mostRecent.id !== rawState.activeSessionId) {
         // One user action (clicking the workspace) = one history entry.
         void selectSession(mostRecent.id);
+      } else if (!mostRecent) {
+        setActiveSessionId(undefined);
+        writeSessionUrl(undefined, 'push');
       }
     } else {
       setActiveSessionId(undefined);
@@ -1360,13 +1380,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
     // A history entry can point at a session that has since been deleted (or one
     // outside the loaded page): try to fetch it; on failure fall back to the most
-    // recent session and FIX the URL so the bad entry doesn't stick around.
+    // recent sidebar-visible session (skipping hidden ones, e.g. ACP-created)
+    // and FIX the URL so the bad entry doesn't stick around.
     void (async () => {
       if (await fetchSessionIntoList(id)) {
         await selectSession(id, { urlMode: 'none' });
         return;
       }
-      const next = rawState.sessions[0];
+      const next = rawState.sessions.find((s) => !isSessionHiddenFromList(s));
       if (next) {
         await selectSession(next.id, { urlMode: 'replace' });
       } else {
@@ -2380,8 +2401,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
       // If archived session was active, pick another. 'replace' so the address
       // bar doesn't keep pointing at (and back doesn't return to) a dead session.
+      // Skip sessions hidden from the sidebar (e.g. ACP-created).
       if (rawState.activeSessionId === id) {
-        const next = rawState.sessions[0];
+        const next = rawState.sessions.find((s) => !isSessionHiddenFromList(s));
         if (next) {
           await selectSession(next.id, { urlMode: 'replace' });
         } else {
