@@ -159,14 +159,14 @@ describe('createOriginHook (onRequest hook)', () => {
       method: 'OPTIONS',
       url: '/api/v1/probe',
       headers: {
-        origin: 'https://foo.com',
+        origin: 'https://foo.example.com',
         host: 'localhost:80',
         'access-control-request-method': 'GET',
         'access-control-request-headers': 'x-request-id, x-kimi-client-version, authorization',
       },
     });
     expect(res.statusCode).toBe(204);
-    expect(res.headers['access-control-allow-origin']).toBe('https://foo.com');
+    expect(res.headers['access-control-allow-origin']).toBe('https://foo.example.com');
     expect(res.headers['access-control-allow-headers']).toBe(
       'x-request-id, x-kimi-client-version, authorization',
     );
@@ -176,7 +176,7 @@ describe('createOriginHook (onRequest hook)', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/api/v1/probe',
-      headers: { origin: 'https://foo.com', host: 'localhost:80' },
+      headers: { origin: 'https://foo.example.com', host: 'localhost:80' },
     });
     expect(res.statusCode).toBe(200);
     expect(res.headers['access-control-allow-headers']).toBe(
