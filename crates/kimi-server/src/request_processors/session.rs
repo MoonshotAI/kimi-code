@@ -587,6 +587,54 @@ impl Processor for SessionProcessor {
             })
         });
 
+        // `session/save` — persist the session agent state.
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_SAVE, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionIdParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                manager
+                    .save_agent_session(&input.session_id)
+                    .map_err(|e| JsonRpcError::internal_error(e.to_string()))?;
+                Ok(serde_json::json!({ "ok": true }))
+            })
+        });
+
+        // `session/delete` — permanently delete a persisted session.
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_DELETE, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionIdParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let deleted = manager
+                    .delete_persisted_session(&input.session_id)
+                    .map_err(|e| JsonRpcError::internal_error(e.to_string()))?;
+                Ok(serde_json::json!({ "deleted": deleted }))
+            })
+        });
+
+        // `session/load` — rebuild an agent from its persisted record.
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_LOAD, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionIdParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let found = manager
+                    .load_agent_session(&input.session_id)
+                    .map_err(|e| JsonRpcError::internal_error(e.to_string()))?;
+                Ok(serde_json::json!({ "found": found }))
+            })
+        });
+
         // `session/get_status` — live engine status snapshot.
         let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_GET_STATUS, move |params| {
