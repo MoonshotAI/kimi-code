@@ -3,6 +3,8 @@
 
 pub mod config;
 pub mod health;
+pub mod session;
 
 pub use config::ConfigProcessor;
 pub use health::HealthProcessor;
+pub use session::SessionProcessor;

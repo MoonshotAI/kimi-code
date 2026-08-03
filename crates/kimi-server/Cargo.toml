@@ -6,6 +6,7 @@ license = "MIT"
 description = "Kimi Code host protocol layer — MessageProcessor over the engine, multi-transport (layer 3 of the Rust-first migration)"
 
 [dependencies]
+anyhow = "1"
 kimi-agent = { path = "../../packages/kimi-agent" }
 kimi-protocol = { path = "../kimi-protocol" }
 serde = { workspace = true }
