@@ -1657,6 +1657,53 @@ mod create_tests {
     }
 
     #[tokio::test]
+    async fn steer_queues_input_for_existing_session() {
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = SessionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/create".into(),
+                params: serde_json::json!({ "session_id": "s-steer" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "create failed: {body}");
+
+        // Steer queues input parts for the session (drained at next turn).
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/steer".into(),
+                params: serde_json::json!({
+                    "session_id": "s-steer",
+                    "input": [{ "type": "text", "text": "go faster" }],
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "steer failed: {body}");
+        assert_eq!(body["result"]["queued"], true);
+
+        // Unknown sessions report queued=false (no error).
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(3),
+                method: "session/steer".into(),
+                params: serde_json::json!({
+                    "session_id": "nope",
+                    "input": [{ "type": "text", "text": "x" }],
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "steer unknown should not error: {body}");
+        assert_eq!(body["result"]["queued"], false);
+    }
+
+    #[tokio::test]
     async fn fork_copies_persisted_session() {
         // Serialized against other store-sensitive tests (env var + shared
         // file store for the fork's per-call store opens).
