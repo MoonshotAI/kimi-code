@@ -155,6 +155,22 @@ describe('Model assembly (pure data)', () => {
     }
   });
 
+  it('keeps full host headers when a kimi provider explicitly targets the first-party host', () => {
+    const { host, catalog } = createHost({
+      providers: { kimi: { type: 'kimi', apiKey: 'sk', baseUrl: 'https://api.moonshot.ai/v1' } },
+      models: { k2: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 200000 } },
+    });
+    try {
+      const model = catalog.get('k2');
+      expect(model.headers).toMatchObject({
+        'User-Agent': 'kimi-test/1.0',
+        'X-Msh-Device-Id': 'device-1',
+      });
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('forwards only the User-Agent to vendors without a full hostHeaders declaration', () => {
     const { host, catalog } = createHost({
       providers: {
@@ -272,6 +288,9 @@ describe('Model assembly (pure data)', () => {
       expect(model.providerType).toBe('kimi');
       expect(model.baseUrl).toBe('https://api.example.test');
       expect(model.supportEfforts).toBeUndefined();
+      // A kimi-typed provider pointed at a third-party host gets only the
+      // User-Agent, never the host identity set.
+      expect(model.headers).toEqual({ 'User-Agent': 'kimi-test/1.0' });
     } finally {
       host.dispose();
     }
