@@ -388,6 +388,7 @@ async function pollCapabilityInstall(
 
 export const __pluginsCommandInternals = {
   isCapabilityEntry,
+  installCapabilityFromPanel,
   pollCapabilityInstall,
   removePlugin,
 };
@@ -402,8 +403,17 @@ async function installCapabilityFromPanel(
   // reserved for unreviewed third-party plugins.
   panel.setInstalling(truncateForStatus(label));
   host.state.ui.requestRender();
+  const session = host.requireSession();
   try {
-    await host.requireSession().installCapability(entry.id);
+    // An install already running (started from another panel or client) is
+    // followed, not restarted — the service rejects duplicate starts even
+    // though the original is healthy.
+    const alreadyRunning = await session
+      .getCapability(entry.id)
+      .then((status) => status.install.running, () => false);
+    if (!alreadyRunning) {
+      await session.installCapability(entry.id);
+    }
   } catch (error) {
     panel.clearInstalling();
     host.state.ui.requestRender();

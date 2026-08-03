@@ -2,20 +2,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { __pluginsCommandInternals } from '#/tui/commands/plugins';
 
-const { isCapabilityEntry, pollCapabilityInstall, removePlugin } = __pluginsCommandInternals;
+const { isCapabilityEntry, installCapabilityFromPanel, pollCapabilityInstall, removePlugin } =
+  __pluginsCommandInternals;
 
 function fakeHost(overrides: {
   engineV2?: boolean;
   capabilityStatus?: () => Promise<{
+    state?: string;
     install: { running: boolean; step?: string; percent?: number; error?: string };
   }>;
 }) {
   const statuses: string[] = [];
   const renders: number[] = [];
+  const installCapability = vi.fn(() => Promise.resolve());
   const session = {
     getCapability:
       overrides.capabilityStatus ??
-      (() => Promise.resolve({ install: { running: false } })),
+      (() => Promise.resolve({ state: 'ready', steps: [], install: { running: false } })),
+    installCapability,
     removePlugin: () => Promise.resolve(),
   };
   const host = {
@@ -24,9 +28,13 @@ function fakeHost(overrides: {
     showStatus: (text: string) => {
       statuses.push(text);
     },
+    showError: (text: string) => {
+      statuses.push(text);
+    },
+    restoreEditor: () => undefined,
     state: { ui: { requestRender: () => renders.push(1) } },
   };
-  return { host: host as never, statuses, renders };
+  return { host: host as never, statuses, renders, installCapability };
 }
 
 function fakePanel() {
@@ -101,5 +109,42 @@ describe('plugins command capability surface', () => {
     const { host, statuses } = fakeHost({ engineV2: true });
     await removePlugin(host, 'superpowers');
     expect(statuses.some((s) => s.includes('runtime binaries'))).toBe(false);
+  });
+
+  it('starts a capability install only when none is running', async () => {
+    const idle = fakeHost({});
+    await installCapabilityFromPanel(
+      idle.host,
+      fakePanel().panel,
+      { id: 'kimi-cu', displayName: 'Kimi Computer Use', source: 'capability:kimi-cu' } as never,
+    );
+    expect(idle.installCapability).toHaveBeenCalledWith('kimi-cu');
+  });
+
+  it('follows an in-progress capability install instead of restarting it', async () => {
+    let calls = 0;
+    const { host, installCapability, statuses } = fakeHost({
+      capabilityStatus: () => {
+        calls += 1;
+        // The pre-check sees the running install; the poll then sees it settle.
+        return Promise.resolve(
+          calls === 1
+            ? { state: 'partial', steps: [], install: { running: true, step: 'download', percent: 40 } }
+            : { state: 'ready', steps: [], install: { running: false } },
+        );
+      },
+    });
+
+    await installCapabilityFromPanel(
+      host,
+      fakePanel().panel,
+      { id: 'kimi-cu', displayName: 'Kimi Computer Use', source: 'capability:kimi-cu' } as never,
+    );
+
+    // The service rejects duplicate starts (40922) — a healthy in-progress
+    // install must be followed via polling, never reported as a failure.
+    expect(installCapability).not.toHaveBeenCalled();
+    expect(statuses.some((s) => s.includes('Failed to install'))).toBe(false);
+    expect(statuses.some((s) => s.includes('is ready'))).toBe(true);
   });
 });
