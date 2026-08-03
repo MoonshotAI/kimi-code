@@ -294,6 +294,34 @@ fn chat_help_then_quit() {
 }
 
 #[test]
+fn chat_export_writes_zip() {
+    // `kimi chat -s <id>` + `/export` writes <id>.zip in the cwd. The shared
+    // store needs KIMI_AGENT_HOME so session/export finds the created session.
+    let home = temp_dir("chat-export");
+    let cwd = temp_dir("chat-export-cwd");
+    let mut child = Command::new(binary())
+        .args(["chat", "-s", "s-chat-export"])
+        .current_dir(&cwd)
+        .env("KIMI_AGENT_HOME", &home)
+        .env("HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn kimi chat");
+    {
+        use std::io::Write;
+        let stdin = child.stdin.as_mut().expect("stdin");
+        stdin.write_all(b"/export\n/quit\n").expect("write");
+    }
+    let output = child.wait_with_output().expect("wait");
+    assert!(output.status.success(), "chat exits 0: {}", output.status);
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(out.contains("exported to"), "export line: {out}");
+    assert!(cwd.join("s-chat-export.zip").exists(), "zip written to cwd");
+}
+
+#[test]
 fn server_mode_verbose_emits_events() {
     // `--verbose` over the Remote path: the serve binary fans engine events
     // to stderr (session.turn.started fires before the LLM call, so it lands

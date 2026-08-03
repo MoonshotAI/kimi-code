@@ -196,6 +196,7 @@ async fn handle_chat_command(
             println!("/usage       token usage");
             println!("/clear       clear the session context");
             println!("/compact     compact the session context");
+            println!("/export      export the session as <session_id>.zip");
             ChatCommand::Handled
         }
         "/resume" => {
@@ -284,6 +285,35 @@ async fn handle_chat_command(
                 return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
             }
             println!("context compacted");
+            ChatCommand::Handled
+        }
+        "/export" => {
+            let path = if rest.is_empty() {
+                format!("{session_id}.zip")
+            } else {
+                rest.to_string()
+            };
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_EXPORT,
+                    serde_json::json!({ "session_id": *session_id }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            let b64 = match body["result"]["zip_base64"].as_str() {
+                Some(s) => s,
+                None => return ChatCommand::Error("export returned no zip_base64".into()),
+            };
+            let bytes = match base64::engine::general_purpose::STANDARD.decode(b64) {
+                Ok(bytes) => bytes,
+                Err(e) => return ChatCommand::Error(format!("zip_base64 decode failed: {e}")),
+            };
+            if let Err(e) = std::fs::write(&path, &bytes) {
+                return ChatCommand::Error(format!("write {path}: {e}"));
+            }
+            println!("exported to {path}");
             ChatCommand::Handled
         }
         _ => ChatCommand::Error(format!("unknown command {cmd} — try /help")),
