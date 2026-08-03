@@ -17,25 +17,15 @@
  * resolved against the frozen
  * `sessionContext.cwd` exactly like the Bash tool itself (`args.cwd ??
  * sessionContext.cwd` — a base that deliberately differs from the live agent
- * cwd after a chdir). Preflight-rejected calls (no `tool` on the context —
- * guard denials included) are never probed: the path policy already said no
- * to that path. Calls vetoed by a listener (permission denials) arrive with
- * `tool` set and a result that is still shown to the model, so they are
- * probed and reminded like any visible result — with one exception: a
- * same-step duplicate vetoed by `toolDedupe` carries a placeholder result
- * that the dedupe hook swaps for the original's deferred result, so anything
- * attached to it would be discarded while the file was already counted as
- * reminded. The hook detects the placeholder (the call id sits in
- * `toolDedupe.syntheticCallIds` until the dedupe hook consumes it — the key
- * only exists where `toolDedupe` constructed, so in scopes without it no
- * call is ever treated as a duplicate) and leaves it untouched, keeping
- * reminder, telemetry, and the known-set strictly on results that reach the
- * model. The hook is ordered before `toolDedupe` so the placeholder is
- * still marked synthetic when this hook runs and the original call carries
- * the reminder by the time the duplicate's deferred result resolves; the
- * ordered registration throws when its target is absent, so scopes without
- * `toolDedupe` fall back to plain append-order registration, which still
- * lands ahead of a `toolDedupe` hook constructed later.
+ * cwd after a chdir). Only calls whose `ToolDidExecuteContext.outcome` is
+ * `executed` are probed: preflight rejects, resolution failures, aborts,
+ * permission vetoes, and synthetic/duplicate results have not touched the
+ * requested resource and are left unchanged. The hook is ordered before
+ * `toolDedupe` so an executed original carries the reminder into the
+ * deferred result returned for a duplicate; no dedupe implementation state is
+ * needed here. The ordered registration throws when its target is absent, so
+ * scopes without `toolDedupe` fall back to plain append-order registration,
+ * which still lands ahead of a `toolDedupe` hook constructed later.
  *
  * Known-set discipline: candidates are claimed synchronously per discovered
  * file into an in-memory `claimed` set (parallel calls can never duplicate a
@@ -94,7 +84,6 @@ import {
   loadAgentsMdDetailed,
 } from '#/agent/profile/context';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { toolDedupeSyntheticCallIdsKey } from '#/agent/toolDedupe/toolDedupeService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 
@@ -167,11 +156,6 @@ export class AgentAgentsMdReminderService
     return this.states.get(agentsMdReminderCwdKey) ?? this.sessionContext.cwd;
   }
 
-  private isDedupePlaceholder(ctx: ToolDidExecuteContext): boolean {
-    if (!this.states.has(toolDedupeSyntheticCallIdsKey)) return false;
-    return this.states.get(toolDedupeSyntheticCallIdsKey).has(ctx.toolCall.id);
-  }
-
   private async ensureSeeded(): Promise<void> {
     if (this.states.get(agentsMdReminderSeededKey)) return;
     const { paths } = await loadAgentsMdDetailed(
@@ -183,8 +167,7 @@ export class AgentAgentsMdReminderService
   }
 
   private async augmentWithReminder(ctx: ToolDidExecuteContext): Promise<ExecutableToolResult> {
-    if (ctx.tool === undefined) return ctx.result;
-    if (this.isDedupePlaceholder(ctx)) return ctx.result;
+    if (ctx.outcome !== 'executed') return ctx.result;
     const discovered: string[] = [];
     try {
       await this.ensureSeeded();

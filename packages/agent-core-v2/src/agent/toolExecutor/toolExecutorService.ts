@@ -44,6 +44,7 @@ import type {
   BeforeToolExecuteEvent,
   ResolvedToolExecutionHookContext,
   ToolDidExecuteContext,
+  ToolExecutionOutcome,
   WillExecuteToolEvent,
 } from '#/agent/toolExecutor/toolHooks';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -201,13 +202,15 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       task: ToolExecutionTask;
       call: PreflightedToolCall;
       resolvedAccesses?: ToolAccesses;
+      outcome: ToolExecutionOutcome;
       stopBatchAfterThis?: boolean;
     }> = [];
 
     let stopBatch = false;
     for (const call of preflighted) {
       if (stopBatch) {
-        preparedTasks.push({ task: this.prepareSkippedToolCall(call, options), call });
+        const skipped = this.prepareSkippedToolCall(call, options);
+        preparedTasks.push({ ...skipped, call });
         continue;
       }
 
@@ -216,6 +219,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         task: prepared.task,
         call,
         resolvedAccesses: prepared.resolvedAccesses,
+        outcome: prepared.outcome,
         stopBatchAfterThis: prepared.stopBatchAfterThis,
       });
       if (prepared.stopBatchAfterThis === true) {
@@ -288,6 +292,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     prepared: {
       readonly call: PreflightedToolCall;
       readonly resolvedAccesses?: ToolAccesses;
+      readonly outcome: ToolExecutionOutcome;
     },
     timedResult: TimedToolResult,
     options: ToolExecutorExecuteOptions,
@@ -298,6 +303,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       call,
       rawResult,
       options,
+      prepared.outcome,
       prepared.resolvedAccesses,
     );
 
@@ -341,27 +347,30 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
   ): Promise<{
     task: ToolExecutionTask;
     resolvedAccesses?: ToolAccesses;
+    outcome: ToolExecutionOutcome;
     stopBatchAfterThis?: boolean;
   }> {
     const settleError = (
       args: unknown,
       output: string,
+      outcome: Exclude<ToolExecutionOutcome, 'executed'>,
       displayFields?: ToolCallDisplayFields,
-    ): { task: ToolExecutionTask } => {
+    ): { task: ToolExecutionTask; outcome: ToolExecutionOutcome } => {
       this.dispatchToolCall(call, args, options, displayFields);
       return {
         task: makeResolvedTask(makeErrorToolResult(call, args, output)),
+        outcome,
       };
     };
 
     const settleSynthetic = (
       args: unknown,
       result: ExecutableToolResult,
+      outcome: Exclude<ToolExecutionOutcome, 'executed'>,
       displayFields?: ToolCallDisplayFields,
-      resolvedAccesses?: ToolAccesses,
     ): {
       task: ToolExecutionTask;
-      resolvedAccesses?: ToolAccesses;
+      outcome: ToolExecutionOutcome;
       stopBatchAfterThis?: boolean;
     } => {
       const toolResult = this.normalizeAndMergeResult(result, call.toolName, undefined);
@@ -374,13 +383,13 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
           result: toolResult,
           stopTurn: toolResult.stopTurn === true,
         }),
-        resolvedAccesses,
+        outcome,
         stopBatchAfterThis: toolResult.stopBatchAfterThis ?? toolResult.stopTurn,
       };
     };
 
     if (call.kind === 'rejected') {
-      return settleError(call.args, call.output);
+      return settleError(call.args, call.output, 'preflight-rejected');
     }
 
     let execution: ToolExecution;
@@ -391,7 +400,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         error instanceof PathSecurityError
           ? error.message
           : `Tool "${call.toolName}" failed to resolve execution: ${errorMessage(error)}`;
-      return settleError(call.args, output);
+      return settleError(call.args, output, 'resolution-failed');
     }
 
     const displayFields = toolCallDisplayFieldsFromExecution(execution);
@@ -400,19 +409,20 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       return settleError(
         call.args,
         abortedToolOutput(call.toolName, options.signal),
+        'aborted',
         displayFields,
       );
     }
 
     if (execution.isError === true) {
-      return settleSynthetic(call.args, execution, displayFields);
+      return settleSynthetic(call.args, execution, 'synthetic', displayFields);
     }
 
     const beforeContext = buildBeforeExecuteContext(call, execution, allCalls, options);
     const decision = await this.beforeExecuteEmitter.fireBeforeExecute(beforeContext);
 
     if (decision?.veto !== undefined) {
-      return settleSynthetic(call.args, decision.veto, displayFields, execution.accesses);
+      return settleSynthetic(call.args, decision.veto, 'vetoed', displayFields);
     }
 
     const executionMetadata = decision?.executionMetadata;
@@ -436,6 +446,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
           this.runSingleExecution(call, execution, executionMetadata, options, taskSignal),
       },
       resolvedAccesses: execution.accesses,
+      outcome: 'executed',
       stopBatchAfterThis: execution.stopBatchAfterThis,
     };
   }
@@ -443,10 +454,13 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
   private prepareSkippedToolCall(
     call: PreflightedToolCall,
     options: ToolExecutorExecuteOptions,
-  ): ToolExecutionTask {
+  ): { task: ToolExecutionTask; outcome: ToolExecutionOutcome } {
     const output = 'Tool skipped because a previous tool call stopped the turn.';
     this.dispatchToolCall(call, call.args, options);
-    return makeResolvedTask(makeErrorToolResult(call, call.args, output));
+    return {
+      task: makeResolvedTask(makeErrorToolResult(call, call.args, output)),
+      outcome: 'skipped',
+    };
   }
 
   private async *executeBatch(
@@ -605,6 +619,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     call: PreflightedToolCall,
     result: ToolResult,
     options: ToolExecutorExecuteOptions,
+    outcome: ToolExecutionOutcome,
     resolvedAccesses?: ToolAccesses,
   ): Promise<ToolResult> {
     const didCtx: ToolDidExecuteContext = {
@@ -615,6 +630,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       toolCalls: [call.toolCall],
       tool: call.kind === 'runnable' ? call.tool : undefined,
       args: call.args,
+      outcome,
       accesses: resolvedAccesses,
       result: result as ExecutableToolResult,
     };

@@ -42,7 +42,23 @@ const TRANSPARENT_WRAPPERS: ReadonlySet<string> = new Set([
   'redirected_statement',
 ]);
 
-const ARG_TAKING_OPTIONS: ReadonlySet<string> = new Set([
+const LS_ARG_TAKING_OPTIONS: ReadonlySet<string> = new Set([
+  '-w',
+  '--width',
+  '--sort',
+  '--block-size',
+  '-I',
+  '--ignore',
+  '--hide',
+  '--format',
+  '--time-style',
+  '--indicator-style',
+  '--quoting-style',
+  '-T',
+  '--tabsize',
+]);
+
+const TREE_LIKE_ARG_TAKING_OPTIONS: ReadonlySet<string> = new Set([
   '-w',
   '--width',
   '--sort',
@@ -122,7 +138,7 @@ export function extractBashTargetDirs(
       continue;
     }
     if (!LISTING_COMMANDS.has(name)) continue;
-    const operands = name === 'find' ? takeLeadingPaths(args) : dropFlags(args);
+    const operands = name === 'find' ? takeLeadingPaths(args) : dropFlags(args, name);
     if (operands.length === 0) {
       if (!dropped) push('.');
       continue;
@@ -203,7 +219,11 @@ function literalText(node: BashSyntaxNode): string | undefined {
   }
 }
 
-function dropFlags(args: readonly string[]): string[] {
+function dropFlags(args: readonly string[], command: string): string[] {
+  const argumentTakingOptions =
+    command === 'ls' || command === 'dir'
+      ? LS_ARG_TAKING_OPTIONS
+      : TREE_LIKE_ARG_TAKING_OPTIONS;
   const out: string[] = [];
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
@@ -211,7 +231,7 @@ function dropFlags(args: readonly string[]): string[] {
       out.push(arg);
       continue;
     }
-    if (!arg.includes('=') && ARG_TAKING_OPTIONS.has(arg)) {
+    if (!arg.includes('=') && argumentTakingOptions.has(arg)) {
       i += 1;
     }
   }

@@ -258,6 +258,7 @@ async function runTerminalUpdateGoalResult(
     toolCall,
     toolCalls: [toolCall],
     args: { status },
+    outcome: 'executed',
     result: { output, stopTurn: true },
   });
 }

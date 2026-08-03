@@ -9,7 +9,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, normalize } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
@@ -171,6 +171,7 @@ function didCtx(
     toolCalls: [toolCall],
     args,
     tool: options.preflightRejected === true ? undefined : ({} as ExecutableTool),
+    outcome: options.preflightRejected === true ? 'preflight-rejected' : 'executed',
     accesses:
       options.preflightRejected === true
         ? undefined
@@ -812,6 +813,59 @@ describe('agentsMdReminder round-2 hardening', () => {
     expect(results).toHaveLength(1);
     expect(outputText(results[0]!.result)).toContain(homeAgentsMd);
   });
+
+  it('does not probe or remind when permission vetoes an access-bearing call', async () => {
+    const h = createHarness({ withRealExecutor: true });
+    const subDir = join(workDir, 'packages', 'kap-server');
+    const subAgentsMd = await writeAgentsMd(subDir);
+    const hostFs = h.ix.get(IHostFileSystem);
+    const stat = vi.spyOn(hostFs, 'stat');
+    const readText = vi.spyOn(hostFs, 'readText');
+
+    class ReadTool implements ExecutableTool<Record<string, unknown>> {
+      readonly name = 'Read';
+      readonly description = 'Returns file contents.';
+      readonly parameters = { type: 'object', additionalProperties: true };
+
+      resolveExecution(_args: Record<string, unknown>): ToolExecution {
+        return {
+          accesses: ToolAccesses.readFile(join(subDir, 'index.ts')),
+          approvalRule: this.name,
+          execute: async () => {
+            throw new Error('vetoed tool must not execute');
+          },
+        };
+      }
+    }
+    h.ix.get(IAgentToolRegistryService).register(new ReadTool());
+    h.ix.get(IAgentToolExecutorService).onBeforeExecuteTool((event) => {
+      event.veto({ output: 'permission denied', isError: true });
+    });
+
+    const results = [];
+    for await (const item of h.ix.get(IAgentToolExecutorService).execute(
+      [
+        {
+          type: 'function',
+          id: 'call-denied-read',
+          name: 'Read',
+          arguments: JSON.stringify({ path: join(subDir, 'index.ts') }),
+        },
+      ],
+      { turnId: 1, signal: new AbortController().signal },
+    )) {
+      results.push(item);
+    }
+
+    expect(results).toHaveLength(1);
+    expect(outputText(results[0]!.result)).toBe('permission denied');
+    expect(outputText(results[0]!.result)).not.toContain(subAgentsMd);
+    expect(stat).not.toHaveBeenCalled();
+    expect(readText).not.toHaveBeenCalled();
+    expect(
+      h.telemetryEvents.filter((event) => event.event === 'agents_md_reminder_shown'),
+    ).toHaveLength(0);
+  });
 });
 
 describe('agentsMdReminder Bash parse degradation', () => {
@@ -884,6 +938,11 @@ describe('extractBashTargetDirs', () => {
     expect(targets('ls -w 80 packages')).toEqual([normalize(join(workDir, 'packages'))]);
     expect(targets('ls --sort size packages')).toEqual([normalize(join(workDir, 'packages'))]);
     expect(targets('ls --sort=size packages')).toEqual([normalize(join(workDir, 'packages'))]);
+    expect(targets('ls -L packages')).toEqual([normalize(join(workDir, 'packages'))]);
+    expect(targets('ls -P packages')).toEqual([normalize(join(workDir, 'packages'))]);
+    expect(targets('ls -o packages')).toEqual([normalize(join(workDir, 'packages'))]);
+    expect(targets('ls -s packages')).toEqual([normalize(join(workDir, 'packages'))]);
+    expect(targets('tree -L 2 packages')).toEqual([normalize(join(workDir, 'packages'))]);
     expect(targets('find -L packages -name x')).toEqual([normalize(join(workDir, 'packages'))]);
     expect(targets('find -H -P /srv -type f')).toEqual(['/srv']);
     expect(targets('find -- packages -name x')).toEqual([normalize(join(workDir, 'packages'))]);
