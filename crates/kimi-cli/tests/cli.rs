@@ -269,6 +269,31 @@ fn chat_quit_command_exits() {
 }
 
 #[test]
+fn chat_help_then_quit() {
+    let home = temp_dir("chat-help");
+    let cwd = temp_dir("chat-help-cwd");
+    let mut child = Command::new(binary())
+        .args(["chat"])
+        .current_dir(&cwd)
+        .env("KIMI_AGENT_HOME", &home)
+        .env("HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn kimi chat");
+    {
+        use std::io::Write;
+        let stdin = child.stdin.as_mut().expect("stdin");
+        stdin.write_all(b"/help\n/quit\n").expect("write");
+    }
+    let output = child.wait_with_output().expect("wait");
+    assert!(output.status.success(), "chat exits 0: {}", output.status);
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(out.contains("/resume") && out.contains("/compact"), "help list: {out}");
+}
+
+#[test]
 fn server_mode_verbose_emits_events() {
     // `--verbose` over the Remote path: the serve binary fans engine events
     // to stderr (session.turn.started fires before the LLM call, so it lands

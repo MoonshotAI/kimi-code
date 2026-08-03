@@ -165,6 +165,131 @@ fn connect_with_renderer(
     Ok((client, Some(renderer)))
 }
 
+/// Outcome of a chat slash command.
+enum ChatCommand {
+    /// Leave the REPL (e.g. `/quit`).
+    Done,
+    /// Handled; continue the loop.
+    Handled,
+    /// Handled but failed; print the message and continue.
+    Error(String),
+}
+
+/// Dispatch chat slash commands (offline-safe — none triggers the LLM).
+async fn handle_chat_command(
+    text: &str,
+    client: &mut kimi_server_client::AppServerClient,
+    session_id: &mut String,
+) -> ChatCommand {
+    let (cmd, rest) = match text.split_once(' ') {
+        Some((c, r)) => (c, r.trim()),
+        None => (text, ""),
+    };
+    match cmd {
+        "/quit" | "/exit" => ChatCommand::Done,
+        "/help" => {
+            println!("/help        this list");
+            println!("/quit        exit the chat");
+            println!("/resume <id> switch to (and resume) another session");
+            println!("/model <id>  set the session model");
+            println!("/status      session status snapshot");
+            println!("/usage       token usage");
+            println!("/clear       clear the session context");
+            println!("/compact     compact the session context");
+            ChatCommand::Handled
+        }
+        "/resume" => {
+            if rest.is_empty() {
+                return ChatCommand::Error("usage: /resume <session-id>".into());
+            }
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_CREATE,
+                    serde_json::json!({ "session_id": rest }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            *session_id = rest.to_string();
+            println!("switched to session {session_id}");
+            ChatCommand::Handled
+        }
+        "/model" => {
+            if rest.is_empty() {
+                return ChatCommand::Error("usage: /model <model-id>".into());
+            }
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_SET_MODEL,
+                    serde_json::json!({ "session_id": *session_id, "model": rest }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            println!("model set to {rest}");
+            ChatCommand::Handled
+        }
+        "/status" => {
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_GET_STATUS,
+                    serde_json::json!({ "session_id": *session_id }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&body["result"]).unwrap_or_default()
+            );
+            ChatCommand::Handled
+        }
+        "/usage" => {
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_GET_USAGE,
+                    serde_json::json!({ "session_id": *session_id }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            println!("{}", serde_json::to_string_pretty(&body["result"]).unwrap_or_default());
+            ChatCommand::Handled
+        }
+        "/clear" => {
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_CLEAR_CONTEXT,
+                    serde_json::json!({ "session_id": *session_id }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            println!("context cleared");
+            ChatCommand::Handled
+        }
+        "/compact" => {
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_COMPACT,
+                    serde_json::json!({ "session_id": *session_id }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            println!("context compacted");
+            ChatCommand::Handled
+        }
+        _ => ChatCommand::Error(format!("unknown command {cmd} — try /help")),
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     use clap::CommandFactory;
@@ -416,10 +541,11 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
             if std::io::stderr().is_terminal() {
-                eprintln!("chat session {session_id} — type /quit to exit");
+                eprintln!("chat session {session_id} — type /help for commands");
             }
             let stdin = std::io::stdin();
             let mut line = String::new();
+            let mut session_id = session_id;
             loop {
                 line.clear();
                 match stdin.read_line(&mut line) {
@@ -434,8 +560,16 @@ async fn main() -> anyhow::Result<()> {
                 if text.is_empty() {
                     continue;
                 }
-                if matches!(text, "/quit" | "/exit") {
-                    break;
+                if text.starts_with('/') {
+                    // Slash command — offline-safe; a `continue` keeps the loop.
+                    match handle_chat_command(text, &mut client, &mut session_id).await {
+                        ChatCommand::Done => break,
+                        ChatCommand::Handled => continue,
+                        ChatCommand::Error(message) => {
+                            eprintln!("error: {message}");
+                            continue;
+                        }
+                    }
                 }
                 let result = client
                     .call(
