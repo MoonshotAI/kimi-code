@@ -26,6 +26,8 @@ enum Commands {
         #[arg(default_value_t = 50)]
         limit: u32,
     },
+    /// Environment + config diagnostics.
+    Doctor,
     /// Engine health check.
     Health,
 }
@@ -54,6 +56,22 @@ async fn main() -> anyhow::Result<()> {
             }
             for session in body["result"]["sessions"].as_array().unwrap_or(&vec![]) {
                 println!("{}  {}", session["id"], session["title"]);
+            }
+        }
+        Commands::Doctor => {
+            let server = kimi_server::Server::build()?;
+            let mut client = kimi_server_client::AppServerClient::InProcess(
+                kimi_server::in_process::spawn(server.processor),
+            );
+            let health = client.health().await;
+            println!("health: {}", health["result"]["status"].as_str().unwrap_or("?"));
+            let config = client.call(kimi_protocol::methods::CONFIG_GET, serde_json::Value::Null).await;
+            if let Some(error) = config.get("error") {
+                println!("config: error — {}", error["message"].as_str().unwrap_or("unknown"));
+            } else {
+                let model = config["result"]["model"].as_str().unwrap_or("");
+                let provider = config["result"]["provider"].as_str().unwrap_or("");
+                println!("config: model={model} provider={provider}");
             }
         }
         Commands::Health => {
