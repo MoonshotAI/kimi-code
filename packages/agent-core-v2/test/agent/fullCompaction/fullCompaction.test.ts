@@ -29,6 +29,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DefaultCompactionStrategy,
 } from '#/agent/fullCompaction/strategy';
+import { fullCompactionAutoCompactionDisabledKey } from '#/agent/fullCompaction/fullCompactionService';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { COMPACTION_SUMMARY_PREFIX } from '#/agent/contextMemory/compactionHandoff';
 import { makeHookRunner } from '../externalHooks/runner-stub';
 import type { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
@@ -51,6 +53,7 @@ import {
 } from '#/index';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
@@ -2072,6 +2075,129 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('disables auto compaction after two ineffective compactions instead of looping', async () => {
+    // Reproduces the small-window loop from upstream issue #2325: the trigger
+    // threshold (0.85 * 2_000 = 1_700) sits below the steady-state usage the
+    // server keeps reporting (~1_800), because the fixed request overhead
+    // alone exceeds the threshold. Every compaction shrinks only the
+    // conversation, the next measured usage jumps back over the threshold,
+    // and without the circuit breaker auto-compaction would loop forever.
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 2_000,
+      },
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 1_800);
+
+    // Turn 1: compaction #1 runs before the step.
+    ctx.mockNextResponse({ type: 'text', text: 'Ineffective compacted summary one.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Answer one.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'loop prompt one' }] });
+    await ctx.untilTurnEnd();
+
+    // The server keeps reporting the same overhead-dominated usage, so the
+    // pre-step check marks compaction #1 ineffective and starts #2.
+    bumpUsage(ctx, 1_800);
+    ctx.mockNextResponse({ type: 'text', text: 'Ineffective compacted summary two.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Answer two.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'loop prompt two' }] });
+    await ctx.untilTurnEnd();
+
+    // Turn 3: the steady-state count is still >= 80% of the count that
+    // triggered #2 — the second ineffective compaction in a row — so
+    // auto-compaction is disabled instead of starting a third round.
+    bumpUsage(ctx, 1_800);
+    ctx.mockNextResponse({ type: 'text', text: 'Answer three.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'loop prompt three' }] });
+    await ctx.untilTurnEnd();
+
+    const compactionCalls = ctx.llmCalls.filter((call) =>
+      messageText(call.history.at(-1)).includes('first-person handoff note'),
+    );
+    expect(compactionCalls).toHaveLength(2);
+    expect(ctx.llmCalls).toHaveLength(5);
+    const warnings = ctx.allEvents.filter((entry) => entry.event === 'warning');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.args).toEqual(
+      expect.objectContaining({
+        code: 'auto-compaction-ineffective',
+        message: expect.stringContaining('Auto-compaction disabled'),
+      }),
+    );
+    expect(ctx.get(IAgentStateService).get(fullCompactionAutoCompactionDisabledKey)).toBe(true);
+    await ctx.expectResumeMatches();
+  });
+
+  it('resets the ineffective streak after an effective compaction', async () => {
+    // Regression guard against false positives: a compaction that genuinely
+    // drops the steady-state count below 80% of its trigger count resets the
+    // streak, so only two CONSECUTIVE ineffective compactions open the
+    // circuit. An accumulated (unreset) streak would open it one round
+    // earlier and produce only 3 compaction calls below.
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 2_000,
+      },
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 1_800);
+
+    // Turn 1: compaction #1.
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary one.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Answer one.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'prompt one' }] });
+    await ctx.untilTurnEnd();
+
+    // Turn 2: still overhead-dominated — compaction #1 was ineffective
+    // (streak 1) and compaction #2 runs.
+    bumpUsage(ctx, 1_800);
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary two.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Answer two.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'prompt two' }] });
+    await ctx.untilTurnEnd();
+
+    // Turn 3: this time the steady-state count stayed low after compaction
+    // #2, so the streak resets to 0 and no compaction runs.
+    ctx.mockNextResponse({ type: 'text', text: 'Answer three.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'prompt three' }] });
+    await ctx.untilTurnEnd();
+    expect(ctx.allEvents.filter((entry) => entry.event === 'warning')).toHaveLength(0);
+    expect(ctx.get(IAgentStateService).get(fullCompactionAutoCompactionDisabledKey)).toBe(false);
+
+    // Turns 4-6: two consecutive ineffective compactions (#3, #4) open the
+    // circuit — only possible because the turn-3 reset zeroed the streak.
+    bumpUsage(ctx, 1_800);
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary three.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Answer four.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'prompt four' }] });
+    await ctx.untilTurnEnd();
+
+    bumpUsage(ctx, 1_800);
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary four.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Answer five.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'prompt five' }] });
+    await ctx.untilTurnEnd();
+
+    bumpUsage(ctx, 1_800);
+    ctx.mockNextResponse({ type: 'text', text: 'Answer six.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'prompt six' }] });
+    await ctx.untilTurnEnd();
+
+    const compactionCalls = ctx.llmCalls.filter((call) =>
+      messageText(call.history.at(-1)).includes('first-person handoff note'),
+    );
+    expect(compactionCalls).toHaveLength(4);
+    expect(ctx.llmCalls).toHaveLength(10);
+    expect(ctx.allEvents.filter((entry) => entry.event === 'warning')).toHaveLength(1);
+    expect(ctx.get(IAgentStateService).get(fullCompactionAutoCompactionDisabledKey)).toBe(true);
+    await ctx.expectResumeMatches();
+  });
+
   it('compacts and retries when the provider reports context overflow', async () => {
     let callCount = 0;
     const inputs: string[][] = [];
@@ -2962,6 +3088,21 @@ type MutableKimiConfig = {
     models?: Record<string, { maxOutputSize?: number }>;
   };
 };
+
+// Simulates the server reporting a constant, overhead-dominated usage total
+// for the current context — the trigger condition of the small-window
+// auto-compaction loop from upstream issue #2325. Mirrors the harness's
+// (private) coverUsage helper.
+function bumpUsage(ctx: TestAgentContext, tokenTotal: number): void {
+  const contextSize = ctx.get(IAgentContextSizeService);
+  const contextMemory = ctx.get(IAgentContextMemoryService);
+  contextSize.measured(contextMemory.get(), [], {
+    inputOther: tokenTotal - 1,
+    output: 1,
+    inputCacheRead: 0,
+    inputCacheCreation: 0,
+  });
+}
 
 function textResult(text: string, traceId: string | null = null): Awaited<ReturnType<GenerateFn>> {
   return {

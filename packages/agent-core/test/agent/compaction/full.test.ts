@@ -1688,6 +1688,61 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('disables auto compaction after two ineffective compactions instead of looping', async () => {
+    // Reproduces the small-window loop from upstream issue #2325: the trigger
+    // threshold (0.85 * 2_000 = 1_700) sits below the steady-state usage the
+    // server keeps reporting (~1_800), because the fixed request overhead
+    // alone exceeds the threshold. Every compaction shrinks only the
+    // conversation, the next measured usage jumps back over the threshold,
+    // and without the circuit breaker auto-compaction would loop forever.
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 2_000,
+      },
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 1_800);
+
+    // Turn 1: compaction #1 runs before the step.
+    ctx.mockNextResponse({ type: 'text', text: 'Ineffective compacted summary one.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Answer one.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'loop prompt one' }] });
+    await ctx.untilTurnEnd();
+
+    // The server keeps reporting the same overhead-dominated usage, so the
+    // pre-step check marks compaction #1 ineffective and starts #2.
+    ctx.appendExchange(2, 'bump user two', 'bump assistant two', 1_800);
+    ctx.mockNextResponse({ type: 'text', text: 'Ineffective compacted summary two.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Answer two.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'loop prompt two' }] });
+    await ctx.untilTurnEnd();
+
+    // Turn 3: the steady-state count is still >= 80% of the count that
+    // triggered #2 — the second ineffective compaction in a row — so
+    // auto-compaction is disabled instead of starting a third round.
+    ctx.appendExchange(3, 'bump user three', 'bump assistant three', 1_800);
+    ctx.mockNextResponse({ type: 'text', text: 'Answer three.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'loop prompt three' }] });
+    await ctx.untilTurnEnd();
+
+    const compactionCalls = ctx.llmCalls.filter((call) =>
+      messageText(call.history.at(-1)).includes('first-person handoff note'),
+    );
+    expect(compactionCalls).toHaveLength(2);
+    expect(ctx.llmCalls).toHaveLength(5);
+    const warnings = ctx.allEvents.filter((entry) => entry.event === 'warning');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.args).toEqual(
+      expect.objectContaining({
+        code: 'auto-compaction-ineffective',
+        message: expect.stringContaining('Auto-compaction disabled'),
+      }),
+    );
+    await ctx.expectResumeMatches();
+  });
+
   it('keeps an oversized pending user prompt out of auto compaction', async () => {
     const ctx = testAgent();
     ctx.configure({
