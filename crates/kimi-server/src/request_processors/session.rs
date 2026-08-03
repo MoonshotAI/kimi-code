@@ -1657,6 +1657,54 @@ mod create_tests {
     }
 
     #[tokio::test]
+    async fn swarm_mode_and_undo_empty_state() {
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = SessionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/create".into(),
+                params: serde_json::json!({ "session_id": "s-swarm" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "create failed: {body}");
+
+        // set_swarm_mode toggles and the status snapshot reflects it.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/set_swarm_mode".into(),
+                params: serde_json::json!({ "session_id": "s-swarm", "enabled": true }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "set_swarm_mode failed: {body}");
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(3),
+                method: "session/get_status".into(),
+                params: serde_json::json!({ "session_id": "s-swarm" }),
+            })
+            .await;
+        assert_eq!(body["result"]["swarm_mode"], true, "status: {body}");
+
+        // Undo on an empty history reports the engine error, not a crash.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(4),
+                method: "session/undo_history".into(),
+                params: serde_json::json!({ "session_id": "s-swarm" }),
+            })
+            .await;
+        assert!(body.get("error").is_some(), "empty-history undo errors: {body}");
+    }
+
+    #[tokio::test]
     async fn import_context_appends_transcript() {
         let state = crate::state::ServerState::new().expect("state");
         let processor = SessionProcessor::with_state(state);
