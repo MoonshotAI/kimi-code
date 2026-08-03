@@ -1,5 +1,9 @@
 /**
- * The wire `Message` shape — the legacy REST/streaming message format.
+ * The v1 wire `Message` shape — the legacy REST/streaming message format served
+ * on the `messages`, `snapshot`, and `sessions` (`:undo`) surfaces, and accepted
+ * on the `prompts` submission surface. Owned by kap-server: the engine speaks
+ * only the native `ContextMessage`, and `services/messages/messageProjection`
+ * projects it into this shape at the edge.
  *
  * Media sources come in three kinds: `url`, `base64`, and `file` (a daemon
  * upload id). The `url` kind optionally pairs an `id` — the provider-issued
@@ -9,7 +13,7 @@
 
 import { z } from 'zod';
 
-import { isoDateTimeSchema } from '#/_base/utils/isoDateTime';
+import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
 
 export const messageRoleSchema = z.enum(['user', 'assistant', 'tool', 'system']);
 export type MessageRole = z.infer<typeof messageRoleSchema>;
