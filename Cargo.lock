@@ -1365,6 +1365,7 @@ dependencies = [
  "kimi-agent",
  "kimi-exec",
  "kimi-protocol",
+ "kimi-sdk",
  "kimi-server",
  "kimi-server-client",
  "kimi-ui",

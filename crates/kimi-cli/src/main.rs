@@ -34,6 +34,14 @@ fn connect(server: &Option<String>) -> anyhow::Result<kimi_server_client::AppSer
     }
 }
 
+/// High-level harness over the same engine choice (embedded or Remote).
+fn connect_harness(server: &Option<String>) -> anyhow::Result<kimi_sdk::Harness> {
+    match server {
+        Some(bin) => kimi_sdk::Harness::remote(bin),
+        None => kimi_sdk::Harness::embedded(),
+    }
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Run one prompt non-interactively.
@@ -518,16 +526,18 @@ async fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            let mut client = connect(&server)?;
-            let health = client.health().await;
-            println!("health: {}", health["result"]["status"].as_str().unwrap_or("?"));
-            let config = client.config_get().await;
-            if let Some(error) = config.get("error") {
-                println!("config: error — {}", error["message"].as_str().unwrap_or("unknown"));
-            } else {
-                let model = config["result"]["model"].as_str().unwrap_or("");
-                let provider = config["result"]["provider"].as_str().unwrap_or("");
-                println!("config: model={model} provider={provider}");
+            let harness = connect_harness(&server)?;
+            match harness.health().await {
+                Ok(status) => println!("health: {status}"),
+                Err(e) => println!("health: error — {e}"),
+            }
+            match harness.config().await {
+                Ok(config) => {
+                    let model = config["model"].as_str().unwrap_or("");
+                    let provider = config["provider"].as_str().unwrap_or("");
+                    println!("config: model={model} provider={provider}");
+                }
+                Err(e) => println!("config: error — {e}"),
             }
 
             // File-level config checks (TS `kimi doctor` parity): report every
