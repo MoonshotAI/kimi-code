@@ -76,6 +76,7 @@ export async function runCommand(
 
 export type FetchLike = (
   url: string,
+  init?: { signal?: AbortSignal },
 ) => Promise<{
   ok: boolean;
   status: number;
@@ -87,11 +88,12 @@ export type FetchLike = (
  * Download `url` to `destPath` (parent dirs created), reporting 0–99 percent
  * while the response carries a content-length. Returns the byte count.
  *
- * A response that stops producing bytes is failed after `idleTimeoutMs`
- * (default 30s): the background capability install clears its running state
- * on failure, so a stalled CDN connection must never wedge the capability in
- * a permanent "installing" state. Slow but flowing downloads are unaffected
- * — the watchdog resets on every chunk.
+ * Both phases have a deadline (`idleTimeoutMs`, default 30s): the response
+ * headers must arrive in time (the fetch is aborted), and the byte stream
+ * must not go quiet for that long. A stalled CDN connection must never
+ * wedge the background capability install in a permanent "installing" state
+ * — failure is what clears the running state. Slow but flowing downloads
+ * are unaffected — the stream watchdog resets on every chunk.
  */
 export async function downloadToFile(
   url: string,
@@ -101,7 +103,17 @@ export async function downloadToFile(
   options: { idleTimeoutMs?: number } = {},
 ): Promise<number> {
   const idleTimeoutMs = options.idleTimeoutMs ?? DOWNLOAD_IDLE_TIMEOUT_MS;
-  const resp = await fetchImpl(url);
+  let resp;
+  try {
+    resp = await fetchImpl(url, { signal: AbortSignal.timeout(idleTimeoutMs) });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      throw new Error(`Failed to download ${url}: no response within ${idleTimeoutMs}ms`, {
+        cause: error,
+      });
+    }
+    throw error;
+  }
   if (!resp.ok || resp.body === null) {
     throw new Error(`Failed to download ${url}: HTTP ${resp.status}`);
   }

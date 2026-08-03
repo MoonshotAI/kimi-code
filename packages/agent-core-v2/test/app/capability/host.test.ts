@@ -105,6 +105,27 @@ describe('capability host downloadToFile', () => {
     ).rejects.toThrow(/stalled/);
   });
 
+  it('aborts when the response headers never arrive', async () => {
+    // The CDN accepted the connection but never completes the headers —
+    // the header phase has its own deadline via the fetch's abort signal.
+    const hangingFetch = ((_url: string, init?: { signal?: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation timed out.', 'TimeoutError'));
+        });
+      })) as never;
+
+    await expect(
+      downloadToFile(
+        'https://cdn.example.test/headers',
+        path.join(root, 'headers'),
+        undefined,
+        hangingFetch,
+        { idleTimeoutMs: 5 },
+      ),
+    ).rejects.toThrow(/no response within 5ms/);
+  });
+
   it('lets a slow but flowing download finish intact', async () => {
     const chunks = ['hel', 'lo ', 'wor', 'ld'];
     const body = new ReadableStream({

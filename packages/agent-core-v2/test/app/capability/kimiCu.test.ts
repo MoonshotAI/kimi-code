@@ -5,7 +5,7 @@
  * host processes, fake plugins).
  */
 
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
@@ -177,7 +177,10 @@ describe('kimi-cu entry', () => {
     const applicationsDir = path.join(root, 'Applications');
     const macosDir = path.join(applicationsDir, 'KimiCU.app', 'Contents', 'MacOS');
     await mkdir(macosDir, { recursive: true });
-    await writeFile(path.join(macosDir, 'kimi-cu'), '#!/bin/sh\n');
+    const appBin = path.join(macosDir, 'kimi-cu');
+    await writeFile(appBin, '#!/bin/sh\n');
+    // Real bundles are executable; anything less reads as a broken install.
+    await chmod(appBin, 0o755);
     await writeFile(
       path.join(applicationsDir, 'KimiCU.app', 'Contents', 'Info.plist'),
       '<key>CFBundleShortVersionString</key>\n<string>0.5.4</string>',
@@ -319,5 +322,19 @@ describe('kimi-cu entry', () => {
     // setup must not strand the capability at partial by leaving it off.
     await entry.install(() => {});
     expect(plugins.enabledCalls).toEqual([{ id: 'kimi-cu', enabled: true }]);
+  });
+
+  it('reads a non-executable leftover app binary as a broken install', async () => {
+    const applicationsDir = await fakeAppBundle();
+    // An interrupted ditto leaves the binary present but not executable.
+    await chmod(path.join(applicationsDir, 'KimiCU.app', 'Contents', 'MacOS', 'kimi-cu'), 0o644);
+    const entry = createKimiCuEntry(makeCtx({ applicationsDir }));
+
+    const detected = await entry.detect();
+    expect(detected.steps.find((s) => s.id === 'app')).toEqual({
+      id: 'app',
+      state: 'missing',
+      detail: 'not executable',
+    });
   });
 });

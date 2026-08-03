@@ -13,6 +13,7 @@
  * `osascript ... with administrator privileges` (native auth dialog).
  */
 
+import { constants } from 'node:fs';
 import { mkdtemp, readFile, rm, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -89,6 +90,13 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     );
   }
 
+  async function executable(p: string): Promise<boolean> {
+    return access(p, constants.X_OK).then(
+      () => true,
+      () => false,
+    );
+  }
+
   async function serviceRunning(): Promise<boolean> {
     if (!(await exists(appBin))) return false;
     const result = await runCommand(ctx.hostProcess, appBin, ['service-status'], {
@@ -119,8 +127,20 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     });
 
     const version = await readAppBundleVersion(infoPlist);
-    const appPresent = await exists(appBin);
-    steps.push({ id: 'app', state: appPresent ? 'ok' : 'missing', ...(version !== undefined ? { detail: version } : {}) });
+    // ditto produces an executable binary only once the copy completes; an
+    // interrupted install leaves an unusable file behind, which must read as
+    // missing so the next install re-copies instead of failing with EACCES.
+    const appExists = await exists(appBin);
+    const appUsable = appExists && (await executable(appBin));
+    steps.push({
+      id: 'app',
+      state: appUsable ? 'ok' : 'missing',
+      ...(appExists && !appUsable
+        ? { detail: 'not executable' }
+        : version !== undefined
+          ? { detail: version }
+          : {}),
+    });
 
     // A wedged binary turns these CLI probes into timeouts — mark the step
     // failed instead of throwing, so status views and the detect-first
