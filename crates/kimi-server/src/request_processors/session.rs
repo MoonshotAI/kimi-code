@@ -1657,6 +1657,42 @@ mod create_tests {
     }
 
     #[tokio::test]
+    async fn activate_unknown_skill_errors_fast() {
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = SessionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/create".into(),
+                params: serde_json::json!({ "session_id": "s-ask" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "create failed: {body}");
+
+        // An unregistered skill errors before any LLM turn.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/activate_skill".into(),
+                params: serde_json::json!({
+                    "session_id": "s-ask",
+                    "name": "nonexistent-skill",
+                    "args": null,
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_some(), "unknown skill -> error: {body}");
+        assert!(
+            body["error"]["message"].as_str().unwrap_or("").contains("was not found"),
+            "clear message: {body}"
+        );
+    }
+
+    #[tokio::test]
     async fn mcp_servers_and_warnings_empty_states() {
         let state = crate::state::ServerState::new().expect("state");
         let processor = SessionProcessor::with_state(state);
