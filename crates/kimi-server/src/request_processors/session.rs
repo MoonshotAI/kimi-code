@@ -106,6 +106,25 @@ impl Processor for SessionProcessor {
                     .map_err(|e| JsonRpcError::internal_error(format!("session/list serialize failed: {e}")))
             })
         });
+
+        // `session/get_usage` — cumulative token usage.
+        let mgr = self.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_GET_USAGE, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: SessionGoalParams = serde_json::from_value(params)
+                    .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                serde_json::to_value(agent.usage.data())
+                    .map_err(|e| JsonRpcError::internal_error(e.to_string()))
+            })
+        });
     }
 }
 
@@ -146,5 +165,22 @@ mod tests {
             .await;
         assert!(body.get("error").is_none(), "session/list should not error: {body}");
         assert_eq!(body["result"]["sessions"], serde_json::json!([]));
+    }
+
+
+    #[tokio::test]
+    async fn get_usage_missing_session_yields_engine_error() {
+        let processor = SessionProcessor::new().expect("session processor");
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/get_usage".into(),
+                params: serde_json::json!({ "session_id": "nope" }),
+            })
+            .await;
+        assert_eq!(body["error"]["message"], "no agent for session: nope");
     }
 }
