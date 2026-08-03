@@ -1,0 +1,15 @@
+[package]
+name = "kimi-server"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Kimi Code host protocol layer — MessageProcessor over the engine, multi-transport (layer 3 of the Rust-first migration)"
+
+[dependencies]
+kimi-protocol = { path = "../kimi-protocol" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros", "sync"] }
