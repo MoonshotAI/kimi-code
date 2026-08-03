@@ -22,11 +22,8 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IConfigService } from '#/app/config/config';
 
-import { BUILTIN_SKILLS } from './builtin/builtin';
-import {
-  BUILTIN_PRODUCT_SKILLS_SECTION,
-  type BuiltinProductSkillsConfig,
-} from './configSection';
+import { visibleBuiltinSkills } from './builtin/builtin';
+import { builtinProductSkillsEnabled } from './configSection';
 import { SKILL_SOURCE_PRIORITY, type ISkillSource, type SkillContribution } from './skillSource';
 
 export interface IBuiltinSkillSource extends ISkillSource {
@@ -46,10 +43,7 @@ export class BuiltinSkillSource implements IBuiltinSkillSource {
 
   async load(): Promise<SkillContribution> {
     await this.config.ready;
-    const enabled =
-      this.config.get<BuiltinProductSkillsConfig>(BUILTIN_PRODUCT_SKILLS_SECTION) !== false;
-    if (enabled) return { skills: BUILTIN_SKILLS };
-    return { skills: BUILTIN_SKILLS.filter((skill) => skill.productSpecific !== true) };
+    return { skills: visibleBuiltinSkills(builtinProductSkillsEnabled(this.config)) };
   }
 }
 

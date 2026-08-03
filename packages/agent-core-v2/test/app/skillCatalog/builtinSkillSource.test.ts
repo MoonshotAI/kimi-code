@@ -15,7 +15,7 @@ import { describe, expect, it } from 'vitest';
 
 import { TestInstantiationService } from '#/_base/di/test';
 import { IConfigService } from '#/app/config/config';
-import { BUILTIN_SKILLS } from '#/app/skillCatalog/builtin/builtin';
+import { BUILTIN_SKILLS, visibleBuiltinSkills } from '#/app/skillCatalog/builtin/builtin';
 import { BuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
 import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/app/skillCatalog/configSection';
 
@@ -56,6 +56,17 @@ describe('BuiltinSkillSource product-skill switch', () => {
     const names = await loadNames(false);
     expect(names).toEqual(NEUTRAL_SKILLS);
     for (const name of PRODUCT_SKILLS) expect(names).not.toContain(name);
+  });
+
+  // The session-less workspace listings (the SDK's `listWorkspaceSkills`, the
+  // server's `GET /workspaces/{id}/skills`) compose builtins through the same
+  // predicate rather than the raw constant, so a surface cannot advertise a
+  // skill the session catalog will drop.
+  it('exposes the same filter the session-less listings compose with', () => {
+    expect(visibleBuiltinSkills(true).map((s) => s.name)).toEqual(
+      BUILTIN_SKILLS.map((s) => s.name),
+    );
+    expect(visibleBuiltinSkills(false).map((s) => s.name)).toEqual(NEUTRAL_SKILLS);
   });
 
   // This is the lowest-priority source, so the workspace catalog loads it

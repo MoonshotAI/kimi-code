@@ -5,6 +5,12 @@
  * they bypass `ISkillDiscovery`: `BUILTIN_SKILLS` feeds the builtin
  * `ISkillSource`, and `registerBuiltinSkills` stamps them into an in-memory
  * catalog for edge composition without a Session.
+ *
+ * `visibleBuiltinSkills` is the one place that decides which of them the
+ * `builtin_product_skills` switch hides. Every consumer goes through it — the
+ * session-scoped source and the session-less workspace listings alike — so a
+ * skill marked `productSpecific` cannot stay advertised on one surface while
+ * being filtered on another.
  */
 
 import type { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
@@ -32,6 +38,11 @@ export const BUILTIN_SKILLS: readonly SkillDefinition[] = [
   SUB_SKILL_REVIEW,
   SUB_SKILL_CONSOLIDATE,
 ];
+
+export function visibleBuiltinSkills(productSkillsEnabled: boolean): readonly SkillDefinition[] {
+  if (productSkillsEnabled) return BUILTIN_SKILLS;
+  return BUILTIN_SKILLS.filter((skill) => skill.productSpecific !== true);
+}
 
 export function registerBuiltinSkills(registry: InMemorySkillCatalog): void {
   for (const skill of BUILTIN_SKILLS) {

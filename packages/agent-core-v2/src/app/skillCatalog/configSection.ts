@@ -19,7 +19,9 @@
  * `stripEnvBoundFields` only walks object fields, so an env override would
  * otherwise be written back into `config.toml`. The strip restores the
  * env-free file value while the env var resolves, and drops the field when the
- * file held anything but a boolean.
+ * file held anything but a boolean. `builtinProductSkillsEnabled` reads the
+ * resolved switch; only an explicit opt-out disables, so a missing or
+ * not-yet-registered section behaves like the shipped default.
  */
 
 import { z } from 'zod';
@@ -29,6 +31,7 @@ import {
   type ConfigStripEnv,
   type EnvBindings,
   envBindings,
+  type IConfigService,
 } from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 
@@ -75,3 +78,7 @@ registerConfigSection(BUILTIN_PRODUCT_SKILLS_SECTION, BuiltinProductSkillsConfig
   env: builtinProductSkillsEnvBindings,
   stripEnv: stripBuiltinProductSkillsEnv,
 });
+
+export function builtinProductSkillsEnabled(config: IConfigService): boolean {
+  return config.get<BuiltinProductSkillsConfig>(BUILTIN_PRODUCT_SKILLS_SECTION) !== false;
+}
