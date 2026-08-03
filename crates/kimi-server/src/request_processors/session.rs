@@ -1657,6 +1657,72 @@ mod create_tests {
     }
 
     #[tokio::test]
+    async fn goal_roundtrip_on_session() {
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = SessionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/create".into(),
+                params: serde_json::json!({ "session_id": "s-goal-srv" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "create failed: {body}");
+
+        // Create -> snapshot carries the objective.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/goal_create".into(),
+                params: serde_json::json!({
+                    "session_id": "s-goal-srv",
+                    "objective": "finish the migration",
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "goal_create failed: {body}");
+        assert_eq!(body["result"]["objective"], "finish the migration");
+
+        // goal_get nests the snapshot under `goal`.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(3),
+                method: "session/goal_get".into(),
+                params: serde_json::json!({ "session_id": "s-goal-srv" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "goal_get failed: {body}");
+        assert_eq!(body["result"]["goal"]["objective"], "finish the migration");
+
+        // Pause / resume / cancel complete the lifecycle.
+        for method in ["session/goal_pause", "session/goal_resume"] {
+            let body = server
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(4),
+                    method: method.into(),
+                    params: serde_json::json!({ "session_id": "s-goal-srv" }),
+                })
+                .await;
+            assert!(body.get("error").is_none(), "{method} failed: {body}");
+        }
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(5),
+                method: "session/goal_cancel".into(),
+                params: serde_json::json!({ "session_id": "s-goal-srv" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "goal_cancel failed: {body}");
+    }
+
+    #[tokio::test]
     async fn steer_queues_input_for_existing_session() {
         let state = crate::state::ServerState::new().expect("state");
         let processor = SessionProcessor::with_state(state);
