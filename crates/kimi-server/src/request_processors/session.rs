@@ -414,6 +414,50 @@ impl Processor for SessionProcessor {
             })
         });
 
+        // `session/get_context` — full context snapshot.
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_GET_CONTEXT, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: SessionGoalParams = serde_json::from_value(params)
+                    .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                serde_json::to_value(agent.context.data())
+                    .map_err(|e| JsonRpcError::internal_error(format!("serialize context: {e}")))
+            })
+        });
+
+        // `session/undo_history` — undo the last N user turns.
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_UNDO_HISTORY, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionUndoHistoryParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                let cut = agent
+                    .undo_history(input.count)
+                    .map_err(JsonRpcError::internal_error)?;
+                Ok(serde_json::json!({
+                    "undone_turns": cut.removed_count,
+                    "cut_index": cut.cut_index,
+                }))
+            })
+        });
+
         // `session/get_status` — live engine status snapshot.
         let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_GET_STATUS, move |params| {
