@@ -11,6 +11,7 @@ import {
   bootstrap,
   IConfigService,
   IProviderDiscoveryService,
+  ISessionLifecycleService,
   IWorkspaceService,
   logSeed,
   resolveConfigPath,
@@ -171,6 +172,9 @@ export interface RunningServer {
   readonly port: number;
   close(): Promise<void>;
 }
+
+const SESSION_DRAIN_TIMEOUT_MS = 3_000;
+const SESSION_DRAIN_OVERALL_TIMEOUT_MS = 8_000;
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 58627;
@@ -349,10 +353,49 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   }
 
   const close = async (): Promise<void> => {
+    // 1. Stop accepting new HTTP/WS connections and drain in-flight requests.
     await app.close();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
-    // Telemetry is best-effort and must never prevent core or instance cleanup.
+
+    // 2. Quiesce telemetry producers: drain all active sessions so no events
+    //    are emitted after the telemetry flush boundary. Bounded by a deadline
+    //    so a wedged session cannot hold up server shutdown indefinitely.
+    try {
+      const sessionLifecycle = core.accessor.get(ISessionLifecycleService);
+      const handles = sessionLifecycle.list();
+      if (handles.length > 0) {
+        const drainDeadline = Date.now() + SESSION_DRAIN_OVERALL_TIMEOUT_MS;
+        const closeOne = async (h: (typeof handles)[number]): Promise<void> => {
+          const remaining = Math.max(0, drainDeadline - Date.now());
+          await Promise.race([
+            sessionLifecycle.close(h.id),
+            new Promise<void>((_, reject) => {
+              const t = setTimeout(
+                () => reject(new Error(`session ${h.id} close timed out after ${SESSION_DRAIN_TIMEOUT_MS}ms`)),
+                Math.min(SESSION_DRAIN_TIMEOUT_MS, remaining),
+              );
+              t.unref?.();
+            }),
+          ]);
+        };
+        const results = await Promise.allSettled(handles.map(closeOne));
+        for (let i = 0; i < results.length; i++) {
+          const r = results[i];
+          if (r.status === 'rejected') {
+            logger.warn(
+              { err: r.reason instanceof Error ? r.reason.message : String(r.reason), sessionId: handles[i].id },
+              'session close failed; proceeding with telemetry shutdown',
+            );
+          }
+        }
+      }
+    } catch {
+      // Session lifecycle may not be initialized in partial-boot scenarios.
+    }
+
+    // 3. Flush and shutdown telemetry. Best-effort — telemetry failure must
+    //    never prevent core or instance cleanup.
     try {
       await shutdownServerTelemetry(telemetry);
     } catch (error) {
@@ -361,6 +404,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         'telemetry shutdown failed; continuing server cleanup',
       );
     }
+
+    // 4. Dispose core scope and release instance registration.
     try {
       core.dispose();
       // `core.dispose()` triggers the search service's synchronous `dispose()`,
