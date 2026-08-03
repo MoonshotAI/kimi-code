@@ -14,7 +14,10 @@ The `kimi-webbridge` binary lives at `~/.kimi-webbridge/bin/kimi-webbridge` (Win
 
    Then retry the tool call.
 2. **`command not found` / binary missing** → not installed. Point the user to the help page below to install it.
-3. **Extension won't connect, or anything still broken after a `start` + retry** → don't deep-troubleshoot. Point the user to the help page:
+3. **Extension missing or won't connect** → give the user both official installation paths:
+   - Chrome Web Store: https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc
+   - Restricted-network fallback: download https://kimi-web-img.moonshot.cn/webbridge/latest/extension/kimi-webbridge-extension.zip, unzip it, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select the extracted folder.
+4. **Anything still broken after a `start` + retry** → don't deep-troubleshoot. Point the user to the help page:
    - English: https://www.kimi.com/features/webbridge
    - 中文: https://www.kimi.com/zh-cn/features/webbridge
 

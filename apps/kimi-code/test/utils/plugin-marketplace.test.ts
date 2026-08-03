@@ -94,7 +94,10 @@ describe('loadPluginMarketplace', () => {
       'utf8',
     );
 
-    const marketplace = await loadPluginMarketplace({ workDir: '/tmp/work', source: file });
+    const marketplace = await loadPluginMarketplace({
+      workDir: '/tmp/work',
+      source: file,
+    });
 
     expect(marketplace.source).toBe(file);
     expect(marketplace.version).toBe('1');
@@ -127,7 +130,11 @@ describe('loadPluginMarketplace', () => {
     const file = join(dir, 'marketplace.json');
     await writeFile(file, JSON.stringify({ version: '1', plugins: [] }), 'utf8');
 
-    const marketplace = await loadPluginMarketplace({ workDir: '/tmp/work', source: file });
+    const marketplace = await loadPluginMarketplace({
+      workDir: '/tmp/work',
+      source: file,
+      includeBuiltInCapabilities: true,
+    });
 
     // Client-injected, so the visibility of the two capabilities is bound to
     // the client version; no version is pinned (reinstall is the upgrade path).
@@ -147,7 +154,7 @@ describe('loadPluginMarketplace', () => {
     expect(marketplace.plugins.map((entry) => entry.version)).toEqual([undefined, undefined]);
   });
 
-  it('lets a catalog entry win over the built-in entry with the same id', async () => {
+  it('masks same-id catalog rows with the built-in entries', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'kimi-plugin-marketplace-'));
     const file = join(dir, 'marketplace.json');
     await writeFile(
@@ -165,12 +172,18 @@ describe('loadPluginMarketplace', () => {
       'utf8',
     );
 
-    const marketplace = await loadPluginMarketplace({ workDir: '/tmp/work', source: file });
+    const marketplace = await loadPluginMarketplace({
+      workDir: '/tmp/work',
+      source: file,
+      includeBuiltInCapabilities: true,
+    });
 
+    // What the built-in ids mean stays decided by the client release: the
+    // catalog's own kimi-webbridge row is masked, only the injected one
+    // survives — a future official listing would only reach older clients.
     const webbridge = marketplace.plugins.filter((entry) => entry.id === 'kimi-webbridge');
     expect(webbridge).toHaveLength(1);
-    expect(webbridge[0]?.source).toBe(join(dir, 'kimi-webbridge'));
-    // kimi-cu is still injected — only the carried id is deduped.
+    expect(webbridge[0]?.source).toBe(join(REPO_ROOT, 'plugins/official/kimi-webbridge'));
     expect(marketplace.plugins.some((entry) => entry.id === 'kimi-cu')).toBe(true);
   });
 

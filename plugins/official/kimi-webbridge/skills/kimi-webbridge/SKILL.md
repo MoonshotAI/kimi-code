@@ -162,10 +162,15 @@ Decoded PDF cap is 100 MB. Above that the daemon refuses; reduce `scale` or spli
 & "$env:USERPROFILE\.kimi-webbridge\bin\kimi-webbridge.exe" start
 ```
 
-Then retry the tool call. If it still fails — or the browser extension won't connect — point the user to the help page instead of deep-troubleshooting:
+Then retry the tool call. If it still fails, point the user to the help page instead of deep-troubleshooting:
 
 - English: https://www.kimi.com/features/webbridge
 - 中文: https://www.kimi.com/zh-cn/features/webbridge
+
+If the daemon is reachable but the browser extension is missing or won't connect, give the user both official installation paths:
+
+1. Chrome Web Store: https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc
+2. Restricted-network fallback: download https://kimi-web-img.moonshot.cn/webbridge/latest/extension/kimi-webbridge-extension.zip, unzip it, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select the extracted folder.
 
 Never run `stop` / `restart` / `uninstall` automatically — those kill a running daemon. See `references/operations.md` for anything deeper.
 

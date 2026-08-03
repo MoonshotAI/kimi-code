@@ -42,14 +42,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/capabilities",
-    ],
-    [
-      "GET",
-      "/api/v1/capabilities/{capability_id}",
-    ],
-    [
-      "GET",
       "/api/v1/catalog/providers",
     ],
     [
@@ -135,14 +127,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "GET",
       "/api/v1/oauth/userinfo",
-    ],
-    [
-      "GET",
-      "/api/v1/plugins",
-    ],
-    [
-      "GET",
-      "/api/v1/plugins/marketplace",
     ],
     [
       "GET",
@@ -274,10 +258,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
-      "/api/v1/capabilities/{tail}",
-    ],
-    [
-      "POST",
       "/api/v1/config",
     ],
     [
@@ -331,14 +311,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/oauth/logout",
-    ],
-    [
-      "POST",
-      "/api/v1/plugins",
-    ],
-    [
-      "POST",
-      "/api/v1/plugins/{tail}",
     ],
     [
       "POST",

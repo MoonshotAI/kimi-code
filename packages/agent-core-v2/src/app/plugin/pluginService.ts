@@ -10,9 +10,6 @@
  * scope.
  */
 
-import { watch, type FSWatcher } from 'node:fs';
-import path from 'node:path';
-
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -24,7 +21,6 @@ import { IProviderService } from '#/kosong/provider/provider';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import type { HookDef } from '#/agent/externalHooks/types';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
-import type { PluginAgentRoot } from './types';
 import type { SkillRoot } from '#/app/skillCatalog/types';
 
 import { PluginManager } from './manager';
@@ -41,6 +37,7 @@ import type {
   EnabledPluginSystemPrompt,
   PluginCommandDef,
   PluginInfo,
+  PluginAgentRoot,
   PluginSummary,
   PluginUpdateStatus,
   ReloadSummary,
@@ -61,16 +58,6 @@ export class PluginService extends Disposable implements IPluginService {
   private hasLoadedSnapshot = false;
   private loadError: Error | undefined;
   private mutationQueue: Promise<void> = Promise.resolve();
-  /**
-   * Echo suppression for the installed.json watcher: while our own mutation
-   * is persisting (and briefly after), file events are our own writes and
-   * must not trigger a redundant reload. External processes' writes are not
-   * covered by the flag and always reload.
-   */
-  private mutationInFlight = false;
-  private mutationSettledAt = 0;
-  private installedFileWatcher: FSWatcher | undefined;
-  private watchDebounce: ReturnType<typeof setTimeout> | undefined;
   private readonly onDidReloadEmitter = this._register(new Emitter<ReloadSummary>());
 
   readonly onDidReload: Event<ReloadSummary> = this.onDidReloadEmitter.event;
@@ -89,37 +76,6 @@ export class PluginService extends Disposable implements IPluginService {
       kimiHomeDir: this.homeDir,
       discoverSkills: (roots) => discovery.discover(roots),
     });
-    this.startInstalledFileWatcher();
-  }
-
-  /**
-   * Watch `plugins/` for external writes to `installed.json`. Multiple hosts
-   * share the same KIMI_CODE_HOME (CLI, desktop, other agents): plugin
-   * installs/removals in one process must converge every other live process
-   * (skill catalogs, the capability shelf hook) instead of going stale until
-   * the next restart. Own-process writes are suppressed via the mutation
-   * flag, so a mutation costs exactly one reload (its own), not two.
-   */
-  private startInstalledFileWatcher(): void {
-    const pluginsDir = path.join(this.homeDir, 'plugins');
-    try {
-      this.installedFileWatcher = watch(pluginsDir, (_event, fileName) => {
-        if (fileName !== 'installed.json') return;
-        if (this.mutationInFlight) return;
-        if (Date.now() - this.mutationSettledAt < 250) return;
-        if (this.watchDebounce !== undefined) clearTimeout(this.watchDebounce);
-        this.watchDebounce = setTimeout(() => {
-          this.watchDebounce = undefined;
-          void this.reloadPlugins().catch(() => undefined);
-        }, 200);
-        this.watchDebounce.unref?.();
-      });
-      this.installedFileWatcher.unref?.();
-      this._register({ dispose: () => this.installedFileWatcher?.close() });
-    } catch {
-      // The plugins dir may not exist yet on a fresh home — installs create
-      // it, and this process's own reloads cover that path.
-    }
   }
 
   listPlugins(): Promise<readonly PluginSummary[]> {
@@ -131,9 +87,8 @@ export class PluginService extends Disposable implements IPluginService {
       const record = await this.manager.install(input.source);
       const info = this.manager.info(record.id);
       if (info === undefined) throw new Error(`Plugin "${record.id}" missing right after install`);
-      // Mutations fire the same change event as an explicit reload so
-      // consumers (session skill catalogs, the capability shelf-install
-      // hook) converge on every install path, not just `/plugins reload`.
+      // Mutations fire the same change event as an explicit reload so live
+      // sessions see the new plugin without a process restart.
       this.onDidReloadEmitter.fire({ added: [record.id], removed: [], errors: [] });
       return info;
     });
@@ -279,15 +234,7 @@ export class PluginService extends Disposable implements IPluginService {
   }
 
   private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.mutationQueue.then(async () => {
-      this.mutationInFlight = true;
-      try {
-        return await operation();
-      } finally {
-        this.mutationInFlight = false;
-        this.mutationSettledAt = Date.now();
-      }
-    });
+    const result = this.mutationQueue.then(operation);
     this.mutationQueue = result.then(
       () => undefined,
       () => undefined,

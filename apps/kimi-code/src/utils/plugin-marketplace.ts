@@ -71,6 +71,7 @@ export interface LoadPluginMarketplaceOptions {
   readonly workDir: string;
   readonly source?: string;
   readonly fetchImpl?: typeof fetch;
+  readonly includeBuiltInCapabilities?: boolean;
 }
 
 export async function loadPluginMarketplace(
@@ -90,26 +91,32 @@ export async function loadPluginMarketplace(
       configuredSource === undefined ? await getSourceCheckoutMarketplaceLocation() : undefined;
     if (fallback === undefined) throw error;
     raw = await readMarketplaceText(fallback, fetchImpl);
-    return withBuiltInEntries(await withLatestVersions(parsePluginMarketplace(raw, fallback), fetchImpl));
+    const marketplace = await withLatestVersions(parsePluginMarketplace(raw, fallback), fetchImpl);
+    return options.includeBuiltInCapabilities === true
+      ? withBuiltInEntries(marketplace)
+      : marketplace;
   }
-  return withBuiltInEntries(await withLatestVersions(parsePluginMarketplace(raw, location), fetchImpl));
+  const marketplace = await withLatestVersions(parsePluginMarketplace(raw, location), fetchImpl);
+  return options.includeBuiltInCapabilities === true
+    ? withBuiltInEntries(marketplace)
+    : marketplace;
 }
 
 /**
  * The built-in capability entries (kimi-cu, kimi-webbridge) are injected by
  * the client instead of being served by the marketplace catalog, so their
  * visibility is bound to the client version — older clients never see them.
- * They are appended to every catalog (default, custom, or the source-checkout
- * fallback), skipping ids the catalog already carries so a real entry always
- * wins. No `version` is pinned: it would drift from the actual CDN content,
- * and reinstalling is the upgrade path (a reinstall upserts the wiring).
+ * The v2 catalog surface opts into them explicitly. Same-id catalog rows are
+ * MASKED, not merged: what these two ids mean stays decided by the client
+ * release, and a future official marketplace listing only reaches older
+ * clients (whose fix is to upgrade). No `version` is pinned: reinstalling
+ * uses the latest managed artifacts.
  */
 async function withBuiltInEntries(marketplace: PluginMarketplace): Promise<PluginMarketplace> {
-  const present = new Set(marketplace.plugins.map((entry) => entry.id));
-  const missing = (await builtInMarketplaceEntries()).filter((entry) => !present.has(entry.id));
-  return missing.length === 0
-    ? marketplace
-    : { ...marketplace, plugins: [...marketplace.plugins, ...missing] };
+  const builtIns = await builtInMarketplaceEntries();
+  const builtInIds = new Set(builtIns.map((entry) => entry.id));
+  const catalog = marketplace.plugins.filter((entry) => !builtInIds.has(entry.id));
+  return { ...marketplace, plugins: [...catalog, ...builtIns] };
 }
 
 async function builtInMarketplaceEntries(): Promise<readonly PluginMarketplaceEntry[]> {

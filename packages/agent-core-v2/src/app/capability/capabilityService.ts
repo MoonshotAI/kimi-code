@@ -3,14 +3,12 @@
  *
  * Holds the closed registry of built-in capability entries and serializes
  * install runs per entry. Install progress lives in memory only and is
- * polled by clients (no WS events in v1); a failed attempt leaves its
- * error in the progress state until the next attempt starts. Bound at App
- * scope.
+ * polled by clients; a failed attempt leaves its error in the progress state
+ * until the next attempt starts. Bound at App scope.
  */
 
 import { homedir } from 'node:os';
 
-import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -31,7 +29,7 @@ import type {
 
 const IDLE_PROGRESS: CapabilityInstallProgress = { running: false };
 
-export class CapabilityService extends Disposable implements ICapabilityService {
+export class CapabilityService implements ICapabilityService {
   declare readonly _serviceBrand: undefined;
 
   private readonly entries: ReadonlyMap<CapabilityId, CapabilityEntry>;
@@ -44,7 +42,6 @@ export class CapabilityService extends Disposable implements ICapabilityService 
     @IHostProcessService hostProcess: IHostProcessService,
     entriesOverride?: readonly CapabilityEntry[],
   ) {
-    super();
     if (entriesOverride !== undefined) {
       this.entries = new Map(entriesOverride.map((entry) => [entry.id, entry]));
     } else {
@@ -60,40 +57,6 @@ export class CapabilityService extends Disposable implements ICapabilityService 
         ['kimi-cu', createKimiCuEntry(ctx)],
         ['kimi-webbridge', createKimiWebbridgeEntry(ctx)],
       ]);
-    }
-    // Shelf-install hook: when a capability's wiring plugin gets installed
-    // through ANY path (marketplace shelf, TUI, CLI), auto-complete the
-    // missing binary layers — a shelf install is a complete install, never
-    // wiring-only. Triggers only on the wiring step's false→true edge so a
-    // completed install with still-missing manual steps (TCC permissions)
-    // does not retrigger heavy downloads on every later plugin reload.
-    this._register(
-      plugins.onDidReload(() => {
-        void this.autoCompleteAfterWiringInstall();
-      }),
-    );
-  }
-
-  private readonly lastWiringOk = new Map<CapabilityId, boolean>();
-
-  private async autoCompleteAfterWiringInstall(): Promise<void> {
-    for (const entry of this.entries.values()) {
-      if (!entry.supported || this.runningInstalls.has(entry.id)) continue;
-      try {
-        const detected = await entry.detect();
-        const wiringOk =
-          detected.steps.find((step) => step.id === entry.wiringStepId)?.state === 'ok';
-        const wasOk = this.lastWiringOk.get(entry.id) ?? false;
-        this.lastWiringOk.set(entry.id, wiringOk);
-        const missingRequired = detected.steps.some(
-          (step) => step.optional !== true && step.state !== 'ok',
-        );
-        if (wiringOk && !wasOk && missingRequired) {
-          await this.installCapability(entry.id);
-        }
-      } catch {
-        // Best-effort hook — failures surface through capability status.
-      }
     }
   }
 
@@ -126,16 +89,13 @@ export class CapabilityService extends Disposable implements ICapabilityService 
     // Fire-and-forget: progress and errors are surfaced through polling.
     void (async () => {
       try {
-        const note = await entry.install((step, percent) => {
+        await entry.install((step, percent) => {
           this.installProgress.set(
             entry.id,
             percent === undefined ? { running: true, step } : { running: true, step, percent },
           );
         });
-        this.installProgress.set(
-          entry.id,
-          note === undefined ? { running: false } : { running: false, note },
-        );
+        this.installProgress.set(entry.id, { running: false });
       } catch (error) {
         this.installProgress.set(entry.id, {
           running: false,

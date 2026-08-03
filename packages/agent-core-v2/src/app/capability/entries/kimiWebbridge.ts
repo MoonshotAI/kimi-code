@@ -6,20 +6,8 @@
  * skills only, installed through `IPluginService`) + browser extension
  * (soft gate, user installs from the webstore or the manual zip).
  *
- * Lifecycle rules honored here (official operations contract): the daemon
- * is only ever STARTED — never stopped / restarted / uninstalled — because
- * the Kimi Work desktop app manages its own daemon on the same port and an
- * external stop would fight it. `start` is idempotent and converges to a
- * single daemon.
- *
- * Skill-source shadowing: a user who previously ran the official install
- * script (or copied the skill around) has it in user-scope dirs —
- * `~/.kimi-code/skills/kimi-webbridge/` and/or `~/.agents/skills/kimi-webbridge/`
- * — both at priority 20, SHADOWING the plugin copy (priority 5). Install
- * therefore removes those stale user copies — they are artifacts of the
- * official installer (or of the same content), and the plugin copy carries
- * the same skill. Other runtimes' dirs (~/.claude, ~/.codex) are out of
- * scope and untouched.
+ * A running daemon is left untouched. Reinstall replaces the on-disk binary
+ * from the latest channel, which takes effect the next time the daemon starts.
  */
 
 import { access, chmod, mkdir, rename, rm } from 'node:fs/promises';
@@ -33,7 +21,6 @@ import type {
   CapabilityInstallReporter,
   CapabilityStep,
 } from '../types';
-
 import type { CapabilityEntryContext } from './context';
 
 const PLUGIN_ID = 'kimi-webbridge';
@@ -121,6 +108,20 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
       ...(plugin?.version !== undefined ? { detail: plugin.version } : {}),
     });
 
+    const skillShadows = (
+      await Promise.all(
+        userSourceSkillDirs.map(async (dir) => ({ dir, present: await exists(dir) })),
+      )
+    ).filter((item) => item.present);
+    if (skillShadows.length > 0) {
+      steps.push({
+        id: 'skill-shadow',
+        state: 'failed',
+        detail: skillShadows.map((item) => item.dir).join(', '),
+        optional: true,
+      });
+    }
+
     // Soft gate: extension presence never blocks readiness — use-time
     // failures carry official guidance.
     steps.push({
@@ -129,9 +130,6 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
       optional: true,
     });
 
-    // Version only from the live daemon: the on-disk `.version` file tracks
-    // the installer script's lineage (e.g. 3.1.x), not the product version
-    // (e.g. v1.11.3) — reporting it would be misleading.
     return { steps, ...(daemon?.version !== undefined ? { version: daemon.version } : {}) };
   }
 
@@ -146,12 +144,43 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     throw new Error(`WebBridge daemon did not come up on ${baseUrl} — check ~/.kimi-webbridge/logs`);
   }
 
-  async function install(report: CapabilityInstallReporter): Promise<string | undefined> {
+  async function install(report: CapabilityInstallReporter): Promise<void> {
     const asset = binaryAssetName(ctx.platform, ctx.arch);
     if (asset === undefined) {
       throw new Error(`kimi-webbridge is not supported on ${ctx.platform}/${ctx.arch}`);
     }
 
+    const before = await detect();
+    const stepStates = new Map(before.steps.map((step) => [step.id, step.state]));
+    const readyBefore = before.steps
+      .filter((step) => step.optional !== true)
+      .every((step) => step.state === 'ok');
+    if (stepStates.get('daemon-binary') !== 'ok' || readyBefore) {
+      await installBinary(report, asset);
+    }
+
+    const status = await fetchDaemonStatus();
+    if (status?.running !== true) {
+      report('daemon');
+      const started = await runCommand(ctx.hostProcess, binPath, ['start'], {
+        timeout: START_TIMEOUT_MS,
+      });
+      if (started.code !== 0) {
+        throw new Error(`kimi-webbridge start failed: ${started.stderr || started.stdout}`);
+      }
+      await waitForDaemon();
+    }
+
+    if (stepStates.get('skill') !== 'ok' || readyBefore) {
+      report('skill');
+      await ctx.plugins.installPlugin({ source: PLUGIN_ZIP_URL });
+    }
+  }
+
+  async function installBinary(
+    report: CapabilityInstallReporter,
+    asset: string,
+  ): Promise<void> {
     report('download', 0);
     const url = `${BINARY_CDN_BASE}/${asset}`;
     const staging = path.join(
@@ -176,34 +205,6 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     } finally {
       await rm(staging, { force: true }).catch(() => undefined);
     }
-
-    report('daemon');
-    const status = await fetchDaemonStatus();
-    if (status?.running !== true) {
-      // start-if-down only — never stop/restart (Kimi Work coexistence).
-      const started = await runCommand(ctx.hostProcess, binPath, ['start'], {
-        timeout: START_TIMEOUT_MS,
-      });
-      if (started.code !== 0) {
-        throw new Error(`kimi-webbridge start failed: ${started.stderr || started.stdout}`);
-      }
-      await waitForDaemon();
-    }
-
-    report('skill');
-    await ctx.plugins.installPlugin({ source: PLUGIN_ZIP_URL });
-    // Un-shadow the plugin copy: user-source skills (priority 20, in either
-    // user dir) win over the plugin source (priority 5) on name collisions.
-    // Surface the migration so clients can tell the user their
-    // manually-installed skill is now managed as a plugin.
-    let migrated = false;
-    for (const dir of userSourceSkillDirs) {
-      if (await exists(dir)) {
-        migrated = true;
-        await rm(dir, { recursive: true, force: true });
-      }
-    }
-    return migrated ? 'user-skill-migrated' : undefined;
   }
 
   return {
@@ -212,7 +213,6 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     description:
       'Control your real browser (with your login sessions) — navigate, click, type, read pages, and screenshot any website.',
     supported,
-    wiringStepId: 'skill',
     detect,
     install,
   };

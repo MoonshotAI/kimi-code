@@ -24,7 +24,6 @@ import type {
   CapabilityInstallReporter,
   CapabilityStep,
 } from '../types';
-
 import type { CapabilityEntryContext } from './context';
 
 const PLUGIN_ID = 'kimi-cu';
@@ -40,11 +39,11 @@ interface PermissionStatus {
   readonly screenRecording: boolean;
 }
 
-/** `request-permissions` (bare) prints `permissions: accessibility=true screenRecording=true`. */
 export function parsePermissionStatus(output: string): PermissionStatus | undefined {
-  const match = /permissions:\s*accessibility=(true|false)\s+screenRecording=(true|false)/.exec(
-    output,
-  );
+  const match =
+    /(?:permissions|permissionStatus):\s*accessibility=(true|false)\s+screenRecording=(true|false)/.exec(
+      output,
+    );
   if (match === null) return undefined;
   return { accessibility: match[1] === 'true', screenRecording: match[2] === 'true' };
 }
@@ -90,7 +89,7 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
 
   async function permissionStatus(): Promise<PermissionStatus | undefined> {
     if (!(await exists(appBin))) return undefined;
-    const result = await runCommand(ctx.hostProcess, appBin, ['request-permissions'], {
+    const result = await runCommand(ctx.hostProcess, appBin, ['xpc-ping'], {
       timeout: PERMISSIONS_TIMEOUT_MS,
     });
     return parsePermissionStatus(result.stdout);
@@ -109,9 +108,10 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     });
 
     const version = await readAppBundleVersion(infoPlist);
+    const appPresent = await exists(appBin);
     steps.push({
       id: 'app',
-      state: (await exists(appBin)) ? 'ok' : 'missing',
+      state: appPresent ? 'ok' : 'missing',
       ...(version !== undefined ? { detail: version } : {}),
     });
 
@@ -183,42 +183,56 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     }
   }
 
-  async function install(report: CapabilityInstallReporter): Promise<string | undefined> {
+  async function install(report: CapabilityInstallReporter): Promise<void> {
     if (!supported) {
       throw new Error(`kimi-cu is only supported on macOS (current: ${ctx.platform})`);
     }
 
-    report('plugin');
-    await ctx.plugins.installPlugin({ source: PLUGIN_ZIP_URL });
+    const before = await detect();
+    const stepStates = new Map(before.steps.map((step) => [step.id, step.state]));
+    const readyBefore = before.steps
+      .filter((step) => step.optional !== true)
+      .every((step) => step.state === 'ok');
 
-    const workDir = await mkdtemp(path.join(tmpdir(), 'kimi-cu-install-'));
-    try {
-      report('download', 0);
-      const zipPath = path.join(workDir, 'KimiCU.app.zip');
-      await downloadToFile(
-        APP_ZIP_URL,
-        zipPath,
-        (percent) => {
-          report('download', percent);
-        },
-        ctx.fetchImpl,
-      );
+    if (stepStates.get('plugin') !== 'ok' || readyBefore) {
+      report('plugin');
+      await ctx.plugins.installPlugin({ source: PLUGIN_ZIP_URL });
+    }
 
-      report('app');
-      await stopOldProcesses();
-      const unzipDir = path.join(workDir, 'unzipped');
-      const unzipped = await runCommand(ctx.hostProcess, 'ditto', ['-x', '-k', zipPath, unzipDir], {
-        timeout: 120_000,
-      });
-      if (unzipped.code !== 0) {
-        throw new Error(`Failed to unzip KimiCU.app: ${unzipped.stderr || unzipped.stdout}`);
+    const installApp = stepStates.get('app') !== 'ok' || readyBefore;
+    if (installApp) {
+      const workDir = await mkdtemp(path.join(tmpdir(), 'kimi-cu-install-'));
+      try {
+        report('download', 0);
+        const zipPath = path.join(workDir, 'KimiCU.app.zip');
+        await downloadToFile(
+          APP_ZIP_URL,
+          zipPath,
+          (percent) => {
+            report('download', percent);
+          },
+          ctx.fetchImpl,
+        );
+
+        report('app');
+        await stopOldProcesses();
+        const unzipDir = path.join(workDir, 'unzipped');
+        const unzipped = await runCommand(ctx.hostProcess, 'ditto', ['-x', '-k', zipPath, unzipDir], {
+          timeout: 120_000,
+        });
+        if (unzipped.code !== 0) {
+          throw new Error(`Failed to unzip KimiCU.app: ${unzipped.stderr || unzipped.stdout}`);
+        }
+        await moveAppIntoPlace(path.join(unzipDir, APP_BUNDLE));
+        await runCommand(ctx.hostProcess, 'xattr', ['-dr', 'com.apple.quarantine', appPath], {
+          timeout: COMMAND_TIMEOUT_MS,
+        });
+      } finally {
+        await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
       }
-      await moveAppIntoPlace(path.join(unzipDir, APP_BUNDLE));
-      // Strip the quarantine bit (harmless for curl-style downloads).
-      await runCommand(ctx.hostProcess, 'xattr', ['-dr', 'com.apple.quarantine', appPath], {
-        timeout: COMMAND_TIMEOUT_MS,
-      });
+    }
 
+    if (installApp || stepStates.get('service') !== 'ok') {
       report('service');
       const registered = await runCommand(ctx.hostProcess, appBin, ['install'], {
         timeout: COMMAND_TIMEOUT_MS,
@@ -227,22 +241,21 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
         throw new Error(`kimi-cu install failed: ${registered.stderr || registered.stdout}`);
       }
       await new Promise((resolve) => {
-      setTimeout(resolve, 1_000);
-    });
+        setTimeout(resolve, 1_000);
+      });
       if (!(await serviceRunning())) {
         throw new Error('kimi-cu background service is not running after install');
       }
+    }
 
+    if (stepStates.get('permissions') !== 'ok') {
       report('permissions');
-      // Triggers the system permission dialogs; the user still has to flip
-      // the switches, so this never blocks a successful install — readiness
-      // is reported by `detect`.
-      await runCommand(ctx.hostProcess, appBin, ['request-permissions', '--ax', '--screen'], {
-        timeout: PERMISSIONS_TIMEOUT_MS,
-      });
-      return undefined;
-    } finally {
-      await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
+      await runCommand(
+        ctx.hostProcess,
+        appBin,
+        ['request-permissions', '--ax', '--screen'],
+        { timeout: PERMISSIONS_TIMEOUT_MS },
+      ).catch(() => undefined);
     }
   }
 
@@ -252,7 +265,6 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     description:
       'macOS GUI automation in the background — read app UIs and click, type, scroll, and drag without taking over your mouse or foregrounding apps.',
     supported,
-    wiringStepId: 'plugin',
     detect,
     install,
   };

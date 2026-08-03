@@ -5,7 +5,7 @@ import { __pluginsCommandInternals } from '#/tui/commands/plugins';
 const { isCapabilityEntry, pollCapabilityInstall, removePlugin } = __pluginsCommandInternals;
 
 function fakeHost(overrides: {
-  capabilities?: Array<{ id: string }>;
+  engineV2?: boolean;
   capabilityStatus?: () => Promise<{
     install: { running: boolean; step?: string; percent?: number; error?: string };
   }>;
@@ -13,15 +13,13 @@ function fakeHost(overrides: {
   const statuses: string[] = [];
   const renders: number[] = [];
   const session = {
-    listCapabilities: overrides.capabilities
-      ? () => Promise.resolve(overrides.capabilities)
-      : () => Promise.reject(new Error('unavailable on this engine')),
     getCapability:
       overrides.capabilityStatus ??
       (() => Promise.resolve({ install: { running: false } })),
     removePlugin: () => Promise.resolve(),
   };
   const host = {
+    engineV2: overrides.engineV2 ?? false,
     requireSession: () => session,
     showStatus: (text: string) => {
       statuses.push(text);
@@ -51,13 +49,14 @@ describe('plugins command capability surface', () => {
     vi.restoreAllMocks();
   });
 
-  it('detects capability entries and falls back when the engine lacks the surface', async () => {
-    const withCaps = fakeHost({ capabilities: [{ id: 'kimi-cu' }] });
-    expect(await isCapabilityEntry(withCaps.host, 'kimi-cu')).toBe(true);
-    expect(await isCapabilityEntry(withCaps.host, 'superpowers')).toBe(false);
+  it('routes built-in entries through capabilities only on v2', () => {
+    const v2 = fakeHost({ engineV2: true });
+    expect(isCapabilityEntry(v2.host, 'kimi-cu')).toBe(true);
+    expect(isCapabilityEntry(v2.host, 'kimi-webbridge')).toBe(true);
+    expect(isCapabilityEntry(v2.host, 'superpowers')).toBe(false);
 
     const v1 = fakeHost({});
-    expect(await isCapabilityEntry(v1.host, 'kimi-cu')).toBe(false);
+    expect(isCapabilityEntry(v1.host, 'kimi-cu')).toBe(false);
   });
 
   it('polls progress into the panel until the install settles', async () => {
@@ -80,14 +79,15 @@ describe('plugins command capability surface', () => {
   });
 
   it('removePlugin notes that capability runtimes are left untouched', async () => {
-    const { host, statuses } = fakeHost({ capabilities: [{ id: 'kimi-cu' }] });
+    const { host, statuses } = fakeHost({ engineV2: true });
     await removePlugin(host, 'kimi-cu');
     expect(statuses.some((s) => s.includes('Removed kimi-cu'))).toBe(true);
     expect(statuses.some((s) => s.includes('runtime binaries were left untouched'))).toBe(true);
+    expect(statuses.some((s) => s.includes('plugin wiring is disabled for new sessions'))).toBe(true);
   });
 
   it('removePlugin stays quiet for non-capability plugins', async () => {
-    const { host, statuses } = fakeHost({ capabilities: [{ id: 'kimi-cu' }] });
+    const { host, statuses } = fakeHost({ engineV2: true });
     await removePlugin(host, 'superpowers');
     expect(statuses.some((s) => s.includes('runtime binaries'))).toBe(false);
   });

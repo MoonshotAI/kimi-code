@@ -17,6 +17,7 @@ import {
   agentUsageContract,
 } from './agent/services.js';
 import { authContract, authSummaryContract } from './global/auth.js';
+import { capabilitiesContract } from './global/capabilities.js';
 import { catalogContract } from './global/catalog.js';
 import { providerDiscoveryContract } from './global/providerDiscovery.js';
 import { configContract } from './global/config.js';
@@ -50,6 +51,7 @@ export const globalContract: KlientContract = {
   authSummaryService: authSummaryContract,
   flagService: flagsContract,
   pluginService: pluginsContract,
+  capabilityService: capabilitiesContract,
   hostFolderBrowser: hostFsContract,
   bootstrapService: envContract,
   // workspace scope (+ the app-registered handler registry)

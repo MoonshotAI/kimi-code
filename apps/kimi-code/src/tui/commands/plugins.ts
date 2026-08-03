@@ -8,6 +8,8 @@ import {
   PluginMcpSelectorComponent,
   PluginRemoveConfirmComponent,
   PluginsPanelComponent,
+  describeCapabilityIssues,
+  formatCapabilityVersion,
   type PluginInstallTrustConfirmResult,
   type PluginMcpSelection,
   type PluginRemoveConfirmResult,
@@ -169,9 +171,22 @@ async function showPluginsPicker(
     return;
   }
 
+  let capabilities: readonly CapabilityStatus[] = [];
+  if (host.engineV2) {
+    try {
+      capabilities = await host.requireSession().listCapabilities();
+    } catch (error) {
+      host.showStatus(
+        `Capability status unavailable: ${formatErrorMessage(error)}. Plugin management remains available.`,
+        'warning',
+      );
+    }
+  }
+
   const panel = new PluginsPanelComponent({
     installed: plugins,
     installedIds: new Set(plugins.map((plugin) => plugin.id)),
+    capabilities,
     initialTab: options?.initialTab,
     selectedId: options?.selectedId,
     pluginHint: options?.pluginHint,
@@ -215,6 +230,7 @@ async function loadMarketplaceCatalog(
     const marketplace = await loadPluginMarketplace({
       workDir: host.state.appState.workDir,
       source,
+      includeBuiltInCapabilities: host.engineV2 && source === undefined,
     });
     panel.setMarketplace(marketplace.plugins, marketplace.source);
   } catch (error) {
@@ -302,18 +318,9 @@ async function confirmInstallTrust(
 const CAPABILITY_POLL_INTERVAL_MS = 700;
 const CAPABILITY_POLL_ATTEMPTS = 260; // ~3 minutes of runtime setup budget
 
-/** Capability entries (kimi-cu, kimi-webbridge) install through the
- * capability service — full runtime + wiring orchestration with live
- * progress — instead of a bare plugin-package install. v1 engines have no
- * capability surface, in which case every entry falls back to the plain
- * plugin path. */
-async function isCapabilityEntry(host: SlashCommandHost, id: string): Promise<boolean> {
-  try {
-    const capabilities = await host.requireSession().listCapabilities();
-    return capabilities.some((capability) => capability.id === id);
-  } catch {
-    return false;
-  }
+/** v2-only marketplace entries install their runtime and plugin together. */
+function isCapabilityEntry(host: SlashCommandHost, id: string): boolean {
+  return host.engineV2 && (id === 'kimi-cu' || id === 'kimi-webbridge');
 }
 
 /** Poll a background capability install, mirroring progress into the
@@ -384,13 +391,33 @@ async function installCapabilityFromPanel(
     host.showError(`${label} setup failed: ${result.install.error}. Install again from /plugins to retry.`);
     return;
   }
-  const migrationNote =
-    result.install.note === 'user-skill-migrated'
-      ? ' Your manually installed skill is now managed as a plugin.'
-      : '';
+  if (result.state !== 'ready') {
+    const issues = describeCapabilityIssues(result);
+    host.showStatus(
+      `${label} setup is incomplete${issues.length > 0 ? `: ${issues}` : ''}.`,
+      'warning',
+    );
+    if (result.id === 'kimi-cu' && result.steps.some((step) => step.id === 'permissions' && step.state !== 'ok')) {
+      host.showStatus(
+        'Grant Accessibility and Screen Recording in System Settings → Privacy & Security, then reopen /plugins to recheck.',
+        'warning',
+      );
+    }
+    host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
+    return;
+  }
   host.showStatus(
-    `${label} is ready${result.version !== undefined ? ` (v${result.version})` : ''}.${migrationNote}`,
+    `${label} is ready${result.version !== undefined ? ` (${formatCapabilityVersion(result.version)})` : ''}.`,
   );
+  const skillShadow = result.steps.find(
+    (step) => step.id === 'skill-shadow' && step.state !== 'ok',
+  );
+  if (skillShadow?.detail !== undefined) {
+    host.showStatus(
+      `A user-installed kimi-webbridge skill is shadowing the managed plugin. Remove it manually: ${skillShadow.detail}`,
+      'warning',
+    );
+  }
   host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
 }
 
@@ -495,7 +522,7 @@ async function handlePluginsPanelSelection(
       await showPluginsPicker(host, { initialTab: 'installed' });
       return;
     case 'install':
-      if (await isCapabilityEntry(host, selection.entry.id)) {
+      if (isCapabilityEntry(host, selection.entry.id)) {
         await installCapabilityFromPanel(host, panel, selection.entry);
         return;
       }
@@ -553,11 +580,10 @@ async function handlePluginMcpSelection(
 async function removePlugin(host: SlashCommandHost, id: string): Promise<void> {
   await host.requireSession().removePlugin(id);
   host.showStatus(`Removed ${id}.`);
-  if (await isCapabilityEntry(host, id)) {
-    // Capability runtimes (KimiCU.app / WebBridge daemon) are deliberately
-    // never uninstalled by plugin removal — say so, since the capability
-    // still works until the user removes those separately.
-    host.showStatus('Note: the runtime binaries were left untouched and the capability still works. Reinstall any time from the Official tab.');
+  if (isCapabilityEntry(host, id)) {
+    host.showStatus(
+      'Note: the runtime binaries were left untouched, but Kimi Code plugin wiring is disabled for new sessions. Reinstall any time from the Official tab.',
+    );
   }
   host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
 }

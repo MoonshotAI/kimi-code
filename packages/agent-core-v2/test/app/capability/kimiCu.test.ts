@@ -95,6 +95,10 @@ describe('parsePermissionStatus', () => {
       accessibility: true,
       screenRecording: false,
     });
+    expect(parsePermissionStatus('permissionStatus: accessibility=false screenRecording=true')).toEqual({
+      accessibility: false,
+      screenRecording: true,
+    });
     expect(parsePermissionStatus('unknown command')).toBeUndefined();
     expect(parsePermissionStatus('')).toBeUndefined();
   });
@@ -143,7 +147,7 @@ describe('kimi-cu entry', () => {
     await writeFile(path.join(macosDir, 'kimi-cu'), '#!/bin/sh\n');
     await writeFile(
       path.join(applicationsDir, 'KimiCU.app', 'Contents', 'Info.plist'),
-      '<key>CFBundleShortVersionString</key>\n<string>0.4.18</string>',
+      '<key>CFBundleShortVersionString</key>\n<string>0.5.4</string>',
     );
     return applicationsDir;
   }
@@ -168,23 +172,25 @@ describe('kimi-cu entry', () => {
 
   it('detects all four layers with details', async () => {
     const applicationsDir = await fakeAppBundle();
-    const plugins = fakePlugins([{ id: 'kimi-cu', enabled: true, state: 'ok', version: '0.4.18' }]);
+    const plugins = fakePlugins([{ id: 'kimi-cu', enabled: true, state: 'ok', version: '0.5.4' }]);
     const host = fakeHostProcess([
       { match: 'service-status', code: 0, stdout: 'SMAppService status=1 (1=enabled); fallback plist exists=false' },
-      { match: 'request-permissions', code: 0, stdout: 'permissions: accessibility=true screenRecording=false' },
+      { match: 'xpc-ping', code: 0, stdout: 'permissionStatus: accessibility=true screenRecording=false' },
     ]);
     const entry = createKimiCuEntry(
       makeCtx({ applicationsDir, plugins: plugins.service, hostProcess: host.service }),
     );
 
     const detected = await entry.detect();
-    expect(detected.version).toBe('0.4.18');
+    expect(detected.version).toBe('0.5.4');
     expect(detected.steps).toEqual([
-      { id: 'plugin', state: 'ok', detail: '0.4.18' },
-      { id: 'app', state: 'ok', detail: '0.4.18' },
+      { id: 'plugin', state: 'ok', detail: '0.5.4' },
+      { id: 'app', state: 'ok', detail: '0.5.4' },
       { id: 'service', state: 'ok' },
       { id: 'permissions', state: 'missing', detail: 'screenRecording' },
     ]);
+    expect(host.calls.some((call) => call.endsWith(' xpc-ping'))).toBe(true);
+    expect(host.calls.some((call) => call.includes('request-permissions'))).toBe(false);
   });
 
   it('reports missing layers on a bare machine', async () => {
@@ -204,5 +210,29 @@ describe('kimi-cu entry', () => {
     const entry = createKimiCuEntry(makeCtx({ platform: 'linux', plugins: plugins.service }));
     await expect(entry.install(() => {})).rejects.toThrow(/only supported on macOS/);
     expect(plugins.installs).toEqual([]);
+  });
+
+  it('resumes a partial install without repeating completed runtime layers', async () => {
+    const applicationsDir = await fakeAppBundle();
+    const plugins = fakePlugins([]);
+    const host = fakeHostProcess([
+      { match: 'service-status', code: 0, stdout: 'SMAppService status=1' },
+      { match: 'xpc-ping', code: 0, stdout: 'permissionStatus: accessibility=true screenRecording=true' },
+    ]);
+    const entry = createKimiCuEntry(
+      makeCtx({
+        applicationsDir,
+        plugins: plugins.service,
+        hostProcess: host.service,
+        fetchImpl: (() => Promise.reject(new Error('download should be skipped'))) as never,
+      }),
+    );
+    const reports: string[] = [];
+
+    await entry.install((step) => reports.push(step));
+
+    expect(plugins.installs).toHaveLength(1);
+    expect(reports).toEqual(['plugin']);
+    expect(host.calls.every((call) => call.includes('service-status') || call.includes('xpc-ping'))).toBe(true);
   });
 });

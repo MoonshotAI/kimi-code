@@ -31,7 +31,7 @@ export interface CapabilityStep {
   readonly optional?: boolean;
 }
 
-/** Live install progress, polled by clients (no WS events in v1). */
+/** Live install progress, polled by clients. */
 export interface CapabilityInstallProgress {
   readonly running: boolean;
   /** Current step id while running. */
@@ -40,13 +40,6 @@ export interface CapabilityInstallProgress {
   readonly percent?: number;
   /** Set when the last install attempt failed; cleared on the next attempt. */
   readonly error?: string;
-  /**
-   * Machine-key note from the last completed install (e.g.
-   * 'user-skill-migrated' — a pre-existing user-source skill was replaced by
-   * the plugin-managed copy). Clients localize it; cleared on the next
-   * attempt.
-   */
-  readonly note?: string;
 }
 
 export interface CapabilityDetectResult {
@@ -69,26 +62,14 @@ export type CapabilityInstallReporter = (step: string, percent?: number) => void
 
 /**
  * A built-in capability entry. `install` must be idempotent and re-entrant:
- * every step no-ops when already satisfied, so an interrupted run can be
- * retried by calling `install` again.
+ * interrupted runs may skip completed layers, while an explicit reinstall
+ * of a ready capability may replace its managed artifacts with latest.
  */
 export interface CapabilityEntry {
   readonly id: CapabilityId;
   readonly displayName: string;
   readonly description: string;
   readonly supported: boolean;
-  /**
-   * The step representing the agent-wiring layer (`plugin` for kimi-cu,
-   * `skill` for kimi-webbridge). When that step flips to `ok` through ANY
-   * install path (marketplace shelf, TUI, CLI), the capability service
-   * auto-completes the missing binary layers — installing the wiring from
-   * the shelf is meant to be a complete install, never a half-broken one.
-   */
-  readonly wiringStepId: string;
   detect(): Promise<CapabilityDetectResult>;
-  /**
-   * Resolves with an optional machine-key note surfaced through
-   * `CapabilityInstallProgress.note` (e.g. 'user-skill-migrated').
-   */
-  install(report: CapabilityInstallReporter): Promise<string | undefined>;
+  install(report: CapabilityInstallReporter): Promise<void>;
 }

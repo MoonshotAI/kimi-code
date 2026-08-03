@@ -103,6 +103,7 @@ export interface SlashCommandHost {
   state: TUIState;
   session: Session | undefined;
   readonly harness: KimiHarness;
+  readonly engineV2: boolean;
   cancelInFlight: (() => void) | undefined;
   deferUserMessages: boolean;
 

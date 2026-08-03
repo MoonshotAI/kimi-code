@@ -4316,9 +4316,10 @@ command = "vim"
     await vi.waitFor(() => {
       expect(stripSgr(panel.render(120).join('\n'))).toContain('Kimi Datasource');
     });
-    // The client-injected capability entries (kimi-cu, kimi-webbridge) follow
-    // the catalog's own rows and suppress the WebBridge promo, so Kimi
-    // Datasource leads the Official tab and installs directly.
+    // This harness runs v1-shaped (engineV2 unset → false), so the built-in
+    // capability entries are NOT injected: the pinned WebBridge promo leads
+    // the Official tab and Kimi Datasource is the next row down.
+    panel.handleInput('[B');
     panel.handleInput('\r');
 
     await vi.waitFor(() => {
@@ -4526,9 +4527,10 @@ command = "vim"
       await vi.waitFor(() => {
         expect(stripSgr(panel.render(120).join('\n'))).toContain('Kimi Datasource');
       });
-      // The client-injected capability entries (kimi-cu, kimi-webbridge)
-      // follow the catalog's own rows and suppress the WebBridge promo, so
-      // Kimi Datasource leads the Official tab and installs directly.
+      // This harness runs v1-shaped (engineV2 unset → false), so the built-in
+      // capability entries are NOT injected: the pinned WebBridge promo leads
+      // the Official tab and Kimi Datasource is the next row down.
+      panel.handleInput('[B');
       panel.handleInput('\r');
 
       await vi.waitFor(() => {

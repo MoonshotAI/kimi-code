@@ -445,9 +445,9 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
 
     capabilities: {
       list: () => call('capabilityService', 'listCapabilities', []) as Promise<readonly CapabilityStatus[]>,
-      get: (id) => call('capabilityService', 'getCapability', [{ id }]) as Promise<CapabilityStatus>,
+      get: (id) => call('capabilityService', 'getCapability', [id]) as Promise<CapabilityStatus>,
       install: (id) =>
-        call('capabilityService', 'installCapability', [{ id }]) as Promise<CapabilityStatus>,
+        call('capabilityService', 'installCapability', [id]) as Promise<CapabilityStatus>,
     },
 
     hostFs: {

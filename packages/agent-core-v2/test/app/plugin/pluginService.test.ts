@@ -359,53 +359,6 @@ describe('PluginService (plugin boundary)', () => {
     }
   });
 
-  it('reloads when another process rewrites installed.json (shared-home convergence)', async () => {
-    const home = await makeHome();
-    await writeValidInstalledFile(home);
-    const source = await makePluginDir('external-demo', { version: '1.0.0' });
-    createdDirs.push(source);
-    const host = makeHost(home);
-    try {
-      const svc = host.app.accessor.get(IPluginService);
-      // Settle the initial load before the external write (the watcher's
-      // echo window suppresses events for 250ms after our own mutation).
-      await svc.listPlugins();
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      const summaries: ReloadSummary[] = [];
-      svc.onDidReload((summary) => summaries.push(summary));
-
-      // Simulate a CLI/desktop peer installing a plugin through the same
-      // manager semantics: write the record, then materialize the managed dir.
-      const peer = await makePluginDir('peer-demo', { version: '2.0.0' });
-      createdDirs.push(peer);
-      await writeInstalledFile(
-        home,
-        JSON.stringify({
-          version: 1,
-          plugins: [
-            {
-              id: 'peer-demo',
-              root: peer,
-              source: 'local-path',
-              enabled: true,
-              installedAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            },
-          ],
-        }),
-      );
-
-      for (let i = 0; i < 50 && summaries.length === 0; i += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      expect(summaries).toEqual([{ added: ['peer-demo'], removed: [], errors: [] }]);
-      const list = await svc.listPlugins();
-      expect(list.map((p) => p.id)).toContain('peer-demo');
-    } finally {
-      host.dispose();
-    }
-  });
-
   it('fires onDidReload on install, enable-toggle, and remove (not just explicit reload)', async () => {
     const home = await makeHome();
     await writeValidInstalledFile(home);

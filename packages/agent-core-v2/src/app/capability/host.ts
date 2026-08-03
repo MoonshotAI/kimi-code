@@ -50,24 +50,25 @@ export async function runCommand(
       collect(proc.stderr),
       proc.wait().catch(() => -1),
     ] as const);
-    const timed =
-      options.timeout === undefined
-        ? work
-        : Promise.race([
-            work,
-            new Promise<never>((_resolve, reject) => {
-              const timer = setTimeout(() => {
-                void proc.kill().catch(() => {});
-                reject(new Error(`command timed out after ${options.timeout}ms: ${command}`));
-              }, options.timeout);
-              timer.unref?.();
-              void work.finally(() => {
-                clearTimeout(timer);
-              });
-            }),
-          ]);
-    const [stdout, stderr, code] = await timed;
-    return { code, stdout, stderr };
+    let timer: NodeJS.Timeout | undefined;
+    const timed = options.timeout === undefined
+      ? work
+      : Promise.race([
+          work,
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => {
+              void proc.kill().catch(() => {});
+              reject(new Error(`command timed out after ${options.timeout}ms: ${command}`));
+            }, options.timeout);
+            timer.unref?.();
+          }),
+        ]);
+    try {
+      const [stdout, stderr, code] = await timed;
+      return { code, stdout, stderr };
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   } finally {
     proc.dispose();
   }
