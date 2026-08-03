@@ -29,6 +29,7 @@
     "dist",
     "dist-web",
     "native",
+    "bundled-plugins",
     "scripts/postinstall.mjs",
     "scripts/postinstall",
     "README.md"
@@ -50,7 +51,7 @@
     "provenance": true
   },
   "scripts": {
-    "build": "pnpm -C ../kimi-web run build && tsdown && node scripts/copy-native-assets.mjs && node scripts/copy-web-assets.mjs",
+    "build": "pnpm -C ../kimi-web run build && tsdown && node scripts/copy-native-assets.mjs && node scripts/copy-web-assets.mjs && node scripts/copy-bundled-plugins.mjs",
     "prebuild": "node scripts/build-vis-asset.mjs",
     "catalog:update": "node scripts/update-catalog.mjs --out dist/built-in-catalog.json",
     "smoke": "node scripts/smoke.mjs",

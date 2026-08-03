@@ -36,6 +36,7 @@ import { runUpdatePreflight } from './cli/update/preflight';
 import { createKimiCodeHostIdentity, getVersion } from './cli/version';
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, PROCESS_NAME } from './constant/app';
 import { cleanupStaleNativeCacheForCurrent } from './native/native-assets';
+import { publishNativeBundledPluginsDir } from './native/bundled-plugins';
 import { installNativeModuleHook } from './native/module-hook';
 import { runNativeAssetSmokeIfRequested } from './native/smoke';
 
@@ -142,6 +143,16 @@ export function main(): void {
   // invalid proxy URL is reported and ignored rather than aborting startup.
   installGlobalProxyDispatcher();
   installNativeModuleHook();
+  // SEA builds embed the capability wiring plugins (kimi-cu / kimi-webbridge)
+  // as blob assets; extract them into the native cache and point the engine's
+  // capability domain at them. A failure here must not abort startup — the
+  // engine's own probes still cover npm/dev, and a missing bundle surfaces as
+  // a clear capability-install error.
+  try {
+    publishNativeBundledPluginsDir();
+  } catch (error) {
+    log.warn('failed to extract bundled capability plugins', { error });
+  }
   if (runNativeAssetSmokeIfRequested()) return;
 
   // Start the background cleanup of stale native cache. Fire-and-forget; must not block startup or throw.

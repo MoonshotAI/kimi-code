@@ -62,13 +62,14 @@ export function webAssetKey(target, relativePath) {
   return buildWebAssetKey(target, relativePath);
 }
 
-async function collectAssetRoot({
+export async function collectAssetRoot({
   appRoot,
   target,
   root,
   requiredFile,
   missingMessage,
   assetKey,
+  version = WEB_ASSET_MANIFEST_VERSION,
 }) {
   const assetRoot = resolve(appRoot, ...root.split('/'));
   await assertBuiltAssetRoot({ assetRoot, requiredFile, message: missingMessage });
@@ -91,7 +92,7 @@ async function collectAssetRoot({
   }
 
   const manifest = {
-    version: WEB_ASSET_MANIFEST_VERSION,
+    version,
     target,
     root,
     files: manifestFiles,

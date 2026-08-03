@@ -1,0 +1,9 @@
+#!/bin/sh
+# kimi-code 只允许 stdio 插件的 command 是 PATH 命令或 ./ 相对路径，
+# 故经由本 wrapper 转发到系统安装的 KimiCU.app。
+APP="/Applications/KimiCU.app/Contents/MacOS/kimi-cu"
+if [ ! -x "$APP" ]; then
+  echo "KimiCU.app 未安装，安装命令: curl -fsSL https://cdn.kimi.com/kimi-computer-use/latest/setup_macos.sh | bash" >&2
+  exit 1
+fi
+exec "$APP" mcp

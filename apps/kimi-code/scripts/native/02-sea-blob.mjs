@@ -6,6 +6,10 @@ import {
   nativeAssetManifestKey,
   nativeAssetSummary,
 } from './assets.mjs';
+import {
+  bundledPluginsManifestKey,
+  collectBundledPlugins,
+} from './bundled-plugins.mjs';
 import { fail, run } from './exec.mjs';
 import {
   appRoot,
@@ -33,18 +37,29 @@ async function writeSeaConfig(target) {
     target,
   });
   const web = await collectWebAssets({ appRoot, target });
+  const bundledPlugins = await collectBundledPlugins({ appRoot, target });
   const manifestPath = resolve(nativeManifestDir(target), 'manifest.json');
   const webManifestPath = resolve(nativeIntermediatesDir(), 'web-assets', target, 'manifest.json');
+  const bundledPluginsManifestPath = resolve(
+    nativeIntermediatesDir(),
+    'bundled-plugins',
+    target,
+    'manifest.json',
+  );
   await mkdir(dirname(manifestPath), { recursive: true });
   await mkdir(dirname(webManifestPath), { recursive: true });
+  await mkdir(dirname(bundledPluginsManifestPath), { recursive: true });
   await writeFile(manifestPath, manifestJson);
   await writeFile(webManifestPath, web.manifestJson);
+  await writeFile(bundledPluginsManifestPath, bundledPlugins.manifestJson);
 
   const seaAssets = {
     [nativeAssetManifestKey(target)]: manifestPath,
     [webAssetManifestKey(target)]: webManifestPath,
+    [bundledPluginsManifestKey(target)]: bundledPluginsManifestPath,
     ...assets,
     ...web.assets,
+    ...bundledPlugins.assets,
   };
   const config = {
     main: nativeJsBundlePath(),
@@ -64,6 +79,9 @@ async function writeSeaConfig(target) {
   }
   console.log(
     `Collected web assets for ${web.manifest.target}: ${web.manifest.files.length} files`,
+  );
+  console.log(
+    `Collected bundled plugins for ${bundledPlugins.manifest.target}: ${bundledPlugins.manifest.files.length} files`,
   );
 }
 
