@@ -349,6 +349,40 @@ fn chat_sessions_lists_persisted() {
 }
 
 #[test]
+fn acp_initialize_handshake() {
+    // `kimi acp` speaks ACP over stdio: initialize -> protocolVersion.
+    let home = temp_dir("acp");
+    let cwd = temp_dir("acp-cwd");
+    let mut child = Command::new(binary())
+        .args(["acp"])
+        .current_dir(&cwd)
+        .env("KIMI_AGENT_HOME", &home)
+        .env("HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn kimi acp");
+    {
+        use std::io::Write;
+        let stdin = child.stdin.as_mut().expect("stdin");
+        stdin
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"clientCapabilities\":{}}}\n")
+            .expect("write");
+    }
+    let output = child.wait_with_output().expect("wait");
+    assert!(output.status.success(), "kimi acp exits 0: {}", output.status);
+    let out = String::from_utf8_lossy(&output.stdout);
+    let line = out.lines().next().expect("a response line");
+    let body: serde_json::Value = serde_json::from_str(line).expect("JSON response");
+    assert!(body.get("error").is_none(), "initialize: {body}");
+    assert!(
+        body["result"]["protocolVersion"].as_str().is_some_and(|v| !v.is_empty()),
+        "negotiated protocol version: {body}"
+    );
+}
+
+#[test]
 fn server_mode_verbose_emits_events() {
     // `--verbose` over the Remote path: the serve binary fans engine events
     // to stderr (session.turn.started fires before the LLM call, so it lands

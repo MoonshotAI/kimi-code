@@ -1374,6 +1374,7 @@ dependencies = [
  "anyhow",
  "base64",
  "clap",
+ "kimi-acp",
  "kimi-agent",
  "kimi-exec",
  "kimi-protocol",

@@ -111,6 +111,8 @@ enum Commands {
         #[arg(short, long)]
         session: Option<String>,
     },
+    /// Serve the Agent Client Protocol (ACP) over stdio.
+    Acp,
 }
 
 /// Sub-targets of `kimi doctor`.
@@ -656,6 +658,14 @@ async fn main() -> anyhow::Result<()> {
             if let Some(renderer) = renderer {
                 renderer.abort();
             }
+        }
+        Commands::Acp => {
+            // ACP stdio server (stage E): initialize + session lifecycle,
+            // driving the engine through the SDK harness.
+            let harness = connect_harness(&server)?;
+            let stdin = tokio::io::stdin();
+            let mut stdout = tokio::io::stdout();
+            kimi_acp::serve(harness, stdin, &mut stdout).await;
         }
         Commands::Export { session_id, output, yes } => {
             let mut client = connect(&server)?;
