@@ -27,7 +27,7 @@ pub enum ContentBlock {
 /// Configuration for the native HTTP LLM transport. When present on
 /// `RunTurnParams`, the Rust engine calls the provider directly over
 /// HTTP with SSE streaming instead of proxying `llm_chat` to the JS host.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NativeLlmConfig {
     /// Wire protocol: `"openai"` (Chat Completions), `"anthropic"` (Messages),
     /// or `"google"` / `"google-genai"` (Gemini streamGenerateContent).

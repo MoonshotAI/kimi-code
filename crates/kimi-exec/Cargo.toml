@@ -6,6 +6,7 @@ license = "MIT"
 description = "Kimi Code non-interactive execution — -p/print over the host protocol (layer 4 of the Rust-first migration)"
 
 [dependencies]
+kimi-agent = { path = "../../packages/kimi-agent" }
 kimi-protocol = { path = "../kimi-protocol" }
 kimi-server = { path = "../kimi-server" }
 kimi-server-client = { path = "../kimi-server-client" }
