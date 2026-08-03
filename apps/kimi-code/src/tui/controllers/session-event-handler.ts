@@ -14,10 +14,8 @@ import type {
   GoalChange,
   GoalUpdatedEvent,
   HookResultEvent,
-  KimiHarness,
   Session,
   SessionMetaUpdatedEvent,
-  SessionTitleKind,
   SkillActivatedEvent,
   PluginCommandActivatedEvent,
   ThinkingDeltaEvent,
@@ -96,7 +94,6 @@ export interface SessionEventHost {
   aborted: boolean;
   sessionEventUnsubscribe: (() => void) | undefined;
   readonly streamingUI: StreamingUIController;
-  readonly harness: KimiHarness;
 
   requireSession(): Session;
   setAppState(patch: Partial<AppState>): void;
@@ -165,7 +162,6 @@ export class SessionEventHandler {
   private queuedGoalPromotionPending = false;
   private queuedGoalPromotionInFlight = false;
   private queuedGoalPromotionTimer: ReturnType<typeof setTimeout> | undefined;
-  private titleGenerationDisabled = false;
 
   resetRuntimeState(): void {
     this.backgroundTasks.clear();
@@ -184,7 +180,6 @@ export class SessionEventHandler {
     this.queuedGoalPromotionPending = false;
     this.queuedGoalPromotionInFlight = false;
     this.clearQueuedGoalPromotionTimer();
-    this.titleGenerationDisabled = false;
     this.stopAllMcpServerStatusSpinners();
   }
 
@@ -390,37 +385,6 @@ export class SessionEventHandler {
     }
     this.pluginMcpToolsUsedInTurn.clear();
     this.scheduleQueuedGoalPromotion();
-  }
-
-  /**
-   * Seeds the title-generation gate from the persisted title state (read off
-   * the resumed session's summary): a session whose title was already
-   * generated or customized has nothing left to ask for, so the one-shot
-   * request is skipped. Only ever closes the gate —
-   * reopening stays with `resetRuntimeState` on a session switch.
-   */
-  syncTitleGenerationGate(titleKind: SessionTitleKind | undefined): void {
-    if (titleKind === 'generated' || titleKind === 'custom') {
-      this.titleGenerationDisabled = true;
-    }
-  }
-
-  /**
-   * Best-effort auto title: right after a prompt is accepted by the engine,
-   * ask it once to generate a title from the first prompts. One shot per
-   * session attach — the prompt-derived easy title is an acceptable
-   * fallback, so the outcome is not acted on and failures (no managed login,
-   * v1 engine, dead RPC) are not retried. The engine overwrites the
-   * prompt-derived easy title but never a custom title (enforced
-   * server-side), and a generated title lands through the regular
-   * `session.meta.updated` event.
-   */
-  requestSessionTitleGeneration(): void {
-    if (this.titleGenerationDisabled) return;
-    const { sessionId } = this.host.state.appState;
-    if (sessionId.length === 0) return;
-    this.titleGenerationDisabled = true;
-    void this.host.harness.generateSessionTitle({ id: sessionId }).catch(() => undefined);
   }
 
   private handleStepBegin(event: TurnStepStartedEvent): void {
@@ -926,11 +890,6 @@ export class SessionEventHandler {
     if (title !== undefined) {
       this.host.setAppState({ sessionTitle: title });
       this.host.updateTerminalTitle();
-    }
-    // A custom rename (here or by another client) settles title generation:
-    // the engine would only keep returning undefined for it.
-    if (event.patch?.['isCustomTitle'] === true) {
-      this.titleGenerationDisabled = true;
     }
   }
 

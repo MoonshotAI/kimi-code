@@ -1357,15 +1357,10 @@ export class KimiTUI {
       });
       return;
     }
-    void session.prompt(sdkInput).then(
-      // The prompt is enqueued engine-side by the time this resolves, so the
-      // title endpoint can already read it — no need to wait for turn end.
-      () => this.sessionEventHandler.requestSessionTitleGeneration(),
-      (error: unknown) => {
-        const message = formatErrorMessage(error);
-        this.failSessionRequest(`Failed to send: ${message}`);
-      },
-    );
+    void session.prompt(sdkInput).catch((error: unknown) => {
+      const message = formatErrorMessage(error);
+      this.failSessionRequest(`Failed to send: ${message}`);
+    });
   }
 
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void {
@@ -1618,7 +1613,6 @@ export class KimiTUI {
       sessionTitle: session.summary?.title ?? null,
       goal: goalResult.goal,
     });
-    this.sessionEventHandler.syncTitleGenerationGate(session.summary?.titleKind);
     this.syncAdditionalDirs(session);
   }
 

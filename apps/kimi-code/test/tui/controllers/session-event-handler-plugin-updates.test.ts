@@ -56,7 +56,6 @@ function makeHost() {
     shiftQueuedMessage: vi.fn(),
     btwPanelController: { routeEvent: vi.fn(() => false) },
     tasksBrowserController: {},
-    harness: { generateSessionTitle: vi.fn(async () => undefined) },
   };
   return { host: host as never, streamingUI };
 }

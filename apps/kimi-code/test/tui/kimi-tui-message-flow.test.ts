@@ -282,7 +282,6 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
       return interactiveAgentScope.run(agentId, fn);
     }),
     getExperimentalFeatures: vi.fn(async () => []),
-    generateSessionTitle: vi.fn(async () => undefined),
     auth: {
       status: vi.fn(),
       login: vi.fn(),
@@ -1201,31 +1200,6 @@ command = "vim"
         content: 'hello',
       }),
     ]);
-  });
-
-  it('requests a session title once the prompt is accepted', async () => {
-    const { driver, harness } = await makeDriver();
-
-    driver.handleUserInput('hello');
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(harness.generateSessionTitle).toHaveBeenCalledWith({ id: 'ses-1' });
-  });
-
-  it('does not request a session title when the prompt send fails', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession({
-        prompt: vi.fn(async () => {
-          throw new Error('core rpc unavailable');
-        }),
-      }),
-    );
-
-    driver.handleUserInput('hello');
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(harness.generateSessionTitle).not.toHaveBeenCalled();
-    expect(driver.state.appState.streamingPhase).toBe('idle');
   });
 
   it('keeps the transcript intact when undo RPC fails', async () => {

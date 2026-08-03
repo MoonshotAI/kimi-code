@@ -95,7 +95,6 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
     shiftQueuedMessage: vi.fn(),
     btwPanelController: { routeEvent: vi.fn(() => false) },
     tasksBrowserController: {},
-    harness: { generateSessionTitle: vi.fn(async () => undefined) },
   };
   host.setAppState.mockImplementation((patch: Record<string, unknown>) => {
     Object.assign(host.state.appState, patch);
