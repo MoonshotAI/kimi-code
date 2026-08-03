@@ -1,0 +1,8 @@
+# Rust build artifacts
+/target/
+
+# napi-rs outputs
+*.node
+
+# Cargo lockfile for libraries (not needed for cdylib)
+# Cargo.lock is committed for CLI applications, but this is a library

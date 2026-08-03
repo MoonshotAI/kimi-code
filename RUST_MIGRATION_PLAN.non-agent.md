@@ -50,11 +50,12 @@
 - 事实:唯一消费者是 agent-core-v2(冻结);全仓无其他 import;引擎持久化用 rusqlite。
 - 动作:agent-core-v2 移入 `retired/` 时连同 `minidb` 一起处理(移入 retired 或删除)。**现在不动**(agent-core-v2 仍被 klient 消费)。
 
-### P1-2:kosong/native 处置决策(接线 or 退役)
-- 事实:19 个 `.rs`、6,705 行已实现 anthropic/openai/google chat+streaming,但 `native-bridge.ts` 零调用方;而引擎侧 `kimi-agent/src/llm/` 是**另一套**更完整的原生实现(引擎已默认使用)。
-- 选项 A(推荐):**退役** `kosong/native`——引擎 LLM 已是原生 HTTP,宿主侧 LLM 调用面(node-sdk/klient)不需要 napi 加速;避免两套 Rust LLM 并存维护。
-- 选项 B:**接线**——若宿主侧(node-sdk provider 面)需要不经引擎直连 LLM 的加速路径,可把 `createNative*Provider` 接回 `providers/index.ts`。
-- 注意:选项 A 需先确认 `@moonshot-ai/kosong-native`(napi 包)无其他消费者(pnpm workspace 依赖图)。
+### P1-2:kosong/native 处置决策(接线 or 退役)—— ✅ 已实施(2026-08-03)
+
+**决策:退役(选项 A)。** 用户确认(2026-08-03)。实施与并行会话的 klient 提交(`1b78771f1`)重叠完成:
+- 已删除 `packages/kosong/native/`(22 个文件,含 19 个 `.rs` + napi 产物)与 `packages/kosong/src/native-bridge.ts`(509 行);根 `Cargo.toml` members 移除;`Cargo.lock` 无残留。
+- 验证:`cargo check --workspace` 全绿;`@moonshot-ai/kosong-native` 全仓零引用(仅历史文档)。
+- 引擎 LLM 面不受影响(`kimi-agent/src/llm/` 原生 HTTP 是唯一 Rust LLM 实现)。
 
 ### P2-1:protocol 残留接口清理
 - `protocol/events.ts` 中已从 `AgentEvent` 联合删除的接口定义(§3.3 列表),待 agent-core-v2 退役后一并清理(当前冻结包仍 import,不可提前删)。

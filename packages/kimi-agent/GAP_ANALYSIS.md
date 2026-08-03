@@ -14,8 +14,7 @@
 | kimi-agent（主引擎） | 233 `.rs` | **88,634** | 基线 |
 | kimi-native-tools | 54 `.rs` | 25,357 | 29% |
 | kimi-shared | 3 `.rs` | 797 | 1% |
-| kosong/native | 19 `.rs` | 6,705 | 8% |
-| **Rust 全工作区（6 crate）** | **338 `.rs`** | **128,622** | — |
+| **Rust 全工作区（5 crate）** | **319 `.rs`** | **121,917** | — |
 | v1 agent-core | 372 `.ts` | 72,546 | 82% |
 | v2 agent feature 层 | 234 `.ts` | 33,150 | 37% |
 | v2 app 框架层 | — | 22,937 | 26% |
@@ -112,7 +111,7 @@
 ### 4.2 Rust 集成测试（cargo test）
 `tests/stdio_rpc_integration.rs` 共 **51 个集成测试**（真实 `kimi-agent-cli` 二进制 + SSE stub / 零 host 回调），覆盖：cron 生命周期与跨会话恢复、bg 任务（register/list/output/settle/restart 恢复）、session（destroy/load 重建、startBtw 侧问、init 生成 AGENTS.md）、hooks 事件面、approval 面、AgentSwarm / SwarmDiscussion 子代理编排、git status、memory 持久化等。
 
-**当前状态（2026-08-01 实测）**：`cargo test -p kimi-agent` = **2011 lib 全绿、0 warnings**；工作区各 crate 合计约 **2,800+ 测试**（kimi-agent 2011 + 集成 51 + native-tools 617 + kimi-shared 47 + kosong/native 89）。需要 Rust 工具链与 Node.js >=24.15.0（本机实测 v24.18.0）。
+**当前状态（2026-08-03 核对）**：`cargo test -p kimi-agent` = **2011 lib 全绿、0 warnings**；工作区各 crate 合计约 **2,700+ 测试**（kimi-agent 2011 + 集成 51 + native-tools 617 + kimi-shared 47；kosong/native 已退役删除，2026-08-03）。需要 Rust 工具链与 Node.js >=24.15.0（本机实测 v24.18.0）。
 
 | 等级 | 含义 | 模块数 | 备注 |
 |------|------|--------|------|
