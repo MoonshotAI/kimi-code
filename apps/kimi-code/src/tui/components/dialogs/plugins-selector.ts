@@ -539,7 +539,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
     if (matchesKey(data, Key.enter)) {
       if (plugin === undefined) return;
       const capability = this.capabilityFor(plugin.id);
-      if (capability !== undefined && capability.state !== 'ready' && !capability.install.running) {
+      if (capability !== undefined && capabilityNeedsSetup(capability)) {
         this.opts.onSelect({ kind: 'install', entry: capabilityMarketplaceEntry(capability) });
         return;
       }
@@ -636,8 +636,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
   private installedHint(): string {
     const plugin = this.opts.installed[this.selectedIndex];
     const capability = plugin === undefined ? undefined : this.capabilityFor(plugin.id);
-    const needsSetup =
-      capability !== undefined && capability.state !== 'ready' && !capability.install.running;
+    const needsSetup = capability !== undefined && capabilityNeedsSetup(capability);
     const hasUpdate = plugin !== undefined && this.installedUpdateStatus(plugin) !== undefined;
     const enter = needsSetup ? 'Enter finish setup' : hasUpdate ? 'Enter update' : 'Enter details';
     return ` Tab switch · Space toggle · D remove · M MCP · ${enter} · I details · R reload · Esc cancel`;
@@ -671,8 +670,18 @@ export class PluginsPanelComponent extends Container implements Focusable {
       line += '  ' + marketplaceStatusStyle(badge, colors)(badge);
     }
     if (capability !== undefined && capability.state !== 'ready') {
-      const badge = capability.install.running ? 'installing…' : 'setup incomplete';
-      line += '  ' + chalk.hex(colors.warning)(badge);
+      const badge = capability.install.running
+        ? 'installing…'
+        : capabilityNeedsSetup(capability)
+          ? 'setup incomplete'
+          : capability.state === 'unsupported'
+            ? 'unsupported'
+            : undefined;
+      if (badge !== undefined) {
+        // Unsupported is a fact, not a problem: dim it; actionable setup
+        // states keep the warning tone.
+        line += '  ' + (badge === 'unsupported' ? chalk.hex(colors.textDim)(badge) : chalk.hex(colors.warning)(badge));
+      }
     }
     if (this.opts.pluginHint?.id === plugin.id) {
       line += '  ' + chalk.hex(colors.warning)(this.opts.pluginHint.text);
@@ -851,6 +860,19 @@ function capabilityMarketplaceEntry(capability: CapabilityStatus): PluginMarketp
     tier: 'official',
     description: capability.description,
   };
+}
+
+/**
+ * Setup is actionable only for these states. An `unsupported` capability
+ * (wrong OS/arch) can only fail — the service rejects its install — so the
+ * panel must not offer a "finish setup" action that ends in an error; it
+ * renders as unsupported instead.
+ */
+function capabilityNeedsSetup(capability: CapabilityStatus): boolean {
+  return (
+    (capability.state === 'not_installed' || capability.state === 'partial') &&
+    !capability.install.running
+  );
 }
 
 function capabilityRowStatus(

@@ -599,6 +599,27 @@ describe('plugins selector dialogs', () => {
     });
   });
 
+  it('renders an unsupported capability as a fact, not a setup action', () => {
+    // e.g. the kimi-cu plugin installed on Linux (shared home / v1 path):
+    // Enter can only end in the service rejecting the install, so the row
+    // must not offer "finish setup".
+    const installed = [
+      { ...superpowers, id: 'kimi-cu', displayName: 'Kimi Computer Use', version: '0.5.4' },
+    ];
+    const capabilities = [
+      makeCapability({ supported: false, state: 'unsupported', steps: [] }),
+    ];
+    const { panel, onSelect } = makePanel({ installed, capabilities });
+
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Kimi Computer Use  enabled  unsupported');
+    expect(out).not.toContain('setup incomplete');
+    expect(out).not.toContain('finish setup');
+
+    panel.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'details', id: 'kimi-cu' });
+  });
+
   it('does not duplicate a daemon version prefix', () => {
     const capabilities = [
       makeCapability({
