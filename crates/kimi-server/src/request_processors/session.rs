@@ -1657,6 +1657,76 @@ mod create_tests {
     }
 
     #[tokio::test]
+    async fn fork_copies_persisted_session() {
+        // Serialized against other store-sensitive tests (env var + shared
+        // file store for the fork's per-call store opens).
+        let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = std::env::temp_dir().join(format!("kimi-fork-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("mkdir");
+        let previous = std::env::var_os("KIMI_AGENT_HOME");
+        std::env::set_var("KIMI_AGENT_HOME", &home);
+
+        let result = async {
+            let state = crate::state::ServerState::new().expect("state");
+            let processor = SessionProcessor::with_state(state);
+            let mut server = MessageProcessor::new();
+            processor.register(&mut server);
+            let body = server
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(1),
+                    method: "session/create".into(),
+                    params: serde_json::json!({ "session_id": "s-fork-src" }),
+                })
+                .await;
+            assert!(body.get("error").is_none(), "create failed: {body}");
+
+            // Fork into a new id.
+            let body = server
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(2),
+                    method: "session/fork".into(),
+                    params: serde_json::json!({
+                        "session_id": "s-fork-src",
+                        "fork_id": "s-fork-dst",
+                        "title": "forked",
+                    }),
+                })
+                .await;
+            assert!(body.get("error").is_none(), "fork failed: {body}");
+
+            // Both the source and the fork are listed.
+            let body = server
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(3),
+                    method: "session/list".into(),
+                    params: serde_json::json!({ "limit": 50 }),
+                })
+                .await;
+            let sessions = body["result"]["sessions"].as_array().expect("sessions");
+            assert!(
+                sessions.iter().any(|s| s["id"] == "s-fork-src"),
+                "source listed: {body}"
+            );
+            assert!(
+                sessions.iter().any(|s| s["id"] == "s-fork-dst"),
+                "fork listed: {body}"
+            );
+        }
+        .await;
+
+        match previous {
+            Some(v) => std::env::set_var("KIMI_AGENT_HOME", v),
+            None => std::env::remove_var("KIMI_AGENT_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+        result;
+    }
+
+    #[tokio::test]
     async fn export_roundtrip_yields_zip() {
         // Point the store at a temp dir so session/export (which opens the
         // store per call) sees the session created below. Serialized against
