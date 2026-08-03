@@ -1,0 +1,10 @@
+[package]
+name = "kimi-protocol"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Kimi Code wire protocol — pure types for the JSON-RPC contract, events, and config (layer 1 of the Rust-first migration)"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

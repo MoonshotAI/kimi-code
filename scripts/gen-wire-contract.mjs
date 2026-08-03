@@ -17,25 +17,31 @@ import { join, relative, resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const SRC = join(ROOT, 'packages', 'kimi-agent', 'src');
+const PROTOCOL_SRC = join(ROOT, 'crates', 'kimi-protocol', 'src');
 const PRIMARY = join(SRC, 'rpc', 'types.rs');
 const OUT = join(SRC, 'rpc', 'wire.gen.ts');
 
 // ── Collect all .rs sources ────────────────────────────────────────────
-function collectRs(dir) {
+function collectRs(dir, base = SRC) {
   const out = new Map();
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     const stat = statSync(full);
     if (stat.isDirectory()) {
-      for (const [k, v] of collectRs(full)) out.set(k, v);
+      for (const [k, v] of collectRs(full, base)) out.set(k, v);
     } else if (entry.endsWith('.rs')) {
-      out.set(relative(SRC, full).replaceAll('\\', '/'), readFileSync(full, 'utf8'));
+      out.set(relative(base, full).replaceAll('\\', '/'), readFileSync(full, 'utf8'));
     }
   }
   return out;
 }
 
-const SOURCES = collectRs(SRC);
+// Sources = engine crate + the protocol crate (wire types live there from
+// the Rust-first migration stage A).
+const SOURCES = new Map([
+  ...collectRs(SRC),
+  ...collectRs(PROTOCOL_SRC, PROTOCOL_SRC),
+]);
 
 // ── Parsing helpers ────────────────────────────────────────────────────
 const STRUCT_RE = /pub struct (\w+)\s*\{([\s\S]*?)\n\}/g;
@@ -281,12 +287,21 @@ function renderAlias(name, raw) {
   return `export type ${name} = ${type};`;
 }
 
-// ── Resolve entry set: everything declared in the primary wire file ────
+// ── Resolve entry set: everything declared in the primary wire files ────
+// Seed = types.rs (engine RPC leftovers) + kimi-protocol wire files
+// (rpc.rs envelope + wire_types.rs params/results).
 const primary = readFileSync(PRIMARY, 'utf8');
 const seed = new Set();
 for (const m of primary.matchAll(STRUCT_RE)) seed.add(m[1]);
 for (const m of primary.matchAll(ENUM_RE)) seed.add(m[1]);
 for (const m of primary.matchAll(ALIAS_RE)) seed.add(m[1]);
+for (const [key, text] of SOURCES) {
+  if (key === 'rpc.rs' || key === 'wire_types.rs') {
+    for (const m of text.matchAll(STRUCT_RE)) seed.add(m[1]);
+    for (const m of text.matchAll(ENUM_RE)) seed.add(m[1]);
+    for (const m of text.matchAll(ALIAS_RE)) seed.add(m[1]);
+  }
+}
 
 const rendered = new Map();
 const inProgress = new Set();

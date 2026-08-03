@@ -37,6 +37,7 @@ sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"
 kimi-shared = { path = "../kimi-shared" }
+kimi-protocol = { path = "../../crates/kimi-protocol" }
 image = { workspace = true }
 toml = "0.8"
 zip = "0.6"
