@@ -368,6 +368,24 @@ async fn main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
             }
+
+            // tui.toml (TS parity, existence only — the engine has no TUI
+            // config parser yet). `KIMI_CODE_HOME` is itself the data dir, so
+            // tui.toml is `$KIMI_CODE_HOME/tui.toml`; otherwise
+            // `~/.kimi-code/tui.toml`.
+            let tui_path = match std::env::var("KIMI_CODE_HOME") {
+                Ok(dir) => Some(std::path::PathBuf::from(dir).join("tui.toml")),
+                Err(_) => std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+                    .ok()
+                    .map(|home| std::path::PathBuf::from(home).join(".kimi-code").join("tui.toml")),
+            };
+            if let Some(p) = tui_path {
+                if p.exists() {
+                    println!("tui file: OK   {}", p.display());
+                } else {
+                    println!("tui file: SKIP {}", p.display());
+                }
+            }
         }
         Commands::Health => {
             let mut client = connect(&server)?;
