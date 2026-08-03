@@ -58,6 +58,9 @@ enum Commands {
         session_id: String,
         /// The prompt to run.
         prompt: String,
+        /// Print engine events (progress/deltas) as they arrive.
+        #[arg(long)]
+        verbose: bool,
     },
     /// Show the current engine config (model/provider).
     Config,
@@ -216,11 +219,15 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
             for session in body["result"]["sessions"].as_array().unwrap_or(&vec![]) {
-                println!("{}  {}", session["id"], session["title"]);
+                let id = session["id"].as_str().unwrap_or("");
+                let title = session["title"].as_str().unwrap_or("");
+                let title = if title.is_empty() { "(untitled)" } else { title };
+                let work_dir = session["work_dir"].as_str().unwrap_or("");
+                println!("{id}  {title}  {work_dir}");
             }
         }
-        Commands::Resume { session_id, prompt } => {
-            let mut client = connect(&server)?;
+        Commands::Resume { session_id, prompt, verbose } => {
+            let (mut client, renderer) = connect_with_renderer(&server, verbose)?;
             let native_llm = kimi_exec::native_llm_from_config();
             let mut create_params = serde_json::json!({ "session_id": session_id });
             if let Some(nllm) = native_llm {
@@ -243,6 +250,9 @@ async fn main() -> anyhow::Result<()> {
                     }),
                 )
                 .await;
+            if let Some(renderer) = renderer {
+                renderer.abort();
+            }
             if let Some(error) = result.get("error") {
                 eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
                 std::process::exit(1);
