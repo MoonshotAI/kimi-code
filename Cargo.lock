@@ -1464,8 +1464,10 @@ dependencies = [
 name = "kimi-server-transport"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "kimi-protocol",
  "kimi-server",
+ "kimi-server-client",
  "serde_json",
  "tokio",
 ]
