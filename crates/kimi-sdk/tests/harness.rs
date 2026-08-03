@@ -4,6 +4,13 @@ use kimi_sdk::Harness;
 
 #[tokio::test]
 async fn embedded_harness_creates_sessions() {
+    // Point the session store at a temp dir so session/export (which opens
+    // the store per call) sees the session created by the harness.
+    let home = std::env::temp_dir().join(format!("kimi-sdk-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).expect("mkdir");
+    std::env::set_var("KIMI_AGENT_HOME", &home);
+
     let mut harness = Harness::embedded().expect("embedded engine");
     assert_eq!(harness.health().await.expect("health"), "ok");
 
@@ -20,6 +27,17 @@ async fn embedded_harness_creates_sessions() {
 
     // Cancel of a created session reports true (flag registered at create).
     assert_eq!(session.cancel().await["result"]["cancelled"], true);
+
+    // Harness facade: config parses, the session is listed, export yields a
+    // zip, and delete removes the persisted record.
+    assert!(harness.config().await.expect("config").is_object());
+    let sessions = harness.list_sessions(50).await.expect("list");
+    assert!(sessions.iter().any(|s| s["id"] == "s-sdk"), "listed: {sessions:?}");
+    let zip = harness.export_session("s-sdk").await.expect("export");
+    assert_eq!(&zip[..2], b"PK", "zip magic");
+    assert!(harness.delete_session("s-sdk").await.expect("delete"));
+    let sessions = harness.list_sessions(50).await.expect("list");
+    assert!(!sessions.iter().any(|s| s["id"] == "s-sdk"), "deleted: {sessions:?}");
 }
 
 #[tokio::test]

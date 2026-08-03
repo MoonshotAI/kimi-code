@@ -10,6 +10,7 @@ pub use session::Session;
 
 use std::sync::Arc;
 
+use base64::Engine;
 use kimi_server_client::AppServerClient;
 use tokio::sync::Mutex;
 
@@ -55,6 +56,64 @@ impl Harness {
             anyhow::bail!("create session: {}", error["message"].as_str().unwrap_or("unknown"));
         }
         Ok(Session::new(session_id.to_string(), self.client.clone()))
+    }
+
+    /// Persisted sessions (newest first), as their summary objects.
+    pub async fn list_sessions(&mut self, limit: u32) -> anyhow::Result<Vec<serde_json::Value>> {
+        let body = self.client.lock().await.session_list(limit).await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("list sessions: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"]["sessions"].as_array().cloned().unwrap_or_default())
+    }
+
+    /// The engine's parsed config.
+    pub async fn config(&mut self) -> anyhow::Result<serde_json::Value> {
+        let body = self.client.lock().await.config_get().await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("config: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"].clone())
+    }
+
+    /// Permanently delete a persisted session (engine-side `session/delete`).
+    pub async fn delete_session(&mut self, session_id: &str) -> anyhow::Result<bool> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                kimi_protocol::methods::SESSION_DELETE,
+                serde_json::json!({ "session_id": session_id }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("delete session: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"]["deleted"].as_bool().unwrap_or(false))
+    }
+
+    /// Export a session as a ZIP archive (decoded from the wire base64).
+    pub async fn export_session(&mut self, session_id: &str) -> anyhow::Result<Vec<u8>> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                kimi_protocol::methods::SESSION_EXPORT,
+                serde_json::json!({ "session_id": session_id }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("export session: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        let b64 = body["result"]["zip_base64"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("export returned no zip_base64"))?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .map_err(|e| anyhow::anyhow!("zip_base64 decode failed: {e}"))?;
+        Ok(bytes)
     }
 
     /// The protocol client (borrowed) — advanced callers escape to raw RPC.

@@ -7,6 +7,7 @@ description = "Kimi Code client SDK — high-level harness over the host protoco
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 kimi-protocol = { path = "../kimi-protocol" }
 kimi-server = { path = "../kimi-server" }
 kimi-server-client = { path = "../kimi-server-client" }
