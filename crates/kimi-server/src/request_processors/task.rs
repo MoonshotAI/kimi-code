@@ -46,6 +46,11 @@ impl TaskProcessor {
         }
         Ok(Self { service })
     }
+
+    /// Expose the shared task service (tests).
+    pub fn service(&self) -> Arc<Mutex<kimi_agent::task::TaskService>> {
+        self.service.clone()
+    }
 }
 
 impl Processor for TaskProcessor {
@@ -84,5 +89,46 @@ mod tests {
             .await;
         assert!(body.get("error").is_none(), "task/list failed: {body}");
         assert!(body["result"].is_array());
+    }
+
+    #[tokio::test]
+    async fn task_list_shows_tracked_task() {
+        let processor = TaskProcessor::new().expect("task processor");
+        // Seed a tracked task through the service, as the tool runner does.
+        processor
+            .service()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .track(kimi_agent::task::AgentTaskTrackOptions {
+                id_prefix: "bash".into(),
+                description: "run tests".into(),
+                kind: "process".into(),
+                detached: false,
+                timeout_ms: None,
+                detach_timeout_ms: None,
+                agent_id: None,
+            })
+            .expect("track");
+
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "task/list".into(),
+                params: serde_json::Value::Null,
+            })
+            .await;
+        assert!(body.get("error").is_none(), "task/list failed: {body}");
+        let tasks = body["result"].as_array().expect("tasks array");
+        assert!(
+            tasks.iter().any(|t| {
+                t["description"] == "run tests"
+                    && t["status"] == "running"
+                    && t["task_id"].as_str().is_some_and(|id| id.starts_with("bash-"))
+            }),
+            "tracked task listed: {body}"
+        );
     }
 }

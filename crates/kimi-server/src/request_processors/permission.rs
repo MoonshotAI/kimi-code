@@ -105,4 +105,46 @@ mod tests {
             "added rule should appear in snapshot: {body}"
         );
     }
+
+    #[tokio::test]
+    async fn set_mode_roundtrip() {
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = PermissionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "permission/set_mode".into(),
+                params: serde_json::json!({ "mode": "yolo" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "set_mode failed: {body}");
+        assert_eq!(body["result"]["mode"], "yolo");
+
+        // The snapshot reflects the new mode.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "permission/get".into(),
+                params: serde_json::Value::Null,
+            })
+            .await;
+        assert!(body.get("error").is_none());
+        assert_eq!(body["result"]["mode"], "yolo", "snapshot: {body}");
+
+        // Unknown modes are rejected, not silently accepted.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(3),
+                method: "permission/set_mode".into(),
+                params: serde_json::json!({ "mode": "sometimes" }),
+            })
+            .await;
+        assert!(body.get("error").is_some(), "unknown mode -> error: {body}");
+    }
 }
