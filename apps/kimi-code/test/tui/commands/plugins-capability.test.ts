@@ -6,7 +6,6 @@ const { isCapabilityEntry, pollCapabilityInstall, removePlugin } = __pluginsComm
 
 function fakeHost(overrides: {
   engineV2?: boolean;
-  capabilityIds?: readonly string[];
   capabilityStatus?: () => Promise<{
     install: { running: boolean; step?: string; percent?: number; error?: string };
   }>;
@@ -17,8 +16,6 @@ function fakeHost(overrides: {
     getCapability:
       overrides.capabilityStatus ??
       (() => Promise.resolve({ install: { running: false } })),
-    listCapabilities: () =>
-      Promise.resolve((overrides.capabilityIds ?? []).map((id) => ({ id }))),
     removePlugin: () => Promise.resolve(),
   };
   const host = {
@@ -93,7 +90,7 @@ describe('plugins command capability surface', () => {
   });
 
   it('removePlugin notes that capability runtimes are left untouched', async () => {
-    const { host, statuses } = fakeHost({ engineV2: true, capabilityIds: ['kimi-cu'] });
+    const { host, statuses } = fakeHost({ engineV2: true });
     await removePlugin(host, 'kimi-cu');
     expect(statuses.some((s) => s.includes('Removed kimi-cu'))).toBe(true);
     expect(statuses.some((s) => s.includes('runtime binaries were left untouched'))).toBe(true);

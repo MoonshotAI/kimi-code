@@ -344,15 +344,16 @@ function isCapabilityEntry(host: SlashCommandHost, entry: PluginMarketplaceEntry
   return host.engineV2 && entry.source === `capability:${entry.id}`;
 }
 
-/** Capability ids come from the engine's registry — nothing is hardcoded
- * client-side. v1 engines have no capability surface and answer false. */
-async function isCapabilityId(host: SlashCommandHost, id: string): Promise<boolean> {
-  try {
-    const capabilities = await host.requireSession().listCapabilities();
-    return capabilities.some((capability) => capability.id === id);
-  } catch {
-    return false;
-  }
+/**
+ * Closed-set id check for the post-remove note. The capability ids are part
+ * of the client/engine CONTRACT (mirrored in the klient zod enum), not
+ * product data that drifts — so they may be named here. What must not
+ * happen is the alternative: answering set membership by running
+ * `listCapabilities()`, which fires every entry's detector (seconds of
+ * probes) just to decide whether to print one hint line.
+ */
+function isCapabilityId(host: SlashCommandHost, id: string): boolean {
+  return host.engineV2 && (id === 'kimi-cu' || id === 'kimi-webbridge');
 }
 
 /** Poll a background capability install, mirroring progress into the
@@ -612,7 +613,7 @@ async function handlePluginMcpSelection(
 async function removePlugin(host: SlashCommandHost, id: string): Promise<void> {
   await host.requireSession().removePlugin(id);
   host.showStatus(`Removed ${id}.`);
-  if (await isCapabilityId(host, id)) {
+  if (isCapabilityId(host, id)) {
     host.showStatus(
       'Note: the runtime binaries were left untouched, but Kimi Code plugin wiring is disabled for new sessions. Reinstall any time from the Official tab.',
     );
