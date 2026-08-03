@@ -16,7 +16,7 @@ struct Cli {
     #[arg(long, global = true)]
     server: Option<String>,
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 /// Build the protocol client: an embedded in-process server by default, or a
@@ -174,7 +174,18 @@ fn connect_with_renderer(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    use clap::CommandFactory;
     let Cli { server, command } = Cli::parse();
+    let Some(command) = command else {
+        // No subcommand: TS enters the interactive TUI here. That is stage D
+        // of the Rust migration (ratatui, offline-blocked) — point the user
+        // at the non-interactive paths instead.
+        let mut cmd = Cli::command();
+        cmd.print_help()?;
+        println!();
+        println!("interactive TUI is stage D of the Rust migration — use `kimi print -p \"...\"` for one-shot runs");
+        return Ok(());
+    };
     match command {
         Commands::Print { prompt, verbose, json } => {
             // Progress on stderr: always with `--verbose`, and by default when

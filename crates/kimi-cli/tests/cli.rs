@@ -206,6 +206,19 @@ fn config_set_writes_and_persists() {
 }
 
 #[test]
+fn bare_invocation_prints_help_and_stage_d_hint() {
+    let home = temp_dir("bare");
+    let output = run(&home, &[]);
+    assert!(output.status.success(), "bare kimi exits 0: {}", output.status);
+    let out = stdout(&output);
+    assert!(out.contains("Usage:"), "help printed: {out}");
+    assert!(
+        out.contains("stage D") && out.contains("kimi print"),
+        "stage D hint present: {out}"
+    );
+}
+
+#[test]
 fn config_set_rejects_malformed_key() {
     let home = temp_dir("config-set-bad");
     let output = run(&home, &["config", "--set", "no-equals-sign"]);
