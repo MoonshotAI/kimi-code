@@ -246,7 +246,7 @@ test('rotation: a WAL close() failure leaves the db writable and compact() retri
   const { MiniDb } = await import('../src/index.js');
   const dir = await tmpDir();
   try {
-    let db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', compactThresholdBytes: 1 << 30 });
+    let db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', compactThresholdBytes: 1 << 30, indexGenerations: false });
     const N = 200;
     for (let i = 0; i < N; i++) await db.set(`k${i}`, `v${i}`);
 
@@ -309,7 +309,7 @@ test('rotation: a WAL rename failure (new snapshot already in place) leaves the 
   const { MiniDb } = await import('../src/index.js');
   const dir = await tmpDir();
   try {
-    let db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', compactThresholdBytes: 1 << 30 });
+    let db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', compactThresholdBytes: 1 << 30, indexGenerations: false });
     const N = 200;
     for (let i = 0; i < N; i++) await db.set(`k${i}`, `v${i}`);
 
@@ -407,7 +407,7 @@ test('rotation: the first directory fsync failure aborts the rotation; rollback 
   mockFsWithDirSyncFault(dir, new Set([1]));
   const { MiniDb } = await import('../src/index.js');
   try {
-    let db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', compactThresholdBytes: 1 << 30 });
+    let db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', compactThresholdBytes: 1 << 30, indexGenerations: false });
     const N = 200;
     for (let i = 0; i < N; i++) await db.set(`k${i}`, `v${i}`);
 
@@ -456,7 +456,7 @@ test('rotation: the second directory fsync failure aborts after both renames; ro
   mockFsWithDirSyncFault(dir, new Set([2]));
   const { MiniDb } = await import('../src/index.js');
   try {
-    let db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', compactThresholdBytes: 1 << 30 });
+    let db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', compactThresholdBytes: 1 << 30, indexGenerations: false });
     const N = 200;
     for (let i = 0; i < N; i++) await db.set(`k${i}`, `v${i}`);
 
@@ -562,7 +562,7 @@ test('a WAL poison during the snapshot phase aborts this compaction; the next co
   const { MiniDb } = await import('../src/index.js');
   const dir = await tmpDir();
   try {
-    let db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', compactThresholdBytes: 1 << 30 });
+    let db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', compactThresholdBytes: 1 << 30, indexGenerations: false });
     const N = 50;
     for (let i = 0; i < N; i++) await db.set(`k${i}`, `v${i}`);
 

@@ -10,16 +10,18 @@
 // Readers: read-only MiniDb instances used for keys whose shard this process
 // does not currently hold. A MiniDb reader replays snapshot+WAL only at open
 // time and would go stale afterwards, so every reader use is guarded by a
-// cheap file fingerprint (dev:ino:size:mtimeMs of the shard's WAL, snapshot
-// and every index-definition sidecar — FINGERPRINT_FILES, derived from the
-// authoritative persistent-files module so a newly added file can never be
+// cheap file fingerprint (dev:ino:size:mtimeMs of the shard's WAL, snapshot,
+// CURRENT, and every index-definition sidecar — FINGERPRINT_FILES, derived
+// from the authoritative generation module so a newly added file can never be
 // missed). A change refreshes the reader first:
 //  - when only the WAL changed as pure appends on the same inode (tracked by
 //    a {dev, ino, size} watermark), the appended frames are scanned and
 //    applied incrementally (MiniDb.catchUpFromWal) — O(delta);
-//  - anything else (rotation, truncation, snapshot/index-def changes, an
-//    offset that turns out not to be a frame boundary) falls back to a close
-//    + full reopen — O(shard size).
+//  - anything else (rotation, truncation, a generation switch on CURRENT,
+//    snapshot/index-def changes, an offset that turns out not to be a frame
+//    boundary) falls back to a close + full reopen — with a published
+//    generation that reopen loads the new checkpoint instead of rebuilding
+//    every index from the full corpus.
 // Because a writer's WAL append is complete before its set() resolves, a read
 // that starts after another process's write resolved always observes it.
 
@@ -28,7 +30,7 @@ import path from 'node:path';
 import type { MiniDb } from '../index.js';
 import { LockError } from '../lockfile.js';
 import { OpTracker } from '../op-tracker.js';
-import { FINGERPRINT_FILES } from '../persistent-files.js';
+import { FINGERPRINT_FILES } from '../generation.js';
 import { ShardHandle } from './shard.js';
 import type { ShardOpenOptions } from './shard.js';
 import { sleep } from './utils.js';
@@ -325,8 +327,17 @@ export class ShardLockPool {
       // reopen below). A compound/secondary/text definition change lands on
       // this reopen path too: it rewrites its sidecar, which the fingerprint
       // tracks.
+      //
+      // CURRENT (parts[2]) is deliberately NOT part of the wal-only verdict:
+      // a pure generation publish (background build / manual rebuild) changes
+      // CURRENT without rotating the snapshot, and the reader's WAL-catch-up
+      // view stays perfectly valid — forcing a reopen would just churn. A
+      // compaction always rotates the snapshot, and THAT is what sends the
+      // reader to a reopen (which then loads the new generation instead of
+      // rebuilding from the corpus).
       let walOnly = true;
       for (let i = 1; i < parts.length; i++) {
+        if (i === 2) continue; // CURRENT — see above
         if (parts[i] !== cached.fpParts[i]) {
           walOnly = false;
           break;

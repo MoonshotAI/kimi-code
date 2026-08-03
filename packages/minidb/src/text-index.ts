@@ -13,15 +13,19 @@
 //     LRU cache), merges the in-memory `delta`, drops tombstones, and scores
 //     by TF-IDF. Synchronous by design so db.search()/db.query() keep their
 //     synchronous API.
-//   - Builds: open and compaction rebuild the whole index from the Store.
+//   - Builds: a generation build stages a rebuild whose commit also rebases
+//     the live index (the compaction-time postings refresh); a load attaches
+//     the generation's persisted dictionary + postings + doc table; the
+//     legacy open path still rebuilds the whole index from the Store.
 //     `build()` is async and yields to the event loop periodically, so a big
 //     rebuild never hard-blocks the host process; writes landing mid-build
 //     keep applying to the live view (searches stay correct) and are queued
 //     for a synchronous replay onto the new base at swap time.
-//   - Durability: the postings file is a pure derived cache of the Store; it is
-//     rebuilt from the Store on open and on compaction. The Store (snapshot +
+//   - Durability: the postings file is a pure derived cache of the Store;
+//     it is checkpointed into each published generation and rebuilt from the
+//     Store whenever a generation is absent or invalid. The Store (snapshot +
 //     WAL) is the source of truth, so a crash never loses postings — they are
-//     simply rebuilt.
+//     simply rebuilt or re-checkpointed.
 
 import { getPath } from './query.js';
 import { PostingsFile } from './text-postings.js';
@@ -239,6 +243,20 @@ export class TextIndex {
   // Disk-base mode.
   private pf: PostingsFile | null = null;
 
+  /** Integrity record of the postings file the last successful commitBuild
+   *  wrote (bytes + whole-file crc32). Stage 5's generation builder records
+   *  it in the manifest for the generation's copy of the file; the loader
+   *  restores it on attach, so a CLEAN index's fast path can re-publish the
+   *  unchanged file without re-reading it. */
+  postingsFileInfo: { bytes: number; crc32: number } | null = null;
+
+  /** The path of the postings file the current base is read from (null for a
+   *  memory base). Stage 5's clean-index fast path hard-links THIS file into
+   *  the next generation instead of re-tokenizing the corpus. */
+  get currentPostingsPath(): string | null {
+    return this.pf?.path ?? null;
+  }
+
   // LRU cache of decoded base postings: term -> [docID, freq][]
   private readonly cache = new Map<string, [number, number][]>();
 
@@ -372,7 +390,7 @@ export class TextIndex {
    * it until the next successful build. abort() discards the staged state
    * (nothing is written before commit() runs).
    */
-  beginBuild(): TextIndexBuild {
+  beginBuild(opts: { postingsPath?: string } = {}): TextIndexBuild {
     if (this.buildQueue !== null) throw new Error('text index build already in progress');
     const queue: BuildOp[] = [];
     this.buildQueue = queue;
@@ -412,7 +430,7 @@ export class TextIndex {
         if (done) throw new Error('text index build already finished');
         done = true;
         try {
-          await this.commitBuild(queue, agg, newKeys, newKeyToId, newDocLen, n);
+          await this.commitBuild(queue, agg, newKeys, newKeyToId, newDocLen, n, opts.postingsPath);
         } catch (e) {
           // Staging never touched the live view, so the previous index is
           // intact; the queued ops were already applied to it — just disarm.
@@ -431,7 +449,11 @@ export class TextIndex {
     };
   }
 
-  /** Swap a fully staged build into the live index (see beginBuild). */
+  /** Swap a fully staged build into the live index (see beginBuild).
+   *  `postingsPathOverride` redirects the new postings file away from
+   *  this.path (stage 5: a generation build writes the file INTO the
+   *  generation's tmp directory and the live index attaches to it there;
+   *  this.path stays the rebuild target for non-generation builds). */
   private async commitBuild(
     queue: BuildOp[],
     agg: Map<string, Map<number, number>>,
@@ -439,8 +461,10 @@ export class TextIndex {
     newKeyToId: Map<string, number>,
     newDocLen: Map<number, number>,
     n: number,
+    postingsPathOverride?: string,
   ): Promise<void> {
-    if (this.path) {
+    const targetPath = postingsPathOverride ?? this.path;
+    if (targetPath) {
       // Disk mode: write the new postings file (tmp + fsync + atomic rename
       // in PostingsFile.rebuild). The old read handle is closed only at the
       // rename — and only on Windows, where an open fd would block it (POSIX
@@ -450,7 +474,7 @@ export class TextIndex {
       const oldPf = this.pf;
       let dict: Map<string, PostingEntry>;
       try {
-        dict = await PostingsFile.rebuild(this.path, aggToSorted(agg), {
+        const res = await PostingsFile.rebuild(targetPath, aggToSorted(agg), {
           beforeRename:
             process.platform === 'win32' && oldPf !== null
               ? () => {
@@ -459,10 +483,12 @@ export class TextIndex {
                 }
               : undefined,
         });
+        dict = res.dict;
+        this.postingsFileInfo = { bytes: res.bytes, crc32: res.crc32 };
       } catch (e) {
         if (oldPf !== null && !oldPf.open) {
           try {
-            this.pf = PostingsFile.open(this.path);
+            this.pf = PostingsFile.open(targetPath);
           } catch {
             /* old handle unrecoverable; the next successful build fixes it */
           }
@@ -474,7 +500,7 @@ export class TextIndex {
       // is not special-cased: readBase treats a null pf as an empty base, so
       // reads degrade to delta-only until the next build instead of reading
       // through a stale dictionary.
-      const newPf = PostingsFile.open(this.path);
+      const newPf = PostingsFile.open(targetPath);
       this.postings.clear();
       for (const [t, e] of dict) this.postings.set(t, e);
       oldPf?.close();
@@ -727,6 +753,98 @@ export class TextIndex {
     return { hits: top.sorted(), visits, truncated };
   }
 
+  /** Stage-5 generation build: a synchronous deep-enough snapshot of the live
+   *  state for image serialization. The maps/arrays are copied so later
+   *  mutations of the live index never reach the serialized image. Must run
+   *  while no build is in flight (a committed build's state is what a
+   *  generation serializes). */
+  exportImageState(): {
+    dict: Map<string, PostingEntry>;
+    keys: (string | undefined)[];
+    docLens: Map<number, number>;
+    liveCount: number;
+    removed: Set<number>;
+    delta: Map<string, Map<number, number>>;
+  } {
+    return {
+      dict: new Map(this.postings),
+      keys: [...this.keys],
+      docLens: new Map(this.docLen),
+      liveCount: this.N,
+      removed: new Set(this.removed),
+      delta: new Map([...this.delta].map(([t, m]) => [t, new Map(m)])),
+    };
+  }
+
+  /** Stage-5 generation load: attach a persisted base + write-buffer state,
+   *  making the index exactly equal to the one the generation sealed —
+   *  dictionary, doc table, tombstones and delta included. Any previous state
+   *  is replaced; a memory-base instance switches to disk-base on the
+   *  generation's postings file (read-only opens attach the same way — the
+   *  file is only ever read). */
+  attachImage(args: {
+    postingsPath: string;
+    dict: Map<string, PostingEntry>;
+    keys: (string | undefined)[];
+    docLens: Map<number, number>;
+    liveCount: number;
+    removed: Set<number>;
+    delta: Map<string, Map<number, number>>;
+  }): void {
+    this.close(); // release any previous postings handle
+    this.memBase = null;
+    this.postings.clear();
+    for (const [t, e] of args.dict) this.postings.set(t, e);
+    this.pf = PostingsFile.open(args.postingsPath);
+    this.docLen.clear();
+    for (const [id, len] of args.docLens) this.docLen.set(id, len);
+    this.keys.length = 0;
+    for (const k of args.keys) this.keys.push(k);
+    this.keyToId.clear();
+    for (let i = 0; i < this.keys.length; i++) {
+      const k = this.keys[i];
+      if (k !== undefined) this.keyToId.set(k, i);
+    }
+    this.delta.clear();
+    this.deltaDocs.clear();
+    this.deltaCount = 0;
+    for (const [t, m] of args.delta) {
+      this.delta.set(t, m);
+      for (const [id] of m) {
+        this.deltaCount++;
+        let s = this.deltaDocs.get(id);
+        if (!s) this.deltaDocs.set(id, (s = new Set()));
+        s.add(t);
+      }
+    }
+    this.removed.clear();
+    for (const id of args.removed) this.removed.add(id);
+    this.cache.clear();
+    this.N = args.liveCount;
+  }
+
+  /** Stage-5 generation build: after the atomic publish rename, repoint the
+   *  live base handle from the build's tmp directory to the published
+   *  generation directory (same file, final name). On Windows an open handle
+   *  would have blocked the directory rename, so the caller closes before the
+   *  rename and reopens here; POSIX just updates the path (the fd stays valid
+   *  across the rename). A reopen failure degrades reads to delta-only until
+   *  the next build, exactly like commitBuild's reopen failure. */
+  repointPostings(newPath: string): void {
+    if (!this.pf) return;
+    if (process.platform === 'win32') {
+      this.pf.close();
+      this.pf = null;
+      try {
+        this.pf = PostingsFile.open(newPath);
+      } catch {
+        /* degrade to delta-only reads; the next successful build fixes it */
+      }
+      return;
+    }
+    this.pf.path = newPath;
+  }
+
   /** Close the underlying postings file. */
   close(): void {
     if (this.pf) {
@@ -736,13 +854,14 @@ export class TextIndex {
   }
 }
 
-/** Yield `{ term, entries }` with entries sorted by docID ascending (they are
- *  already in insertion order, which equals ascending docID during build). */
+/** Yield `{ term, entries }` with entries sorted by docID ascending: the agg
+ *  maps' insertion order already IS ascending docID (docIDs increase
+ *  monotonically during a build), so the Map itself is yielded — never a
+ *  per-term spread, which was an OOM vector on million-entry lists. */
 function* aggToSorted(
   agg: Map<string, Map<number, number>>,
-): Generator<{ term: string; entries: readonly (readonly [number, number])[] }> {
+): Generator<{ term: string; entries: ReadonlyMap<number, number> }> {
   for (const [term, m] of agg) {
-    const entries = [...m];
-    yield { term, entries };
+    yield { term, entries: m };
   }
 }

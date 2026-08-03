@@ -8,33 +8,36 @@
 // meta) lives in frameToOps so that open-time recovery and read-replica WAL
 // catch-up (catchUpWal) can never drift apart.
 //
-// GENERATION PAIRING (stat-pairing — a TRANSITIONAL implementation; stage
-// 5's generations/ manifest replaces it with a generation-id comparison,
-// with the replacement confined to recoverPass/sameGeneration and the
-// attachValueReader hook below). MiniDb's disk state is a compound document:
-// a compaction rotation swaps db.snapshot and db.wal in two renames, and a
-// read-only opener that scans the two files unpaired can combine the OLD
-// snapshot with the NEW truncated WAL — silently losing the data the
-// snapshot had absorbed, and (in disk mode) reading values back through
-// offsets that point into the wrong inode (review #15). recover() therefore
-// runs bounded passes: each pass fingerprints both files (dev/ino/size of
-// the opened fd BEFORE scanning it, a path re-stat AFTER the last read), and
-// any generation switch — an inode change, a size shrink, a file appearing
-// or disappearing mid-pass — discards the pass's whole result and retries
-// with exponential backoff. A WAL that merely GREW on the same inode is safe
-// (append-only; the extra frames are a natural staleness window that
-// catch-up covers). Exhausting the retries throws
+// GENERATION PAIRING (stat-pairing — the LEGACY fallback path). MiniDb's
+// disk state is a compound document: a compaction rotation swaps db.snapshot
+// and db.wal in two renames, and a read-only opener that scans the two files
+// unpaired can combine the OLD snapshot with the NEW truncated WAL — silently
+// losing the data the snapshot had absorbed, and (in disk mode) reading
+// values back through offsets that point into the wrong inode (review #15).
+// recover() therefore runs bounded passes: each pass fingerprints both files
+// (dev/ino/size of the opened fd BEFORE scanning it, a path re-stat AFTER the
+// last read), and any generation switch — an inode change, a size shrink, a
+// file appearing or disappearing mid-pass — discards the pass's whole result
+// and retries with exponential backoff. A WAL that merely GREW on the same
+// inode is safe (append-only; the extra frames are a natural staleness window
+// that catch-up covers). Exhausting the retries throws
 // RecoveryGenerationChurnError. The writer's own open walks the same code
 // path but is naturally stable (it holds the write lock, and compaction only
 // starts after recovery completes), so it costs two extra stat calls and
 // changes zero behavior.
+//
+// Stage 5 supersedes this for the common case: when a published persistent
+// index generation exists (generations/ + CURRENT, see generation.ts), open
+// loads it and replays only the WAL delta past its checkpoint, and this full
+// scan runs only as the fallback — for legacy databases, a missing/invalid
+// generation, or a rotated-away WAL anchor.
 
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
 import { scanFrameRefsFd, scanBatchOpRefs, TYPE_SET, TYPE_DEL, TYPE_BATCH, MAGIC } from './codec.js';
 import type { FrameRef } from './codec.js';
-import { SNAPSHOT_FILE, WAL_FILE } from './persistent-files.js';
+import { SNAPSHOT_FILE, WAL_FILE } from './generation.js';
 import type { Store, ValueLoc, ValueRef } from './store.js';
 
 export type RecoveryMode = 'resync' | 'strict';
@@ -68,6 +71,16 @@ export interface RecoveryInfo {
   /** Generation-churn retries recovery needed before it paired a consistent
    *  snapshot/WAL set (0 on a stable directory — see the file header). */
   generationRetries: number;
+  /** Stage 5: set when this recovery was served by a persistent index
+   *  generation instead of the full snapshot/WAL scan + index rebuild. The
+   *  generation id, the WAL checkpoint it covered (frames at/after it were
+   *  replayed on top), and the store-image record count. */
+  indexGeneration?: { id: string; walCheckpoint: number; records: number };
+  /** Stage 5, generation loads only: how many primitive ops the WAL-delta
+   *  replay applied on top of the loaded generation (drives the open-time
+   *  background-refresh decision — a large delta means the checkpoint is
+   *  stale and worth rebuilding in the background). */
+  walDeltaAppliedOps?: number;
 }
 
 function readAtSync(fd: number, off: number, len: number): Buffer {

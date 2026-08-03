@@ -1,11 +1,13 @@
 // src/index-manager.ts
 //
-// Secondary indexes over JSON documents. Indexes are pure in-memory derived
-// state (the WAL/store is the source of truth); they are rebuilt from the store
-// on startup.
+// Secondary indexes over JSON documents. Indexes are derived state (the
+// WAL/store is the source of truth): on open they are restored from the
+// published index generation (stage 5) or, as the fallback, rebuilt from the
+// store wholesale; individual indexes are rebuilt on definition changes.
 
 import { SkipList, cmpNumber, cmpString } from './skiplist.js';
 import type { RangeOptions } from './skiplist.js';
+import type { SecondaryImageIndex } from './gen-codec.js';
 
 export type IndexType = 'equality' | 'range';
 
@@ -472,5 +474,72 @@ export class IndexManager {
         }
       },
     };
+  }
+
+  /** Stage-5 generation: export every LIVE index's full state (equality maps
+   *  and range lists in ascending order) for image serialization. */
+  exportImage(): SecondaryImageIndex[] {
+    const out: SecondaryImageIndex[] = [];
+    for (const idx of this.indexes.values()) {
+      if (idx.type === 'range') {
+        out.push({
+          name: idx.name,
+          field: idx.field,
+          type: 'range',
+          unique: idx.unique,
+          sparse: idx.sparse,
+          equality: null,
+          range: idx.list.toArray().map((n) => ({ value: n.key, pk: n.val })),
+        });
+      } else {
+        out.push({
+          name: idx.name,
+          field: idx.field,
+          type: 'equality',
+          unique: idx.unique,
+          sparse: idx.sparse,
+          equality: [...idx.map.entries()].map(([scalarKey, set]) => ({ scalarKey, pks: [...set] })),
+          range: null,
+        });
+      }
+    }
+    return out;
+  }
+
+  /** Replace ONE live index's state from a loaded generation image (the
+   *  caller already matched the definition hash). Range lists are bulk-built
+   *  in O(N); byPk reverse maps are derived from the forward state. */
+  loadImage(image: SecondaryImageIndex): void {
+    const idx = this.indexes.get(image.name);
+    if (!idx) throw new Error(`no such index: ${image.name}`);
+    if (idx.type !== image.type) throw new Error(`index "${image.name}" image type mismatch`);
+    if (idx.type === 'range' && image.range) {
+      idx.list = SkipList.bulkLoad<number, string>(
+        image.range.map((e) => ({ key: e.value, val: e.pk })),
+        { compareKey: cmpNumber, compareVal: cmpString },
+      );
+      const byPk = new Map<string, number[]>();
+      for (const e of image.range) {
+        const arr = byPk.get(e.pk);
+        if (arr) arr.push(e.value);
+        else byPk.set(e.pk, [e.value]);
+      }
+      idx.byPk = byPk;
+    } else if (idx.type === 'equality' && image.equality) {
+      const map = new Map<string, Set<string>>();
+      const byPk = new Map<string, string[]>();
+      for (const v of image.equality) {
+        map.set(v.scalarKey, new Set(v.pks));
+        for (const pk of v.pks) {
+          const arr = byPk.get(pk);
+          if (arr) arr.push(v.scalarKey);
+          else byPk.set(pk, [v.scalarKey]);
+        }
+      }
+      idx.map = map;
+      idx.byPk = byPk;
+    } else {
+      throw new Error(`index "${image.name}" image payload missing`);
+    }
   }
 }

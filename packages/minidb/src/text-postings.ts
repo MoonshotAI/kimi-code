@@ -58,12 +58,16 @@ function decodeVarint(buf: Buffer, cur: { i: number }): number {
 
 // ---- posting list codec ---------------------------------------------------
 
-/** Encode a sorted (by docID asc) list of [docID, freq] pairs. */
-export function encodePostingList(entries: readonly (readonly [number, number])[]): Buffer {
+/** Encode a sorted (by docID asc) list of [docID, freq] pairs. Accepts any
+ *  sized iterable (an array or a Map's entries view) so a large build never
+ *  materializes a per-term copy — a hot term's list can have millions of
+ *  entries and spreading it was an OOM vector. */
+export function encodePostingList(entries: ReadonlyMap<number, number> | readonly (readonly [number, number])[]): Buffer {
+  const count = Array.isArray(entries) ? (entries as readonly unknown[]).length : (entries as ReadonlyMap<number, number>).size;
   const bytes: number[] = [];
-  encodeVarintInto(entries.length, bytes);
+  encodeVarintInto(count, bytes);
   let prev = 0;
-  for (const [docID, freq] of entries) {
+  for (const [docID, freq] of entries as Iterable<readonly [number, number]>) {
     encodeVarintInto(docID - prev, bytes);
     encodeVarintInto(freq, bytes);
     prev = docID;
@@ -163,7 +167,15 @@ export interface PostingEntry {
 export class PostingsFile {
   private fd: number | null = null;
 
-  private constructor(readonly path: string) {}
+  /** The path this handle reads. Mutable for exactly one caller: stage 5's
+   *  generation builder repoints a freshly committed base from the build's
+   *  tmp directory to the published generation directory after the atomic
+   *  rename (same file, new name — POSIX keeps the fd valid throughout). */
+  path: string;
+
+  private constructor(filePath: string) {
+    this.path = filePath;
+  }
 
   /**
    * Open an existing postings file for positioned reads. Throws if the file is
@@ -207,9 +219,11 @@ export class PostingsFile {
   /**
    * Build a fresh postings file from an iterator of `{ term, entries }`
    * (entries must be sorted by docID asc). Writes to `<path>.tmp`, fsyncs, and
-   * atomically renames over `<path>`. Returns the new term dictionary. The old
-   * file (if any) is replaced only after the new one is fully durable, so a
-   * crash mid-build leaves the previous file intact.
+   * atomically renames over `<path>`. Returns the new term dictionary plus the
+   * file's byte length and whole-file crc32 (stage 5's generation manifest
+   * records them; the crc streams along with the write batches, so it costs no
+   * extra read). The old file (if any) is replaced only after the new one is
+   * fully durable, so a crash mid-build leaves the previous file intact.
    *
    * Async so a large rebuild does not starve the event loop: record writes are
    * coalesced into ~1 MiB writev batches (each batch await is a yield point).
@@ -219,12 +233,13 @@ export class PostingsFile {
    */
   static async rebuild(
     filePath: string,
-    iter: Iterable<{ term: string; entries: readonly (readonly [number, number])[] }>,
+    iter: Iterable<{ term: string; entries: ReadonlyMap<number, number> | readonly (readonly [number, number])[] }>,
     hooks: { beforeRename?: () => void } = {},
-  ): Promise<Map<string, PostingEntry>> {
+  ): Promise<{ dict: Map<string, PostingEntry>; bytes: number; crc32: number }> {
     const tmp = filePath + '.tmp';
     const dict = new Map<string, PostingEntry>();
     let off = 0;
+    let crc = 0;
     let batch: Buffer[] = [];
     let batchBytes = 0;
     const fh = await fsp.open(tmp, 'w');
@@ -233,6 +248,7 @@ export class PostingsFile {
       const buf = Buffer.concat(batch);
       batch = [];
       batchBytes = 0;
+      crc = crc32(buf, crc);
       let written = 0;
       while (written < buf.length) {
         const { bytesWritten } = await fh.write(buf, written);
@@ -242,10 +258,11 @@ export class PostingsFile {
     };
     try {
       for (const { term, entries } of iter) {
-        if (entries.length === 0) continue;
+        const count = Array.isArray(entries) ? (entries as readonly unknown[]).length : (entries as ReadonlyMap<number, number>).size;
+        if (count === 0) continue;
         const payload = encodePostingList(entries);
-        const rec = encodeRecord(term, entries.length, payload);
-        dict.set(term, { off, len: rec.length, df: entries.length });
+        const rec = encodeRecord(term, count, payload);
+        dict.set(term, { off, len: rec.length, df: count });
         batch.push(rec);
         batchBytes += rec.length;
         off += rec.length;
@@ -269,6 +286,6 @@ export class PostingsFile {
     } catch {
       /* some platforms disallow fsync on a directory */
     }
-    return dict;
+    return { dict, bytes: off, crc32: crc >>> 0 };
   }
 }

@@ -70,7 +70,7 @@ test('PostingsFile: rebuild + positioned read', async () => {
   const dir = await tmpDir();
   try {
     const p = path.join(dir, 'x.postings');
-    const dict = await PostingsFile.rebuild(p, [
+    const { dict } = await PostingsFile.rebuild(p, [
       {
         term: 'hello',
         entries: [
@@ -104,7 +104,7 @@ test('PostingsFile: rebuild + positioned read', async () => {
     pf.close();
 
     // rebuild is atomic: a second rebuild replaces the file and dict.
-    const dict2 = await PostingsFile.rebuild(p, [{ term: 'only', entries: [[7, 1]] }]);
+    const { dict: dict2 } = await PostingsFile.rebuild(p, [{ term: 'only', entries: [[7, 1]] }]);
     assert.equal(dict2.size, 1);
     const pf2 = PostingsFile.open(p);
     assert.deepEqual(pf2.read(dict2.get('only')!), [[7, 1]]);
@@ -118,7 +118,7 @@ test('PostingsFile: corrupt record throws on read', async () => {
   const dir = await tmpDir();
   try {
     const p = path.join(dir, 'x.postings');
-    const dict = await PostingsFile.rebuild(p, [{ term: 'a', entries: [[1, 1]] }]);
+    const { dict } = await PostingsFile.rebuild(p, [{ term: 'a', entries: [[1, 1]] }]);
     // flip a byte in the file payload
     const e = dict.get('a')!;
     const fd = fssync.openSync(p, 'r+');
@@ -291,30 +291,49 @@ test('MiniDb: text postings written to disk, search survives reopen', async () =
   }
 });
 
-test('MiniDb: compaction rebuilds postings (file reclaimed)', async () => {
-  const dir = await tmpDir();
-  try {
-    const db = await MiniDb.open({ dir, valueCodec: 'json', autoCompact: false });
-    await db.createTextIndex('bio', { fields: ['bio'] });
-    for (let i = 0; i < 50; i++) await db.set('k' + i, { bio: 'hello world ' + i });
-    const p = path.join(dir, 'db.text-bio.postings');
-    assert.ok(fssync.existsSync(p));
-    // overwrite everything to create tombstones, then add more (delta grows)
-    for (let i = 0; i < 50; i++) await db.set('k' + i, { bio: 'goodbye world ' + i });
-    for (let i = 50; i < 80; i++) await db.set('k' + i, { bio: 'hello again ' + i });
+for (const indexGenerations of [false, true]) {
+  test(`MiniDb: compaction rebuilds postings (file reclaimed) [indexGenerations: ${indexGenerations}]`, async () => {
+    const dir = await tmpDir();
+    try {
+      const db = await MiniDb.open({ dir, valueCodec: 'json', autoCompact: false, indexGenerations });
+      await db.createTextIndex('bio', { fields: ['bio'] });
+      for (let i = 0; i < 50; i++) await db.set('k' + i, { bio: 'hello world ' + i });
+      const p = path.join(dir, 'db.text-bio.postings');
+      if (indexGenerations) {
+        // The background generation build may already have re-published the
+        // base (root file reclaimed) — either location proves persistence.
+        const inGen = fssync.existsSync(path.join(dir, 'CURRENT'));
+        assert.ok(fssync.existsSync(p) || inGen, 'postings persisted (root or generation)');
+      } else {
+        assert.ok(fssync.existsSync(p));
+      }
+      // overwrite everything to create tombstones, then add more (delta grows)
+      for (let i = 0; i < 50; i++) await db.set('k' + i, { bio: 'goodbye world ' + i });
+      for (let i = 50; i < 80; i++) await db.set('k' + i, { bio: 'hello again ' + i });
 
-    await db.compact(); // should rebuild postings from the live store
+      await db.compact(); // should rebuild postings from the live store
 
-    // after compaction the postings reflect the latest values only
-    assert.equal(db.search('bio', 'hello').length, 30); // k50..k79
-    assert.equal(db.search('bio', 'goodbye').length, 50); // k0..k49
-    await db.close();
-  } finally {
-    await fs.rm(dir, { recursive: true, force: true });
-  }
-});
+      // after compaction the postings reflect the latest values only
+      assert.equal(db.search('bio', 'hello').length, 30); // k50..k79
+      assert.equal(db.search('bio', 'goodbye').length, 50); // k0..k49
+      if (indexGenerations) {
+        // The base moved into the published generation: the legacy root file
+        // is reclaimed and CURRENT's generation carries the fresh postings.
+        assert.ok(!fssync.existsSync(p), 'root postings reclaimed after generation publish');
+        const gen = db.getIndexGeneration()!;
+        assert.ok(gen, 'compaction published a generation');
+        assert.ok(fssync.existsSync(path.join(dir, 'generations', gen.id, 'text-bio.postings')), 'postings live in the generation');
+      } else {
+        assert.ok(fssync.existsSync(p), 'legacy path keeps the root postings file');
+      }
+      await db.close();
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+}
 
-test('MiniDb: compaction skips the postings rebuild when the index is clean', async () => {
+test('MiniDb: compaction skips the postings rebuild when the index is clean [legacy]', async () => {
   const dir = await tmpDir();
   // Count TextIndex.build calls to prove which compactions rebuilt postings.
   const orig = TextIndex.prototype.build;
@@ -324,7 +343,7 @@ test('MiniDb: compaction skips the postings rebuild when the index is clean', as
     return orig.apply(this, args);
   } as typeof orig;
   try {
-    const db = await MiniDb.open({ dir, valueCodec: 'json', autoCompact: false });
+    const db = await MiniDb.open({ dir, valueCodec: 'json', autoCompact: false, indexGenerations: false });
     await db.createTextIndex('bio', { fields: ['bio'] }); // build #1
     await db.set('a', { bio: 'hello world' });
     await db.compact(); // delta dirty -> rebuild #2
@@ -338,49 +357,76 @@ test('MiniDb: compaction skips the postings rebuild when the index is clean', as
   }
 });
 
-test('MiniDb: writes during a compaction postings rebuild stay consistent', async () => {
+test('MiniDb: compaction skips the postings rebuild when the index is clean [generation]', async () => {
   const dir = await tmpDir();
-  // Deterministic barrier instead of the old "3000 docs keep the compaction
-  // busy long enough" timing inference (review #28): the compaction's
-  // postings rebuild (TextIndex.build) is parked on a deferred, so the writes
-  // PROVABLY land while the rebuild is in flight, and each write's promise is
-  // explicitly settled instead of fire-and-forget. The barrier arms AFTER
-  // createTextIndex so its call 1 is the compaction rebuild, not the create.
-  let gate!: ReturnType<typeof barrier>;
+  // Same skip, generation style: the clean index is re-published by hard
+  // link, so PostingsFile.rebuild (the actual postings rewrite) runs only
+  // for the create and the one DIRTY compaction.
+  const orig = PostingsFile.rebuild;
+  let rebuilds = 0;
+  PostingsFile.rebuild = async function (...args) {
+    rebuilds++;
+    return orig.apply(this, args);
+  } as typeof orig;
   try {
     const db = await MiniDb.open({ dir, valueCodec: 'json', autoCompact: false });
-    await db.createTextIndex('bio', { fields: ['bio'] });
-    for (let i = 0; i < 50; i++) await db.set(`d${i}`, { bio: `hello doc${i}` });
-
-    gate = barrier(TextIndex.prototype, 'build');
-    const compactP = db.compact();
-    await gate.entered; // the compaction is provably inside the postings rebuild
-    const writes = Promise.all([
-      db.set('extra', { bio: 'hello extra' }),
-      db.set('d0', { bio: 'goodbye replaced' }),
-      db.del('d1'),
-    ]);
-    gate.release();
-    await writes;
-    await compactP;
-    assert.equal(db.stats.compactions, 1);
-
-    assert.equal(db.search('bio', 'hello', { limit: 10_000 }).length, 49);
-    assert.deepEqual(db.search('bio', 'extra').map((h) => h.key), ['extra']);
-    assert.deepEqual(db.search('bio', 'goodbye').map((h) => h.key), ['d0']);
-    assert.deepEqual(db.search('bio', 'doc1').map((h) => h.key), []);
+    await db.createTextIndex('bio', { fields: ['bio'] }); // rewrite #1
+    await db.set('a', { bio: 'hello world' });
+    await db.compact(); // delta dirty -> generation build rewrites postings (#2)
+    await db.compact(); // clean now -> re-published by link, no rewrite
+    assert.equal(rebuilds, 2);
+    assert.deepEqual(db.search('bio', 'hello').map((h) => h.key), ['a']);
     await db.close();
-
-    // The mid-compaction writes are durable and consistent across a reopen.
-    const db2 = await MiniDb.open({ dir, valueCodec: 'json' });
-    assert.equal(db2.search('bio', 'hello', { limit: 10_000 }).length, 49);
-    assert.deepEqual(db2.search('bio', 'extra').map((h) => h.key), ['extra']);
-    await db2.close();
   } finally {
-    gate?.restore();
+    PostingsFile.rebuild = orig;
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+for (const indexGenerations of [false, true]) {
+  test(`MiniDb: writes during a compaction postings rebuild stay consistent [indexGenerations: ${indexGenerations}]`, async () => {
+    const dir = await tmpDir();
+    // Deterministic barrier instead of the old "3000 docs keep the compaction
+    // busy long enough" timing inference (review #28): the compaction's
+    // derived-state rebuild is parked on a deferred, so the writes PROVABLY
+    // land while it is in flight, and each write's promise is explicitly
+    // settled instead of fire-and-forget. The barrier arms AFTER
+    // createTextIndex so its call 1 is the compaction rebuild, not the
+    // create. On the legacy path the rebuild is TextIndex.build; with
+    // generations it is the staged build's PostingsFile.rebuild inside the
+    // generation publish.
+    let gate!: ReturnType<typeof barrier>;
+    try {
+      const db = await MiniDb.open({ dir, valueCodec: 'json', autoCompact: false, indexGenerations });
+      await db.createTextIndex('bio', { fields: ['bio'] });
+      for (let i = 0; i < 50; i++) await db.set(`d${i}`, { bio: `hello doc${i}` });
+
+      gate = indexGenerations ? barrier(PostingsFile, 'rebuild') : barrier(TextIndex.prototype, 'build');
+      const compactP = db.compact();
+      await gate.entered; // the compaction is provably inside the postings rebuild
+      const writes = Promise.all([db.set('extra', { bio: 'hello extra' }), db.set('d0', { bio: 'goodbye replaced' }), db.del('d1')]);
+      gate.release();
+      await writes;
+      await compactP;
+      assert.equal(db.stats.compactions, 1);
+
+      assert.equal(db.search('bio', 'hello', { limit: 10_000 }).length, 49);
+      assert.deepEqual(db.search('bio', 'extra').map((h) => h.key), ['extra']);
+      assert.deepEqual(db.search('bio', 'goodbye').map((h) => h.key), ['d0']);
+      assert.deepEqual(db.search('bio', 'doc1').map((h) => h.key), []);
+      await db.close();
+
+      // The mid-compaction writes are durable and consistent across a reopen.
+      const db2 = await MiniDb.open({ dir, valueCodec: 'json' });
+      assert.equal(db2.search('bio', 'hello', { limit: 10_000 }).length, 49);
+      assert.deepEqual(db2.search('bio', 'extra').map((h) => h.key), ['extra']);
+      await db2.close();
+    } finally {
+      gate?.restore();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+}
 
 // ---- trigram (n-gram literal tokenizer) ------------------------------------
 

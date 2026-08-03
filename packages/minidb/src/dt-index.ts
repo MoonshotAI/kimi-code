@@ -2,11 +2,13 @@
 //
 // Ordered indexes over declared datetime columns (dt1..dtN). Each column is a
 // SkipList ordered by epoch-ms (numeric) with the record key as tie-break, giving
-// O(log N) range / rank on every dt column. Pure in-memory derived state; rebuilt
-// from the store on startup.
+// O(log N) range / rank on every dt column. Derived state: restored from the
+// published index generation on open (stage 5) or rebuilt from the store as
+// the fallback.
 
 import { SkipList, cmpNumber, cmpString } from './skiplist.js';
 import type { RangeEntry } from './skiplist.js';
+import type { DtImageColumn } from './gen-codec.js';
 
 interface DtColumn {
   list: SkipList<number, string>;
@@ -100,6 +102,38 @@ export class DtIndex {
     const b = this.beginRebuild();
     for (const { key, dt } of entries) b.add(key, dt);
     b.commit();
+  }
+
+  /** Stage-5 generation: export the whole index as columns with entries in
+   *  ascending (ms, key) order — the image serialization order. */
+  exportImage(): DtImageColumn[] {
+    return [...this.cols.entries()].map(([name, c]) => ({
+      name,
+      entries: c.list.toArray().map((n: RangeEntry<number, string>) => ({ ms: n.key, key: n.val })),
+    }));
+  }
+
+  /** Replace the whole index from a loaded generation image: the columns are
+   *  bulk-built (O(N)) and the byKey reverse map is derived from them. */
+  loadImage(cols: DtImageColumn[]): void {
+    const nextCols = new Map<string, DtColumn>();
+    const nextByKey = new Map<string, Record<string, number>>();
+    for (const { name, entries } of cols) {
+      const list = SkipList.bulkLoad<number, string>(
+        entries.map((e) => ({ key: e.ms, val: e.key })),
+        { compareKey: cmpNumber, compareVal: cmpString },
+      );
+      const byKey = new Map<string, number>();
+      for (const e of entries) {
+        byKey.set(e.key, e.ms);
+        const rec = nextByKey.get(e.key) ?? {};
+        rec[name] = e.ms;
+        nextByKey.set(e.key, rec);
+      }
+      nextCols.set(name, { list, byKey });
+    }
+    this.cols = nextCols;
+    this.byKey = nextByKey;
   }
 
   /** Stage a rebuild in fresh state and swap it in on commit(), so a rebuild

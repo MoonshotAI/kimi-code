@@ -247,7 +247,7 @@ function swapWalInodeSync(real: FsSyncModule, walPath: string): void {
 test('generation pairing: a rotation-like WAL inode swap at the post-scan forensics is retried to a consistent read-only open', async () => {
   const dir = await tmpDir();
   try {
-    const writer = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false });
+    const writer = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false, indexGenerations: false });
     for (let i = 0; i < 50; i++) await writer.set(`k${i}`, `v${i}`);
 
     // The injection fires when recover takes its post-scan path stat of
@@ -265,7 +265,7 @@ test('generation pairing: a rotation-like WAL inode swap at the post-scan forens
       },
     });
     const { MiniDb: MockedMiniDb } = await import('../src/index.js');
-    const reader = await MockedMiniDb.open<string>({ dir, valueCodec: 'string', readOnly: true });
+    const reader = await MockedMiniDb.open<string>({ dir, valueCodec: 'string', readOnly: true, indexGenerations: false });
     assert.equal(swaps, 1);
     assert.equal(reader.recoveryInfo!.generationRetries, 1, 'the swapped inode forced exactly one retry');
     assert.equal(reader.size, 50);
@@ -281,7 +281,7 @@ test('generation pairing: a rotation-like WAL inode swap at the post-scan forens
 test('generation pairing: churn beyond the retry budget throws RECOVERY_GENERATION_CHURN and leaves no partial state', async () => {
   const dir = await tmpDir();
   try {
-    const writer = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false });
+    const writer = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false, indexGenerations: false });
     for (let i = 0; i < 50; i++) await writer.set(`k${i}`, `v${i}`);
     await writer.close();
 
@@ -297,7 +297,7 @@ test('generation pairing: churn beyond the retry budget throws RECOVERY_GENERATI
     });
     const { MiniDb: MockedMiniDb } = await import('../src/index.js');
     await assert.rejects(
-      MockedMiniDb.open<string>({ dir, valueCodec: 'string', readOnly: true }),
+      MockedMiniDb.open<string>({ dir, valueCodec: 'string', readOnly: true, indexGenerations: false }),
       (e: unknown) =>
         (e as { code?: string }).code === 'RECOVERY_GENERATION_CHURN' && (e as Error).name === 'RecoveryGenerationChurnError',
     );
@@ -318,7 +318,7 @@ test('generation pairing: churn beyond the retry budget throws RECOVERY_GENERATI
 test('generation pairing: append-only WAL growth between the forensic rounds does not trigger a retry', async () => {
   const dir = await tmpDir();
   try {
-    const writer = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false });
+    const writer = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false, indexGenerations: false });
     for (let i = 0; i < 50; i++) await writer.set(`k${i}`, `v${i}`);
     await writer.close();
 
@@ -334,7 +334,7 @@ test('generation pairing: append-only WAL growth between the forensic rounds doe
       },
     });
     const { MiniDb: MockedMiniDb } = await import('../src/index.js');
-    const reader = await MockedMiniDb.open<string>({ dir, valueCodec: 'string', readOnly: true });
+    const reader = await MockedMiniDb.open<string>({ dir, valueCodec: 'string', readOnly: true, indexGenerations: false });
     assert.equal(reader.recoveryInfo!.generationRetries, 0, 'append-only growth must not be retried');
     assert.equal(reader.size, 50);
     // The late frame landed after the scan: outside the recovered view, to be
@@ -369,7 +369,7 @@ test('generation pairing (disk mode): a ValueReader attach to the wrong inode re
       },
     });
     const { MiniDb: MockedMiniDb } = await import('../src/index.js');
-    const reader = await MockedMiniDb.open<string>({ dir, valueCodec: 'string', valueMode: 'disk', readOnly: true });
+    const reader = await MockedMiniDb.open<string>({ dir, valueCodec: 'string', valueMode: 'disk', readOnly: true, indexGenerations: false });
     assert.equal(swaps, 1);
     assert.equal(reader.recoveryInfo!.generationRetries, 1, 'the mismatched attach forced exactly one retry');
     // Every pointer reads back the right bytes through the correctly-attached
@@ -412,7 +412,7 @@ test('generation pairing (disk mode): a failing ValueReader open() closes the pa
     };
     try {
       await assert.rejects(
-        MockedMiniDb.open<string>({ dir, valueCodec: 'string', valueMode: 'disk', readOnly: true }),
+        MockedMiniDb.open<string>({ dir, valueCodec: 'string', valueMode: 'disk', readOnly: true, indexGenerations: false }),
         (e: unknown) => (e as { code?: string }).code === 'EMFILE',
       );
     } finally {
@@ -433,7 +433,7 @@ test('generation pairing (disk mode): a failing ValueReader open() closes the pa
 test('generation pairing: a stable writer costs a read-only open zero retries', async () => {
   const dir = await tmpDir();
   try {
-    const writer = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false });
+    const writer = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false, indexGenerations: false });
     for (let i = 0; i < 20; i++) await writer.set(`k${i}`, `v${i}`);
 
     const reader = await MiniDb.open<string>({ dir, valueCodec: 'string', readOnly: true });
@@ -471,7 +471,7 @@ test('a read-only open racing a compaction rotation always recovers one complete
   const { MiniDb: MockedMiniDb } = await import('../src/index.js');
   const dir = await tmpDir();
   try {
-    const writer = await MockedMiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false });
+    const writer = await MockedMiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false, indexGenerations: false });
     const N = 100;
     for (let i = 0; i < N; i++) await writer.set(`k${i}`, `v${i}`);
 
@@ -481,7 +481,7 @@ test('a read-only open racing a compaction rotation always recovers one complete
     // The reader opens in the mid-rotation window: new snapshot + old full
     // WAL is a complete, consistent pairing (the replay is idempotent), and
     // the stable window costs no retry.
-    const midReader = await MockedMiniDb.open<string>({ dir, valueCodec: 'string', readOnly: true });
+    const midReader = await MockedMiniDb.open<string>({ dir, valueCodec: 'string', readOnly: true, indexGenerations: false });
     assert.equal(midReader.size, N);
     assert.equal(midReader.get('k0'), 'v0');
     assert.equal(midReader.get(`k${N - 1}`), `v${N - 1}`);
@@ -492,7 +492,7 @@ test('a read-only open racing a compaction rotation always recovers one complete
     await compactPromise;
 
     // After the rotation, a fresh open recovers the new generation, complete.
-    const postReader = await MockedMiniDb.open<string>({ dir, valueCodec: 'string', readOnly: true });
+    const postReader = await MockedMiniDb.open<string>({ dir, valueCodec: 'string', readOnly: true, indexGenerations: false });
     assert.equal(postReader.size, N);
     assert.equal(postReader.get('k0'), 'v0');
     assert.equal(postReader.get(`k${N - 1}`), `v${N - 1}`);

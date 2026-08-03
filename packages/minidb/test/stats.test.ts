@@ -152,13 +152,15 @@ test('everysec background sync failure is observable in stats but does not chang
 
 test('recovery stats capture scanned bytes, frames and duration at open', async () => {
   const dir = await tmpDir();
-  const db = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false });
+  // Legacy recovery path (indexGenerations: false): a generation load would
+  // report the store image + WAL delta instead of the full scan.
+  const db = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false, indexGenerations: false });
   const N = 50;
   for (let i = 0; i < N; i++) await db.set(`k${i}`, `v${i}`);
   await db.close();
 
   const walBytes = (await fs.stat(path.join(dir, 'db.wal'))).size;
-  const reopened = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false });
+  const reopened = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false, indexGenerations: false });
   try {
     assert.equal(reopened.stats.recoveryFrames, N, 'one frame per set replayed');
     assert.equal(reopened.stats.recoveryBytes, walBytes, 'WAL bytes accounted (no snapshot yet)');
@@ -232,10 +234,10 @@ test('index rebuild stats: values decoded once per record, 0 without value-deriv
   // No secondary/compound/text index: the open-time rebuild walk must be
   // metadata-only (dt comes from record metadata, values are never decoded).
   const dir = await tmpDir();
-  let db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+  let db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false, indexGenerations: false });
   for (let i = 0; i < 20; i++) await db.set(`k${i}`, { n: i }, { dt: { created: i } });
   await db.close();
-  db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+  db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false, indexGenerations: false });
   try {
     assert.equal(db.stats.indexRebuildDecoded, 0, 'no decodes without value-derived indexes');
     assert.equal(db.dtRange('created', { gte: 0 }).length, 20, 'dt index rebuilt from metadata alone');
@@ -247,14 +249,14 @@ test('index rebuild stats: values decoded once per record, 0 without value-deriv
   // With several value-derived indexes: exactly one decode per live record,
   // fanned out to every staged builder in the shared walk.
   const dir2 = await tmpDir();
-  db = await MiniDb.open({ dir: dir2, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+  db = await MiniDb.open({ dir: dir2, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false, indexGenerations: false });
   await db.createTextIndex('body', { fields: ['body'] });
   await db.createTextIndex('title', { fields: ['title'] });
   await db.createIndex('byN', { field: 'n' });
   await db.createCompoundIndex('byGrpN', { groupBy: 'grp', orderBy: 'n' });
   for (let i = 0; i < 20; i++) await db.set(`k${i}`, { n: i, grp: 'g', body: `b${i}`, title: `t${i}` });
   await db.close();
-  db = await MiniDb.open({ dir: dir2, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+  db = await MiniDb.open({ dir: dir2, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false, indexGenerations: false });
   try {
     assert.equal(db.stats.indexRebuildDecoded, 20, 'one decode per record fanned out to all builders');
     assert.equal(db.search('body', 'b1').length, 1);

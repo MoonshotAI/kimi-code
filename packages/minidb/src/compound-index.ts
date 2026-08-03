@@ -10,6 +10,7 @@
 
 import { SkipList, cmpNumber, cmpString } from './skiplist.js';
 import type { Comparator, RangeOptions } from './skiplist.js';
+import type { CompoundImageIndex } from './gen-codec.js';
 
 export type OrderType = 'number' | 'string';
 
@@ -233,5 +234,62 @@ export class CompoundIndexManager {
         }
       },
     };
+  }
+
+  /** Stage-5 generation: export every LIVE compound index's full state for
+   *  image serialization (group entries in ascending (order, pk) order).
+   *  Indexes whose group values include a non-serializable type (objects —
+   *  Map identity semantics cannot survive a round-trip) are SKIPPED and
+   *  named in `skipped`; the loader rebuilds those from the store. */
+  exportImage(): { images: CompoundImageIndex[]; skipped: string[] } {
+    const images: CompoundImageIndex[] = [];
+    const skipped: string[] = [];
+    for (const [name, entry] of this.indexes) {
+      let serializable = true;
+      const groups: CompoundImageIndex['groups'] = [];
+      for (const [group, list] of entry.groups) {
+        const t = typeof group;
+        if (group !== null && t !== 'number' && t !== 'string' && t !== 'boolean') {
+          serializable = false;
+          break;
+        }
+        groups.push({
+          group: group as number | string | boolean | null,
+          entries: list.toArray().map((n) => ({ order: n.key as number | string, pk: n.val })),
+        });
+      }
+      if (!serializable) {
+        skipped.push(name);
+        continue;
+      }
+      images.push({
+        name,
+        groupBy: entry.def.groupBy,
+        orderBy: entry.def.orderBy,
+        orderType: entry.def.orderType,
+        groups,
+      });
+    }
+    return { images, skipped };
+  }
+
+  /** Replace ONE live compound index's state from a loaded generation image
+   *  (the caller already matched the definition hash). Group lists are
+   *  bulk-built in O(N); the byPk placement map is derived from them. */
+  loadImage(image: CompoundImageIndex): void {
+    const entry = this.indexes.get(image.name);
+    if (!entry) throw new Error(`no such compound index: ${image.name}`);
+    const groups = new Map<unknown, SkipList<unknown, string>>();
+    const byPk = new Map<string, { group: unknown; order: unknown }>();
+    for (const g of image.groups) {
+      const list = SkipList.bulkLoad<unknown, string>(
+        g.entries.map((e) => ({ key: e.order, val: e.pk })),
+        { compareKey: entry.cmp, compareVal: cmpString },
+      );
+      groups.set(g.group, list);
+      for (const e of g.entries) byPk.set(e.pk, { group: g.group, order: e.order });
+    }
+    entry.groups = groups;
+    entry.byPk = byPk;
   }
 }

@@ -117,7 +117,7 @@ export interface StoreOptions {
 
 export class Store {
   readonly map = new Map<string, StoreRecord>(); // kstr -> record
-  private readonly order = new SkipList<string, string>({ compareKey: cmpString }); // kstr ordered
+  private order = new SkipList<string, string>({ compareKey: cmpString }); // kstr ordered
   private readonly heap = new MinHeap();
   private seq = 0;
   /** Approximate bytes held by live + expired-not-yet-reaped records. In
@@ -347,6 +347,33 @@ export class Store {
       const next = remap(k, r.ref.loc, r);
       if (next) r.ref = { kind: 'disk', loc: { ...next } };
     }
+  }
+
+  /** Stage-5 generation load: populate the store wholesale from a recovered
+   *  generation store image. `records` must be expiry-filtered by the caller
+   *  (expired-past records dropped) and sorted by canonical key ascending (the
+   *  image's write order), so the ordered index is bulk-built in O(N) instead
+   *  of per-record inserts.
+   *
+   *  OWNERSHIP: the records' refs are adopted as-is (no defensive clone) —
+   *  the image parser produced fresh buffers for exactly this purpose.
+   *  `metaBytes` is the precomputed dt accounting value (0 = none), so the
+   *  load never re-stringifies per record. */
+  bulkLoadRefs(
+    records: Iterable<{ kstr: string; ref: ValueRef; expireAt: number; dt: Record<string, number> | null; metaBytes?: number }>,
+  ): void {
+    const orderEntries: RangeEntry<string, string>[] = [];
+    for (const { kstr, ref, expireAt, dt, metaBytes } of records) {
+      const seq = ++this.seq;
+      this.map.set(kstr, { ref, expireAt: expireAt || 0, seq, dt });
+      this.bytes += Buffer.byteLength(kstr, 'binary') + this.refBytes(ref) + (metaBytes ?? 0);
+      if (expireAt) {
+        this.expiring++;
+        this.heap.push({ t: expireAt, k: kstr, seq });
+      }
+      orderEntries.push({ key: kstr, val: kstr });
+    }
+    this.order = SkipList.bulkLoad(orderEntries, { compareKey: cmpString });
   }
 
   private activeExpire(): void {

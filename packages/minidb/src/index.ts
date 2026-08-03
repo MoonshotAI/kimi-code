@@ -8,9 +8,10 @@
 //   { key: string(<=128), value: <any JSON>, dt1..dtN: <epoch-ms datetime columns> }
 
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import { Store } from './store.js';
-import type { StoreRecord, ValueLoc } from './store.js';
+import type { StoreRecord, ValueLoc, ValueRef } from './store.js';
 import { WAL } from './wal.js';
 import type { WalPoison } from './wal.js';
 import { ValueReader } from './value-reader.js';
@@ -26,9 +27,52 @@ import {
   SIDECAR_FILES,
   STALE_TMP_FILES,
   STALE_POSTINGS_TMP_PATTERN,
+  GENERATION_FORMAT_VERSION,
+  STORE_IMAGE_FILE,
+  DT_INDEX_FILE,
+  SECONDARY_INDEX_FILE,
+  COMPOUND_INDEX_FILE,
+  GEN_SNAPSHOT_FILE,
+  generationId,
+  indexDefHash,
   isStaleTmpFile,
   isPersistentFile,
-} from './persistent-files.js';
+  rootPostingsFile,
+  textDictionaryFile,
+  textPostingsFile,
+  textDocsFile,
+} from './generation.js';
+import type { GenerationManifest } from './generation.js';
+import {
+  cleanupGenerations,
+  generationDir,
+  generationsDir,
+  listGenerations,
+  publishGeneration,
+  readCurrent,
+  readManifest,
+  sweepGenerationTemps,
+  writeManifest,
+} from './generation-files.js';
+import {
+  GenerationCorruptError,
+  STORE_VERSION,
+  readGenerationFileChecked,
+  readStoreImage,
+  readDtIndexImage,
+  readSecondaryIndexImage,
+  readCompoundIndexImage,
+  readTextDictionaryImage,
+  readTextDocsImage,
+  verifyFileIntegritySync,
+  writeStoreImage,
+  writeDtIndexImage,
+  writeSecondaryIndexImage,
+  writeCompoundIndexImage,
+  writeTextDictionaryImage,
+  writeTextDocsImage,
+} from './gen-codec.js';
+import type { StoreImageRecord, TextDocsImage } from './gen-codec.js';
 import { IndexManager, UniqueViolationError } from './index-manager.js';
 import { DtIndex } from './dt-index.js';
 import { TextIndex, type TextIndexOptions, type TextIndexBuild } from './text-index.js';
@@ -37,7 +81,7 @@ import { CompoundIndexManager } from './compound-index.js';
 import { getPath, match, project } from './query.js';
 import { LockFile, LockError } from './lockfile.js';
 import { createSerializer } from './serialize.js';
-import { encodeFrame, encodeBatchOps, scanBatchOpRefs, HEADER_SIZE, TYPE_SET, TYPE_DEL, TYPE_BATCH } from './codec.js';
+import { encodeFrame, encodeBatchOps, scanBatchOpRefs, scanFrameRefsFd, HEADER_SIZE, TYPE_SET, TYPE_DEL, TYPE_BATCH } from './codec.js';
 import type { BatchOp as EncodedBatchOp, FrameRef } from './codec.js';
 import type { FsyncPolicy } from './wal.js';
 import type { RecoveryMode, RecoveryInfo, ValueMode, RecoveredOp } from './recovery.js';
@@ -205,6 +249,13 @@ export interface OpenOptions {
   maxMemoryBytes?: number;
   /** What to do when a write would exceed maxMemoryBytes. */
   maxMemoryPolicy?: 'reject' | 'evict-lru';
+  /** Persistent index generations (stage 5), default true. With generations
+   *  enabled, a writer publishes derived-state checkpoints under
+   *  `generations/` and open loads them instead of rebuilding every index
+   *  from a full store scan; the legacy full recovery remains the automatic
+   *  fallback. Set false to force the pre-generation behavior everywhere
+   *  (full open-time rebuild, root postings rebuilds after compaction). */
+  indexGenerations?: boolean;
 }
 
 export interface RestoreOptions extends Omit<OpenOptions, 'dir'> {
@@ -280,6 +331,44 @@ interface WalGroup {
   /** Set once the group failed and was rolled back; later rejects are no-ops. */
   rolledBack: boolean;
 }
+
+/** One write op captured by an in-flight generation build (stage 5). The
+ *  build walks the live store and then drains this queue onto its detached
+ *  states, so the image equals replaying snapshot + WAL up to the sealed
+ *  checkpoint exactly. `storeOnly` marks expire()'s TTL-only rewrite: the
+ *  value is unchanged, so value-derived index states need no re-feed. */
+interface GenBuildOp {
+  type: number; // TYPE_SET | TYPE_DEL
+  pk: string;
+  value: Buffer | null;
+  expireAt: number;
+  dtNorm: Record<string, number> | null;
+  canonical: unknown;
+  storeOnly?: boolean;
+}
+
+/** Internal control-flow exception: the generation build noticed a rotation,
+ *  a WAL rollback, a closing instance, or a queue overflow and discarded
+ *  itself. Aborts are expected under churn (never counted as errors). */
+class GenerationBuildAborted extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GenerationBuildAborted';
+  }
+}
+
+/** Soft caps on the generation build's mutation queue: a write storm outrun-
+ *  ning the build's drain aborts the build instead of buffering unboundedly —
+ *  bounded both by op count and by accumulated value bytes (each queued op
+ *  pins its value buffer). */
+const GEN_BUILD_QUEUE_CAP = 1_000_000;
+const GEN_BUILD_QUEUE_BYTES_CAP = 512 * 1024 * 1024;
+
+/** Trigger-(b) thresholds for the open-time background build: a generation
+ *  whose WAL delta replay exceeded either is refreshed in the background so
+ *  the next open is cheap (the per-op replay path is for small deltas only). */
+const GEN_BUILD_WAL_DELTA_OPS = 4096;
+const GEN_BUILD_WAL_DELTA_BYTES = 4 * 1024 * 1024;
 
 /** Persisted shape of one entry in `db.textindexes.json`. `tokenizer` is
  *  absent in definitions written before n-gram support existed, which means
@@ -408,6 +497,27 @@ export class MiniDb<V = unknown> {
    *  overlap (see op-tracker.ts). Same promise-chain pattern as
    *  serializeUniqueWrites. */
   private readonly serializeBackups = createSerializer();
+  /** Persistent index generations enabled (OpenOptions.indexGenerations,
+   *  default true). When false the instance behaves exactly as before stage
+   *  5: full open-time rebuild + root postings rebuilds after compaction. */
+  private indexGenerationsEnabled = true;
+  /** The in-flight generation build's mutation queue registration (stage 5):
+   *  while non-null, applyOp (and expire()'s TTL rewrite) push every applied
+   *  op here so the build's detached states converge on the exact checkpoint.
+   *  `wal` pins the WAL identity the build measured — a compaction rotation
+   *  replaces it and aborts the build (its disk refs would point into rotated
+   *  files). `aborted` is set by the rollback path (restoreGroupKey), which
+   *  mutates the store outside applyOp and therefore outside the queue. */
+  private genBuild: { queue: GenBuildOp[]; bytes: number; wal: WAL; aborted: boolean } | null = null;
+  /** Single-flight guard for generation builds (open-time background builds
+   *  dedupe onto it; a compaction-triggered build awaits an in-flight one —
+   *  which the rotation just aborted — before starting fresh). close() drains
+   *  it before releasing resources. */
+  private genBuildPromise: Promise<void> | null = null;
+  /** The generation this instance loaded at open or last published (null when
+   *  running on the legacy recovery path). Stable status surface — see
+   *  getIndexGeneration(). */
+  private generationInfo: { id: string; createdAt: number; walCheckpoint: number; records: number } | null = null;
   /** Set when in-place WAL recovery's truncate fails (persistent I/O error):
    *  from then on every write op throws a WAL_WRITE_DISABLED error
    *  immediately; reads and close() keep working. The value is the truncate
@@ -485,18 +595,49 @@ export class MiniDb<V = unknown> {
     queryCandidates: 0,
     queryDecoded: 0,
     querySortedRows: 0,
+    // ---- persistent index generations (stage 5) ----
+    /** Successful generation builds (published under generations/ + CURRENT). */
+    generationBuilds: 0,
+    /** Builds that failed with a real error (I/O, corruption). */
+    generationBuildErrors: 0,
+    /** Builds discarded because the ground shifted under them (rotation, WAL
+     *  rollback, queue overflow, close) — expected churn, not an error. */
+    generationBuildAborts: 0,
+    generationBuildDurationMs: 0,
+    /** Opens served by a published generation (no full index rebuild). */
+    generationLoads: 0,
+    /** Opens that fell back to the legacy full recovery (no/invalid
+     *  generation); the sticky reason is in lastGenerationFallback. */
+    generationLoadFallbacks: 0,
+    lastGenerationFallback: null as string | null,
+    generationLoadDurationMs: 0,
+    /** Individual index images rejected at generation load (definition hash
+     *  mismatch, corrupt file) and rebuilt from the loaded store. */
+    generationIndexRebuilds: 0,
   };
 
   /** Hook called by compaction after the store snapshot + WAL are rotated, so
-   *  derived on-disk state (text postings) can be rewritten against the new
-   *  live set. Structural part of the CompactionTarget interface; the
-   *  compaction awaits it, so it may be sync or async. */
+   *  derived on-disk state can be rewritten against the new live set.
+   *  Structural part of the CompactionTarget interface; the compaction awaits
+   *  it, so it may be sync or async.
+   *
+   *  Stage 5: with index generations enabled this is ONE publish transaction
+   *  — the snapshot rotation and the derived-state checkpoint (store image,
+   *  dt/secondary/compound images, text postings) land as a single new
+   *  generation, and the live text indexes rebase onto it. The synchronous
+   *  rebuildTextPostings() tail no longer runs. With generations disabled the
+   *  legacy behavior is kept exactly. */
   onCompacted: () => void | Promise<void> = async (): Promise<void> => {
     const t0 = performance.now();
-    await this.rebuildTextPostings();
-    const ms = performance.now() - t0;
-    this.stats.compactionPostingsDurationMs += ms;
-    this.stats.textRebuildDurationMs += ms;
+    if (!this.indexGenerationsEnabled) {
+      await this.rebuildTextPostings();
+      const ms = performance.now() - t0;
+      this.stats.compactionPostingsDurationMs += ms;
+      this.stats.textRebuildDurationMs += ms;
+      return;
+    }
+    await this.buildGeneration('compact');
+    this.stats.compactionPostingsDurationMs += performance.now() - t0;
   };
 
   static async open<V = unknown>(opts: OpenOptions): Promise<MiniDb<V>> {
@@ -519,6 +660,7 @@ export class MiniDb<V = unknown> {
     db.autoCompact = opts.autoCompact ?? true;
     db.maxMemoryBytes = opts.maxMemoryBytes ?? null;
     db.maxMemoryPolicy = opts.maxMemoryPolicy ?? 'reject';
+    db.indexGenerationsEnabled = opts.indexGenerations ?? true;
     if (db.maxMemoryBytes !== null && (!Number.isFinite(db.maxMemoryBytes) || db.maxMemoryBytes <= 0)) {
       throw new RangeError('maxMemoryBytes must be a positive finite number');
     }
@@ -568,6 +710,9 @@ export class MiniDb<V = unknown> {
         // delete, for any index name.
         if (STALE_POSTINGS_TMP_PATTERN.test(f)) await fs.rm(path.join(db.dir, f), { force: true });
       }
+      // Stranded generation build tmp dirs (a crashed build never published):
+      // only the sole writer may delete them.
+      await sweepGenerationTemps(db.dir);
     }
 
     db.store = new Store({
@@ -586,60 +731,74 @@ export class MiniDb<V = unknown> {
       // WAL's size stays 0, so shouldCompact never fires for it.
       if (!db.readOnly) await db.wal.open();
 
-      const recT0 = performance.now();
-      db.recoveryInfo = await recover({
-        dir: db.dir,
-        store: db.store,
-        mode: opts.recovery ?? 'resync',
-        truncate: !db.readOnly,
-        valueMode: db.valueMode,
-        // Disk-backed values need the positioned reader attached to the SAME
-        // inodes recovery scanned; recovery's generation pairing re-verifies
-        // the attach and retries the whole pass when a rotation landed in
-        // between (see the pairing note in recovery.ts). In valueMode
-        // 'memory' no record ever carries a disk loc, so opening the files
-        // would only hold handles for no benefit (on Windows those idle
-        // handles would additionally block compaction's rename-over-path
-        // rotation — rename over an open destination is EPERM there).
-        attachValueReader:
-          db.valueMode === 'disk'
-            ? (anchors) => {
-                const reader = new ValueReader(db.dir);
-                // open() can throw after attaching only one side (e.g. EMFILE
-                // on the WAL with the snapshot already open). This reader is
-                // never published to db.valueReader, so the open() failure
-                // cleanup cannot reach it — close it here or leak the fd.
-                let ids: ReturnType<ValueReader['open']>;
-                try {
-                  ids = reader.open();
-                } catch (e) {
-                  reader.close();
-                  throw e;
-                }
-                const sameInode = (a: { dev: number; ino: number } | null, i: { dev: number; ino: number } | null): boolean =>
-                  a === null ? i === null : i !== null && i.dev === a.dev && i.ino === a.ino;
-                if (sameInode(anchors.snapshot, ids.snapshot) && sameInode(anchors.wal, ids.wal)) {
-                  db.valueReader = reader;
-                  return true;
-                }
-                reader.close();
-                return false;
-              }
-            : undefined,
-      });
-      db.stats.recoveryDurationMs += performance.now() - recT0;
-      db.stats.recoveryBytes += db.recoveryInfo.snapshotBytes + db.recoveryInfo.walBytes;
-      db.stats.recoveryFrames += db.recoveryInfo.snapshotFrames + db.recoveryInfo.walFrames;
-      // Recovery may have truncated a torn WAL tail behind the WAL's back;
-      // re-sync its size bookkeeping so later appends (and their disk-mode
-      // value pointers) are computed against the real, truncated file size.
-      if (db.recoveryInfo.truncatedWal) await db.wal.refreshSize();
-      db.seedAccessFromStore();
-
+      // Index definitions BEFORE recovery: the generation load path matches
+      // the live registries (and the TextIndex instances) against the
+      // manifest's definition hashes, so they must exist first. The loaders
+      // only read sidecars and construct empty indexes — order-independent
+      // with respect to the store.
       await db.loadIndexDefinitions();
       await db.loadCompoundIndexDefinitions();
       await db.loadTextIndexDefinitions();
-      await db.rebuildAllIndexes();
+
+      // Stage 5: a published generation serves the open (store image +
+      // derived-index images + WAL delta replay) and skips the full rebuild
+      // below. Any validation failure falls back to the legacy full recovery
+      // inside tryLoadGeneration — never a deletion of authoritative data.
+      let generationLoaded = false;
+      if (db.indexGenerationsEnabled) generationLoaded = await db.tryLoadGeneration(opts.recovery ?? 'resync');
+
+      if (!generationLoaded) {
+        const recT0 = performance.now();
+        db.recoveryInfo = await recover({
+          dir: db.dir,
+          store: db.store,
+          mode: opts.recovery ?? 'resync',
+          truncate: !db.readOnly,
+          valueMode: db.valueMode,
+          // Disk-backed values need the positioned reader attached to the SAME
+          // inodes recovery scanned; recovery's generation pairing re-verifies
+          // the attach and retries the whole pass when a rotation landed in
+          // between (see the pairing note in recovery.ts). In valueMode
+          // 'memory' no record ever carries a disk loc, so opening the files
+          // would only hold handles for no benefit (on Windows those idle
+          // handles would additionally block compaction's rename-over-path
+          // rotation — rename over an open destination is EPERM there).
+          attachValueReader:
+            db.valueMode === 'disk'
+              ? (anchors) => {
+                  const reader = new ValueReader(db.dir);
+                  // open() can throw after attaching only one side (e.g. EMFILE
+                  // on the WAL with the snapshot already open). This reader is
+                  // never published to db.valueReader, so the open() failure
+                  // cleanup cannot reach it — close it here or leak the fd.
+                  let ids: ReturnType<ValueReader['open']>;
+                  try {
+                    ids = reader.open();
+                  } catch (e) {
+                    reader.close();
+                    throw e;
+                  }
+                  const sameInode = (a: { dev: number; ino: number } | null, i: { dev: number; ino: number } | null): boolean =>
+                    a === null ? i === null : i !== null && i.dev === a.dev && i.ino === a.ino;
+                  if (sameInode(anchors.snapshot, ids.snapshot) && sameInode(anchors.wal, ids.wal)) {
+                    db.valueReader = reader;
+                    return true;
+                  }
+                  reader.close();
+                  return false;
+                }
+              : undefined,
+        });
+        db.stats.recoveryDurationMs += performance.now() - recT0;
+        db.stats.recoveryBytes += db.recoveryInfo.snapshotBytes + db.recoveryInfo.walBytes;
+        db.stats.recoveryFrames += db.recoveryInfo.snapshotFrames + db.recoveryInfo.walFrames;
+        // Recovery may have truncated a torn WAL tail behind the WAL's back;
+        // re-sync its size bookkeeping so later appends (and their disk-mode
+        // value pointers) are computed against the real, truncated file size.
+        if (db.recoveryInfo.truncatedWal) await db.wal.refreshSize();
+        db.seedAccessFromStore();
+        await db.rebuildAllIndexes();
+      }
 
       // A read-only instance never compacts: rotation would rename the live
       // writer's snapshot/WAL out from under it and lose its acknowledged data.
@@ -649,13 +808,33 @@ export class MiniDb<V = unknown> {
       // compaction here blocked open() on the whole snapshot rewrite + text
       // postings rebuild — tens of seconds of stalled startup on a large db.
       if (!db.readOnly && db.autoCompact && shouldCompact(db)) compact(db).catch(() => {});
+      // Background generation build (fire-and-forget, like the compaction
+      // kick). Two triggers: (a) the legacy path served the open and there is
+      // data worth checkpointing — no (usable) generation exists; (b) a
+      // generation served the open but its checkpoint is far behind (the WAL
+      // delta replay was the dominant cost) — refresh it so the NEXT open is
+      // cheap again. An empty store is never worth a build (an empty
+      // generation would just force every later open to replay the whole WAL
+      // through the per-op path before anything refreshes it).
+      if (!db.readOnly && db.indexGenerationsEnabled) {
+        const gen = db.recoveryInfo?.indexGeneration;
+        const deltaOps = db.recoveryInfo?.walDeltaAppliedOps ?? 0;
+        const deltaBytes = gen ? db.recoveryInfo!.walScanEnd - gen.walCheckpoint : 0;
+        const stale = gen !== undefined && (deltaOps > GEN_BUILD_WAL_DELTA_OPS || deltaBytes > GEN_BUILD_WAL_DELTA_BYTES);
+        if ((!generationLoaded && db.size > 0) || stale) {
+          void db.buildGeneration('open').catch(() => {});
+        }
+      }
     } catch (err) {
       // A background open-time compaction may still be in flight: settle it
       // before tearing down the WAL/store/handles it touches.
       if (db.compacting && db._compactDone) await db._compactDone.catch(() => {});
       // Release every resource acquired so far: an open that fails after the
       // WAL/store are set up must not leak a file handle or keep the everysec /
-      // active-expire timers running.
+      // active-expire timers running. Text indexes are closed too: a
+      // generation load may have attached postings handles before a later
+      // step failed (rebuildAllIndexes' builds likewise).
+      for (const ti of db.text.values()) ti.close();
       if (db.wal) await db.wal.close().catch(() => {});
       db.valueReader?.close();
       db.store?.close();
@@ -749,19 +928,20 @@ export class MiniDb<V = unknown> {
     }
   }
 
-  /** On-disk postings file path for a text index (name sanitized for the fs). */
+  /** On-disk postings file path for a text index (root location — the legacy
+   *  pre-generation home; the name sanitization lives in generation.ts). */
   private textPostingsPath(name: string): string {
-    const safe = name.replace(/[^a-zA-Z0-9_.-]/g, '_');
-    return path.join(this.dir, `db.text-${safe}.postings`);
+    return path.join(this.dir, rootPostingsFile(name));
   }
 
-  /** Rebuild every dirty text index's on-disk postings from the live Store.
-   *  Drops the in-memory delta + tombstones and reclaims orphaned postings
-   *  records. Invoked after compaction (postings are pure derived state, so
-   *  this is only for space/latency, never for correctness). Indexes with an
-   *  empty write buffer are skipped: the open-time build just produced a
-   *  fresh base, so a compaction landing right after open must not redo the
-   *  exact same (expensive) pass. */
+  /** LEGACY postings maintenance (indexGenerations: false): rebuild every
+   *  dirty text index's on-disk postings from the live Store. With
+   *  generations enabled this whole job is superseded by the generation
+   *  build (the staged text builds + clean re-publish), so it only runs on
+   *  the legacy onCompacted path. Drops the in-memory delta + tombstones and
+   *  reclaims orphaned postings records — postings are pure derived state,
+   *  so this is only for space/latency, never for correctness. Indexes with
+   *  an empty write buffer are skipped: a fresh base must not be redone. */
   private async rebuildTextPostings(): Promise<void> {
     for (const [name, ti] of this.text) {
       // Skip indexes staged for drop (see textDrops): their postings are
@@ -831,6 +1011,785 @@ export class MiniDb<V = unknown> {
     for (const { key, value } of this.store.entries()) {
       yield { key, value: this.decode(value) };
     }
+  }
+
+  // ---- persistent index generations (stage 5) ------------------------------
+  //
+  // The writer periodically checkpoints every piece of derived state into an
+  // atomically published generation (see generation.ts for the layout and the
+  // crash protocol). Build triggers: after each compaction rotation (the
+  // onCompacted hook — the rotation and the generation are one transaction),
+  // in the background after an open that found no usable generation, and the
+  // explicit rebuildGeneration() maintenance call. The build walks the live
+  // store into DETACHED index states (fresh IndexManager / DtIndex /
+  // CompoundIndexManager instances, plus staged TextIndex builds whose commit
+  // also rebases the live index) while applyOp feeds every concurrent write
+  // into a queue; a final synchronous drain + WAL watermark capture seals the
+  // exact checkpoint. The load path (tryLoadGeneration) validates the
+  // manifest, loads the images whose definition hashes still match, rebuilds
+  // only the affected indexes for mismatches, and replays just the WAL delta
+  // — open cost follows the WAL delta + index metadata, not the full corpus.
+
+  /** The canonical definition shape a text index's manifest hash is computed
+   *  from (both sides use it, so a legacy definition without `tokenizer`
+   *  hashes identically to an explicit 'default'). */
+  private static canonicalTextDef(d: TextIndexDef): { name: string; fields: readonly string[] | null; tokenizer: string } {
+    return { name: d.name, fields: d.fields, tokenizer: d.tokenizer ?? 'default' };
+  }
+
+  /** Read the store image / index images of one published generation and
+   *  replay the WAL past its checkpoint. Throws GenerationCorruptError for
+   *  every validation/consistency failure (the caller falls back); genuine
+   *  system errors propagate. On success the instance is fully recovered —
+   *  store, every derived index, recoveryInfo, value reader. */
+  private async loadOneGeneration(id: string, mode: RecoveryMode): Promise<void> {
+    const genDir = generationDir(this.dir, id);
+    const manifest = await readManifest(this.dir, id);
+    if (manifest.valueCodec !== this.codecName) {
+      throw new GenerationCorruptError(`codec mismatch (${manifest.valueCodec} != ${this.codecName})`);
+    }
+    if (manifest.valueMode !== this.valueMode) {
+      throw new GenerationCorruptError(`value mode mismatch (${manifest.valueMode} != ${this.valueMode})`);
+    }
+    const cp = manifest.checkpoint;
+    // WAL anchor: the checkpoint offset only has meaning on the exact inode
+    // the build measured, and the file must still reach it.
+    const walSt = await fs.stat(this.walPath).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return null;
+      throw e;
+    });
+    if (!walSt || walSt.dev !== cp.walDev || walSt.ino !== cp.walIno || walSt.size < cp.walOffset) {
+      throw new GenerationCorruptError('WAL anchor mismatch (rotated or truncated since the build)');
+    }
+    // Disk mode: image refs point into the generation's snapshot, which the
+    // live db.snapshot still aliases (hard link) — verify the identity.
+    if (this.valueMode === 'disk' && cp.snapshotIno !== 0) {
+      if (!cp.snapshotLinked) throw new GenerationCorruptError('snapshot not hard-linked; disk refs unservable');
+      const snapSt = await fs.stat(path.join(this.dir, SNAPSHOT_FILE)).catch((e: NodeJS.ErrnoException) => {
+        if (e.code === 'ENOENT') return null;
+        throw e;
+      });
+      if (!snapSt || snapSt.dev !== cp.snapshotDev || snapSt.ino !== cp.snapshotIno) {
+        throw new GenerationCorruptError('snapshot anchor mismatch (rotated since the build)');
+      }
+    }
+    // Disk mode: attach the positioned reader NOW, before anything reads a
+    // value back — the image's refs and the WAL-delta replay both resolve
+    // through it (mirrors the legacy recovery's attach check).
+    if (this.valueMode === 'disk') {
+      const reader = new ValueReader(this.dir);
+      let ids: ReturnType<ValueReader['open']>;
+      try {
+        ids = reader.open();
+      } catch (e) {
+        reader.close();
+        throw e;
+      }
+      const walOk = ids.wal !== null && ids.wal.dev === cp.walDev && ids.wal.ino === cp.walIno;
+      const snapOk =
+        cp.snapshotIno === 0
+          ? true // the build had no snapshot; the image can carry no snapshot refs
+          : ids.snapshot !== null && ids.snapshot.dev === cp.snapshotDev && ids.snapshot.ino === cp.snapshotIno;
+      if (!walOk || !snapOk) {
+        reader.close();
+        throw new GenerationCorruptError('value reader attach raced a rotation');
+      }
+      this.valueReader = reader;
+    }
+
+    // Store image. Records expire-past at load time are dropped here AND
+    // noted, so their loaded index entries can be reconciled below (the
+    // image legitimately contains records whose TTL elapsed after the build).
+    const storeInfo = manifest.files[STORE_IMAGE_FILE];
+    if (!storeInfo) throw new GenerationCorruptError('store image missing from manifest');
+    const storePayload = await readGenerationFileChecked(path.join(genDir, STORE_IMAGE_FILE), 'MDGS', STORE_VERSION, storeInfo);
+    const now = Date.now();
+    const droppedExpired: string[] = [];
+    const records: StoreImageRecord[] = [];
+    let imageCount = 0;
+    for (const rec of readStoreImage(storePayload)) {
+      imageCount++;
+      if (rec.expireAt && rec.expireAt <= now) {
+        droppedExpired.push(rec.kstr);
+        continue;
+      }
+      if (this.valueMode === 'memory' && rec.ref.kind !== 'memory') {
+        throw new GenerationCorruptError('store image carries disk refs for a memory-mode open');
+      }
+      records.push(rec);
+    }
+    this.store.bulkLoadRefs(records);
+    if (manifest.counts && typeof manifest.counts.records === 'number' && manifest.counts.records !== imageCount) {
+      throw new GenerationCorruptError(`store image record count mismatch (${imageCount} != ${manifest.counts.records})`);
+    }
+
+    // Derived-index images. Every failure here is LOCAL: a corrupt or missing
+    // image rebuilds exactly the affected index(es) from the loaded store.
+    await this.loadDtImage(genDir, manifest);
+    await this.loadSecondaryImages(genDir, manifest);
+    await this.loadCompoundImages(genDir, manifest);
+    await this.loadTextImages(genDir, manifest);
+
+    // Reconcile the expired-at-load drops out of the loaded index states.
+    for (const k of droppedExpired) {
+      this.dt.del(k);
+      this.indexes.remove(k, undefined);
+      this.compound.remove(k);
+      for (const ti of this.text.values()) ti.remove(k);
+    }
+
+    // Replay the WAL delta past the checkpoint with the exact same per-frame
+    // interpretation the legacy recovery uses (frameToOps), maintaining every
+    // derived index incrementally (applyRecoveredOp).
+    const replay = await this.replayWalDelta(cp.walOffset, mode);
+    // A rotation racing the load invalidates the coordinate system the
+    // recoveryInfo below is anchored to (and, in disk mode, the value reader
+    // attached above) — reject the candidate.
+    const walAfter = await fs.stat(this.walPath).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return null;
+      throw e;
+    });
+    if (!walAfter || walAfter.dev !== cp.walDev || walAfter.ino !== cp.walIno) {
+      throw new GenerationCorruptError('WAL rotated during generation load');
+    }
+
+    this.recoveryInfo = {
+      snapshotFrames: records.length,
+      walFrames: replay.walFrames,
+      snapshotBytes: storeInfo.bytes,
+      walBytes: walSt.size,
+      truncatedWal: replay.truncatedWal,
+      corruptRanges: replay.corruptRanges,
+      snapshotCorruptRanges: [],
+      lostBytes: replay.corruptRanges.reduce((a, [s, e]) => a + (e - s), 0),
+      walScanEnd: replay.walScanEnd,
+      walDev: cp.walDev,
+      walIno: cp.walIno,
+      snapshotDev: cp.snapshotDev,
+      snapshotIno: cp.snapshotIno,
+      corruptBatches: replay.corruptBatches,
+      generationRetries: 0,
+      indexGeneration: { id, walCheckpoint: cp.walOffset, records: records.length },
+      walDeltaAppliedOps: replay.appliedOps,
+    };
+    this.generationInfo = { id, createdAt: manifest.createdAt, walCheckpoint: cp.walOffset, records: records.length };
+    this.seedAccessFromStore();
+  }
+
+  /** Undo any partial state a failed generation-load candidate left behind,
+   *  so the next candidate (or the legacy full recovery) starts clean: the
+   *  store must be empty (recovery replays into it), the value reader
+   *  detached, and any postings handles the candidate attached closed (the
+   *  next path re-attaches or rebuilds as needed). */
+  private resetAfterFailedGenerationLoad(): void {
+    for (const k of this.store.map.keys()) this.store.del(k);
+    this.valueReader?.close();
+    this.valueReader = undefined;
+    for (const ti of this.text.values()) ti.close();
+  }
+
+  /** The generation-load entry point from open(): try CURRENT's generation
+   *  first, then the previous ones (their WAL anchor survives whenever no
+   *  compaction intervened). Corruption-class failures try the next
+   *  candidate; genuine system errors propagate. Returns false when no
+   *  candidate loaded (the caller runs the legacy full recovery). */
+  private async tryLoadGeneration(mode: RecoveryMode): Promise<boolean> {
+    const t0 = performance.now();
+    const candidates: string[] = [];
+    try {
+      const current = await readCurrent(this.dir);
+      if (current) candidates.push(current);
+      for (const g of await listGenerations(this.dir)) {
+        if (!g.tmp && g.id !== current && candidates.length < 3) candidates.push(g.id);
+      }
+    } catch (e) {
+      this.stats.generationLoadFallbacks++;
+      this.stats.lastGenerationFallback = `list: ${(e as Error).message}`;
+      return false;
+    }
+    for (const id of candidates) {
+      try {
+        await this.loadOneGeneration(id, mode);
+        this.stats.generationLoads++;
+        this.stats.generationLoadDurationMs += performance.now() - t0;
+        return true;
+      } catch (e) {
+        if (!(e instanceof GenerationCorruptError) && (e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+        this.stats.generationLoadFallbacks++;
+        this.stats.lastGenerationFallback = `${id}: ${(e as Error).message}`;
+        this.resetAfterFailedGenerationLoad();
+      }
+    }
+    return false;
+  }
+
+  /** Load the dt image; rebuild the (cheap, metadata-only) dt index from the
+   *  loaded store when the image is absent/corrupt. */
+  private async loadDtImage(genDir: string, manifest: GenerationManifest): Promise<void> {
+    const info = manifest.files[DT_INDEX_FILE];
+    if (info) {
+      try {
+        const payload = await readGenerationFileChecked(path.join(genDir, DT_INDEX_FILE), 'MDGD', 1, info);
+        this.dt.loadImage(readDtIndexImage(payload));
+        return;
+      } catch (e) {
+        if (!(e instanceof GenerationCorruptError)) throw e;
+      }
+    }
+    this.stats.generationIndexRebuilds++;
+    const store = this.store;
+    this.dt.rebuild(
+      (function* (): Generator<{ key: string; dt: Record<string, number> | null }> {
+        for (const rec of store.rawRecords()) yield { key: rec.kstr, dt: rec.dt };
+      })(),
+    );
+  }
+
+  /** Load secondary-index images for definitions whose hash still matches;
+   *  rebuild exactly the affected indexes otherwise (plan: only the affected
+   *  index is rebuilt, never the whole registry). */
+  private async loadSecondaryImages(genDir: string, manifest: GenerationManifest): Promise<void> {
+    const live = this.indexes.list();
+    if (live.length === 0) return;
+    let images: Map<string, ReturnType<typeof readSecondaryIndexImage>[number]> | null = null;
+    const info = manifest.files[SECONDARY_INDEX_FILE];
+    if (info) {
+      try {
+        const payload = await readGenerationFileChecked(path.join(genDir, SECONDARY_INDEX_FILE), 'MDSI', 1, info);
+        images = new Map(readSecondaryIndexImage(payload).map((i) => [i.name, i]));
+      } catch (e) {
+        if (!(e instanceof GenerationCorruptError)) throw e;
+      }
+    }
+    for (const def of live) {
+      const image = images?.get(def.name);
+      if (image && manifest.indexDefs.secondary[def.name] === indexDefHash(def)) {
+        try {
+          this.indexes.loadImage(image);
+          continue;
+        } catch {
+          /* shape mismatch: rebuild below */
+        }
+      }
+      this.stats.generationIndexRebuilds++;
+      this.rebuildOneSecondaryIndex(def);
+    }
+  }
+
+  private rebuildOneSecondaryIndex(def: IndexInfo): void {
+    const fresh = new IndexManager();
+    fresh.create(def.name, def);
+    for (const { key, value } of this._liveRecordsRaw()) {
+      if (this.indexable(value)) fresh.add(this.pk(key), value);
+    }
+    this.indexes.indexes.set(def.name, fresh.indexes.get(def.name)!);
+  }
+
+  /** Load compound-index images (same per-index discipline as secondary). */
+  private async loadCompoundImages(genDir: string, manifest: GenerationManifest): Promise<void> {
+    const live = this.compound.list();
+    if (live.length === 0) return;
+    let images: Map<string, ReturnType<typeof readCompoundIndexImage>[number]> | null = null;
+    const info = manifest.files[COMPOUND_INDEX_FILE];
+    if (info) {
+      try {
+        const payload = await readGenerationFileChecked(path.join(genDir, COMPOUND_INDEX_FILE), 'MDCI', 1, info);
+        images = new Map(readCompoundIndexImage(payload).map((i) => [i.name, i]));
+      } catch (e) {
+        if (!(e instanceof GenerationCorruptError)) throw e;
+      }
+    }
+    for (const def of live) {
+      const image = images?.get(def.name);
+      if (image && manifest.indexDefs.compound[def.name] === indexDefHash(def)) {
+        try {
+          this.compound.loadImage(image);
+          continue;
+        } catch {
+          /* shape mismatch: rebuild below */
+        }
+      }
+      this.stats.generationIndexRebuilds++;
+      this.rebuildOneCompoundIndex(def);
+    }
+  }
+
+  private rebuildOneCompoundIndex(def: CompoundIndexInfo): void {
+    const fresh = new CompoundIndexManager();
+    fresh.create(def.name, { groupBy: def.groupBy, orderBy: def.orderBy, orderType: def.orderType });
+    for (const { key, value, dt } of this.liveRecords()) {
+      fresh.add(this.pk(key), value, dt);
+    }
+    this.compound.indexes.set(def.name, fresh.indexes.get(def.name)!);
+  }
+
+  /** Load text-index images (dictionary + docs + postings attachment) for
+   *  definitions whose hash still matches; rebuild exactly the affected
+   *  indexes otherwise — a rebuild is the full corpus tokenization for that
+   *  one index, the cost stage 5 exists to avoid on the happy path. */
+  private async loadTextImages(genDir: string, manifest: GenerationManifest): Promise<void> {
+    for (const def of this.textDefs) {
+      const ti = this.text.get(def.name);
+      if (!ti) continue;
+      const dictInfo = manifest.files[textDictionaryFile(def.name)];
+      const docsInfo = manifest.files[textDocsFile(def.name)];
+      const postingsInfo = manifest.files[textPostingsFile(def.name)];
+      let attached = false;
+      if (dictInfo && docsInfo && postingsInfo && manifest.indexDefs.text[def.name] === indexDefHash(MiniDb.canonicalTextDef(def))) {
+        try {
+          const dictPayload = await readGenerationFileChecked(path.join(genDir, textDictionaryFile(def.name)), 'MDTD', 1, dictInfo);
+          const docsPayload = await readGenerationFileChecked(path.join(genDir, textDocsFile(def.name)), 'MDTC', 1, docsInfo);
+          // The postings file carries the base every search reads: verify it
+          // wholesale against the manifest NOW (one streaming crc pass), so a
+          // corrupt base is rebuilt at open instead of failing a query later
+          // (its per-record CRCs would only trip on the first read).
+          const postingsPath = path.join(genDir, textPostingsFile(def.name));
+          verifyFileIntegritySync(postingsPath, postingsInfo);
+          const dict = new Map(readTextDictionaryImage(dictPayload).map((e) => [e.term, { off: e.off, len: e.len, df: e.df }]));
+          const docs = readTextDocsImage(docsPayload);
+          const docLens = new Map<number, number>();
+          for (let i = 0; i < docs.docLens.length; i++) {
+            const len = docs.docLens[i];
+            if (len !== undefined) docLens.set(i, len);
+          }
+          ti.attachImage({
+            postingsPath,
+            dict,
+            keys: docs.keys,
+            docLens,
+            liveCount: docs.liveCount,
+            removed: new Set(docs.removed),
+            delta: new Map(docs.delta.map((d) => [d.term, new Map(d.docs.map((x) => [x.docID, x.freq] as [number, number]))])),
+          });
+          // Carry the integrity record forward: a later CLEAN fast-path build
+          // re-publishes this unchanged file without re-reading it.
+          ti.postingsFileInfo = { bytes: postingsInfo.bytes, crc32: postingsInfo.crc32 };
+          attached = true;
+        } catch (e) {
+          if (!(e instanceof GenerationCorruptError) && (e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+        }
+      }
+      if (!attached) {
+        this.stats.generationIndexRebuilds++;
+        await ti.build(this.textRecords());
+      }
+    }
+  }
+
+  /** Replay WAL frames at/after `startOffset` onto the loaded store (and
+   *  every derived index), with the legacy recovery's torn-tail handling:
+   *  a corrupt tail is truncated by the writer, left alone read-only. */
+  private async replayWalDelta(
+    startOffset: number,
+    mode: RecoveryMode,
+  ): Promise<{
+    walFrames: number;
+    walScanEnd: number;
+    corruptRanges: [number, number][];
+    truncatedWal: boolean;
+    corruptBatches: number;
+    appliedOps: number;
+  }> {
+    const fd = fsSync.openSync(this.walPath, 'r');
+    try {
+      const st = fsSync.fstatSync(fd);
+      const r = scanFrameRefsFd(fd, { onCorrupt: mode, startOffset });
+      let corruptBatches = 0;
+      let appliedOps = 0;
+      for (const f of r.frames) {
+        for (const op of frameToOps(f, 'wal', fd, this.valueMode, () => corruptBatches++)) {
+          this.applyRecoveredOp(op);
+          appliedOps++;
+        }
+      }
+      let truncatedWal = false;
+      const last = r.corruptRanges[r.corruptRanges.length - 1];
+      if (last && last[1] === st.size && !this.readOnly) {
+        await fs.truncate(this.walPath, last[0]);
+        truncatedWal = true;
+        await this.wal.refreshSize();
+      }
+      return { walFrames: r.frames.length, walScanEnd: r.eofOffset, corruptRanges: r.corruptRanges, truncatedWal, corruptBatches, appliedOps };
+    } finally {
+      fsSync.closeSync(fd);
+    }
+  }
+
+  /** Single-flight generation build entry point. 'open' dedupes onto an
+   *  in-flight build; 'compact'/'manual' await the in-flight one (a rotation
+   *  or their own trigger just made it abort) and then build fresh. */
+  private async buildGeneration(trigger: 'open' | 'compact' | 'manual'): Promise<void> {
+    if (this.readOnly || !this.indexGenerationsEnabled) return;
+    if (this.state !== 'open') return;
+    if (this.genBuildPromise) {
+      if (trigger === 'open') return this.genBuildPromise;
+      await this.genBuildPromise.catch(() => {});
+    }
+    const run = this.runGenerationBuild();
+    this.genBuildPromise = run;
+    try {
+      await run;
+    } finally {
+      if (this.genBuildPromise === run) this.genBuildPromise = null;
+    }
+  }
+
+  /** The build itself: detached-state walk + mutation queue + seal + file
+   *  writes + atomic publish, then retention cleanup. See the section header. */
+  private async runGenerationBuild(): Promise<void> {
+    const t0 = performance.now();
+    const gens = generationsDir(this.dir);
+    const prevCurrent = await readCurrent(this.dir);
+    const existing = await listGenerations(this.dir);
+    const nextN = Math.max(prevCurrent ? (existing.find((g) => g.id === prevCurrent)?.n ?? 0) : 0, existing[0]?.n ?? 0) + 1;
+    const id = generationId(nextN);
+    const tmpName = `${id}.tmp-${process.pid}`;
+    const tmpDir = path.join(gens, tmpName);
+
+    const gb = { queue: [] as GenBuildOp[], bytes: 0, wal: this.wal, aborted: false };
+    // Detached derived states (never touched by the live write paths).
+    const dtB = new DtIndex();
+    const secB = new IndexManager();
+    for (const d of this.indexes.list()) secB.create(d.name, d);
+    const cmpB = new CompoundIndexManager();
+    for (const d of this.compound.list()) cmpB.create(d.name, { groupBy: d.groupBy, orderBy: d.orderBy, orderType: d.orderType });
+    const imageRecords = new Map<string, { ref: ValueRef; expireAt: number; dt: Record<string, number> | null }>();
+    const textBuilds = new Map<string, { ti: TextIndex; b: TextIndexBuild }>();
+    /** Clean text indexes (empty write buffer): no staged rebuild — the
+     *  current base is re-published wholesale (hard link + live-state
+     *  serialization), the generation-era form of the old needsRebuild skip.
+     *  A compaction over a static corpus therefore never re-tokenizes it. */
+    const textClean = new Map<string, TextIndex>();
+
+    const drainQueue = (): void => {
+      if (gb.queue.length === 0) return;
+      const ops = gb.queue.splice(0, gb.queue.length);
+      gb.bytes = 0;
+      for (const op of ops) {
+        if (op.type === TYPE_SET) {
+          imageRecords.set(op.pk, { ref: { kind: 'memory', value: op.value! }, expireAt: op.expireAt, dt: op.dtNorm });
+          dtB.set(op.pk, op.dtNorm);
+          if (!op.storeOnly) {
+            secB.remove(op.pk, undefined);
+            if (this.indexable(op.canonical)) secB.add(op.pk, op.canonical);
+            cmpB.remove(op.pk);
+            cmpB.add(op.pk, op.canonical, op.dtNorm);
+          }
+        } else {
+          imageRecords.delete(op.pk);
+          dtB.del(op.pk);
+          secB.remove(op.pk, undefined);
+          cmpB.remove(op.pk);
+        }
+      }
+    };
+
+    const checkAlive = (): void => {
+      if (gb.aborted) throw new GenerationBuildAborted('store rewound by a WAL rollback');
+      if (this.wal !== gb.wal) throw new GenerationBuildAborted('compaction rotation replaced the WAL');
+      if (this.state !== 'open') throw new GenerationBuildAborted('instance is closing');
+      if (gb.queue.length > GEN_BUILD_QUEUE_CAP || gb.bytes > GEN_BUILD_QUEUE_BYTES_CAP) {
+        throw new GenerationBuildAborted('write storm outran the build');
+      }
+    };
+
+    const files: Record<string, { bytes: number; crc32: number }> = {};
+    let sealedOffset = 0;
+    try {
+      await fs.mkdir(tmpDir, { recursive: true });
+      // Staged text builds register their build queues FIRST, so every write
+      // in the window is captured for the swap-time replay (existing
+      // TextIndex machinery). An index that cannot start a build (one already
+      // in flight, e.g. a concurrent createTextIndex) is excluded from the
+      // image — the loader rebuilds it. A CLEAN index (empty delta, no
+      // tombstones) skips the staged rebuild entirely: its unchanged base is
+      // re-published by link below.
+      for (const [name, ti] of this.text) {
+        try {
+          if (!ti.needsRebuild()) {
+            textClean.set(name, ti);
+            continue;
+          }
+          textBuilds.set(name, { ti, b: ti.beginBuild({ postingsPath: path.join(tmpDir, textPostingsFile(name)) }) });
+        } catch {
+          /* excluded from this generation */
+        }
+      }
+      // Register the mutation queue only AFTER the staged builds exist, so
+      // queued ops and staged text builds cover the same window.
+      this.genBuild = gb;
+
+      // Phase 1: walk the live store into the detached states. Sorted keys
+      // (the store's ordered index), so the store image is written in
+      // bulk-load order without a later sort.
+      let docsSinceYield = 0;
+      let tokensSinceYield = 0;
+      const needValues = secB.indexes.size > 0 || cmpB.indexes.size > 0 || textBuilds.size > 0;
+      for (const kstr of this.store.rawKeys()) {
+        const rec = this.store.map.get(kstr);
+        if (!rec) continue;
+        imageRecords.set(kstr, { ref: rec.ref, expireAt: rec.expireAt, dt: rec.dt });
+        dtB.set(kstr, rec.dt);
+        if (needValues) {
+          const buf = rec.ref.kind === 'memory' ? rec.ref.value : this.valueReader!.read(rec.ref.loc);
+          const doc = this.decode(buf);
+          if (this.indexable(doc)) {
+            secB.add(kstr, doc);
+            for (const { b } of textBuilds.values()) tokensSinceYield += b.add(kstr, doc);
+          }
+          cmpB.add(kstr, doc, rec.dt);
+        }
+        if (++docsSinceYield >= REBUILD_YIELD_DOCS || tokensSinceYield >= 500_000) {
+          docsSinceYield = 0;
+          tokensSinceYield = 0;
+          drainQueue();
+          checkAlive();
+          await yieldToLoop();
+        }
+      }
+
+      // Seal: the final drain, the liveness check, the queue cutoff, and the
+      // WAL watermark read form ONE synchronous segment — no op can interleave,
+      // so the image equals replaying every frame below the checkpoint exactly.
+      drainQueue();
+      checkAlive();
+      this.genBuild = null;
+      sealedOffset = gb.wal.appendOffset;
+
+      // Phase 2: commit the staged text builds — each writes its postings file
+      // into the tmp dir, swaps the LIVE base onto it (the compaction-time
+      // rebase that replaces rebuildTextPostings), and replays its queue.
+      const textStates = new Map<string, ReturnType<TextIndex['exportImageState']>>();
+      for (const [name, tb] of textBuilds) {
+        await tb.b.commit();
+        textStates.set(name, tb.ti.exportImageState());
+        checkAlive();
+      }
+      // Clean indexes: serialize the live state as-is and re-publish the
+      // unchanged postings file by hard link (copy fallback). The manifest
+      // reuses the integrity record from the build that WROTE the file (it is
+      // immutable until replaced, so the record is still exact) — no
+      // re-tokenization, no re-read.
+      const cleanPostings = new Map<string, { src: string; info: { bytes: number; crc32: number } }>();
+      for (const [name, ti] of textClean) {
+        const src = ti.currentPostingsPath;
+        const info = ti.postingsFileInfo;
+        if (src && info) {
+          cleanPostings.set(name, { src, info });
+          textStates.set(name, ti.exportImageState());
+        }
+        // else: cannot re-publish safely (memory base / unknown integrity) —
+        // omit from the image; the loader rebuilds that index.
+      }
+
+      // Phase 3: write every image file (fsynced individually by the writers).
+      // The store image is written in ascending key order (the load path
+      // bulk-builds the ordered index from file order): the walk's keys were
+      // already sorted, but queue-applied keys appended out of order.
+      const sortedImageKeys = [...imageRecords.keys()].sort();
+      const storeRes = await writeStoreImage(
+        path.join(tmpDir, STORE_IMAGE_FILE),
+        (function* (): Generator<StoreImageRecord> {
+          for (const kstr of sortedImageKeys) {
+            const r = imageRecords.get(kstr)!;
+            yield { kstr, ref: r.ref, expireAt: r.expireAt, dt: r.dt };
+          }
+        })(),
+      );
+      files[STORE_IMAGE_FILE] = { bytes: storeRes.bytes, crc32: storeRes.crc32 };
+      files[DT_INDEX_FILE] = await writeDtIndexImage(path.join(tmpDir, DT_INDEX_FILE), dtB.exportImage());
+      const secImages = secB.exportImage();
+      files[SECONDARY_INDEX_FILE] = await writeSecondaryIndexImage(path.join(tmpDir, SECONDARY_INDEX_FILE), secImages);
+      const cmpExport = cmpB.exportImage();
+      files[COMPOUND_INDEX_FILE] = await writeCompoundIndexImage(path.join(tmpDir, COMPOUND_INDEX_FILE), cmpExport.images);
+      for (const [name, state] of textStates) {
+        files[textDictionaryFile(name)] = await writeTextDictionaryImage(
+          path.join(tmpDir, textDictionaryFile(name)),
+          (function* (): Generator<{ term: string; off: number; len: number; df: number }> {
+            for (const [term, e] of state.dict) yield { term, off: e.off, len: e.len, df: e.df };
+          })(),
+        );
+        const docsImage: TextDocsImage = {
+          keys: state.keys,
+          docLens: (() => {
+            const out: (number | undefined)[] = [];
+            for (let i = 0; i < state.keys.length; i++) out.push(state.docLens.get(i));
+            return out;
+          })(),
+          liveCount: state.liveCount,
+          removed: [...state.removed],
+          delta: [...state.delta].map(([term, m]) => ({
+            term,
+            docs: [...m].map(([docID, freq]) => ({ docID, freq })),
+          })),
+        };
+        files[textDocsFile(name)] = await writeTextDocsImage(path.join(tmpDir, textDocsFile(name)), docsImage);
+        const clean = cleanPostings.get(name);
+        if (clean) {
+          // Re-publish the unchanged base: hard link (same inode, zero copy),
+          // copy fallback — carrying the original integrity record.
+          const dst = path.join(tmpDir, textPostingsFile(name));
+          try {
+            await fs.link(clean.src, dst);
+          } catch {
+            await fs.copyFile(clean.src, dst);
+          }
+          files[textPostingsFile(name)] = clean.info;
+        } else {
+          const postInfo = textBuilds.get(name)?.ti.postingsFileInfo;
+          if (!postInfo) throw new GenerationBuildAborted(`text index "${name}" produced no postings file info`);
+          files[textPostingsFile(name)] = postInfo;
+        }
+      }
+
+      // The generation's own snapshot reference: a hard link to the live
+      // db.snapshot (same inode, zero copy — later rotations rename the path
+      // away and the generation keeps the inode), falling back to a full copy
+      // on filesystems without links (manifest records which; disk-mode loads
+      // require the link).
+      const snapSrc = path.join(this.dir, SNAPSHOT_FILE);
+      let snapSt: fsSync.Stats | null = null;
+      let snapshotLinked = false;
+      try {
+        snapSt = await fs.stat(snapSrc);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+      }
+      if (snapSt) {
+        try {
+          await fs.link(snapSrc, path.join(tmpDir, GEN_SNAPSHOT_FILE));
+          snapshotLinked = true;
+        } catch {
+          await fs.copyFile(snapSrc, path.join(tmpDir, GEN_SNAPSHOT_FILE));
+          const h = await fs.open(path.join(tmpDir, GEN_SNAPSHOT_FILE), 'r');
+          try {
+            await h.sync();
+          } finally {
+            await h.close().catch(() => {});
+          }
+        }
+      }
+      const walSt = await fs.stat(this.walPath);
+
+      // The manifest hashes exactly the indexes this image carries (a
+      // definition created/dropped mid-build is simply absent — the loader
+      // rebuilds or ignores it).
+      const manifest: GenerationManifest = {
+        format: GENERATION_FORMAT_VERSION,
+        id,
+        createdAt: Date.now(),
+        valueCodec: this.codecName,
+        valueMode: this.valueMode,
+        checkpoint: {
+          walOffset: sealedOffset,
+          walDev: walSt.dev,
+          walIno: walSt.ino,
+          walSize: sealedOffset,
+          snapshotBytes: snapSt?.size ?? 0,
+          snapshotDev: snapSt?.dev ?? 0,
+          snapshotIno: snapSt?.ino ?? 0,
+          snapshotLinked,
+        },
+        indexDefs: {
+          secondary: Object.fromEntries(
+            secImages.map((i) => [
+              i.name,
+              indexDefHash({ name: i.name, field: i.field, type: i.type, unique: i.unique, sparse: i.sparse }),
+            ]),
+          ),
+          compound: Object.fromEntries(
+            cmpExport.images.map((i) => [i.name, indexDefHash({ name: i.name, groupBy: i.groupBy, orderBy: i.orderBy, orderType: i.orderType })]),
+          ),
+          text: Object.fromEntries(
+            [...textStates.keys()].map((name) => {
+              const def = this.textDefs.find((d) => d.name === name);
+              return [name, def ? indexDefHash(MiniDb.canonicalTextDef(def)) : ''];
+            }),
+          ),
+        },
+        files,
+        counts: {
+          records: imageRecords.size,
+          dtColumns: dtB.columns().length,
+          secondaryIndexes: secImages.length,
+          compoundIndexes: cmpExport.images.length,
+          textIndexes: textStates.size,
+        },
+      };
+      checkAlive();
+      await writeManifest(tmpDir, manifest);
+      await fsyncDir(tmpDir, { strict: true, stats: this.stats });
+      // Windows cannot rename a directory with open files inside: the
+      // committed bases' live handles sit in the tmp dir, so close them first
+      // (repointPostings reopens at the final path below). POSIX keeps the
+      // handles valid across the rename — no close needed there.
+      if (process.platform === 'win32') {
+        for (const [, tb] of textBuilds) tb.ti.close();
+      }
+      await publishGeneration(this.dir, tmpName, id, { stats: this.stats });
+      // Repoint EVERY live base this build (re)published into the CURRENT
+      // generation: staged commits still read the (now renamed) tmp path, and
+      // clean re-publishes still read their OLD location (the root file — or
+      // a previous generation's — both about to be reclaimed below). Without
+      // this the next clean fast path links from a deleted path and fails
+      // ENOENT forever. The invariant after publish: every live text base
+      // reads from inside the CURRENT generation. POSIX: same inode (the
+      // hard link), just update the path string; win32: close + reopen there.
+      for (const [name, tb] of textBuilds) {
+        tb.ti.repointPostings(path.join(generationDir(this.dir, id), textPostingsFile(name)));
+      }
+      for (const [name, ti] of textClean) {
+        if (cleanPostings.has(name)) ti.repointPostings(path.join(generationDir(this.dir, id), textPostingsFile(name)));
+      }
+
+      this.generationInfo = { id, createdAt: manifest.createdAt, walCheckpoint: sealedOffset, records: imageRecords.size };
+      this.stats.generationBuilds++;
+      this.stats.generationBuildDurationMs += performance.now() - t0;
+
+      // Retention: keep the new and the previously-published generation; sweep
+      // everything else (stray tmp dirs included). Best-effort, async.
+      const keep = new Set(prevCurrent ? [id, prevCurrent] : [id]);
+      void cleanupGenerations(this.dir, keep).catch(() => {});
+      // The live text bases now live inside the new generation: the legacy
+      // root postings files are superseded derived state — reclaim them.
+      for (const name of textStates.keys()) {
+        await fs.rm(this.textPostingsPath(name), { force: true }).catch(() => {});
+      }
+    } catch (e) {
+      if (this.genBuild === gb) this.genBuild = null;
+      // Uncommitted staged builds only disarm their queues (the live indexes
+      // stay authoritative); committed ones keep their new base — its
+      // postings file stays readable through the open fd even though the
+      // stranded tmp dir is swept at the next open (POSIX; on Windows the
+      // sweep fails best-effort until the handle closes).
+      for (const [, tb] of textBuilds) tb.b.abort();
+      if (e instanceof GenerationBuildAborted) {
+        this.stats.generationBuildAborts++;
+        return;
+      }
+      this.stats.generationBuildErrors++;
+      throw e;
+    } finally {
+      if (this.genBuild === gb) this.genBuild = null;
+      void sealedOffset;
+    }
+  }
+
+  /** Explicit maintenance (stage 5): build + publish a fresh index generation
+   *  now. Writer only. The load path is automatic; this exists for operators
+   *  who want to force a checkpoint after a large burst of writes instead of
+   *  waiting for the next compaction. */
+  async rebuildGeneration(): Promise<void> {
+    this.ensureOpen();
+    this.ensureWritable();
+    if (!this.indexGenerationsEnabled) throw new Error('index generations are disabled (OpenOptions.indexGenerations: false)');
+    await this.buildGeneration('manual');
+  }
+
+  /** Stable generation status: the generation this instance loaded at open or
+   *  last published (null when running on the legacy recovery path). */
+  getIndexGeneration(): { id: string; createdAt: number; walCheckpoint: number; records: number } | null {
+    return this.generationInfo ? { ...this.generationInfo } : null;
   }
 
   private async loadIndexDefinitions(): Promise<void> {
@@ -1661,6 +2620,22 @@ export class MiniDb<V = unknown> {
         for (const ti of this.text.values()) ti.remove(op.pk);
       }
     }
+    // Stage 5: feed the in-flight generation build (if any) so its detached
+    // states converge on the exact sealed checkpoint — see genBuild. Infallible
+    // (a bare array push + counter), preserving this method's must-not-throw
+    // contract.
+    const gb = this.genBuild;
+    if (gb) {
+      gb.queue.push({
+        type: op.type,
+        pk: op.pk,
+        value: op.value,
+        expireAt: op.expireAt,
+        dtNorm: op.dtNorm,
+        canonical: op.canonical,
+      });
+      gb.bytes += (op.value ? op.value.length : 0) + 64;
+    }
     if (op.type === TYPE_SET) this.touchAccess(op.pk);
   }
 
@@ -1685,6 +2660,10 @@ export class MiniDb<V = unknown> {
    *  rollback: put the key back to `prev` across the store and every derived
    *  index (TTL/access/dt/secondary/compound/text). */
   private restoreGroupKey(pk: string, prev: StoreRecord | undefined): void {
+    // A rollback rewinds the store OUTSIDE applyOp's op stream, so an
+    // in-flight generation build can no longer prove its image equals the
+    // checkpoint replay: abort it (expected churn, never an error).
+    if (this.genBuild) this.genBuild.aborted = true;
     if (this.indexes.size) this.indexes.remove(pk, undefined);
     for (const ti of this.text.values()) ti.remove(pk);
     this.dt.del(pk);
@@ -1802,6 +2781,22 @@ export class MiniDb<V = unknown> {
         let seq: number | undefined;
         try {
           this.store.set(k, curValue, expireAt, cur.dt);
+          // Stage 5: expire() rewrites the TTL without going through applyOp,
+          // so the generation build's queue needs this store-only entry — the
+          // value is unchanged and value-derived indexes need no re-feed.
+          const gb = this.genBuild;
+          if (gb) {
+            gb.queue.push({
+              type: TYPE_SET,
+              pk: k,
+              value: curValue,
+              expireAt,
+              dtNorm: cur.dt,
+              canonical: undefined,
+              storeOnly: true,
+            });
+            gb.bytes += curValue.length + 64;
+          }
           seq = this.store.map.get(k)?.seq;
         } catch (err) {
           // The in-memory mutation failed: an enqueued frame poisons the WAL
@@ -2392,7 +3387,13 @@ export class MiniDb<V = unknown> {
 
   private async copyIfExists(name: string, destDir: string): Promise<boolean> {
     try {
-      await fs.copyFile(path.join(this.dir, name), path.join(destDir, name));
+      const src = path.join(this.dir, name);
+      const st = await fs.stat(src);
+      // The generations/ tree is a directory: copy it recursively (backup
+      // includes published generations; a restore's inode change safely
+      // invalidates their WAL anchors, so they fall back to a rebuild).
+      if (st.isDirectory()) await fs.cp(src, path.join(destDir, name), { recursive: true });
+      else await fs.copyFile(src, path.join(destDir, name));
       return true;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') return false;
@@ -2548,7 +3549,10 @@ export class MiniDb<V = unknown> {
     const names = await fs.readdir(srcDir);
     for (const name of names) {
       if (isPersistentFile(name) || name === 'backup.manifest.json') {
-        await fs.copyFile(path.join(srcDir, name), path.join(destDir, name));
+        const src = path.join(srcDir, name);
+        const st = await fs.stat(src);
+        if (st.isDirectory()) await fs.cp(src, path.join(destDir, name), { recursive: true });
+        else await fs.copyFile(src, path.join(destDir, name));
       }
     }
     return MiniDb.open<V>({ ...openOpts, dir: destDir });
@@ -2626,6 +3630,10 @@ export class MiniDb<V = unknown> {
     // it escape here would skip the whole cleanup pass (the caller would have
     // to close() twice to actually release the lock).
     if (this.compacting) await this._compactDone?.catch(() => {});
+    // Settle an in-flight generation build (its liveness check aborts it once
+    // the state flips to 'closing') before its file handles/posts are torn
+    // down. Failures are already accounted in the generation stats.
+    if (this.genBuildPromise) await this.genBuildPromise.catch(() => {});
     // Let in-flight WAL failures and their kicked recoveries settle before
     // and after closing the WAL: a poisoned/failing close would otherwise
     // leave an un-acked tail in db.wal that a reopen replays as ghost writes.

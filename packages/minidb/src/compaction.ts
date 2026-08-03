@@ -33,8 +33,11 @@
 //                     finishes; the pause scales with the tail the pre-copy did
 //                     not drain — the same bounded end-of-rewrite pause Redis
 //                     accepts for its AOF diff flush.
-//   4. bookkeeping  — stats + awaiting onCompacted() (rebuild derived text
-//                     postings — yields to the event loop, writers unaffected).
+//   4. bookkeeping  — stats + awaiting onCompacted() (stage 5: build and
+//                     publish the new index generation — store image, index
+//                     images, text postings — as one transaction with the
+//                     rotated snapshot/WAL; legacy mode rebuilds derived text
+//                     postings instead).
 //
 // Crash safety: recovery is `load db.snapshot` + `replay db.wal`, last-writer
 // wins. We rename the snapshot BEFORE the WAL. If a crash lands between the two
@@ -93,8 +96,8 @@ export interface CompactionTarget {
    *  closed before the rotation renames (see rotateReplace). */
   valueReader?: { reopenBoth(): void; close?(): void };
   /** Optional hook invoked (and awaited) after the snapshot + WAL rotation
-   *  succeeds, so the owner can rewrite derived on-disk state (e.g. text
-   *  postings) against the new live set. */
+   *  succeeds, so the owner can publish derived on-disk state (stage 5's
+   *  index generation; legacy mode: text postings) against the new live set. */
   onCompacted?: () => void | Promise<void>;
 }
 

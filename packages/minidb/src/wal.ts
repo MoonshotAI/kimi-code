@@ -317,6 +317,15 @@ export class WAL {
     return this.poisoned;
   }
 
+  /** The logical next append offset, including queued-but-unflushed frames:
+   *  every frame already accepted sits strictly below it, and any later frame
+   *  starts at/above it. Stage 5's generation build seals its checkpoint at
+   *  this watermark (every op applied so far has its frame below it, because
+   *  a commit body appends before it applies, in the same tick). */
+  get appendOffset(): number {
+    return this.nextOffset;
+  }
+
   /** Clear the poison after the owner truncated the file to failedAtOffset
    *  and re-synced size bookkeeping via refreshSize(): the write path resumes. */
   clearPoison(): void {
