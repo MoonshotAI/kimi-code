@@ -153,6 +153,29 @@ max_steps_per_turn = "abc"
     });
   });
 
+  it('reports an API-key provider as authed even with a broken unrelated config section', async () => {
+    // No OAuth token file — the user authenticated via API key only. A broken
+    // [loop_control] must not abort status resolution (the read path uses the
+    // lenient loader, not the strict write-path reader).
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+[providers."moonshot-cn"]
+type = "kimi"
+base_url = "https://api.moonshot.cn/v1"
+api_key = "sk-test"
+
+[loop_control]
+max_steps_per_turn = "abc"
+`,
+    );
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    const status = await harness.auth.status();
+    expect(status.providers).toContainEqual({ providerName: 'moonshot-cn', hasToken: true });
+    expect(status.providers.some((entry) => entry.hasToken)).toBe(true);
+  });
+
   it('resolves cached access tokens from the configured scoped OAuth ref', async () => {
     const oauthKey = resolveKimiCodeOAuthKey({
       oauthHost: 'https://auth.dev.example.test',

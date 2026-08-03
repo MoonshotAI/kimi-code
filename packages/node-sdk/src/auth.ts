@@ -119,7 +119,11 @@ export class KimiAuthFacade {
   }
 
   async status(providerName?: string | undefined): Promise<AuthStatus> {
-    return this.toolkit.status(providerName, this.resolveRuntimeManagedAuth(providerName).oauthRef);
+    return this.toolkit.status(
+      providerName,
+      this.resolveRuntimeManagedAuth(providerName).oauthRef,
+      { apiKeyProviders: this.resolveApiKeyProviders() },
+    );
   }
 
   async login(
@@ -292,6 +296,24 @@ export class KimiAuthFacade {
       oauthRef: provider?.oauth,
       baseUrl: provider?.baseUrl,
     };
+  }
+
+  /**
+   * Provider names configured with a non-empty `apiKey`. Like
+   * {@link resolveManagedAuth} this reads via the lenient loader so a broken
+   * unrelated config section cannot abort status resolution. The managed OAuth
+   * slot is provisioned with an empty `apiKey`, so it is excluded by the
+   * non-empty check.
+   */
+  private resolveApiKeyProviders(): string[] {
+    const { config } = loadRuntimeConfigSafe(this.options.configPath);
+    const names: string[] = [];
+    for (const [name, provider] of Object.entries(config.providers)) {
+      if (provider.apiKey && provider.apiKey.length > 0) {
+        names.push(name);
+      }
+    }
+    return names;
   }
 
   private resolveRuntimeManagedAuth(providerName?: string | undefined): {
