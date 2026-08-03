@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IEventBus } from '#/app/event/eventBus';
 import { IEventService } from '#/app/event/event';
@@ -72,7 +72,7 @@ export class AgentRPCService implements IAgentRPCService {
     @IAgentFullCompactionService private readonly fullCompaction: IAgentFullCompactionService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentContextSizeService private readonly contextSize: IAgentContextSizeService,
+    @IAgentTokenCountingService private readonly tokenCounting: IAgentTokenCountingService,
     @IAgentSkillService private readonly skills: IAgentSkillService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventBus private readonly eventBus: IEventBus,
@@ -218,7 +218,10 @@ export class AgentRPCService implements IAgentRPCService {
   getContext(_payload: EmptyPayload) {
     return {
       history: this.context.get(),
-      tokenCount: this.contextSize.get().measured,
+      // The strategy-resolved total (measured + estimated tail), matching the
+      // v1 `context.tokenCount` semantics — under the `estimated` strategy
+      // `measured` alone would read 0.
+      tokenCount: this.tokenCounting.get().size,
     };
   }
 

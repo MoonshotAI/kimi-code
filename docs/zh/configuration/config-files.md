@@ -252,6 +252,16 @@ max_output_size = 8192
 
 重试仅针对瞬时故障——连接错误、超时、HTTP 429 限流和 5xx 服务端错误。账户额度耗尽或余额不足导致的 429 不会重试，会立即失败：在充值之前重试不可能成功。
 
+## `token_counting`
+
+`token_counting` 决定上下文 token 计数的来源——上下文大小显示和自动压缩都基于这个值。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `strategy` | `"measured+estimated" \| "measured" \| "estimated"` | `"measured+estimated"` | `measured+estimated` 使用每次请求的供应商实测用量，仅对未实测的尾部做估算；`measured` 只依赖供应商实测（估算按 0 处理，压缩触发更晚，或仅靠上下文溢出恢复）；`estimated` 忽略供应商实测、全部使用估算——适用于不上报用量的供应商 |
+
+`strategy` 可被环境变量 `KIMI_TOKEN_COUNTING_STRATEGY` 覆盖，优先级高于 `config.toml`。
+
 ## `background`
 
 `background` 控制后台任务（通过 `Bash` 工具或 `Agent` 工具的 `run_in_background=true` 参数启动）的并发数。

@@ -50,7 +50,7 @@ import {
   type ToolExecution,
 } from '#/index';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
@@ -1614,7 +1614,10 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         source: 'auto',
         tokens_before: 46,
-        tokens_after: 166,
+        // 9 measured summary output tokens (scripted compaction exchange) +
+        // 21 estimated tokens for the kept user messages — the summary
+        // component is the REAL provider count, not a text estimate.
+        tokens_after: 30,
         compacted_count: 7,
         retry_count: 0,
       }),
@@ -3286,7 +3289,7 @@ describe('goal reminder re-injection after full compaction', () => {
         lastCompactedTokenCount: number | null;
       }
     ).lastCompactedTokenCount;
-    expect(floor).toBe(ctx.get(IAgentContextSizeService).get().size);
+    expect(floor).toBe(ctx.get(IAgentTokenCountingService).get().size);
     expect(floor!).toBeGreaterThan(tokensAfter as number);
 
     ctx.mockNextResponse({ type: 'text', text: 'Reply after compaction.' });

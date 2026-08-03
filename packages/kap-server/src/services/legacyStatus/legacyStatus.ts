@@ -4,7 +4,7 @@
  *
  * v1 emits a single `agent.status.updated` carrying usage + contextTokens +
  * maxContextTokens + model together. v2 splits those into independent Models /
- * Ops (`usage.record`, `context_size.measured`, `config.update` …), so the
+ * Ops (`usage.record`, `token_counting.measured`, `config.update` …), so the
  * partial events reach clients separately and a usage-only event can overwrite
  * a previously-known contextTokens with a stale zero. The v1 edge re-reads the
  * authoritative services when a native status or context change arrives, so it
@@ -16,16 +16,14 @@
  */
 
 import {
-  IAgentContextSizeService,
   IAgentProfileService,
+  IAgentTokenCountingService,
   IAgentUsageService,
   IModelCatalog,
-  IWireService,
   SECONDARY_DERIVED_MODEL_ID,
   type IAgentScopeHandle,
   type UsageStatus,
 } from '@moonshot-ai/agent-core-v2';
-import { ContextSizeModel } from '@moonshot-ai/agent-core-v2';
 import type { AgentActivityState } from '@moonshot-ai/agent-core-v2';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 
@@ -112,16 +110,10 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
   const usageService = agent.accessor.get(IAgentUsageService) as
     | IAgentUsageService
     | undefined;
-  const contextSize = agent.accessor.get(IAgentContextSizeService) as
-    | IAgentContextSizeService
+  const tokenCounting = agent.accessor.get(IAgentTokenCountingService) as
+    | IAgentTokenCountingService
     | undefined;
-  const wire = agent.accessor.get(IWireService) as IWireService | undefined;
-  if (
-    profile === undefined ||
-    usageService === undefined ||
-    contextSize === undefined ||
-    wire === undefined
-  ) {
+  if (profile === undefined || usageService === undefined || tokenCounting === undefined) {
     return undefined;
   }
   const usage = usageService.status();
@@ -133,8 +125,7 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
   // prefix (the estimate then excludes the system prompt); the measured total
   // is the better reading there. Every REAL shrink (undo / clear / compaction)
   // rebases the measured model first, so the max only wins in that window.
-  const measured = wire.getModel(ContextSizeModel);
-  const contextTokens = Math.max(contextSize.get().size, measured.tokens);
+  const contextTokens = Math.max(tokenCounting.get().size, tokenCounting.latestMeasured());
   const capabilities = profile.getModelCapabilities();
   const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
   const model = displayModelAlias(agent, profile.getModel());

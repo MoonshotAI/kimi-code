@@ -16,19 +16,17 @@ import type {
   SessionActivityState,
 } from '@moonshot-ai/agent-core-v2';
 import {
-  ContextSizeModel,
   IAgentActivityView,
   LifecycleScope,
-  IAgentContextSizeService,
   IAgentLifecycleService,
   IAgentProfileService,
+  IAgentTokenCountingService,
   IAgentUsageService,
   IEventBus,
   IEventService,
   IModelCatalog,
   ISessionActivityView,
   ISessionInteractionService,
-  IWireService,
   ISessionMetadata,
   ISessionLifecycleService,
   IWorkspaceLifecycleService,
@@ -525,18 +523,15 @@ describe('SessionEventBroadcaster', () => {
     const usage = {
       total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
     };
-    main.set(IAgentContextSizeService, { get: () => ({ size: contextSize }) });
+    main.set(IAgentTokenCountingService, {
+      get: () => ({ size: contextSize }),
+      latestMeasured: () => 8,
+    });
     main.set(IAgentProfileService, {
       getModel: () => 'example-model',
       getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
     });
     main.set(IAgentUsageService, { status: () => usage });
-    main.set(IWireService, {
-      getModel: (model: unknown) => {
-        expect(model).toBe(ContextSizeModel);
-        return { length: 0, tokens: 8 };
-      },
-    });
     sessions.set('s1', lc);
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
@@ -574,18 +569,12 @@ describe('SessionEventBroadcaster', () => {
     const usage = {
       total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
     };
-    sub.set(IAgentContextSizeService, { get: () => ({ size: 10 }) });
+    sub.set(IAgentTokenCountingService, { get: () => ({ size: 10 }), latestMeasured: () => 8 });
     sub.set(IAgentProfileService, {
       getModel: () => 'sub-model',
       getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
     });
     sub.set(IAgentUsageService, { status: () => usage });
-    sub.set(IWireService, {
-      getModel: (model: unknown) => {
-        expect(model).toBe(ContextSizeModel);
-        return { length: 0, tokens: 8 };
-      },
-    });
     sessions.set('s1', lc);
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
@@ -611,13 +600,12 @@ describe('SessionEventBroadcaster', () => {
   it('resolves the secondary derived model id to a display string in status events', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
-    main.set(IAgentContextSizeService, { get: () => ({ size: 10 }) });
+    main.set(IAgentTokenCountingService, { get: () => ({ size: 10 }), latestMeasured: () => 8 });
     main.set(IAgentProfileService, {
       getModel: () => SECONDARY_DERIVED_MODEL_ID,
       getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
     });
     main.set(IAgentUsageService, { status: () => ({}) });
-    main.set(IWireService, { getModel: () => ({ length: 0, tokens: 8 }) });
     main.set(IModelCatalog, {
       get: (id: string) => {
         expect(id).toBe(SECONDARY_DERIVED_MODEL_ID);
@@ -661,18 +649,12 @@ describe('SessionEventBroadcaster', () => {
       },
       total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
     };
-    main.set(IAgentContextSizeService, { get: () => ({ size: 10 }) });
+    main.set(IAgentTokenCountingService, { get: () => ({ size: 10 }), latestMeasured: () => 8 });
     main.set(IAgentProfileService, {
       getModel: () => 'example-model',
       getModelCapabilities: () => ({ max_context_tokens: 128_000, max_input_tokens: 64_000 }),
     });
     main.set(IAgentUsageService, { status: () => usage });
-    main.set(IWireService, {
-      getModel: (model: unknown) => {
-        expect(model).toBe(ContextSizeModel);
-        return { length: 0, tokens: 8 };
-      },
-    });
     sessions.set('s1', lc);
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
