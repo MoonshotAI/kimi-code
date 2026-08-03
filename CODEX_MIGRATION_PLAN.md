@@ -309,7 +309,7 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 
 ### 阶段 E — SDK/ACP/OAuth/Config
 1. 🔶 `kimi-sdk`：**`Harness`（内嵌/Remote 引擎生命周期 + `Session` typed 门面，2 集成测试）已落地**；session/harness/auth/catalog 平移继续；klient 并入
-2. `kimi-acp`：ACP stdio 适配
+2. 🔶 `kimi-acp`：**最小 stdio 适配器已落地**（initialize 协商 + session/new/load/list/delete + prompt 经 Harness，2 测试）；ACP 兼容测试与通知面继续
 3. `kimi-oauth`：流程状态机
 4. `kimi-config`：TOML/env/diagnostics
 5. **验证**：SDK 测试平移（425 用例）；ACP 兼容测试；node-sdk/klient 转薄壳 re-export

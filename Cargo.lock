@@ -1311,6 +1311,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kimi-acp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "kimi-protocol",
+ "kimi-sdk",
+ "kimi-ui",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "kimi-agent"
 version = "0.1.0"
 dependencies = [

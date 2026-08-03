@@ -1,0 +1,14 @@
+[package]
+name = "kimi-acp"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Kimi Code Agent Client Protocol (ACP) adapter — stdio JSON-RPC over kimi-sdk (stage E)"
+
+[dependencies]
+anyhow = "1"
+kimi-protocol = { path = "../kimi-protocol" }
+kimi-sdk = { path = "../kimi-sdk" }
+kimi-ui = { path = "../kimi-ui" }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "sync"] }
