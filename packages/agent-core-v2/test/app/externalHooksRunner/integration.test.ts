@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
@@ -38,6 +38,7 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
 import { ExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunnerService';
 import { makeHookRunner } from '../../agent/externalHooks/runner-stub';
+import type { AgentTaskInfo } from '#/agent/task/task';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
@@ -58,6 +59,11 @@ import {
 } from '#/session/subagent/subagent';
 import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
 import { SessionExternalHooksService } from '#/session/externalHooks/externalHooksService';
+import {
+  ISessionAgentProfileCatalog,
+} from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { IModelService } from '#/kosong/model/model';
 
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubLoopWithHooks, stubToolExecutor } from '../../agent/loop/stubs';
@@ -128,14 +134,53 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 function stubHookRunner(partial: unknown): IExternalHooksRunnerService {
-  const p = partial as Pick<
-    IExternalHooksRunnerService,
-    'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'
+  const p = partial as Partial<
+    Pick<
+      IExternalHooksRunnerService,
+      'trigger' | 'triggerBlock' | 'fireAndForgetTrigger' | 'hasHooksFor'
+    >
   >;
   return {
     _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    onDidReload: Event.None,
+    hasHooksFor: () => false,
     ...p,
-  };
+  } as IExternalHooksRunnerService;
+}
+
+function stubSessionMetadata(title?: string): ISessionMetadata {
+  return {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    onDidChangeMetadata: Event.None,
+    read: async () => ({
+      id: 'session-1',
+      title,
+      createdAt: 0,
+      updatedAt: 0,
+      archived: false,
+    }),
+    update: async () => {},
+    setTitle: async () => {},
+    setArchived: async () => {},
+    registerAgent: async () => {},
+  } as unknown as ISessionMetadata;
+}
+
+function stubProfileCatalog(name = 'default'): ISessionAgentProfileCatalog {
+  return {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    getDefault: () => ({ name }),
+  } as unknown as ISessionAgentProfileCatalog;
+}
+
+function stubModelService(model = 'kimi-test'): IModelService {
+  return {
+    _serviceBrand: undefined,
+    getDefaultModel: () => model,
+  } as unknown as IModelService;
 }
 
 function hookLogPath(): string {
@@ -261,6 +306,7 @@ describe('IExternalHooksRunnerService integration', () => {
           registerTestAgentWireServices(reg, 'wire/external-hooks');
           reg.defineInstance(IBootstrapService, stubBootstrap());
           reg.defineInstance(ISessionContext, stubSessionContext());
+          reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.definePartialInstance(IConfigService, {});
           reg.definePartialInstance(IPluginService, {});
           reg.defineInstance(IAgentContextMemoryService, context);
@@ -365,6 +411,7 @@ describe('IExternalHooksRunnerService integration', () => {
           registerTestAgentWireServices(reg, 'wire/external-hooks');
           reg.defineInstance(IBootstrapService, stubBootstrap());
           reg.defineInstance(ISessionContext, stubSessionContext());
+          reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.definePartialInstance(IConfigService, {});
           reg.definePartialInstance(IPluginService, {});
           reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
@@ -491,6 +538,9 @@ describe('IExternalHooksRunnerService integration', () => {
                 : `sessions/workspace-1/session-1/${subKey}`,
           });
           reg.defineInstance(ISessionLifecycleHooks, stubSessionLifecycleHooks());
+          reg.defineInstance(ISessionMetadata, stubSessionMetadata());
+          reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
+          reg.defineInstance(IModelService, stubModelService());
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: stopAgentTask.event,
@@ -554,6 +604,7 @@ describe('IExternalHooksRunnerService integration', () => {
           registerStateServices(reg);
           reg.defineInstance(IBootstrapService, stubBootstrap());
           reg.defineInstance(ISessionContext, stubSessionContext());
+          reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.definePartialInstance(IConfigService, {
             ready,
             get: <T = unknown>(domain: string): T =>
@@ -825,6 +876,9 @@ describe('IExternalHooksRunnerService integration', () => {
                 : `sessions/workspace-1/session-1/${subKey}`,
           });
           reg.defineInstance(ISessionLifecycleHooks, lifecycleHooks);
+          reg.defineInstance(ISessionMetadata, stubSessionMetadata());
+          reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
+          reg.defineInstance(IModelService, stubModelService());
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
@@ -855,6 +909,7 @@ describe('IExternalHooksRunnerService integration', () => {
       await lifecycleHooks.onDidCreateSession.run({ source: 'resume' });
       await lifecycleHooks.onDidCreateSession.run({ source: 'fork' });
       await lifecycleHooks.onWillCloseSession.run({ reason: 'exit' });
+      await lifecycleHooks.onWillCloseSession.run({ reason: 'archive' });
 
       expect(readHookLog(path)).toEqual([
         {
@@ -872,6 +927,12 @@ describe('IExternalHooksRunnerService integration', () => {
         {
           event: 'SessionEnd',
           reason: 'exit',
+          sessionId: 'session-1',
+          cwd,
+        },
+        {
+          event: 'SessionEnd',
+          reason: 'archive',
           sessionId: 'session-1',
           cwd,
         },
@@ -984,5 +1045,345 @@ describe('IExternalHooksRunnerService integration', () => {
     });
     expect(stop).toHaveLength(1);
     expect(stop[0]?.stdout).toContain('stop:explore:done');
+  });
+
+  it('enriches SessionStart with model, profile, session title, and client type', async () => {
+    const disposables = new DisposableStore();
+    let ix: TestInstantiationService | undefined;
+    try {
+      const lifecycleHooks = stubSessionLifecycleHooks();
+      const path = hookLogPath();
+      const command = stdinScript([
+        'const fs = require("node:fs");',
+        'fs.appendFileSync(',
+        `  ${JSON.stringify(path)},`,
+        '  JSON.stringify({',
+        '    event: parsed.hook_event_name,',
+        '    model: parsed.model,',
+        '    profile: parsed.profile,',
+        '    sessionTitle: parsed.session_title,',
+        '    clientType: parsed.client_type,',
+        '  }) + "\\n",',
+        ');',
+      ].join('\n'));
+
+      ix = createServices(disposables, {
+        strict: true,
+        additionalServices: (reg) => {
+          registerStateServices(reg);
+          reg.defineInstance(ISessionContext, stubSessionContext());
+          reg.defineInstance(ISessionLifecycleHooks, lifecycleHooks);
+          reg.defineInstance(ISessionMetadata, stubSessionMetadata('My Session'));
+          reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog('coder'));
+          reg.defineInstance(IModelService, stubModelService('kimi-k2'));
+          reg.definePartialInstance(ISessionSubagentService, {
+            hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
+            onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
+          });
+          reg.definePartialInstance(IConfigService, {
+            ready: Promise.resolve(),
+            get: <T = unknown>(domain: string): T =>
+              (domain === HOOKS_SECTION
+                ? [{ event: 'SessionStart' as const, command, timeout: 5 }]
+                : undefined) as T,
+          });
+          reg.definePartialInstance(IPluginService, {
+            enabledHooks: async () => [],
+            onDidReload: Event.None as IPluginService['onDidReload'],
+          });
+          reg.defineInstance(IBootstrapService, stubBootstrap());
+          reg.define(IHostProcessService, HostProcessService);
+        },
+      });
+      ix.set(IExternalHooksRunnerService, new SyncDescriptor(ExternalHooksRunnerService));
+      ix.set(ISessionExternalHooksService, new SyncDescriptor(SessionExternalHooksService));
+      ix.get(ISessionExternalHooksService);
+      await flushMicrotasks();
+
+      await lifecycleHooks.onDidCreateSession.run({ source: 'startup' });
+
+      expect(readHookLog(path)).toEqual([
+        {
+          event: 'SessionStart',
+          model: 'kimi-k2',
+          profile: 'coder',
+          sessionTitle: 'My Session',
+          clientType: 'test_platform',
+        },
+      ]);
+    } finally {
+      ix?.dispose();
+      disposables.dispose();
+    }
+  });
+
+  it('translates turn.started, prompt.queued, and task.started bus events into hooks', async () => {
+    const disposables = new DisposableStore();
+    let ix: TestInstantiationService | undefined;
+    try {
+      const fired: Array<{
+        event: string;
+        matcherValue?: unknown;
+        inputData?: unknown;
+      }> = [];
+      const hookEngine = {
+        trigger: async () => [],
+        triggerBlock: async () => undefined,
+        fireAndForgetTrigger: async (
+          event: string,
+          args: { matcherValue?: unknown; inputData?: unknown },
+        ) => {
+          fired.push({
+            event,
+            matcherValue: args.matcherValue,
+            inputData: args.inputData,
+          });
+          return [];
+        },
+      };
+
+      ix = createServices(disposables, {
+        strict: true,
+        additionalServices: (reg) => {
+          registerStateServices(reg);
+          registerTestAgentWireServices(reg, 'wire/external-hooks');
+          reg.defineInstance(IBootstrapService, stubBootstrap());
+          reg.defineInstance(ISessionContext, stubSessionContext());
+          reg.defineInstance(ISessionMetadata, stubSessionMetadata('My Session'));
+          reg.definePartialInstance(IConfigService, {});
+          reg.definePartialInstance(IPluginService, {});
+          reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
+          reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
+          reg.define(IEventBus, EventBusService);
+          reg.definePartialInstance(IAgentPromptService, {
+            hooks: createHooks(['onBeforeSubmitPrompt']),
+          });
+          reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+          reg.definePartialInstance(IAgentPermissionGate, {});
+          reg.definePartialInstance(IAgentFullCompactionService, {
+            hooks: createHooks(['onWillCompact']),
+          });
+          reg.definePartialInstance(IAgentTaskService, {});
+        },
+      });
+      ix.set(IExternalHooksRunnerService, stubHookRunner(hookEngine));
+      ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
+      ix.get(IAgentExternalHooksService);
+      const eventBus = ix.get(IEventBus);
+      await flushMicrotasks();
+
+      eventBus.publish({
+        type: 'turn.started',
+        turnId: 3,
+        origin: { kind: 'system_trigger', name: 'goal' },
+      });
+      const queuedContent = [{ type: 'text' as const, text: 'later' }];
+      eventBus.publish({
+        type: 'prompt.queued',
+        promptId: 'p1',
+        content: queuedContent,
+        queueLength: 2,
+      });
+      eventBus.publish({
+        type: 'task.started',
+        info: {
+          taskId: 'task-1',
+          kind: 'process',
+          description: 'npm test',
+          status: 'running',
+          startedAt: 123,
+        } as unknown as AgentTaskInfo,
+      });
+      await flushMicrotasks();
+
+      expect(fired).toEqual([
+        {
+          event: 'TurnStarted',
+          matcherValue: 'system_trigger',
+          inputData: {
+            sessionTitle: 'My Session',
+            turnId: 3,
+            originKind: 'system_trigger',
+            originName: 'goal',
+            prompt: undefined,
+          },
+        },
+        {
+          event: 'UserPromptQueued',
+          matcherValue: queuedContent,
+          inputData: {
+            sessionTitle: 'My Session',
+            promptId: 'p1',
+            prompt: queuedContent,
+            queueLength: 2,
+          },
+        },
+        {
+          event: 'TaskStarted',
+          matcherValue: 'process',
+          inputData: {
+            sessionTitle: 'My Session',
+            taskId: 'task-1',
+            kind: 'process',
+            description: 'npm test',
+            status: 'running',
+            detached: undefined,
+            startedAt: 123,
+          },
+        },
+      ]);
+    } finally {
+      ix?.dispose();
+      disposables.dispose();
+    }
+  });
+
+  it('fires SessionHeartbeat on the interval when the event is configured', async () => {
+    vi.useFakeTimers();
+    const disposables = new DisposableStore();
+    let ix: TestInstantiationService | undefined;
+    try {
+      const fired: string[] = [];
+      const hookEngine = {
+        trigger: async () => [],
+        triggerBlock: async () => undefined,
+        fireAndForgetTrigger: async (event: string) => {
+          fired.push(event);
+          return [];
+        },
+        hasHooksFor: (event: string) => event === 'SessionHeartbeat',
+      };
+
+      ix = createServices(disposables, {
+        strict: true,
+        additionalServices: (reg) => {
+          registerStateServices(reg);
+          reg.defineInstance(ISessionContext, stubSessionContext());
+          reg.defineInstance(ISessionLifecycleHooks, stubSessionLifecycleHooks());
+          reg.defineInstance(ISessionMetadata, stubSessionMetadata());
+          reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
+          reg.defineInstance(IModelService, stubModelService());
+          reg.definePartialInstance(ISessionSubagentService, {
+            hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
+            onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
+          });
+        },
+      });
+      ix.set(IExternalHooksRunnerService, stubHookRunner(hookEngine));
+      ix.set(ISessionExternalHooksService, new SyncDescriptor(SessionExternalHooksService));
+      ix.get(ISessionExternalHooksService);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fired).toEqual(['SessionHeartbeat']);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fired).toEqual(['SessionHeartbeat', 'SessionHeartbeat']);
+    } finally {
+      ix?.dispose();
+      disposables.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('skips SessionHeartbeat ticks when no hook is registered for the event', async () => {
+    vi.useFakeTimers();
+    const disposables = new DisposableStore();
+    let ix: TestInstantiationService | undefined;
+    try {
+      const fired: string[] = [];
+      const hookEngine = {
+        trigger: async () => [],
+        triggerBlock: async () => undefined,
+        fireAndForgetTrigger: async (event: string) => {
+          fired.push(event);
+          return [];
+        },
+      };
+
+      ix = createServices(disposables, {
+        strict: true,
+        additionalServices: (reg) => {
+          registerStateServices(reg);
+          reg.defineInstance(ISessionContext, stubSessionContext());
+          reg.defineInstance(ISessionLifecycleHooks, stubSessionLifecycleHooks());
+          reg.defineInstance(ISessionMetadata, stubSessionMetadata());
+          reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
+          reg.defineInstance(IModelService, stubModelService());
+          reg.definePartialInstance(ISessionSubagentService, {
+            hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
+            onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
+          });
+        },
+      });
+      ix.set(IExternalHooksRunnerService, stubHookRunner(hookEngine));
+      ix.set(ISessionExternalHooksService, new SyncDescriptor(SessionExternalHooksService));
+      ix.get(ISessionExternalHooksService);
+
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(fired).toEqual([]);
+    } finally {
+      ix?.dispose();
+      disposables.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('arms and disarms SessionHeartbeat when the hook index reloads', async () => {
+    vi.useFakeTimers();
+    const disposables = new DisposableStore();
+    let ix: TestInstantiationService | undefined;
+    try {
+      const fired: string[] = [];
+      const reloadEmitter = disposables.add(new Emitter<void>());
+      let heartbeatEnabled = false;
+      const hookEngine = {
+        trigger: async () => [],
+        triggerBlock: async () => undefined,
+        fireAndForgetTrigger: async (event: string) => {
+          fired.push(event);
+          return [];
+        },
+        hasHooksFor: (event: string) => heartbeatEnabled && event === 'SessionHeartbeat',
+        onDidReload: reloadEmitter.event,
+      };
+
+      ix = createServices(disposables, {
+        strict: true,
+        additionalServices: (reg) => {
+          registerStateServices(reg);
+          reg.defineInstance(ISessionContext, stubSessionContext());
+          reg.defineInstance(ISessionLifecycleHooks, stubSessionLifecycleHooks());
+          reg.defineInstance(ISessionMetadata, stubSessionMetadata());
+          reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
+          reg.defineInstance(IModelService, stubModelService());
+          reg.definePartialInstance(ISessionSubagentService, {
+            hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
+            onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
+          });
+        },
+      });
+      ix.set(IExternalHooksRunnerService, stubHookRunner(hookEngine));
+      ix.set(ISessionExternalHooksService, new SyncDescriptor(SessionExternalHooksService));
+      ix.get(ISessionExternalHooksService);
+
+      // No heartbeat hook at startup: nothing fires.
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(fired).toEqual([]);
+
+      // A plugin reload contributes a SessionHeartbeat hook: the timer arms.
+      heartbeatEnabled = true;
+      reloadEmitter.fire();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fired).toEqual(['SessionHeartbeat']);
+
+      // A later reload drops it again: the timer disarms.
+      heartbeatEnabled = false;
+      reloadEmitter.fire();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(fired).toEqual(['SessionHeartbeat']);
+    } finally {
+      ix?.dispose();
+      disposables.dispose();
+      vi.useRealTimers();
+    }
   });
 });

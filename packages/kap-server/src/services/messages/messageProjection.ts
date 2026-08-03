@@ -1,8 +1,10 @@
 /**
- * `contextMemory` protocol projection — `ContextMessage` → wire `Message`.
+ * `ContextMessage` → v1 wire `Message` projection.
  *
- * Mirrors the v1 protocol projection so the legacy REST/streaming message
- * objects stay byte-compatible.
+ * Mirrors the v1 protocol projection so the `messages`, `snapshot`, and
+ * `sessions` (`:undo`) surfaces produce byte-compatible message objects.
+ * Lives in kap-server (next to the wire schema in `protocol/message.ts`) —
+ * the engine speaks only the native `ContextMessage`.
  *
  * Tool results project to a single `tool_result` part: plain-text results keep
  * the historical flattened-text output, while a result carrying media parts
@@ -18,10 +20,9 @@
  * marker.
  */
 
-import type { Message, MessageContent, MessageRole, ToolUseContent } from './protocolMessage';
+import { parseKimiFileUrl, type ContextMessage } from '@moonshot-ai/agent-core-v2';
 
-import { parseKimiFileUrl } from '#/agent/media/kimiFileUrl';
-import type { ContextMessage } from './types';
+import type { Message, MessageContent, MessageRole, ToolUseContent } from '../../protocol/message';
 
 function deriveMessageId(sessionId: string, index: number): string {
   const padded = String(index).padStart(6, '0');

@@ -285,6 +285,83 @@ describe('AgentRecords persistence metadata', () => {
     expect(names).not.toContain('Write');
   });
 
+  it('replays a v2 profile.bind record as config.update + tools.set_active_tools', async () => {
+    const persistence = new InMemoryAgentRecordPersistence([
+      // v2-engine wires are stamped with protocol 1.5.
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      {
+        type: 'profile.bind',
+        modelAlias: 'mock-model',
+        profileName: 'coding',
+        thinkingEffort: 'off',
+        systemPrompt: 'You are a v2 coding agent.',
+        activeToolNames: ['Read', 'Write', 'Bash'],
+        disallowedTools: ['Write'],
+        subagents: ['explore'],
+      } as AgentRecord,
+    ]);
+    const { agent } = testAgent({ persistence });
+
+    await agent.records.replay();
+
+    expect(agent.config.modelAlias).toBe('mock-model');
+    expect(agent.config.profileName).toBe('coding');
+    expect(agent.config.systemPrompt).toBe('You are a v2 coding agent.');
+    expect(agent.config.subagentNames).toEqual(['explore']);
+    expect(agent.replayBuilder.buildResult().map((record) => record.type)).not.toContain(
+      'config_updated',
+    );
+    const names = agent.tools.loopTools.map((tool) => tool.name);
+    expect(names).toContain('Read');
+    expect(names).toContain('Bash');
+    expect(names).not.toContain('Write');
+  });
+
+  it('skips a profile.bind record without activeToolNames so the profile fallback still fires', async () => {
+    const persistence = new InMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      // v2's "every tool active" binding: no allowlist to restore. The record
+      // must be ignored wholesale so the session-level default-profile
+      // fallback (gated on an empty replayed system prompt) keeps firing.
+      {
+        type: 'profile.bind',
+        modelAlias: 'mock-model',
+        systemPrompt: 'You are a v2 agent.',
+      } as AgentRecord,
+      { type: 'goal.create', goalId: 'g1', objective: 'do work' } as AgentRecord,
+    ]);
+    const { agent } = testAgent({ persistence });
+
+    await agent.records.replay();
+
+    expect(agent.config.systemPrompt).toBe('');
+    // Replay continued past the skipped record.
+    expect(agent.goal.getGoal().goal?.goalId).toBe('g1');
+  });
+
+  it('replays a v2 tools.reset_active_tools record as a no-op', async () => {
+    const persistence = new InMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      {
+        type: 'tools.set_active_tools',
+        names: ['Read'],
+      } as AgentRecord,
+      { type: 'tools.reset_active_tools' } as AgentRecord,
+      { type: 'goal.create', goalId: 'g1', objective: 'do work' } as AgentRecord,
+    ]);
+    const { agent } = testAgent({ persistence });
+    agent.config.update({ modelAlias: 'mock-model' });
+
+    await agent.records.replay();
+
+    // v1 has no "all tools" state to restore; the earlier restriction stays
+    // (fails closed) and replay continues past the record.
+    const names = agent.tools.loopTools.map((tool) => tool.name);
+    expect(names).toContain('Read');
+    expect(names).not.toContain('Write');
+    expect(agent.goal.getGoal().goal?.goalId).toBe('g1');
+  });
+
   it('restores goal.* records during replay', async () => {
     const persistence = new InMemoryAgentRecordPersistence([
       { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },

@@ -386,7 +386,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       type: 'event.session.archived',
       payload: { sessionId },
     });
-    await this.announceWillClose({ sessionId, handle, reason: 'exit' });
+    await this.announceWillClose({ sessionId, handle, reason: 'archive' });
     this.sessions.delete(sessionId);
     handle.dispose();
     this._onDidArchiveSession.fire({ sessionId });

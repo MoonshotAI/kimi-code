@@ -2,6 +2,7 @@
  * `mcpCore` domain — Streamable HTTP transport MCP client.
  */
 
+import { ErrorCodes, Error2 } from '#/errors';
 import type { McpServerHttpConfig } from './config-schema';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
@@ -63,7 +64,7 @@ export class HttpMcpClient implements MCPClient {
 
   async connect(): Promise<void> {
     if (this.closed) {
-      throw new Error('MCP HTTP client is closed');
+      throw new Error2(ErrorCodes.MCP_STARTUP_FAILED, 'MCP HTTP client is closed');
     }
     if (this.started) return;
     this.started = true;
@@ -79,7 +80,7 @@ export class HttpMcpClient implements MCPClient {
     }
     if (this.closed) {
       await this.closeStartedClient();
-      throw new Error('MCP HTTP client was closed during startup');
+      throw new Error2(ErrorCodes.MCP_STARTUP_FAILED, 'MCP HTTP client was closed during startup');
     }
     this.ready = true;
   }

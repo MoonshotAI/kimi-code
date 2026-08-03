@@ -39,6 +39,7 @@
 
 import { z } from 'zod';
 
+import { ErrorCodes, Error2 } from '#/errors';
 import type { ContentPart } from '#/kosong/contract/message';
 import { defineModel, type PartsTransformer } from '#/wire/model';
 import type { WireRecord } from '#/wire/record';
@@ -238,7 +239,17 @@ export function readContextCompactedCount(record: ContextCompactionRecord): numb
   if (typeof compactedCount === 'number') return compactedCount;
   const legacyCount = fields['count'];
   if (typeof legacyCount === 'number') return legacyCount;
-  throw new Error('Invalid context.apply_compaction record: missing compactedCount');
+  throw new Error2(
+    ErrorCodes.STORAGE_DECODE_FAILED,
+    'Invalid context.apply_compaction record: missing compactedCount',
+    {
+      details: {
+        recordKeys: Object.keys(record),
+        compactedCountType: typeof compactedCount,
+        countType: typeof legacyCount,
+      },
+    },
+  );
 }
 
 export function readContextCompactionSummary(record: ContextCompactionRecord): ContextMessage {
@@ -248,7 +259,17 @@ export function readContextCompactionSummary(record: ContextCompactionRecord): C
   const summary = fields['summary'];
   if (typeof summary === 'string') return createCompactionSummaryMessage(summary);
   if (isContextMessage(summary)) return summary;
-  throw new Error('Invalid context.apply_compaction record: missing summary');
+  throw new Error2(
+    ErrorCodes.STORAGE_DECODE_FAILED,
+    'Invalid context.apply_compaction record: missing summary',
+    {
+      details: {
+        recordKeys: Object.keys(record),
+        summaryType: typeof summary,
+        contextSummaryType: typeof contextSummary,
+      },
+    },
+  );
 }
 
 function readContextCompactionRawSummary(record: UnknownRecord): string {
@@ -259,7 +280,17 @@ function readContextCompactionRawSummary(record: UnknownRecord): string {
   if (isContextMessage(summary)) {
     return textOf(summary);
   }
-  throw new Error('Invalid context.apply_compaction record: missing summary');
+  throw new Error2(
+    ErrorCodes.STORAGE_DECODE_FAILED,
+    'Invalid context.apply_compaction record: missing summary',
+    {
+      details: {
+        recordKeys: Object.keys(record),
+        summaryType: typeof summary,
+        contextSummaryType: typeof contextSummary,
+      },
+    },
+  );
 }
 
 function readLegacySummaryMessage(record: UnknownRecord): ContextMessage | undefined {

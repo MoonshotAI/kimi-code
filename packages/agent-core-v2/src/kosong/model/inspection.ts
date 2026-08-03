@@ -19,6 +19,8 @@
 
 import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
 
+import { BugIndicatingError } from '#/_base/errors/errors';
+
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { InspectionSource, ResolutionTrace } from '#/kosong/contract/inspection';
 import type { Protocol, ProtocolProviderOptions } from '#/kosong/protocol/protocol';
@@ -501,7 +503,7 @@ function attributeHeaders(
 function required<T>(trace: ResolutionTraceCollector, key: string, what: string): T {
   const value = trace.captured<T>(key);
   if (value === undefined) {
-    throw new Error(`resolution trace is missing the ${what} capture ('${key}')`);
+    throw new BugIndicatingError(`resolution trace is missing the ${what} capture ('${key}')`);
   }
   return value;
 }

@@ -13,7 +13,7 @@ import type { Hooks } from '#/hooks';
 
 export type SessionCreateSource = 'startup' | 'resume' | 'fork';
 
-export type SessionCloseReason = 'exit';
+export type SessionCloseReason = 'exit' | 'archive';
 
 export interface SessionStartHookEvent {
   readonly source: SessionCreateSource;

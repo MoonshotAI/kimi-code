@@ -2,8 +2,9 @@
  * `di` domain — service identifiers, `createDecorator`, and the `IInstantiationService` contract.
  */
 
-import type { SyncDescriptor0 } from './descriptors';
-import type { DisposableStore } from './lifecycle';
+import type { SyncDescriptor, SyncDescriptor0 } from './descriptors';
+import type { CascadeEngine } from './cascadeEngine';
+import type { DisposableStore, IDisposable } from './lifecycle';
 import type { ServiceCollection } from './serviceCollection';
 
 // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -109,8 +110,31 @@ export interface ServicesAccessor {
   get<T>(id: ServiceIdentifier<T>): T;
 }
 
+export interface ProvideOptions {
+  /** Cascade-line metadata (L4): a pinned unit never joins a cascade. */
+  readonly pinned?: boolean;
+  /**
+   * `eager` (default): the unit activates as soon as its dependencies are
+   * satisfied. `ondemand`: it materializes at first resolution (a cascade-torn
+   * unit always rebuilds regardless).
+   */
+  readonly activation?: 'eager' | 'ondemand';
+}
+
+/**
+ * Handle to one `provide` registration: it is an entry in the provider's
+ * ledger, so disposing the handle unprovides the token. (Grows into the full
+ * FiberHandle — thenable / state / update — in Phase 3.)
+ */
+export interface ProvideHandle extends IDisposable {
+  readonly uid: number;
+}
+
 export interface IInstantiationService {
   readonly _serviceBrand: undefined;
+
+  /** Cascade engine (L2): per-container facade over the tree-wide orchestrated transactions. */
+  readonly cascade: CascadeEngine;
 
   invokeFunction<R, TS extends any[] = []>(
     fn: (accessor: ServicesAccessor, ...args: TS) => R,
@@ -129,6 +153,17 @@ export interface IInstantiationService {
     ...args: GetLeadingNonServiceArgs<ConstructorParameters<Ctor>>
   ): R;
   createChild(services: ServiceCollection, store?: DisposableStore): IInstantiationService;
+  /**
+   * Register (or replace) a token at runtime. Replacing retires the previous
+   * materialized instance before the new generation becomes visible.
+   */
+  provide<T>(
+    id: ServiceIdentifier<T>,
+    instanceOrDescriptor: T | SyncDescriptor<T>,
+    options?: ProvideOptions,
+  ): ProvideHandle;
+  /** Remove a token, retiring its materialized instance. No-op when absent. */
+  unprovide<T>(id: ServiceIdentifier<T>): void;
   dispose(): void;
 }
 

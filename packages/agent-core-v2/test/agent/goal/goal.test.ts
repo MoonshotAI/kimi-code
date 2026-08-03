@@ -1756,7 +1756,7 @@ describe('goal pause classification on provider errors', () => {
     return {
       initialConfig: {
         providers: {},
-        loopControl: { maxRetriesPerStep: 1 },
+        loopControl: { maxAttemptsPerStep: 1 },
       },
     };
   }

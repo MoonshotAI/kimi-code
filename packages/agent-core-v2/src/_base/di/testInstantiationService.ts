@@ -53,7 +53,12 @@ export class TestInstantiationService extends InstantiationService implements ID
     id: ServiceIdentifier<T>,
     instanceOrDescriptor: T | SyncDescriptor<T>,
   ): T | SyncDescriptor<T> | undefined {
-    return this._serviceCollection.set(id, instanceOrDescriptor);
+    // Routed through provide so test overrides get production semantics:
+    // a replaced materialized instance is retired, a new generation starts.
+    // Descriptors stay lazy (constructed at first resolution), as before.
+    const prev = this._serviceCollection.get(id);
+    this.provide(id, instanceOrDescriptor, { activation: 'ondemand' });
+    return prev;
   }
 
   public mock<T>(id: ServiceIdentifier<T>): T | sinon.SinonMock {
@@ -269,14 +274,11 @@ export class TestInstantiationService extends InstantiationService implements ID
   }
 
   public override createChild(services: ServiceCollection): TestInstantiationService {
-    if (!(services instanceof ServiceCollection)) {
-      throw new TypeError(
-        'createChild requires a ServiceCollection instance (got something else)',
-      );
-    }
-    const child = new TestInstantiationService(services, false, this);
-    (this as unknown as { _children: Set<InstantiationService> })._children.add(child);
-    return child;
+    return super.createChild(services) as TestInstantiationService;
+  }
+
+  protected override _createChildService(services: ServiceCollection): InstantiationService {
+    return new TestInstantiationService(services, false, this);
   }
 
   public override dispose(): void {
