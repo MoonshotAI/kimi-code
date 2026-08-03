@@ -80,6 +80,9 @@ enum Commands {
         /// Print the raw RPC result JSON instead of the rendered transcript.
         #[arg(long)]
         json: bool,
+        /// Create a goal on the session before prompting (goal mode).
+        #[arg(long)]
+        goal: Option<String>,
     },
     /// Show the engine config (model/provider); with `--set`, write a value.
     Config {
@@ -527,7 +530,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("{id}  {title}  {work_dir}");
             }
         }
-        Commands::Resume { session_id, prompt, verbose, json } => {
+        Commands::Resume { session_id, prompt, verbose, json, goal } => {
             let (mut client, renderer) = connect_with_renderer(&server, verbose)?;
             let native_llm = kimi_exec::native_llm_from_config();
             let mut create_params = serde_json::json!({ "session_id": session_id });
@@ -538,6 +541,23 @@ async fn main() -> anyhow::Result<()> {
             if created.get("error").is_some() {
                 eprintln!("error: {}", created["error"]["message"].as_str().unwrap_or("unknown"));
                 std::process::exit(1);
+            }
+            // Goal mode: create the goal on the (now existing) session so the
+            // engine drives continuation turns toward the objective.
+            if let Some(objective) = goal {
+                let goal_created = client
+                    .call(
+                        kimi_protocol::methods::SESSION_GOAL_CREATE,
+                        serde_json::json!({
+                            "session_id": session_id,
+                            "objective": objective,
+                        }),
+                    )
+                    .await;
+                if let Some(error) = goal_created.get("error") {
+                    eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
+                    std::process::exit(1);
+                }
             }
             client
                 .call(kimi_protocol::methods::SESSION_LOAD, serde_json::json!({ "session_id": session_id }))
