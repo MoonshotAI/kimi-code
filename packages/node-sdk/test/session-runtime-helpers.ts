@@ -1,9 +1,61 @@
-import { readFile, rm, mkdtemp } from 'node:fs/promises';
+import { readFile, rm, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, normalize } from 'pathe';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import type { Event } from '#/index';
+
+/**
+ * Minimal LlmChatResponse-shaped object a fake `llmStep` must return (the
+ * engine host-proxy model step; see `@moonshot-ai/kimi-agent/rust-loop`
+ * LlmChatResponse). Tests that drive real engine turns supply a `llmStep`
+ * built with `fakeLlmStep()` — the retired JS-engine kosong `createProvider`
+ * mock does not reach the Rust engine.
+ */
+export interface FakeLlmStepOptions {
+  readonly responseText?: string;
+  /** Shared call log the test can inspect for per-turn model requests. */
+  readonly calls?: unknown[];
+}
+
+export function fakeLlmStep(
+  state: FakeLlmStepOptions = {},
+): (req: unknown) => Promise<unknown> {
+  return async (req) => {
+    state.calls?.push(req);
+    return {
+      content: state.responseText ?? 'hello from fake llm',
+      tool_calls: [],
+      finish_reason: 'stop',
+      usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 },
+    };
+  };
+}
+
+/** An llmStep that never settles — keeps a turn active until cancelled. */
+export const HANGING_LLM_STEP: (req: unknown) => Promise<unknown> = () => new Promise(() => {});
+
+/** Write a config.toml with a fake provider/model so the SDK can start
+ *  sessions against the Rust engine (which resolves the model host-side). */
+export async function writeFakeModelConfig(homeDir: string): Promise<void> {
+  await writeFile(
+    join(homeDir, 'config.toml'),
+    `
+default_model = "fake-model"
+
+[providers.local]
+type = "kimi"
+base_url = "https://example.test/v1"
+api_key = "sk-test"
+
+[models.fake-model]
+provider = "local"
+model = "fake-model"
+max_context_size = 1000
+`,
+    'utf-8',
+  );
+}
 
 export interface AgentWirePayload {
   readonly type: string;

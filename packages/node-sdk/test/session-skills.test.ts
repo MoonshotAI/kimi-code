@@ -4,11 +4,9 @@
  * Wiring: the in-process core and filesystem are real; only the remote model provider is stubbed.
  * Run: pnpm exec vitest run packages/node-sdk/test/session-skills.test.ts
  */
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
-import { win32 } from 'node:path';
-import { join, resolve } from 'pathe';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'pathe';
 
-import type * as KosongModule from '@moonshot-ai/kosong';
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import {
@@ -19,70 +17,36 @@ import {
   type SkillSummary,
 } from '#/index';
 import type { SDKRpcClientBase } from '#/rpc';
-import { isWindowsAbsolutePath } from '#/legacy/guards';
 
 import {
+  fakeLlmStep,
   makeTempDir,
   removeTempDirs,
-  waitForAgentWireEvent,
   waitForSDKEvent,
+  writeFakeModelConfig,
 } from './session-runtime-helpers';
 import { TEST_IDENTITY } from './test-identity';
 
-/** Slash-normalize a workspace path (port of the retired agent-core
- *  workdir-key helper; the engine owns session dirs, tests only need the
- *  path folding for comparisons). */
-function normalizeWorkDir(workDir: string): string {
-  if (isWindowsAbsolutePath(workDir)) {
-    return win32.resolve(workDir).replaceAll('\\', '/');
-  }
-  return resolve(workDir);
-}
-
-const fakeProviderState = vi.hoisted(() => ({
-  histories: [] as unknown[],
+/**
+ * Fake host-proxy model step state. The Rust engine runs turns against the
+ * `llmStep` host callback (the retired JS-engine kosong `createProvider` mock
+ * does not reach the engine), so tests drive and inspect the step here.
+ */
+const llmState: {
+  calls: Array<{ system_prompt: string; messages: unknown; model_name?: string }>;
+  responseText: string;
+} = {
+  calls: [],
   responseText: 'skill response',
-}));
-
-vi.mock('@moonshot-ai/kosong', async (importOriginal) => {
-  const actual = await importOriginal<typeof KosongModule>();
-  return {
-    ...actual,
-    createProvider: () => ({
-      name: 'fake',
-      modelName: 'fake-model',
-      thinkingEffort: null,
-      async generate(_systemPrompt: string, _tools: unknown, history: unknown) {
-        fakeProviderState.histories.push(history);
-        return {
-          id: 'fake-response',
-          usage: {
-            inputOther: 0,
-            output: 1,
-            inputCacheRead: 0,
-            inputCacheCreation: 0,
-          },
-          finishReason: 'completed',
-          rawFinishReason: 'stop',
-          async *[Symbol.asyncIterator]() {
-            yield { type: 'text', text: fakeProviderState.responseText };
-          },
-        };
-      },
-      withThinking() {
-        return this;
-      },
-    }),
-  };
-});
+};
 
 const { Session } = await import('#/index');
 
 const tempDirs: string[] = [];
 
 beforeEach(() => {
-  fakeProviderState.histories.length = 0;
-  fakeProviderState.responseText = 'skill response';
+  llmState.calls.length = 0;
+  llmState.responseText = 'skill response';
 });
 
 afterEach(async () => {
@@ -103,9 +67,14 @@ describe('Session skills', () => {
       '',
       'Review the requested file.',
     ]);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({
+      homeDir,
+      identity: TEST_IDENTITY,
+      llmStep: fakeLlmStep(llmState),
+    });
 
     try {
+      await writeFakeModelConfig(homeDir);
       const session = await harness.createSession({ id: 'ses_sdk_skill_list', workDir });
 
       const skills = await session.listSkills();
@@ -135,9 +104,14 @@ describe('Session skills', () => {
       '',
       'Review the requested file.',
     ]);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({
+      homeDir,
+      identity: TEST_IDENTITY,
+      llmStep: fakeLlmStep(llmState),
+    });
 
     try {
+      await writeFakeModelConfig(homeDir);
       const session = await harness.createSession({ id: 'ses_sdk_skill_activate', workDir });
       const events: Event[] = [];
       const unsubscribe = session.onEvent((event) => {
@@ -162,42 +136,22 @@ describe('Session skills', () => {
       expect(events).toContainEqual(expect.objectContaining({ type: 'session.turn.ended' }));
       expect(JSON.stringify(events)).not.toContain('Review the requested file.');
 
-      const statePath = join(session.summary!.sessionDir, 'state.json');
-      const state = JSON.parse(await readFile(statePath, 'utf-8')) as Record<string, unknown>;
-      expect(state['title']).toBe('/review src/app.ts');
-      expect(state['isCustomTitle']).toBe(false);
-      expect(state['lastPrompt']).toBe('/review src/app.ts');
-
-      const skillDir = normalizeWorkDir(await realpath(join(workDir, '.kimi-code', 'skills', 'review')));
-      await expect(
-        waitForAgentWireEvent(
-          homeDir,
-          session.id,
-          'turn.prompt',
-          (event) => event['origin'] !== undefined,
-        ),
-      ).resolves.toMatchObject({
-        type: 'turn.prompt',
-        input: [
-          {
-            type: 'text',
-            text: [
-              'User activated the skill "review". Follow the loaded skill instructions.',
-              '',
-              `<kimi-skill-loaded name="review" trigger="user-slash" source="project" dir="${skillDir}" args="src/app.ts">`,
-              'Review the requested file.',
-              '',
-              'ARGUMENTS: src/app.ts',
-              '</kimi-skill-loaded>',
-            ].join('\n'),
-          },
-        ],
-        origin: {
-          kind: 'skill_activation',
-          skillName: 'review',
-          skillArgs: 'src/app.ts',
-        },
-      });
+      // The engine loads the skill body from disk at activation and seeds it
+      // as the turn's user message; the host-proxy model step observes the
+      // rendered prompt (trimmed name, loaded body, trimmed arguments). The
+      // session directory / host wire.jsonl surface is engine-internal now.
+      const renderedMessages = llmState.calls[0]?.messages;
+      expect(renderedMessages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            content: expect.stringContaining('[Skill: review]'),
+          }),
+        ]),
+      );
+      const renderedText = JSON.stringify(renderedMessages);
+      expect(renderedText).toContain('Review the requested file.');
+      expect(renderedText).toContain('Args: src/app.ts');
     } finally {
       await harness.close();
     }
@@ -211,9 +165,13 @@ describe('Session skills', () => {
     vi.stubEnv('KIMI_CODE_HOME', homeDir);
     await writeLegacyUserSkill(processHome, 'sdk-real-home-only', 'SDK real home skill');
     await writeBrandUserSkill(homeDir, 'sdk-sandbox-only', 'SDK sandbox skill');
-    const harness = createKimiHarness({ identity: TEST_IDENTITY });
+    const harness = createKimiHarness({
+      identity: TEST_IDENTITY,
+      llmStep: fakeLlmStep(llmState),
+    });
 
     try {
+      await writeFakeModelConfig(homeDir);
       const session = await harness.createSession({ id: 'ses_sdk_skill_env_home', workDir });
       const names = new Set((await session.listSkills()).map((skill) => skill.name));
 

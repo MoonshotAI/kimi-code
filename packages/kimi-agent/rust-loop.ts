@@ -2210,6 +2210,9 @@ export interface SessionCreateOptions {
   systemPrompt?: string;
   provider?: string;
   model?: string;
+  /** Host-resolved max context tokens for the session model (drives the
+   *  engine's compaction window and import-overflow guard). */
+  maxContextSize?: number;
   goalEnabled?: boolean;
   nativeLlm?: NativeLlmDef;
   /** Host tool definitions presented to the model (executed at the host). */
@@ -2238,6 +2241,7 @@ export async function sessionCreate(
     system_prompt: options.systemPrompt,
     provider: options.provider,
     model: options.model,
+    max_context_size: options.maxContextSize,
     goal_enabled: options.goalEnabled,
     native_llm: options.nativeLlm,
     tools: (options.tools ?? []).map((t) => ({
@@ -3112,11 +3116,13 @@ export async function sessionFork(input: {
   sessionId: string;
   forkId: string;
   title?: string;
+  turnIndex?: number;
 }): Promise<{ forked: boolean } | null> {
   return agentCall('session/fork', {
     session_id: input.sessionId,
     fork_id: input.forkId,
     title: input.title,
+    turn_index: input.turnIndex,
   });
 }
 

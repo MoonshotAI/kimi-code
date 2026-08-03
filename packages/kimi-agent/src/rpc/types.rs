@@ -415,6 +415,11 @@ pub struct SessionCreateParams {
     pub provider: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
+    /// Host-resolved max context tokens for the session's model (from the
+    /// SDK config). Drives the engine's context-budget enforcement
+    /// (import-overflow rejection, compaction window).
+    #[serde(default)]
+    pub max_context_size: Option<u64>,
     #[serde(default)]
     pub goal_enabled: Option<bool>,
     #[serde(default)]
@@ -482,6 +487,12 @@ pub struct SessionForkParams {
     /// Optional title for the fork.
     #[serde(default)]
     pub title: Option<String>,
+    /// Optional historical fork point: keep only conversation up to and
+    /// including the turn at this 0-based index (each user-originated message
+    /// starts a turn). Absent → copy the full conversation. Negative or
+    /// out-of-range values are rejected with `request.invalid`.
+    #[serde(default)]
+    pub turn_index: Option<i64>,
 }
 
 /// Input for session/set_model.

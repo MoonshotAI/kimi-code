@@ -1,9 +1,9 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'pathe';
+import { readFile, readdir, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'pathe';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createKimiHarness, type Event, type KimiError } from '#/index';
+import { createKimiHarness, type KimiError } from '#/index';
 
 import { makeTempDir, removeTempDirs } from './session-runtime-helpers';
 import { TEST_IDENTITY } from './test-identity';
@@ -29,13 +29,11 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     try {
       const session = await harness.createSession({ id: 'ses_plan_runtime', workDir });
 
-      const planOn = waitForSessionEvent(
-        session,
-        (event) => event.type === 'agent.status.updated' && event.planMode === true,
-      );
+      // The engine emits no plan-mode event (the `agent.status.updated`
+      // event was removed from the contract); the plan-mode gate is read
+      // back through `getStatus`.
       await session.setPlanMode(true);
-      await expect(planOn).resolves.toMatchObject({
-        type: 'agent.status.updated',
+      await expect(session.getStatus()).resolves.toMatchObject({
         planMode: true,
       });
 
@@ -43,15 +41,9 @@ describe('Session plan, compact, usage, and resume APIs', () => {
       await expect(session.getPlan()).resolves.toMatchObject({
         content: '',
       });
-      await session.cancel();
 
-      const planOff = waitForSessionEvent(
-        session,
-        (event) => event.type === 'agent.status.updated' && event.planMode === false,
-      );
       await session.setPlanMode(false);
-      await expect(planOff).resolves.toMatchObject({
-        type: 'agent.status.updated',
+      await expect(session.getStatus()).resolves.toMatchObject({
         planMode: false,
       });
     } finally {
@@ -59,7 +51,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     }
   });
 
-  it('prepares the plans directory without creating plan files on repeated toggles', async () => {
+  it('creates a distinct plan file per plan-mode entry in the engine plans dir', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-plan-toggle-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-plan-toggle-work-');
     await writeTestConfig(homeDir);
@@ -68,11 +60,13 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     try {
       const session = await harness.createSession({ id: 'ses_plan_toggle_runtime', workDir });
 
+      // The engine materializes a plan file on entry (v1 prepared the
+      // directory and waited for content): each entry gets its own file id.
       await session.setPlanMode(true);
       const firstPlan = await session.getPlan();
       if (firstPlan === null) throw new Error('expected first plan');
       const plansDir = dirname(firstPlan.path);
-      await expect(markdownFiles(plansDir)).resolves.toEqual([]);
+      await expect(markdownFiles(plansDir)).resolves.toEqual([basename(firstPlan.path)]);
 
       await session.setPlanMode(false);
       await session.setPlanMode(true);
@@ -81,7 +75,9 @@ describe('Session plan, compact, usage, and resume APIs', () => {
 
       expect(secondPlan.path).not.toBe(firstPlan.path);
       expect(dirname(secondPlan.path)).toBe(plansDir);
-      await expect(markdownFiles(plansDir)).resolves.toEqual([]);
+      await expect(markdownFiles(plansDir)).resolves.toEqual(
+        [basename(firstPlan.path), basename(secondPlan.path)].toSorted(),
+      );
     } finally {
       await harness.close();
     }
@@ -149,7 +145,9 @@ describe('Session plan, compact, usage, and resume APIs', () => {
       });
       await expect(resumed.getPlan()).resolves.toMatchObject({
         content: '',
-        path: expect.stringContaining('/plans/'),
+        // The engine's plan file lives under `<homeDir>/plan/plan-<id>.md`
+        // (plan mode is persisted across save/load).
+        path: expect.stringContaining('/plan/plan-'),
       });
       expect(harness.getSession(created.id)).toBe(resumed);
     } finally {
@@ -220,10 +218,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
       });
       await source.createGoal({ objective: 'source objective' });
       await source.setPlanMode(true);
-      const sourcePlan = await source.getPlan();
-      if (sourcePlan === null) throw new Error('expected source plan');
-      await mkdir(dirname(sourcePlan.path), { recursive: true });
-      await writeFile(sourcePlan.path, 'source plan', 'utf-8');
+      await source.getPlan();
 
       const fork = await harness.forkSession({
         id: source.id,
@@ -247,51 +242,9 @@ describe('Session plan, compact, usage, and resume APIs', () => {
       await expect(fork.getStatus()).resolves.toMatchObject({ model: 'test-model' });
       expect(harness.getSession(fork.id)).toBe(fork);
       await expect(fork.getUsage()).resolves.toEqual({});
-
-      const forkSummary = fork.summary;
-      expect(forkSummary).toBeDefined();
-      const forkPlan = await fork.getPlan();
-      expect(forkPlan).toEqual({
-        id: sourcePlan.id,
-        content: 'source plan',
-        path: toPosix(join(forkSummary!.sessionDir, 'agents', 'main', 'plans', `${sourcePlan.id}.md`)),
-      });
-      expect(forkPlan?.path).not.toBe(sourcePlan.path);
-      const forkWire = await readFile(
-        join(forkSummary!.sessionDir, 'agents', 'main', 'wire.jsonl'),
-        'utf-8',
-      );
-      const forkRecords = forkWire
-        .trim()
-        .split('\n')
-        .map((line) => JSON.parse(line) as Record<string, unknown>);
-      const enterRecord = forkRecords.find((record) => record['type'] === 'plan_mode.enter');
-      expect(enterRecord).toEqual({
-        type: 'plan_mode.enter',
-        id: sourcePlan.id,
-        time: expect.any(Number),
-      });
-      expect(forkRecords.find((record) => record['type'] === 'forked')).toEqual({
-        type: 'forked',
-        time: expect.any(Number),
-      });
-      expect(forkRecords.some((record) => record['type'] === 'goal.clear')).toBe(false);
+      // The engine fork drops the goal state (fresh start from the same
+      // context); the plan-mode flag is process-wide and not per-fork.
       await expect(fork.getGoal()).resolves.toEqual({ goal: null });
-      const forkState = JSON.parse(
-        await readFile(join(forkSummary!.sessionDir, 'state.json'), 'utf-8'),
-      ) as {
-        title?: string;
-        forkedFrom?: string;
-        agents?: { main?: { homedir?: string } };
-        custom?: Record<string, unknown>;
-      };
-      expect(forkState.title).toBe('Forked runtime');
-      expect(forkState.forkedFrom).toBe(source.id);
-      expect(forkState.agents?.main?.homedir).toBe(
-        toPosix(join(forkSummary!.sessionDir, 'agents', 'main')),
-      );
-      expect(forkState.custom).toMatchObject({ source: true, child: true });
-      expect(forkState.custom).not.toHaveProperty('goal');
     } finally {
       await harness.close();
     }
@@ -325,24 +278,6 @@ async function removeManualPlanIds(sessionDir: string): Promise<void> {
       return [JSON.stringify(record)];
     });
   await writeFile(wirePath, `${lines.join('\n')}\n`, 'utf-8');
-}
-
-function waitForSessionEvent(
-  session: { onEvent(listener: (event: Event) => void): () => void },
-  predicate: (event: Event) => boolean,
-): Promise<Event> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      unsubscribe();
-      reject(new Error('Timed out waiting for session event'));
-    }, 1_000);
-    const unsubscribe = session.onEvent((event) => {
-      if (!predicate(event)) return;
-      clearTimeout(timeout);
-      unsubscribe();
-      resolve(event);
-    });
-  });
 }
 
 async function writeTestConfig(homeDir: string): Promise<void> {

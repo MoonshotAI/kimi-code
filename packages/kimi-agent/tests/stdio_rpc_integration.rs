@@ -2604,11 +2604,14 @@ fn session_set_plan_mode_toggles_and_reflects_in_status() {
         "status must reflect plan mode: {s1}"
     );
 
-    // Re-entering an active plan mode errors (TS "Already in plan mode").
+    // Re-entering an active plan mode is idempotent (the permission gate is
+    // process-wide, so a re-entry from another session must not error; the
+    // agent's own plan state is what governs).
     let again = call(5, "session/set_plan_mode", serde_json::json!({ "session_id": "it-plan", "enabled": true }));
-    assert!(
-        again.get("error").is_some(),
-        "re-entering plan mode must error: {again}"
+    assert_eq!(
+        again.get("result").and_then(|r| r.get("plan_mode")).and_then(|v| v.as_bool()),
+        Some(true),
+        "re-entering plan mode is a no-op reporting plan_mode: {again}"
     );
 
     // Exit → status back to false.

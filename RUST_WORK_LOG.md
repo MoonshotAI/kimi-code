@@ -1,3 +1,13 @@
+
+> **✅ 2026-08-03 event-contract 阶段 6 收尾——node-sdk 集成测试 43→0（已提交）**：
+> - **目标**：node-sdk vitest 43 个运行时失败全部清零（34 文件 425 passed / 0 failed；node-sdk typecheck 0 错误）。
+> - **测试适配（引擎唯一语义）**：
+>   - 模型路径：测试从 mock kosong createProvider（退役 JS 引擎路径）改为宿主代理 llmStep（session-cancel 样板提升为共享 helper：fakeLlmStep / writeFakeModelConfig / HANGING_LLM_STEP）；prompt 元数据（title/lastPrompt sanitize）、state.json、agent.status.updated / turn.step.* / wire.jsonl 等已移除宿主行为改写为引擎语义（prompt-events 14 绿）。
+>   - session-skills 9 绿（宿主侧 skills 发现）、local-logging 12 绿（export 切引擎 RPC + 日志接入）、rust-rpc-client 6 绿、plan-compact 7 绿、session-context 7 绿、auth-facade 全绿。
+> - **SDK 修复（宿主适配层）**：llmChat 代发 llm.delta（host-proxy 引擎不发流事件，宿主拥有 token 流——agent.rs 设计注释）；prompt 透传 agentId（btw 侧代理路由）；btw-<sid> 事件映射回主会话；forkSession 透传 turnIndex + 错误映射（request.invalid / fork_active_turn / details）；resume 补 replay / forkedFrom / metadata / additionalDirs 宿主镜像；getKimiConfig 改 loadRuntimeConfigSafe（v1 降级语义）+ getConfigDiagnostics 返回 warnings；providerToToml 全新 provider 写显式空 apiKey；importContext 错误映射（request.invalid / context.overflow）；listWorkspaceSkills 宿主发现 + workDir 校验；createSession 传 init skill + workDir skills（path/dir 磁盘加载）+ maxContextSize。
+> - **引擎（Rust）改动**：session/fork 增 turn_index（历史 fork：截断 context 至所选 turn + turn_counter 续号 + 越界/负索引校验，manager.rs is_user_turn_message 按 origin.kind）；durable_state 持久化 turn_counter / plan_active / plan_id / token_count（context 改存 raw history——projection 剥离 origin 导致 fork 计 turn 为 0）；restore_durable_state / load_session 改为替换（不重复追加）+ 恢复上述字段；set_plan_mode 按本会话 plan 状态幂等（permission gate 进程共享，原全局守卫在共享 gate 下误伤跨会话）；plan.restore 重建 plan_file_path（get_plan 恢复后可用）；import_context 增 max_tokens 上限校验；session/create 增 max_context_size（SDK config 传入，驱动 compaction 窗口 + import 上限）；sessionExport 暴露于 rust-loop。
+> - **验证**：node-sdk 34 文件 425 passed；protocol / acp-adapter / kap-server typecheck 0 错误；cargo test -p kimi-agent 全绿（lib 2027 + 集成 51，0 warnings）；pnpm gen:wire 幂等已跑（SessionCreateParams.max_context_size）。
+> - **遗留**：agent-core 退役包 2 个 typecheck 错误（subagent.* 事件，phase 1 契约删除后遗留，frozen 不修）；apps/kimi-code typecheck 因此未全绿；SDK 49 个 v1 wire 公开类型切 Rust wire 形状（④）、klient Rust 传输（⑤）、物理隔离 agent-core（⑥）待续。
 # Rust 迁移工作记录（交接用，勿提交）
 
 > **✅ 2026-08-02 node-sdk 解绑——harness 切 Rust + 核心本地化（已提交 4 个 commit）**：

@@ -39,6 +39,7 @@ function fakeRustLoop(overrides: Partial<RustLoopApi> = {}): RustLoopApi & {
       context_usage: 0.001,
     }),
     sessionPrompt: async () => ({ stop_reason: 'EndTurn', steps: 1, usage: {} }),
+    sessionExport: async () => null,
     sessionSave: record('sessionSave'),
     sessionCancel: async () => ({ cancelled: true }),
     sessionSetModel: async () => ({ ok: true }),
@@ -89,7 +90,7 @@ describe('RustRpcClient', () => {
     expect(sessions[0]?.workDir).toBe('/ws');
   });
 
-  it('dispatches engine events to session listeners via the translator', async () => {
+  it('dispatches engine events to session listeners with sessionId/agentId routing', async () => {
     let onEvent: ((event: unknown) => void) | undefined;
     const rust = fakeRustLoop({
       installSessionHostHandlers: (handlers) => {
@@ -101,9 +102,12 @@ describe('RustRpcClient', () => {
     const rpc = await client['getRpc']();
     await rpc.createSession({ id: 'ses_1', workDir: '/ws' });
 
-    const seen: string[] = [];
+    // The engine emits the SDK event shape (snake_case) directly; the client
+    // only stamps the sessionId/agentId routing fields and passes the event
+    // through verbatim (the old camelCase translator is gone).
+    const seen: Array<{ type: string; sessionId?: string; agentId?: string }> = [];
     const unsubscribe = client['onEvent']((event) => {
-      seen.push((event as { type: string }).type);
+      seen.push(event as { type: string; sessionId?: string; agentId?: string });
     });
     onEvent?.({
       type: 'session.turn.started',
@@ -115,7 +119,11 @@ describe('RustRpcClient', () => {
       session_id: 'ses_1',
       part: { type: 'text', text: 'hello' },
     });
-    expect(seen).toEqual(['turn.started', 'assistant.delta']);
+    expect(seen.map((event) => event.type)).toEqual(['session.turn.started', 'llm.delta']);
+    for (const event of seen) {
+      expect(event.sessionId).toBe('ses_1');
+      expect(event.agentId).toBe('main');
+    }
     unsubscribe();
   });
 
@@ -126,9 +134,17 @@ describe('RustRpcClient', () => {
     await expect(rpc.installPlugin({ source: 'x' } as never)).rejects.toThrow(
       'not available under the native engine',
     );
-    await expect(rpc.forkSession({ sessionId: 'ses_1' } as never)).rejects.toThrow(
-      'not available under the native engine',
-    );
+  });
+
+  it('fetches engine wire records for export; engine absence degrades to empty', async () => {
+    const rust = fakeRustLoop();
+    const client = new RustRpcClient({ rustLoop: rust });
+    const rpc = await client['getRpc']();
+    // The fake engine has no records to export (sessionExport → null); the
+    // host export must still receive a usable empty record set.
+    await expect(
+      rpc.exportSession({ sessionId: 'ses_1' } as never),
+    ).resolves.toEqual({ wireRecords: [] });
   });
 
   it('prompts the engine with the session id and text parts', async () => {

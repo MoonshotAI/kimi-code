@@ -196,6 +196,9 @@ impl PlanMode {
     pub fn restore(&mut self, is_active: bool, plan_id: Option<String>) {
         self.is_active = is_active;
         self.plan_id = plan_id;
+        // Reconstruct the plan file path from the restored id so `data()`
+        // (SDK `getPlan`) keeps working after a resume / fork rebuild.
+        self.plan_file_path = self.plan_id.as_ref().map(|id| self.plan_file_path_for(id));
     }
 
     /// Return the plan data (id, content, path) or None if no active plan.

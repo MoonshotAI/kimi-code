@@ -167,6 +167,7 @@ export interface SessionCreateParams {
   system_prompt?: string | undefined;
   provider?: string | undefined;
   model?: string | undefined;
+  max_context_size?: number | undefined;
   goal_enabled?: boolean | undefined;
   native_llm?: NativeLlmConfig | undefined;
   tools?: Array<ToolDef>;
@@ -186,6 +187,15 @@ export interface SessionPromptParams {
 
 export interface SessionIdParams {
   session_id: string;
+}
+
+export interface SessionForkParams {
+  /** The source session to fork from. */
+  session_id: string;
+  /** The new session's id. */
+  fork_id: string;
+  title?: string | undefined;
+  turn_index?: number | undefined;
 }
 
 export interface SessionSetModelParams {

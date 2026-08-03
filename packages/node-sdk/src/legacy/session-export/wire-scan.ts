@@ -16,9 +16,14 @@ export interface SessionWireScan {
 export async function scanSessionWire(sessionDir: string): Promise<SessionWireScan> {
   let raw: string;
   try {
-    raw = await readFile(join(sessionDir, 'wire.jsonl'), 'utf-8');
+    raw = await readFile(join(sessionDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
   } catch {
-    return {};
+    // Legacy layout: the wire file sat at the session dir root.
+    try {
+      raw = await readFile(join(sessionDir, 'wire.jsonl'), 'utf-8');
+    } catch {
+      return {};
+    }
   }
 
   let firstActivityMs: number | undefined;

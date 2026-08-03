@@ -244,12 +244,29 @@
 - [x] **阶段 5：测试重写**（2026-08-03，commit `9ee500dc8`）
   - node-sdk 4 文件（session-event-types/prompt-events/cancel/skills）重写为 30 成员引擎
     AgentEvent 联合；**node-sdk typecheck 0 错误**。
-- [ ] 阶段 6：全量验证 + 收尾（**event-translate.ts 已删**（commit `9ee500dc8`，native-session
-  goal 透传替代 mapGoalSnapshot）；剩余：node-sdk vitest 43 个运行时失败——B 群契约差异
-  （local-logging export 9 / session-context 6 / plan-compact 5 / auth-facade 2 /
-  rust-rpc-client 2 / prompt-events 若干），引擎 session 存储为 SQLite 无文件目录树，
-  SDK exportSession 需切引擎 `session/export` RPC）
-- [ ] 阶段 6：全量验证 + 收尾（删除 event-translate.ts、dead 接口/schema 清理）
+- [x] **阶段 6：全量验证 + 收尾**（2026-08-03）
+  - **node-sdk vitest 43 个运行时失败全部清零**（425 passed / 34 文件全绿；typecheck 0 错误）：
+    - 测试适配：prompt-events 14 全绿（llmStep 宿主代理接线取代退役 kosong mock——引擎唯一
+      模型路径是 `llmStep`；prompt 元数据/state.json/`agent.status.updated`/`turn.step.*` 等
+      已移除宿主行为改写为引擎语义）；session-skills 9 绿（宿主侧 skills 发现）；local-logging
+      12 绿（exportSession 切引擎 `session/export` RPC + 日志接入）；rust-rpc-client 6 绿；
+      plan-compact 7 绿；session-context 7 绿；auth-facade 全绿。
+    - SDK 修复（rust-loop.ts / rpc-client.ts / harness / config.ts）：llmChat 代发 llm.delta
+      （host-proxy 引擎不发流事件，宿主拥有 token 流）；prompt 透传 agentId（btw 侧代理路由）；
+      `btw-<sid>` 事件映射回主会话；forkSession 透传 turnIndex + 错误映射（request.invalid/
+      fork_active_turn）；resume 补 replay/forkedFrom/metadata/additionalDirs 镜像；
+      getKimiConfig 改 lenient 读（v1 降级语义）+ getConfigDiagnostics 返回 warnings；
+      providerToToml 对全新 provider 写显式空 apiKey；importContext 错误映射
+      （request.invalid/context.overflow）；listWorkspaceSkills 宿主发现 + workDir 校验。
+    - **引擎（Rust）**：`session/fork` 增 `turn_index`（历史 fork：截断 context 至所选 turn +
+      turn_counter 续号 + 越界/负索引校验）；durable_state 持久化 turn_counter/plan/token_count
+      （raw history 保留 origin——projection 会剥离）；`set_plan_mode` 按本会话 plan 状态幂等
+      （permission gate 进程共享）；plan.restore 重建 plan 文件路径；`import_context` 增
+      `max_tokens` 上限校验；`session/create` 增 `max_context_size`（SDK config 传入，驱动
+      compaction 窗口与 import 上限）。`cargo test -p kimi-agent` 全绿（2027 lib + 51 集成）。
+  - 遗留（本专项外）：`agent-core` 退役包 2 个 typecheck 错误（subagent.* 事件，phase 1 契约
+    删除后遗留——frozen 不修，随物理隔离删除）；`apps/kimi-code` typecheck 因此未全绿。
+- [ ] 阶段 6 收尾（dead 接口/schema 清理——`#/events` 不再用的 re-export 等）
 
 > 注意（2026-08-02）：工作区有协作者并行的 session/fork + cancellation + llmStep 改动
 > （kimi-agent turn_loop/agent.rs/types.rs、node-sdk types.ts/sdk-rpc-client.ts、session-cancel

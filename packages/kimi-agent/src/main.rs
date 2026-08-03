@@ -533,6 +533,19 @@ async fn main() -> anyhow::Result<()> {
                 for skill in skills {
                     agent.skill_manager.registry.register(skill.into_metadata());
                 }
+                // Host-resolved model window: the SDK config's max context
+                // size drives the compaction window and the import-overflow
+                // guard. Defaults (engine profile) when the host omits it.
+                if let Some(max_context_size) = input.max_context_size {
+                    if max_context_size > 0 {
+                        agent.compaction.set_model(
+                            kimi_agent::compaction::strategy::ProfileModelContext {
+                                max_size: max_context_size,
+                                ..Default::default()
+                            },
+                        );
+                    }
+                }
                 (agent.mcp.clone(), agent.cancellation.clone(), agent.steer_queue.clone())
             };
             // Release the manager lock before the (async, possibly slow) MCP
@@ -1248,7 +1261,11 @@ async fn main() -> anyhow::Result<()> {
             })?;
             agent
                 .context
-                .import_context(&input.content, &input.source)
+                .import_context(
+                    &input.content,
+                    &input.source,
+                    Some(agent.compaction.strategy().max_size()),
+                )
                 .map_err(types::JsonRpcError::internal_error)?;
             Ok(serde_json::json!({ "imported": true }))
         })
@@ -1748,7 +1765,12 @@ async fn main() -> anyhow::Result<()> {
             }
             let mut manager = mgr.lock().await;
             let forked = manager
-                .fork_session(&input.session_id, &input.fork_id, input.title.as_deref())
+                .fork_session(
+                    &input.session_id,
+                    &input.fork_id,
+                    input.title.as_deref(),
+                    input.turn_index,
+                )
                 .map_err(|e| types::JsonRpcError::internal_error(e.to_string()))?;
             Ok(serde_json::json!({ "forked": forked.is_some() }))
         })

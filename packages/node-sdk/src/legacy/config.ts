@@ -966,10 +966,15 @@ function providerToToml(provider: ProviderConfig, rawProvider: unknown): Record<
   for (const [key, value] of Object.entries(provider)) {
     if (key === 'apiKey') {
       // An explicit non-empty apiKey replaces the raw value (a raw snapshot
-      // would otherwise shadow a patch that updates the key); empty/undefined
-      // keeps whatever the raw provider carried.
+      // would otherwise shadow a patch that updates the key). An explicit
+      // empty apiKey is only persisted for a brand-new provider entry (e.g.
+      // managed OAuth provisioning writes `api_key = ""`); a patch over an
+      // existing raw entry keeps the raw value so an empty patch cannot
+      // clobber a real key.
       if (value !== undefined && value !== '') {
         out['api_key'] = value;
+      } else if (rawProvider === undefined || typeof rawProvider !== 'object') {
+        out['api_key'] = value ?? '';
       }
       continue;
     }

@@ -597,6 +597,7 @@ impl SessionManager {
         source_id: &str,
         fork_id: &str,
         title: Option<&str>,
+        turn_index: Option<i64>,
     ) -> anyhow::Result<Option<SessionRecord>> {
         // Refuse to fork a session with an active turn: the conversation is
         // mid-flight and the copy would be inconsistent (SDK
@@ -611,6 +612,51 @@ impl SessionManager {
             .ok()
             .filter(SessionRecord::is_valid_shape)
             .unwrap_or_else(|| SessionRecord::new(source_id, ModelConfig::default()));
+
+        // The store may be stale (agent context is persisted on
+        // `session/save`, not after every turn): when the source agent is
+        // live, its durable state is the authoritative conversation to copy.
+        if let Some(agent) = self.agents.get(source_id) {
+            record.agent_state = agent.durable_state();
+        }
+
+        // Historical fork: keep only the conversation through the selected
+        // turn (each user-originated message starts a turn). The fork's next
+        // turn id continues after the kept history (`turn_index + 1`).
+        if let Some(turn_index) = turn_index {
+            let context = record
+                .agent_state
+                .get("context")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let available_turns = context
+                .iter()
+                .filter(|msg| is_user_turn_message(msg))
+                .count() as i64;
+            if turn_index < 0 {
+                anyhow::bail!("turn index must not be negative: {turn_index}");
+            }
+            if turn_index >= available_turns {
+                anyhow::bail!("turn index out of range: {turn_index} >= {available_turns}");
+            }
+            let keep_user_messages = turn_index as usize + 1;
+            let mut user_seen = 0usize;
+            let mut kept: Vec<serde_json::Value> = Vec::new();
+            for msg in &context {
+                if is_user_turn_message(msg) {
+                    user_seen += 1;
+                    if user_seen > keep_user_messages {
+                        break;
+                    }
+                }
+                kept.push(msg.clone());
+            }
+            if let Some(state) = record.agent_state.as_object_mut() {
+                state.insert("context".to_string(), serde_json::Value::Array(kept));
+                state.insert("turn_counter".to_string(), serde_json::json!(turn_index + 1));
+            }
+        }
 
         // New identity + timestamps; the fork is an active session.
         record.id = fork_id.to_string();
@@ -1068,4 +1114,15 @@ mod tests {
         assert!(cached.is_valid_shape());
         assert_eq!(cached.id, "sess-1");
     }
+}
+
+/// A user-originated message starts a new turn (matches the SDK replay
+/// filter: `role == "user"` with a `{ kind: "user" }` origin).
+fn is_user_turn_message(message: &serde_json::Value) -> bool {
+    message.get("role").and_then(|r| r.as_str()) == Some("user")
+        && message
+            .get("origin")
+            .and_then(|o| o.get("kind"))
+            .and_then(|k| k.as_str())
+            == Some("user")
 }

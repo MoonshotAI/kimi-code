@@ -14,7 +14,6 @@ import { createKimiHarness, type KimiError } from '#/index';
 import {
   makeTempDir,
   removeTempDirs,
-  waitForSDKEvent,
 } from './session-runtime-helpers';
 import { TEST_IDENTITY } from './test-identity';
 
@@ -54,9 +53,10 @@ describe('Session context', () => {
     try {
       const session = await harness.createSession({ id: 'ses_context_clear', workDir });
       await session.addAdditionalDir(additionalDir, { persist: false });
-      await expect(session.getContext()).resolves.toMatchObject({
-        history: [{ role: 'user' }],
-      });
+      // The engine records the additional dir without injecting a context
+      // message (v1 host injected a user note); a fresh session has no
+      // history yet.
+      await expect(session.getContext()).resolves.toEqual({ history: [], tokenCount: 0 });
 
       await session.clearContext();
 
@@ -109,7 +109,7 @@ describe('Session context', () => {
     }
   });
 
-  it('emits the estimated context token status after an import', async () => {
+  it('reports the estimated context token count after an import', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-context-status-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-context-status-work-');
     await writeTestConfig(homeDir, 200_000);
@@ -117,19 +117,12 @@ describe('Session context', () => {
 
     try {
       const session = await harness.createSession({ id: 'ses_context_status', workDir });
-      const status = waitForSDKEvent(
-        session,
-        (event) =>
-          event.type === 'agent.status.updated' && (event.contextTokens ?? 0) > 0,
-      );
 
+      // The engine emits no `agent.status.updated` event (removed from the
+      // contract); the imported-context token count is read back through
+      // `getContext`.
       await session.importContext('Prior context.', "file 'status.md'");
 
-      await expect(status).resolves.toMatchObject({
-        type: 'agent.status.updated',
-        maxContextTokens: 200_000,
-        contextTokens: expect.any(Number),
-      });
       const context = await session.getContext();
       expect(context.tokenCount).toBeGreaterThan(0);
     } finally {

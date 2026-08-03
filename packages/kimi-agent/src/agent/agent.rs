@@ -1794,15 +1794,15 @@ impl Agent {
     /// tracked by the permission gate's context type (`"plan_mode"`), which
     /// activates the plan-guard policies; entering also appends the plan-mode
     /// reminder to the context, exiting appends the exit reminder. Returns the
-    /// plan-mode state afterwards. Re-entering an already-active plan mode is
-    /// an error, matching the TS `PlanModeService.enter` contract (the TUI's
-    /// resume path relies on this guard).
+    /// plan-mode state afterwards. Idempotent: re-entering an already-active
+    /// plan mode (for this agent) is a no-op, not an error — the permission
+    /// gate is process-wide, so another session may have left it set while
+    /// this agent's own plan state is what matters.
     pub fn set_plan_mode(&mut self, enabled: bool) -> Result<bool, String> {
-        let active =
-            self.permission.manager().context_type().as_deref() == Some("plan_mode");
+        let active = self.plan.is_active();
         if enabled {
             if active {
-                return Err("Already in plan mode".to_string());
+                return Ok(true);
             }
             self.permission.set_context_type(Some("plan_mode".to_string()));
             // Drive the plan-file state machine alongside the permission gate,
@@ -2120,14 +2120,26 @@ any partial output shown above is incomplete. The user's next message continues 
     pub fn durable_state(&self) -> serde_json::Value {
         serde_json::json!({
             "goal": self.goal.as_ref().and_then(|g| g.persisted_state()),
-            "context": self.context.messages(),
+            // Raw history (not the projected view): the projection strips
+            // message metadata (origin, is_error) and merges adjacent user
+            // messages, which would lose the turn boundaries the historical
+            // fork needs. Round-tripping the raw history preserves them.
+            "context": self.context.history(),
             "undo_checkpoints": self.undo_checkpoints,
+            "turn_counter": self.turn_id_counter,
+            "plan_active": self.plan.is_active(),
+            "plan_id": self.plan.plan_id(),
+            "token_count": self.context.token_count(),
         })
     }
 
     /// Restore state produced by `durable_state`. Applies the GOAL.md restart
     /// rule via `GoalMode::restore_persisted` (active → paused).
     pub fn restore_durable_state(&mut self, state: &serde_json::Value) {
+        // Replace, not append: a restore (resume / fork rebuild / reload)
+        // must reproduce the persisted history exactly, never double it onto
+        // whatever the agent already holds.
+        self.context.clear();
         if let Some(messages) = state.get("context").and_then(|v| v.as_array()) {
             for value in messages {
                 if let Ok(message) =
@@ -2150,6 +2162,18 @@ any partial output shown above is incomplete. The user's next message continues 
                     goal.restore_persisted(goal_value);
                 }
             }
+        }
+        if let Some(turn_counter) = state.get("turn_counter").and_then(|v| v.as_u64()) {
+            self.turn_id_counter = turn_counter as u32;
+        }
+        let plan_active = state.get("plan_active").and_then(|v| v.as_bool()).unwrap_or(false);
+        let plan_id = state
+            .get("plan_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        self.plan.restore(plan_active, plan_id);
+        if let Some(token_count) = state.get("token_count").and_then(|v| v.as_u64()) {
+            self.context.update_token_count(token_count);
         }
         self.emit_goal_status();
     }
@@ -2189,6 +2213,9 @@ any partial output shown above is incomplete. The user's next message continues 
         let Some(record) = store.load_session(id)? else {
             return Ok(false);
         };
+        // Replace, not append: a load must reproduce the persisted history
+        // exactly (a double load would double the conversation).
+        self.context.clear();
         if let Some(messages) = record.state_json.get("context").and_then(|v| v.as_array()) {
             for value in messages {
                 if let Ok(message) =
@@ -2204,6 +2231,13 @@ any partial output shown above is incomplete. The user's next message continues 
                     goal.restore_persisted(goal_value);
                 }
             }
+        }
+        if let Some(turn_counter) = record
+            .state_json
+            .get("turn_counter")
+            .and_then(|v| v.as_u64())
+        {
+            self.turn_id_counter = turn_counter as u32;
         }
         self.session_id = Some(id.to_string());
         self.emit_goal_status();

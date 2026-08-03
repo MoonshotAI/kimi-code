@@ -19,12 +19,14 @@
  */
 import type { SdkRpcSurface } from '../rpc';
 import type { Event } from '../events';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'pathe';
+import { load as loadYaml } from 'js-yaml';
 
 import { SDKRpcClientBase } from '#/rpc';
 import { ErrorCodes, KimiError } from '#/legacy/errors';
 import { GlobalMcpConfigStore } from '#/legacy/global-mcp-config';
+import { readZipEntries } from '#/legacy/session-export/zip';
 import {
   beginGlobalMcpServerAuthHost,
   cancelGlobalMcpServerAuthHost,
@@ -32,13 +34,22 @@ import {
   resetGlobalMcpServerAuthHost,
   testGlobalMcpServerHost,
 } from '#/legacy/mcp-host';
-import { ensureConfigFile as legacyEnsureConfigFile, readConfigFile, writeConfigFile } from '#/legacy/config';
+import {
+  ensureConfigFile as legacyEnsureConfigFile,
+  loadRuntimeConfigSafe,
+  readConfigFile,
+  resolveKimiHome,
+  writeConfigFile,
+} from '#/legacy/config';
+import { DEFAULT_INIT_PROMPT } from '#/legacy/profile/default';
 import type {
+  JsonObject,
   KimiConfig,
   KimiHostIdentity,
   ListSessionsOptions,
   ResumedSessionSummary,
   SessionSummary,
+  SkillSummary,
   TelemetryClient,
 } from '#/types';
 
@@ -72,6 +83,7 @@ export interface RustLoopApi {
     homedir?: string;
     systemPrompt?: string;
     model?: string;
+    maxContextSize?: number;
     goalEnabled?: boolean;
     nativeLlm?: unknown;
     tools?: { name: string; description: string; inputSchema?: unknown }[];
@@ -111,7 +123,10 @@ export interface RustLoopApi {
   sessionGetContext(sessionId: string): Promise<unknown>;
   sessionClearContext(sessionId: string): Promise<unknown>;
   sessionImportContext(sessionId: string, content: string, source: string): Promise<unknown>;
-  sessionGoalCreate(sessionId: string, objective: string, replace: boolean): Promise<unknown>;
+  sessionGoalCreate(
+    sessionId: string,
+    input: { objective: string; completionCriterion?: string; replace?: boolean },
+  ): Promise<unknown>;
   sessionGoalGet(sessionId: string): Promise<unknown>;
   sessionGoalPause(sessionId: string): Promise<unknown>;
   sessionGoalResume(sessionId: string): Promise<unknown>;
@@ -138,10 +153,16 @@ export interface RustLoopApi {
   sessionSave(sessionId: string): Promise<{ ok: boolean } | null>;
   sessionLoad(sessionId: string): Promise<{ found: boolean } | null>;
   sessionDelete(sessionId: string): Promise<{ deleted: boolean } | null>;
+  sessionExport(
+    sessionId: string,
+    homedir?: string,
+    webLog?: string,
+  ): Promise<{ session_id: string; zip_base64: string } | null>;
   sessionFork(input: {
     sessionId: string;
     forkId: string;
     title?: string;
+    turnIndex?: number;
   }): Promise<{ forked: boolean } | null>;
   sessionDelete(sessionId: string): Promise<{ deleted: boolean } | null>;
   cronList(): Promise<{ tasks: unknown[] } | null>;
@@ -227,6 +248,133 @@ function parseTime(value: string | undefined, fallback: number): number {
   return Number.isNaN(ms) ? fallback : ms;
 }
 
+// ── Host-side skill discovery ──────────────────────────────────────────
+//
+// The engine registry only knows skills the host hands it at `session/create`;
+// listing is a host responsibility too. Discovery walks the two on-disk skill
+// roots the SDK owns — `<workDir>/.kimi-code/skills` (project) and the brand
+// dir `<KIMI_CODE_HOME>/skills` (user, resolveKimiHome-resolved) — and parses
+// each `SKILL.md` frontmatter into a summary. Bodies are never exposed: the
+// engine loads the text from `path`/`dir` at activation time.
+
+/** A host-discovered skill bundle: frontmatter summary + disk locations. */
+export interface DiscoveredSkill {
+  readonly name: string;
+  readonly description: string;
+  readonly source: SkillSummary['source'];
+  /** Absolute SKILL.md path (pathe-normalized forward slashes). */
+  readonly path: string;
+  /** Bundle directory; the engine falls back to it when resolving `path`. */
+  readonly dir: string;
+  readonly disableModelInvocation?: boolean;
+}
+
+const DISABLE_MODEL_INVOCATION_KEYS = [
+  'disable_model_invocation',
+  'disable-model-invocation',
+  'disableModelInvocation',
+] as const;
+
+/** Walk one `<root>/skills/<name>/SKILL.md` root; unreadable entries and
+ *  unparseable frontmatter are skipped (discovery is best-effort). */
+async function discoverSkillBundles(
+  rootDir: string,
+  source: SkillSummary['source'],
+): Promise<readonly DiscoveredSkill[]> {
+  let entries: readonly string[];
+  try {
+    entries = await readdir(rootDir);
+  } catch {
+    return [];
+  }
+
+  const skills: DiscoveredSkill[] = [];
+  await Promise.all(
+    entries.map(async (entry) => {
+      const dir = join(rootDir, entry);
+      const skillPath = join(dir, 'SKILL.md');
+      let text: string;
+      try {
+        text = await readFile(skillPath, 'utf-8');
+      } catch {
+        return;
+      }
+      const parsed = parseSkillFrontmatter(text, entry);
+      if (parsed === undefined) return;
+      skills.push({
+        name: parsed.name,
+        description: parsed.description,
+        source,
+        path: skillPath,
+        dir,
+        ...(parsed.disableModelInvocation !== undefined
+          ? { disableModelInvocation: parsed.disableModelInvocation }
+          : {}),
+      });
+    }),
+  );
+  return skills;
+}
+
+/** Parse a SKILL.md's YAML frontmatter (name/description/
+ *  disable_model_invocation). Missing fields fall back to the bundle dir name
+ *  and an empty description; no parseable frontmatter yields undefined. */
+function parseSkillFrontmatter(
+  text: string,
+  fallbackName: string,
+):
+  | { readonly name: string; readonly description: string; readonly disableModelInvocation?: boolean }
+  | undefined {
+  const lines = text.split(/\r?\n/);
+  if (lines[0]?.trim() !== '---') return undefined;
+  const close = lines.findIndex((line, index) => index > 0 && line.trim() === '---');
+  if (close === -1) return undefined;
+
+  const yamlText = lines.slice(1, close).join('\n').trim();
+  let data: unknown;
+  try {
+    data = yamlText.length === 0 ? {} : (loadYaml(yamlText) ?? {});
+  } catch {
+    return undefined;
+  }
+  if (typeof data !== 'object' || data === null) return undefined;
+  const frontmatter = data as Record<string, unknown>;
+
+  const name =
+    typeof frontmatter['name'] === 'string' && frontmatter['name'].trim().length > 0
+      ? frontmatter['name'].trim()
+      : fallbackName;
+  const description =
+    typeof frontmatter['description'] === 'string' ? frontmatter['description'].trim() : '';
+
+  let disableModelInvocation: boolean | undefined;
+  for (const key of DISABLE_MODEL_INVOCATION_KEYS) {
+    if (typeof frontmatter[key] === 'boolean') {
+      disableModelInvocation = frontmatter[key] as boolean;
+      break;
+    }
+  }
+
+  return {
+    name,
+    description,
+    ...(disableModelInvocation !== undefined ? { disableModelInvocation } : {}),
+  };
+}
+
+/** Map a discovered bundle onto the public `SkillSummary` surface (no body). */
+function toSkillSummary(skill: DiscoveredSkill): SkillSummary {
+  return {
+    name: skill.name,
+    description: skill.description,
+    source: skill.source,
+    path: skill.path,
+    ...(skill.disableModelInvocation !== undefined
+      ? { disableModelInvocation: skill.disableModelInvocation }
+      : {}),
+  };
+}
+
 export class RustRpcClient extends SDKRpcClientBase {
   readonly homeDir: string;
   readonly configPath: string;
@@ -242,6 +390,9 @@ export class RustRpcClient extends SDKRpcClientBase {
    *  process-global (shared across harnesses/tests), so listing must filter on
    *  what this client actually created rather than the whole store. */
   private readonly sessionSummaries = new Map<string, SessionSummary>();
+  /** fork id → source session id, so the resumed summary can surface
+   *  `sessionMetadata.forkedFrom`. */
+  private readonly forkParents = new Map<string, string>();
   private readonly ready: Promise<SdkRpcSurface>;
 
   constructor(options: RustRpcClientOptions) {
@@ -255,9 +406,27 @@ export class RustRpcClient extends SDKRpcClientBase {
     this.rustLoop.installSessionHostHandlers({
       onEvent: (raw) => this.dispatchEngineEvent(raw),
       authorizeTool: (raw) => this.authorizeTool(raw),
-      // Host-proxy model step: without it the engine cannot run a turn
-      // unless a native-LLM provider is configured.
-      llmChat: options.llmStep ?? (() => Promise.reject(new Error('no llmStep provided'))),
+      llmChat: async (raw) => {
+        if (options.llmStep === undefined) {
+          throw new Error('no llmStep provided');
+        }
+        const response = await options.llmStep(raw);
+        // Host-proxy model step: the engine hands the token stream to the
+        // host (it emits llm.delta for native-LLM turns only), so the SDK
+        // re-emits the completed response content as one delta to keep the
+        // Session.onEvent streaming-text contract for host-proxy sessions.
+        const sessionId = (raw as { session_id?: string } | null)?.session_id;
+        const text = (response as { content?: string } | null)?.content;
+        if (sessionId !== undefined && sessionId.length > 0 && typeof text === 'string' && text.length > 0) {
+          this.receiveEvent({
+            type: 'llm.delta',
+            part: { type: 'text', text },
+            sessionId,
+            agentId: this.interactiveAgentId,
+          } as never);
+        }
+        return response;
+      },
     });
     this.ready = Promise.resolve(this.buildRpc());
   }
@@ -266,11 +435,16 @@ export class RustRpcClient extends SDKRpcClientBase {
 
   /** Pass an engine `host/event` through verbatim (protocol-toward-engine):
    *  the engine emits the SDK event shape (snake_case) already, so the host
-   *  only stamps the `sessionId`/`agentId` routing fields. */
+   *  only stamps the `sessionId`/`agentId` routing fields. Side-question
+   *  (btw) turns carry the engine's `btw-<sid>` session id; they belong to
+   *  the parent session, so map them back onto it. */
   private dispatchEngineEvent(raw: unknown): void {
     const event = (raw ?? {}) as { type?: string; session_id?: string | null };
-    const sessionId = event.session_id ?? '';
-    if (sessionId.length === 0) return;
+    const rawSessionId = event.session_id ?? '';
+    if (rawSessionId.length === 0) return;
+    const sessionId = rawSessionId.startsWith('btw-')
+      ? rawSessionId.slice('btw-'.length)
+      : rawSessionId;
     const { session_id: _drop, ...payload } = event;
     this.receiveEvent({ ...payload, sessionId, agentId: 'main' } as never);
   }
@@ -305,15 +479,46 @@ export class RustRpcClient extends SDKRpcClientBase {
     // matched per method.
     const impl: Record<string, unknown> = {
       // ── Session lifecycle ──────────────────────────────────────────────
-      createSession: async ({ id, workDir, model, additionalDirs, permission }: any) => {
+      createSession: async ({ id, workDir, model, additionalDirs, permission, metadata }: any) => {
         // Model resolution is host-side: an explicit option wins, else the
         // host config's defaultModel (config is SDK-owned data).
         const effectiveModel = model ?? readConfigFile(this.configPath).defaultModel;
+        // On-disk project/brand skills the engine registry must know before
+        // `session/activate_skill` can resolve them. The engine loads each
+        // body from `path`/`dir` at activation; the SDK summary surface never
+        // exposes the body itself.
+        const discovered =
+          workDir !== undefined && workDir.trim().length > 0
+            ? await this.discoverSkills(workDir)
+            : [];
         const created = await r.sessionCreate({
           sessionId: id,
           homedir: this.homeDir,
           model: effectiveModel,
+          // Host-resolved model window: the engine enforces context-budget
+          // limits (import overflow) against this.
+          maxContextSize: readConfigFile(this.configPath).models?.[effectiveModel]?.maxContextSize,
           llmStep: this.llmStep,
+          // Builtin prompt skills the engine registry must know for
+          // host RPCs like `generateAgentsMd` (session.init). The engine
+          // persists none of these; the host supplies flat records.
+          skills: [
+            {
+              name: 'init',
+              description: 'Analyze the codebase and generate AGENTS.md',
+              skillType: 'prompt',
+              source: 'builtin',
+              content: DEFAULT_INIT_PROMPT,
+            },
+            ...discovered.map((skill) => ({
+              name: skill.name,
+              description: skill.description,
+              skillType: 'prompt',
+              source: skill.source,
+              path: skill.path,
+              dir: skill.dir,
+            })),
+          ],
         });
         if (created === null) {
           throw new Error('Rust engine unavailable: cannot create session');
@@ -332,6 +537,15 @@ export class RustRpcClient extends SDKRpcClientBase {
             r as unknown as { permissionSetMode?(mode: string): Promise<unknown> }
           ).permissionSetMode?.(effectivePermission);
         }
+        // Initial metadata is host-owned session state: mirror it locally and
+        // hand it to the engine (the resumed summary reads it back from the
+        // host mirror; the engine persists it with the session record).
+        const initialMetadata = (metadata ?? {}) as Record<string, unknown>;
+        if (Object.keys(initialMetadata).length > 0) {
+          await r.sessionUpdateMetadata(sessionId, {
+            custom: initialMetadata as JsonObject,
+          });
+        }
         const now = Date.now();
         const summary: SessionSummary = {
           id: sessionId,
@@ -339,7 +553,7 @@ export class RustRpcClient extends SDKRpcClientBase {
           sessionDir: workDir,
           createdAt: now,
           updatedAt: now,
-          metadata: {},
+          metadata: initialMetadata as JsonObject,
           additionalDirs: additionalDirs ?? [],
         };
         this.sessionSummaries.set(sessionId, summary);
@@ -369,19 +583,24 @@ export class RustRpcClient extends SDKRpcClientBase {
         await r.sessionLoad(sessionId);
         const status = await r.sessionGetStatus(sessionId);
         const summary = await this.sessionSummaryFor(sessionId);
-        return this.resumedSummary(summary, status);
+        return this.resumedSummary(summary, status, await this.replayFor(sessionId));
       },
       reloadSession: async ({ sessionId }: any) => {
         const found = await r.sessionLoad(sessionId);
         if (!found) throw new Error('Session not found for reload');
         const status = await r.sessionGetStatus(sessionId);
         const summary = await this.sessionSummaryFor(sessionId);
-        return this.resumedSummary(summary, status);
+        return this.resumedSummary(summary, status, await this.replayFor(sessionId));
       },
-      forkSession: async ({ sessionId, id, title, workDir }: any) => {
+      forkSession: async ({ sessionId, id, title, workDir, metadata, turnIndex }: any) => {
         let result: { forked: boolean } | null;
         try {
-          result = await r.sessionFork({ sessionId, forkId: id ?? `${sessionId}_fork`, title });
+          result = await r.sessionFork({
+            sessionId,
+            forkId: id ?? `${sessionId}_fork`,
+            title,
+            turnIndex,
+          });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (message.includes('active turn')) {
@@ -390,6 +609,20 @@ export class RustRpcClient extends SDKRpcClientBase {
               'Cannot fork a session with an active turn',
             );
           }
+          if (message.includes('out of range')) {
+            const match = message.match(/out of range: (-?\d+) >= (-?\d+)/);
+            throw new KimiError(ErrorCodes.REQUEST_INVALID, message, {
+              details: {
+                turnIndex: Number(match?.[1] ?? turnIndex),
+                availableTurns: Number(match?.[2] ?? 0),
+              },
+            });
+          }
+          if (message.includes('negative')) {
+            throw new KimiError(ErrorCodes.REQUEST_INVALID, message, {
+              details: { turnIndex },
+            });
+          }
           throw error;
         }
         if (!result || !result.forked) {
@@ -397,6 +630,18 @@ export class RustRpcClient extends SDKRpcClientBase {
         }
         const forkId = id ?? `${sessionId}_fork`;
         const now = Date.now();
+        // The fork inherits the source's custom metadata and merges the
+        // caller's overrides; the kept conversation's last user prompt
+        // becomes the fork's `lastPrompt` (read back from the engine).
+        const sourceMetadata = this.sessionSummaries.get(sessionId)?.metadata ?? {};
+        const mergedMetadata = { ...sourceMetadata, ...(metadata ?? {}) };
+        let lastPrompt: string | undefined;
+        try {
+          const context = await r.sessionGetContext(forkId);
+          lastPrompt = lastUserPromptFromContext(context);
+        } catch {
+          // Engine context unavailable; leave lastPrompt unset.
+        }
         const summary: SessionSummary = {
           id: forkId,
           workDir: workDir ?? this.workDirs.get(sessionId) ?? '',
@@ -404,10 +649,29 @@ export class RustRpcClient extends SDKRpcClientBase {
           title,
           createdAt: now,
           updatedAt: now,
-          metadata: {},
+          metadata: mergedMetadata,
+          ...(lastPrompt !== undefined ? { lastPrompt } : {}),
         };
         if (summary.workDir.length > 0) this.workDirs.set(forkId, summary.workDir);
-        return summary;
+        this.sessionSummaries.set(forkId, summary);
+        this.forkParents.set(forkId, sessionId);
+        // Surface the resumed shape so the fresh fork Session carries
+        // sessionMetadata (title/custom/forkedFrom/agents) immediately.
+        return {
+          ...summary,
+          sessionMetadata: {
+            createdAt: String(now),
+            updatedAt: String(now),
+            title: title ?? summary.id,
+            isCustomTitle: title !== undefined,
+            ...(summary.workDir.length > 0 ? { workDir: summary.workDir } : {}),
+            custom: mergedMetadata,
+            agents: { main: {} },
+            ...(lastPrompt !== undefined ? { lastPrompt } : {}),
+            forkedFrom: sessionId,
+          },
+          agents: { main: {} },
+        } as never;
       },
       archiveSession: async () => nativeUnavailable('archiveSession'),
       deleteSession: async ({ sessionId }: any) => {
@@ -419,11 +683,41 @@ export class RustRpcClient extends SDKRpcClientBase {
         this.sessionSummaries.delete(sessionId);
         this.clearSessionHandlers(sessionId);
       },
-      exportSession: async () => nativeUnavailable('exportSession'),
+      exportSession: async ({ sessionId }: any) => {
+        // The engine persists sessions in its own store; fetch its wire
+        // records so the host-side export archive can include them. The engine
+        // bundles session files only when `homedir` is a real path — pass ''
+        // so the archive carries just the records (the host re-assembles the
+        // zip in the SDK layout). Unknown sessions export an empty record set.
+        let result: { session_id: string; zip_base64: string } | null;
+        try {
+          result = await r.sessionExport(sessionId, '');
+        } catch {
+          result = null;
+        }
+        if (result === null) return { wireRecords: [] };
+        let entries: Map<string, Buffer>;
+        try {
+          entries = readZipEntries(Buffer.from(result.zip_base64, 'base64'));
+        } catch {
+          return { wireRecords: [] };
+        }
+        return { wireRecords: parseEngineWireRecords(entries.get('wire.json')) };
+      },
 
       // ── Turn control ───────────────────────────────────────────────────
-      prompt: async ({ sessionId, input }: any) => {
-        await r.sessionPrompt(sessionId, [{ type: 'text', text: promptText(input) }]);
+      prompt: async ({ sessionId, agentId, input }: any) => {
+        const text = promptText(input);
+        if (text.trim().length === 0) {
+          throw new KimiError(
+            ErrorCodes.REQUEST_PROMPT_INPUT_EMPTY,
+            'Prompt input must not be empty',
+          );
+        }
+        // Route to the interactive side agent (`btw-<sid>`) when the caller
+        // is inside `withInteractiveAgent`; the engine answers main-agent
+        // turns when agentId is absent or not a btw id.
+        await r.sessionPrompt(sessionId, [{ type: 'text', text }], agentId);
       },
       steer: async ({ sessionId, input }: any) => {
         await r.sessionSteer(sessionId, [{ type: 'text', text: promptText(input) }]);
@@ -492,11 +786,36 @@ export class RustRpcClient extends SDKRpcClientBase {
         // parameter today — the SDK flag is accepted for contract parity but
         // silently dropped by the wire (persisted vs ephemeral dirs is an
         // engine-side gap; see RUST_MIGRATION_PLAN TODO).
-        const result = await r.sessionAddAdditionalDir(sessionId, path);
-        return { additionalDirs: result?.additional_dirs ?? [] };
+        await r.sessionAddAdditionalDir(sessionId, path);
+        // Mirror the caller's path into the host summary (the engine returns
+        // its canonical form, which on Windows resolves 8.3 short names —
+        // the SDK surfaces what the caller added). Normalized to the SDK's
+        // forward-slash convention.
+        const normalizedPath = normalizeHostPath(path);
+        const summary = this.sessionSummaries.get(sessionId);
+        const existing = summary?.additionalDirs ?? [];
+        const additionalDirs = existing.includes(normalizedPath)
+          ? existing
+          : [...existing, normalizedPath];
+        if (summary !== undefined) {
+          this.sessionSummaries.set(sessionId, { ...summary, additionalDirs });
+        }
+        return { additionalDirs };
       },
-      updateSessionMetadata: async ({ sessionId, patch }: any) => {
-        await r.sessionUpdateMetadata(sessionId, patch);
+      updateSessionMetadata: async ({ sessionId, metadata }: any) => {
+        await r.sessionUpdateMetadata(sessionId, metadata ?? {});
+        // Mirror the patch into the host session summary (custom metadata is
+        // host-owned state the resumed summary reads back).
+        const summary = this.sessionSummaries.get(sessionId);
+        if (summary !== undefined) {
+          const patch = (metadata as { custom?: JsonObject } | null)?.custom;
+          if (patch !== undefined && Object.keys(patch).length > 0) {
+            this.sessionSummaries.set(sessionId, {
+              ...summary,
+              metadata: { ...summary.metadata, ...patch } as JsonObject,
+            });
+          }
+        }
       },
       renameSession: async ({ sessionId, title }: any) => {
         // Missing sessions are unknown to the engine agent map ("no agent for
@@ -577,8 +896,19 @@ export class RustRpcClient extends SDKRpcClientBase {
         return (result?.warnings ?? []) as never;
       },
       listSkills: async ({ sessionId }: any) => {
+        // Merge the engine registry (skills registered at session/create) with
+        // a fresh host-side discovery over the session's workDir. Host
+        // discovery wins on same-name overlap: it carries the disk path and
+        // frontmatter flags (`disableModelInvocation`) the engine record omits.
         const result = await r.sessionListSkills(sessionId);
-        return (result?.skills ?? []).map((s) => mapSkill(s as never));
+        const engineSkills = (result?.skills ?? []).map((s) => mapSkill(s as never));
+        const workDir = this.workDirs.get(sessionId);
+        const discovered =
+          workDir === undefined ? [] : (await this.discoverSkills(workDir)).map(toSkillSummary);
+        const byName = new Map<string, SkillSummary>();
+        for (const skill of engineSkills) byName.set(skill.name, skill);
+        for (const skill of discovered) byName.set(skill.name, skill);
+        return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
       },
       activateSkill: async ({ sessionId, name, args }: any) => {
         await r.sessionActivateSkill(sessionId, name, args);
@@ -601,7 +931,27 @@ export class RustRpcClient extends SDKRpcClientBase {
         await r.sessionClearContext(sessionId);
       },
       importContext: async ({ sessionId, content, source }: any) => {
-        await r.sessionImportContext(sessionId, content, source);
+        try {
+          await r.sessionImportContext(sessionId, content, source);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message.includes('cannot be empty')) {
+            throw new KimiError(ErrorCodes.REQUEST_INVALID, message, {
+              details: { reason: 'import_content_empty' },
+            });
+          }
+          if (message.includes('exceed the context limit')) {
+            const match = message.match(/exceed the context limit: (\d+) > (\d+)/);
+            throw new KimiError(ErrorCodes.CONTEXT_OVERFLOW, message, {
+              details: {
+                reason: 'import_context_overflow',
+                currentTokenCount: Number(match?.[1] ?? 0),
+                maxContextTokens: Number(match?.[2] ?? 0),
+              },
+            });
+          }
+          throw error;
+        }
       },
       undoHistory: async ({ sessionId, count }: any) => {
         await r.sessionUndoHistory(sessionId, count ?? 1);
@@ -609,8 +959,12 @@ export class RustRpcClient extends SDKRpcClientBase {
       getPlan: async ({ sessionId }: any) => {
         return (await r.sessionGetPlan(sessionId)) as never;
       },
-      createGoal: async ({ sessionId, objective, replace }: any) => {
-        return (await r.sessionGoalCreate(sessionId, objective, replace ?? false)) as never;
+      createGoal: async ({ sessionId, objective, completionCriterion, replace }: any) => {
+        return (await r.sessionGoalCreate(sessionId, {
+          objective,
+          completionCriterion,
+          replace: replace ?? false,
+        })) as never;
       },
       getGoal: async ({ sessionId }: any) => {
         return (await r.sessionGoalGet(sessionId)) as never;
@@ -658,8 +1012,12 @@ export class RustRpcClient extends SDKRpcClientBase {
       getExperimentalFeatures: async () => [] as never,
       getKimiConfig: async () => {
         // Config is host data: read the SDK-owned config.toml locally (the
-        // engine's config/get serves the engine's own resolved view).
-        return readConfigFile(this.configPath);
+        // engine's config/get serves the engine's own resolved view). The
+        // lenient read salvages broken-but-fixable sections (v1 degraded
+        // startup: an invalid model alias is dropped, not fatal) and reports
+        // the drops through getConfigDiagnostics.
+        const loaded = loadRuntimeConfigSafe(this.configPath);
+        return loaded.config;
       },
       setKimiConfig: async (patch: any) => {
         // Deep-merge the patch onto the on-disk config and persist it
@@ -675,7 +1033,12 @@ export class RustRpcClient extends SDKRpcClientBase {
         return merged as KimiConfig;
       },
       removeKimiProvider: async () => nativeUnavailable('removeKimiProvider'),
-      getConfigDiagnostics: async () => ({ warnings: [] }) as never,
+      getConfigDiagnostics: async () => {
+        const loaded = loadRuntimeConfigSafe(this.configPath);
+        return {
+          warnings: [...loaded.fileWarnings, ...loaded.envWarnings],
+        } as never;
+      },
       listGlobalMcpServers: async () => new GlobalMcpConfigStore(this.homeDir).list(),
       addGlobalMcpServer: async ({ server }: any) =>
         new GlobalMcpConfigStore(this.homeDir).add(server),
@@ -701,7 +1064,15 @@ export class RustRpcClient extends SDKRpcClientBase {
         const server = await new GlobalMcpConfigStore(this.homeDir).get(name);
         return testGlobalMcpServerHost(server);
       },
-      listWorkspaceSkills: async () => [],
+      listWorkspaceSkills: async ({ workDir }: any) => {
+        if (typeof workDir !== 'string' || workDir.trim() === '') {
+          throw new KimiError(
+            ErrorCodes.REQUEST_WORK_DIR_REQUIRED,
+            'listWorkspaceSkills requires workDir',
+          );
+        }
+        return (await this.discoverSkills(workDir)).map(toSkillSummary);
+      },
       listPlugins: async () => {
         const result = await r.pluginList();
         return (result?.plugins ?? []) as never;
@@ -739,6 +1110,24 @@ export class RustRpcClient extends SDKRpcClientBase {
 
   // ── Helpers ────────────────────────────────────────────────────────────
 
+  /** Discover project + brand skills visible to `workDir` (project wins on a
+   *  same-name collision; results are name-sorted for determinism). The brand
+   *  root is `<KIMI_CODE_HOME>/skills` via the same resolveKimiHome resolution
+   *  the harness uses — never the OS home. */
+  private async discoverSkills(workDir: string): Promise<readonly DiscoveredSkill[]> {
+    const byName = new Map<string, DiscoveredSkill>();
+    const roots: ReadonlyArray<[string, SkillSummary['source']]> = [
+      [join(workDir, '.kimi-code', 'skills'), 'project'],
+      [join(resolveKimiHome(this.homeDir), 'skills'), 'user'],
+    ];
+    for (const [root, source] of roots) {
+      for (const skill of await discoverSkillBundles(root, source)) {
+        if (!byName.has(skill.name)) byName.set(skill.name, skill);
+      }
+    }
+    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   private async sessionSummaryFor(sessionId: string): Promise<SessionSummary> {
     const records = (await this.rustLoop.sessionList())?.sessions ?? [];
     const record = records.find((r) => r.id === sessionId);
@@ -747,17 +1136,32 @@ export class RustRpcClient extends SDKRpcClientBase {
       this.homeDir,
     );
     const sdkWorkDir = this.workDirs.get(sessionId);
+    const mirror = this.sessionSummaries.get(sessionId);
+    const withMetadata = {
+      ...summary,
+      ...(mirror?.metadata !== undefined && Object.keys(mirror.metadata).length > 0
+        ? { metadata: mirror.metadata }
+        : {}),
+      ...(mirror?.additionalDirs !== undefined && mirror.additionalDirs.length > 0
+        ? { additionalDirs: mirror.additionalDirs }
+        : {}),
+    };
     if (sdkWorkDir !== undefined) {
-      return { ...summary, workDir: sdkWorkDir, sessionDir: sdkWorkDir };
+      return { ...withMetadata, workDir: sdkWorkDir, sessionDir: sdkWorkDir };
     }
-    return summary;
+    return withMetadata;
   }
 
   private resumedSummary(
     summary: SessionSummary,
     _status: EngineSessionStatus | null,
+    replay?: unknown,
   ): ResumedSessionSummary {
     const now = Date.now();
+    const forkedFrom = this.forkParents.get(summary.id);
+    const mainAgent = {
+      ...(replay !== undefined ? { replay } : {}),
+    } as ResumedSessionSummary['agents'][string];
     return {
       ...summary,
       sessionMetadata: {
@@ -767,13 +1171,27 @@ export class RustRpcClient extends SDKRpcClientBase {
         isCustomTitle: false,
         ...(summary.workDir !== undefined ? { workDir: summary.workDir } : {}),
         custom: {},
-        agents: {},
+        // The engine tracks no per-agent state on the wire; the main agent is
+        // the only agent the SDK surfaces at resume.
+        agents: { main: {} },
+        ...(forkedFrom !== undefined ? { forkedFrom } : {}),
       },
-      agents: {},
+      agents: { main: mainAgent },
       warning: undefined,
       createdAt: summary.createdAt,
       updatedAt: now,
     };
+  }
+
+  /** Build the main-agent replay records from the engine's context history
+   *  (message-level records; the SDK's resume surface reads them back). */
+  private async replayFor(sessionId: string): Promise<unknown> {
+    try {
+      const context = await this.rustLoop.sessionGetContext(sessionId);
+      return replayFromContext(context);
+    } catch {
+      return [];
+    }
   }
 
   private mapContext(raw: unknown): unknown {
@@ -810,5 +1228,79 @@ function isTaskNotFound(error: unknown): boolean {
   return /task .* not found/i.test(error instanceof Error ? error.message : String(error));
 }
 
+/** Parse the engine's `wire.json` (a JSON array of record objects) into the
+ *  array the host writes out as `agents/main/wire.jsonl`. Malformed or missing
+ *  records yield an empty list — the export proceeds without wire content. */
+function parseEngineWireRecords(entry: Buffer | undefined): unknown[] {
+  if (entry === undefined) return [];
+  try {
+    const parsed = JSON.parse(entry.toString('utf-8')) as unknown;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Map an engine context snapshot (`{ history: [...] }`) to SDK replay
+ *  message records, preserving the conversation the fork kept. User messages
+ *  carry a `{ kind: 'user' }` origin; assistant messages none (matching the
+ *  SDK's `visibleReplayText` filter). */
+function replayFromContext(raw: unknown): unknown[] {
+  if (raw === null || typeof raw !== 'object') return [];
+  const history = (raw as Record<string, unknown>)['history'];
+  if (!Array.isArray(history)) return [];
+  const records: unknown[] = [];
+  for (const value of history) {
+    if (typeof value !== 'object' || value === null) continue;
+    const message = value as Record<string, unknown>;
+    if (typeof message['role'] !== 'string') continue;
+    const role = message['role'] as string;
+    if (role !== 'user' && role !== 'assistant') continue;
+    const content = Array.isArray(message['content']) ? message['content'] : [];
+    const textParts = (content as Record<string, unknown>[])
+      .filter((part) => part['type'] === 'text' && typeof part['text'] === 'string')
+      .map((part) => ({ type: 'text' as const, text: part['text'] as string }));
+    const origin =
+      message['origin'] !== null && typeof message['origin'] === 'object'
+        ? ((message['origin'] as Record<string, unknown>)['kind'] as
+            | 'user'
+            | 'shell_command'
+            | undefined)
+        : undefined;
+    records.push({
+      type: 'message',
+      message: {
+        role,
+        content: textParts,
+        toolCalls: [],
+        ...(origin !== undefined ? { origin: { kind: origin } } : {}),
+      },
+    });
+  }
+  return records;
+}
+
+/** The text of the last user message in an engine context snapshot (used as
+ *  the fork's `lastPrompt` after a historical fork). */
+function lastUserPromptFromContext(raw: unknown): string | undefined {
+  const records = replayFromContext(raw);
+  for (let i = records.length - 1; i >= 0; i -= 1) {
+    const record = records[i] as { type?: string; message?: { role?: string; content?: { text?: string }[] } };
+    if (record.type !== 'message') continue;
+    if (record.message?.role !== 'user') continue;
+    const text = (record.message.content ?? [])
+      .map((part) => part.text ?? '')
+      .join('');
+    if (text.trim().length > 0) return text;
+  }
+  return undefined;
+}
+
 /** Default agent id stamped onto engine events (side-agent turns override it). */
 const MAIN_AGENT_ID = 'main';
+
+/** Normalize an engine-returned path to the SDK's forward-slash convention
+ *  (strips the Windows `\\?\` verbatim prefix and converts separators). */
+function normalizeHostPath(path: string): string {
+  return path.replace(/^\\\\\?\\/, '').replaceAll('\\', '/');
+}

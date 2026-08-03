@@ -303,7 +303,12 @@ impl ContextMemory {
     }
 
     /// Import an external transcript as a single user message.
-    pub fn import_context(&mut self, content: &str, source: &str) -> Result<(), String> {
+    pub fn import_context(
+        &mut self,
+        content: &str,
+        source: &str,
+        max_tokens: Option<u64>,
+    ) -> Result<(), String> {
         if content.trim().is_empty() {
             return Err("Imported context cannot be empty".to_string());
         }
@@ -332,7 +337,13 @@ impl ContextMemory {
 
         let import_tokens = tokenizer::estimate_message_tokens(&message);
         let total = self.token_count_with_pending() + import_tokens;
-        // The max-context ceiling is the caller's to enforce.
+        if let Some(max) = max_tokens {
+            if max > 0 && total > max {
+                return Err(format!(
+                    "import would exceed the context limit: {total} > {max}"
+                ));
+            }
+        }
         self.append_message(message);
         self.update_token_count(total);
         Ok(())
@@ -801,9 +812,9 @@ mod tests {
     #[test]
     fn import_context_validates_its_inputs() {
         let mut ctx = ContextMemory::new();
-        assert!(ctx.import_context("", "test.txt").is_err());
-        assert!(ctx.import_context("content", "  ").is_err());
-        assert!(ctx.import_context("some content", "test.txt").is_ok());
+        assert!(ctx.import_context("", "test.txt", None).is_err());
+        assert!(ctx.import_context("content", "  ", None).is_err());
+        assert!(ctx.import_context("some content", "test.txt", None).is_ok());
         assert_eq!(ctx.len(), 1);
         assert!(text_of(&ctx.history()[0]).contains("<imported_context source=\"test.txt\">"));
     }
