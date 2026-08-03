@@ -387,6 +387,8 @@ export const kimiErrorCodeSchema = z.enum([
   'fs.grep_timeout',
   'fs.git_unavailable',
   'wire.migration_missing',
+  'storage.permission_denied',
+  'storage.disk_full',
   'cron.expression_invalid',
   'web.invalid_url',
   'web.private_address',

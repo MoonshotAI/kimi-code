@@ -327,6 +327,8 @@ export type KimiErrorCode =
   | 'storage.corrupted'
   | 'storage.io_failed'
   | 'storage.locked'
+  | 'storage.permission_denied'
+  | 'storage.disk_full'
   | 'wire.duplicate_op'
   | 'wire.cycle'
   | 'wire.unknown_record'
