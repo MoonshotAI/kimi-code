@@ -241,8 +241,14 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
 
 async function renameAcrossDevicesFallback(from: string, to: string): Promise<void> {
   const { copyFile } = await import('node:fs/promises');
-  await copyFile(from, to);
+  const sibling = `${to}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await copyFile(from, sibling);
+    await rename(sibling, to);
+  } finally {
+    await rm(sibling, { force: true }).catch(() => undefined);
+  }
   await rm(from, { force: true });
 }
 
-export const __kimiWebbridgeInternals = { binaryAssetName };
+export const __kimiWebbridgeInternals = { binaryAssetName, renameAcrossDevicesFallback };

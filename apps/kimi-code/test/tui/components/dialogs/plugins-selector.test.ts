@@ -72,6 +72,7 @@ const marketplaceEntries = [...officialEntries, ...thirdPartyEntries];
 function makePanel(opts: {
   installed?: readonly PluginSummary[];
   capabilities?: readonly CapabilityStatus[];
+  catalogIsDefault?: boolean;
   initialTab?: 'installed' | 'official' | 'third-party' | 'custom';
   selectedId?: string;
   pluginHint?: { id: string; text: string };
@@ -83,6 +84,7 @@ function makePanel(opts: {
     installed,
     installedIds: new Set(installed.map((p) => p.id)),
     capabilities: opts.capabilities,
+    catalogIsDefault: opts.catalogIsDefault,
     initialTab: opts.initialTab,
     selectedId: opts.selectedId,
     pluginHint: opts.pluginHint,
@@ -473,6 +475,18 @@ describe('plugins selector dialogs', () => {
       kind: 'install',
       entry: expect.objectContaining({ id: 'kimi-webbridge', source: 'capability:kimi-webbridge' }),
     });
+  });
+
+  it('keeps built-in rows out while the overridden marketplace is loading', () => {
+    // /plugins marketplace <url> or the env override must be able to fully
+    // replace the Official tab — fallback capability rows stay out too.
+    const capabilities = [makeCapability()];
+    const { panel } = makePanel({ initialTab: 'official', capabilities, catalogIsDefault: false });
+
+    const out = strip(renderRaw(panel));
+    expect(out).not.toContain('Kimi Computer Use');
+    expect(out).toContain('Kimi WebBridge  open in browser');
+    expect(out).toContain('Loading marketplace');
   });
 
   it('opens the Web Bridge webpage on Enter instead of installing', () => {

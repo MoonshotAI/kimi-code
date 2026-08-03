@@ -5,7 +5,7 @@
  * (temp dirs, scripted fetch, scripted host processes, fake plugins).
  */
 
-import { mkdtemp, readFile, rm, mkdir, writeFile, access, chmod, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, mkdir, writeFile, access, chmod, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -168,6 +168,26 @@ describe('kimi-webbridge entry', () => {
     expect(binaryAssetName('win32', 'x64')).toBe('kimi-webbridge-windows-amd64.exe');
     expect(binaryAssetName('win32', 'arm64')).toBeUndefined();
     expect(binaryAssetName('freebsd', 'x64')).toBeUndefined();
+  });
+
+  it('EXDEV fallback replaces the destination without opening it for write', async () => {
+    const { renameAcrossDevicesFallback } = __kimiWebbridgeInternals;
+    const from = path.join(root, 'staging', 'kimi-webbridge');
+    const to = path.join(root, 'bin', 'kimi-webbridge');
+    await mkdir(path.dirname(from), { recursive: true });
+    await mkdir(path.dirname(to), { recursive: true });
+    await writeFile(from, 'new');
+    await writeFile(to, 'old-running');
+
+    // Stage-then-rename on the target filesystem: the live destination is
+    // replaced atomically (never opened for write — ETXTBSY-safe), the
+    // source is removed, and no sibling temp is left behind.
+    await renameAcrossDevicesFallback(from, to);
+
+    expect(await readFile(to, 'utf-8')).toBe('new');
+    await expect(access(from)).rejects.toThrow();
+    const binEntries = await readdir(path.dirname(to));
+    expect(binEntries.filter((entry) => entry.endsWith('.tmp'))).toEqual([]);
   });
 
   it('is unsupported on unknown platforms', () => {

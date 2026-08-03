@@ -343,6 +343,12 @@ export interface PluginsPanelOptions {
   readonly installed: readonly PluginSummary[];
   readonly installedIds: ReadonlySet<string>;
   readonly capabilities?: readonly CapabilityStatus[];
+  /**
+   * False when the marketplace was explicitly replaced (slash-command
+   * source or env override): built-in rows then stay out of the Official
+   * tab entirely. Undefined means the default catalog.
+   */
+  readonly catalogIsDefault?: boolean;
   readonly initialTab?: PluginsPanelTabId;
   readonly selectedId?: string;
   readonly pluginHint?: { readonly id: string; readonly text: string };
@@ -465,8 +471,11 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   /** Capability rows synthesized from the engine's registry, independent of
-   * the marketplace state; unsupported platforms hide them entirely. */
+   * the marketplace state; unsupported platforms hide them entirely. Only
+   * the default catalog gets built-in rows — an explicitly overridden
+   * marketplace must be able to fully replace the Official tab. */
   private get pendingBuiltInEntries(): readonly PluginMarketplaceEntry[] {
+    if (this.opts.catalogIsDefault === false) return [];
     return (this.opts.capabilities ?? [])
       .filter((capability) => capability.supported)
       .map(capabilityMarketplaceEntry);

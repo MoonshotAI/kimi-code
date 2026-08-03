@@ -187,6 +187,9 @@ async function showPluginsPicker(
     installed: plugins,
     installedIds: new Set(plugins.map((plugin) => plugin.id)),
     capabilities,
+    catalogIsDefault:
+      options?.marketplaceSource === undefined &&
+      process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV] === undefined,
     initialTab: options?.initialTab,
     selectedId: options?.selectedId,
     pluginHint: options?.pluginHint,
