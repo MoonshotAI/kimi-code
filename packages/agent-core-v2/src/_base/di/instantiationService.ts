@@ -3,7 +3,7 @@
  */
 
 import { SyncDescriptor } from './descriptors';
-import { CascadeEngine, type CascadeHost } from './cascadeEngine';
+import { CascadeEngine, type CascadeChange, type CascadeHost } from './cascadeEngine';
 import { DependencyGraph } from './dependencyGraph';
 import { CascadeConflictError, CyclicDependencyError } from './errors';
 import { Graph } from './graph';
@@ -175,6 +175,10 @@ export class InstantiationService implements IInstantiationService {
         this._services.set(token, descriptor, { pinned });
         return this._services.uidOf(token)!;
       },
+      applyProvideInstance: (token, instance, pinned) => {
+        this._services.set(token, instance, { pinned });
+        return this._services.uidOf(token)!;
+      },
       applyUnprovide: (token) => {
         this._services.delete(token);
       },
@@ -229,13 +233,12 @@ export class InstantiationService implements IInstantiationService {
     this._assertNotDisposed();
     this._releaseProvideEntry(id);
 
-    if (!(instanceOrDescriptor instanceof SyncDescriptor)) {
-      // Pre-materialized instance: nothing to schedule — direct registration.
-      if (this._services.get(id) !== instanceOrDescriptor) {
-        // Replacing retires the previous generation — unless the caller is
-        // re-affirming the very instance already materialized under this token.
-        this._retireProvidedInstance(id);
-      }
+    if (
+      !(instanceOrDescriptor instanceof SyncDescriptor) &&
+      this._services.get(id) === instanceOrDescriptor
+    ) {
+      // Re-affirming the very instance already materialized under this token:
+      // refresh the registration, no retirement, no cascade.
       this._services.set(id, instanceOrDescriptor, { pinned: options?.pinned });
       const uid = this._services.uidOf(id)!;
       const entry = this._ledger.register(() => {
@@ -252,7 +255,8 @@ export class InstantiationService implements IInstantiationService {
       };
     }
 
-    // Descriptor: schedule through the cascade engine (single transaction).
+    // Everything else — a recipe or a replacing instance — is one cascade
+    // transaction, so live dependents are torn down and rebuilt (D1/D4).
     const beforeUid = this._services.uidOf(id);
     let appliedUid: number | undefined;
     const noteApplied = (): void => {
@@ -261,17 +265,25 @@ export class InstantiationService implements IInstantiationService {
         appliedUid = uid;
       }
     };
+    const change: CascadeChange =
+      instanceOrDescriptor instanceof SyncDescriptor
+        ? {
+            action: 'provide',
+            token: id,
+            descriptor: instanceOrDescriptor,
+            pinned: options?.pinned,
+            activation: options?.activation,
+            reason: `provide ${String(id)}`,
+          }
+        : {
+            action: 'provide',
+            token: id,
+            instance: instanceOrDescriptor,
+            pinned: options?.pinned,
+            reason: `provide ${String(id)}`,
+          };
     noteApplied();
-    this.cascade
-      .submit({
-        action: 'provide',
-        token: id,
-        descriptor: instanceOrDescriptor,
-        pinned: options?.pinned,
-        activation: options?.activation,
-        reason: `provide ${String(id)}`,
-      })
-      .then(noteApplied, onUnexpectedError);
+    this.cascade.submit(change).then(noteApplied, onUnexpectedError);
     noteApplied(); // the sync fast path has already applied the change
     const entry = this._ledger.register(() => {
       // Generation guard: only unprovide the generation this entry provided.
@@ -300,13 +312,7 @@ export class InstantiationService implements IInstantiationService {
       return;
     }
     this._releaseProvideEntry(id);
-    const value = this._services.get(id);
-    if (value === undefined) {
-      return;
-    }
-    if (!(value instanceof SyncDescriptor) && !this._instanceEntries.has(value)) {
-      // Foreign-seeded instance: direct removal, no cascade.
-      this._services.delete(id);
+    if (this._services.get(id) === undefined) {
       return;
     }
     this.cascade
@@ -336,21 +342,6 @@ export class InstantiationService implements IInstantiationService {
     }
     this._instanceEntries.delete(instance);
     return entry.dispose();
-  }
-
-  /** Retire the current materialized instance of a token, if this container owns one. */
-  private _retireProvidedInstance<T>(id: ServiceIdentifier<T>): void {
-    const prev = this._services.get(id);
-    if (prev === undefined || prev instanceof SyncDescriptor) {
-      return;
-    }
-    // Only instances created (and ledger-registered) by this container are
-    // retired; externally seeded instances keep their foreign ownership.
-    const entry = this._instanceEntries.get(prev);
-    if (entry !== undefined) {
-      this._instanceEntries.delete(prev);
-      void entry.dispose();
-    }
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

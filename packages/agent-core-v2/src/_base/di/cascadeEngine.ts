@@ -34,6 +34,8 @@ export interface CascadeChange {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly token: ServiceIdentifier<any>;
   readonly descriptor?: SyncDescriptor<unknown>;
+  /** Pre-materialized value for a `provide` change (mutually exclusive with `descriptor`). */
+  readonly instance?: unknown;
   readonly pinned?: boolean;
   readonly activation?: UnitActivation;
   readonly reason: string;
@@ -91,6 +93,14 @@ export interface CascadeHost {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     token: ServiceIdentifier<any>,
     descriptor: SyncDescriptor<unknown>,
+    pinned: boolean | undefined,
+  ): number;
+  /** Register a pre-materialized instance (a new generation). */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  applyProvideInstance(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    token: ServiceIdentifier<any>,
+    instance: unknown,
     pinned: boolean | undefined,
   ): number;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -401,7 +411,14 @@ export class CascadeEngine {
     }
     const waitMs = this._options.abortWaitMs ?? DEFAULT_ABORT_WAIT_MS;
     return Promise.race([
-      Promise.resolve(out).then(() => ({ waited: true, timedOut: false })),
+      Promise.resolve(out).then(
+        () => ({ waited: true, timedOut: false }),
+        (error: unknown) => {
+          // Best-effort (§4.5): an async abort failure is logged, never a veto.
+          onUnexpectedError(error);
+          return { waited: true, timedOut: false };
+        },
+      ),
       new Promise<{ waited: boolean; timedOut: boolean }>((resolve) => {
         setTimeout(() => { resolve({ waited: true, timedOut: true }); }, waitMs);
       }),
@@ -453,8 +470,18 @@ export class CascadeEngine {
       for (const change of changes) {
         switch (change.action) {
           case 'provide':
-            this._host.applyProvide(change.token, change.descriptor!, change.pinned);
-            this._markPending(change.token, change.activation ?? 'eager', false);
+            if (change.descriptor !== undefined) {
+              this._host.applyProvide(change.token, change.descriptor, change.pinned);
+              this._markPending(change.token, change.activation ?? 'eager', false);
+            } else {
+              // Pre-materialized instance: a new generation that is already
+              // live — no activation to schedule, dependents rebuild below.
+              this._host.applyProvideInstance(change.token, change.instance, change.pinned);
+              const unit = this._unitFor(change.token);
+              unit.state = 'Active';
+              unit.everActive = true;
+              unit.error = undefined;
+            }
             break;
           case 'unprovide':
             this._host.applyUnprovide(change.token);

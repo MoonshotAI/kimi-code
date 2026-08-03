@@ -445,8 +445,7 @@ describe('cascade engine — mechanism matrix', () => {
     ix.dispose();
   });
 
-  it('12. ledger balance: arbitrary sequences leave no leaks or dangling edges', async () => {
-    const ix = makeContainer();
+  it('12. ledger balance: arbitrary sequences leave no leaks or dangling edges', async () => {    const ix = makeContainer();
     provideChain(ix);
     // 3 live instances + 3 provide entries on the book.
     expect(ledgerOf(ix).size).toBe(6);
@@ -476,5 +475,49 @@ describe('cascade engine — mechanism matrix', () => {
 
     ix.dispose();
     expect(ledgerOf(ix).size).toBe(0);
+  });
+
+  it('13. replacing with a concrete instance cascades into live dependents (D1)', () => {
+    const ix = makeContainer();
+    provideChain(ix);
+    const firstMid = ix.invokeFunction((a) => a.get(IMid));
+    const replacement = new Root('root2');
+    events = [];
+
+    ix.provide(IRoot, replacement);
+
+    // Same transaction: dependents were torn down and rebuilt against the instance.
+    expect(events).toEqual(['-leaf', '-mid', '-root', '+mid', '+leaf']);
+    const newMid = ix.invokeFunction((a) => a.get(IMid));
+    expect(newMid).not.toBe(firstMid);
+    expect(newMid.root).toBe(replacement);
+    expect(ix.invokeFunction((a) => a.get(IRoot))).toBe(replacement);
+    ix.dispose();
+  });
+
+  it('14. a rejecting abort hook is logged, never a veto (best-effort §4.5)', async () => {
+    const reported: unknown[] = [];
+    const { setUnexpectedErrorHandler, resetUnexpectedErrorHandler } = await import(
+      '#/_base/errors/unexpectedError'
+    );
+    setUnexpectedErrorHandler((err) => { reported.push(err); });
+    try {
+      const ix = makeContainer();
+      provideChain(ix);
+      ix.cascade.configure({
+        onWillCascade: () => Promise.reject(new Error('abort hook blew up')),
+      });
+
+      await ix.cascade.submit({ action: 'unprovide', token: IRoot, reason: 'forced anyway' });
+
+      expect(ix.cascade.unitState(IRoot)).toBeUndefined();
+      expect(() => ix.invokeFunction((a) => a.get(IRoot))).toThrow(/unknown service/);
+      expect(ix.cascade.history().at(-1)!.abortWaited).toBe(true);
+      expect(reported).toHaveLength(1);
+      expect((reported[0] as Error).message).toContain('abort hook blew up');
+      ix.dispose();
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
   });
 });
