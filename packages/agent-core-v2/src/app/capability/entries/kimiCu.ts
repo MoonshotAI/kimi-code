@@ -74,6 +74,14 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function shQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+export function elevatedDittoScript(from: string, to: string): string {
+  return `/usr/bin/ditto ${shQuote(from)} ${shQuote(to)}`;
+}
+
 export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
   const applicationsDir = ctx.applicationsDir ?? '/Applications';
   const appPath = path.join(applicationsDir, APP_BUNDLE);
@@ -208,7 +216,7 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
       timeout: commandTimeoutMs,
     });
     if (direct.code === 0) return;
-    const script = `/usr/bin/ditto ${appleScriptQuote(unzippedApp)} ${appleScriptQuote(appPath)}`;
+    const script = appleScriptQuote(elevatedDittoScript(unzippedApp, appPath));
     const elevated = await runCommand(
       ctx.hostProcess,
       'osascript',

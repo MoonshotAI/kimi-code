@@ -17,6 +17,7 @@ import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProce
 import type { CapabilityEntryContext } from '#/app/capability/entries/context';
 import {
   createKimiCuEntry,
+  elevatedDittoScript,
   parsePermissionStatus,
   readAppBundleVersion,
 } from '#/app/capability/entries/kimiCu';
@@ -163,6 +164,18 @@ describe('parsePermissionStatus', () => {
     });
     expect(parsePermissionStatus('unknown command')).toBeUndefined();
     expect(parsePermissionStatus('')).toBeUndefined();
+  });
+});
+
+describe('elevatedDittoScript', () => {
+  it('shell-quotes both paths so spaces and metacharacters stay literal', () => {
+    // The elevated path runs the string through /bin/sh with administrator
+    // privileges: every path must be exactly one literal argument.
+    expect(elevatedDittoScript('/tmp/kimi cu/app', '/Applications/KimiCU.app')).toBe(
+      "/usr/bin/ditto '/tmp/kimi cu/app' '/Applications/KimiCU.app'",
+    );
+    const script = elevatedDittoScript("$(touch /tmp/pwned); echo '", '/Applications/KimiCU.app');
+    expect(script).toBe("/usr/bin/ditto '$(touch /tmp/pwned); echo '\\''' '/Applications/KimiCU.app'");
   });
 });
 
