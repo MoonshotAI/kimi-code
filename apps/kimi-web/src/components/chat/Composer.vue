@@ -1742,8 +1742,8 @@ function selectModel(modelId: string): void {
 .md-provider {
   color: var(--muted);
   font-size: var(--ui-font-size-xs);
-  flex: none;
-  max-width: 110px;
+  flex: 0 1 auto;
+  max-width: 35%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
