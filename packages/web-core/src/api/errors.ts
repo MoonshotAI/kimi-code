@@ -81,6 +81,22 @@ export class DaemonNetworkError extends Error {
   }
 }
 
+/** A host-side preview read was refused because the file exceeds the client
+ *  size cap (fs:content streams the whole body; the renderer decodes it in
+ *  full, so an unbounded read could OOM the app). Raised by
+ *  readHostFileContent; the file preview maps it to a dedicated error state. */
+export class FileTooLargeError extends Error {
+  readonly size: number;
+  readonly limit: number;
+
+  constructor(input: { size: number; limit: number }) {
+    super(`file too large to preview: ${input.size} bytes (limit ${input.limit})`);
+    this.name = 'FileTooLargeError';
+    this.size = input.size;
+    this.limit = input.limit;
+  }
+}
+
 export function isDaemonApiError(error: unknown): error is DaemonApiError {
   return (
     error instanceof DaemonApiError ||
@@ -99,5 +115,15 @@ export function isDaemonNetworkError(error: unknown): error is DaemonNetworkErro
       (error as { name?: unknown }).name === 'DaemonNetworkError' &&
       typeof (error as { method?: unknown }).method === 'string' &&
       typeof (error as { path?: unknown }).path === 'string')
+  );
+}
+
+export function isFileTooLargeError(error: unknown): error is FileTooLargeError {
+  return (
+    error instanceof FileTooLargeError ||
+    (typeof error === 'object' &&
+      error !== null &&
+      (error as { name?: unknown }).name === 'FileTooLargeError' &&
+      typeof (error as { limit?: unknown }).limit === 'number')
   );
 }

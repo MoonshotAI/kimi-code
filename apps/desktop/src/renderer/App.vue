@@ -1633,7 +1633,7 @@ function openPr(url: string): void {
         :cwd="client.status.value.cwd"
         closable
         @close="closeTurnDiff"
-        @open-file="openFilePreview({ path: $event, allowHostRead: true })"
+        @open-file="openFilePreview({ path: $event })"
       />
     </aside>
 

@@ -13,9 +13,13 @@ import HighlightedCode from './HighlightedCode.vue';
 const { t } = useI18n();
 
 // Resolve a relative path (from inside a Markdown file) against that file's
-// directory. Handles "./foo", "../foo", and bare "foo" segments.
+// directory. Handles "./foo", "../foo", and bare "foo" segments. An absolute
+// (POSIX-rooted) base keeps its root — an out-of-workspace Markdown like
+// /tmp/notes/a.md resolves ./b.md to /tmp/notes/b.md, not the
+// workspace-relative tmp/notes/b.md.
 function resolveRelativePath(src: string, base: string): string {
-  const result = base ? base.split('/').filter(Boolean) : [];
+  const rooted = base.startsWith('/');
+  const result = base.split('/').filter(Boolean);
   for (const part of src.split('/')) {
     if (part === '' || part === '.') continue;
     if (part === '..') {
@@ -24,7 +28,7 @@ function resolveRelativePath(src: string, base: string): string {
       result.push(part);
     }
   }
-  return result.join('/');
+  return (rooted ? '/' : '') + result.join('/');
 }
 
 // Wrap the app-level image resolver so that relative image paths inside a
@@ -37,7 +41,8 @@ const markdownBaseDir = computed(() => {
 });
 function resolveImageSrc(src: string): string {
   if (/^(https?:|data:|blob:)/i.test(src)) return src;
-  if (src.startsWith('/')) return src;
+  // Absolute paths pass through: POSIX, Windows drive, UNC.
+  if (src.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(src) || src.startsWith('\\\\')) return src;
   const base = markdownBaseDir.value;
   if (!base) return src;
   return resolveRelativePath(src, base);
@@ -55,7 +60,13 @@ provide('resolveImage', resolveMarkdownImage);
 // `?query` and `#fragment` are stripped so they don't become part of the path.
 function resolveMarkdownFileTarget(target: { path: string; line?: number }): FilePreviewRequest {
   let href = target.path;
-  if (/^(https?:|mailto:|tel:|data:|blob:|#)/i.test(href) || href.startsWith('/')) {
+  // Absolute targets pass through unchanged: POSIX, Windows drive, UNC.
+  if (
+    /^(https?:|mailto:|tel:|data:|blob:|#)/i.test(href) ||
+    href.startsWith('/') ||
+    /^[a-zA-Z]:[\\/]/.test(href) ||
+    href.startsWith('\\\\')
+  ) {
     return target;
   }
   for (const sep of ['#', '?']) {

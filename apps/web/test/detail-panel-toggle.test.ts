@@ -66,10 +66,105 @@ describe('detail panel toggle', () => {
     };
     const preview = useFilePreview({ client: client as never, detailTarget });
 
-    await preview.openFilePreview({ path: '/repo/src/a.ts', allowHostRead: true });
+    await preview.openFilePreview({ path: '/repo/src/a.ts' });
     expect(detailTarget.value).toBe('file');
-    await preview.openFilePreview({ path: '/repo/src/a.ts', allowHostRead: true });
+    await preview.openFilePreview({ path: '/repo/src/a.ts' });
     expect(detailTarget.value).toBe(null);
+  });
+
+  it('reads an out-of-workspace absolute path via the host fs:content', async () => {
+    const detailTarget = ref<DetailTarget | null>(null);
+    const client = {
+      status: ref({ cwd: '/repo' }),
+      readFileContent: vi.fn(),
+      readHostFileContent: vi.fn(async () => ({
+        path: '/tmp/notes.txt',
+        content: 'host',
+        encoding: 'utf-8',
+        mime: 'text/plain',
+        isBinary: false,
+        size: 4,
+      })),
+      getFileDownloadUrl: vi.fn(() => 'url'),
+      openWorkspaceFile: vi.fn(),
+      revealWorkspaceFile: vi.fn(),
+    };
+    const preview = useFilePreview({ client: client as never, detailTarget });
+
+    await preview.openFilePreview({ path: '/tmp/notes.txt' });
+    expect(client.readHostFileContent).toHaveBeenCalledWith('/tmp/notes.txt');
+    expect(preview.previewError.value).toBe(null);
+    expect(preview.previewFile.value?.content).toBe('host');
+  });
+
+  it('keeps an in-cwd ".." path on the session read path', async () => {
+    const detailTarget = ref<DetailTarget | null>(null);
+    const client = {
+      status: ref({ cwd: '/repo' }),
+      readFileContent: vi.fn(async () => ({
+        path: 'a.ts',
+        content: 'x',
+        encoding: 'utf-8',
+        mime: 'text/plain',
+        isBinary: false,
+        size: 1,
+      })),
+      readHostFileContent: vi.fn(),
+      getFileDownloadUrl: vi.fn(() => 'url'),
+      openWorkspaceFile: vi.fn(),
+      revealWorkspaceFile: vi.fn(),
+    };
+    const preview = useFilePreview({ client: client as never, detailTarget });
+
+    await preview.openFilePreview({ path: 'src/../a.ts' });
+    expect(client.readFileContent).toHaveBeenCalledWith('a.ts');
+    expect(client.readHostFileContent).not.toHaveBeenCalled();
+    expect(preview.previewError.value).toBe(null);
+  });
+
+  it('normalizes an escaping ".." path before the host read', async () => {
+    const detailTarget = ref<DetailTarget | null>(null);
+    const client = {
+      status: ref({ cwd: '/repo' }),
+      readFileContent: vi.fn(),
+      readHostFileContent: vi.fn(async () => ({
+        path: '/outside.ts',
+        content: 'host',
+        encoding: 'utf-8',
+        mime: 'text/plain',
+        isBinary: false,
+        size: 4,
+      })),
+      getFileDownloadUrl: vi.fn(() => 'url'),
+      openWorkspaceFile: vi.fn(),
+      revealWorkspaceFile: vi.fn(),
+    };
+    const preview = useFilePreview({ client: client as never, detailTarget });
+
+    await preview.openFilePreview({ path: '../outside.ts' });
+    expect(client.readHostFileContent).toHaveBeenCalledWith('/outside.ts');
+    expect(preview.previewError.value).toBe(null);
+  });
+
+  it('maps a too-large host file to the dedicated error state', async () => {
+    const detailTarget = ref<DetailTarget | null>(null);
+    const client = {
+      status: ref({ cwd: '/repo' }),
+      readFileContent: vi.fn(),
+      readHostFileContent: vi.fn(async () => {
+        throw Object.assign(new Error('file too large to preview: 20971520 bytes (limit 10485760)'), {
+          name: 'FileTooLargeError',
+          limit: 10_485_760,
+        });
+      }),
+      getFileDownloadUrl: vi.fn(() => 'url'),
+      openWorkspaceFile: vi.fn(),
+      revealWorkspaceFile: vi.fn(),
+    };
+    const preview = useFilePreview({ client: client as never, detailTarget });
+
+    await preview.openFilePreview({ path: '/tmp/huge.log' });
+    expect(preview.previewError.value).toBe('filePreview.errors.tooLarge');
   });
 
   it('maps a daemon path-not-found to the dedicated not-found error state', async () => {
@@ -90,7 +185,7 @@ describe('detail panel toggle', () => {
     };
     const preview = useFilePreview({ client: client as never, detailTarget });
 
-    await preview.openFilePreview({ path: '/repo/src/gone.ts', allowHostRead: true });
+    await preview.openFilePreview({ path: '/repo/src/gone.ts' });
     expect(preview.previewError.value).toBe('filePreview.errors.notFound');
   });
 });

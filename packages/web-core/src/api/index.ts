@@ -29,7 +29,9 @@ export { buildRestUrl, buildWsUrl } from './config';
 export {
   DaemonApiError,
   DaemonNetworkError,
+  FileTooLargeError,
   isDaemonApiError,
   isDaemonNetworkError,
+  isFileTooLargeError,
 } from './errors';
 export * from './types';

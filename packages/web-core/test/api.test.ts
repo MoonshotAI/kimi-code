@@ -318,3 +318,44 @@ describe('DaemonEventSocket injection', () => {
     );
   });
 });
+
+describe('DaemonHttpClient.getBlob maxBytes', () => {
+  it('rejects at the Content-Length header and cancels the body stream', async () => {
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(16));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(stream, {
+        status: 200,
+        headers: { 'content-length': String(20 * 1024 * 1024) },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const client = makeClient({});
+
+    await expect(
+      client.getBlob('/fs:content', { path: '/big.log' }, { maxBytes: 10_485_760 }),
+    ).rejects.toMatchObject({ name: 'FileTooLargeError', limit: 10_485_760 });
+    expect(cancelled).toBe(true);
+  });
+
+  it('returns the blob when the Content-Length is within the cap', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: { 'content-length': '3' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const client = makeClient({});
+
+    const blob = await client.getBlob('/fs:content', { path: '/small.txt' }, { maxBytes: 10 });
+    expect(blob.size).toBe(3);
+  });
+});

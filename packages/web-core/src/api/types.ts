@@ -1064,7 +1064,8 @@ export interface KimiWebApi {
 
   /** Read any host file by ABSOLUTE path via the daemon's global fs:content.
    *  No workspace prefix gate (unlike session fs:read); a missing file surfaces
-   *  the daemon's real not-found. Text decodes utf-8, binary returns base64. */
+   *  the daemon's real not-found. Text decodes utf-8, binary returns base64.
+   *  Throws FileTooLargeError when the file exceeds the client-side read cap. */
   readHostFileContent(path: string): Promise<{ path: string; content: string; encoding: 'utf-8' | 'base64'; mime: string; isBinary: boolean; size: number }>;
 
   // Config — REAL endpoints

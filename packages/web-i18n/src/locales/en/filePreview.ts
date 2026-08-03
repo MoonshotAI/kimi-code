@@ -31,6 +31,7 @@ export default {
     outsideWorkspace: 'Only files inside the current workspace can be previewed',
     isDirectory: 'Select a file instead of a directory',
     notFound: 'File no longer exists or was moved',
+    tooLarge: 'File is too large to preview',
     loadFailed: 'Unable to read this file',
   },
 } as const;

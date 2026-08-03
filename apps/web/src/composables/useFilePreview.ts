@@ -5,7 +5,7 @@
 import { computed, ref, watch, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { getKimiWebApi } from '../api';
-import { isDaemonApiError } from '../api/errors';
+import { isDaemonApiError, isFileTooLargeError } from '../api/errors';
 import { pathRelativeTo } from '../lib/pathRelativeTo';
 import type { FileData, FilePreviewRequest, ToolMedia } from '../types';
 import type { useKimiWebClient } from './useKimiWebClient';
@@ -25,6 +25,26 @@ function isNotFoundError(err: unknown): boolean {
 // anything else is workspace-relative and stays on the session fs:read path.
 function isAbsoluteToolPath(path: string): boolean {
   return path.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith('\\\\');
+}
+
+// Lexically normalize an absolute path — resolve "." and ".." segments without
+// touching the filesystem (".." clamps at the root / drive). POSIX and
+// Windows-drive paths stay absolute; UNC shares pass through untouched. Done
+// before the in-workspace check so "src/../a.ts" (or "/repo/src/../a.ts")
+// keeps the session read path instead of falling into the host-read branch.
+function normalizeAbsolutePath(path: string): string {
+  if (path.startsWith('\\\\')) return path;
+  const drive = /^[a-zA-Z]:/.test(path) ? path.slice(0, 2) : '';
+  const out: string[] = [];
+  for (const part of path.slice(drive.length).split(/[\\/]+/)) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      out.pop();
+      continue;
+    }
+    out.push(part);
+  }
+  return drive ? `${drive}/${out.join('/')}` : `/${out.join('/')}`;
 }
 
 /** Which occupant currently owns the shared right-side detail layer. */
@@ -129,17 +149,13 @@ export function useFilePreview({ client, detailTarget }: UseFilePreviewOptions) 
   }
 
   async function openFilePreview(target: FilePreviewRequest): Promise<void> {
-    // Clicking the link for the already-open file toggles the panel closed. The
-    // identity includes allowHostRead: a chat link that failed outsideWorkspace
-    // (no opt-in) and the summary's trusted open of the SAME path are different
-    // requests — the trusted one must read, not toggle the error panel shut.
+    // Clicking the link for the already-open file toggles the panel closed.
     const current = previewTarget.value;
     if (
       detailTarget.value === 'file' &&
       current &&
       current.path === target.path &&
-      current.line === target.line &&
-      (current.allowHostRead ?? false) === (target.allowHostRead ?? false)
+      current.line === target.line
     ) {
       closeFilePreview();
       return;
@@ -170,33 +186,26 @@ export function useFilePreview({ client, detailTarget }: UseFilePreviewOptions) 
       return;
     }
 
-    // An opted-in (allowHostRead) parent-relative path ("../shared/x.ts") has
-    // no absolute form yet — resolve it against the cwd so the absolute-path
-    // branch below can read it via fs:content; a non-opted-in one stays
-    // confined (normalizePreviewPath rejects the "..").
-    if (
-      target.allowHostRead &&
-      !isAbsoluteToolPath(target.path) &&
-      target.path.split(/[\\/]+/).includes('..')
-    ) {
+    // A parent-relative path ("../shared/x.ts") has no absolute form yet —
+    // resolve it against the cwd, normalized, so the absolute-path branch
+    // below sorts it correctly: "src/../a.ts" stays in-cwd and keeps the
+    // session read path; only a path that genuinely escapes ("../../x") lands
+    // in the host-read branch.
+    if (!isAbsoluteToolPath(target.path) && target.path.split(/[\\/]+/).includes('..')) {
       const cwd = trimTrailingSlash(client.status.value.cwd);
-      if (cwd) target = { ...target, path: `${cwd}/${target.path}` };
+      if (cwd) target = { ...target, path: normalizeAbsolutePath(`${cwd}/${target.path}`) };
     }
 
     // Absolute path. An in-workspace file relativizes and falls through to the
     // session path below (which also serves its download URL / open / reveal).
-    // A genuinely-external file reads via the daemon's global fs:content ONLY
-    // when the caller opted in (allowHostRead — the turn's file-change summary,
-    // whose paths the agent touched); an ordinary chat / Markdown link to an
-    // outside path stays confined (outsideWorkspace).
+    // A genuinely-external file reads via the daemon's global fs:content —
+    // previewing is a local read-only action, so it is not confined to the
+    // workspace (workspace-level trust gating is handled separately).
     if (isAbsoluteToolPath(target.path)) {
+      target = { ...target, path: normalizeAbsolutePath(target.path) };
       const relPath = workspaceRelativePath(target.path);
       if (relPath !== null) {
         target = { ...target, path: relPath };
-      } else if (!target.allowHostRead) {
-        previewLoading.value = false;
-        previewError.value = t('filePreview.errors.outsideWorkspace');
-        return;
       } else {
         try {
           const result = await client.readHostFileContent(target.path);
@@ -214,9 +223,11 @@ export function useFilePreview({ client, detailTarget }: UseFilePreviewOptions) 
           if (requestSeq !== previewRequestSeq) return;
           previewError.value = isNotFoundError(err)
             ? t('filePreview.errors.notFound')
-            : err instanceof Error
-              ? err.message
-              : t('filePreview.errors.loadFailed');
+            : isFileTooLargeError(err)
+              ? t('filePreview.errors.tooLarge')
+              : err instanceof Error
+                ? err.message
+                : t('filePreview.errors.loadFailed');
         } finally {
           if (requestSeq === previewRequestSeq) previewLoading.value = false;
         }

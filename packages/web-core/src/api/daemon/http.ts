@@ -4,7 +4,7 @@
 import { buildRestUrl } from '../config';
 import { noopTracer } from '../../contracts';
 import type { ClientIdentity, CredentialStore, Tracer } from '../../contracts';
-import { DaemonApiError, DaemonNetworkError } from '../errors';
+import { DaemonApiError, DaemonNetworkError, FileTooLargeError } from '../errors';
 import type { WireEnvelope } from './wire';
 
 /** Per-request timeout. Without one, a hung connection (half-open TCP after a
@@ -103,10 +103,15 @@ export class DaemonHttpClient {
   /** Authenticated raw-binary GET (no envelope). Used for file downloads that
    *  must carry the Bearer token — e.g. <video>/<img> src, which the browser
    *  fetches natively and cannot authorize on its own. Returns the body as a
-   *  Blob on 2xx; otherwise parses the daemon envelope and throws. */
+   *  Blob on 2xx; otherwise parses the daemon envelope and throws.
+   *  `maxBytes` rejects oversized bodies at the Content-Length header — before
+   *  the body is read — so a huge host file can't be fully downloaded into the
+   *  renderer (readHostFileContent's preview cap). A missing Content-Length
+   *  falls through to the caller's post-read size check. */
   async getBlob(
     path: string,
     query?: Record<string, string | number | boolean | undefined>,
+    opts?: { maxBytes?: number },
   ): Promise<Blob> {
     let url = buildRestUrl(this.opts.origin, path);
     if (query) {
@@ -159,6 +164,13 @@ export class DaemonHttpClient {
         code: 0,
         msg: '',
       });
+      const contentLength = Number(response.headers.get('content-length') ?? 0);
+      if (opts?.maxBytes !== undefined && contentLength > opts.maxBytes) {
+        // Refuse at the header: cancel the stream so the body is never read
+        // into the renderer and the connection frees up.
+        void response.body?.cancel();
+        throw new FileTooLargeError({ size: contentLength, limit: opts.maxBytes });
+      }
       return response.blob();
     }
     // Error path: the daemon sends a JSON envelope (401/404/413…).

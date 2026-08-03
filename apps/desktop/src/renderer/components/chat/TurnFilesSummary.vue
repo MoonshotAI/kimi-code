@@ -100,10 +100,9 @@ function rowStats(change: TurnFileChange): { added: number; removed: number } | 
 
 function openChange(change: TurnFileChange): void {
   // A Write's whole content IS the change (no line diff to show), so it opens
-  // the file itself; an Edit has a real diff. Paths the agent touched may read
-  // outside the workspace (allowHostRead).
+  // the file itself; an Edit has a real diff.
   if (change.hasWrite) {
-    emit('openFile', { path: change.path, allowHostRead: true });
+    emit('openFile', { path: change.path });
   } else {
     emit('openDiff', change);
   }

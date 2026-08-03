@@ -31,6 +31,7 @@ export default {
     outsideWorkspace: '只能预览当前 workspace 内的文件',
     isDirectory: '请选择具体文件，而不是目录',
     notFound: '文件不存在或已被移动',
+    tooLarge: '文件过大，暂不支持预览',
     loadFailed: '无法读取这个文件',
   },
 } as const;

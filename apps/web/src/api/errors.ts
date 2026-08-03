@@ -3,6 +3,8 @@
 export {
   DaemonApiError,
   DaemonNetworkError,
+  FileTooLargeError,
   isDaemonApiError,
   isDaemonNetworkError,
+  isFileTooLargeError,
 } from '@moonshot-ai/web-core/api';

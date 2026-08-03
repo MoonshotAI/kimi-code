@@ -52,8 +52,13 @@ import type {
   UpdateProviderResult,
 } from '../types';
 import { DaemonHttpClient } from './http';
-import { isDaemonApiError } from '../errors';
+import { FileTooLargeError, isDaemonApiError } from '../errors';
 import type { AgentProjector } from './projector';
+
+// Cap for host-side preview reads (readHostFileContent): the body is decoded
+// in full (text or base64) in the renderer, so match the image-attachment
+// limit of 10 MiB instead of letting a huge log / image hang or OOM the app.
+const HOST_READ_MAX_BYTES = 10_485_760;
 
 // Envelope code for request-schema validation failures (kap-server
 // error-codes.ts); used to detect servers that predate a request field.
@@ -1654,7 +1659,10 @@ export class DaemonKimiWebApi implements KimiWebApi {
    *  (server-v2 addition). Unlike the session fs:read, there is no workspace
    *  prefix gate, so files outside the active cwd (e.g. a worktree the turn
    *  touched) open too; a missing file surfaces the daemon's real not-found.
-   *  Text files decode as utf-8; binary content returns base64. */
+   *  Text files decode as utf-8; binary content returns base64.
+   *  Throws FileTooLargeError beyond HOST_READ_MAX_BYTES — fs:content has no
+   *  truncation semantics (unlike fs:read's 1 MiB cap) and the body is decoded
+   *  in full here, so an unbounded read could hang or OOM the renderer. */
   async readHostFileContent(path: string): Promise<{
     path: string;
     content: string;
@@ -1663,7 +1671,12 @@ export class DaemonKimiWebApi implements KimiWebApi {
     isBinary: boolean;
     size: number;
   }> {
-    const blob = await this.http.getBlob('/fs:content', { path });
+    // maxBytes refuses oversized files at the Content-Length header; the
+    // post-read blob.size check stays as the fallback for a missing header.
+    const blob = await this.http.getBlob('/fs:content', { path }, { maxBytes: HOST_READ_MAX_BYTES });
+    if (blob.size > HOST_READ_MAX_BYTES) {
+      throw new FileTooLargeError({ size: blob.size, limit: HOST_READ_MAX_BYTES });
+    }
     // An empty Content-Type must reach isTextLikeMime as empty (it reads as
     // text) — don't pre-fill octet-stream and flip the file to binary. The
     // reported mime falls back per kind so the preview can render it: text for

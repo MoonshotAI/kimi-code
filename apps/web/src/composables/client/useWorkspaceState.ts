@@ -35,6 +35,7 @@ import {
 import { isDesktop } from '../../lib/desktopFlag';
 import { logWarn } from '../../lib/log';
 import { parseDiff } from '../../lib/parseDiff';
+import { pathRelativeTo } from '../../lib/pathRelativeTo';
 import { buildFullDiffTexts, type DiffFullTexts } from '../../lib/diffFullTexts';
 import { sessionExportTraceToJsonl, traceKeyEvent } from '../../debug/trace';
 import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
@@ -3108,13 +3109,21 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
+  // A local absolute image path: POSIX (`/x`), a Windows drive (`C:\x`/`C:/x`),
+  // or a UNC share (`\\host\x`). Same classification as the file preview's
+  // isAbsoluteToolPath.
+  function isAbsoluteLocalPath(path: string): boolean {
+    return path.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith('\\\\');
+  }
+
   /**
    * Resolve a local image path to a displayable data URL.
    * Non-local URLs (http/https/data) pass through unchanged.
-   * Local paths are read via the daemon's readFile endpoint and returned as
-   * data:{mime};base64,{content} URLs so they render in the browser. Absolute
-   * paths are made cwd-relative first (the daemon rejects absolute paths), and
-   * truncated/non-binary reads fall back to the original src.
+   * Local paths are read via the daemon and returned as data:{mime};base64
+   * URLs so they render in the browser. In-workspace absolutes are made
+   * cwd-relative and read via the session fs:read (truncated/non-binary reads
+   * fall back to the original src); out-of-workspace absolutes read via the
+   * global fs:content — the same capability external file previews use.
    */
   async function resolveImageUrl(src: string): Promise<string> {
     // Pass through already-addressable URLs
@@ -3122,16 +3131,25 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const sid = rawState.activeSessionId;
     if (!sid) return src;
 
-    // The daemon's path resolution only accepts session-relative paths, but the
-    // model usually references images by absolute path. Strip the session cwd.
+    // The session fs:read only accepts cwd-relative paths, but the model
+    // usually references images by absolute path. An in-cwd absolute path
+    // (POSIX or Windows) relativizes for the session read; an outside one
+    // goes through the host fs:content.
     let path = src;
-    if (path.startsWith('/')) {
+    if (isAbsoluteLocalPath(path)) {
       const cwd = rawState.sessions.find((s) => s.id === sid)?.cwd;
-      if (cwd && (path === cwd || path.startsWith(cwd.endsWith('/') ? cwd : `${cwd}/`))) {
-        path = path.slice(cwd.length).replace(/^\//, '');
-        if (!path) return src;
+      const relative = cwd ? pathRelativeTo(path, cwd) : null;
+      if (relative) {
+        path = relative;
       } else {
-        return src; // absolute path outside the workspace — unreadable
+        try {
+          const result = await readHostFileContent(path);
+          if (!result.isBinary || result.encoding !== 'base64') return src;
+          return `data:${result.mime};base64,${result.content}`;
+        } catch {
+          // Missing / too large / otherwise unreadable — keep the raw src.
+          return src;
+        }
       }
     }
 
