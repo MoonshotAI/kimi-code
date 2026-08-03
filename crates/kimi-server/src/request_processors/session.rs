@@ -205,6 +205,45 @@ impl Processor for SessionProcessor {
                     })
             })
         });
+
+        // `session/list_mcp_servers` — per-server views.
+        let mgr = self.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_LIST_MCP_SERVERS, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: SessionGoalParams = serde_json::from_value(params)
+                    .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mcp = {
+                    let mut manager = mgr.lock().await;
+                    let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                        JsonRpcError::internal_error(format!(
+                            "no agent for session: {}",
+                            input.session_id
+                        ))
+                    })?;
+                    agent.mcp.clone()
+                };
+                // Lock the runtime outside the manager lock so a slow MCP call
+                // in a running turn cannot deadlock against this listing.
+                let servers: Vec<kimi_protocol::wire_types::McpServerInfoRpc> = mcp
+                    .lock()
+                    .await
+                    .list()
+                    .into_iter()
+                    .map(|entry| kimi_protocol::wire_types::McpServerInfoRpc {
+                        name: entry.name,
+                        transport: entry.transport.as_str().to_string(),
+                        status: entry.status.as_str().to_string(),
+                        tool_count: entry.tool_count,
+                        error: entry.error,
+                    })
+                    .collect();
+                serde_json::to_value(kimi_protocol::wire_types::McpServerListResult { servers })
+                    .map_err(|e| {
+                        JsonRpcError::internal_error(format!("list_mcp_servers serialize failed: {e}"))
+                    })
+            })
+        });
     }
 }
 
