@@ -1657,6 +1657,55 @@ mod create_tests {
     }
 
     #[tokio::test]
+    async fn session_controls_roundtrip() {
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = SessionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/create".into(),
+                params: serde_json::json!({ "session_id": "s-ctrl-srv" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "create failed: {body}");
+
+        // set_model / set_thinking are accepted without an LLM.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/set_model".into(),
+                params: serde_json::json!({ "session_id": "s-ctrl-srv", "model": "test-model" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "set_model failed: {body}");
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(3),
+                method: "session/set_thinking".into(),
+                params: serde_json::json!({ "session_id": "s-ctrl-srv", "effort": "high" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "set_thinking failed: {body}");
+
+        // clear_context reports it cleared (an empty context still clears).
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(4),
+                method: "session/clear_context".into(),
+                params: serde_json::json!({ "session_id": "s-ctrl-srv" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "clear_context failed: {body}");
+        assert!(body["result"].is_object());
+    }
+
+    #[tokio::test]
     async fn list_skills_and_get_plan_empty_states() {
         let state = crate::state::ServerState::new().expect("state");
         let processor = SessionProcessor::with_state(state);
