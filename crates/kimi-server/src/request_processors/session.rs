@@ -514,6 +514,79 @@ impl Processor for SessionProcessor {
             })
         });
 
+        // `session/steer` — push user input into the running goal turn.
+        let steer = self.steer.clone();
+        processor.register(kimi_protocol::methods::SESSION_STEER, move |params| {
+            let steer = steer.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionSteerParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let parts: Vec<kimi_agent::context::types::ContentPart> =
+                    serde_json::from_value(input.input).map_err(|e| {
+                        JsonRpcError::internal_error(format!("Invalid input parts: {e}"))
+                    })?;
+                // Push onto the shared steer queue without the manager lock.
+                let queued = {
+                    let map = steer.lock().unwrap_or_else(|e| e.into_inner());
+                    match map.get(&input.session_id) {
+                        Some(q) => {
+                            q.lock().unwrap_or_else(|e| e.into_inner()).extend(parts);
+                            true
+                        }
+                        None => false,
+                    }
+                };
+                Ok(serde_json::json!({ "queued": queued }))
+            })
+        });
+
+        // `session/goal_create` — create (or replace) the session goal.
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_GOAL_CREATE, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionGoalCreateParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                let snapshot = agent
+                    .goal_create(kimi_agent::goal::CreateGoalInput {
+                        objective: input.objective,
+                        completion_criterion: input.completion_criterion,
+                        replace: input.replace,
+                    })
+                    .map_err(JsonRpcError::internal_error)?;
+                serde_json::to_value(&snapshot)
+                    .map_err(|e| JsonRpcError::internal_error(e.to_string()))
+            })
+        });
+
+        // `session/goal_get` — current goal snapshot (null when none).
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_GOAL_GET, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: SessionGoalParams = serde_json::from_value(params)
+                    .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                serde_json::to_value(agent.goal_get())
+                    .map_err(|e| JsonRpcError::internal_error(e.to_string()))
+            })
+        });
+
         // `session/get_status` — live engine status snapshot.
         let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_GET_STATUS, move |params| {
