@@ -1,0 +1,20 @@
+[package]
+name = "kimi-cli"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Kimi Code command dispatcher (layer 4 of the Rust-first migration)"
+
+[[bin]]
+name = "kimi"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { workspace = true }
+kimi-exec = { path = "../kimi-exec" }
+kimi-protocol = { path = "../kimi-protocol" }
+kimi-server = { path = "../kimi-server" }
+kimi-server-client = { path = "../kimi-server-client" }
+serde_json = { workspace = true }
+tokio = { workspace = true }

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/kimi-cli",
     "crates/kimi-exec",
     "crates/kimi-protocol",
     "crates/kimi-server",
