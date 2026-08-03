@@ -868,6 +868,113 @@ describe('agentsMdReminder round-2 hardening', () => {
   });
 });
 
+describe('agentsMdReminder cancellation outcomes', () => {
+  it('does not consume a reminder for a conflicting task cancelled before execution starts', async () => {
+    const h = createHarness({ withRealExecutor: true });
+    const subDir = join(workDir, 'packages', 'kap-server');
+    const subAgentsMd = await writeAgentsMd(subDir);
+    let resolveStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+
+    class BlockingBash implements ExecutableTool<Record<string, unknown>> {
+      readonly name = 'Bash';
+      readonly description = 'Blocks until cancelled.';
+      readonly parameters = { type: 'object', additionalProperties: true };
+
+      resolveExecution(): ToolExecution {
+        return {
+          accesses: ToolAccesses.all(),
+          approvalRule: this.name,
+          execute: ({ signal }) => {
+            resolveStarted();
+            return new Promise<ExecutableToolResult>((resolve) => {
+              const onAbort = (): void => {
+                signal.removeEventListener('abort', onAbort);
+                resolve({ output: 'bash aborted', isError: true });
+              };
+              if (signal.aborted) onAbort();
+              else signal.addEventListener('abort', onAbort);
+            });
+          },
+        };
+      }
+    }
+
+    class ReadTool implements ExecutableTool<Record<string, unknown>> {
+      readonly name = 'Read';
+      readonly description = 'Reads a file.';
+      readonly parameters = { type: 'object', additionalProperties: true };
+
+      resolveExecution(): ToolExecution {
+        return {
+          accesses: ToolAccesses.readFile(join(subDir, 'index.ts')),
+          approvalRule: this.name,
+          execute: async () => ({ output: 'read result' }),
+        };
+      }
+    }
+
+    h.ix.get(IAgentToolRegistryService).register(new BlockingBash());
+    h.ix.get(IAgentToolRegistryService).register(new ReadTool());
+    const controller = new AbortController();
+    const calls: ToolCall[] = [
+      {
+        type: 'function',
+        id: 'call-blocking-bash',
+        name: 'Bash',
+        arguments: JSON.stringify({ command: 'sleep 60' }),
+      },
+      {
+        type: 'function',
+        id: 'call-queued-read',
+        name: 'Read',
+        arguments: JSON.stringify({ path: join(subDir, 'index.ts') }),
+      },
+    ];
+    const pending = (async () => {
+      const results = [];
+      for await (const item of h.ix.get(IAgentToolExecutorService).execute(calls, {
+        turnId: 1,
+        signal: controller.signal,
+      })) {
+        results.push(item);
+      }
+      return results;
+    })();
+
+    await started;
+    controller.abort();
+    const results = await pending;
+    const queued = results.find((item) => item.toolCallId === 'call-queued-read');
+    expect(queued).toBeDefined();
+    expect(outputText(queued!.result)).not.toContain('<system-reminder>');
+    expect(
+      h.telemetryEvents.filter((event) => event.event === 'agents_md_reminder_shown'),
+    ).toEqual([]);
+
+    const real = [];
+    for await (const item of h.ix.get(IAgentToolExecutorService).execute(
+      [
+        {
+          type: 'function',
+          id: 'call-real-read',
+          name: 'Read',
+          arguments: JSON.stringify({ path: join(subDir, 'index.ts') }),
+        },
+      ],
+      {
+        turnId: 2,
+        signal: new AbortController().signal,
+      },
+    )) {
+      real.push(item);
+    }
+    expect(outputText(real[0]!.result)).toContain(subAgentsMd);
+  });
+});
+
 describe('agentsMdReminder Bash parse degradation', () => {
   it('falls back to the structured cwd argument when the command cannot be parsed', async () => {
     const h = createHarness();
