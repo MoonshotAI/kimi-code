@@ -149,6 +149,12 @@ interface TurnDriver {
   turnId?: number;
   settled: boolean;
   /**
+   * Set when `cancel()` arrives while {@link turnId} is still unknown: the
+   * launch handler re-issues a precisely-addressed cancel once the id lands,
+   * and a no-launch outcome settles `cancelled` instead of `end_turn`.
+   */
+  cancelRequested?: boolean;
+  /**
    * Turn-scoped events that arrived while `turnId` was still unknown. Once
    * the launch resolves, the entries matching the driver's turn are replayed
    * in arrival order; the rest (a still-draining prior turn) are dropped —
@@ -228,6 +234,11 @@ export class AcpSession {
     readonly sessionId: string,
     private readonly acpConnection: IAcpConnection,
     /**
+     * Whether the client advertised `elicitation.form` at `initialize` —
+     * forwarded to the interaction bridge's ask-user routing.
+     */
+    elicitationForm: boolean,
+    /**
      * Resolve the session's media-originals dir for prompt-image compression
      * (`sessionMediaOriginalsDir(sessionDir)` when the live session scope is
      * reachable). Undefined / returning undefined → `persistOriginalImage`'s
@@ -240,7 +251,7 @@ export class AcpSession {
     // `main` is auto-materialized by the transport's scope resolution on the
     // first call — no explicit agent bootstrap is needed here.
     this.agent = this.session.agent('main');
-    this.interactionBridge = new AcpInteractionBridge(conn, this.session, sessionId);
+    this.interactionBridge = new AcpInteractionBridge(conn, this.session, sessionId, elicitationForm);
   }
 
   /**
@@ -617,11 +628,22 @@ export class AcpSession {
             // hook-blocked case; the wire carries no blocking message to
             // surface, matching the old `PromptHandle`-based behavior.
             this.settleDriver(driver, () => {
-              resolve({ stopReason: 'end_turn' });
+              resolve({ stopReason: driver.cancelRequested === true ? 'cancelled' : 'end_turn' });
             });
             return;
           }
           driver.turnId = launched.turn_id;
+          if (driver.cancelRequested === true) {
+            // A cancel arrived before the id was known (see `cancel()`): the
+            // unaddressed cancel may have predated the turn's activation, so
+            // re-issue it now precisely addressed. Idempotent.
+            void this.agent.cancel({ turnId: launched.turn_id }).catch((error) => {
+              log.warn('acp: deferred cancel failed', {
+                sessionId: this.sessionId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            });
+          }
           // Replay the events the turn emitted before its id arrived (a fast
           // turn can outrun the launch round-trip — `activateSkill` returns
           // only after the prompt-metadata update).
@@ -918,8 +940,26 @@ export class AcpSession {
     for (const pending of this.pendingPromptAborts) {
       pending.aborted = true;
     }
-    const turnId = this.driver?.turnId;
-    if (turnId === undefined) return;
+    const driver = this.driver;
+    if (driver === undefined || driver.settled) return;
+    const turnId = driver.turnId;
+    if (turnId === undefined) {
+      // The launch round-trip has not returned the turn id yet. The engine's
+      // cancel payload makes turnId optional — an empty call cancels whatever
+      // turn is active (the same contract kap-server's cancel route relies
+      // on) — and concurrent prompts are rejected, so the active turn can only
+      // be this driver's. Flag the driver too: when the id lands, the launch
+      // handler re-issues a precisely-addressed cancel, and a no-launch
+      // outcome settles `cancelled` instead of `end_turn`.
+      driver.cancelRequested = true;
+      void this.agent.cancel().catch((error) => {
+        log.warn('acp: cancel (unaddressed) failed', {
+          sessionId: this.sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+      return;
+    }
     void this.agent.cancel({ turnId }).catch((error) => {
       log.warn('acp: cancel failed', {
         sessionId: this.sessionId,
