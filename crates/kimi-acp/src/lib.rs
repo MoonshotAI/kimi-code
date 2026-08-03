@@ -30,11 +30,16 @@ where
         }
         let response = match serde_json::from_str::<kimi_protocol::rpc::JsonRpcRequest>(line) {
             Ok(request) => handle(&harness, &request).await,
-            Err(_) => serde_json::json!({
+            Err(_) => Some(serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": null,
                 "error": { "code": -32700, "message": "Parse error" },
-            }),
+            })),
+        };
+        // Notifications (no response body) are processed and answered with
+        // silence — the ACP/JSON-RPC convention.
+        let Some(response) = response else {
+            continue;
         };
         if writer
             .write_all(format!("{response}\n").as_bytes())
@@ -49,19 +54,23 @@ where
     }
 }
 
-/// Dispatch one ACP request through the harness.
-async fn handle(harness: &Harness, request: &kimi_protocol::rpc::JsonRpcRequest) -> serde_json::Value {
+/// Dispatch one ACP request through the harness. Returns `None` for
+/// notifications, which must not receive a response.
+async fn handle(
+    harness: &Harness,
+    request: &kimi_protocol::rpc::JsonRpcRequest,
+) -> Option<serde_json::Value> {
     let id = &request.id;
-    let error = |code: i64, message: &str| serde_json::json!({
+    let error = |code: i64, message: &str| Some(serde_json::json!({
         "jsonrpc": "2.0",
         "id": id,
         "error": { "code": code, "message": message },
-    });
-    let result = |value: serde_json::Value| serde_json::json!({
+    }));
+    let result = |value: serde_json::Value| Some(serde_json::json!({
         "jsonrpc": "2.0",
         "id": id,
         "result": value,
-    });
+    }));
     let params = request.params.clone();
     let method = request.method.as_str();
     match method {
@@ -137,7 +146,16 @@ async fn handle(harness: &Harness, request: &kimi_protocol::rpc::JsonRpcRequest)
                 Err(e) => error(-32603, &format!("session/prompt failed: {e}")),
             }
         }
-        "notifications/initialized" => result(serde_json::json!({})),
+        "notifications/initialized" => None,
+        "session/cancel" => {
+            // ACP notification: cancel the named session's running turn.
+            // Processed for its side effect; no response body.
+            let session_id = params.get("sessionId").and_then(|v| v.as_str()).unwrap_or("");
+            if !session_id.is_empty() {
+                let _ = harness.client().await.session_cancel(session_id).await;
+            }
+            None
+        }
         _ => error(-32601, &format!("Method not found: {method}")),
     }
 }
@@ -147,8 +165,13 @@ mod tests {
     use super::*;
     use tokio::io::{duplex, AsyncReadExt};
 
-    /// Drive the ACP server over an in-memory duplex with one request.
-    async fn round_trip(harness: Harness, request: &str) -> serde_json::Value {
+    /// Serializes tests that touch `KIMI_AGENT_HOME` (process-global env var).
+    static STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Drive the ACP server over an in-memory duplex; `None` when the server
+    /// answers with silence (notifications — the read times out instead of
+    /// blocking forever).
+    async fn round_trip_maybe_empty(harness: Harness, request: &str) -> Option<serde_json::Value> {
         let (server_side, mut client_side) = duplex(4096);
         let (reader, mut writer) = tokio::io::split(server_side);
         let server = tokio::spawn(async move {
@@ -157,18 +180,41 @@ mod tests {
         client_side.write_all(request.as_bytes()).await.unwrap();
         let mut buf = Vec::new();
         let mut byte = [0u8; 1];
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         loop {
-            if client_side.read(&mut byte).await.unwrap() == 0 {
-                break;
+            if std::time::Instant::now() > deadline {
+                break; // notification: no response within the window
             }
-            buf.push(byte[0]);
-            if byte[0] == b'\n' {
-                break;
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                client_side.read(&mut byte),
+            )
+            .await
+            {
+                Ok(Ok(0)) | Ok(Err(_)) => break,
+                Ok(Ok(_)) => {
+                    buf.push(byte[0]);
+                    if byte[0] == b'\n' {
+                        break;
+                    }
+                }
+                Err(_) => {}
             }
         }
         drop(client_side);
         let _ = server.await;
-        serde_json::from_slice(&buf).unwrap()
+        if buf.is_empty() {
+            None
+        } else {
+            serde_json::from_slice(&buf).ok()
+        }
+    }
+
+    /// Drive the ACP server over an in-memory duplex with one request.
+    async fn round_trip(harness: Harness, request: &str) -> serde_json::Value {
+        round_trip_maybe_empty(harness, request)
+            .await
+            .expect("a response")
     }
 
     #[tokio::test]
@@ -186,6 +232,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_lifecycle_round_trip() {
+        let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let home = std::env::temp_dir().join(format!("kimi-acp-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).expect("mkdir");
@@ -225,5 +272,33 @@ mod tests {
         )
         .await;
         assert_eq!(body["error"]["code"], -32601, "unknown method: {body}");
+    }
+
+    #[tokio::test]
+    async fn notifications_are_answered_with_silence() {
+        let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = std::env::temp_dir().join(format!("kimi-acp-notif-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("mkdir");
+        std::env::set_var("KIMI_AGENT_HOME", &home);
+
+        // notifications/initialized -> no response line.
+        let harness = Harness::embedded().expect("embedded");
+        let body = round_trip_maybe_empty(
+            harness,
+            "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n",
+        )
+        .await;
+        assert!(body.is_none(), "notification gets no response: {body:?}");
+
+        // session/cancel (notification) -> no response; unknown sessions are
+        // tolerated (cancel simply reports false internally).
+        let harness = Harness::embedded().expect("embedded");
+        let body = round_trip_maybe_empty(
+            harness,
+            "{\"jsonrpc\":\"2.0\",\"method\":\"session/cancel\",\"params\":{\"sessionId\":\"nope\"}}\n",
+        )
+        .await;
+        assert!(body.is_none(), "cancel notification gets no response: {body:?}");
     }
 }
