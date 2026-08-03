@@ -198,7 +198,16 @@ export class CloudAppender implements ITelemetryAppender {
     }
 
     try {
-      await this.flush().catch(() => {});
+      // Bound shutdown even when a pre-existing flush is already running:
+      // a send started before shutdownController existed has no abort signal,
+      // so a hung request could block the server close past the deadline.
+      await Promise.race([
+        this.flush().catch(() => {}),
+        new Promise<void>((resolve) => {
+          const t = setTimeout(() => resolve(), remainingMs);
+          t.unref?.();
+        }),
+      ]);
 
       if (this.buffer.length > 0) {
         await this.transport.saveToDisk(this.buffer).catch(() => {});
