@@ -116,4 +116,80 @@ mod tests {
         assert!(body.get("error").is_none());
         assert_eq!(body["result"]["pending"], serde_json::json!([]));
     }
+
+    #[tokio::test]
+    async fn approval_roundtrip_request_list_resolve() {
+        use kimi_agent::approval::ApprovalDecision;
+
+        let processor = ApprovalProcessor::new();
+        // Register a pending approval on the shared store, as the gated tool
+        // path does; the wait handle resolves when the decision lands.
+        let decision_rx = processor.store().request(
+            Some("s1".to_string()),
+            "tool-call-1".to_string(),
+            "Bash".to_string(),
+            serde_json::json!({ "cmd": "ls" }),
+            "Bash(**)".to_string(),
+        );
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+
+        // session/approval_list surfaces it under the session scope.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/approval_list".into(),
+                params: serde_json::json!({ "session_id": "s1" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "list failed: {body}");
+        let pending = body["result"]["pending"].as_array().expect("pending array");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0]["tool_name"], "Bash");
+        let id = pending[0]["id"].as_str().expect("id").to_string();
+
+        // session/approval_resolve feeds the decision back to the waiter.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/approval_resolve".into(),
+                params: serde_json::json!({ "id": id, "decision": "allow" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "resolve failed: {body}");
+        assert_eq!(body["result"]["resolved"], true);
+        assert!(
+            matches!(decision_rx.await, Ok(ApprovalDecision::Allow)),
+            "waiting tool receives the allow decision"
+        );
+
+        // The queue drains; a second list is empty.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(3),
+                method: "session/approval_list".into(),
+                params: serde_json::json!({ "session_id": "s1" }),
+            })
+            .await;
+        assert_eq!(body["result"]["pending"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn approval_resolve_rejects_unknown_decision() {
+        let processor = ApprovalProcessor::new();
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/approval_resolve".into(),
+                params: serde_json::json!({ "id": "x", "decision": "maybe" }),
+            })
+            .await;
+        assert!(body.get("error").is_some(), "unknown decision -> error: {body}");
+    }
 }
