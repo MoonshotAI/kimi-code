@@ -1,13 +1,6 @@
 /**
  * `_base` text helpers — model-text line-ending normalization.
  *
- * Shared low-level helpers used by both the os file tools (Read, to render
- * carriage returns visibly) and the agent edit domain (TextModel, to normalize
- * CRLF → LF for matching and re-materialize on write). Lives in `_base` so
- * higher domains can import it without creating an upward dependency on the os
- * tool implementations.
- *
- * Ported from v1 (`packages/agent-core/src/tools/builtin/file/line-endings.ts`).
  * Normalizes CRLF → LF for display and re-materializes CRLF on write, so the
  * model sees a consistent view while the on-disk bytes stay faithful.
  */

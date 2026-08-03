@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `WriteTool` implementation.
+ * `tools` domain — `WriteTool` implementation.
  *
  * Resolves path access policy before any filesystem I/O, creates missing
  * parent directories (`mkdir(recursive)`), and writes through
@@ -13,7 +13,7 @@
  * domain; the workspace and skill roots come from `ISessionWorkspaceContext`
  * / `ISessionSkillCatalog`.
  *
- * Ported from v1 (`packages/agent-core/src/tools/builtin/file/write.ts`).
+ * Ported from v1.
  * Bound at Agent scope; self-registers via `registerAgentToolService(...)` at module
  * load.
  */

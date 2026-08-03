@@ -1,10 +1,9 @@
 /**
- * `rpc` domain (L7) — v2 native RPC contract.
+ * `rpc` domain — v2 native RPC contract.
  *
  * Request/response payloads and event types for the engine's native RPC
  * surface. `PromptPayload.disabledTools` is the client-managed session
- * denylist, applied via `IAgentProfileService.setSessionDisabledTools` before
- * the prompt is enqueued: full-replace semantics, the profile's own
+ * denylist, applied before the prompt is enqueued: full-replace semantics, the profile's own
  * `disallowedTools` always survive, omitting the field keeps the persisted
  * value, and `[]` clears the client portion. It is ignored by engines without
  * profile support.
@@ -24,7 +23,6 @@ import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { SwarmModeTrigger } from '#/agent/swarm/swarm';
 import type { ToolDisclosure, ToolInfo } from '#/tool/toolContract';
 import type { ResolvedConfig } from '#/app/config/config';
-import type { McpServerConfig } from '#/agent/mcp/config-schema';
 import type { ExperimentalFeatureState } from '#/app/flag/flag';
 import type { ResumeSessionResult } from '#/agent/replayBuilder/types';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
@@ -65,7 +63,6 @@ export interface CreateSessionPayload {
   readonly thinking?: string | undefined;
   readonly permission?: PermissionMode | undefined;
   readonly metadata?: JsonObject | undefined;
-  readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly additionalDirs?: readonly string[];
   readonly client?: ClientTelemetryInfo | undefined;
 }
@@ -80,7 +77,6 @@ export interface ArchiveSessionPayload {
 
 export interface ResumeSessionPayload {
   readonly sessionId: string;
-  readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly additionalDirs?: readonly string[];
 }
 
@@ -257,18 +253,6 @@ export interface GetPluginInfoPayload {
 export type ReloadPluginsResult = ReloadSummary;
 export type { PluginSummary, PluginInfo };
 
-export interface AddAdditionalDirPayload {
-  readonly path: string;
-  readonly persist: boolean;
-}
-
-export interface AddAdditionalDirResult {
-  readonly additionalDirs: readonly string[];
-  readonly projectRoot: string;
-  readonly configPath: string;
-  readonly persisted: boolean;
-}
-
 export interface RenameSessionPayload {
   readonly title: string;
 }
@@ -336,7 +320,6 @@ export interface SessionAPI extends AgentAPIWithId {
   reconnectMcpServer: (payload: ReconnectMcpServerPayload) => void;
   generateAgentsMd: (payload: EmptyPayload) => void;
   getSessionWarnings: (payload: EmptyPayload) => readonly SessionWarning[];
-  addAdditionalDir: (payload: AddAdditionalDirPayload) => AddAdditionalDirResult;
 }
 
 type SessionAPIWithId = WithSessionId<SessionAPI>;

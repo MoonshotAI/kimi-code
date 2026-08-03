@@ -1,5 +1,5 @@
 /**
- * `storage` domain (L1) — node-fs backend for `IAppendLogStore`.
+ * `storage` domain — node-fs backend for `IAppendLogStore`.
  *
  * Sits on top of `IFileSystemStorageService` and turns a byte stream into an ordered
  * sequence of typed JSON records. Owns the concerns the storage service

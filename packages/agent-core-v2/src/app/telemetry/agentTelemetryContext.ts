@@ -1,11 +1,9 @@
 /**
- * `telemetry` domain (L1) — `IAgentTelemetryContextService` contract.
+ * `telemetry` domain — `IAgentTelemetryContextService` contract.
  *
- * Agent-scoped mutable request context: the `plan` domain sets `mode`, the
- * `profile` domain mirrors the resolved model protocol into `provider_type` /
- * `protocol`, and the `loop` domain sets `turn_id` and `trace_id`. Turn
- * telemetry snapshots it at launch; immutable Agent identity is owned by the
- * scoped `ITelemetryService` view instead. Bound at Agent scope.
+ * Agent-scoped mutable request context holding `mode`, `provider_type` /
+ * `protocol`, `turn_id`, and `trace_id`, snapshotted by turn telemetry at
+ * launch. Bound at Agent scope.
  */
 
 import { createDecorator } from '#/_base/di/instantiation';

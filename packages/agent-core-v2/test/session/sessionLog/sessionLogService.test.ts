@@ -22,6 +22,8 @@ import { SessionLogService } from '#/session/sessionLog/sessionLogService';
 import { makeSessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
+import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
+import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 
 let homeDir: string;
 let sessionDir: string;
@@ -59,14 +61,17 @@ function buildHost() {
 }
 
 function testSessionSeed() {
-  return sessionContextSeed(makeSessionContext({
-    sessionId: 's1',
-    workspaceId: 'test-workspace',
-    sessionDir,
-    sessionScope: 'sessions/test-workspace/s1',
-    metaScope: 'sessions/test-workspace/s1/session-meta',
-    cwd: sessionDir,
-  }));
+  return [
+    ...sessionContextSeed(makeSessionContext({
+      sessionId: 's1',
+      workspaceId: 'test-workspace',
+      sessionDir,
+      sessionScope: 'sessions/test-workspace/s1',
+      metaScope: 'sessions/test-workspace/s1/session-meta',
+      cwd: sessionDir,
+    })),
+    [IWorkspaceStateService, new WorkspaceStateService()] as const,
+  ];
 }
 
 async function readSessionLog(): Promise<string> {

@@ -3,7 +3,7 @@
  * `GET /sessions/{sid}/snapshot` in `auto` mode.
  *
  * Reads `state.json` + `agents/main/wire.jsonl` directly from disk, bypassing
- * the `ISessionLifecycleService.resume` chain (DI-scope materialization, MCP
+ * the session-resume chain (handler + DI-scope materialization, MCP
  * connect, full wire replay). Mirrors v1's `ISnapshotService`
  * (`packages/server/src/services/snapshot/snapshot.ts`).
  */

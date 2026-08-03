@@ -1,21 +1,28 @@
 /**
- * `sessionExport` domain (L6) — `ISessionExportService` implementation.
+ * `sessionExport` domain — `ISessionExportService` implementation.
  *
- * Coordinates live session flushing through `sessionLifecycle`, derives session
- * paths from `bootstrap`, reads persisted summaries through `sessionIndex`, and
- * packages diagnostic files through the local zip writer. Bound at App scope.
+ * Coordinates live session flushing through the live workspace handler
+ * registry, derives session paths from the handler-chain addressing, reads
+ * persisted summaries through the session index, and packages diagnostic
+ * files through the local zip writer. Bound at App scope.
  */
 
 import { join, resolve } from 'pathe';
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import type { ISessionScopeHandle } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { resolveGlobalLogPath } from '#/_base/log/logConfig';
 import { IWireService } from '#/wire/wire';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
-import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
+import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
 import { IWorkspaceService } from '#/app/workspace/workspace';
+import {
+  sessionDirOf,
+  workspacePersistenceScope,
+} from '#/workspace/sessionLifecycle/internal/addressing';
+import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -47,7 +54,7 @@ export class SessionExportService implements ISessionExportService {
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionIndex private readonly index: ISessionIndex,
-    @ISessionLifecycleService private readonly lifecycle: ISessionLifecycleService,
+    @IWorkspaceLifecycleService private readonly workspaceLifecycle: IWorkspaceLifecycleService,
     @IWorkspaceService private readonly workspaces: IWorkspaceService,
     @ILogService private readonly log: ILogService,
   ) {}
@@ -98,14 +105,18 @@ export class SessionExportService implements ISessionExportService {
 
   private async flushLiveSession(summary: SessionSummary): Promise<ExportSessionDirectorySummary> {
     const workspace = await this.workspaces.get(summary.workspaceId);
-    const sessionDir = this.bootstrap.sessionDir(summary.workspaceId, summary.id);
+    const sessionDir = sessionDirOf(
+      this.bootstrap.homeDir,
+      workspacePersistenceScope(this.bootstrap.scope('sessions'), summary.workspaceId),
+      summary.id,
+    );
     let exportSummary: ExportSessionDirectorySummary = {
       id: summary.id,
       title: summary.title,
       workspaceDir: workspace?.root,
       sessionDir,
     };
-    const handle = this.lifecycle.get(summary.id);
+    const handle = this.liveSession(summary.id);
     if (handle === undefined) {
       return exportSummary;
     }
@@ -135,6 +146,14 @@ export class SessionExportService implements ISessionExportService {
     }
 
     return exportSummary;
+  }
+
+  private liveSession(sessionId: string): ISessionScopeHandle | undefined {
+    for (const handler of this.workspaceLifecycle.handlers.list()) {
+      const handle = handler.accessor.get(ISessionLifecycleService).get(sessionId);
+      if (handle !== undefined) return handle;
+    }
+    return undefined;
   }
 
   private async warnIfFails(

@@ -190,7 +190,7 @@ export interface IAppendLogStore {
 
 ## Platform primitives are deployment-coupled, not core abstractions
 
-`hostFs` (local filesystem) is a **platform primitive** used only by local backends (`FileStorageService`, `LocalFileSystemBackend`, `LocalSkillCatalog`, `HostFolderBrowser`). It is **not** a core abstraction and must not appear in L2/L3 dependency graphs. A server deployment swaps those backends for DB / S3 implementations and never registers `hostFs`.
+`hostFs` (local filesystem) is a **platform primitive** used only by local backends (`FileStorageService`, `LocalFileSystemBackend`, `LocalSkillCatalog`, `HostFolderBrowser`). It is **not** a core abstraction and must not appear in business-domain dependency graphs. A server deployment swaps those backends for DB / S3 implementations and never registers `hostFs`.
 
 ## Red lines (this topic)
 
@@ -199,6 +199,6 @@ export interface IAppendLogStore {
 - Name generic Stores by access pattern (`IAppendLogStore` / `IAtomicDocumentStore` / `IBlobStore`), never by business concept (`IRecordStore` / `IConfigStore`).
 - Business-specific Stores (unique query semantics) are named after the domain (`ISessionIndex`).
 - `IFileSystemStorageService` is the filesystem byte-layer interface; non-filesystem backends implement the **Store** interfaces directly. Route backends by binding a different Store implementation at the composition root, not by overloading `scope`.
-- `hostFs` is a local-only platform primitive; L2/L3 domains must not import `node:fs` or `hostFs` directly.
+- `hostFs` is a local-only platform primitive; business domains must not import `node:fs` or `hostFs` directly.
 - Only the file-backed bootstrap (`FileBootstrapService`) and file backends import `pathe`; business domains do not.
 - Do not create a pass-through `Store` that only forwards `read/write` — a Store must hide a real access-pattern concern, or it is noise; use `IFileSystemStorageService` directly instead.

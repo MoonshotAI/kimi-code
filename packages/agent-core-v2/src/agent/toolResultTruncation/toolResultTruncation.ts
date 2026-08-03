@@ -1,5 +1,5 @@
 /**
- * `toolResultTruncation` domain (L3) — model-context truncation contract for tool results.
+ * `toolResultTruncation` domain — model-context truncation contract for tool results.
  *
  * Defines the Agent-scoped service that runs after tool execution hooks and
  * before a result is recorded into model-visible context. It preserves complete

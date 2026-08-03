@@ -327,7 +327,22 @@ const CODE_DARK_THEME = 'github-dark';
 // blank placeholders. Pinning `loading` to false drops the skeleton entirely:
 // the block renders its plain-text fallback immediately and shiki upgrades it to
 // the highlighted version when the highlighter is ready. Streaming blocks are
-// unaffected (their `stream` is true, so the skeleton gate was already false).
+// unaffected (their `stream` is true, so the skeleton gate was already
+// false).
+// Chat code blocks show no gutter: line numbers eat 3+ characters of reading
+// width and every chat block starts at line 1 anyway. stream-diffs derives its
+// gutter from `lineNumbers === false` (boolean, not monaco's 'off' string).
+// This rides inside codeBlockProps because markstream only forwards the
+// top-level codeBlockMonacoOptions to the 'monaco' renderer kind — the 'shiki'
+// kind's props object omits it, while codeBlockProps reach the same component.
+//
+// fontSize / fontFamily matter as much as the gutter: since 1.0.9 the shiki
+// renderer (stream-diffs) applies these options as inline styles on the code
+// container (`applyEditorStyles`), so CSS overrides cannot beat them — the
+// values must be passed here. fontSize mirrors --text-sm (13px). `padding`
+// is ignored by the settled renderer (it draws inside a shadow root; its
+// vertical padding comes from `--diffs-gap-block` below) but sets the loading
+// fallback's inline padding, keeping the fallback → settled swap stable.
 const codeBlockProps = {
   showHeader: true,
   showCopyButton: true,
@@ -336,6 +351,12 @@ const codeBlockProps = {
   showCollapseButton: false,
   showFontSizeButtons: false,
   loading: false,
+  monacoOptions: {
+    lineNumbers: false,
+    fontSize: 13,
+    fontFamily: 'var(--font-mono)',
+    padding: { top: 12, bottom: 12 },
+  },
 };
 
 // Root cause for the "large session turns into code skeletons" failure:
@@ -621,9 +642,9 @@ function copyDiff(code: string, idx: number) {
   font-family: var(--font-ui);
 }
 /* Copy button — mirrors the §03 IconButton: muted glyph, sunken hover, soft
-   radius, and the shared focus ring. markstream renders its own button, so we
-   restyle it in place instead of swapping in the IconButton primitive. */
-.md :deep(.code-block-header .copy-button),
+   radius, and the shared focus ring. markstream renders its own button (the
+   `.code-action-btn` class since 1.0.9 — the old `.copy-button` is gone), so
+   we restyle it in place instead of swapping in the IconButton primitive. */
 .md :deep(.code-block-header .code-action-btn) {
   color: var(--color-text-muted);
   background: transparent;
@@ -633,23 +654,48 @@ function copyDiff(code: string, idx: number) {
   transition: background var(--duration-base) var(--ease-out),
     color var(--duration-base) var(--ease-out);
 }
-.md :deep(.code-block-header .copy-button:hover),
 .md :deep(.code-block-header .code-action-btn:hover) {
   background: var(--color-surface-sunken);
   color: var(--color-text);
 }
-.md :deep(.code-block-header .copy-button:focus-visible),
 .md :deep(.code-block-header .code-action-btn:focus-visible) {
   outline: none;
   box-shadow: var(--p-focus-ring);
 }
-.md :deep(.code-block-header .copy-button *),
 .md :deep(.code-block-header .code-action-btn *) {
   pointer-events: none;
 }
-.md :deep(.code-block-content),
+/* The code body wrapper was renamed in 1.0.9: `.code-block-content` is gone,
+   the shiki (stream-diffs) block now mounts under `.code-block-shell-content`. */
+.md :deep(.code-block-shell-content),
 .md :deep(.markstream-pre) {
   background: var(--color-surface-sunken);
+}
+/* Pierre renders the highlighted code inside a shadow root. Its native gap
+   variable inherits through that boundary; the Monaco `padding` option above
+   does not, but it sets the loading fallback's inline padding — both layers
+   end up at 12px. Line height stays relative (1.65) so every rendering path
+   shares the token ratio without pinning a px value into inline styles. */
+.md :deep(.code-editor-container) {
+  line-height: 1.65;
+  --diffs-gap-block: var(--space-3);
+}
+.md :deep(.code-editor-container diffs-container) {
+  --diffs-line-height: 1.65em;
+}
+/* Loading/streaming fallback <pre>: upstream hardcodes show-line-numbers on
+   it while the settled stream-diffs block honors lineNumbers:false — the
+   gutter (and its reserved padding) popping in and out on every load is a
+   visible flash. Hide the fallback gutter, pin its left inset to the settled
+   per-line padding (1ch), and force the shared 1.65 line height over the
+   inline 1.5×-font-size default upstream stamps on the pre, so the
+   fallback → highlighted swap is layout-stable. */
+.md :deep(.code-pre-fallback > .markstream-pre__line-numbers) {
+  display: none;
+}
+.md :deep(.code-block-container .code-pre-fallback) {
+  padding-left: 1ch;
+  line-height: 1.65 !important;
 }
 .md :deep(.code-block-container pre:not(.code-pre-fallback):not(.markstream-pre--line-numbers)),
 .md :deep(.markstream-pre:not(.code-pre-fallback):not(.markstream-pre--line-numbers)) {
@@ -668,8 +714,8 @@ function copyDiff(code: string, idx: number) {
 }
 .md :deep(.markstream-pre),
 .md :deep(.code-pre-fallback),
-.md :deep(.code-block-content pre:not(.shiki)),
-.md :deep(.code-block-content pre:not(.shiki) code) {
+.md :deep(.code-block-shell-content pre:not(.shiki)),
+.md :deep(.code-block-shell-content pre:not(.shiki) code) {
   color: var(--color-text);
 }
 

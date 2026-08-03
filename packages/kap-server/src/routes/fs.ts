@@ -3,18 +3,39 @@
  *
  * Mirrors `packages/server/src/routes/fs.ts` path-for-path and schema-for-schema
  * so existing v1 clients keep working against server-v2. Backed by the v2
- * Session-scoped `ISessionFsService` (`agent-core-v2/src/sessionFs`): the route resolves
- * the session from the URL, then dispatches `fs:<action>` to the matching
- * `ISessionFsService` method. The wire schema comes from the engine's own
- * `sessionFs` domain contract (`agent-core-v2`).
+ * Workspace-scoped `IWorkspaceFsService` (`agent-core-v2/src/workspace/workspaceFs`):
+ * the route resolves the session from the URL, then dispatches `fs:<action>`
+ * to the matching `IWorkspaceFsService` method — the session's accessor
+ * resolves it from its parent Workspace scope (the handler), which is the
+ * "session → handler → workspace fs" chain (chdir is gone, so the handler
+ * root is the one fixed fs root). The wire schema comes from the engine's own
+ * `workspaceFs` domain contract (`agent-core-v2`).
+ *
+ * Draft-session fallback: a client composing the first prompt of a new
+ * session (e.g. kimi-web's new-session draft) has no session id yet, so it
+ * passes the workspace reference — registered workspace id or absolute root —
+ * in the `{session_id}` slot. Only `fs:search` serves those (the `@` file
+ * mention must work before the session exists): the route resolves the
+ * workspace's handler directly and uses the same Workspace-scope fs service a
+ * real session would resolve to. URL and wire schema are unchanged.
+ *
+ * First-class workspace search: `POST /workspace/fs:search` carries the same
+ * workspace reference in the body (`workspace`), so a session-less client
+ * searches without borrowing the `{session_id}` slot. kimi-web's `@` mention
+ * uses this route; the session-route fallback above predates it and stays for
+ * wire compatibility.
  */
 
 import { createReadStream } from 'node:fs';
+import { isAbsolute } from 'node:path';
 
 import {
   ErrorCodes,
-  ISessionFsService,
-  ISessionLifecycleService,
+  IWorkspaceFsService,
+  IWorkspaceLifecycleService,
+  IWorkspaceService,
+  getLiveSessionById,
+  resumeSessionById,
   isError2,
   Error2,
   type Scope,
@@ -28,9 +49,10 @@ import {
   fsMkdirRequestSchema,
   fsReadRequestSchema,
   fsSearchRequestSchema,
+  fsSearchResponseSchema,
   fsStatManyRequestSchema,
   fsStatRequestSchema,
-} from '@moonshot-ai/agent-core-v2/session/sessionFs/fs';
+} from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -81,6 +103,17 @@ const sessionIdAndTailParamSchema = z.object({
   tail: z.string().min(1),
 });
 
+/**
+ * Body for `POST /workspace/fs:search`: the engine's fs-search request plus
+ * the workspace reference (registered workspace id or absolute root) the
+ * session route would otherwise carry in its `{session_id}` slot.
+ */
+const workspaceFsSearchBodySchema = fsSearchRequestSchema.extend({
+  workspace: z.string().min(1),
+});
+
+const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
+
 const FS_ACTIONS = [
   'list',
   'read',
@@ -99,12 +132,40 @@ const FS_ACTIONS = [
 type FsAction = (typeof FS_ACTIONS)[number];
 const FS_TAIL_PREFIX = 'fs:';
 
-function resolveFs(core: Scope, sessionId: string): ISessionFsService {
-  const session = core.accessor.get(ISessionLifecycleService).get(sessionId);
+function resolveFs(core: Scope, sessionId: string): IWorkspaceFsService {
+  const session = getLiveSessionById(core.accessor, sessionId);
   if (session === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
   }
-  return session.accessor.get(ISessionFsService);
+  // The fs service lives on the session's parent Workspace scope (the
+  // handler): one instance per workspace, pinned to the handler root.
+  return session.accessor.get(IWorkspaceFsService);
+}
+
+/**
+ * Workspace fallback for `fs:search` (see the file header): resolve a
+ * workspace reference — registered id, or an absolute root registered on the
+ * spot — to its handler's `IWorkspaceFsService`. `undefined` when the ref is
+ * neither a known workspace nor an existing absolute directory.
+ */
+async function resolveWorkspaceFs(
+  core: Scope,
+  ref: string,
+): Promise<IWorkspaceFsService | undefined> {
+  const workspaces = core.accessor.get(IWorkspaceService);
+  let ws = await workspaces.get(ref);
+  if (ws === undefined) {
+    if (!isAbsolute(ref)) return undefined;
+    try {
+      ws = await workspaces.createOrTouch(ref);
+    } catch {
+      return undefined;
+    }
+  }
+  const handler = await core.accessor
+    .get(IWorkspaceLifecycleService)
+    .handlerFor({ workspaceId: ws.id, root: ws.root });
+  return handler.accessor.get(IWorkspaceFsService);
 }
 
 export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
@@ -154,8 +215,14 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       // need the work dir) do not 404 on a freshly-opened session. Matches v1,
       // which reads the persisted cwd. `resume` returns undefined only when the
       // session is unknown or its workspace is gone.
-      const session = await core.accessor.get(ISessionLifecycleService).resume(session_id);
-      if (session === undefined) {
+      const session = await resumeSessionById(core.accessor, session_id);
+      // Draft-session fallback (file header): no session yet, but the client
+      // addressed a workspace — `fs:search` resolves it directly.
+      const workspaceFs =
+        session === undefined && fsAction === 'search'
+          ? await resolveWorkspaceFs(core, session_id)
+          : undefined;
+      if (session === undefined && workspaceFs === undefined) {
         reply.send(
           errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
         );
@@ -183,7 +250,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
             await handleMkdir(core, session_id, req, reply);
             return;
           case 'search':
-            await handleSearch(core, session_id, req, reply);
+            await handleSearch(workspaceFs ?? resolveFs(core, session_id), req, reply);
             return;
           case 'grep':
             await handleGrep(core, session_id, req, reply);
@@ -213,6 +280,54 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     fsActionRoute.path,
     fsActionRoute.options,
     fsActionRoute.handler as unknown as Parameters<FsRouteHost['post']>[2],
+  );
+
+  // Session-less workspace file search (file header): the `@` file mention of
+  // a not-yet-created session addresses the workspace directly instead of
+  // borrowing the session route's `{session_id}` slot. Declared with a double
+  // colon so find-my-way serves it on the wire as `/workspace/fs:search`
+  // (same convention as `/fs::browse` in `workspaceFs.ts`).
+  const workspaceSearchRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/workspace/fs::search',
+      body: workspaceFsSearchBodySchema,
+      success: { data: fsSearchResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+        [ErrorCode.FS_TOO_MANY_RESULTS]: {},
+      },
+      description:
+        'Search files in a workspace without a session. `workspace` accepts a registered workspace id or an absolute root (registered on the spot).',
+      tags: ['fs'],
+      operationId: 'workspaceFsSearch',
+    },
+    async (req, reply) => {
+      const { workspace, ...searchRequest } = req.body;
+      const fs = await resolveWorkspaceFs(core, workspace);
+      if (fs === undefined) {
+        reply.send(
+          errEnvelope(
+            ErrorCode.WORKSPACE_NOT_FOUND,
+            `workspace ${workspace} does not exist`,
+            req.id,
+          ),
+        );
+        return;
+      }
+      try {
+        const data = await fs.search(searchRequest);
+        reply.send(okEnvelope(data, req.id));
+      } catch (err) {
+        sendMappedError(reply, req, err);
+      }
+    },
+  );
+  app.post(
+    workspaceSearchRoute.path,
+    workspaceSearchRoute.options,
+    workspaceSearchRoute.handler as unknown as Parameters<FsRouteHost['post']>[2],
   );
 
   const downloadRoute = defineRoute(
@@ -251,7 +366,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
 
       // Cold-load so a freshly-opened (persisted but not live) session can still
       // serve downloads; `resume` only returns undefined for unknown / workspace-gone.
-      const session = await core.accessor.get(ISessionLifecycleService).resume(session_id);
+      const session = await resumeSessionById(core.accessor, session_id);
       if (session === undefined) {
         reply.send(
           errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
@@ -259,7 +374,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         return;
       }
 
-      let resolved: Awaited<ReturnType<ISessionFsService['resolveDownload']>>;
+      let resolved: Awaited<ReturnType<IWorkspaceFsService['resolveDownload']>>;
       try {
         resolved = await resolveFs(core, session_id).resolveDownload(relPath);
       } catch (err) {
@@ -332,7 +447,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
 }
 
 // ---------------------------------------------------------------------------
-// Action handlers — thin adapters: parse body, call ISessionFsService, wrap result.
+// Action handlers — thin adapters: parse body, call IWorkspaceFsService, wrap result.
 // ---------------------------------------------------------------------------
 
 type Req = { id: string; body: unknown };
@@ -398,13 +513,13 @@ async function handleMkdir(core: Scope, sessionId: string, req: Req, reply: Repl
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleSearch(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
+async function handleSearch(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsSearchRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
     return;
   }
-  const data = await resolveFs(core, sessionId).search(parsed.data);
+  const data = await fs.search(parsed.data);
   reply.send(okEnvelope(data, req.id));
 }
 
@@ -531,7 +646,7 @@ function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void 
       case ErrorCodes.SESSION_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
         return;
-      // hostFs errors that escaped the sessionFs layer keep their `os.fs.*`
+      // hostFs errors that escaped the workspaceFs layer keep their `os.fs.*`
       // code; map them onto the closest v1 wire code (ENOTDIR collapses into
       // path-not-found, matching `mapFsError`).
       case ErrorCodes.OS_FS_NOT_FOUND:

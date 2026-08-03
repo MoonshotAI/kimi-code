@@ -1,5 +1,5 @@
 /**
- * `cron` domain (L3) — cron operational-config section env bindings.
+ * `cron` domain — cron operational-config section env bindings.
  *
  * Declares the `KIMI_CRON_*` environment bindings for the cron operational
  * toggles (debug / jitter / stale / killswitch / manual tick / clock /

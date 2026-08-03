@@ -1,12 +1,11 @@
 /**
- * `tools` domain (L7) — `WebSearchTool` implementation (the `WebSearch` tool).
+ * `tools` domain — `WebSearchTool` implementation (the `WebSearch` tool).
  *
  * Resolves the host-injected `WebSearchProvider` from the App-scope
  * `IWebSearchProviderService` (`auth` domain) at construction — the tool only
  * activates when a provider is configured, because there is no local search
  * backend — renders the results through `ToolResultBuilder`, and classifies
- * provider errors into model-readable output. The public contract (schemas,
- * provider types, `IWebSearchTool`) lives in `./web-search`.
+ * provider errors into model-readable output.
  *
  * Registered via the module-level `registerAgentToolService(IWebSearchTool,
  * WebSearchTool)` at the bottom of this file — the same "import = register"

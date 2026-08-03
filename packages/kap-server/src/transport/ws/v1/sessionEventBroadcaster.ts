@@ -70,8 +70,8 @@ import {
   ISessionActivityView,
   ISessionInteractionService,
   ISessionIndex,
-  ISessionLifecycleService,
   MAIN_AGENT_ID,
+  getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import type { SessionCreatedEvent, SessionMetaUpdatedEvent, Event } from './events';
 import { isVolatileEventType } from './events';
@@ -754,7 +754,7 @@ export class SessionEventBroadcaster {
   private async createSessionState(sessionId: string): Promise<SessionState | undefined> {
     if (this.closed) return undefined;
 
-    const session = this.opts.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(this.opts.core.accessor, sessionId);
     if (session === undefined) return undefined;
 
     const journal = await SessionEventJournal.open(

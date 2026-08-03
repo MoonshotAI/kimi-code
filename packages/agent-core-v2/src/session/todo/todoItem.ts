@@ -1,11 +1,9 @@
 /**
- * `todo` domain (L4) — todo item data shape and pure render helpers.
+ * `todo` domain — todo item data shape and pure render helpers.
  *
  * `TodoItem` / `TodoStatus` are the persistent shape carried by the
- * `tools.update_store` (`key: 'todo'`) wire record and rendered by the
- * `TodoListTool` and the stale reminder. Pure
- * and scope-less — no scoped state lives here. The session todo list itself is
- * owned by `ISessionTodoService`.
+ * `tools.update_store` (`key: 'todo'`) wire record. Pure and scope-less — no
+ * scoped state lives here.
  */
 
 export const TODO_LIST_TOOL_NAME = 'TodoList' as const;

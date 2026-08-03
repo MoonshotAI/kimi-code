@@ -1,5 +1,5 @@
 /**
- * `goal` domain (L4) — `IAgentGoalService` implementation.
+ * `goal` domain — `IAgentGoalService` implementation.
  *
  * Owns the main-agent goal lifecycle; persists the goal in the `wire`
  * `GoalModel` (`GoalState | null`) through the `goal.create` / `goal.update` /
@@ -11,10 +11,7 @@
  * `wallClockResumedAt` anchor is
  * persisted at create/resume boundaries so recovery can settle crash-spanning
  * elapsed time without periodic writes. A `forked` wire Op clears the Model
- * at a fork boundary; the `goal.*` payload shapes are registered in
- * `PersistedOpMap` (`#/wire/types`) inside `goalOps` because they still ride
- * the Agent wire journal restored into the Model.
- * Injects reminders through
+ * at a fork boundary. Injects reminders through
  * `contextInjector`, drives continuation turns by enqueueing `newTurn`
  * `StepRequest`s onto `loop` (the continuation message materializes when the
  * loop pops it), accounts live
@@ -625,7 +622,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const state = this.requireState();
     const snapshot = this.toSnapshot(state);
     if (state.status === 'active' && this.liveTurnId !== undefined) {
-      this.loopService.cancel(this.liveTurnId);
+      this.loopService.cancel(this.liveTurnId, abortError('Goal cancelled'));
     }
     this.clearInternal(actor);
     if (actor === 'user') {
@@ -988,18 +985,10 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const pending = this.pendingContinuation;
     if (preserveLiveContinuation && pending?.turnId === this.liveTurnId) return;
     this.pendingContinuation = undefined;
-    const aborted =
-      reason === undefined ? pending?.receipt.abort() : pending?.receipt.abort(reason);
-    if (
-      pending !== undefined &&
-      !aborted &&
-      pending.turnId !== undefined
-    ) {
-      if (reason === undefined) {
-        this.loopService.cancel(pending.turnId);
-      } else {
-        this.loopService.cancel(pending.turnId, reason);
-      }
+    const cancellation = reason ?? abortError('Goal continuation cancelled');
+    const aborted = pending?.receipt.abort(cancellation);
+    if (pending !== undefined && !aborted && pending.turnId !== undefined) {
+      this.loopService.cancel(pending.turnId, cancellation);
     }
   }
 

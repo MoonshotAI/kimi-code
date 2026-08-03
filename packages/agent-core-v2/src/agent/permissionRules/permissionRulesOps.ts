@@ -1,5 +1,5 @@
 /**
- * `permissionRules` domain (L3) — wire Model (`PermissionRulesModel`) and the
+ * `permissionRules` domain — wire Model (`PermissionRulesModel`) and the
  * `permission.rules.add` (`addPermissionRules`) / `permission.record_approval_result`
  * (`recordApprovalResult`) Ops for the agent's permission rules and session-scoped
  * approval patterns.
@@ -15,8 +15,7 @@
  * because v1 does not persist permission rules; hosts re-supply them on resume,
  * while only `permission.record_approval_result` rides the wire log. The
  * legacy `toReplay: approval_result` projection is dropped — only `message`
- * records feed the transcript. Consumed by the Agent-scope
- * `permissionRulesService`.
+ * records feed the transcript.
  */
 
 import { z } from 'zod';

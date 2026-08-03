@@ -1,12 +1,8 @@
 /**
  * `contextMemory` protocol projection — `ContextMessage` → wire `Message`.
  *
- * Mirrors v1's `toProtocolMessage`
- * (`packages/agent-core/src/services/message/message.ts`) so the `messages`,
- * `snapshot`, and `sessions` (`:undo`) edge surfaces produce byte-compatible
- * message objects. Lives in agent-core-v2 (next to the `ContextMessage` data it
- * projects) so the `sessionLegacy` edge adapter can own the v1 `:undo` response
- * shape without duplicating the projection in the server layer.
+ * Mirrors the v1 protocol projection so the legacy REST/streaming message
+ * objects stay byte-compatible.
  *
  * Tool results project to a single `tool_result` part: plain-text results keep
  * the historical flattened-text output, while a result carrying media parts

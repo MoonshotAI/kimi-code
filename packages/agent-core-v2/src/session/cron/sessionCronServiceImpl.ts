@@ -1,5 +1,5 @@
 /**
- * `cron` domain (L5) — `SessionCronService` implementation.
+ * `cron` domain — `SessionCronService` implementation.
  *
  * Session-level scheduling engine. Holds the in-memory task map (filtered
  * from `ICronTaskPersistence` by `sessionId` tag), runs the polling timer

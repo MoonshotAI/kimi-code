@@ -1,6 +1,6 @@
 /**
- * `agentProfileCatalog` domain (L3) — App-scope registry of named agent
- * profiles.
+ * `agentProfileCatalog` domain — the agent-profile domain types and the
+ * App-scope extension point (`IAgentProfileRegistry`).
  *
  * A profile is "how an Agent runs": the full system prompt it renders for a
  * given context, the tool set it may use, plus optional per-invocation and
@@ -22,16 +22,16 @@
  * an allowlist of subagent profile names the agent may delegate to
  * (`undefined` = any type).
  *
- * Profiles are contributed at module load via `registerAgentProfile(...)`, the
- * same "import = register" pattern used by `registerAgentToolService` and
- * `registerConfigSection`. `AgentProfileCatalogService` consumes the accumulated
- * contributions on construction and exposes `get(name)` / `getDefault()` /
- * `list()` to callers (the `Agent` tool, the swarm scheduler, and the per-agent
- * profile binding). Contributions are keyed by `name`; a later-registered
- * profile with the same name overrides an earlier one.
+ * Profiles reach agents through the Contribution / Registry / Catalog
+ * extension point: loaders (builtin code contributions via
+ * `registerAgentProfile(...)`, plugin / user file scans at App scope,
+ * workspace / extra / explicit file scans at Workspace scope) register
+ * `AgentProfileContribution`s into the App-scope `IAgentProfileRegistry`,
+ * keyed by source id; the Session-scope `ISessionAgentProfileCatalog`
+ * projects the registry into the merged, name-deduped read view that
+ * consumers (the `Agent` tool, the swarm scheduler, the per-agent profile
+ * binding) resolve profiles through.
  */
-
-import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 import type { ILogger } from '#/_base/log/log';
 import type { ISessionProcessRunner } from '#/session/process/processRunner';
@@ -82,14 +82,3 @@ export interface AgentProfile {
   readonly promptPrefix?: (ctx: AgentProfilePromptPrefixContext) => Promise<string>;
   readonly summaryPolicy?: AgentProfileSummaryPolicy;
 }
-
-export interface IAgentProfileCatalogService {
-  readonly _serviceBrand: undefined;
-
-  get(name: string): AgentProfile | undefined;
-  getDefault(): AgentProfile;
-  list(): readonly AgentProfile[];
-}
-
-export const IAgentProfileCatalogService: ServiceIdentifier<IAgentProfileCatalogService> =
-  createDecorator<IAgentProfileCatalogService>('agentProfileCatalogService');

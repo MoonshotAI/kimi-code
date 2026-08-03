@@ -1,5 +1,5 @@
 /**
- * `mcp` domain (L5) — MCP tool-discovery wire state.
+ * `mcp` domain — MCP tool-discovery wire state.
  *
  * Restores the per-agent de-dup cursor for durable MCP discovery records,
  * keyed by `${serverName}\n${hash}` entries already present in this log.
@@ -8,7 +8,7 @@
 import { z } from 'zod';
 
 import { defineModel } from '#/wire/model';
-import type { MCPToolDefinition } from './types';
+import type { MCPToolDefinition } from '#/mcpCore/types';
 
 export interface McpToolCollision {
   readonly qualified: string;

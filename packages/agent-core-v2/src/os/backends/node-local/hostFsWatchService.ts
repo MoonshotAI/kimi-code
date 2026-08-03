@@ -1,5 +1,5 @@
 /**
- * `hostFsWatch` domain (L1) — `IHostFsWatchService` implementation.
+ * `hostFsWatch` domain — `IHostFsWatchService` implementation.
  *
  * Wraps `chokidar` to report raw create/modify/delete events under an absolute
  * path. Each `watch()` call owns an independent `FSWatcher`; disposing the

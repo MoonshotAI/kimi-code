@@ -30,13 +30,13 @@ import { isAbortError } from '#/_base/utils/abort';
 
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult } from '#/tool/toolContract';
 import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
-import type { MCPClient, MCPToolResult } from '#/agent/mcp/types';
+import type { MCPClient, MCPToolResult } from '#/mcpCore/types';
 import {
   isMcpConnectionClosedError,
   isMcpMalformedResultError,
   isMcpTransportFailure,
   probeMcpLiveness,
-} from '#/agent/mcp/client-shared';
+} from '#/mcpCore/client-shared';
 
 interface McpToolOptions {
   readonly originalsDir?: string;
@@ -85,9 +85,6 @@ async function retryAfterReconnect(
   callTool: (client: MCPClient, args: unknown, signal: AbortSignal) => Promise<MCPToolResult>,
 ): Promise<MCPToolResult> {
   const reconnect = options.reconnect;
-  // Errors that can never be fixed by a retry: user cancellation, and the
-  // server having answered — a JSON-RPC error (`McpError`, including a tool
-  // call timeout) or a malformed result that failed schema validation.
   const isUnrecoverable = (e: unknown): boolean =>
     context.signal.aborted ||
     isAbortError(e) ||
@@ -97,19 +94,11 @@ async function retryAfterReconnect(
     throw error;
   }
 
-  // A ConnectionClosed error is a measured death (the SDK already fired
-  // `onclose` and rejected every pending request), so it goes straight to
-  // reconnect. Anything else is ambiguous about whether the transport
-  // still works — probe it instead of guessing from the error's type.
   let failure = error;
   if (!isMcpConnectionClosedError(failure)) {
     const alive = await probeMcpLiveness(client, context.signal);
     context.signal.throwIfAborted();
     if (alive) {
-      // The transport is fine and the failure was transient: retry once in
-      // place instead of paying a full reconnect for a network blip. If the
-      // transport dies between probe and retry, fall through to reconnect —
-      // still capped at one reconnect per call.
       try {
         return await callTool(client, args, context.signal);
       } catch (retryError) {

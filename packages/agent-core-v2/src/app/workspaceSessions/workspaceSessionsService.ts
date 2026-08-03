@@ -1,5 +1,5 @@
 /**
- * `workspaceSessions` domain (L2) — `IWorkspaceSessions` implementation.
+ * `workspaceSessions` domain — `IWorkspaceSessions` implementation.
  *
  * Answers workspace-centric read queries by composing the alias resolver
  * (`workspaceAliases`) with the persisted session index (`sessionIndex`):
@@ -30,9 +30,6 @@ export class WorkspaceSessionsService implements IWorkspaceSessions {
   }
 
   async count(workspaceId: string): Promise<number> {
-    // One set-query over the alias set (legacy split buckets): a single merged
-    // listing cannot double-count, and a singleton set behaves exactly as
-    // before.
     const workspaceIds = await this.aliases.resolveAliasIds(workspaceId);
     const page = await this.index.list({ workspaceIds, includeArchived: true });
     return page.items.length;

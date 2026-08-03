@@ -1,5 +1,5 @@
 /**
- * `permissionMode` domain (L3) — `IAgentPermissionModeService` implementation.
+ * `permissionMode` domain — `IAgentPermissionModeService` implementation.
  *
  * Holds the agent's permission mode (`manual` / `yolo` / `auto`) in the `wire`
  * `PermissionModeModel`, mutating it only through the `permission.set_mode` Op

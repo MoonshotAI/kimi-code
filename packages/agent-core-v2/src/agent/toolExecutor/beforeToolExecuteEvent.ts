@@ -1,5 +1,5 @@
 /**
- * `toolExecutor` domain (L3) — `onBeforeExecuteTool` veto-event machinery.
+ * `toolExecutor` domain — `onBeforeExecuteTool` veto-event machinery.
  *
  * `BeforeToolExecuteEventImpl` is the per-fire event object listeners
  * adjudicate through; `BeforeToolExecuteEmitter` owns the listener registry
@@ -39,7 +39,6 @@ import type {
 
 type PendingVetoFactory = () => Promise<BeforeExecuteDecision | undefined>;
 
-/** Convenience for the common veto shape: a denial carrying only a message. */
 export function denyToolExecution(reason: string): ExecutableToolResult {
   return { output: reason, isError: true };
 }

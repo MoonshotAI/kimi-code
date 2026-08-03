@@ -1,9 +1,8 @@
 /**
- * `agentProfileCatalog` domain (L3) — shared prompt helpers for builtin profiles.
+ * `agentProfileCatalog` domain — shared prompt helpers for builtin profiles.
  *
  * Keeps the base system-prompt template and the task-agent role prefix in the
- * registry domain so profile contributions living in higher domains (`plan`,
- * `agentLifecycle`) can reuse them without upward imports.
+ * registry domain.
  *
  * All system-prompt rendering — the builtin template, `SYSTEM.md`, and agent
  * files — shares one `${var}` substitution pass over one variable table

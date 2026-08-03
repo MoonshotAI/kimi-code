@@ -1,5 +1,5 @@
 /**
- * `subagent` domain (L6) — `ISessionSecondaryModelWarningService` implementation.
+ * `subagent` domain — `ISessionSecondaryModelWarningService` implementation.
  *
  * When enabled through `flag`, runs the secondary-model check once per session
  * when the main agent appears (`agentLifecycle` onDidCreate, or an
@@ -8,12 +8,11 @@
  * recipe carries patch fields, checks `default_effort` against the patched
  * `supportEfforts` (what the derived entry will carry) — on failure, caches a
  * warning and publishes it as a `warning` event on the main agent's
- * `eventBus`, and stays cached for the edge to pull
- * (`GET /sessions/{id}/warnings`). `recheckSecondaryModelWarning` recomputes
+ * `eventBus`, and stays cached for the edge to pull.
+ * `recheckSecondaryModelWarning` recomputes
  * the cache after a mid-session `[secondary_model]` change, re-publishing
  * only when the warning actually changed. Never throws: a broken secondary
- * model demotes to a notice here, with spawn-time resolution
- * (`resolveSubagentBinding` + `wrapSubagentModelError`) staying as the
+ * model demotes to a notice here, with spawn-time resolution staying as the
  * backstop. Bound at Session scope.
  */
 
@@ -122,9 +121,6 @@ export class SessionSecondaryModelWarningService
           'Subagent spawning will fail until this is fixed.',
       };
     }
-    // The effort check targets what subagents actually bind: with patch
-    // fields the derived entry carries the patched `supportEfforts`, without
-    // them the pointed entry's own list applies.
     const patch = secondaryModelPatch(secondary);
     return effortWarning(
       secondary.model,

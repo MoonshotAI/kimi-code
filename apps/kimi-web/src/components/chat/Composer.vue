@@ -1277,8 +1277,7 @@ function selectModel(modelId: string): void {
   --composer-send-inset: var(--space-2);
   position: relative;
   border: 1px solid var(--line);
-  border-radius: calc((var(--composer-send-size) / 2) + var(--composer-send-inset) + var(--space-3));
-  corner-shape: superellipse(1.5);
+  border-radius: var(--radius-xl);
   background: var(--bg);
   box-shadow: var(--shadow-md);
   transition: border-color 0.15s, box-shadow 0.15s;
@@ -1328,7 +1327,7 @@ function selectModel(modelId: string): void {
 }
 .att-lightbox-name {
   max-width: 100%;
-  color: var(--color-text-on-accent);
+  color: var(--surface-light);
   font-family: var(--mono);
   font-size: calc(var(--ui-font-size) - 2px);
   overflow: hidden;
@@ -1344,7 +1343,7 @@ function selectModel(modelId: string): void {
   border: 1px solid rgba(255,255,255,0.45);
   border-radius: 50%;
   background: rgba(20,23,28,0.82);
-  color: var(--color-text-on-accent);
+  color: var(--surface-light);
   cursor: pointer;
 }
 
@@ -1453,7 +1452,7 @@ function selectModel(modelId: string): void {
   height: var(--composer-send-size);
   border-radius: 50%;
   background: var(--color-accent);
-  color: var(--color-text-on-accent); /* white on accent — readable in light and dark */
+  color: var(--color-text-on-accent);
   border: none;
   box-shadow: var(--shadow-xs);
   padding: 0;
@@ -1491,7 +1490,7 @@ function selectModel(modelId: string): void {
 }
 
 .send.is-starting :deep(.ui-spinner__track) {
-  stroke: rgba(255, 255, 255, 0.32);
+  stroke: color-mix(in srgb, var(--color-text-on-accent) 32%, transparent);
 }
 
 .send svg {
@@ -1522,7 +1521,7 @@ function selectModel(modelId: string): void {
 }
 .stop:hover {
   background: var(--color-danger);
-  color: var(--color-text-on-accent);
+  color: var(--surface-light);
   border-color: var(--color-danger);
 }
 .stop:active {

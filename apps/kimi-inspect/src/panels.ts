@@ -65,7 +65,7 @@ export interface ServicePanelDef {
   readonly id: string;
   readonly label: string;
   /** Wire scope the Service is called on (`app` maps to the `core` route). */
-  readonly scope: 'app' | 'session' | 'agent';
+  readonly scope: 'app' | 'workspace' | 'session' | 'agent';
   readonly fetch?: (svc: AnyService) => Promise<unknown>;
   readonly actions?: readonly PanelAction[];
 }

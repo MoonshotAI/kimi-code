@@ -1883,9 +1883,10 @@ onUnmounted(() => {
     font-family: var(--font-ui); color: var(--color-text); font-size: var(--text-base);
   }
   /* ---- Dark skin overrides ---- */
-  [data-p="dark"] {
+  .ds-page [data-p="dark"] {
     --p-bg: #0d1117; --p-surface: #161b22; --p-surface-raised: #1c2128; --p-surface-sunken: #0d1117;
     --p-text: #c9cdd4; --p-text-muted: #9aa0a8; --p-text-faint: #6b7280;
+    --p-text-on-accent: #ffffff;
     --p-line: #2d333b; --p-line-strong: #3d444d;
     --p-accent: #58a6ff; --p-accent-hover: #79b8ff; --p-accent-soft: rgba(88,166,255,.14); --p-accent-bd: rgba(88,166,255,.28);
     --p-success: #3fb950; --p-success-soft: rgba(63,185,80,.14); --p-success-bd: rgba(63,185,80,.28);
@@ -2125,7 +2126,7 @@ onUnmounted(() => {
   .p-composer-ta.ph { color: var(--p-text-faint); }
   .p-composer-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px 8px; }
   .p-composer-left, .p-composer-right { display: flex; align-items: center; gap: 2px; }
-  .p-send { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--p-accent); color: #fff; border: none; cursor: pointer; box-shadow: var(--p-sh-xs); transition: transform var(--p-dur-fast) var(--p-ease), background var(--p-dur) var(--p-ease); }
+  .p-send { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--p-accent); color: var(--p-text-on-accent); border: none; cursor: pointer; box-shadow: var(--p-sh-xs); transition: transform var(--p-dur-fast) var(--p-ease), background var(--p-dur) var(--p-ease); }
   .p-send:hover { background: var(--p-accent-hover); }
   .p-send:active { transform: scale(.92); }
   .p-send .p-ic { width: 16px; height: 16px; }
@@ -2204,11 +2205,11 @@ onUnmounted(() => {
   .p-switch::after {
     content: ""; position: absolute; top: 2px; left: 2px;
     width: 16px; height: 16px; border-radius: var(--p-r-full);
-    background: var(--p-surface-raised); box-shadow: var(--p-sh-xs);
+    background: var(--surface-light); box-shadow: var(--p-sh-xs);
     transition: transform var(--p-dur) var(--p-ease);
   }
   .p-switch.on { background: var(--p-accent); }
-  .p-switch.on::after { transform: translateX(16px); }
+  .p-switch.on::after { background: var(--p-text-on-accent); transform: translateX(16px); }
   .p-switch:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 
   /* ===== Checkbox ===== */

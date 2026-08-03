@@ -1,13 +1,18 @@
 /**
- * `process` domain (L2) — `ISessionProcessRunner` implementation.
+ * `process` domain — the default `ISessionProcessRunner` implementation.
  *
  * Resolves the default cwd from the session's `ISessionContext` and delegates
  * the actual host spawn to the App-scope `IHostProcessService`. A per-call
  * `options.cwd` wins over the seeded cwd. A per-call `options.env` is overlaid
  * onto `process.env` and passed as the child's complete env bag (the host
  * replaces the child env with what we pass); when `options.env` is omitted we
- * pass `undefined` so the child inherits `process.env` verbatim. Bound at
- * Session scope.
+ * pass `undefined` so the child inherits `process.env` verbatim.
+ *
+ * This Session-scope registration is the DEFAULT for scopes built without a
+ * workspace handler (test hosts, harness agents). Real sessions get the
+ * handler-shared Workspace-scope runner as a scope seed, which shadows this
+ * registration — same pattern as the other workspace-capability injection
+ * contracts.
  */
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';

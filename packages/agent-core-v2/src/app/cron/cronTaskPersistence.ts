@@ -1,11 +1,11 @@
 /**
- * `cron` domain (L5) — `ICronTaskPersistence` contract.
+ * `cron` domain — `ICronTaskPersistence` contract.
  *
  * Project-level persistence for cron tasks. Persists tasks under
  * `bootstrap.scope('cron')` as atomic documents keyed by
  * `<workspaceId>/<taskId>.json`. Provides CRUD and query-by-workspace.
- * A pure data layer — scheduling, timers, and fire delivery are owned by
- * `ISessionCronService` at Session scope. Bound at App scope.
+ * A pure data layer — scheduling, timers, and fire delivery are out of
+ * scope. Bound at App scope.
  */
 
 import { createDecorator } from '#/_base/di/instantiation';

@@ -1,13 +1,13 @@
 /**
- * `git` domain (L1) — `IGitService` implementation.
+ * `git` domain — `IGitService` implementation.
  *
  * Runs `git status` / `git diff` (and `gh pr view`) against a repository on
- * the local disk. Process spawning goes through the App-scope
- * `IHostProcessService` from `os/interface`, and the single path-existence
- * probe in `diff` goes through `IHostFileSystem`; no Node platform API is
- * imported directly. Bound at App scope — it owns no Session dependency, so
- * the caller supplies an absolute `cwd` and already-confined repo-relative
- * paths.
+ * the local disk, and discovers the enclosing git work tree of a directory
+ * (`findWorkTree`). Process spawning goes through the App-scope
+ * `IHostProcessService`, and the single path-existence probe in `diff` goes
+ * through `IHostFileSystem`; no Node platform API is imported directly. Bound
+ * at App scope — it owns no Session dependency, so the caller supplies an
+ * absolute `cwd` and already-confined repo-relative paths.
  */
 
 import type { FsDiffResponse, FsGitStatusResponse, FsPullRequest } from './git';
@@ -19,6 +19,7 @@ import { IHostProcessService } from '#/os/interface/hostProcess';
 
 import { IGitService } from './git';
 import { parseNumstat, parsePorcelain, parsePullRequest } from './gitParsers';
+import { findGitWorkTree, type GitWorkTree } from './workTree';
 
 const DIFF_MAX_BYTES = 1_048_576;
 
@@ -121,6 +122,10 @@ export class GitService implements IGitService {
       diff: truncated ? diffStdout.slice(0, DIFF_MAX_BYTES) : diffStdout,
       truncated,
     };
+  }
+
+  findWorkTree(cwd: string): Promise<GitWorkTree | null> {
+    return findGitWorkTree(this.fs, cwd);
   }
 
   private async readPullRequest(cwd: string): Promise<FsPullRequest | null> {

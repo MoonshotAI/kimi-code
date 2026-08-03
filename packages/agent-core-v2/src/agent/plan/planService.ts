@@ -1,5 +1,5 @@
 /**
- * `plan` domain (L3) — `IAgentPlanService` implementation.
+ * `plan` domain — `IAgentPlanService` implementation.
  *
  * Manages plan-mode state through `wire`, injects plan-mode context through
  * `contextInjector`, writes optional plan files through `hostFileSystem`,
@@ -7,8 +7,7 @@
  * revisions: `recordRevision` reads the current plan file, writes it
  * atomically through `IBlobStore` under the agent's own persistence scope
  * (`agentCtx.scope()`, i.e. the homeDir-relative
- * `sessions/<ws>/<sid>/agents/<agentId>` root — the same rooting
- * `IAgentBlobService` uses for its `blobs` child scope) with the key
+ * `sessions/<ws>/<sid>/agents/<agentId>` root) with the key
  * `plan/<id>/v<N>.md`, and dispatches a reference-only `plan.revision` op
  * carrying the homeDir-relative path, sha256 and byte length. N comes from
  * the Model's replayed per-id `revisionCount`, starting at 1. Also carries

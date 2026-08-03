@@ -1,5 +1,5 @@
 /**
- * `di` domain (L0) — disposable lifecycle primitives (`Disposable`, `DisposableStore`, `IDisposable`).
+ * `di` domain — disposable lifecycle primitives (`Disposable`, `DisposableStore`, `IDisposable`).
  */
 
 import { onUnexpectedError } from '../errors/unexpectedError';

@@ -1,5 +1,5 @@
 /**
- * `_base/execEnv` (L0) — OS / shell probe.
+ * `_base/execEnv` — OS / shell probe.
  *
  * Detects the host operating system, architecture, kernel release, and a
  * usable POSIX shell path. The result is a pure function of injected probes
@@ -9,11 +9,9 @@
  *
  * On Windows the probe expects bash from Git for Windows or MSYS2. If it
  * cannot be located the function throws a plain `Error` with the checked paths
- * in the message; the App-scope host-environment service catches that at first
- * resolution. Set `KIMI_SHELL_PATH` to override.
+ * in the message. Set `KIMI_SHELL_PATH` to override.
  *
- * Vendored from `@moonshot-ai/kaos` `environment.ts` — kept as a pure helper
- * with no DI dependencies.
+ * Kept as a pure helper with no DI dependencies.
  */
 
 import { execFile as nodeExecFile } from 'node:child_process';

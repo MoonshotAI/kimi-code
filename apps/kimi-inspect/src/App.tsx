@@ -9,12 +9,15 @@
  * the transcript audit and the agent inspector under Audit / Agent tabs;
  * the `models` view is the full-width model catalog; the `services` view is
  * the full-width app-scope Service reflection (`AppServicesView`); the
+ * `workspace` view is the workspace-scope counterpart
+ * (`WorkspaceServicesView`, with a workspace picker on top); the
  * `bash` view is the full-width `IBashParserService` playground
  * (`BashParserView`); the `search` view is the full-width global message
  * search (`SearchView`) whose hits navigate back into the chat timeline.
  */
 
-import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
+import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
+import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/sessionLifecycle';
 import { useEffect, useState } from 'react';
 
 import type { AuditTrail } from './audit/trail';
@@ -28,6 +31,7 @@ import { SearchView } from './components/SearchView';
 import { ServerSwitcher } from './components/ServerSwitcher';
 import { SessionPane } from './components/SessionPane';
 import { Sidebar } from './components/Sidebar';
+import { WorkspaceServicesView } from './components/WorkspaceServicesView';
 import { useConnection } from './connection';
 import type { SearchHit } from './search/api';
 import { errorMessage } from './ui';
@@ -45,15 +49,21 @@ export function App() {
   const [jump, setJump] = useState<ChatJump | null>(null);
 
   // Resume (materialize) the session on the server when it is selected, so
-  // session / agent scoped Services become reachable.
+  // session / agent scoped Services become reachable. Session lifecycle lives
+  // on the workspace handler (Workspace scope): the index yields the
+  // session's workspaceId, then the handler resumes it.
   useEffect(() => {
     if (sessionId === null) return;
     let cancelled = false;
     setReady(false);
     setResumeError(null);
     klient
-      .core(ISessionLifecycleService)
-      .resume(sessionId)
+      .core(ISessionIndex)
+      .get(sessionId)
+      .then((summary) => {
+        if (summary === undefined) throw new Error(`session ${sessionId} does not exist`);
+        return klient.workspace(summary.workspaceId).service(ISessionLifecycleService).resume(sessionId);
+      })
       .then(() => {
         if (!cancelled) setReady(true);
       })
@@ -104,6 +114,8 @@ export function App() {
         <NavRail view={view} onChange={setView} />
         {view === 'services' ? (
           <AppServicesView />
+        ) : view === 'workspace' ? (
+          <WorkspaceServicesView />
         ) : view === 'bash' ? (
           <BashParserView />
         ) : view === 'models' ? (
