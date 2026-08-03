@@ -133,8 +133,6 @@ impl Processor for BgProcessor {
                 }
             })
         });
-    }
-}
 
         // `bg/output` — output snapshot (live or ghost-fallback).
         let bm = self.manager.clone();
