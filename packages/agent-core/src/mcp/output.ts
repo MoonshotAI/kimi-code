@@ -444,6 +444,11 @@ function deepJsonEqual(a: unknown, b: unknown): boolean {
   const aKeys = Object.keys(aRecord);
   return (
     aKeys.length === Object.keys(bRecord).length &&
-    aKeys.every((key) => deepJsonEqual(aRecord[key], bRecord[key]))
+    // `Object.hasOwn` matters: `bRecord[key]` would otherwise resolve
+    // inherited properties (e.g. "__proto__") and a same-length key count
+    // could false-positive two unrelated objects as duplicates.
+    aKeys.every(
+      (key) => Object.hasOwn(bRecord, key) && deepJsonEqual(aRecord[key], bRecord[key]),
+    )
   );
 }

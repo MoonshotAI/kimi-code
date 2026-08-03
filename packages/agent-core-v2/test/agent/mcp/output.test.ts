@@ -592,6 +592,22 @@ describe('structuredContent forwarding', () => {
     }
   });
 
+  test('does not mistake an inherited-property lookup for a duplicate fallback', async () => {
+    const out = await mcpResultToExecutableOutput(
+      {
+        content: [{ type: 'text', text: '{"__proto__":{}}' }],
+        isError: false,
+        structuredContent: { actual: 42 },
+      },
+      'mcp__s__t',
+    );
+
+    expect(out.output).toEqual([
+      { type: 'text', text: '{"__proto__":{}}' },
+      { type: 'text', text: '{"actual":42}' },
+    ]);
+  });
+
   test('emits structuredContent even when the content array is empty', async () => {
     const out = await mcpResultToExecutableOutput(
       { content: [], isError: false, structuredContent: { ok: true } },
