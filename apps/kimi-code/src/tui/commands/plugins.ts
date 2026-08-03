@@ -161,17 +161,28 @@ async function showPluginsPicker(
   host: SlashCommandHost,
   options?: ShowPluginsPickerOptions,
 ): Promise<void> {
+  const session = host.requireSession();
   let plugins: readonly PluginSummary[];
   try {
-    plugins = await host.requireSession().listPlugins();
+    plugins = await session.listPlugins();
   } catch (error) {
     host.showError(`Failed to load plugins: ${formatErrorMessage(error)}`);
     return;
   }
 
+  // Best-effort: v1 engines have no capability surface — the panel then hides
+  // the Built-in section and keeps the marketplace/promo fallbacks.
+  let capabilities: readonly CapabilityStatus[] = [];
+  try {
+    capabilities = await session.listCapabilities();
+  } catch {
+    capabilities = [];
+  }
+
   const panel = new PluginsPanelComponent({
     installed: plugins,
     installedIds: new Set(plugins.map((plugin) => plugin.id)),
+    capabilities,
     initialTab: options?.initialTab,
     selectedId: options?.selectedId,
     pluginHint: options?.pluginHint,
