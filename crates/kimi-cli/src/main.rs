@@ -206,12 +206,7 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 // Default: render the transcript — the last assistant text
                 // from the session context (raw RPC envelope via `--json`).
-                let ctx = client
-                    .call(
-                        kimi_protocol::methods::SESSION_GET_CONTEXT,
-                        serde_json::json!({ "session_id": "kimi-exec" }),
-                    )
-                    .await;
+                let ctx = client.session_get_context("kimi-exec").await;
                 match kimi_ui::last_assistant_text(&ctx["result"]) {
                     Some(text) => println!("{text}"),
                     None => println!("{result}"),
@@ -249,13 +244,7 @@ async fn main() -> anyhow::Result<()> {
                 .call(kimi_protocol::methods::SESSION_LOAD, serde_json::json!({ "session_id": session_id }))
                 .await;
             let result = client
-                .call(
-                    kimi_protocol::methods::SESSION_PROMPT,
-                    serde_json::json!({
-                        "session_id": session_id,
-                        "input": [{ "type": "text", "text": prompt }],
-                    }),
-                )
+                .session_prompt(&session_id, &prompt)
                 .await;
             if let Some(renderer) = renderer {
                 renderer.abort();
@@ -269,12 +258,7 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 // Default: render the transcript (last assistant text), same
                 // as `kimi print`; raw RPC envelope via `--json`.
-                let ctx = client
-                    .call(
-                        kimi_protocol::methods::SESSION_GET_CONTEXT,
-                        serde_json::json!({ "session_id": session_id }),
-                    )
-                    .await;
+                let ctx = client.session_get_context(&session_id).await;
                 match kimi_ui::last_assistant_text(&ctx["result"]) {
                     Some(text) => println!("{text}"),
                     None => println!("{result}"),
@@ -324,9 +308,7 @@ async fn main() -> anyhow::Result<()> {
                 );
                 return Ok(());
             }
-            let config = client
-                .call(kimi_protocol::methods::CONFIG_GET, serde_json::Value::Null)
-                .await;
+            let config = client.config_get().await;
             if let Some(error) = config.get("error") {
                 eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
                 std::process::exit(1);
@@ -361,7 +343,7 @@ async fn main() -> anyhow::Result<()> {
             let mut client = connect(&server)?;
             let health = client.health().await;
             println!("health: {}", health["result"]["status"].as_str().unwrap_or("?"));
-            let config = client.call(kimi_protocol::methods::CONFIG_GET, serde_json::Value::Null).await;
+            let config = client.config_get().await;
             if let Some(error) = config.get("error") {
                 println!("config: error — {}", error["message"].as_str().unwrap_or("unknown"));
             } else {

@@ -51,6 +51,46 @@ impl AppServerClient {
         self.call(kimi_protocol::methods::HEALTH, serde_json::Value::Null)
             .await
     }
+
+    /// Typed: run one prompt on a session.
+    pub async fn session_prompt(
+        &mut self,
+        session_id: &str,
+        text: &str,
+    ) -> serde_json::Value {
+        self.call(
+            kimi_protocol::methods::SESSION_PROMPT,
+            serde_json::json!({
+                "session_id": session_id,
+                "input": [{ "type": "text", "text": text }],
+            }),
+        )
+        .await
+    }
+
+    /// Typed: the session's current context (history + token count).
+    pub async fn session_get_context(&mut self, session_id: &str) -> serde_json::Value {
+        self.call(
+            kimi_protocol::methods::SESSION_GET_CONTEXT,
+            serde_json::json!({ "session_id": session_id }),
+        )
+        .await
+    }
+
+    /// Typed: the engine's parsed config.
+    pub async fn config_get(&mut self) -> serde_json::Value {
+        self.call(kimi_protocol::methods::CONFIG_GET, serde_json::Value::Null)
+            .await
+    }
+
+    /// Typed: a session's status snapshot.
+    pub async fn session_get_status(&mut self, session_id: &str) -> serde_json::Value {
+        self.call(
+            kimi_protocol::methods::SESSION_GET_STATUS,
+            serde_json::json!({ "session_id": session_id }),
+        )
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -82,5 +122,26 @@ mod tests {
         let mut client = AppServerClient::InProcess(kimi_server::in_process::spawn(processor));
         let body = client.health().await;
         assert_eq!(body["result"]["status"], "ok");
+    }
+
+    #[tokio::test]
+    async fn typed_methods_round_trip() {
+        let server = Server::build().expect("server");
+        let mut client = AppServerClient::InProcess(kimi_server::in_process::spawn(server.processor));
+
+        // config_get parses the merged engine config.
+        let body = client.config_get().await;
+        assert!(body.get("error").is_none(), "config_get: {body}");
+
+        // Create, then status/context typed reads work.
+        let body = client.session_create("s-typed").await;
+        assert_eq!(body["result"]["session_id"], "s-typed");
+        let body = client.session_get_status("s-typed").await;
+        assert!(body.get("error").is_none(), "get_status: {body}");
+
+        // Context is readable right after create.
+        let body = client.session_get_context("s-typed").await;
+        assert!(body.get("error").is_none(), "get_context: {body}");
+        assert!(body["result"]["history"].is_array());
     }
 }
