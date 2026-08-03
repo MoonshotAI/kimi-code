@@ -478,7 +478,7 @@ function userAttachmentMedia(att: TurnAttachment): ToolMedia {
   // back to a generic label and sniffs the mime from the URL when needed. When
   // a fileId is present the preview fetches the bytes with auth (a bare
   // getFileUrl src 401s under daemon auth).
-  return { kind: att.kind === 'video' ? 'video' : 'image', url: att.url, path: att.name, fileId: att.fileId };
+  return { kind: att.kind === 'video' ? 'video' : 'image', url: att.url, path: att.name, fileId: att.fileId, bytes: att.size };
 }
 
 // Transient "can't open this type" hint after clicking a file chip of a
