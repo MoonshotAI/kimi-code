@@ -137,4 +137,19 @@ impl Harness {
     pub async fn client(&self) -> tokio::sync::MutexGuard<'_, AppServerClient> {
         self.client.lock().await
     }
+
+    /// One-shot: create (or resume) a session, run a prompt, and return the
+    /// last assistant transcript — the SDK's `print` equivalent. Requires a
+    /// reachable LLM (engine-side config).
+    pub async fn run_prompt(&self, session_id: &str, text: &str) -> anyhow::Result<String> {
+        let mut session = self.create_session(session_id).await?;
+        let result = session.prompt(text).await;
+        if let Some(error) = result.get("error") {
+            anyhow::bail!("run_prompt: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(session
+            .transcript()
+            .await?
+            .unwrap_or_else(|| result.to_string()))
+    }
 }

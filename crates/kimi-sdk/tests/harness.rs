@@ -21,9 +21,11 @@ async fn embedded_harness_creates_sessions() {
     assert!(status.get("error").is_none(), "get_status: {status}");
     assert!(status["result"]["plan_mode"].is_boolean(), "status fields: {status}");
 
+    // Context is readable right after create (empty transcript so far).
     let context = session.get_context().await;
     assert!(context.get("error").is_none(), "get_context: {context}");
     assert!(context["result"]["history"].is_array());
+    assert_eq!(session.transcript().await.expect("transcript"), None);
 
     // Cancel of a created session reports true (flag registered at create).
     assert_eq!(session.cancel().await["result"]["cancelled"], true);

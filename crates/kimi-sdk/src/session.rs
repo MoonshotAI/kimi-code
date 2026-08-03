@@ -27,6 +27,15 @@ impl Session {
         self.client.lock().await.session_prompt(&self.id, text).await
     }
 
+    /// The last assistant message's text from the session context, if any.
+    pub async fn transcript(&mut self) -> anyhow::Result<Option<String>> {
+        let body = self.client.lock().await.session_get_context(&self.id).await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("get_context: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(kimi_ui::last_assistant_text(&body["result"]))
+    }
+
     /// The session's context (history + token count).
     pub async fn get_context(&mut self) -> serde_json::Value {
         self.client.lock().await.session_get_context(&self.id).await
