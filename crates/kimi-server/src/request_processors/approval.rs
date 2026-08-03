@@ -23,6 +23,11 @@ impl ApprovalProcessor {
         }
     }
 
+    /// Create from shared server state.
+    pub fn with_state(state: crate::state::ServerState) -> Self {
+        Self { store: state.approval }
+    }
+
     /// Expose the shared store (tests / future processors).
     pub fn store(&self) -> SharedApprovalStore {
         self.store.clone()

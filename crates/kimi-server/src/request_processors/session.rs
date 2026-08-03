@@ -5,7 +5,6 @@
 
 use std::sync::Arc;
 
-use kimi_agent::persistence::{SessionStore, SqliteStore};
 use kimi_agent::session::manager::SessionManager;
 use kimi_protocol::rpc::JsonRpcError;
 use kimi_protocol::wire_types::SessionGoalParams;
@@ -13,22 +12,7 @@ use tokio::sync::Mutex;
 
 use crate::processor::{MessageProcessor, Processor};
 
-/// Open the engine's session store (`$KIMI_AGENT_HOME/sessions.db` or
-/// in-memory) — mirrors `open_session_store` in main.rs.
-pub fn open_session_store() -> anyhow::Result<SqliteStore> {
-    match std::env::var("KIMI_AGENT_HOME") {
-        Ok(dir) if !dir.trim().is_empty() => {
-            let path = std::path::Path::new(dir.trim()).join("sessions.db");
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            SqliteStore::open(&path)
-        }
-        _ => SqliteStore::in_memory(),
-    }
-}
-
-/// Session methods, backed by a shared engine `SessionManager`.
+/// Session methods, backed by the shared engine `SessionManager`.
 pub struct SessionProcessor {
     manager: Arc<Mutex<SessionManager>>,
 }
@@ -36,9 +20,14 @@ pub struct SessionProcessor {
 impl SessionProcessor {
     /// Create with a fresh engine session manager (own store).
     pub fn new() -> anyhow::Result<Self> {
-        let store = open_session_store()?;
-        let manager = Arc::new(Mutex::new(SessionManager::new(SessionStore::new(store))));
-        Ok(Self { manager })
+        Ok(Self::with_state(crate::state::ServerState::new()?))
+    }
+
+    /// Create from shared server state.
+    pub fn with_state(state: crate::state::ServerState) -> Self {
+        Self {
+            manager: state.manager,
+        }
     }
 
     /// Expose the shared manager (for tests / future processors).
