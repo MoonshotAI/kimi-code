@@ -22,12 +22,14 @@ export interface ExternalHooksRunnerTriggerArgs {
 
 export interface IExternalHooksRunnerService {
   readonly _serviceBrand: undefined;
+  readonly ready: Promise<void>;
   trigger(event: string, args?: ExternalHooksRunnerTriggerArgs): Promise<HookResult[]>;
   triggerBlock(
     event: string,
     args?: ExternalHooksRunnerTriggerArgs,
   ): Promise<HookBlockDecision | undefined>;
   fireAndForgetTrigger(event: string, args?: ExternalHooksRunnerTriggerArgs): Promise<HookResult[]>;
+  hasHooksFor(event: string): boolean;
 }
 
 export const IExternalHooksRunnerService: ServiceIdentifier<IExternalHooksRunnerService> =

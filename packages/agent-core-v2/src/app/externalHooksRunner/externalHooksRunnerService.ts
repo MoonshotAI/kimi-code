@@ -9,7 +9,9 @@
  * process service (cross-platform kill, hidden console on Windows) rather than
  * `node:child_process` directly. Per-call caller facts (`cwd` defaulting to
  * bootstrap cwd, `sessionId`, `signal`, payload) flow in through the args, so
- * this service keeps no per-scope state. Bound at App scope.
+ * this service keeps no per-scope state; the one payload field it contributes
+ * itself is `clientType` (the host platform from bootstrap client identity),
+ * merged under the caller's `inputData`. Bound at App scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -84,6 +86,10 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     }
   }
 
+  hasHooksFor(event: string): boolean {
+    return (this.byEvent.get(event)?.length ?? 0) > 0;
+  }
+
   private async triggerInner(
     event: string,
     args: ExternalHooksRunnerTriggerArgs,
@@ -96,6 +102,10 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
       {
         cwd: args.cwd ?? this.bootstrap.cwd,
         ...args,
+        inputData: {
+          clientType: this.bootstrap.clientIdentity.platform,
+          ...args.inputData,
+        },
       },
       this.callbacks,
     );
