@@ -3,11 +3,14 @@
  * failures after a timed-out command.
  */
 
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { PassThrough, Writable } from 'node:stream';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { runCommand } from '#/app/capability/host';
+import { downloadToFile, runCommand } from '#/app/capability/host';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 
 describe('capability host runCommand', () => {
@@ -59,5 +62,74 @@ describe('capability host runCommand', () => {
     } finally {
       process.off('unhandledRejection', onUnhandled);
     }
+  });
+});
+
+describe('capability host downloadToFile', () => {
+  let root: string;
+  beforeEach(async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'capability-download-'));
+  });
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  function fakeFetchWith(body: ReadableStream): typeof fetch {
+    return (() =>
+      Promise.resolve(
+        new Response(body, {
+          status: 200,
+          headers: { 'content-length': '100' },
+        }),
+      )) as unknown as typeof fetch;
+  }
+
+  it('aborts a response whose byte stream goes quiet', async () => {
+    // One chunk flows, then the server goes silent — the install must fail
+    // (clearing the running state) instead of hanging forever.
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+        // never enqueues or closes again
+      },
+    });
+
+    await expect(
+      downloadToFile(
+        'https://cdn.example.test/blob',
+        path.join(root, 'blob'),
+        undefined,
+        fakeFetchWith(body) as never,
+        { idleTimeoutMs: 5 },
+      ),
+    ).rejects.toThrow(/stalled/);
+  });
+
+  it('lets a slow but flowing download finish intact', async () => {
+    const chunks = ['hel', 'lo ', 'wor', 'ld'];
+    const body = new ReadableStream({
+      async start(controller) {
+        for (const chunk of chunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+          // Gaps below the idle budget must not trip the watchdog.
+          await new Promise((resolve) => {
+            setTimeout(resolve, 2);
+          });
+        }
+        controller.close();
+      },
+    });
+
+    const dest = path.join(root, 'hello.txt');
+    const received = await downloadToFile(
+      'https://cdn.example.test/hello',
+      dest,
+      undefined,
+      fakeFetchWith(body) as never,
+      { idleTimeoutMs: 50 },
+    );
+
+    expect(received).toBe(11);
+    expect(await readFile(dest, 'utf-8')).toBe('hello world');
   });
 });

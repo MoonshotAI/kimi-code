@@ -86,13 +86,21 @@ export type FetchLike = (
 /**
  * Download `url` to `destPath` (parent dirs created), reporting 0–99 percent
  * while the response carries a content-length. Returns the byte count.
+ *
+ * A response that stops producing bytes is failed after `idleTimeoutMs`
+ * (default 30s): the background capability install clears its running state
+ * on failure, so a stalled CDN connection must never wedge the capability in
+ * a permanent "installing" state. Slow but flowing downloads are unaffected
+ * — the watchdog resets on every chunk.
  */
 export async function downloadToFile(
   url: string,
   destPath: string,
   onPercent?: (percent: number) => void,
   fetchImpl: FetchLike = fetch as unknown as FetchLike,
+  options: { idleTimeoutMs?: number } = {},
 ): Promise<number> {
+  const idleTimeoutMs = options.idleTimeoutMs ?? DOWNLOAD_IDLE_TIMEOUT_MS;
   const resp = await fetchImpl(url);
   if (!resp.ok || resp.body === null) {
     throw new Error(`Failed to download ${url}: HTTP ${resp.status}`);
@@ -100,8 +108,10 @@ export async function downloadToFile(
   const total = Number(resp.headers.get('content-length') ?? 0);
   await mkdir(path.dirname(destPath), { recursive: true });
   let received = 0;
+  let idleTimer: NodeJS.Timeout | undefined;
   const meter = new Transform({
     transform(chunk: Buffer, _encoding, callback) {
+      armIdleWatchdog();
       received += chunk.length;
       if (total > 0 && onPercent !== undefined) {
         onPercent(Math.min(99, Math.floor((received / total) * 100)));
@@ -109,7 +119,22 @@ export async function downloadToFile(
       callback(null, chunk);
     },
   });
-  await pipeline(Readable.fromWeb(resp.body), meter, createWriteStream(destPath));
+  function armIdleWatchdog(): void {
+    if (idleTimer !== undefined) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      meter.destroy(new Error(`Download stalled for ${idleTimeoutMs}ms: ${url}`));
+    }, idleTimeoutMs);
+    idleTimer.unref?.();
+  }
+  armIdleWatchdog();
+  try {
+    await pipeline(Readable.fromWeb(resp.body), meter, createWriteStream(destPath));
+  } finally {
+    if (idleTimer !== undefined) clearTimeout(idleTimer);
+  }
   onPercent?.(100);
   return received;
 }
+
+/** Default inactivity budget for a download's byte stream. */
+const DOWNLOAD_IDLE_TIMEOUT_MS = 30_000;
