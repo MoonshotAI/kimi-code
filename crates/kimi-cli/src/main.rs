@@ -54,6 +54,9 @@ enum Commands {
         /// Max sessions to list.
         #[arg(default_value_t = 50)]
         limit: u32,
+        /// Print the raw session list JSON instead of the table.
+        #[arg(long)]
+        json: bool,
     },
     /// Resume a session and run a prompt on it.
     Resume {
@@ -213,12 +216,19 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Commands::Sessions { limit } => {
+        Commands::Sessions { limit, json } => {
             let mut client = connect(&server)?;
             let body = client.session_list(limit).await;
             if let Some(error) = body.get("error") {
                 eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
                 std::process::exit(1);
+            }
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&body["result"]["sessions"]).unwrap_or_default()
+                );
+                return Ok(());
             }
             for session in body["result"]["sessions"].as_array().unwrap_or(&vec![]) {
                 let id = session["id"].as_str().unwrap_or("");

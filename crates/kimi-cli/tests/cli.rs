@@ -53,6 +53,11 @@ fn sessions_empty_home_is_empty() {
     let output = run(&home, &["sessions"]);
     assert!(output.status.success(), "sessions exited {}", output.status);
     assert_eq!(stdout(&output), "", "no sessions -> no output");
+
+    // `--json` prints a valid empty array instead.
+    let output = run(&home, &["sessions", "--json"]);
+    assert!(output.status.success());
+    assert_eq!(stdout(&output).trim(), "[]");
 }
 
 #[test]
