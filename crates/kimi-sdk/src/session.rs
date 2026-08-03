@@ -274,6 +274,40 @@ impl Session {
         Ok(())
     }
 
+    /// Append an imported transcript chunk to the session context.
+    pub async fn import_context(&mut self, content: &str, source: &str) -> anyhow::Result<()> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                kimi_protocol::methods::SESSION_IMPORT_CONTEXT,
+                serde_json::json!({ "session_id": self.id, "content": content, "source": source }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("import context: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(())
+    }
+
+    /// Clear the session context.
+    pub async fn clear_context(&mut self) -> anyhow::Result<bool> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                kimi_protocol::methods::SESSION_CLEAR_CONTEXT,
+                serde_json::json!({ "session_id": self.id }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("clear context: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"]["cleared"].as_bool().unwrap_or(false))
+    }
+
     async fn simple_call(&mut self, method: &str) -> anyhow::Result<serde_json::Value> {
         let body = self
             .client

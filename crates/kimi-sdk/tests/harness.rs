@@ -120,6 +120,15 @@ async fn harness_exposes_engine_events() {
     session.fork("s-goal-fork", Some("forked")).await.expect("fork");
     let sessions = harness.list_sessions(50).await.expect("list");
     assert!(sessions.iter().any(|s| s["id"] == "s-goal-fork"), "fork listed: {sessions:?}");
+
+    // Import a transcript chunk, verify it lands, then clear.
+    session.import_context("imported sdk text", "sdk-test").await.expect("import");
+    let context = session.get_context().await;
+    assert!(
+        serde_json::to_string(&context["result"]).unwrap_or_default().contains("imported sdk text"),
+        "imported text present: {context}"
+    );
+    assert!(session.clear_context().await.expect("clear"));
 }
 
 #[tokio::test]
