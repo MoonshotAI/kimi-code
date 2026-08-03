@@ -14,10 +14,10 @@
  * Blank and whitespace-only values read as unset on both sides, matching what
  * the env bindings already do: without that a stray `name = ""` in the file
  * would claim an identity, rendering an empty display name into the prompt and
- * falling through slug normalization to the neutral token — silently rewriting
- * the User-Agent sent to third parties. The slug follows the explicit `slug`
- * when set and the declared name otherwise; both are normalized, since a
- * hand-written slug may still carry spaces or non-ASCII characters.
+ * falling through slug normalization to the neutral token — silently changing
+ * the outbound User-Agent. The slug follows the explicit `slug` when set and
+ * the declared name otherwise; both are normalized, since a hand-written slug
+ * may still carry spaces or non-ASCII characters.
  */
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';

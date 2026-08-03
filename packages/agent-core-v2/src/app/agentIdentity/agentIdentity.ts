@@ -1,9 +1,9 @@
 /**
  * `agentIdentity` domain — resolved identity contract.
  *
- * The identity the agent presents to the outside world, resolved from the
- * `[identity]` config section over the host's declared display name. It has
- * two faces, and they are deliberately NOT symmetric:
+ * The identity the agent uses for itself, resolved from the `[identity]`
+ * config section over the host's declared display name. It has two faces, and
+ * they are deliberately NOT symmetric:
  *
  * - `displayName` fills the `${product_name}` slot in the system prompt. It is
  *   a *filling* value: `config > host-declared > (consumer's own default)`.
@@ -15,8 +15,9 @@
  *   what the host gave them completely untouched. A defined slug is always a
  *   non-empty ASCII token safe to place in a header.
  *
- * The asymmetry is what keeps the feature safe: with no identity configured,
- * the protocol-rewriting code paths are equivalent to not existing at all.
+ * The asymmetry is deliberate: with no identity configured the rewriting
+ * paths are equivalent to not existing, so an unconfigured install behaves
+ * exactly as it did before.
  *
  * `normalizeIdentitySlug` folds an arbitrary human name into that protocol-safe
  * token: everything outside `[a-z0-9]` collapses to `-`, which is what stops a

@@ -6,7 +6,7 @@
  * `ISkillSource`.
  *
  * `visibleBuiltinSkills` is the one place that decides which of them the
- * `builtin_product_skills` switch hides. Every consumer goes through it — the
+ * `builtin_product_skills` switch excludes. Every consumer goes through it — the
  * session-scoped source and the session-less workspace listings alike — so a
  * skill marked `productSpecific` cannot stay advertised on one surface while
  * being filtered on another.
