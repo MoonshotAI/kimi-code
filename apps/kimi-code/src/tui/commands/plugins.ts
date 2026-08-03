@@ -27,7 +27,7 @@ import {
   isOfficialPluginInstall,
   isOfficialPluginSource,
 } from '../utils/plugin-source-label';
-import { QUOTA_CONSUMING_PLUGIN_IDS } from '#/constant/app';
+import { KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV, QUOTA_CONSUMING_PLUGIN_IDS } from '#/constant/app';
 import { loadPluginMarketplace, type PluginMarketplaceEntry } from '#/utils/plugin-marketplace';
 import { openUrl } from '#/utils/open-url';
 import type { SlashCommandHost } from './dispatch';
@@ -245,11 +245,16 @@ async function loadMarketplaceCatalog(
   capabilities: readonly CapabilityStatus[],
 ): Promise<void> {
   try {
+    // Injection is part of the DEFAULT catalog experience only: any explicit
+    // replacement (the slash-command source or the env override) opts out
+    // wholesale — its same-id rows are never masked and its failures surface.
+    const isDefaultCatalog =
+      source === undefined && process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV] === undefined;
     const marketplace = await loadPluginMarketplace({
       workDir: host.state.appState.workDir,
       source,
       builtInEntries:
-        host.engineV2 && source === undefined
+        host.engineV2 && isDefaultCatalog
           ? capabilities.map(capabilityMarketplaceEntry)
           : undefined,
     });
