@@ -7,4 +7,4 @@ description = "Kimi Code UI primitives — event rendering + transcript extracti
 
 [dependencies]
 serde_json = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["sync", "io-util", "rt"] }

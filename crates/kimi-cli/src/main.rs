@@ -6,7 +6,6 @@
 use base64::Engine;
 use clap::{Parser, Subcommand};
 use std::io::IsTerminal;
-use tokio::io::AsyncBufReadExt;
 
 #[derive(Parser)]
 #[command(name = "kimi", version, about = "Kimi Code CLI (Rust-first)")]
@@ -125,49 +124,34 @@ fn connect_with_renderer(
     if !capture {
         return Ok((connect(server)?, None));
     }
-    let mut events = None;
-    let mut captured_stderr = None;
-    let client = match server {
+    let (client, source) = match server {
         Some(bin) => {
             let (client, stderr) =
                 kimi_server_client::stdio_client::StdioClient::spawn_captured(bin)?;
-            captured_stderr = Some(stderr);
-            kimi_server_client::AppServerClient::Remote(client)
+            (
+                kimi_server_client::AppServerClient::Remote(client),
+                Some(kimi_ui::EventSource::from_lines(stderr)),
+            )
         }
         None => {
             let embedded = kimi_server::Server::build()?;
-            events = Some(embedded.state.subscribe_events());
-            kimi_server_client::AppServerClient::InProcess(
-                kimi_server::in_process::spawn(embedded.processor),
+            (
+                kimi_server_client::AppServerClient::InProcess(
+                    kimi_server::in_process::spawn(embedded.processor),
+                ),
+                Some(kimi_ui::EventSource::from_bus(embedded.state.subscribe_events())),
             )
         }
     };
     let renderer = tokio::spawn(async move {
+        let mut source = source.expect("capture path attaches a source");
         let mut printed = 0usize;
-        if let Some(mut rx) = events {
-            while let Ok(event) = rx.recv().await {
-                if let Some(line) = kimi_ui::render_event(&event) {
-                    eprintln!("{line}");
-                    printed += 1;
-                    if printed > 64 {
-                        break; // bound verbose output
-                    }
-                }
-            }
-        } else if let Some(stderr) = captured_stderr {
-            let mut lines = tokio::io::BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                let rendered = line
-                    .strip_prefix("[event] ")
-                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-                    .and_then(|e| kimi_ui::render_event(&e))
-                    .unwrap_or_else(|| line.clone());
-                eprintln!("{rendered}");
-                if line.starts_with("[event] ") {
-                    printed += 1;
-                    if printed > 64 {
-                        break; // bound verbose output
-                    }
+        while let Some(event) = source.next().await {
+            if let Some(line) = kimi_ui::render_event(&event) {
+                eprintln!("{line}");
+                printed += 1;
+                if printed > 64 {
+                    break; // bound verbose output
                 }
             }
         }

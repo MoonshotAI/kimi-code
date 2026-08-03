@@ -294,7 +294,7 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 3. ✅ **验证**：`kimi -p "..."` 端到端；CLI 集成测试（health/sessions/export/config/doctor/--server/verbose 事件流驱动真实二进制，9 用例）；CLI 测试平移（55 用例，TS 面待）
 
 ### 阶段 D — TUI
-0. ✅ `kimi-ui` crate（渲染原语：render_event 事件→进度行、last_assistant_text 转录提取，CLI/TUI 共用，4 测试）
+0. ✅ `kimi-ui` crate（渲染原语：render_event 事件→进度行、last_assistant_text 转录提取、**EventSource 统一事件源**（内嵌 EventBus / Remote stderr 捕获，CLI/TUI 共用），6 测试）
 1. `kimi-tui`：app 主循环 + custom_terminal + 事件流（ratatui 依赖，离线待引入）
 2. chatwidget（transcript/streaming/tool_requests/slash）→ components/messages 平移
 3. bottom_pane（composer/textarea/footer）→ controllers
