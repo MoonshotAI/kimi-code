@@ -62,7 +62,6 @@ import { createOriginHook, isOriginAllowed, parseCorsOrigins } from './middlewar
 import { createSecurityHeadersHook } from './middleware/securityHeaders';
 import { createAuthHook } from './middleware/auth';
 import { GuiStoreService } from './services/guiStore/guiStoreService';
-import { loadSnapshotConfig, SnapshotReader } from './services/snapshot';
 import {
   initializeServerTelemetry,
   type ServerTelemetry,
@@ -387,14 +386,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   });
   const fsWatchBridge = new FsWatchBridge({ core, logger });
 
-  const snapshotReader = new SnapshotReader({
-    homeDir,
-    core,
-    broadcaster,
-    logger,
-    config: loadSnapshotConfig(),
-  });
-
   async function registerOpenApi(): Promise<void> {
     const { default: swagger } = await import('@fastify/swagger');
     await app.register(swagger, {
@@ -450,7 +441,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     },
     connectionRegistry,
     broadcaster,
-    snapshotReader,
     transcriptService,
     dangerousBypassAuth: opts.disableAuth === true,
   });
