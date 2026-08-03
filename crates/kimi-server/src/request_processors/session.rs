@@ -1657,6 +1657,33 @@ mod create_tests {
     }
 
     #[tokio::test]
+    async fn list_tools_returns_native_and_goal_tools() {
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = SessionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/list_tools".into(),
+                params: serde_json::json!({
+                    "session_id": "s-tools",
+                    "homedir": std::env::temp_dir().to_string_lossy(),
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "list_tools failed: {body}");
+        let tools = body["result"]["tools"].as_array().expect("tools array");
+        // Native toolset (Read/Glob/Write/…) plus goal tools.
+        assert!(tools.len() >= 4, "expected the native toolset: {body}");
+        assert!(
+            tools.iter().any(|t| t["name"] == "Read") && tools.iter().any(|t| t["name"] == "Glob"),
+            "native tools present: {body}"
+        );
+    }
+
+    #[tokio::test]
     async fn goal_roundtrip_on_session() {
         let state = crate::state::ServerState::new().expect("state");
         let processor = SessionProcessor::with_state(state);
