@@ -236,6 +236,12 @@ export type KimiErrorCode =
   | 'session.question_handler_error'
   | 'session.init_failed'
   | 'agent.not_found'
+  | 'agent.already_exists'
+  | 'agent.already_running'
+  | 'agent.not_a_subagent'
+  | 'agent.not_owned'
+  | 'agent.type_not_allowed'
+  | 'agent.max_tokens_exceeded'
   | 'turn.agent_busy'
   | 'goal.already_exists'
   | 'goal.not_found'
@@ -269,15 +275,19 @@ export type KimiErrorCode =
   | 'skill.not_found'
   | 'skill.type_unsupported'
   | 'skill.name_empty'
+  | 'skill.parse_failed'
+  | 'skill.nested_too_deep'
   | 'records.write_failed'
   | 'compaction.failed'
   | 'compaction.unable'
   | 'task.task_id_empty'
+  | 'task.limit_exceeded'
   | 'usage.turn_id_conflict'
   | 'mcp.server_not_found'
   | 'mcp.server_disabled'
   | 'mcp.startup_failed'
   | 'mcp.tool_name_collision'
+  | 'mcp.oauth_failed'
   | 'message.not_found'
   | 'plugin.not_found'
   | 'plugin.load_failed'
@@ -317,9 +327,16 @@ export type KimiErrorCode =
   | 'storage.corrupted'
   | 'storage.io_failed'
   | 'storage.locked'
+  | 'storage.permission_denied'
+  | 'storage.disk_full'
   | 'wire.duplicate_op'
   | 'wire.cycle'
   | 'wire.unknown_record'
+  | 'wire.migration_missing'
+  | 'cron.expression_invalid'
+  | 'web.invalid_url'
+  | 'web.private_address'
+  | 'web.fetch_failed'
   | 'validation.failed'
   | 'not_implemented'
   | 'internal';
@@ -1170,6 +1187,12 @@ export const kimiErrorCodeSchema = z.enum([
   'session.question_handler_error',
   'session.init_failed',
   'agent.not_found',
+  'agent.already_exists',
+  'agent.already_running',
+  'agent.not_a_subagent',
+  'agent.not_owned',
+  'agent.type_not_allowed',
+  'agent.max_tokens_exceeded',
   'turn.agent_busy',
   'goal.already_exists',
   'goal.not_found',
@@ -1203,15 +1226,19 @@ export const kimiErrorCodeSchema = z.enum([
   'skill.not_found',
   'skill.type_unsupported',
   'skill.name_empty',
+  'skill.parse_failed',
+  'skill.nested_too_deep',
   'records.write_failed',
   'compaction.failed',
   'compaction.unable',
   'task.task_id_empty',
+  'task.limit_exceeded',
   'usage.turn_id_conflict',
   'mcp.server_not_found',
   'mcp.server_disabled',
   'mcp.startup_failed',
   'mcp.tool_name_collision',
+  'mcp.oauth_failed',
   'message.not_found',
   'plugin.not_found',
   'plugin.load_failed',
@@ -1236,6 +1263,31 @@ export const kimiErrorCodeSchema = z.enum([
   'fs.too_many_results',
   'fs.grep_timeout',
   'fs.git_unavailable',
+  'os.fs.not_found',
+  'os.fs.is_directory',
+  'os.fs.not_directory',
+  'os.fs.already_exists',
+  'os.fs.permission_denied',
+  'os.fs.not_empty',
+  'os.fs.unavailable',
+  'os.fs.unknown',
+  'os.process.spawn_failed',
+  'os.process.kill_failed',
+  'storage.not_found',
+  'storage.decode_failed',
+  'storage.corrupted',
+  'storage.io_failed',
+  'storage.locked',
+  'storage.permission_denied',
+  'storage.disk_full',
+  'wire.duplicate_op',
+  'wire.cycle',
+  'wire.unknown_record',
+  'wire.migration_missing',
+  'cron.expression_invalid',
+  'web.invalid_url',
+  'web.private_address',
+  'web.fetch_failed',
   'validation.failed',
   'not_implemented',
   'internal',

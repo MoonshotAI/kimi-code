@@ -16,7 +16,7 @@
 | `/logout` | — | 清除当前所选账号的凭据 | 否 |
 | `/provider` | — | 打开交互式供应商管理器，查看、添加和删除已配置的供应商。详见[平台与模型 — `/provider` 与供应商管理](../configuration/providers.md#provider-—-交互式供应商管理) | 是 |
 | `/model` | — | 切换当前会话使用的 LLM 模型 | 是 |
-| `/secondary_model` | — | 配置子 Agent 使用的第二模型（写入 [`[secondary_model]`](../configuration/config-files.md#secondary-model) 配置并在当前会话立即生效）。需开启 `secondary-model` 实验功能 | 是 |
+| `/secondary_model` | — | 配置子 Agent 默认绑定的次主力模型（写入 [`[secondary_model]`](../configuration/config-files.md#secondary-model) 配置并在当前会话立即生效）。需开启 `secondary-model` 实验功能 | 是 |
 | `/settings` | `/config` | 打开 TUI 内的设置面板 | 是 |
 | `/experiments` | `/experimental` | 打开实验功能面板 | 是 |
 | `/permission` | — | 选择权限模式 | 是 |

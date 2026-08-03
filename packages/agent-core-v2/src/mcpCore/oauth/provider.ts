@@ -17,6 +17,8 @@
 
 import { randomBytes } from 'node:crypto';
 
+import { BugIndicatingError } from '#/errors';
+
 import type {
   OAuthClientProvider,
   OAuthDiscoveryState,
@@ -146,7 +148,7 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
 
   codeVerifier(): string {
     if (this._codeVerifier === undefined) {
-      throw new Error('McpOAuthClientProvider: PKCE code verifier not initialized');
+      throw new BugIndicatingError('McpOAuthClientProvider: PKCE code verifier not initialized');
     }
     return this._codeVerifier;
   }

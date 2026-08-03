@@ -25,7 +25,7 @@
 
 import type { Tool as KosongTool } from '#/kosong/contract/tool';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
-import { toErrorMessage } from '#/errors';
+import { Error2, ErrorCodes, toErrorMessage } from '#/errors';
 import { isAbortError } from '#/_base/utils/abort';
 
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult } from '#/tool/toolContract';
@@ -118,7 +118,8 @@ async function retryAfterReconnect(
     if (context.signal.aborted || isAbortError(reconnectError)) {
       throw reconnectError;
     }
-    throw new Error(
+    throw new Error2(
+      ErrorCodes.MCP_STARTUP_FAILED,
       `${toErrorMessage(failure)} (reconnecting the MCP server also failed: ${toErrorMessage(reconnectError)})`,
       { cause: reconnectError },
     );

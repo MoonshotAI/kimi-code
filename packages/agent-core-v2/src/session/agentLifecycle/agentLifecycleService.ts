@@ -22,6 +22,7 @@
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
+import { Error2, ErrorCodes } from '#/errors';
 import { join } from 'pathe';
 import {
   createScopedChildHandle,
@@ -202,9 +203,15 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
 
   async fork(sourceAgentId: string, opts?: ForkAgentOptions): Promise<IAgentScopeHandle> {
     const source = this.handles.get(sourceAgentId);
-    if (source === undefined) throw new Error(`Source agent "${sourceAgentId}" does not exist`);
+    if (source === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Source agent "${sourceAgentId}" does not exist`, {
+        details: { agentId: sourceAgentId },
+      });
+    }
     if (opts?.agentId !== undefined && this.handles.has(opts.agentId)) {
-      throw new Error(`Agent "${opts.agentId}" already exists`);
+      throw new Error2(ErrorCodes.AGENT_ALREADY_EXISTS, `Agent "${opts.agentId}" already exists`, {
+        details: { agentId: opts.agentId },
+      });
     }
     const child = await this.create({ agentId: opts?.agentId, forkedFrom: source.id });
 

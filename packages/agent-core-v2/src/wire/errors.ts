@@ -16,6 +16,7 @@ export const WireErrors = {
     WIRE_DUPLICATE_OP: 'wire.duplicate_op',
     WIRE_CYCLE: 'wire.cycle',
     WIRE_UNKNOWN_RECORD: 'wire.unknown_record',
+    WIRE_MIGRATION_MISSING: 'wire.migration_missing',
     RECORDS_WRITE_FAILED: 'records.write_failed',
   },
   info: {
@@ -36,6 +37,12 @@ export const WireErrors = {
       retryable: false,
       public: true,
       action: 'The record was written by a newer version; upgrade or drop it.',
+    },
+    'wire.migration_missing': {
+      title: 'Wire migration missing',
+      retryable: false,
+      public: true,
+      action: 'The wire file predates the supported migration chain; start a new session.',
     },
     'records.write_failed': {
       title: 'Wire journal write failed',

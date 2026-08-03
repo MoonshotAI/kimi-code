@@ -25,6 +25,7 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
+import { BugIndicatingError } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ILogService } from '#/_base/log/log';
 import {
@@ -170,7 +171,7 @@ export class ConfigRegistry implements IConfigRegistry {
       ) {
         return;
       }
-      throw new Error(`ConfigRegistry: section '${domain}' is already registered`);
+      throw new BugIndicatingError(`ConfigRegistry: section '${domain}' is already registered`);
     }
     this.sections.set(domain, {
       domain,

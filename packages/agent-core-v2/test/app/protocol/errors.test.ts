@@ -24,12 +24,11 @@ describe('translateProviderError', () => {
     expect(translateProviderError(coded)).toBe(coded);
   });
 
-  it('maps 429 to provider.rate_limit, keeping the raw error as cause and status in details', () => {
+  it('maps 429 to provider.rate_limit at birth, passing through with status in details', () => {
     const raw = new APIStatusError(429, 'Too Many Requests', 'req-1');
     const error = translateProviderError(raw);
-    expect(error).toBeInstanceOf(Error2);
+    expect(error).toBe(raw);
     expect(error.code).toBe('provider.rate_limit');
-    expect(error.cause).toBe(raw);
     expect(error.name).toBe('APIStatusError');
     expect(error.details).toMatchObject({ statusCode: 429, requestId: 'req-1' });
   });
@@ -52,11 +51,11 @@ describe('translateProviderError', () => {
     expect(error.code).toBe('context.overflow');
   });
 
-  it('maps provider-overload errors to provider.overloaded, keeping HTTP details', () => {
+  it('maps provider-overload errors to provider.overloaded at birth, keeping HTTP details', () => {
     const raw = new APIProviderOverloadedError(529, 'Overloaded', 'req-overload');
     const error = translateProviderError(raw);
+    expect(error).toBe(raw);
     expect(error.code).toBe('provider.overloaded');
-    expect(error.cause).toBe(raw);
     expect(error.details).toMatchObject({ statusCode: 529, requestId: 'req-overload' });
   });
 

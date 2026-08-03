@@ -32,6 +32,7 @@ import {
   isUserCancellation,
   userCancellationReason,
 } from '#/_base/utils/abort';
+import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
@@ -240,7 +241,11 @@ export class SubagentTool implements ISubagentTool {
   ): Promise<SubagentHandle> {
     const requester = this.lifecycle.get(this.callerAgentId);
     if (requester === undefined) {
-      throw new Error(`Caller agent "${this.callerAgentId}" does not exist`);
+      throw new Error2(
+        ErrorCodes.AGENT_NOT_FOUND,
+        `Caller agent "${this.callerAgentId}" does not exist`,
+        { details: { agentId: this.callerAgentId } },
+      );
     }
 
     const resumeAgentId = args.resume?.trim();
@@ -252,7 +257,9 @@ export class SubagentTool implements ISubagentTool {
     if (isResume) {
       const target = this.lifecycle.get(resumeAgentId);
       if (target === undefined) {
-        throw new Error(`Agent instance "${resumeAgentId}" does not exist`);
+        throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent instance "${resumeAgentId}" does not exist`, {
+          details: { agentId: resumeAgentId },
+        });
       }
       await this.ensureOwnedIdleSubagent(resumeAgentId, target);
       agentId = target.id;
@@ -266,14 +273,22 @@ export class SubagentTool implements ISubagentTool {
       const own = this.profile.data();
       const allowlist = subagentAllowlistFor(this.catalog, own);
       if (allowlist !== undefined && !allowlist.includes(requestedProfileName)) {
-        throw new Error(subagentTypeNotAllowedMessage(requestedProfileName, allowlist));
+        throw new Error2(
+          ErrorCodes.AGENT_TYPE_NOT_ALLOWED,
+          subagentTypeNotAllowedMessage(requestedProfileName, allowlist),
+          { details: { profileName: requestedProfileName, allowlist } },
+        );
       }
       const profile = this.catalog.get(requestedProfileName);
       if (profile === undefined) {
-        throw new Error(`Unknown agent type: "${requestedProfileName}"`);
+        throw new Error2(ErrorCodes.PROFILE_UNKNOWN, `Unknown agent type: "${requestedProfileName}"`, {
+          details: { profileName: requestedProfileName },
+        });
       }
       if (own.modelAlias === undefined) {
-        throw new Error('Caller agent has no model bound');
+        throw new Error2(ErrorCodes.MODEL_NOT_CONFIGURED, 'Caller agent has no model bound', {
+          details: { agentId: this.callerAgentId },
+        });
       }
       const binding = resolveSubagentBinding(
         this.config,
@@ -342,13 +357,23 @@ export class SubagentTool implements ISubagentTool {
   ): Promise<void> {
     const meta = (await this.sessionMetadata.read()).agents?.[agentId];
     if (!isSubagentMeta(meta)) {
-      throw new Error(`Agent instance "${agentId}" is not a subagent`);
+      throw new Error2(ErrorCodes.AGENT_NOT_A_SUBAGENT, `Agent instance "${agentId}" is not a subagent`, {
+        details: { agentId },
+      });
     }
     if (subagentParentAgentId(meta) !== this.callerAgentId) {
-      throw new Error(`Agent instance "${agentId}" does not belong to this parent agent`);
+      throw new Error2(
+        ErrorCodes.AGENT_NOT_OWNED,
+        `Agent instance "${agentId}" does not belong to this parent agent`,
+        { details: { agentId, callerAgentId: this.callerAgentId } },
+      );
     }
     if (target.accessor.get(IAgentLoopService).status().state === 'running') {
-      throw new Error(`Agent instance "${agentId}" is already running and cannot run concurrently`);
+      throw new Error2(
+        ErrorCodes.AGENT_ALREADY_RUNNING,
+        `Agent instance "${agentId}" is already running and cannot run concurrently`,
+        { details: { agentId } },
+      );
     }
   }
 
@@ -422,7 +447,7 @@ export class SubagentTool implements ISubagentTool {
         const message = error instanceof Error ? error.message : String(error);
         return {
           output:
-            message === 'Too many detached tasks are already running.'
+            isError2(error) && error.code === ErrorCodes.TASK_LIMIT_EXCEEDED
               ? 'Too many background tasks are already running.'
               : message,
           isError: true,

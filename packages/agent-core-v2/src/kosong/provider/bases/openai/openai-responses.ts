@@ -15,6 +15,7 @@
 
 import OpenAI from 'openai';
 
+import { Error2 } from '#/_base/errors/errors';
 import {
   APIContextOverflowError,
   APIProviderQuotaExhaustedError,
@@ -41,6 +42,7 @@ import type {
 } from '#/kosong/contract/provider';
 import type { Tool } from '#/kosong/contract/tool';
 import type { TokenUsage } from '#/kosong/contract/usage';
+import { ProtocolErrors } from '#/kosong/protocol/errors';
 
 import {
   convertOpenAIError,
@@ -1170,7 +1172,8 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
         !('responses' in client) ||
         typeof (client as { responses?: { create?: unknown } }).responses?.create !== 'function'
       ) {
-        throw new Error(
+        throw new Error2(
+          ProtocolErrors.codes.PROVIDER_API_ERROR,
           'OpenAI SDK version does not support Responses API. Upgrade to >=4.x with responses support.',
         );
       }

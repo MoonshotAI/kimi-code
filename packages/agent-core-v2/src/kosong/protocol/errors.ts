@@ -2,11 +2,16 @@
  * `kosong/protocol` domain — wire API failure codes and the boundary
  * translation from raw contract errors to coded `Error2`s.
  *
- * `translateProviderError` converts the L0 `API*Error` family into coded
- * errors callers can branch on across the wire. Its FIRST guard is the
- * contract's `throwIfAbortError`: a user cancellation is thrown as the
- * standard abort DOMException and can never be misclassified as a retryable
- * provider failure. The guard throws rather than returns, by design.
+ * The `ChatProviderError` family is born-coded (see `kosong/contract/errors`):
+ * every instance already carries its wire code, so `translateProviderError`'s
+ * `isError2` guard passes it through untouched. What remains here is the
+ * abort guard and the fallback for errors foreign to the family (plain
+ * `Error` / unknown thrown values → `internal`).
+ *
+ * `translateProviderError`'s FIRST guard is the contract's
+ * `throwIfAbortError`: a user cancellation is thrown as the standard abort
+ * DOMException and can never be misclassified as a retryable provider
+ * failure. The guard throws rather than returns, by design.
  *
  * Side-effect module: importing registers the error domain.
  */
@@ -14,26 +19,27 @@
 import { CoreErrors, registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 import { Error2, isError2 } from '#/_base/errors/errors';
 import {
-  APIConnectionError,
-  APIContextOverflowError,
-  APIEmptyResponseError,
-  APIProviderOverloadedError,
-  APIProviderQuotaExhaustedError,
-  APIStatusError,
-  APITimeoutError,
-  ChatProviderError,
+  CONTEXT_OVERFLOW_ERROR_CODE,
+  PROVIDER_API_ERROR_CODE,
+  PROVIDER_AUTH_ERROR_CODE,
+  PROVIDER_CONNECTION_ERROR_CODE,
+  PROVIDER_FILTERED_ERROR_CODE,
+  PROVIDER_OVERLOADED_ERROR_CODE,
+  PROVIDER_RATE_LIMIT_ERROR_CODE,
   throwIfAbortError,
 } from '#/kosong/contract/errors';
 
+export { sanitizeStatusErrorMessage } from '#/kosong/contract/errors';
+
 export const ProtocolErrors = {
   codes: {
-    PROVIDER_API_ERROR: 'provider.api_error',
-    PROVIDER_FILTERED: 'provider.filtered',
-    PROVIDER_RATE_LIMIT: 'provider.rate_limit',
-    PROVIDER_AUTH_ERROR: 'provider.auth_error',
-    PROVIDER_CONNECTION_ERROR: 'provider.connection_error',
-    PROVIDER_OVERLOADED: 'provider.overloaded',
-    CONTEXT_OVERFLOW: 'context.overflow',
+    PROVIDER_API_ERROR: PROVIDER_API_ERROR_CODE,
+    PROVIDER_FILTERED: PROVIDER_FILTERED_ERROR_CODE,
+    PROVIDER_RATE_LIMIT: PROVIDER_RATE_LIMIT_ERROR_CODE,
+    PROVIDER_AUTH_ERROR: PROVIDER_AUTH_ERROR_CODE,
+    PROVIDER_CONNECTION_ERROR: PROVIDER_CONNECTION_ERROR_CODE,
+    PROVIDER_OVERLOADED: PROVIDER_OVERLOADED_ERROR_CODE,
+    CONTEXT_OVERFLOW: CONTEXT_OVERFLOW_ERROR_CODE,
   },
   retryable: [
     'provider.rate_limit',
@@ -82,55 +88,6 @@ export function translateProviderError(error: unknown): Error2 {
   if (isError2(error)) {
     return error;
   }
-  if (error instanceof APIStatusError) {
-    const code =
-      error instanceof APIContextOverflowError
-        ? ProtocolErrors.codes.CONTEXT_OVERFLOW
-        : error instanceof APIProviderOverloadedError || error.statusCode === 529
-          ? ProtocolErrors.codes.PROVIDER_OVERLOADED
-          : error instanceof APIProviderQuotaExhaustedError
-            ? ProtocolErrors.codes.PROVIDER_API_ERROR
-            : error.statusCode === 429
-              ? ProtocolErrors.codes.PROVIDER_RATE_LIMIT
-              : error.statusCode === 401 || error.statusCode === 403
-                ? ProtocolErrors.codes.PROVIDER_AUTH_ERROR
-                : ProtocolErrors.codes.PROVIDER_API_ERROR;
-    return new Error2(code, sanitizeStatusErrorMessage(error.message), {
-      name: error.name,
-      cause: error,
-      details: {
-        statusCode: error.statusCode,
-        requestId: error.requestId,
-        traceId: error.traceId,
-      },
-    });
-  }
-  if (error instanceof APIConnectionError || error instanceof APITimeoutError) {
-    return new Error2(ProtocolErrors.codes.PROVIDER_CONNECTION_ERROR, error.message, {
-      name: error.name,
-      cause: error,
-    });
-  }
-  if (error instanceof APIEmptyResponseError) {
-    const code =
-      error.finishReason === 'filtered'
-        ? ProtocolErrors.codes.PROVIDER_FILTERED
-        : ProtocolErrors.codes.PROVIDER_API_ERROR;
-    return new Error2(code, error.message, {
-      name: error.name,
-      cause: error,
-      details: {
-        finishReason: error.finishReason,
-        rawFinishReason: error.rawFinishReason,
-      },
-    });
-  }
-  if (error instanceof ChatProviderError) {
-    return new Error2(ProtocolErrors.codes.PROVIDER_API_ERROR, error.message, {
-      name: error.name,
-      cause: error,
-    });
-  }
   if (error instanceof Error) {
     return new Error2(CoreErrors.codes.INTERNAL, error.message, {
       name: error.name,
@@ -138,11 +95,4 @@ export function translateProviderError(error: unknown): Error2 {
     });
   }
   return new Error2(CoreErrors.codes.INTERNAL, String(error), { cause: error });
-}
-
-export function sanitizeStatusErrorMessage(message: string): string {
-  const titleMatch = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(message);
-  const extracted = titleMatch?.[1]?.trim();
-  const normalized = extracted !== undefined && extracted.length > 0 ? extracted : message;
-  return normalized.replaceAll('\r', '');
 }

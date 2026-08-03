@@ -3,21 +3,22 @@
  */
 
 import { SyncDescriptor } from './descriptors';
-import { CyclicDependencyError } from './errors';
+import { CascadeEngine, CascadeTree, type CascadeChange, type CascadeHost } from './cascadeEngine';
+import { DependencyGraph } from './dependencyGraph';
+import { CascadeConflictError, CyclicDependencyError } from './errors';
 import { Graph } from './graph';
 import {
   IInstantiationService as IInstantiationServiceDecorator,
   _util,
   type IInstantiationService,
+  type ProvideHandle,
+  type ProvideOptions,
   type ServiceIdentifier,
   type ServicesAccessor,
 } from './instantiation';
-import {
-  dispose,
-  isDisposable,
-  type DisposableStore,
-  type IDisposable,
-} from './lifecycle';
+import { isDisposable, type DisposableStore } from './lifecycle';
+import { onUnexpectedError } from '../errors/unexpectedError';
+import { Ledger, type LedgerEntry } from '../lifecycle/ledger';
 import { ServiceCollection } from './serviceCollection';
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -113,8 +114,29 @@ export class InstantiationService implements IInstantiationService {
 
   protected readonly _parent?: InstantiationService;
 
+  protected readonly _ledger = new Ledger('InstantiationService');
+
+  /** Tree-global persistent dependency graph (shared by the whole scope tree). */
+  get dependencyGraph(): DependencyGraph {
+    return this._tree.graph;
+  }
+
+  private readonly _tree: CascadeTree;
+
+  /** Cascade engine (L2): one per container; tree-wide orchestrated transactions. */
+  readonly cascade: CascadeEngine;
+
+  private _parentLedgerEntry: LedgerEntry | undefined;
+
+  /** Materialized instance → its ledger entry (for individual retirement). */
+  private readonly _instanceEntries = new Map<unknown, LedgerEntry>();
+
+  /** Token → the ledger entry of its latest provide (generation-guarded). */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  protected readonly _constructionOrder: any[] = [];
+  private readonly _provideEntries = new Map<ServiceIdentifier<any>, LedgerEntry>();
+
+  /** Set while the cascade engine itself resolves — bypasses the in-flight guard. */
+  private _cascadeResolving = false;
 
   protected readonly _children = new Set<InstantiationService>();
 
@@ -123,9 +145,6 @@ export class InstantiationService implements IInstantiationService {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private readonly _activeInstantiations = new Set<ServiceIdentifier<any>>();
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private readonly _servicesToMaybeDispose = new Set<any>();
 
   private _disposed = false;
 
@@ -138,6 +157,65 @@ export class InstantiationService implements IInstantiationService {
     this._parent = parent;
     this._globalGraph = _enableTracing ? parent?._globalGraph ?? new Graph(e => e) : undefined;
     this._services.set(IInstantiationServiceDecorator, this);
+    this._tree = parent?._tree ?? new CascadeTree(new DependencyGraph());
+    const host: CascadeHost = {
+      isRegistered: (token) => this._getServiceInstanceOrDescriptor(token) !== undefined,
+      ownerScopeOf: (token) => this._ownerOf(token),
+      isMaterialized: (token) => {
+        const value = this._services.get(token);
+        return value !== undefined && !(value instanceof SyncDescriptor);
+      },
+      materialize: (token) => {
+        this._cascadeResolving = true;
+        try {
+          return this._getOrCreateServiceInstance(
+            token,
+            Trace.traceCreation(false, CascadeEngine),
+          );
+        } finally {
+          this._cascadeResolving = false;
+        }
+      },
+      retire: (token) => this._retireUnit(token),
+      applyProvide: (token, descriptor, pinned) => {
+        this._services.set(token, descriptor, { pinned });
+        return this._services.uidOf(token)!;
+      },
+      applyProvideInstance: (token, instance, pinned) => {
+        this._services.set(token, instance, { pinned });
+        return this._services.uidOf(token)!;
+      },
+      applyUnprovide: (token) => {
+        this._services.delete(token);
+      },
+      recipeOf: (token) => {
+        const entry = this._services.entry(token);
+        if (entry === undefined) return undefined;
+        return entry.value instanceof SyncDescriptor ? entry.value : entry.recipe;
+      },
+      dependenciesOf: (recipe) =>
+        _util.getServiceDependencies(recipe.ctor).map((dependency) => dependency.id),
+    };
+    this.cascade = new CascadeEngine(host, this, this._tree);
+  }
+
+  /** Structural handle for the cascade engine's scoped tokens. */
+  get cascadeDisposed(): boolean {
+    return this._disposed;
+  }
+
+  /** Distance from the tree root (root = 0). */
+  get cascadeDepth(): number {
+    return (this._parent?.cascadeDepth ?? -1) + 1;
+  }
+
+  /** The container owning a token in this container's resolution chain. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private _ownerOf(id: ServiceIdentifier<any>): InstantiationService | undefined {
+    if (this._services.has(id)) {
+      return this;
+    }
+    return this._parent?._ownerOf(id);
   }
 
   invokeFunction<R, TS extends any[] = []>(
@@ -167,6 +245,125 @@ export class InstantiationService implements IInstantiationService {
       done = true;
       _trace.stop();
     }
+  }
+
+  provide<T>(
+    id: ServiceIdentifier<T>,
+    instanceOrDescriptor: T | SyncDescriptor<T>,
+    options?: ProvideOptions,
+  ): ProvideHandle {
+    this._assertNotDisposed();
+    this._releaseProvideEntry(id);
+
+    if (
+      !(instanceOrDescriptor instanceof SyncDescriptor) &&
+      this._services.get(id) === instanceOrDescriptor
+    ) {
+      // Re-affirming the very instance already materialized under this token:
+      // refresh the registration, no retirement, no cascade.
+      this._services.set(id, instanceOrDescriptor, { pinned: options?.pinned });
+      const uid = this._services.uidOf(id)!;
+      const entry = this._ledger.register(() => {
+        if (this._services.uidOf(id) === uid) {
+          this.unprovide(id);
+        }
+      }, `provide:${String(id)}`);
+      this._provideEntries.set(id, entry);
+      return {
+        uid,
+        dispose: () => {
+          void entry.dispose();
+        },
+      };
+    }
+
+    // Everything else — a recipe or a replacing instance — is one cascade
+    // transaction, so live dependents are torn down and rebuilt (D1/D4).
+    const beforeUid = this._services.uidOf(id);
+    let appliedUid: number | undefined;
+    const noteApplied = (): void => {
+      const uid = this._services.uidOf(id);
+      if (uid !== undefined && uid !== beforeUid) {
+        appliedUid = uid;
+      }
+    };
+    const change: CascadeChange =
+      instanceOrDescriptor instanceof SyncDescriptor
+        ? {
+            action: 'provide',
+            token: id,
+            descriptor: instanceOrDescriptor,
+            pinned: options?.pinned,
+            activation: options?.activation,
+            reason: `provide ${String(id)}`,
+          }
+        : {
+            action: 'provide',
+            token: id,
+            instance: instanceOrDescriptor,
+            pinned: options?.pinned,
+            reason: `provide ${String(id)}`,
+          };
+    noteApplied();
+    this.cascade.submit(change).then(noteApplied, onUnexpectedError);
+    noteApplied(); // the sync fast path has already applied the change
+    const entry = this._ledger.register(() => {
+      // Generation guard: only unprovide the generation this entry provided.
+      if (appliedUid !== undefined && this._services.uidOf(id) === appliedUid) {
+        this.unprovide(id);
+      }
+    }, `provide:${String(id)}`);
+    this._provideEntries.set(id, entry);
+    return {
+      get uid(): number {
+        if (appliedUid === undefined) {
+          throw new Error(
+            `provide of '${String(id)}' has not been applied yet (cascade in flight)`,
+          );
+        }
+        return appliedUid;
+      },
+      dispose: () => {
+        void entry.dispose();
+      },
+    };
+  }
+
+  unprovide<T>(id: ServiceIdentifier<T>): void {
+    if (this._disposed) {
+      return;
+    }
+    this._releaseProvideEntry(id);
+    if (this._services.get(id) === undefined) {
+      return;
+    }
+    this.cascade
+      .submit({ action: 'unprovide', token: id, reason: `unprovide ${String(id)}` })
+      .catch(onUnexpectedError);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private _releaseProvideEntry(id: ServiceIdentifier<any>): void {
+    const entry = this._provideEntries.get(id);
+    if (entry !== undefined) {
+      this._provideEntries.delete(id);
+      entry.release();
+    }
+  }
+
+  /** Retire the live instance of a token and reset its entry to the recipe. */
+  private _retireUnit<T>(id: ServiceIdentifier<T>): void | Promise<void> {
+    const instance = this._services.get(id);
+    if (instance === undefined || instance instanceof SyncDescriptor) {
+      return undefined;
+    }
+    this._services.unmaterialize(id);
+    const entry = this._instanceEntries.get(instance);
+    if (entry === undefined) {
+      return undefined;
+    }
+    this._instanceEntries.delete(instance);
+    return entry.dispose();
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -204,10 +401,17 @@ export class InstantiationService implements IInstantiationService {
         'createChild requires a ServiceCollection instance (got something else)',
       );
     }
-    const child = new InstantiationService(services, this._strict, this, this._enableTracing);
+    const child = this._createChildService(services);
     this._children.add(child);
+    child._parentLedgerEntry = this._ledger.register(() => {
+      child.dispose();
+    }, 'child-instantiation');
     store?.add(child);
     return child;
+  }
+
+  protected _createChildService(services: ServiceCollection): InstantiationService {
+    return new InstantiationService(services, this._strict, this, this._enableTracing);
   }
 
   dispose(): void {
@@ -216,30 +420,21 @@ export class InstantiationService implements IInstantiationService {
     }
     this._disposed = true;
 
-    const childSnapshot = Array.from(this._children);
-    this._children.clear();
-
-    const ownInstances: IDisposable[] = [];
-    for (let i = this._constructionOrder.length - 1; i >= 0; i--) {
-      const instance = this._constructionOrder[i]!;
-      if (isDisposable(instance)) {
-        ownInstances.push(instance);
-        this._servicesToMaybeDispose.delete(instance);
-      }
-    }
-
-    const remainingInstances: IDisposable[] = [];
-    for (const candidate of this._servicesToMaybeDispose) {
-      if (isDisposable(candidate)) {
-        remainingInstances.push(candidate);
-      }
-    }
-
     try {
-      dispose([...childSnapshot, ...ownInstances, ...remainingInstances]);
+      // Children first (forward creation order): their services may depend on
+      // this container's instances, so they must die before them. Each child
+      // releases its ledger entry, so the ledger teardown below skips them.
+      for (const child of Array.from(this._children)) {
+        child.dispose();
+      }
+      this._children.clear();
+      void this._ledger.teardown('scope-close');
+      this._services.dispose();
+      this.cascade.dispose();
     } finally {
-      this._constructionOrder.length = 0;
-      this._servicesToMaybeDispose.clear();
+      this._children.clear();
+      this._parentLedgerEntry?.release();
+      this._parentLedgerEntry = undefined;
       if (this._parent) {
         this._parent._children.delete(this);
       }
@@ -281,6 +476,21 @@ export class InstantiationService implements IInstantiationService {
   }
 
   protected _getOrCreateServiceInstance<T>(id: ServiceIdentifier<T>, _trace: Trace): T {
+    if (!this._cascadeResolving) {
+      if (this.cascade.isInFlight(id)) {
+        // The sync resolution path cannot suspend; the async path
+        // (cascade.resolveWhenAvailable) waits for the transaction instead.
+        throw new CascadeConflictError(
+          String(id),
+          'token is inside an in-flight cascade transaction',
+        );
+      }
+      const failure = this.cascade.unitFailure(id);
+      if (failure !== undefined) {
+        // D5: Failed is sticky — resolving a failed unit rethrows its error.
+        throw failure as Error;
+      }
+    }
     const entry = this._getServiceInstanceOrDescriptor(id);
 
     if (entry instanceof SyncDescriptor) {
@@ -397,13 +607,7 @@ export class InstantiationService implements IInstantiationService {
     _trace: Trace,
   ): T {
     if (this._services.get(id) instanceof SyncDescriptor) {
-      return this._createServiceInstance(
-        id,
-        ctor,
-        args,
-        _trace,
-        this._servicesToMaybeDispose,
-      );
+      return this._createServiceInstance(id, ctor, args, _trace);
     }
     if (this._parent) {
       return this._parent._createServiceInstanceWithOwner(
@@ -422,15 +626,39 @@ export class InstantiationService implements IInstantiationService {
     ctor: any,
     args: ReadonlyArray<unknown> = [],
     _trace: Trace,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    disposeBucket: Set<any>,
   ): T {
     const root = this._root();
     root._inProgress.push(id);
     try {
       const result = this._createInstance<T>(ctor, args.slice(), _trace);
-      disposeBucket.add(result);
-      this._constructionOrder.push(result);
+      // Persistent tree-global graph: record the instance and its
+      // constructor-injection (instance) edges, both ends scope-tagged; the
+      // ledger entry removes them again at teardown. Edges point child →
+      // parent (a dependency's owner is always this container or an ancestor).
+      this.dependencyGraph.addInstance(result as object, this, id);
+      for (const dependency of _util.getServiceDependencies(ctor)) {
+        const owner = this._ownerOf(dependency.id);
+        if (owner !== undefined) {
+          this.dependencyGraph.addEdge(
+            result as object,
+            { scope: owner, token: dependency.id },
+            'instance',
+          );
+        }
+      }
+      const entry = this._ledger.register(() => {
+        this._instanceEntries.delete(result);
+        this.dependencyGraph.removeInstance(result as object);
+        if (isDisposable(result)) {
+          // Propagate a (runtime) async disposer so cascade teardown can
+          // await it serially; statically `dispose()` is typed void.
+          const out = result.dispose() as unknown as void | Promise<void>;
+          return out;
+        }
+        return undefined;
+      }, `service:${String(id)}`);
+      this._instanceEntries.set(result, entry);
+      this.cascade.observedMaterialization(id);
       return result;
     } finally {
       const popIdx = root._inProgress.lastIndexOf(id);
@@ -442,7 +670,9 @@ export class InstantiationService implements IInstantiationService {
 
   private _setCreatedServiceInstance<T>(id: ServiceIdentifier<T>, instance: T): void {
     if (this._services.get(id) instanceof SyncDescriptor) {
-      this._services.set(id, instance);
+      // Keeps the recipe on the entry so a cascade teardown can unmaterialize
+      // back to it (and rebuild later).
+      this._services.materialize(id, instance);
     } else if (this._parent) {
       this._parent._setCreatedServiceInstance(id, instance);
     } else {
