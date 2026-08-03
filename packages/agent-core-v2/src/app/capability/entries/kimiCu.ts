@@ -1,11 +1,10 @@
 /**
  * `kimi-cu` capability entry (macOS only).
  *
- * Layers: the official `kimi-cu` plugin (stdio MCP wrapper + skill, bundled
- * inside the client release — see `../bundledPlugins.ts`) + KimiCU.app
- * (`/Applications`, launchd background service) + TCC permissions
- * (accessibility + screen recording — the user must grant these; they can
- * never be set programmatically).
+ * Layers: the official `kimi-cu` plugin (stdio MCP wrapper + skill) +
+ * KimiCU.app (`/Applications`, launchd background service) + TCC
+ * permissions (accessibility + screen recording — the user must grant
+ * these; they can never be set programmatically).
  *
  * The install replicates the official `setup_macos.sh` step-for-step
  * (stop old processes → ditto into /Applications → register service →
@@ -18,7 +17,6 @@ import { mkdtemp, readFile, rm, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { requireBundledPluginDir } from '../bundledPlugins';
 import { downloadToFile, runCommand } from '../host';
 import type {
   CapabilityDetectResult,
@@ -30,6 +28,7 @@ import type {
 import type { CapabilityEntryContext } from './context';
 
 const PLUGIN_ID = 'kimi-cu';
+const PLUGIN_ZIP_URL = 'https://cdn.kimi.com/kimi-computer-use/latest/kimi-cu-plugin.zip';
 const APP_ZIP_URL = 'https://cdn.kimi.com/kimi-computer-use/latest/KimiCU.app.zip';
 const APP_BUNDLE = 'KimiCU.app';
 const LAUNCHD_LABEL = 'ai.kimi.cu.service';
@@ -190,9 +189,7 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     }
 
     report('plugin');
-    await ctx.plugins.installPlugin({
-      source: requireBundledPluginDir(PLUGIN_ID, ctx.bundledPluginsRoot),
-    });
+    await ctx.plugins.installPlugin({ source: PLUGIN_ZIP_URL });
 
     const workDir = await mkdtemp(path.join(tmpdir(), 'kimi-cu-install-'));
     try {

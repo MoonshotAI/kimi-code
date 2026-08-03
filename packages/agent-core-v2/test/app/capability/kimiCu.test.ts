@@ -205,33 +205,4 @@ describe('kimi-cu entry', () => {
     await expect(entry.install(() => {})).rejects.toThrow(/only supported on macOS/);
     expect(plugins.installs).toEqual([]);
   });
-
-  it('installs the wiring plugin from the client-bundled copy', async () => {
-    const bundledRoot = path.join(root, 'bundled');
-    await mkdir(path.join(bundledRoot, 'kimi-cu'), { recursive: true });
-    await writeFile(path.join(bundledRoot, 'kimi-cu', 'kimi.plugin.json'), '{}');
-    const plugins = fakePlugins([]);
-    // Fail the app download: the wiring install (the step under test) has
-    // already happened by then.
-    const fetchImpl = (() => Promise.reject(new Error('offline'))) as unknown as typeof fetch;
-    const entry = createKimiCuEntry(
-      makeCtx({ plugins: plugins.service, fetchImpl, bundledPluginsRoot: bundledRoot }),
-    );
-
-    await expect(entry.install(() => {})).rejects.toThrow(/offline/);
-    expect(plugins.installs).toEqual([path.join(bundledRoot, 'kimi-cu')]);
-  });
-
-  it('fails the wiring step with a clear error when the bundled plugin is missing', async () => {
-    const plugins = fakePlugins([]);
-    const entry = createKimiCuEntry(
-      makeCtx({
-        plugins: plugins.service,
-        bundledPluginsRoot: path.join(root, 'no-such-bundle'),
-      }),
-    );
-
-    await expect(entry.install(() => {})).rejects.toThrow(/bundled "kimi-cu" plugin is missing/);
-    expect(plugins.installs).toEqual([]);
-  });
 });

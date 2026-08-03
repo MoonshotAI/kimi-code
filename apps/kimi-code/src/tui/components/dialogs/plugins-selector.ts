@@ -7,7 +7,7 @@ import {
   visibleWidth,
   type Focusable,
 } from '@moonshot-ai/pi-tui';
-import type { CapabilityStatus, PluginInfo, PluginMcpServerInfo, PluginSummary } from '@moonshot-ai/kimi-code-sdk';
+import type { PluginInfo, PluginMcpServerInfo, PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 import chalk from 'chalk';
 
 import { SELECT_POINTER } from '#/tui/constant/symbols';
@@ -30,10 +30,9 @@ const ELLIPSIS = '…';
 
 // Hardcoded Web Bridge promotion: a built-in fallback shown only while the
 // marketplace catalog is loading, unreachable, or predates the real
-// `kimi-webbridge` entry — and only on engines without the capability surface
-// (v1). On v2 the Built-in section carries the real installable entry, which
-// wins over this promo; selecting the promo opens the install page in the
-// browser, while a catalog entry would install normally.
+// `kimi-webbridge` entry. Selecting it opens the install page in the browser;
+// once the catalog carries the real entry, that row wins and installs
+// normally.
 const WEB_BRIDGE_URL = 'https://www.kimi.com/features/webbridge#local-agent';
 const WEB_BRIDGE_ENTRY: PluginMarketplaceEntry = {
   id: 'kimi-webbridge',
@@ -338,12 +337,6 @@ export interface PluginsPanelOptions {
   readonly initialTab?: PluginsPanelTabId;
   readonly selectedId?: string;
   readonly pluginHint?: { readonly id: string; readonly text: string };
-  /**
-   * Built-in capabilities (kimi-cu / kimi-webbridge) rendered as the
-   * Official tab's Built-in section; empty on v1 engines (no capability
-   * surface), where the section hides and the WebBridge promo fallback stays.
-   */
-  readonly capabilities?: readonly CapabilityStatus[];
   readonly onSelect: (selection: PluginsPanelSelection) => void;
   readonly onCancel: () => void;
   /** Called the first time the Official or Third-party tab needs its catalog.
@@ -433,23 +426,11 @@ export class PluginsPanelComponent extends Container implements Focusable {
     return new Map(this.opts.installed.map((plugin) => [plugin.id, plugin.version]));
   }
 
-  private get builtInCapabilities(): readonly CapabilityStatus[] {
-    // Unsupported entries hide entirely (e.g. kimi-cu off macOS): there is no
-    // install path on this platform, so a disabled row would be noise.
-    return (this.opts.capabilities ?? []).filter((capability) => capability.supported);
-  }
-
-  private get hasBuiltInWebBridge(): boolean {
-    return this.builtInCapabilities.some((capability) => capability.id === WEB_BRIDGE_ENTRY.id);
-  }
-
   private get officialEntries(): readonly PluginMarketplaceEntry[] {
-    // A real installable entry wins over the hardcoded promo row: either the
-    // catalog's own webbridge entry or — on v2 engines — the Built-in
-    // section's capability row. The promo remains only as the v1 /
-    // pre-catalog fallback, never a duplicate row.
-    return this.officialCatalogEntries.some((entry) => entry.id === WEB_BRIDGE_ENTRY.id) ||
-      this.hasBuiltInWebBridge
+    // The real catalog entry wins when present (it installs the actual
+    // plugin); the hardcoded promo row is only a fallback while the catalog
+    // is loading, unreachable, or predates it — never a duplicate row.
+    return this.officialCatalogEntries.some((entry) => entry.id === WEB_BRIDGE_ENTRY.id)
       ? this.officialCatalogEntries
       : [WEB_BRIDGE_ENTRY, ...this.officialCatalogEntries];
   }
@@ -555,29 +536,19 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   private handleMarketplaceInput(data: string): void {
-    // The Official tab's selectable rows are the Built-in capability section
-    // followed by the catalog entries, sharing one index space.
-    const builtInCount = this.activeTab.id === 'official' ? this.builtInCapabilities.length : 0;
     const entries = this.activeTab.id === 'official' ? this.officialEntries : this.thirdPartyEntries;
-    const total = builtInCount + entries.length;
     if (matchesKey(data, Key.up)) {
       this.selectedIndex = Math.max(0, this.selectedIndex - 1);
       return;
     }
     if (matchesKey(data, Key.down)) {
-      // Clamp to 0 while nothing is selectable (catalog still loading and no
-      // built-ins); otherwise `total - 1` is -1 and a later Enter reads [-1].
-      this.selectedIndex = total === 0 ? 0 : Math.min(total - 1, this.selectedIndex + 1);
+      // Clamp to 0 while the catalog is still loading (entries empty); otherwise
+      // `entries.length - 1` is -1 and a later Enter reads `entries[-1]`.
+      this.selectedIndex = entries.length === 0 ? 0 : Math.min(entries.length - 1, this.selectedIndex + 1);
       return;
     }
     if (matchesKey(data, Key.enter)) {
-      if (this.selectedIndex < builtInCount) {
-        const capability = this.builtInCapabilities[this.selectedIndex];
-        if (capability === undefined) return;
-        this.opts.onSelect({ kind: 'install', entry: capabilityMarketplaceEntry(capability) });
-        return;
-      }
-      const entry = entries[this.selectedIndex - builtInCount];
+      const entry = entries[this.selectedIndex];
       if (entry === undefined) return;
       if (isPinnedWebBridgeEntry(entry)) {
         this.opts.onSelect({ kind: 'open-url', url: WEB_BRIDGE_URL, label: entry.displayName });
@@ -724,52 +695,15 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   private renderOfficial(lines: string[], width: number): void {
-    const colors = currentTheme.palette;
-    const builtIns = this.builtInCapabilities;
-    const promoIndex = builtIns.length;
-    if (builtIns.length > 0) {
-      lines.push(sectionLabel('Built-in', colors));
-      for (let i = 0; i < builtIns.length; i++) {
-        lines.push(...this.renderCapabilityRow(builtIns[i]!, i, width));
-      }
-      lines.push('');
-      lines.push(sectionLabel('Official plugins', colors));
-    }
     // Loading / error: catalog rows can't render yet — show only the pinned
-    // promo as the fallback (and not when the Built-in section already
-    // carries the real webbridge entry). Once loaded, `officialEntries`
-    // includes the promo only when neither catalog nor built-ins do.
+    // promo as the fallback. Once loaded, `officialEntries` already includes
+    // the promo only when the catalog lacks the real entry.
     if (this.market.status !== 'loaded') {
-      if (!this.hasBuiltInWebBridge) {
-        lines.push(...this.renderMarketplaceRow(WEB_BRIDGE_ENTRY, promoIndex, width));
-      }
-      this.renderMarketplaceTab(lines, width, [], promoIndex + (this.hasBuiltInWebBridge ? 0 : 1));
+      lines.push(...this.renderMarketplaceRow(WEB_BRIDGE_ENTRY, 0, width));
+      this.renderMarketplaceTab(lines, width, [], 1);
       return;
     }
-    this.renderMarketplaceTab(
-      lines,
-      width,
-      this.officialEntries,
-      builtIns.length,
-      this.officialCatalogEntries,
-    );
-  }
-
-  private renderCapabilityRow(capability: CapabilityStatus, index: number, width: number): string[] {
-    const colors = currentTheme.palette;
-    const selected = index === this.selectedIndex;
-    const pointer = selected ? SELECT_POINTER : ' ';
-    const labelStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
-    const prefix = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `);
-    const status = capabilityRowStatus(capability);
-    const line =
-      prefix + labelStyle(capability.displayName) + '  ' + capabilityStatusStyle(status, colors)(status);
-    const descWidth = Math.max(1, width - 4);
-    const out = [line];
-    for (const descLine of wrapOverviewDescription(capabilityRowDescription(capability), descWidth)) {
-      out.push(mutedHintLine(`    ${descLine}`, colors));
-    }
-    return out;
+    this.renderMarketplaceTab(lines, width, this.officialEntries, 0, this.officialCatalogEntries);
   }
 
   private renderThirdParty(lines: string[], width: number): void {
@@ -865,50 +799,6 @@ function marketplaceTierLabel(tier: PluginMarketplaceEntry['tier']): string {
   if (tier === 'official') return 'Official plugin';
   if (tier === 'curated') return 'Curated plugin';
   return 'Plugin';
-}
-
-/**
- * Adapt a built-in capability to the panel's `install` selection. Only
- * `id`/`displayName` are consumed downstream: the capability branch of the
- * selection handler routes by id into the capability install flow, never
- * touching `source`.
- */
-function capabilityMarketplaceEntry(capability: CapabilityStatus): PluginMarketplaceEntry {
-  return {
-    id: capability.id,
-    displayName: capability.displayName,
-    source: `capability:${capability.id}`,
-    tier: 'official',
-    description: capability.description,
-  };
-}
-
-function capabilityRowStatus(capability: CapabilityStatus): string {
-  if (capability.install.running) return 'installing…';
-  switch (capability.state) {
-    case 'ready':
-      return capability.version === undefined ? 'ready' : `ready · v${capability.version}`;
-    case 'partial':
-      return 'finish setup';
-    case 'not_installed':
-      return 'install';
-    case 'unsupported':
-      // Unsupported rows are filtered out of the Built-in section; this is
-      // only the type-exhaustive fallback.
-      return 'install';
-  }
-}
-
-function capabilityStatusStyle(status: string, colors: ColorPalette): (text: string) => string {
-  // Same visual grammar as the marketplace rows: a settled state recedes
-  // (dim), an available action stays primary, an incomplete setup warns.
-  if (status.startsWith('ready')) return chalk.hex(colors.textDim);
-  if (status === 'finish setup') return chalk.hex(colors.warning);
-  return chalk.hex(colors.primary);
-}
-
-function capabilityRowDescription(capability: CapabilityStatus): string {
-  return `${capability.description} · id ${capability.id} · built-in`;
 }
 
 function installStatus(entry: PluginMarketplaceEntry): string {

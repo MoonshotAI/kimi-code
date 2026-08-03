@@ -207,10 +207,6 @@ describe('kimi-webbridge entry', () => {
     await writeFile(path.join(kimiHome, 'skills', 'kimi-webbridge', 'SKILL.md'), 'old');
     await mkdir(path.join(userHome, '.agents', 'skills', 'kimi-webbridge'), { recursive: true });
     await writeFile(path.join(userHome, '.agents', 'skills', 'kimi-webbridge', 'SKILL.md'), 'old');
-    // The bundled wiring plugin shipped inside the client.
-    const bundledRoot = path.join(root, 'bundled');
-    await mkdir(path.join(bundledRoot, 'kimi-webbridge'), { recursive: true });
-    await writeFile(path.join(bundledRoot, 'kimi-webbridge', 'kimi.plugin.json'), '{}');
 
     const plugins = fakePlugins([]);
     const host = fakeHostProcess();
@@ -220,12 +216,7 @@ describe('kimi-webbridge entry', () => {
     });
     const reports: Array<[string, number | undefined]> = [];
     const entry = createKimiWebbridgeEntry(
-      makeCtx({
-        plugins: plugins.service,
-        hostProcess: host.service,
-        fetchImpl,
-        bundledPluginsRoot: bundledRoot,
-      }),
+      makeCtx({ plugins: plugins.service, hostProcess: host.service, fetchImpl }),
     );
 
     const note = await entry.install((step, percent) => reports.push([step, percent]));
@@ -238,8 +229,10 @@ describe('kimi-webbridge entry', () => {
     await access(binPath);
     // Daemon started exactly once (start-if-down).
     expect(host.calls.map((c) => `${c.command} ${c.args.join(' ')}`)).toEqual([`${binPath} start`]);
-    // Plugin wiring installed from the client-bundled copy (local path).
-    expect(plugins.installs).toEqual([path.join(bundledRoot, 'kimi-webbridge')]);
+    // Plugin wiring installed from the official CDN zip.
+    expect(plugins.installs).toEqual([
+      'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip',
+    ]);
     // User-source shadows removed from BOTH user dirs.
     await expect(access(path.join(kimiHome, 'skills', 'kimi-webbridge'))).rejects.toThrow();
     await expect(access(path.join(userHome, '.agents', 'skills', 'kimi-webbridge'))).rejects.toThrow();
@@ -247,23 +240,6 @@ describe('kimi-webbridge entry', () => {
     expect(reports[0]).toEqual(['download', 0]);
     expect(reports.some(([step]) => step === 'daemon')).toBe(true);
     expect(reports.some(([step]) => step === 'skill')).toBe(true);
-  });
-
-  it('fails the wiring step with a clear error when the bundled plugin is missing', async () => {
-    const plugins = fakePlugins([]);
-    const { fetchImpl } = fakeFetch({
-      statusSequence: [{ running: true, version: '3.1.1', extension_connected: true }],
-    });
-    const entry = createKimiWebbridgeEntry(
-      makeCtx({
-        plugins: plugins.service,
-        fetchImpl,
-        bundledPluginsRoot: path.join(root, 'no-such-bundle'),
-      }),
-    );
-
-    await expect(entry.install(() => {})).rejects.toThrow(/bundled "kimi-webbridge" plugin is missing/);
-    expect(plugins.installs).toEqual([]);
   });
 
   it('never starts the daemon when one is already running (coexistence)', async () => {
