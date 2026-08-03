@@ -309,7 +309,7 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 
 ### 阶段 E — SDK/ACP/OAuth/Config
 1. 🔶 `kimi-sdk`：**`Harness`（内嵌/Remote + 事件流 + 审批面，3 集成测试）与 `Session`（生命周期全 + goal 系列 + transcript/run_prompt）已落地**；`kimi doctor` 已改经 SDK；klient 并入
-2. 🔶 `kimi-acp`：**stdio 适配器已落地 + `kimi acp` 命令**（initialize 协商 + session/new/load/**resume**/list/delete/prompt + notification 语义，4 测试）；ACP 兼容测试继续
+2. 🔶 `kimi-acp`：**stdio 适配器已落地 + `kimi acp` 命令**（initialize 协商 + session/new/load/resume/list/delete/prompt/**get_config/set_config_option** + notification 语义，5 测试）；ACP 兼容测试继续；session/update 通知推送留待联网
 3. `kimi-oauth`：流程状态机——**离线调研结论**：node-sdk `auth.ts` 完全基于 `kimi-code-oauth`（device flow / auth server 交互），PKCE 已在 kimi-shared（Rust）；真实流程需联网验证，离线可先做状态机骨架 + fixture 测试
 4. `kimi-config`：TOML/env/diagnostics——**离线调研结论**：`catalog.ts` 从 `https://models.dev/api.json` 网络拉取；离线可做类型/接口骨架 + 缓存 fixture 测试，拉取需联网
 5. **验证**：SDK 测试平移（425 用例）；ACP 兼容测试；node-sdk/klient 转薄壳 re-export
