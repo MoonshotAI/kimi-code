@@ -560,10 +560,6 @@ describe('createMcpTool', () => {
 
 describe('structuredContent forwarding', () => {
   test('forwards structuredContent the content blocks only summarize', async () => {
-    // Regression: tools with an outputSchema often return a lossy summary in
-    // `content` ("returned 6 item(s)") plus the real payload in
-    // `structuredContent` — the model must see the payload, not just the
-    // summary.
     const out = await mcpResultToExecutableOutput(
       {
         content: [{ type: 'text', text: 'list_projects returned 2 item(s).' }],
@@ -581,8 +577,6 @@ describe('structuredContent forwarding', () => {
   });
 
   test('does not double-forward structuredContent already serialized into a text block', async () => {
-    // Spec-conforming fallbacks serialize the structured payload verbatim
-    // into a text block; appending it again would double the token cost.
     const structuredContent = { total: 2, items: ['a', 'b'] };
     for (const text of [
       JSON.stringify(structuredContent),

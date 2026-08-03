@@ -1,5 +1,9 @@
 /**
  * `mcpCore` domain — shared MCP client helpers — request options, liveness probes, result conversion.
+ *
+ * Result conversion passes a JSON-object `structuredContent` through to the
+ * model untouched; anything else a non-conforming server sends under that key
+ * is dropped here.
  */
 
 import { getCoreVersion } from '#/_base/version';
@@ -84,9 +88,9 @@ export function toMcpToolResult(result: unknown): MCPToolResult {
       return {
         content: typed.content as MCPToolResult['content'],
         isError: typed.isError === true,
-        ...(isStructuredContent(typed.structuredContent)
-          ? { structuredContent: typed.structuredContent }
-          : {}),
+        structuredContent: isStructuredContent(typed.structuredContent)
+          ? typed.structuredContent
+          : undefined,
       };
     }
   }
@@ -105,10 +109,6 @@ export function toMcpToolResult(result: unknown): MCPToolResult {
   return { content: [], isError: false };
 }
 
-/**
- * Per the MCP spec `structuredContent` is a JSON object; ignore anything else
- * a non-conforming server might send under that key.
- */
 function isStructuredContent(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

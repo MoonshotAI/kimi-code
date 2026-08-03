@@ -23,7 +23,7 @@ describe('toMcpToolResult', () => {
       content: [{ type: 'text', text: 'ok' }],
       isError: false,
     });
-    expect(result).not.toHaveProperty('structuredContent');
+    expect(result.structuredContent).toBeUndefined();
   });
 
   test('ignores a non-object structuredContent from a non-conforming server', () => {
@@ -32,6 +32,6 @@ describe('toMcpToolResult', () => {
       structuredContent: 'not-an-object',
     });
 
-    expect(result).not.toHaveProperty('structuredContent');
+    expect(result.structuredContent).toBeUndefined();
   });
 });

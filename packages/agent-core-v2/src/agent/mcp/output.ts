@@ -7,9 +7,15 @@
  *     (dropping unsupported shapes).
  *  2. Wrap media-only outputs in `<mcp_tool_result name="…">` tags so the
  *     model can attribute binary output when several tools return media.
- *  2b. Append `structuredContent` (when present and not already serialized
- *     into a text block) as a JSON text part — `content` blocks are only
- *     the human-oriented summary and can omit the actual data.
+ *  2b. Append `structuredContent` (when present) as a compact JSON text part,
+ *     so the machine-readable payload reaches the model — `content` blocks
+ *     are only the human-oriented summary and can omit the actual data. The
+ *     append happens after the media-only wrap so an image + structured-
+ *     payload result keeps its attribution tags, and the JSON counts against
+ *     the text budget like any tool text. Servers that follow the spec's
+ *     fallback guidance already serialize the payload verbatim into a text
+ *     block; exact duplicates (compact or pretty-printed) are skipped so
+ *     they are not forwarded twice.
  *  3. Apply the 100K text/think character budget to the tool's own text.
  *     This runs BEFORE captions exist, so a chatty tool (page text + a
  *     screenshot) can never evict or slice the compression caption — that
@@ -149,9 +155,6 @@ export async function mcpResultToExecutableOutput(
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
-  // `structuredContent` is appended AFTER the media-only wrap so an image +
-  // structured-payload result still gets its attribution tags; the appended
-  // JSON text then counts against the text budget like any tool text.
   const structured = structuredContentTextPart(result, converted);
   if (structured !== null) {
     wrapped.push(structured);
@@ -297,16 +300,6 @@ function collapseSingleText(parts: readonly ContentPart[]): string | ContentPart
   return [...parts];
 }
 
-/**
- * Serialize `structuredContent` into a text part so the machine-readable
- * payload reaches the model — `content` blocks are only the human-oriented
- * summary and can drop everything that matters ("returned 6 item(s)").
- *
- * Servers that follow the spec's fallback guidance already serialize the
- * structured payload verbatim into a text block; forwarding it again would
- * double the token cost, so exact duplicates (compact or pretty-printed)
- * are skipped.
- */
 function structuredContentTextPart(
   result: MCPToolResult,
   converted: readonly ContentPart[],

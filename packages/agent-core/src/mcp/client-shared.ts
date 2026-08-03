@@ -73,9 +73,9 @@ export function toMcpToolResult(result: unknown): MCPToolResult {
       return {
         content: typed.content as MCPToolResult['content'],
         isError: typed.isError === true,
-        ...(isStructuredContent(typed.structuredContent)
-          ? { structuredContent: typed.structuredContent }
-          : {}),
+        structuredContent: isStructuredContent(typed.structuredContent)
+          ? typed.structuredContent
+          : undefined,
       };
     }
   }
