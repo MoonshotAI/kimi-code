@@ -188,4 +188,77 @@ impl Session {
         }
         Ok(body["result"].clone())
     }
+
+    /// Toggle plan mode on the session.
+    pub async fn set_plan_mode(&mut self, enabled: bool) -> anyhow::Result<()> {
+        self.mode_toggle(kimi_protocol::methods::SESSION_SET_PLAN_MODE, enabled).await
+    }
+
+    /// Toggle swarm mode on the session.
+    pub async fn set_swarm_mode(&mut self, enabled: bool) -> anyhow::Result<()> {
+        self.mode_toggle(kimi_protocol::methods::SESSION_SET_SWARM_MODE, enabled).await
+    }
+
+    /// Set the thinking effort (`low` / `medium` / `high`, or `None` to clear).
+    pub async fn set_thinking(&mut self, effort: Option<&str>) -> anyhow::Result<()> {
+        let mut params = serde_json::json!({ "session_id": self.id });
+        if let Some(effort) = effort {
+            params["effort"] = serde_json::json!(effort);
+        }
+        let body = self.client.lock().await.call(kimi_protocol::methods::SESSION_SET_THINKING, params).await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("set thinking: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(())
+    }
+
+    /// Undo the last turn; returns the undo result body.
+    pub async fn undo_history(&mut self) -> anyhow::Result<serde_json::Value> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                kimi_protocol::methods::SESSION_UNDO_HISTORY,
+                serde_json::json!({ "session_id": self.id }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("undo history: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"].clone())
+    }
+
+    /// Steer the running turn with extra content parts.
+    pub async fn steer(&mut self, parts: serde_json::Value) -> anyhow::Result<bool> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                kimi_protocol::methods::SESSION_STEER,
+                serde_json::json!({ "session_id": self.id, "input": parts }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("steer: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"]["queued"].as_bool().unwrap_or(false))
+    }
+
+    async fn mode_toggle(&mut self, method: &str, enabled: bool) -> anyhow::Result<()> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                method,
+                serde_json::json!({ "session_id": self.id, "enabled": enabled }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("mode toggle: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(())
+    }
 }
