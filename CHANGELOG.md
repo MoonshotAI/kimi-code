@@ -2,6 +2,33 @@
 
 本文档记录 kimi-code 项目的全局更改历史。各子包独立 CHANGELOG 见对应目录。
 
+## 2026-08-03
+
+### chore: 同步官方 main 至 98ef0f0b — rebase 无冲突
+
+将 `rebuild-from-fork` 分支 rebase 到官方 `MoonshotAI/kimi-code` 的 `main` 最新 tip `98ef0f0b`（原基点 `e22479a6`）。官方本次新增 8 个 commit（DI 容器 / lifecycle ledger / cascade engine / Error2 域错误 / kap-server v1 消息历史接管 / 配置 deprecation 机制 / `/login` 已登录提示 / profile.bind replay 修复），涉及 `packages/agent-core-v2/**`、`packages/kap-server/src/{start.ts,routes/sessions.ts,protocol/**,services/**}` 等大量重构。
+
+| 阶段 | 操作 | 结果 |
+|---|---|---|
+| 备份 | `git branch backup/pre-sync-20260803` | rebase 前历史完整保留 |
+| 拉取 | `git fetch official main --depth=50` | `e22479a6..98ef0f0b` 8 个 commit |
+| Rebase | `git rebase official/main` | **无冲突自动完成**（接缝区改动位置不重叠） |
+| Typecheck | `pnpm --filter @moonshot-ai/{kimi-web,kap-server,agent-core-v2,agent-core,kimi-code} run typecheck` | 全部 exit 0 |
+| Style | `pnpm --filter @moonshot-ai/kimi-web run check:style` | exit 0（baseline 29 finding，无新增） |
+
+接缝文件官方本次改动均未触发冲突：
+- `packages/kap-server/src/routes/sessions.ts` — 官方重构 v1 消息广播，二开新增 `exec` / `git-branches` / `git-checkout` session actions，位置不重叠
+- `packages/kap-server/src/start.ts` — 官方调整服务初始化流程，二开仅改 `disableAuth` 默认值
+- `packages/agent-core-v2/src/index.ts` — 官方新增 DI / lifecycle 导出，二开仅追加 `IGitService` 导出
+
+| 文档 | 改动 |
+|---|---|
+| `二开版本同步官方提交指南.md` | 基点更新为 `98ef0f0b`；§1.2 状态快照、§1.3 commit 清单（rebase 后新 hash）、§3.2 / FAQ 中的基点引用同步刷新 |
+
+> **推送方式**：`git push origin rebuild-from-fork --force-with-lease`（rebase 改写了 15 个二开 commit 的 hash）。
+
+---
+
 ## 2026-08-02
 
 ### chore: 清理前端 OAuth 遗留死代码 — 移除设备码登录/轮询/取消全链路
