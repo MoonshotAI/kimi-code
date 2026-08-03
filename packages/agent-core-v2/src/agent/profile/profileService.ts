@@ -7,8 +7,9 @@
  * (`resolveRequestParams`: cache key / sampling / thinking effort+keep —
  * wire encoding is each dialect's own hook), persists the profile binding
  * (`cwd` / `modelAlias` / `profileName` / resolved base `thinkingLevel` /
- * `systemPrompt` / `activeToolNames` / profile `disallowedTools` / profile
- * `subagents`) in the `wire` `ProfileModel` through the `profile.bind` Op
+ * `systemPrompt` / injected AGENTS.md paths / `activeToolNames` / profile
+ * `disallowedTools` / profile `subagents`) in the `wire` `ProfileModel` through
+ * the `profile.bind` Op
  * (later slice updates ride the `config.update` Op) and the persisted
  * active-tool set in the `wire` `ActiveToolsModel` through the
  * `tools.set_active_tools` / `tools.reset_active_tools` Ops (`wire.dispatch`),
@@ -57,7 +58,10 @@
  * (`IAgentStateService`) and read/written through it; `optionsValue` (holds
  * the `cwd` / `emitStatusUpdated` callbacks) and `activeProfile`
  * (a `ResolvedAgentProfile` carrying the `systemPrompt` function) stay plain
- * fields because the container only holds pure data structures. Bound at
+ * fields because the container only holds pure data structures. After every
+ * successful bind / apply / refresh (never before the new prompt commits,
+ * so a failed build cannot poison the set), the injected AGENTS.md paths are
+ * seeded into `agentsMdReminder`'s known-set with the effective cwd. Bound at
  * Agent scope.
  */
 
@@ -101,13 +105,18 @@ import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionT
 import { IPluginService } from '#/app/plugin/plugin';
 import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { IWireService } from '#/wire/wire';
 import type { PayloadOf } from '#/wire/types';
 import { IEventBus } from '#/app/event/eventBus';
-import { prepareSystemPromptContext, type LoadedAgentsMd } from './context';
+import {
+  extractAgentsMdPathsFromSystemPrompt,
+  prepareSystemPromptContext,
+  type LoadedAgentsMd,
+} from './context';
 import type {
   ApplyProfileOptions,
   BindAgentInput,
@@ -220,6 +229,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IBuiltinAgentProfileLoader private readonly builtinProfiles: IBuiltinAgentProfileLoader,
     @IAgentStateService private readonly states: IAgentStateService,
     @IPluginService private readonly plugins: IPluginService,
+    @IAgentAgentsMdReminderService private readonly agentsMdReminder: IAgentAgentsMdReminderService,
   ) {
     super();
     this.states.register(profileActiveToolNamesOverlayKey);
@@ -309,12 +319,15 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   applyBindingSnapshot(snapshot: ProfileBindingSnapshot): void {
     this.activeProfile = undefined;
     this.activeToolNamesOverlay = undefined;
+    const agentsMdPaths =
+      snapshot.agentsMdPaths ?? extractAgentsMdPathsFromSystemPrompt(snapshot.systemPrompt);
     this.wire.dispatch(
       profileBind({
         modelAlias: snapshot.modelAlias,
         profileName: snapshot.profileName,
         thinkingEffort: snapshot.thinkingLevel,
         systemPrompt: snapshot.systemPrompt,
+        agentsMdPaths,
         activeToolNames: snapshot.activeToolNames,
         disallowedTools: snapshot.disallowedTools ?? [],
         subagents: snapshot.subagents,
@@ -325,8 +338,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       profileName: snapshot.profileName,
       thinkingLevel: snapshot.thinkingLevel,
       systemPrompt: snapshot.systemPrompt,
+      agentsMdPaths,
       disallowedTools: snapshot.disallowedTools ?? [],
     });
+    this.agentsMdReminder.seedInjected(agentsMdPaths, this.sessionContext.cwd);
   }
 
   async bind(input: BindAgentInput): Promise<void> {
@@ -376,6 +391,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       profileName: profile.name,
       thinkingEffort: thinkingLevel,
       systemPrompt,
+      agentsMdPaths: context.agentsMdPaths ?? [],
       activeToolNames: profile.tools,
       disallowedTools: profile.disallowedTools ?? [],
       subagents: profile.subagents,
@@ -387,6 +403,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       systemPrompt,
       disallowedTools: profile.disallowedTools ?? [],
     });
+    this.seedAgentsMdReminder(context);
 
     this.publishAgentsMdWarning();
     this.publishToolPatternWarnings(profile);
@@ -446,6 +463,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.update({
       profileName: profile.name,
       systemPrompt: profile.systemPrompt(context),
+      agentsMdPaths: context.agentsMdPaths ?? [],
       disallowedTools: profile.disallowedTools ?? [],
     });
     this.setActiveTools(profile.tools);
@@ -454,6 +472,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   async applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void> {
     const context = await this.buildSystemPromptContext(profile, options);
     this.useProfile(profile, context);
+    this.seedAgentsMdReminder(context);
     this.cacheAgentsMdWarning(context);
     this.publishAgentsMdWarning();
     this.publishToolPatternWarnings(profile);
@@ -478,9 +497,18 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.update({
       profileName: profile.name,
       systemPrompt: profile.systemPrompt(context),
+      agentsMdPaths: context.agentsMdPaths ?? [],
     });
+    this.seedAgentsMdReminder(context);
     this.cacheAgentsMdWarning(context);
     this.publishAgentsMdWarning();
+  }
+
+  private seedAgentsMdReminder(context: SystemPromptContext): void {
+    this.agentsMdReminder.seedInjected(
+      context.agentsMdPaths ?? [],
+      context.cwd ?? this.sessionContext.cwd,
+    );
   }
 
   getAgentsMdWarning(): string | undefined {
@@ -495,6 +523,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       profileName: this.profileName,
       thinkingLevel: this.thinkingLevel,
       systemPrompt: this.systemPrompt,
+      agentsMdPaths: this.profileState.agentsMdPaths,
       activeToolNames: this.activeToolNames === undefined ? undefined : [...this.activeToolNames],
       disallowedTools: [...(this.profileState.disallowedTools ?? [])],
       subagents:
@@ -598,6 +627,9 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       payload.thinkingEffort = this.resolveThinkingEffort(requested, model);
     }
     if (changed.systemPrompt !== undefined) payload.systemPrompt = changed.systemPrompt;
+    if (changed.agentsMdPaths !== undefined) {
+      payload.agentsMdPaths = [...changed.agentsMdPaths];
+    }
     if (changed.disallowedTools !== undefined) {
       payload.disallowedTools = [...changed.disallowedTools];
     }
@@ -879,6 +911,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     return {
       content: this.instructions.agentsMd ?? '',
       warning: this.instructions.agentsMdWarning,
+      paths: this.instructions.agentsMdPaths ?? [],
     };
   }
 

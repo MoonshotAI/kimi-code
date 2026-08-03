@@ -23,7 +23,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 67 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 70 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -57,6 +57,9 @@
 //     activityView.lastTurn                           src/agent/activityView/activityViewService.ts
 //     activityView.lifecycle                          src/agent/activityView/activityViewService.ts
 //     activityView.turn                               src/agent/activityView/activityViewService.ts
+//     agentsMdReminder.cwd                            src/agent/agentsMdReminder/agentsMdReminderService.ts
+//     agentsMdReminder.known                          src/agent/agentsMdReminder/agentsMdReminderService.ts
+//     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     contextInjector.isNewTurn                       src/agent/contextInjector/contextInjectorService.ts
 //     contextProjector.lastRepairSignature            src/agent/contextProjector/contextProjectorService.ts
 //     contextSize.lastEmittedTokens                   src/agent/contextSize/contextSizeService.ts
@@ -135,6 +138,7 @@ export interface WorkspaceStateSnapshot {
   'workspaceInstructions.current': /* WorkspaceInstructionsSnapshot — packages/agent-core-v2/src/workspace/workspaceInstructions/workspaceInstructions.ts */ {
     readonly agentsMd: string | undefined;
     readonly agentsMdWarning: string | undefined;
+    readonly agentsMdPaths: readonly string[] | undefined;
   };
   // src/workspace/workspaceSkillCatalog/workspaceSkillCatalogService.ts
   'workspaceSkillCatalog.contributions': Map<string, {
@@ -969,6 +973,10 @@ export interface AgentStateSnapshot {
       readonly since: number;
     };
   } | undefined;
+  // src/agent/agentsMdReminder/agentsMdReminderService.ts
+  'agentsMdReminder.cwd': string | undefined;
+  'agentsMdReminder.known': Set<string>;
+  'agentsMdReminder.seeded': boolean;
   // src/agent/contextInjector/contextInjectorService.ts
   'contextInjector.isNewTurn': boolean;
   // src/agent/contextProjector/contextProjectorService.ts

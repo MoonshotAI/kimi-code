@@ -82,6 +82,7 @@ interface ConfigUpdatePayload {
   /** ThinkingEffort */
   thinkingLevel?: 'off' | 'on' | (string & {});
   systemPrompt?: string;
+  agentsMdPaths?: string[];
   disallowedTools?: string[];
 }
 
@@ -460,6 +461,7 @@ interface ProfileBindPayload {
   /** ThinkingEffort */
   thinkingEffort: 'off' | 'on' | (string & {});
   systemPrompt: string;
+  agentsMdPaths?: string[];
   activeToolNames?: string[];
   disallowedTools: string[];
   subagents?: string[];
