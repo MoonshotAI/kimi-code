@@ -152,6 +152,8 @@ kimi
 | `KIMI_CODE_NO_AUTO_UPDATE` | 完全禁用更新预检——不检查、不后台安装、不提示。同时兼容旧名 `KIMI_CLI_NO_AUTO_UPDATE` | 真值：`1`/`true`/`yes`/`on` |
 | `KIMI_DISABLE_CRON` | 禁用定时任务工具（`CronCreate` 拒绝新计划，已有任务不触发） | `1` 表示禁用 |
 
+`KIMI_CODE_IDENTITY_*` 和 `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` 这三个变量由 `agent-core-v2` 引擎读取，目前 `kimi web` 和开启 `KIMI_CODE_EXPERIMENTAL_FLAG` 的路径使用该引擎；默认的 `kimi` / `kimi -p` 引擎会忽略它们。
+
 ## 诊断日志
 
 这组变量控制日志级别和文件滚动，进程启动时读取一次：
