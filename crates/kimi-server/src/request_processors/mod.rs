@@ -3,6 +3,7 @@
 
 pub mod approval;
 pub mod config;
+pub mod cron;
 pub mod fs;
 pub mod git;
 pub mod health;
@@ -12,6 +13,7 @@ pub mod session;
 
 pub use approval::ApprovalProcessor;
 pub use config::ConfigProcessor;
+pub use cron::CronProcessor;
 pub use fs::FsProcessor;
 pub use git::GitProcessor;
 pub use health::HealthProcessor;
