@@ -94,16 +94,23 @@ export async function downloadToFile(
   options: { idleTimeoutMs?: number } = {},
 ): Promise<number> {
   const idleTimeoutMs = options.idleTimeoutMs ?? DOWNLOAD_IDLE_TIMEOUT_MS;
+  const headerController = new AbortController();
+  const headerTimer = setTimeout(() => {
+    headerController.abort();
+  }, idleTimeoutMs);
+  headerTimer.unref?.();
   let resp;
   try {
-    resp = await fetchImpl(url, { signal: AbortSignal.timeout(idleTimeoutMs) });
+    resp = await fetchImpl(url, { signal: headerController.signal });
   } catch (error) {
-    if (error instanceof Error && error.name === 'TimeoutError') {
+    if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
       throw new Error(`Failed to download ${url}: no response within ${idleTimeoutMs}ms`, {
         cause: error,
       });
     }
     throw error;
+  } finally {
+    clearTimeout(headerTimer);
   }
   if (!resp.ok || resp.body === null) {
     throw new Error(`Failed to download ${url}: HTTP ${resp.status}`);

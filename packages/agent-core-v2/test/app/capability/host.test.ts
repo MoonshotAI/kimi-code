@@ -111,7 +111,7 @@ describe('capability host downloadToFile', () => {
     const hangingFetch = ((_url: string, init?: { signal?: AbortSignal }) =>
       new Promise((_resolve, reject) => {
         init?.signal?.addEventListener('abort', () => {
-          reject(new DOMException('The operation timed out.', 'TimeoutError'));
+          reject(new DOMException('This operation was aborted.', 'AbortError'));
         });
       })) as never;
 
@@ -132,9 +132,10 @@ describe('capability host downloadToFile', () => {
       async start(controller) {
         for (const chunk of chunks) {
           controller.enqueue(new TextEncoder().encode(chunk));
-          // Gaps below the idle budget must not trip the watchdog.
+          // Per-chunk gaps stay under the budget, but the total stream time
+          // exceeds it — the header deadline must not abort a flowing body.
           await new Promise((resolve) => {
-            setTimeout(resolve, 2);
+            setTimeout(resolve, 30);
           });
         }
         controller.close();
