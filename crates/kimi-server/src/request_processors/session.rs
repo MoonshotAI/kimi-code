@@ -17,6 +17,8 @@ pub struct SessionProcessor {
     cancel: Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
     /// Per-session steer queues.
     steer: Arc<std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::Mutex<Vec<kimi_agent::context::types::ContentPart>>>>>>,
+    /// Per-session busy flags (prompt marks; fork/compact check).
+    busy: Arc<std::sync::Mutex<std::collections::HashMap<String, bool>>>,
 }
 
 impl SessionProcessor {
@@ -31,6 +33,7 @@ impl SessionProcessor {
             state,
             cancel: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             steer: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            busy: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -201,6 +204,61 @@ impl Processor for SessionProcessor {
                     }
                 }
                 Ok(serde_json::json!({ "session_id": id }))
+            })
+        });
+
+        // `session/prompt` — run a turn on the session agent.
+        let mgr = self.state.manager.clone();
+        let busy = self.busy.clone();
+        processor.register(kimi_protocol::methods::SESSION_PROMPT, move |params| {
+            let mgr = mgr.clone();
+            let busy = busy.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionPromptParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let parts: Vec<kimi_agent::context::types::ContentPart> =
+                    serde_json::from_value(input.input).map_err(|e| {
+                        JsonRpcError::internal_error(format!("Invalid input parts: {e}"))
+                    })?;
+                let mut manager = mgr.lock().await;
+                // Side-question routing: an `agent_id` of the form `btw-<sid>`
+                // drives the session's side agent instead of the main agent.
+                let agent = match input.agent_id.as_deref() {
+                    Some(id) if id.starts_with("btw-") => {
+                        manager.get_btw_agent(&input.session_id).ok_or_else(|| {
+                            JsonRpcError::internal_error(format!(
+                                "no side agent for session: {}",
+                                input.session_id
+                            ))
+                        })?
+                    }
+                    _ => manager.get_agent(&input.session_id).ok_or_else(|| {
+                        JsonRpcError::internal_error(format!(
+                            "no agent for session: {}",
+                            input.session_id
+                        ))
+                    })?,
+                };
+                // Mark the session busy so fork/compact can reject it
+                // immediately instead of blocking for the whole turn.
+                {
+                    let mut busy = busy.lock().unwrap_or_else(|e| e.into_inner());
+                    busy.insert(input.session_id.clone(), true);
+                }
+                let result = agent.run_prompt(parts).await.map_err(|e| {
+                    JsonRpcError::internal_error(format!("run_prompt failed: {e}"))
+                });
+                {
+                    let mut busy = busy.lock().unwrap_or_else(|e| e.into_inner());
+                    busy.remove(&input.session_id);
+                }
+                let result = result?;
+                Ok(serde_json::json!({
+                    "stop_reason": format!("{:?}", result.stop_reason),
+                    "steps": result.steps,
+                    "usage": result.usage,
+                }))
             })
         });
 
@@ -497,4 +555,25 @@ mod create_tests {
         );
     }
 
+
+
+    #[tokio::test]
+    async fn prompt_missing_session_yields_engine_error() {
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = SessionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/prompt".into(),
+                params: serde_json::json!({
+                    "session_id": "nope",
+                    "input": [ { "type": "text", "text": "hi" } ],
+                }),
+            })
+            .await;
+        assert_eq!(body["error"]["message"], "no agent for session: nope");
+    }
 }
