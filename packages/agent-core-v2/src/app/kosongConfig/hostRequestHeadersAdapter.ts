@@ -8,9 +8,9 @@
  * at App scope.
  *
  * The headers are a constructor snapshot (bootstrap args are frozen for the
- * process) while the identity slug is read lazily on each access: config loads
- * asynchronously, so a snapshot taken here would freeze the pre-load value and
- * silently drop a configured identity.
+ * process); the rewrite token comes from `agentIdentity` and is read lazily on
+ * each access, because config loads asynchronously and a snapshot taken here
+ * would freeze the pre-load value and silently drop a configured identity.
  */
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';

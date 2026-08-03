@@ -11,8 +11,9 @@
  * configured identity — a race that only shows up under particular startup
  * orderings and is near-impossible to reproduce.
  *
- * Blank and whitespace-only values read as unset on both sides, matching what
- * the env bindings already do: without that a stray `name = ""` in the file
+ * Blank and whitespace-only values read as unset from every source — config,
+ * env, and the host's declared name alike, matching what the env bindings
+ * already do: without that a stray `name = ""` in the file
  * would claim an identity, rendering an empty display name into the prompt and
  * falling through slug normalization to the neutral token — silently changing
  * the outbound User-Agent. The slug follows the explicit `slug` when set and
@@ -41,7 +42,7 @@ export class AgentIdentityService implements IAgentIdentity {
   ) {}
 
   get displayName(): string | undefined {
-    return declared(this.section().name) ?? this.bootstrap.args.displayName;
+    return declared(this.section().name) ?? declared(this.bootstrap.args.displayName);
   }
 
   get slug(): string | undefined {

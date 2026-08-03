@@ -137,6 +137,16 @@ describe('AgentIdentityService', () => {
     },
   );
 
+  // The host half of the same rule: a padded or blank `displayName` from an
+  // embedding host must read as unset too, or the prompt renders "You are   ,".
+  it.each(['', '   '])('treats a blank host display name as unset: %j', (hostName) => {
+    expect(resolve(undefined, hostName).displayName).toBeUndefined();
+  });
+
+  it('trims a padded host display name', () => {
+    expect(resolve(undefined, '  Embedding Host  ').displayName).toBe('Embedding Host');
+  });
+
   it('trims a padded name and slug', () => {
     const identity = resolve({ name: '  Acme Dev  ' });
     expect(identity.displayName).toBe('Acme Dev');
