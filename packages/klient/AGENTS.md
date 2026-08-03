@@ -19,29 +19,29 @@ The package is layered; keep the layers strict when changing code:
   fails here first. `maybe()`/`noResult()` in `src/contract/helpers.ts` encode
   the HTTP wire's `null`-vs-`undefined` semantics — use them for every
   `X | undefined` / `void` result.
-- **Transports** (`src/transports/{ipc,memory}`) — each implements the
-  `KlientChannel` SPI (`src/core/channel.ts`) and nothing else. ipc frames
-  the same dispatcher traffic as NDJSON over a unix socket and shares the
-  in-process dispatcher with memory; memory JSON round-trips every value so
-  both transports return byte-identical data.
+- **Transports** (`src/transports/rust`) — the single transport. It builds a
+  `KlientChannel` (`src/core/channel.ts`) over the rust-loop stdio bridge and
+  assembles host-side services (config / flags / auth / fs / workspaces /
+  plugins / catalog) locally; engine-backed services resolve to rust-loop
+  RPCs.
 
-The facade only covers services that behave identically on both transports
-(the in-process dispatcher mirrors the server's scope resolution, including
-`main`-agent materialization via `ensureMainAgent`). onWill/hook-style
-interception is not wire-exposable
-(engine hooks are in-process `OrderedHookSlot`s); file upload and the
-terminal surface are v1-only and live in the legacy suites.
+The facade only covers the surface the rust engine exposes over RPC (engine
+scope resolution mirrors the session/agent lifecycle). onWill/hook-style
+interception is not wire-exposable (engine hooks are in-process
+`OrderedHookSlot`s); file upload and the terminal surface are v1-only and
+live in the legacy suites.
 
 ## Testing
 
-- One shared conformance suite (`test/helpers/conformance.ts`) runs unchanged
-  against every transport — one test file per transport under `test/`. Add
-  new **global** facade coverage there, not per-transport.
+- Conformance coverage for the facade lives in `test/contract.test.ts` /
+  `test/facade.test.ts` (mocked channel) and the per-surface
+  `test/rust-*.test.ts` suites against the real rust transport. Add new
+  **global** facade coverage there, not ad hoc.
 - `test/e2e/legacy/` + `test/e2e/harness/` — the legacy `/api/v1` live
   suites (moved from server-e2e). They skip unless `KIMI_SERVER_URL` points
   at a running server and **must keep running unchanged**; the v1 surface
-  has no in-memory equivalent, so these stay live-server-only — do not try
-  to run them against the in-process transports.
+  has no stdio equivalent, so these stay live-server-only — do not try to
+  run them against the rust transport.
 - The retired `scenarios/` scripts were rewritten as suites: image-upload
   and terminal (v1-only surfaces) live in `test/e2e/legacy/`.
 
@@ -65,15 +65,5 @@ terminal surface are v1-only and live in the legacy suites.
 - `pnpm --filter @moonshot-ai/klient docker:e2e` — docker e2e; the run
   derives its runner name/namespace from the current workspace to avoid
   cross-workspace conflicts.
-- `pnpm --filter @moonshot-ai/klient typecheck` / `pnpm smoke` (in-process
-  smoke over the memory transport; see `examples/smoke.ts`).
-- `pnpm --filter @moonshot-ai/klient smoke:boundary` — ModelRequester boundary
-  probe: pings every model configured in the real `~/.kimi-code/config.toml`
-  through the in-process engine, then drives deterministic failure modes
-  against a local stub to show which errors the ChatProvider layer wraps and
-  which the requester owns (see `examples/model-requester-boundary.ts`).
-- `pnpm --filter @moonshot-ai/klient smoke:select-tools` — select_tools
-  (progressive tool disclosure) probe for kimi-type providers: stub-verifies
-  the kimi-only wire encoding of dynamic tool declarations, then runs a live
-  two-step select→use flow per real kimi model (see
-  `examples/kimi-select-tools.ts`).
+- `pnpm --filter @moonshot-ai/klient typecheck` / `pnpm smoke` (rust-engine
+  smoke over stdio; see `examples/smoke.ts`).

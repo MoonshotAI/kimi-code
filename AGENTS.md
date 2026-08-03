@@ -11,7 +11,7 @@ This is a TypeScript monorepo built for agent-assisted development. This file is
 - **Author**: Moonshot AI
 - **License**: MIT
 - **Homepage**: https://github.com/MoonshotAI/kimi-code
-- **Version**: `@moonshot-ai/kimi-code` 0.29.1 (the main CLI app)
+- **Version**: `@moonshot-ai/kimi-code` 0.30.0 (the main CLI app)
 
 > **Note**: This repository is a personal experimental fork of MoonshotAI/kimi-code. Not affiliated with Moonshot AI. Use at your own risk — do not submit PRs from this fork to upstream.
 
@@ -73,13 +73,13 @@ This is a TypeScript monorepo built for agent-assisted development. This file is
 
 - **Engine functionality (session loop, tools, context, goal, plan, approval, permission, MCP, skill, records, compaction …) → Rust only**, in `packages/kimi-agent/src/`, `packages/kimi-native-tools/src/`, or `packages/kimi-shared/src/`. Follow the module map in `packages/kimi-agent/GAP_ANALYSIS.md`. Add `cargo test` coverage and keep `cargo test -p kimi-agent` green (0 warnings).
 - **RPC/wire types are generated**: change the Rust type in `src/rpc/types.rs`, then run `pnpm gen:wire` and commit the generated `src/rpc/wire.gen.ts`. Never hand-edit `wire.gen.ts`.
-- **Do NOT implement or modify engine behavior in TypeScript.** `packages/agent-core/` has been **physically moved to `retired/agent-core/`** (2026-08-03) — hosts no longer reference it. `packages/agent-core-v2/` remains **frozen** — the JS engine loop is retired and unreachable; it is kept only because `packages/klient` still consumes its v2 dispatcher and will move to `retired/` once the klient Rust transport (⑤) lands. Do not extend either package.
+- **Do NOT implement or modify engine behavior in TypeScript.** Both TS engine packages are **retired**: `packages/agent-core` moved to `retired/agent-core/` (2026-08-03) and `packages/agent-core-v2` to `retired/agent-core-v2/` (2026-08-03) once klient switched to the rust transport. Hosts no longer reference either; do not extend them or reintroduce imports.
 
 ### TS side is allowed only for the host layer (whitelist)
 
 | Scope | Files | Reason |
 |-------|-------|--------|
-| Rust bridge / adapter | `packages/kimi-agent/rust-loop.ts`, `apps/kimi-code/src/cli/rust-engine.ts`, `apps/kimi-code/src/cli/v2/rust-engine-v2.ts`, `apps/kimi-code/src/cli/native-session.ts` | glue host ↔ Rust RPC |
+| Rust bridge / adapter | `packages/kimi-agent/rust-loop.ts`, `apps/kimi-code/src/cli/rust-engine.ts`, `apps/kimi-code/src/cli/native-session.ts` | glue host ↔ Rust RPC |
 | Server host layer | `packages/kap-server/` (routes, `rustSessions.ts`, `RustSessionService`) | REST/WS projection over Rust RPC |
 | Generated files | `packages/kimi-agent/src/rpc/wire.gen.ts` | regenerated via `pnpm gen:wire`, never hand-edited |
 | CLI / TUI / Web / VS Code shells | `apps/*` UI + i18n | pure UI, no engine logic |
@@ -115,7 +115,6 @@ src/
     commands.ts       — CLI command definitions
     options.ts        — CLI option parsing
     sub/              — Subcommands (acp, doctor, export, login, provider, upgrade, vis, web)
-    v2/               — V2 command implementation
     update/           — Self-update mechanism
   tui/                — Terminal UI mode
     kimi-tui.ts       — TUI initialization and main loop
@@ -149,7 +148,7 @@ src/
 
 #### `apps/kimi-web` — Browser Web UI
 
-Peer to the TUI. Vue 3 + Vite + vue-i18n; talks to the server over REST + WebSocket under `/api/v1`. It must not depend on `@moonshot-ai/agent-core` (wire types are re-implemented locally). Debug against the two engines via the root `pnpm dev:v2` scripts. See `apps/kimi-web/AGENTS.md`.
+Peer to the TUI. Vue 3 + Vite + vue-i18n; talks to the server over REST + WebSocket under `/api/v1`. It must not depend on `@moonshot-ai/agent-core` (wire types are re-implemented locally). Debug against the Rust-backed kap-server via the root `pnpm dev:v2` script. See `apps/kimi-web/AGENTS.md`.
 
 #### `apps/vscode` — VS Code Extension
 
@@ -173,13 +172,11 @@ Debug visualization tool for kimi-code sessions. Composed of `vis/server` (backe
 
 ```
 packages/
-  agent-core/        — Unified agent engine (v1)
-  agent-core-v2/     — Agent engine v2 (DI × Scope architecture)
+  agent-core-v2/     — Agent engine v2 (DI × Scope architecture) — FROZEN (see below)
   kosong/            — LLM / provider abstraction layer
   kaos/              — Execution environment & file/process abstractions
-  klient/            — Client SDK (contract-driven facade over agent-core-v2)
-  kap-server/        — Kimi Code local server (REST + WebSocket)
-  server/            — Legacy local REST + WebSocket server
+  klient/            — Client SDK (Rust transport in progress; see below)
+  kap-server/        — Kimi Code local server (REST + WebSocket, Rust-backed)
   acp-adapter/       — Agent Client Protocol adapter (public package)
   node-sdk/          — Public TypeScript SDK (@moonshot-ai/kimi-code-sdk)
   protocol/          — Shared REST + WS protocol schemas (Zod types)
@@ -193,23 +190,23 @@ packages/
   pi-tui/            — Terminal UI framework (upstream dependency, node:test suite)
   kimi-native-tools/ — Rust native Node addon (napi-rs)
   kimi-build/        — Rust native build tool (SEA binary injection)
-  kimi-agent/        — Rust agent engine (experimental)
-  kosong/            — LLM provider abstraction
+  kimi-agent/        — Rust agent engine — the only engine
+  kimi-shared/       — Shared Rust single-source-of-truth crate (re-exported by kimi-native-tools / kimi-agent)
 ```
 
 #### Key Package Details
 
-**`agent-core`** (v0.15.6) — The unified agent engine. Includes Agent, Session, profile, skills, tools, plan, permission, background, records, the in-process DI service layer (`src/services/`), and other core capabilities. The `Agent` class must be usable on its own — the constructor must not force a `Session` instance. Key submodules: `agent/`, `config/`, `flags/`, `loop/`, `rpc/`, `session/`.
+**`agent-core`** — RETIRED (v1 engine). Physically moved to `retired/agent-core/` (2026-08-03). Hosts no longer reference it; do not extend. Superseded by `kimi-agent`.
 
-**`agent-core-v2`** (v0.2.0) — Next-gen agent engine with DI × Scope architecture. Service interfaces, DI containers, scope-bound session management. Consumed by `kap-server` and `klient`. Includes dependency graph analysis, domain layer linting, and contract type generation scripts.
+**`agent-core-v2`** (v0.2.0) — Next-gen agent engine with DI × Scope architecture. FROZEN: the JS engine loop is retired and unreachable; kept only because `klient` still consumes its v2 dispatcher (being replaced by the Rust transport). Do not extend. Includes dependency graph analysis, domain layer linting, and contract type generation scripts.
 
 **`kosong`** (v0.6.0) — The LLM / provider abstraction layer. Supports Anthropic, Google Gemini, and OpenAI-compatible providers. Uses `zod-to-json-schema` for tool schema conversion.
 
 **`kaos`** (v0.1.6) — Execution environment abstraction. File system operations, process management, SSH execution via `ssh2`. Used by the tool execution system.
 
-**`klient`** (v0.1.0) — Client SDK. A contract-driven facade over agent-core-v2 with aggregated `global.*` / `session(id).*` / `agent(id).*` methods, zod validation on every call, and transport abstraction (ipc or memory). Also hosts e2e suites.
+**`klient`** (v0.1.0) — Client SDK. A contract-driven facade with aggregated `global.*` / `session(id).*` / `agent(id).*` methods and zod validation on every call. The v2 dispatcher transport (ipc or memory) is being replaced by the Rust transport (⑤); once that lands, `agent-core-v2` moves to `retired/`.
 
-**`kap-server`** — The Kimi Code local server. Backed by DI × Scope agent engine. Exposes sessions over REST + WebSocket (`/api/v1` + `/api/v1/ws`). Debug surface at `/api/v1/debug/*`. Bootstrapped from `src/start.ts`.
+**`kap-server`** — The Kimi Code local server. Backed by the Rust engine (`rustSession` via `rust-loop` RPC; zero `agent-core-v2` imports). Exposes sessions over REST + WebSocket (`/api/v1` + `/api/v1/ws`). Debug surface at `/api/v1/debug/*`. Bootstrapped from `src/start.ts`.
 
 **`transcript`** (v0.0.1) — Isomorphic transcript rendering data layer. Pure TypeScript (browser-safe). Agent-granular L1 store, idempotent L2 operations, granularity-gated L3 subscriptions (`off/turn/block/delta`), framework-free L4 view registry. Owns all transcript contract types in `src/contract/`.
 
@@ -481,11 +478,8 @@ Two dependencies are deliberately removed: `ssh2@1.17.0>cpu-features` and `ssh2@
 
 ## Experimental Features
 
-- Gate a not-yet-public feature behind an experimental flag. Add the flag to the registry at `packages/agent-core/src/flags/registry.ts`, then check it with `flags.enabled('my-feature')`.
-- Flags are env-driven and default off:
-  - `KIMI_CODE_EXPERIMENTAL_<NAME>` toggles one
-  - `KIMI_CODE_EXPERIMENTAL_FLAG` enables all
-- Release by flipping the entry's `default` to `true`.
+- Engine features: gate a not-yet-public feature behind an experimental flag defined in Rust — `packages/kimi-agent/src/config/types.rs` (e.g. the `secondary-model` flag, default off; enforcement in `config/native_llm.rs::resolve_secondary_native_llm`). Add `cargo test` coverage for both gated states.
+- The legacy TS flag registry (`packages/agent-core/src/flags/registry.ts`) is retired together with `agent-core` — do not add flags there.
 
 ---
 
@@ -493,12 +487,12 @@ Two dependencies are deliberately removed: `ssh2@1.17.0>cpu-features` and `ssh2@
 
 | Type | Use for | Example |
 |------|---------|---------|
-| feat | A new feature | `feat(agent-core): add tool dedup` |
+| feat | A new feature | `feat(kimi-agent): add tool dedup` |
 | fix | A bug fix | `fix(tui): correct status bar alignment` |
 | docs | Documentation only | `docs: clarify install instructions` |
 | chore | Tooling / housekeeping | `chore: bump dependencies` |
 | refactor | Internal refactor without behavior change | `refactor(kosong): extract retry helper` |
-| test | Adding or improving tests | `test(agent-core): cover skill resolver` |
+| test | Adding or improving tests | `test(kimi-agent): cover skill resolver` |
 | ci | CI / build pipeline changes | `ci: cache pnpm store` |
 | build | Build system / artifact changes | `build(native): add win32-arm64 target` |
 | perf | Performance improvement | `perf(session): batch event flushes` |
@@ -516,7 +510,7 @@ PR titles are enforced by the `pr-title-checker` workflow.
 
 ## Working Principles
 
-- **Engine-first rule**: agent engine functionality is written in **Rust**, never TypeScript. If the feature belongs to the engine domain (session loop, tools, context, goal, plan, permission, approvals, …), modify `packages/kimi-agent` (or `kimi-native-tools` / `kimi-shared`) and add `cargo test` coverage — even if an equivalent TS implementation already exists in `agent-core` / `agent-core-v2` (those are retired and must not be extended). See "Engine Ownership" above.
+- **Engine-first rule**: agent engine functionality is written in **Rust**, never TypeScript. If the feature belongs to the engine domain (session loop, tools, context, goal, plan, permission, approvals, …), modify `packages/kimi-agent` (or `kimi-native-tools` / `kimi-shared`) and add `cargo test` coverage — even if an equivalent TS implementation already exists in `agent-core` / `agent-core-v2` (those are retired / frozen and must not be extended). See "Engine Ownership" above.
 - Think from first principles. Start from real requirements, code facts, and verification results; if the goal is unclear, discuss it with the user first.
 - Treat code, not documentation, as the source of truth. Unless the user explicitly says otherwise, do not read ordinary Markdown just to understand the implementation.
 - Before making code changes, read the relevant code and the most recent constraints, and follow the nearest `AGENTS.md` in the directory tree.

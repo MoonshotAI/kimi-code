@@ -47,7 +47,6 @@ import {
 } from '../goal-queue-store';
 import { formatBackgroundTaskTranscript } from '../utils/background-task-status';
 import { formatHookResultMarkdown } from '../utils/hook-result-format';
-import { McpOAuthAuthorizationUrlOpener } from '../utils/mcp-oauth';
 import {
   formatMcpStartupStatusSummary,
   mcpServerStatusKey,

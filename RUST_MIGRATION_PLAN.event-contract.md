@@ -266,7 +266,7 @@
       compaction 窗口与 import 上限）。`cargo test -p kimi-agent` 全绿（2027 lib + 51 集成）。
   - 遗留（本专项外）：`agent-core` 退役包 2 个 typecheck 错误（subagent.* 事件，phase 1 契约
     删除后遗留——frozen 不修，随物理隔离删除）；`apps/kimi-code` typecheck 因此未全绿。
-- [ ] 阶段 6 收尾（dead 接口/schema 清理——`#/events` 不再用的 re-export 等）
+- [x] **阶段 6 收尾**（dead 接口/schema 清理——`#/events` 不再用的 re-export 等，2026-08-03）：node-sdk `src/events.ts` 删除 30 个无活跃消费方的 dead re-export（turn.step.*/assistant.delta/thinking.delta/tool.call.delta/tool.progress/tool.list.updated/subagent.*/compaction.*/background.task.*/cron.fired/skill.activated/旧 turn.* 事件与 TurnEndReason/UsageStatus 等）；保留 `McpServerStatusEvent`（CLI TUI `mcp-server-status.ts` 作 payload 类型活跃使用）与 `AgentStatusUpdatedEvent`（CLI 事件分支活跃）；同步清理 `session-event-handler.ts` 的 dead `McpOAuthAuthorizationUrlOpener` import、`mcp-oauth.ts` 的 `ToolProgressEvent` 本地化（`ToolProgressLike`）、`session-skills.test.ts` 的 `SkillActivatedEvent` 断言。验证：node-sdk typecheck ✓、apps/kimi-code typecheck ✓、session-skills 9 绿、mcp-oauth 5 绿、残留 import 扫描零（仅 agent-core-v2 冻结包内部引用）。protocol `events.ts` 的接口定义保留至 agent-core-v2 退役时一并清理。
 
 > 注意（2026-08-02）：工作区有协作者并行的 session/fork + cancellation + llmStep 改动
 > （kimi-agent turn_loop/agent.rs/types.rs、node-sdk types.ts/sdk-rpc-client.ts、session-cancel

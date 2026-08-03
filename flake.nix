@@ -63,7 +63,6 @@
       # -------------------------------------------------------------------
       workspacePaths = [
         ./packages/acp-adapter
-        ./packages/agent-core-v2
         ./packages/i18n
         ./packages/i18n-shared
         ./packages/kap-server
@@ -93,7 +92,6 @@
 
       workspaceNames = [
         "@moonshot-ai/acp-adapter"
-        "@moonshot-ai/agent-core-v2"
         "@moonshot-ai/kimi-i18n"
         "@moonshot-ai/i18n-shared"
         "@moonshot-ai/kap-server"

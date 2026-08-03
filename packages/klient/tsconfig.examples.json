@@ -1,4 +1,4 @@
 {
   "extends": "../../tsconfig.json",
-  "include": ["examples/**/*.ts", "../agent-core-v2/src"]
+  "include": ["examples/**/*.ts", "../node-sdk/src/raw-modules.d.ts"]
 }

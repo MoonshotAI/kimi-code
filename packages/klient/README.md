@@ -1,17 +1,14 @@
 # @moonshot-ai/klient
 
-Contract-driven client SDK for the agent-core-v2 engine (now **retired** — the only engine is the Rust `kimi-agent`; this SDK remains as host-layer tooling while hosts unbind, see root `AGENTS.md` → "Engine Ownership"). One facade, two
-transports — you pick the transport **once** at creation; everything after
-that is byte-identical:
+Contract-driven client SDK for the Rust `kimi-agent` engine (the retired
+agent-core-v2 engine has been fully replaced; this SDK is the host-layer
+client facade, bound over the rust transport). One facade, one transport —
+you create the klient **once**; everything after that is byte-identical:
 
 ```ts
-import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
-import { createKlient } from '@moonshot-ai/klient/memory';   // or '/ipc'
+import { createKlientFromRust } from '@moonshot-ai/klient/rust';
 
-const { app } = bootstrap({ homeDir }, [
-  ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
-]);
-const klient = createKlient({ scope: app });
+const klient = createKlientFromRust({ homeDir });
 
 const env = await klient.global.env();
 const sessions = await klient.global.sessions.list({ limit: 20 });
@@ -34,7 +31,7 @@ contract (procedure schemas, shared by all transports)
    ↓
 KlientChannel { call, listen }   ← the only transport SPI
    ↓
-ipc │ memory
+rust
 ```
 
 - **Facade** — aggregated methods, no engine service tokens, no
@@ -61,20 +58,19 @@ ipc │ memory
   Underlying subscriptions are shared and ref-counted; payloads are
   validated; bad payloads drop to `events.onError`.
 
-## Transports
+## Transport
 
 | entry | options | events |
 |---|---|---|
-| `@moonshot-ai/klient/ipc` | `{ socketPath, token? }` | same socket |
-| `@moonshot-ai/klient/memory` | `{ scope }` (a bootstrapped engine app scope) | direct emitter/bus subscription |
+| `@moonshot-ai/klient/rust` | `{ homeDir?, configPath? }` — spawns the rust-loop engine over stdio | engine `host/event` stream, scope-matched |
 
-`ipc` and `memory` share one in-process dispatcher, so they behave identically
-by construction; `memory` additionally JSON round-trips every value so results
-cross the same JSON boundary a socket transport would impose. The IPC host
-ships with the transport: `serveKlientIpc({ scope, socketPath })`.
+The rust transport builds a `KlientChannel` over the rust-loop stdio bridge
+and assembles host-side services (config / flags / auth / fs / workspaces /
+plugins / catalog) locally; engine-backed services resolve to rust-loop RPCs.
 
-The same conformance suite runs against both transports in this
-package's tests (`test/helpers/conformance.ts` — one test file per transport).
+Facade conformance coverage lives in this package's tests
+(`test/contract.test.ts`, `test/facade.test.ts`, and the per-surface
+`test/rust-*.test.ts` suites against the rust transport).
 
 This package also hosts the e2e suites (the retired `server-e2e` package was
 folded in here):
@@ -101,7 +97,7 @@ only).
 pnpm -C packages/klient smoke
 ```
 
-`examples/smoke.ts` boots an in-process engine (memory transport) and asserts
+`examples/smoke.ts` drives the rust engine (spawned over stdio) and asserts
 the `global` facade end-to-end — no server needed. `examples/basic.ts` is a
 shorter narrated tour; `examples/context-usage.ts` traces context-size
 readings through a real prompt (requires `KIMI_EXAMPLE_MODEL` +

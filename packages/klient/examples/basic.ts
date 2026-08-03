@@ -1,9 +1,9 @@
 /**
- * Minimal end-to-end example driving an in-process engine with klient's
- * `global` facade over the memory transport (calls and events never leave
- * the process — same facade either way).
+ * Minimal end-to-end example driving the Rust engine (rust-loop stdio
+ * bridge) with klient's `global` facade — the same facade as any other
+ * transport.
  *
- * Run it (the engine sources need the decorators tsconfig + raw-text loader):
+ * Run it:
  *   pnpm -C packages/klient exec tsx --tsconfig ./tsconfig.examples.json \
  *     --import ../../build/register-raw-text-loader.mjs examples/basic.ts
  */
@@ -11,18 +11,12 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
-import { createKlient } from '@moonshot-ai/klient/memory';
-import { buildEngineAccess } from './helpers/engineAccess.js';
+import { createKlientFromRust } from '@moonshot-ai/klient/rust';
 
 async function main(): Promise<void> {
   const homeDir = await mkdtemp(join(tmpdir(), 'klient-basic-'));
-  const engine = buildEngineAccess();
-  const { app } = bootstrap({ homeDir }, [
-    ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
-  ]);
   try {
-    const klient = createKlient({ scope: app, engine });
+    const klient = createKlientFromRust({ homeDir });
 
     // 1) Aggregated host snapshot.
     const env = await klient.global.env();
@@ -62,7 +56,6 @@ async function main(): Promise<void> {
 
     await klient.close();
   } finally {
-    app.dispose();
     await rm(homeDir, { recursive: true, force: true });
   }
 }

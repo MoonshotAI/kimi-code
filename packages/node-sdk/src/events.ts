@@ -41,49 +41,20 @@ export type {
 // Session lifecycle/status events and their status payload.
 export type {
   AgentStatusUpdatedEvent,
-  SessionMetaUpdatedEvent,
-  GoalUpdatedEvent,
-  SkillActivatedEvent,
-  PluginCommandActivatedEvent,
   ErrorEvent,
   WarningEvent,
-  UsageStatus,
 } from '@moonshot-ai/protocol';
 
-// Turn and step lifecycle events plus the turn-ending reason enum.
+// Tool-call payload types (reverse-RPC and MCP OAuth update shapes).
 export type {
-  TurnStartedEvent,
-  TurnEndedEvent,
-  TurnStepStartedEvent,
-  TurnStepCompletedEvent,
-  TurnStepRetryingEvent,
-  TurnStepInterruptedEvent,
-  TurnEndReason,
-} from '@moonshot-ai/protocol';
-
-// Streaming content and hook-result events.
-export type {
-  AssistantDeltaEvent,
-  HookResultEvent,
-  ThinkingDeltaEvent,
-} from '@moonshot-ai/protocol';
-
-// Tool-call events and incremental progress payloads.
-export type {
-  ToolCallStartedEvent,
-  ToolCallDeltaEvent,
-  ToolProgressEvent,
-  ToolResultEvent,
   ToolUpdate,
   McpOAuthAuthorizationUrlUpdateData,
 } from '@moonshot-ai/protocol';
 
 export type { ToolCallRequest, ToolCallResponse } from '#/legacy/rpc-types';
 
-// MCP tool-list and server status events.
+// MCP server status payload types.
 export type {
-  ToolListUpdatedEvent,
-  ToolListUpdatedReason,
   McpServerStatusEvent,
   McpServerStatusPayload,
 } from '@moonshot-ai/protocol';
@@ -108,33 +79,6 @@ export type {
   QuestionResponse,
   QuestionResult,
 } from '#/legacy/rpc-types';
-
-// Subagent lifecycle events.
-export type {
-  SubagentSpawnedEvent,
-  SubagentStartedEvent,
-  SubagentSuspendedEvent,
-  SubagentCompletedEvent,
-  SubagentFailedEvent,
-} from '@moonshot-ai/protocol';
-
-// Compaction lifecycle events and compaction result payload.
-export type {
-  CompactionStartedEvent,
-  CompactionBlockedEvent,
-  CompactionCancelledEvent,
-  CompactionCompletedEvent,
-  CompactionResult,
-} from '@moonshot-ai/protocol';
-
-// Background task lifecycle events emitted by the BPM. Covers both
-// bash (`bash-*`) and agent (`agent-*`) tasks under one wire format.
-export type {
-  BackgroundTaskStartedEvent,
-  BackgroundTaskTerminatedEvent,
-} from '@moonshot-ai/protocol';
-
-export type { CronFiredEvent } from '@moonshot-ai/protocol';
 
 export type MaybePromise<T> = T | Promise<T>;
 

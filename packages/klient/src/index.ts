@@ -1,9 +1,8 @@
 /**
  * `@moonshot-ai/klient` public surface — the transport-agnostic client facade
- * over the agent-core-v2 engine. Create a klient with one of the transport
- * entry points (`@moonshot-ai/klient/ipc` or `/memory`); everything
- * exported here behaves identically regardless of which one carried the
- * bytes.
+ * over the Rust engine. Create a klient with the transport entry point
+ * (`@moonshot-ai/klient/rust`); everything exported here behaves identically
+ * regardless of which transport carried the bytes.
  */
 
 export type {

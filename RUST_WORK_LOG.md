@@ -1,4 +1,13 @@
 
+> **✅ 2026-08-03 ⑤ klient Rust 传输（完整映射）+ agent-core-v2 退休（已提交）**：
+> - **目标**：klient 从退役的 agent-core-v2 v2 dispatcher 切到 rust 传输（rust-loop 驱动），随后 agent-core-v2 移入 retired/——`packages/*` 不再含任何 TS 引擎包。
+> - **rust 传输（src/transports/rust/）**：
+>   - 骨架：`channel.ts`（KlientChannel over rust-loop stdio：call 经 router 分发、listen 路由 host/event 按 scope 匹配、btw-<sid> 映射回主会话、close）、`router.ts`（registerService 查表，未知抛 RPCError(40001)）、`types.ts`（RustCallContext）、`index.ts`（createKlientFromRust，host bag 装配）、`services/registry.ts`（组模块自注册枢纽）
+>   - 服务组（AgentSwarm 8 组并行，全部自注册）：G1 configService+bootstrapService（smol-toml 宿主读写 + env）、G2 sessionLifecycleService+sessionMetadata（rust-loop session RPC + 影子元数据）、G3 oauthService+authSummaryService（kimi-code-oauth flow 状态机）、G4 flagService+modelService/modelResolver+providerService+providerDiscovery（flags 注册表 + kosong 流式 generate + models.dev 刷新）、G5 pluginService+workspaceService+hostFolderBrowser（engine plugin 读面 + 宿主插件/工作区注册表 + fs browse）、S1+S2 sessionInteractionService+sessionQuestionService+sessionApprovalService（approval/question RPC + 合成 pending 内核）、A1+A2 agentPlanService+agentProfileService+agentShellCommandService+agentTaskService（plan/model/shell/task RPC）、A3 agentUsageService+agentRPCService（usage + prompt/steer/cancel 透传）
+> - **退休 agent-core-v2**：klient 生产代码零 v2 import；删 v2 memory/ipc 传输 + 其测试（被 rust 取代）；3 个 v2 引擎内部示例删除、smoke/basic/context-usage 转 rust；package.json exports 增 `./rust` 删 `./ipc`/`./memory`、v2 devDep 移除；tsconfig 的 agent-core-v2 include 换 node-sdk raw-modules.d.ts；apps/kimi-code 的 v2 devDep 移除；`git mv packages/agent-core-v2 → retired/`（含 flake.nix 清理）
+> - **验证**：klient typecheck 0 错误（tsconfig + examples）；klient 测试 100 通过（rust-* 68 用例 + contract/facade；ipc EACCES 预存失败随 v2 传输删除消失）；node-sdk 回归 425 全绿；kimi-code typecheck 0；pnpm install 干净（workspace 无 TS 引擎包）
+> - **遗留（rust 传输已知缺口，非阻塞）**：① 宿主侧写面无事件通路（providerService/configService 写 TOML 不 emit kosong.providers/models.changed，smoke 示例该断言跑不过）；② providerService.set 在空 home 需 config.toml 已存在；③ agent 域 scope 收敛 main、user_tool 交互不可达（引擎无表面）。④ SDK v1 wire 公开类型切 Rust 形状、C3 插件通知核对待续。
+
 > **✅ 2026-08-03 ⑥ agent-core 物理隔离（v1 完成，已提交）**：
 > - **目标**：agent-core/agent-core-v2 物理移入 `retired/`（端状态：packages/* 无 TS 引擎，`@moonshot-ai/agent-core` 依赖清零，kimi-code typecheck 43 错误 → 0）。
 > - **解绑（AgentSwarm T1-T3 并行）**：

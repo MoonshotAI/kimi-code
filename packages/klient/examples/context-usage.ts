@@ -1,7 +1,6 @@
 /**
  * Trace how the reported "Context size" evolves on a brand-new session after
- * a single "hi" prompt, against an in-process engine over the memory
- * transport.
+ * a single "hi" prompt, against the Rust engine (rust-loop stdio transport).
  *
  * What gets sampled, all through the klient facade:
  *   - `agent.getContext()` → `{ history, tokenCount }` — `tokenCount` is the
@@ -16,9 +15,8 @@
  * line only when something changed, so the output is a timeline of exactly
  * when the Context size reading moves — and when it does NOT.
  *
- * A throwaway model is seeded into the engine's temp home (an in-process
- * engine has no default model), so both env vars are required. Run it (the
- * engine sources need the decorators tsconfig + raw-text loader):
+ * A throwaway model is seeded into the temp home (a fresh temp home has no
+ * default model), so both env vars are required. Run it:
  *   KIMI_EXAMPLE_MODEL=... KIMI_EXAMPLE_API_KEY=... \
  *   pnpm -C packages/klient exec tsx --tsconfig ./tsconfig.examples.json \
  *     --import ../../build/register-raw-text-loader.mjs examples/context-usage.ts
@@ -33,9 +31,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
-import { createKlient } from '@moonshot-ai/klient/memory';
-import { buildEngineAccess } from './helpers/engineAccess.js';
+import { createKlientFromRust } from '@moonshot-ai/klient/rust';
 
 const SEEDED_MODEL_ID = 'klient-example-model';
 
@@ -64,12 +60,8 @@ async function main(): Promise<void> {
   }
 
   const homeDir = await mkdtemp(join(tmpdir(), 'klient-context-usage-'));
-  const engine = buildEngineAccess();
-  const { app } = bootstrap({ homeDir }, [
-    ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
-  ]);
   try {
-    const klient = createKlient({ scope: app, engine });
+    const klient = createKlientFromRust({ homeDir });
 
     const session = await klient.global.sessions.create({ workDir: process.cwd() });
     console.log('[session] created ->', session.id);
@@ -195,7 +187,6 @@ async function main(): Promise<void> {
     await klient.close();
     if (outcome === 'failed') process.exit(1);
   } finally {
-    app.dispose();
     await rm(homeDir, { recursive: true, force: true });
   }
 }

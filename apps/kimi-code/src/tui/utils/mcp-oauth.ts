@@ -1,18 +1,23 @@
 import {
   MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE,
   type McpOAuthAuthorizationUrlUpdateData,
-  type ToolProgressEvent,
   type ToolUpdate,
 } from '@moonshot-ai/kimi-code-sdk';
 
 export type OpenUrl = (url: string) => void;
+
+/** Local structural stand-in for the retired `tool.progress` event payload. */
+export interface ToolProgressLike {
+  toolCallId: string;
+  update: ToolUpdate;
+}
 
 export class McpOAuthAuthorizationUrlOpener {
   private readonly openedAuthorizationUrls = new Set<string>();
 
   constructor(private readonly openUrl: OpenUrl) {}
 
-  handleToolProgress(event: Pick<ToolProgressEvent, 'toolCallId' | 'update'>): void {
+  handleToolProgress(event: ToolProgressLike): void {
     const update = parseMcpOAuthAuthorizationUrlUpdate(event.update);
     if (update === undefined) return;
     const key = `${event.toolCallId}\0${update.authorizationUrl}`;

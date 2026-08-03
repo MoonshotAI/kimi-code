@@ -13,7 +13,6 @@ import {
   createKimiHarness,
   type Event,
   type KimiError,
-  type SkillActivatedEvent,
   type SkillSummary,
 } from '#/index';
 import type { SDKRpcClientBase } from '#/rpc';
@@ -245,9 +244,8 @@ describe('Session skills', () => {
     } satisfies Partial<KimiError>);
   });
 
-  it('exposes public skill event and summary types', () => {
+  it('exposes public skill summary types', () => {
     expectTypeOf<SkillSummary['name']>().toEqualTypeOf<string>();
-    expectTypeOf<SkillActivatedEvent['skillName']>().toEqualTypeOf<string>();
   });
 });
 

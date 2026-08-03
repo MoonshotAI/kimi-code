@@ -5,5 +5,10 @@ export default defineConfig({
     name: 'klient',
     include: ['test/**/*.test.ts'],
     reporters: ['default', './test/e2e/legacy/report/vitest-reporter.ts'],
+    env: {
+      // Rust-engine tests (rust transport suite) spawn the engine over stdio;
+      // without this the napi singleton can lock and session/* RPCs return null.
+      KIMI_AGENT_FORCE_STDIO: '1',
+    },
   },
 });
