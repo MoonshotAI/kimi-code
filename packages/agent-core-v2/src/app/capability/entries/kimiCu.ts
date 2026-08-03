@@ -11,6 +11,12 @@
  * request permissions) with structured progress and errors instead of a
  * shell pipe. Elevation when /Applications is not writable goes through
  * `osascript ... with administrator privileges` (native auth dialog).
+ * Installs are detect-first and idempotent: only unsatisfied layers are
+ * redone, setup re-enables a previously disabled wiring plugin, the app
+ * step requires an executable binary (an interrupted copy reads as
+ * missing), and cleanup of old processes is best-effort — a wedged old
+ * binary turns CLI probes into failed steps or is skipped past, never
+ * blocking the replacement.
  */
 
 import { constants } from 'node:fs';
@@ -34,11 +40,6 @@ const APP_BUNDLE = 'KimiCU.app';
 const LAUNCHD_LABEL = 'ai.kimi.cu.service';
 const COMMAND_TIMEOUT_MS = 30_000;
 const PERMISSIONS_TIMEOUT_MS = 15_000;
-/**
- * Detect-path probes (`service-status`, `xpc-ping`) answer in milliseconds
- * when healthy but run on every status listing, so a wedged binary must
- * degrade quickly instead of stalling the whole capability list.
- */
 const DETECT_PROBE_TIMEOUT_MS = 3_000;
 
 interface PermissionStatus {
@@ -55,7 +56,6 @@ export function parsePermissionStatus(output: string): PermissionStatus | undefi
   return { accessibility: match[1] === 'true', screenRecording: match[2] === 'true' };
 }
 
-/** Read CFBundleShortVersionString from an .app bundle's Info.plist (XML). */
 export async function readAppBundleVersion(infoPlistPath: string): Promise<string | undefined> {
   try {
     const xml = await readFile(infoPlistPath, 'utf-8');
@@ -66,7 +66,6 @@ export async function readAppBundleVersion(infoPlistPath: string): Promise<strin
   }
 }
 
-/** Escape a shell snippet for embedding in an AppleScript double-quoted string. */
 function appleScriptQuote(script: string): string {
   return script.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
 }
@@ -103,7 +102,6 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     const result = await runCommand(ctx.hostProcess, appBin, ['service-status'], {
       timeout: probeTimeoutMs,
     });
-    // `SMAppService status=1` means enabled (1=enabled, 2=requiresApproval, 3=notFound).
     return /status=1\b/.test(result.stdout);
   }
 
@@ -128,9 +126,6 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     });
 
     const version = await readAppBundleVersion(infoPlist);
-    // ditto produces an executable binary only once the copy completes; an
-    // interrupted install leaves an unusable file behind, which must read as
-    // missing so the next install re-copies instead of failing with EACCES.
     const appExists = await exists(appBin);
     const appUsable = appExists && (await executable(appBin));
     steps.push({
@@ -139,9 +134,6 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
       detail: appExists && !appUsable ? 'not executable' : version,
     });
 
-    // A wedged binary turns these CLI probes into timeouts — mark the step
-    // failed instead of throwing, so status views and the detect-first
-    // install path can still see and repair the other layers.
     try {
       steps.push({ id: 'service', state: (await serviceRunning()) ? 'ok' : 'missing' });
     } catch (error) {
@@ -182,8 +174,6 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     };
   }
 
-  /** Mirrors the official script's `|| true`: cleanup failures — including
-   * a timeout on a wedged old binary — must never block the replacement. */
   async function bestEffort(command: string, args: readonly string[]): Promise<void> {
     await runCommand(ctx.hostProcess, command, args, { timeout: commandTimeoutMs }).catch(
       () => undefined,
@@ -210,7 +200,6 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
       timeout: commandTimeoutMs,
     });
     if (direct.code === 0) return;
-    // /Applications not writable → elevate via the native auth dialog.
     const script = `/usr/bin/ditto ${appleScriptQuote(unzippedApp)} ${appleScriptQuote(appPath)}`;
     const elevated = await runCommand(
       ctx.hostProcess,
@@ -241,9 +230,6 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
       report('plugin');
       const summary = await ctx.plugins.installPlugin({ source: PLUGIN_ZIP_URL });
       if (!summary.enabled) {
-        // installPlugin preserves a previous disabled state, but detection
-        // requires an enabled plugin — leaving it disabled would strand the
-        // capability at partial after a successful setup.
         await ctx.plugins.setPluginEnabled({ id: PLUGIN_ID, enabled: true });
       }
     }
@@ -292,8 +278,6 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
       await new Promise((resolve) => {
         setTimeout(resolve, 1_000);
       });
-      // The verification probe itself may time out on a wedged binary —
-      // report the clean failure, not the raw timeout.
       const running = await serviceRunning().catch(() => false);
       if (!running) {
         throw new Error('kimi-cu background service is not running after install');

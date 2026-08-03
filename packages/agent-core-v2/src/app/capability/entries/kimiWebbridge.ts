@@ -6,8 +6,14 @@
  * skills only, installed through `IPluginService`) + browser extension
  * (soft gate, user installs from the webstore or the manual zip).
  *
- * A running daemon is left untouched. Reinstall replaces the on-disk binary
- * from the latest channel, which takes effect the next time the daemon starts.
+ * A running daemon is left untouched (start-if-down only, Kimi Work
+ * coexistence). Reinstall replaces the on-disk binary from the latest
+ * channel, which takes effect the next time the daemon starts. Installs
+ * are detect-first and idempotent: only unsatisfied layers are redone,
+ * setup re-enables a previously disabled wiring plugin, the binary step
+ * requires the executable bit on POSIX (an interrupted install reads as
+ * missing and re-downloads), and user-source skill shadows are reported
+ * as an optional step for manual cleanup instead of being deleted.
  */
 
 import { constants } from 'node:fs';
@@ -97,9 +103,6 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     const steps: CapabilityStep[] = [];
 
     const binaryPresent = await exists(binPath);
-    // POSIX installs chmod +x after the rename; an install interrupted in
-    // between leaves an unusable file behind, which must read as missing so
-    // the next install re-downloads instead of failing `start` with EACCES.
     const binaryUsable =
       binaryPresent && (ctx.platform === 'win32' || (await executable(binPath)));
     steps.push({
@@ -139,8 +142,6 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
       });
     }
 
-    // Soft gate: extension presence never blocks readiness — use-time
-    // failures carry official guidance.
     steps.push({
       id: 'extension',
       state: daemon?.extension_connected === true ? 'ok' : 'missing',
@@ -192,9 +193,6 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
       report('skill');
       const summary = await ctx.plugins.installPlugin({ source: PLUGIN_ZIP_URL });
       if (!summary.enabled) {
-        // installPlugin preserves a previous disabled state, but detection
-        // requires an enabled plugin — leaving it disabled would strand the
-        // capability at partial after a successful setup.
         await ctx.plugins.setPluginEnabled({ id: PLUGIN_ID, enabled: true });
       }
     }
@@ -241,7 +239,6 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
   };
 }
 
-/** rename(2) cannot cross filesystems; fall back to copy+remove. */
 async function renameAcrossDevicesFallback(from: string, to: string): Promise<void> {
   const { copyFile } = await import('node:fs/promises');
   await copyFile(from, to);

@@ -4,7 +4,9 @@
  * Holds the closed registry of built-in capability entries and serializes
  * install runs per entry. Install progress lives in memory only and is
  * polled by clients; a failed attempt leaves its error in the progress state
- * until the next attempt starts. Bound at App scope.
+ * until the next attempt starts. Listing degrades a single entry's failing
+ * detection to a failed step on that entry instead of rejecting the whole
+ * list. Bound at App scope.
  */
 
 import { homedir } from 'node:os';
@@ -86,7 +88,6 @@ export class CapabilityService implements ICapabilityService {
 
     this.runningInstalls.add(entry.id);
     this.installProgress.set(entry.id, { running: true });
-    // Fire-and-forget: progress and errors are surfaced through polling.
     void (async () => {
       try {
         await entry.install((step, percent) => {
@@ -146,11 +147,6 @@ export class CapabilityService implements ICapabilityService {
     };
   }
 
-  /**
-   * `statusOf` for the list view: one entry's broken probe (e.g. a timed-out
-   * CLI call) must not take down every other entry's status, so detection
-   * failures degrade to a failed step on that entry alone.
-   */
   private async statusOfSafe(entry: CapabilityEntry): Promise<CapabilityStatus> {
     try {
       return await this.statusOf(entry);

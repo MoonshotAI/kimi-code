@@ -1,6 +1,13 @@
 /**
  * Shared host helpers for capability entries: process execution with
  * captured output, and streaming downloads with progress reporting.
+ *
+ * `runCommand` never throws for an expected failure — a spawn failure or a
+ * non-zero exit resolves into the result (`code: -1` for spawn failures),
+ * while a timeout kills the process and rejects. `downloadToFile` bounds
+ * both the response-header wait (fetch abort signal) and stream inactivity
+ * (a watchdog reset per chunk, 30s by default), so a stalled CDN connection
+ * fails the background install instead of wedging it.
  */
 
 import { createWriteStream } from 'node:fs';
@@ -25,11 +32,6 @@ async function collect(stream: Readable): Promise<string> {
   return Buffer.concat(chunks).toString('utf-8');
 }
 
-/**
- * Spawn a command and capture its output. Never throws for a non-zero exit —
- * the caller interprets `code`. A spawn failure (missing binary) resolves to
- * `code: -1` with the error message in `stderr`.
- */
 export async function runCommand(
   hostProcess: IHostProcessService,
   command: string,
@@ -84,17 +86,6 @@ export type FetchLike = (
   body: import('node:stream/web').ReadableStream | null;
 }>;
 
-/**
- * Download `url` to `destPath` (parent dirs created), reporting 0–99 percent
- * while the response carries a content-length. Returns the byte count.
- *
- * Both phases have a deadline (`idleTimeoutMs`, default 30s): the response
- * headers must arrive in time (the fetch is aborted), and the byte stream
- * must not go quiet for that long. A stalled CDN connection must never
- * wedge the background capability install in a permanent "installing" state
- * — failure is what clears the running state. Slow but flowing downloads
- * are unaffected — the stream watchdog resets on every chunk.
- */
 export async function downloadToFile(
   url: string,
   destPath: string,
@@ -148,5 +139,4 @@ export async function downloadToFile(
   return received;
 }
 
-/** Default inactivity budget for a download's byte stream. */
 const DOWNLOAD_IDLE_TIMEOUT_MS = 30_000;

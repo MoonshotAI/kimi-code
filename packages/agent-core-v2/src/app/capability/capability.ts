@@ -14,21 +14,10 @@ import type { CapabilityStatus } from './types';
 export interface ICapabilityService {
   readonly _serviceBrand: undefined;
 
-  /** Detect every registered entry (unsupported entries included, marked). */
   listCapabilities(): Promise<readonly CapabilityStatus[]>;
 
-  /**
-   * Detect one entry. Throws `capability.not_found` (Error2) for an id that
-   * is not in the registry.
-   */
   getCapability(id: string): Promise<CapabilityStatus>;
 
-  /**
-   * Start an idempotent install in the background and return the current
-   * status (with `install.running === true`); clients poll `getCapability`
-   * for progress. Throws `capability.not_found`, `capability.unsupported`
-   * (wrong platform), or `capability.install_in_progress`.
-   */
   installCapability(id: string): Promise<CapabilityStatus>;
 }
 

@@ -5,7 +5,8 @@
  * contributions to a session, while capabilities own imperative install
  * orchestration and a layered readiness state machine for product-specific
  * runtimes (macOS app + launchd service + TCC permissions; local HTTP
- * daemon + browser extension).
+ * daemon + browser extension). Steps marked `optional` never block
+ * `ready`; `install.note` is a machine key clients localize.
  */
 
 export type CapabilityId = 'kimi-cu' | 'kimi-webbridge';
@@ -14,31 +15,17 @@ export type CapabilityReadiness = 'not_installed' | 'partial' | 'ready' | 'unsup
 
 export type CapabilityStepState = 'ok' | 'missing' | 'failed';
 
-/**
- * One readiness check of a capability (e.g. `plugin`, `app`, `service`,
- * `permissions`, `daemon`, `skill`, `extension`). `detail` carries a short
- * machine-oriented hint (detected version, missing path, error message).
- */
 export interface CapabilityStep {
   readonly id: string;
   readonly state: CapabilityStepState;
   readonly detail?: string;
-  /**
-   * Optional steps never block `ready` (e.g. the WebBridge browser
-   * extension — a soft gate surfaced as a hint, with official error guidance
-   * covering use-time failures).
-   */
   readonly optional?: boolean;
 }
 
-/** Live install progress, polled by clients. */
 export interface CapabilityInstallProgress {
   readonly running: boolean;
-  /** Current step id while running. */
   readonly step?: string;
-  /** 0–100 while a download with a known content-length is in flight. */
   readonly percent?: number;
-  /** Set when the last install attempt failed; cleared on the next attempt. */
   readonly error?: string;
 }
 
@@ -60,11 +47,6 @@ export interface CapabilityStatus {
 
 export type CapabilityInstallReporter = (step: string, percent?: number) => void;
 
-/**
- * A built-in capability entry. `install` must be idempotent and re-entrant:
- * interrupted runs may skip completed layers, while an explicit reinstall
- * of a ready capability may replace its managed artifacts with latest.
- */
 export interface CapabilityEntry {
   readonly id: CapabilityId;
   readonly displayName: string;
