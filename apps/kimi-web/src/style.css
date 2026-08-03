@@ -475,6 +475,11 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   --z-tooltip: 250;
   --z-overlay: 300;
   --z-modal: 400;
+  /* Nested modal spawned from within another modal (e.g. a confirm dialog
+     triggered by an action inside SettingsDialog). One level above --z-modal
+     so the inner overlay isn't covered by the outer one when both Teleport
+     to <body> and share the same default layer. */
+  --z-modal-top: 500;
   --z-toast: 600;
   --z-max: 9999;
 

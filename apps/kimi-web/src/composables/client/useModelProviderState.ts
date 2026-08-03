@@ -521,7 +521,10 @@ export function useModelProviderState(
     }
   }
 
-  /** Add a provider, then reload providers + models */
+  /** Add a provider, then reload providers + models. 创建后自动触发
+   *  refreshProvider 让后端调上游 /v1/models 拉取完整模型列表（"模型自动
+   *  发现"）——表单里只填了 defaultModel 一个种子，真正的模型列表靠 refresh
+   *  填充。refresh 失败不阻断：provider 已经创建成功，用户可稍后手动 Refresh。 */
   async function addProvider(input: {
     type: string;
     apiKey?: string;
@@ -530,8 +533,14 @@ export function useModelProviderState(
   }): Promise<void> {
     try {
       const api = getKimiWebApi();
-      await api.addProvider(input);
+      const provider = await api.addProvider(input);
       await Promise.all([loadProviders(), loadModels()]);
+      try {
+        await api.refreshProvider(provider.id);
+        await Promise.all([loadProviders(), loadModels()]);
+      } catch {
+        // 模型自动发现失败不阻断添加流程 —— provider 已持久化，用户可手动 Refresh。
+      }
     } catch (err) {
       pushOperationFailure('addProvider', err);
     }

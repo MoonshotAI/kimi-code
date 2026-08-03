@@ -213,16 +213,20 @@ export async function fetchOpenPlatformModels(
  * response carries no context window, so GENERIC_MODEL_FALLBACKS fills it in. */
 export async function fetchGenericOpenAIModels(
   platform: OpenPlatformDefinition,
-  apiKey: string,
+  apiKey: string | undefined,
   fetchImpl: typeof fetch = fetch,
   signal?: AbortSignal,
 ): Promise<ManagedKimiCodeModelInfo[]> {
+  // 本地端点（如 Ollama）可能不需要鉴权 —— apiKey 为空时不发 Authorization 头。
+  const headers: Record<string, string> = {
+    ...parseKimiCodeCustomHeaders(),
+    Accept: 'application/json',
+  };
+  if (apiKey !== undefined && apiKey.length > 0) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  }
   const res = await fetchImpl(`${platform.baseUrl.replace(/\/+$/, '')}/models`, {
-    headers: {
-      ...parseKimiCodeCustomHeaders(),
-      Authorization: `Bearer ${apiKey}`,
-      Accept: 'application/json',
-    },
+    headers,
     signal,
   });
   if (!res.ok) {

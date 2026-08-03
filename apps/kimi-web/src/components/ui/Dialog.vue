@@ -25,12 +25,18 @@ const props = withDefaults(defineProps<{
   /** Element (or selector / resolver) to receive focus when the dialog opens.
    *  Falls back to the first focusable element, then the dialog panel. */
   initialFocus?: HTMLElement | string | (() => HTMLElement | null | undefined);
+  /** Stacking layer. 'modal' (default) uses --z-modal. 'top' uses --z-modal-top
+   *  so a dialog spawned from inside another dialog (e.g. a confirm dialog
+   *  triggered by SettingsDialog) floats above the outer overlay instead of
+   *  being covered by it when both Teleport to <body>. */
+  layer?: 'modal' | 'top';
 }>(), {
   closeOnOverlay: true,
   closeOnEsc: true,
   size: 'md',
   height: 'auto',
   padded: true,
+  layer: 'modal',
 });
 
 const emit = defineEmits<{
@@ -133,7 +139,7 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="ui-dialog__overlay" @mousedown="onOverlayClick">
+    <div v-if="open" class="ui-dialog__overlay" :class="{ 'ui-dialog__overlay--top': layer === 'top' }" @mousedown="onOverlayClick">
       <div
         ref="panel"
         class="ui-dialog"
@@ -172,6 +178,7 @@ onBeforeUnmount(() => {
   background: rgba(13, 17, 23, 0.45);
   animation: kimi-dialog-overlay-in var(--duration-base) var(--ease-out);
 }
+.ui-dialog__overlay--top { z-index: var(--z-modal-top); }
 @keyframes kimi-dialog-overlay-in {
   from { opacity: 0; }
   to { opacity: 1; }

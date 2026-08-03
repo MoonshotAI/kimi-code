@@ -10,6 +10,7 @@ import {
   fetchManagedKimiCodeModels,
   KIMI_CODE_PLATFORM_ID,
   KIMI_CODE_PROVIDER_NAME,
+  ManagedKimiCodeModelsAuthError,
   resolveKimiCodeRuntimeAuth,
   type ManagedKimiConfigShape,
   type ManagedKimiModelAlias,
@@ -455,10 +456,25 @@ export async function refreshProviderModels(
         }
       }
     } catch (error) {
-      failed.push({
-        provider: KIMI_CODE_PROVIDER_NAME,
-        reason: error instanceof Error ? error.message : String(error),
-      });
+      // Managed Kimi Code OAuth 的鉴权失败（401 无有效 OAuth token、402/403 会员权益未
+      // 开通、或服务端报 "unable to verify your membership"）不进入 failed 列表：
+      //   1. 这是 fork 仓库的常态（本地未登录官方 Kimi 账号，OAuth 凭据无效）；
+      //   2. 每次 refreshAllProviders（如打开模型切换弹窗）都会给用户弹告警 toast，
+      //      干扰正常使用 API-key provider 的工作流；
+      //   3. 用户侧也没有可执行的修复操作（此分支是自动走的 OAuth 凭据流）。
+      // 其它网络错误 / JSON 解析错误等仍正常报 failed 以便排查。
+      if (
+        error instanceof ManagedKimiCodeModelsAuthError ||
+        (error instanceof Error &&
+          /membership|subscription|benefit|verify your membership/i.test(error.message))
+      ) {
+        unchanged.push(KIMI_CODE_PROVIDER_NAME);
+      } else {
+        failed.push({
+          provider: KIMI_CODE_PROVIDER_NAME,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
@@ -633,11 +649,19 @@ export async function refreshProviderModels(
     if (provider.type === 'kimi') continue; // handled by branch 2.5
     if (provider.oauth !== undefined) continue;
     if (readCustomRegistrySource(provider) !== undefined) continue;
-    // Only refresh providers whose type suggests a standard API endpoint.
-    if (provider.type !== 'openai' && provider.type !== 'openai_responses') continue;
+    // vendors.contrib.ts 注册的 deepseek/qwen/zhipu/baichuan/minimax/ollama/
+    // custom 都是 OpenAI 兼容端点（baseProtocol: 'openai'），同样走
+    // {baseUrl}/models 自动发现。'anthropic' 用自有协议，不在此列。
+    const OPENAI_COMPATIBLE_VENDOR_TYPES = new Set([
+      'openai', 'openai_responses',
+      'deepseek', 'qwen', 'moonshot', 'zhipu', 'baichuan', 'minimax',
+      'ollama', 'custom',
+    ]);
+    if (!OPENAI_COMPATIBLE_VENDOR_TYPES.has(provider.type)) continue;
     if (provider.baseUrl === undefined) continue;
     const apiKey = resolveProviderApiKey(provider);
-    if (apiKey === undefined) continue;
+    // Ollama / custom 等本地端点可能不需要 API key —— 允许空 key 调 /models。
+    if (apiKey === undefined && provider.type !== 'ollama' && provider.type !== 'custom') continue;
 
     try {
       const platform: OpenPlatformDefinition = {

@@ -1270,10 +1270,28 @@ export class DaemonKimiWebApi implements KimiWebApi {
     defaultModel?: string;
   }): Promise<AppProvider> {
     // POST /v1/providers → WireProvider (kap-server modelCatalog)
-    const body: Record<string, unknown> = { type: input.type };
-    if (input.apiKey !== undefined) body['api_key'] = input.apiKey;
-    if (input.baseUrl !== undefined) body['base_url'] = input.baseUrl;
-    if (input.defaultModel !== undefined) body['default_model'] = input.defaultModel;
+    // 后端 schema 要求 id（providers 表 key）和 models（至少 1 项）必需，
+    // 且 default_model 必须能在 models[].model 中找到。这里用 type 作为 id
+    // （与 vendors.contrib.ts 注册名一致），用 defaultModel 作为初始 model，
+    // 创建后由 useModelProviderState 触发 refreshProvider 自动发现完整列表。
+    const id = input.type;
+    const trimmedDefault = input.defaultModel?.trim() ?? '';
+    const initialModel = trimmedDefault.length > 0 ? trimmedDefault : input.type;
+    const body: Record<string, unknown> = {
+      id,
+      type: input.type,
+      models: [
+        {
+          model: initialModel,
+          max_context_size: 128000,
+        },
+      ],
+    };
+    if (input.apiKey !== undefined && input.apiKey.length > 0) body['api_key'] = input.apiKey;
+    if (input.baseUrl !== undefined && input.baseUrl.trim().length > 0) {
+      body['base_url'] = input.baseUrl.trim();
+    }
+    if (trimmedDefault.length > 0) body['default_model'] = trimmedDefault;
     const data = await this.http.post<WireProvider>('/providers', body);
     return toAppProvider(data);
   }

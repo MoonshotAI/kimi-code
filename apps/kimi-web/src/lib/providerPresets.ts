@@ -13,6 +13,10 @@ export interface ProviderTypePreset {
   readonly defaultUrl: string;
   /** Default model name for the provider. */
   readonly defaultModel: string;
+  /** When true, the add/edit form does not require an API key (e.g. local
+   *  Ollama server has no auth). The submit validation skips the empty-key
+   *  check for these types. */
+  readonly apiKeyOptional?: boolean;
 }
 
 export const PROVIDER_TYPES: readonly ProviderTypePreset[] = [
@@ -63,11 +67,13 @@ export const PROVIDER_TYPES: readonly ProviderTypePreset[] = [
     label: 'providers.types.ollama',
     defaultUrl: 'http://localhost:11434/v1',
     defaultModel: 'llama3.2',
+    apiKeyOptional: true,
   },
   {
     value: 'custom',
     label: 'providers.types.custom',
     defaultUrl: '',
     defaultModel: '',
+    apiKeyOptional: true,
   },
 ];

@@ -363,10 +363,9 @@ async function openModelPicker(): Promise<void> {
   }
 }
 
-async function openProviders(): Promise<void> {
+async function loadProvidersData(): Promise<void> {
   providersLoading.value = true;
   providersUnavailable.value = false;
-  showProviders.value = true;
   try {
     await client.loadProviders();
   } catch {
@@ -374,6 +373,11 @@ async function openProviders(): Promise<void> {
   } finally {
     providersLoading.value = false;
   }
+}
+
+async function openProviders(): Promise<void> {
+  showProviders.value = true;
+  await loadProvidersData();
 }
 
 async function handleSelectModel(modelId: string): Promise<void> {
@@ -973,6 +977,7 @@ function openPr(url: string): void {
       @update-provider="(id, input) => handleUpdateProvider(id, input)"
       @refresh-provider="handleRefreshProvider($event)"
       @delete-provider="confirmDeleteProvider($event)"
+      @load-providers="loadProvidersData"
       @close="showSettings = false"
     />
 

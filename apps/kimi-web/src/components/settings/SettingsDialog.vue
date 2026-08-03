@@ -73,6 +73,7 @@ const emit = defineEmits<{
   logout: [];
   openOnboarding: [];
   openProviders: [];
+  loadProviders: [];
   updateConfig: [patch: Partial<AppConfig>];
   addProvider: [input: { type: string; apiKey?: string; baseUrl?: string; defaultModel?: string }];
   updateProvider: [id: string, input: { type?: string; apiKey?: string; baseUrl?: string; defaultModel?: string }];
@@ -293,6 +294,11 @@ watch(activeTab, (tab) => {
     !client.userSkillsLoading.value
   ) {
     void client.loadUserSkills();
+  }
+  // Providers tab: 触发 App.vue 加载 provider 列表（embedded ProviderManager
+  // 自身是纯展示组件，不调 API）。每次切到该 tab 都刷新，确保最新数据。
+  if (tab === 'providers') {
+    emit('loadProviders');
   }
 });
 

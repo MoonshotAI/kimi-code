@@ -100,7 +100,10 @@ function cancelAdd(): void {
   editingProviderId.value = null;
 }
 function submitAdd(): void {
-  if (!addForm.apiKey.trim() && !editingProviderId.value) {
+  // Ollama / custom 等本地或自托管端点可能不需要 API key —— 由 preset 标记。
+  const preset = PROVIDER_TYPES.find((p) => p.value === addForm.type);
+  const apiKeyOptional = preset?.apiKeyOptional === true;
+  if (!addForm.apiKey.trim() && !editingProviderId.value && !apiKeyOptional) {
     addError.value = t('providers.apiKeyRequired');
     return;
   }

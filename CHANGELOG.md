@@ -2,6 +2,32 @@
 
 本文档记录 kimi-code 项目的全局更改历史。各子包独立 CHANGELOG 见对应目录。
 
+## 2026-08-04
+
+### feat(kimi-web): Provider 模型自动发现 + 刷新后持久化 + 嵌套模态框层级修复 + Kimi Code OAuth 降级
+
+补齐二开 fork 在 Provider 管理上的三块短板，并修复 fork 仓库常态下 Kimi Code OAuth 凭据无效导致的告警干扰。
+
+| 类别 | 文件 | 改动 |
+|---|---|---|
+| feat | `apps/kimi-web/src/lib/providerPresets.ts` | 新增 DeepSeek / Ollama 等 OpenAI 兼容 provider 预设，支持 API key 与本地端点两种接入方式 |
+| feat | `apps/kimi-web/src/api/daemon/client.ts` | `refreshAllProviders` / `refreshProviderModels` 走 v1 RPC，刷新后重新加载 providers 与 models 缓存，确保刷新页面后 provider 与模型不丢失 |
+| feat | `apps/kimi-web/src/composables/client/useModelProviderState.ts` | `refreshAllProviders` 完整实现：调用后端刷新所有可刷新 provider 的远程模型元数据，失败收集到 `failed` 列表再统一上报 |
+| feat | `packages/oauth/src/open-platform.ts` | `fetchGenericOpenAIModels` 支持无 API key 的本地端点（Ollama / custom） |
+| feat | `packages/oauth/src/refreshProviderModels.ts` | 新增分支 2.6：对 `openai` / `deepseek` / `qwen` / `zhipu` / `baichuan` / `minimax` / `ollama` / `custom` 等 OpenAI 兼容 vendor 类型，统一走 `{baseUrl}/models` 自动发现模型列表 |
+| feat | `apps/kimi-web/src/components/settings/ProviderManager.vue` | 切换模型弹窗展示自动发现的模型；修复"暂无提供商"显示问题 |
+| feat | `apps/kimi-web/src/components/settings/SettingsDialog.vue` | 设置弹窗打开时加载 provider 列表 |
+| feat | `apps/kimi-web/src/App.vue` | `openModelPicker` 触发 `refreshAllProviders` 后再展示弹窗，确保列表为最新 |
+| fix | `apps/kimi-web/src/style.css` | 新增 `--z-modal-top: 500` 层级变量，用于嵌套模态框 |
+| fix | `apps/kimi-web/src/components/ui/Dialog.vue` | 新增 `layer` 属性（`modal` / `top`），`top` 使用 `--z-modal-top` 确保嵌套弹窗浮于外层之上 |
+| fix | `apps/kimi-web/src/components/dialogs/ConfirmDialog.vue` | 设置 `layer="top"`，删除确认弹窗不再被设置弹窗覆盖 |
+| fix | `packages/oauth/src/refreshProviderModels.ts` | 分支 1（Managed Kimi Code OAuth）catch 块：`ManagedKimiCodeModelsAuthError`（401/402/403）或 membership / subscription / benefit 关键词错误降级为 `unchanged`，不进 `failed` 列表——fork 仓库本地未登录官方 OAuth 是常态，避免每次 `refreshAllProviders` 都弹告警 toast 干扰 API-key provider 工作流 |
+| docs | `CLAUDE.md` | 从 symlink 改为独立文档，补充仓库身份、二开接缝、常用命令说明 |
+
+> **验证**：Playwright 打开 `http://localhost:5175` → 点模型 pill → 更多模型 → `切换模型` 弹窗正常打开，无 toast 告警，console 仅保留调试级日志。
+
+---
+
 ## 2026-08-03
 
 ### chore: 同步官方 main 至 98ef0f0b — rebase 无冲突
