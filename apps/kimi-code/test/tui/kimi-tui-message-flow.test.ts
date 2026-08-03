@@ -5244,7 +5244,7 @@ command = "vim"
     }
   });
 
-  it('forks the active session and switches to the returned session', async () => {
+  it('forks the active session and stays in the source session', async () => {
     const originalTitle = process.title;
     const source = makeSession({
       id: 'ses-source',
@@ -5267,16 +5267,16 @@ command = "vim"
           id: 'ses-source',
           title: 'Fork: Source title',
         });
-        expect(driver.getCurrentSessionId()).toBe('ses-fork');
+        expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
+          'Session forked (ses-fork). Still in the original session; switch to the fork via /sessions.',
+        );
       });
-      expect(setTitle).toHaveBeenCalledWith('Fork: Source title');
+      expect(driver.getCurrentSessionId()).toBe('ses-source');
+      expect(source.close).not.toHaveBeenCalled();
+      expect(forked.onEvent).not.toHaveBeenCalled();
+      expect(setTitle).not.toHaveBeenCalled();
       expect(process.title).toBe('kimi-test-runner');
-      expect(source.close).toHaveBeenCalledOnce();
-      expect(forked.onEvent).toHaveBeenCalledOnce();
       expect(harness.resumeSession).not.toHaveBeenCalled();
-      expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
-        'Session forked (ses-fork). To return to the original session: kimi -r ses-source',
-      );
     } finally {
       process.title = originalTitle;
     }
