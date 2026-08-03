@@ -14,21 +14,27 @@
  * `AgentProfileContribution`, binding each profile's `${base_prompt}`
  * placeholder lazily at render time so it always reflects the effective
  * default profile (builtin, or the `SYSTEM.md` override) rather than any
- * file-based definition.
+ * file-based definition. A structured base prompt also forwards its
+ * environment disclosure (e.g. the disclosed date) through
+ * `renderSystemPrompt`, so runtime reminders never parse rendered text.
  */
 
 import type {
   AgentProfile,
   AgentProfileContext,
+  SystemPromptRenderResult,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { AgentProfileContribution } from '#/app/agentProfileCatalog/agentProfileContribution';
-import { renderPromptTemplate } from '#/app/agentProfileCatalog/profile-shared';
+import {
+  renderPromptTemplate,
+  renderPromptTemplateResult,
+} from '#/app/agentProfileCatalog/profile-shared';
 
 import type { AgentFileDefinition, AgentFileDiscoveryResult } from './types';
 
 export function agentProfileFromFile(
   definition: AgentFileDefinition,
-  basePrompt: (context: AgentProfileContext) => string,
+  basePrompt: (context: AgentProfileContext) => string | SystemPromptRenderResult,
 ): AgentProfile {
   const skillActive =
     (definition.tools === undefined || definition.tools.includes('Skill')) &&
@@ -44,12 +50,14 @@ export function agentProfileFromFile(
     modelPreference: definition.modelPreference,
     systemPrompt: (context) =>
       renderPromptTemplate(definition.prompt, context, { skillActive }, basePrompt),
+    renderSystemPrompt: (context) =>
+      renderPromptTemplateResult(definition.prompt, context, { skillActive }, basePrompt),
   };
 }
 
 export function profilesFromDiscovery(
   result: AgentFileDiscoveryResult,
-  basePrompt: (context: AgentProfileContext) => string,
+  basePrompt: (context: AgentProfileContext) => string | SystemPromptRenderResult,
 ): AgentProfileContribution {
   return {
     profiles: result.agents.map((definition) => agentProfileFromFile(definition, basePrompt)),

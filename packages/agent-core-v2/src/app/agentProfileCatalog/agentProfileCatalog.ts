@@ -10,7 +10,9 @@
  *
  * Every profile is self-contained: `systemPrompt(context)` returns the complete
  * prompt (base + role overlay are merged at definition time, not at spawn
- * time). Profiles stay independent of concrete model aliases, but may declare
+ * time), while `renderSystemPrompt(context)` can return the same text together
+ * with the environment facts disclosed by that render. Profiles stay
+ * independent of concrete model aliases, but may declare
  * a symbolic primary/secondary preference used as the default when spawned as
  * a subagent. The builtin {@link DEFAULT_AGENT_PROFILE_NAME} (`agent`) is the
  * default profile used when an Agent is bound to a Model without naming a
@@ -61,12 +63,25 @@ export interface AgentProfileContext {
   readonly shellName?: string;
   readonly shellPath?: string;
   readonly now?: string;
+  readonly timeZone?: string;
   readonly skills?: string;
   readonly skillActive?: boolean;
   readonly pluginSections?: string;
   readonly productName?: string;
   readonly replyStyleGuide?: string;
   readonly [key: string]: unknown;
+}
+
+export interface EnvironmentDisclosureSnapshot {
+  readonly cwd: string;
+  readonly date:
+    | { readonly disclosed: true; readonly value: { readonly localDate: string; readonly timeZone: string } }
+    | { readonly disclosed: false };
+}
+
+export interface SystemPromptRenderResult {
+  readonly text: string;
+  readonly environment: EnvironmentDisclosureSnapshot;
 }
 
 export interface AgentProfile {
@@ -79,6 +94,22 @@ export interface AgentProfile {
   readonly subagents?: readonly string[];
   readonly modelPreference?: AgentModelPreference;
   systemPrompt(context: AgentProfileContext): string;
+  readonly renderSystemPrompt?: (context: AgentProfileContext) => SystemPromptRenderResult;
   readonly promptPrefix?: (ctx: AgentProfilePromptPrefixContext) => Promise<string>;
   readonly summaryPolicy?: AgentProfileSummaryPolicy;
+}
+
+export function renderAgentProfile(
+  profile: AgentProfile,
+  context: AgentProfileContext,
+): SystemPromptRenderResult {
+  return (
+    profile.renderSystemPrompt?.(context) ?? {
+      text: profile.systemPrompt(context),
+      environment: {
+        cwd: context.cwd ?? '',
+        date: { disclosed: false },
+      },
+    }
+  );
 }

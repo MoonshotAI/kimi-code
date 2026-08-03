@@ -11,6 +11,7 @@ import { collectGitContext } from './gitContext';
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
 import {
   renderSystemPrompt,
+  renderSystemPromptResult,
   skillActiveFor,
   TASK_AGENT_ROLE_PREFIX,
 } from '#/app/agentProfileCatalog/profile-shared';
@@ -103,6 +104,8 @@ registerAgentProfile({
   tools: AGENT_TOOLS,
   systemPrompt: (context) =>
     renderSystemPrompt('', context, { skillActive: skillActiveFor(AGENT_TOOLS) }),
+  renderSystemPrompt: (context) =>
+    renderSystemPromptResult('', context, { skillActive: skillActiveFor(AGENT_TOOLS) }),
 });
 
 registerAgentProfile({
@@ -114,6 +117,8 @@ registerAgentProfile({
   tools: CODER_TOOLS,
   systemPrompt: (context) =>
     renderSystemPrompt(CODER_ROLE, context, { skillActive: skillActiveFor(CODER_TOOLS) }),
+  renderSystemPrompt: (context) =>
+    renderSystemPromptResult(CODER_ROLE, context, { skillActive: skillActiveFor(CODER_TOOLS) }),
   summaryPolicy: DEFAULT_SUMMARY_POLICY,
 });
 
@@ -125,6 +130,8 @@ registerAgentProfile({
   tools: EXPLORE_TOOLS,
   systemPrompt: (context) =>
     renderSystemPrompt(EXPLORE_ROLE, context, { skillActive: skillActiveFor(EXPLORE_TOOLS) }),
+  renderSystemPrompt: (context) =>
+    renderSystemPromptResult(EXPLORE_ROLE, context, { skillActive: skillActiveFor(EXPLORE_TOOLS) }),
   promptPrefix: async ({ cwd, runner, log }) => {
     try {
       return await collectGitContext(runner, cwd, log);

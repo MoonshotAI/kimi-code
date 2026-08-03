@@ -19,10 +19,12 @@ import { join } from 'pathe';
 
 import {
   DEFAULT_AGENT_PROFILE_NAME,
+  renderAgentProfile,
   type AgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
   renderPromptTemplate,
+  renderPromptTemplateResult,
   skillActiveFor,
 } from '#/app/agentProfileCatalog/profile-shared';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -66,7 +68,11 @@ export async function loadSystemMdProfile(
     subagents: builtinDefault.subagents,
     systemPrompt: (context) =>
       renderPromptTemplate(text, context, { skillActive }, (ctx) =>
-        builtinDefault.systemPrompt(ctx),
+        renderAgentProfile(builtinDefault, ctx),
+      ),
+    renderSystemPrompt: (context) =>
+      renderPromptTemplateResult(text, context, { skillActive }, (ctx) =>
+        renderAgentProfile(builtinDefault, ctx),
       ),
   };
 }

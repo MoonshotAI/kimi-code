@@ -23,12 +23,19 @@
  * resolved lazily and only when the template actually references it. Also
  * shared: `skillActiveFor` (whether the Skill tool survives a profile's tool
  * list — drives skills injection) and the `subagents`-allowlist helpers
- * (`subagentAllowlistFor`, `subagentTypeNotAllowedMessage`).
+ * (`subagentAllowlistFor`, `subagentTypeNotAllowedMessage`). Structured
+ * renderers also carry disclosure metadata so runtime reminders never need to
+ * parse the rendered text.
  */
 
 import { renderPrompt } from '#/_base/utils/render-prompt';
 
-import type { AgentProfile, AgentProfileContext } from './agentProfileCatalog';
+import {
+  type AgentProfile,
+  type AgentProfileContext,
+  type EnvironmentDisclosureSnapshot,
+  type SystemPromptRenderResult,
+} from './agentProfileCatalog';
 
 import SYSTEM_PROMPT_TEMPLATE from './system.md?raw';
 
@@ -122,13 +129,37 @@ export function renderPromptTemplate(
   template: string,
   context: AgentProfileContext,
   options: { readonly skillActive: boolean },
-  basePrompt?: (context: AgentProfileContext) => string,
+  basePrompt?: (context: AgentProfileContext) => string | SystemPromptRenderResult,
 ): string {
+  return renderPromptTemplateResult(template, context, options, basePrompt).text;
+}
+
+export function renderPromptTemplateResult(
+  template: string,
+  context: AgentProfileContext,
+  options: { readonly skillActive: boolean },
+  basePrompt?: (context: AgentProfileContext) => string | SystemPromptRenderResult,
+): SystemPromptRenderResult {
   const vars = systemPromptVars(context, options);
+  let baseResult: SystemPromptRenderResult | undefined;
   if (basePrompt !== undefined && template.includes('${base_prompt}')) {
-    vars['base_prompt'] = basePrompt(context);
+    const rendered = basePrompt(context);
+    baseResult =
+      typeof rendered === 'string'
+        ? {
+            text: rendered,
+            environment: undisclosedEnvironment(context),
+          }
+        : rendered;
+    vars['base_prompt'] = baseResult.text;
   }
-  return renderPrompt(template, vars);
+  return {
+    text: renderPrompt(template, vars),
+    environment: mergeEnvironmentDisclosure(
+      environmentForTemplate(template, context),
+      baseResult?.environment,
+    ),
+  };
 }
 
 export function renderSystemPrompt(
@@ -136,8 +167,75 @@ export function renderSystemPrompt(
   context: AgentProfileContext,
   options: { readonly skillActive: boolean },
 ): string {
-  return renderPrompt(SYSTEM_PROMPT_TEMPLATE, {
-    ...systemPromptVars(context, options),
-    role_additional: roleAdditional,
-  });
+  return renderSystemPromptResult(roleAdditional, context, options).text;
+}
+
+export function renderSystemPromptResult(
+  roleAdditional: string,
+  context: AgentProfileContext,
+  options: { readonly skillActive: boolean },
+): SystemPromptRenderResult {
+  return {
+    text: renderPrompt(SYSTEM_PROMPT_TEMPLATE, {
+      ...systemPromptVars(context, options),
+      role_additional: roleAdditional,
+    }),
+    environment: environmentForTemplate(SYSTEM_PROMPT_TEMPLATE, context),
+  };
+}
+
+function environmentForTemplate(
+  template: string,
+  context: AgentProfileContext,
+): EnvironmentDisclosureSnapshot {
+  const usesNow = template.includes('${now}');
+  const timeZone = context.timeZone ?? localTimeZone();
+  return {
+    cwd: context.cwd ?? '',
+    date: usesNow
+      ? {
+          disclosed: true,
+          value: {
+            localDate: localDateKey(context.now, timeZone),
+            timeZone,
+          },
+        }
+      : { disclosed: false },
+  };
+}
+
+function undisclosedEnvironment(context: AgentProfileContext): EnvironmentDisclosureSnapshot {
+  return {
+    cwd: context.cwd ?? '',
+    date: { disclosed: false },
+  };
+}
+
+function mergeEnvironmentDisclosure(
+  direct: EnvironmentDisclosureSnapshot,
+  base: EnvironmentDisclosureSnapshot | undefined,
+): EnvironmentDisclosureSnapshot {
+  if (base === undefined) return direct;
+  return {
+    cwd: direct.cwd || base.cwd,
+    date: direct.date.disclosed ? direct.date : base.date,
+  };
+}
+
+function localDateKey(now: string | undefined, timeZone: string): string {
+  const date = now === undefined ? new Date() : new Date(now);
+  if (Number.isNaN(date.getTime())) return localDateKey(undefined, timeZone);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((candidate) => candidate.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function localTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 }
