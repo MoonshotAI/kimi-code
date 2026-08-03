@@ -33,6 +33,8 @@ enum Commands {
         /// The prompt to run.
         prompt: String,
     },
+    /// Show the current engine config (model/provider).
+    Config,
     /// Environment + config diagnostics.
     Doctor,
     /// Engine health check.
@@ -97,6 +99,20 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
             println!("{result}");
+        }
+        Commands::Config => {
+            let server = kimi_server::Server::build()?;
+            let mut client = kimi_server_client::AppServerClient::InProcess(
+                kimi_server::in_process::spawn(server.processor),
+            );
+            let config = client
+                .call(kimi_protocol::methods::CONFIG_GET, serde_json::Value::Null)
+                .await;
+            if let Some(error) = config.get("error") {
+                eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
+                std::process::exit(1);
+            }
+            println!("{}", serde_json::to_string_pretty(&config["result"]).unwrap_or_default());
         }
         Commands::Doctor => {
             let server = kimi_server::Server::build()?;
