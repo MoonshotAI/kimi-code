@@ -152,6 +152,58 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(text).toContain('hello_from_bash');
   }, 30_000);
 
+  it('rejects a second prompt while a turn is in flight', async () => {
+    const c = await boot();
+    // First model response parks the turn at a Bash approval; the follow-up
+    // text closes the turn once the approval lands.
+    scripted!.mockNextResponse({
+      type: 'function',
+      id: 'call_busy',
+      name: 'Bash',
+      arguments: '{"command":"echo busy_probe"}',
+    });
+    scripted!.mockNextText('done');
+
+    // Park the approval until the test releases it.
+    let answerPermission: ((response: unknown) => void) | undefined;
+    const permissionSeen = new Promise<void>((seen) => {
+      c.onRequest('session/request_permission', () => {
+        seen();
+        return new Promise((resolve) => {
+          answerPermission = resolve;
+        });
+      });
+    });
+
+    const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+      sessionId: string;
+    };
+    await c.waitForSessionUpdate('available_commands_update', 10_000);
+
+    const firstPrompt = c.send('session/prompt', {
+      sessionId: created.sessionId,
+      prompt: [{ type: 'text', text: 'run echo' }],
+    });
+    // The turn is in flight once its approval reached the client.
+    await permissionSeen;
+
+    // A second prompt while the turn runs must fail fast with -32600, not
+    // silently queue behind the engine and overwrite the in-flight driver.
+    await expect(
+      c.send('session/prompt', {
+        sessionId: created.sessionId,
+        prompt: [{ type: 'text', text: 'again' }],
+      }),
+    ).rejects.toThrow(/another turn is already in progress/);
+
+    // Release the parked approval: the first turn completes normally and its
+    // prompt settles with end_turn (the driver was never displaced).
+    answerPermission!({ outcome: { outcome: 'selected', optionId: 'approve_once' } });
+    const result = (await firstPrompt) as { stopReason: string };
+    expect(result.stopReason).toBe('end_turn');
+    expect(scripted!.callCount()).toBe(2);
+  }, 30_000);
+
   it('attaches locations to a file tool call and its terminal update', async () => {
     const c = await boot();
     const filePath = join(homeDir!, 'note.txt');

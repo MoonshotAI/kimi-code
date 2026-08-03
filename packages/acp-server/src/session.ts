@@ -509,6 +509,7 @@ export class AcpSession {
    * the other consumers.
    */
   private driveSkillActivation(skillName: string, args: string): Promise<PromptResponse> {
+    this.assertNoActiveTurn();
     return this.driveLaunch(
       this.agent.activateSkill({ name: skillName, args: args.length > 0 ? args : undefined }),
     );
@@ -566,20 +567,42 @@ export class AcpSession {
   }
 
   /**
+   * Reject a second model-bound prompt while a turn is in flight. The engine
+   * QUEUES a plain `agent.prompt` submitted during an active turn (the launch
+   * resolves `undefined`, indistinguishable from a hook-blocked launch), and
+   * tracking that queued turn would overwrite the only in-flight driver — the
+   * first prompt would never settle and both turns' events would go
+   * unattributed. The legacy adapter rejected this case (`turn.agent_busy` →
+   * -32600); reject locally instead, synchronously with driver assignment so
+   * two concurrent prompts cannot race past the check.
+   */
+  private assertNoActiveTurn(): void {
+    if (this.driver !== undefined && !this.driver.settled) {
+      throw RequestError.invalidRequest(
+        { code: TURN_AGENT_BUSY_CODE },
+        'another turn is already in progress',
+      );
+    }
+  }
+
+  /**
    * Submit the prompt and drive the turn to completion: `agent.prompt()`
    * returns the launched turn id, which the session-level event handlers use
    * to attribute events to this driver. Settles on `turn.ended`; a no-launch
-   * result (busy / hook-blocked / not runnable) settles with `end_turn`.
+   * result (hook-blocked / not runnable) settles with `end_turn`.
    */
   private driveTurn(input: readonly ContentPart[]): Promise<PromptResponse> {
+    this.assertNoActiveTurn();
     return this.driveLaunch(this.agent.prompt({ input }));
   }
 
   /**
    * Shared turn settlement for every launch path (`agent.prompt`,
    * `agent.activateSkill`): the returned turn id attributes subsequent events
-   * to this driver; `undefined` means no turn launched, so the prompt settles
-   * gracefully with `end_turn`.
+   * to this driver; `undefined` means no turn launched (hook-blocked / not
+   * runnable — the busy case never gets this far, see
+   * {@link assertNoActiveTurn}), so the prompt settles gracefully with
+   * `end_turn`.
    */
   private driveLaunch(launch: Promise<PromptLaunchResult>): Promise<PromptResponse> {
     return new Promise<PromptResponse>((resolve, reject) => {
