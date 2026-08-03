@@ -1,7 +1,7 @@
 /**
  * Scenario: discover uninjected AGENTS.md files from canonical tool accesses and Bash targets.
  * Responsibilities: seeding, once-only reminders, result delivery, probing, and path extraction.
- * Wiring: real reminder, executor, parser, and host filesystem with flag/telemetry/event stubs.
+ * Wiring: real reminder, executor, parser, and host filesystem with telemetry/event stubs.
  * Run: pnpm exec vitest run test/agent/agentsMdReminder/agentsMdReminder.test.ts
  */
 
@@ -15,7 +15,6 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IBashParserService } from '#/app/bashParser/bashParser';
 import { BashParserService } from '#/app/bashParser/bashParserService';
-import { IFlagService } from '#/app/flag/flag';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ToolCall } from '#/kosong/contract/message';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
@@ -54,7 +53,6 @@ import type {
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { AgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminderService';
 import { extractBashTargetDirs } from '#/agent/agentsMdReminder/bashTargets';
-import { stubFlag } from '../../app/flag/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
@@ -86,7 +84,6 @@ interface Harness {
 
 function createHarness(
   options: {
-    readonly flagEnabled?: boolean | (() => boolean);
     readonly withDedupe?: boolean;
     readonly withRealExecutor?: boolean;
     readonly telemetry?: ITelemetryService;
@@ -94,7 +91,6 @@ function createHarness(
 ): Harness {
   const telemetryEvents: TelemetryRecord[] = [];
   const events = stubToolExecutorEvents();
-  const flagEnabled = options.flagEnabled ?? true;
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
       if (options.withRealExecutor === true) {
@@ -136,10 +132,6 @@ function createHarness(
         homeDir,
       } as unknown as IHostEnvironment);
       reg.defineInstance(IBashParserService, new BashParserService());
-      reg.defineInstance(
-        IFlagService,
-        stubFlag(typeof flagEnabled === 'function' ? flagEnabled : () => flagEnabled),
-      );
       reg.defineInstance(
         ITelemetryService,
         options.telemetry ?? recordingTelemetry(telemetryEvents),
@@ -393,34 +385,6 @@ describe('agentsMdReminder Bash coverage', () => {
       const result = await fire(h, didCtx('Bash', { command }));
       expect(outputText(result)).not.toContain('<system-reminder>');
     }
-  });
-});
-
-describe('agentsMdReminder flag gate', () => {
-  it('leaves results untouched while the flag is off', async () => {
-    const h = createHarness({ flagEnabled: false });
-    const subDir = join(workDir, 'packages', 'kap-server');
-    await writeAgentsMd(subDir);
-    h.reminder.seedInjected([], workDir);
-
-    const result = await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
-
-    expect(outputText(result)).toBe('original result');
-    expect(h.telemetryEvents).toHaveLength(0);
-  });
-
-  it('follows runtime flag flips without reconstructing the service', async () => {
-    let flagOn = false;
-    const h = createHarness({ flagEnabled: () => flagOn });
-    const subDir = join(workDir, 'packages', 'kap-server');
-    const subAgentsMd = await writeAgentsMd(subDir);
-
-    const off = await fire(h, didCtx('Read', { path: join(subDir, 'a.ts') }));
-    expect(outputText(off)).not.toContain('<system-reminder>');
-
-    flagOn = true;
-    const on = await fire(h, didCtx('Read', { path: join(subDir, 'b.ts') }));
-    expect(outputText(on)).toContain(subAgentsMd);
   });
 });
 

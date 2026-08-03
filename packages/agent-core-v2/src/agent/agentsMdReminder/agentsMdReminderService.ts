@@ -30,9 +30,7 @@
  * only exists where `toolDedupe` constructed, so in scopes without it no
  * call is ever treated as a duplicate) and leaves it untouched, keeping
  * reminder, telemetry, and the known-set strictly on results that reach the
- * model. The gate (`agents-md-reminder` experimental flag) is evaluated per
- * tool call, so runtime config overrides take effect without reconstructing
- * the agent. The hook is ordered before `toolDedupe` so the placeholder is
+ * model. The hook is ordered before `toolDedupe` so the placeholder is
  * still marked synthetic when this hook runs and the original call carries
  * the reminder by the time the duplicate's deferred result resolves; the
  * ordered registration throws when its target is absent, so scopes without
@@ -69,7 +67,7 @@
  * in `agentState` as well; fs probes go through the os
  * `IHostFileSystem`, the home directory through `IHostEnvironment`, the
  * brand home through `bootstrap`, syntax
- * trees through `bashParser`, the gate through `flag`, and the shown-event
+ * trees through `bashParser`, and the shown-event
  * through `telemetry`. Bound at Agent scope.
  */
 
@@ -80,7 +78,6 @@ import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/
 import { defineState } from '#/_base/state/stateRegistry';
 import { IBashParserService } from '#/app/bashParser/bashParser';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IFlagService } from '#/app/flag/flag';
 import type { AgentsMdReminderShownEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ContentPart } from '#/kosong/contract/message';
@@ -103,7 +100,6 @@ import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 
 import { IAgentAgentsMdReminderService } from './agentsMdReminder';
 import { extractBashTargetDirs } from './bashTargets';
-import { AGENTS_MD_REMINDER_FLAG_ID } from './flag';
 
 const AGENTS_MD_BASENAMES: ReadonlySet<string> = new Set<string>(AGENTS_MD_PLAIN_NAMES);
 
@@ -136,7 +132,6 @@ export class AgentAgentsMdReminderService
     @IHostEnvironment private readonly env: IHostEnvironment,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IBashParserService private readonly bashParser: IBashParserService,
-    @IFlagService private readonly flags: IFlagService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
@@ -144,9 +139,7 @@ export class AgentAgentsMdReminderService
     this.states.register(agentsMdReminderCwdKey);
     this.states.register(agentsMdReminderSeededKey);
     const handler = async (ctx: ToolDidExecuteContext, next: () => Promise<void>): Promise<void> => {
-      if (this.flags.enabled(AGENTS_MD_REMINDER_FLAG_ID)) {
-        ctx.result = await this.augmentWithReminder(ctx);
-      }
+      ctx.result = await this.augmentWithReminder(ctx);
       await next();
     };
     try {

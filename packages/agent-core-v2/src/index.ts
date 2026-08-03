@@ -267,7 +267,6 @@ export * from '#/agent/usage/usage';
 export * from '#/agent/usage/usageService';
 export * from '#/agent/toolDedupe/toolDedupe';
 export * from '#/agent/toolDedupe/toolDedupeService';
-import '#/agent/agentsMdReminder/flag';
 export * from '#/agent/agentsMdReminder/agentsMdReminder';
 export * from '#/agent/agentsMdReminder/agentsMdReminderService';
 import '#/agent/toolSelect/flag';
