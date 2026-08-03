@@ -581,6 +581,8 @@ describe('structuredContent forwarding', () => {
     for (const text of [
       JSON.stringify(structuredContent),
       JSON.stringify(structuredContent, null, 2),
+      '{"total": 2, "items": ["a", "b"]}',
+      '{"items": ["a", "b"], "total": 2}',
     ]) {
       const out = await mcpResultToExecutableOutput(
         { content: [{ type: 'text', text }], isError: false, structuredContent },

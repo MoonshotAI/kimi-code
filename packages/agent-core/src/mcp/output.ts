@@ -8,9 +8,11 @@
  *  2. Wrap media-only outputs in `<mcp_tool_result name="…">` tags so the
  *     model can attribute binary output when several tools return media.
  *     Mirrors the in-tree `ReadMediaFile` convention.
- *  2b. Append `structuredContent` (when present and not already serialized
- *     into a text block) as a JSON text part — `content` blocks are only
- *     the human-oriented summary and can omit the actual data.
+ *  2b. Append `structuredContent` (when present) as a compact JSON text part,
+ *     so the machine-readable payload reaches the model — `content` blocks
+ *     are only the human-oriented summary and can omit the actual data.
+ *     Duplicates already serialized into a text block by the server are
+ *     detected semantically (parse + deep-equal) and skipped.
  *  3. Apply the 100K text/think character budget to the tool's own text.
  *     This runs BEFORE captions exist, so a chatty tool (page text + a
  *     screenshot) can never evict or slice the compression caption — that
@@ -383,9 +385,10 @@ function collapseSingleText(parts: readonly ContentPart[]): string | ContentPart
  * summary and can drop everything that matters ("returned 6 item(s)").
  *
  * Servers that follow the spec's fallback guidance already serialize the
- * structured payload verbatim into a text block; forwarding it again would
- * double the token cost, so exact duplicates (compact or pretty-printed)
- * are skipped.
+ * structured payload into a text block; forwarding it again would double the
+ * token cost, so duplicates are skipped. Comparison is semantic (parse +
+ * deep-equal) rather than string-exact, because serializers differ in
+ * spacing (Python's `json.dumps` emits `{"total": 2}`) and key order.
  */
 function structuredContentTextPart(
   result: MCPToolResult,
@@ -393,11 +396,46 @@ function structuredContentTextPart(
 ): ContentPart | null {
   const structured = result.structuredContent;
   if (structured === undefined) return null;
-  const compact = JSON.stringify(structured);
-  const pretty = JSON.stringify(structured, null, 2);
   const duplicated = converted.some(
-    (part) => part.type === 'text' && (part.text === compact || part.text === pretty),
+    (part) => part.type === 'text' && textMatchesStructuredContent(part.text, structured),
   );
   if (duplicated) return null;
-  return { type: 'text', text: compact };
+  return { type: 'text', text: JSON.stringify(structured) };
+}
+
+/**
+ * Whether `text` is a JSON serialization of `structured`, regardless of
+ * whitespace or key order. Non-JSON text never matches.
+ */
+function textMatchesStructuredContent(
+  text: string,
+  structured: Record<string, unknown>,
+): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  return deepJsonEqual(parsed, structured);
+}
+
+function deepJsonEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((item, i) => deepJsonEqual(item, b[i]))
+    );
+  }
+  const aRecord = a as Record<string, unknown>;
+  const bRecord = b as Record<string, unknown>;
+  const aKeys = Object.keys(aRecord);
+  return (
+    aKeys.length === Object.keys(bRecord).length &&
+    aKeys.every((key) => deepJsonEqual(aRecord[key], bRecord[key]))
+  );
 }

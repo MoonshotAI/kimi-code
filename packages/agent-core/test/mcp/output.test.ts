@@ -720,12 +720,16 @@ describe('structuredContent forwarding', () => {
   });
 
   test('does not double-forward structuredContent already serialized into a text block', async () => {
-    // Spec-conforming fallbacks serialize the structured payload verbatim
-    // into a text block; appending it again would double the token cost.
+    // Spec-conforming fallbacks serialize the structured payload into a text
+    // block; appending it again would double the token cost. Comparison is
+    // semantic, so serializer spacing (Python json.dumps) and key order do
+    // not matter.
     const structuredContent = { total: 2, items: ['a', 'b'] };
     for (const text of [
       JSON.stringify(structuredContent),
       JSON.stringify(structuredContent, null, 2),
+      '{"total": 2, "items": ["a", "b"]}',
+      '{"items": ["a", "b"], "total": 2}',
     ]) {
       const out = await mcpResultToExecutableOutput(
         { content: [{ type: 'text', text }], isError: false, structuredContent },

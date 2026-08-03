@@ -13,9 +13,9 @@
  *     append happens after the media-only wrap so an image + structured-
  *     payload result keeps its attribution tags, and the JSON counts against
  *     the text budget like any tool text. Servers that follow the spec's
- *     fallback guidance already serialize the payload verbatim into a text
- *     block; exact duplicates (compact or pretty-printed) are skipped so
- *     they are not forwarded twice.
+ *     fallback guidance already serialize the payload into a text block;
+ *     duplicates are detected semantically (parse + deep-equal, so spacing
+ *     and key order do not matter) and skipped rather than forwarded twice.
  *  3. Apply the 100K text/think character budget to the tool's own text.
  *     This runs BEFORE captions exist, so a chatty tool (page text + a
  *     screenshot) can never evict or slice the compression caption — that
@@ -306,11 +306,42 @@ function structuredContentTextPart(
 ): ContentPart | null {
   const structured = result.structuredContent;
   if (structured === undefined) return null;
-  const compact = JSON.stringify(structured);
-  const pretty = JSON.stringify(structured, null, 2);
   const duplicated = converted.some(
-    (part) => part.type === 'text' && (part.text === compact || part.text === pretty),
+    (part) => part.type === 'text' && textMatchesStructuredContent(part.text, structured),
   );
   if (duplicated) return null;
-  return { type: 'text', text: compact };
+  return { type: 'text', text: JSON.stringify(structured) };
+}
+
+function textMatchesStructuredContent(
+  text: string,
+  structured: Record<string, unknown>,
+): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  return deepJsonEqual(parsed, structured);
+}
+
+function deepJsonEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((item, i) => deepJsonEqual(item, b[i]))
+    );
+  }
+  const aRecord = a as Record<string, unknown>;
+  const bRecord = b as Record<string, unknown>;
+  const aKeys = Object.keys(aRecord);
+  return (
+    aKeys.length === Object.keys(bRecord).length &&
+    aKeys.every((key) => deepJsonEqual(aRecord[key], bRecord[key]))
+  );
 }
