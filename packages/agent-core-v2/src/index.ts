@@ -375,6 +375,13 @@ export * from '#/agent/tools/ask-user-question/ask-user-question';
 import '#/agent/tools/ask-user-question/askUserQuestionTool';
 export * from '#/app/gateway/gateway';
 export * from '#/app/gateway/gatewayService';
+import '#/app/remoteControl/flag';
+export * from '#/app/remoteControl/flag';
+export * from '#/app/remoteControl/protocol';
+export * from '#/app/remoteControl/remoteControl';
+export * from '#/app/remoteControl/remoteControlTransport';
+import '#/app/remoteControl/remoteControlService';
+import '#/app/remoteControl/remoteControlTransportService';
 
 export * from '#/session/workspaceContext/workspaceContext';
 export * from '#/session/workspaceContext/workspaceContextService';
