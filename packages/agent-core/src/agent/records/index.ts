@@ -48,6 +48,34 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'config.update':
       agent.config.update(input);
       return;
+    case 'profile.bind': {
+      // v2-engine wires persist the profile binding (including the tool
+      // allowlist) via profile.bind instead of the v1 pair of config.update +
+      // tools.set_active_tools. Map it onto the v1 equivalents so a v2
+      // session resumed here keeps its model, prompt, and tools. Records
+      // without an activeToolNames array (v2's "every tool active") are
+      // skipped wholesale: leaving the config untouched preserves the
+      // session-level fallback that applies the default profile when the
+      // replayed system prompt is empty, matching how names-less
+      // tools.set_active_tools records are treated.
+      if (!Array.isArray(input.activeToolNames)) return;
+      const thinkingEffort = input.thinkingEffort ?? input.thinkingLevel;
+      agent.config.restore({
+        ...(input.modelAlias !== undefined ? { modelAlias: input.modelAlias } : {}),
+        ...(input.profileName !== undefined ? { profileName: input.profileName } : {}),
+        ...(thinkingEffort !== undefined ? { thinkingEffort } : {}),
+        ...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
+        ...(input.subagents !== undefined ? { subagentNames: input.subagents } : {}),
+      });
+      agent.tools.setActiveTools(input.activeToolNames, input.disallowedTools);
+      return;
+    }
+    case 'tools.reset_active_tools':
+      // v2-only transition back to the unrestricted default (every tool
+      // active). v1 keeps no "all tools" state to restore — the
+      // session-level profile fallback covers fresh resumes — so the record
+      // replays as a no-op.
+      return;
     case 'permission.set_mode':
       agent.permission.setMode(input.mode);
       return;
