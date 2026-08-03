@@ -40,7 +40,7 @@ function fakeProc(code: number, stdout = '', stderr = ''): IHostProcess {
 }
 
 function fakeHostProcess(
-  script: Array<{ match: string; code: number; stdout?: string; stderr?: string }>,
+  script: Array<{ match: string; code: number; stdout?: string; stderr?: string; hang?: boolean }>,
 ): { service: IHostProcessService; calls: string[] } {
   const calls: string[] = [];
   const service: IHostProcessService = {
@@ -49,6 +49,24 @@ function fakeHostProcess(
       const key = `${command} ${args.join(' ')}`;
       calls.push(key);
       const hit = script.find((s) => key.includes(s.match));
+      if (hit?.hang === true) {
+        return Promise.resolve({
+          _serviceBrand: undefined,
+          pid: 1234,
+          exitCode: null,
+          stdin: new Writable({
+            write: (_c, _e, cb) => {
+              cb();
+            },
+          }),
+          stdout: Readable.from(['']),
+          stderr: Readable.from(['']),
+          // Never settles — the caller's own timeout must fire.
+          wait: () => new Promise<number>(() => {}),
+          kill: () => Promise.resolve(),
+          dispose: () => undefined,
+        } as IHostProcess);
+      }
       return Promise.resolve(fakeProc(hit?.code ?? 0, hit?.stdout ?? '', hit?.stderr ?? ''));
     },
   } as IHostProcessService;
@@ -57,8 +75,9 @@ function fakeHostProcess(
 
 function fakePlugins(
   installed: Array<{ id: string; enabled: boolean; state: string; version?: string }>,
-): { service: IPluginService; installs: string[] } {
+): { service: IPluginService; installs: string[]; enabledCalls: Array<{ id: string; enabled: boolean }> } {
   const installs: string[] = [];
+  const enabledCalls: Array<{ id: string; enabled: boolean }> = [];
   const service = {
     listPlugins: () =>
       Promise.resolve(
@@ -79,10 +98,24 @@ function fakePlugins(
       ),
     installPlugin: (input: { source: string }) => {
       installs.push(input.source);
-      return Promise.resolve({} as never);
+      // Upsert semantics of the real manager: a new id installs enabled, an
+      // existing record keeps its (possibly disabled) enabled flag.
+      const existing = installed.find((p) => p.id === 'kimi-cu');
+      if (existing === undefined) {
+        installed.push({ id: 'kimi-cu', enabled: true, state: 'ok' });
+        return Promise.resolve({ enabled: true } as never);
+      }
+      existing.state = 'ok';
+      return Promise.resolve({ enabled: existing.enabled } as never);
+    },
+    setPluginEnabled: (input: { id: string; enabled: boolean }) => {
+      enabledCalls.push(input);
+      const existing = installed.find((p) => p.id === input.id);
+      if (existing !== undefined) existing.enabled = input.enabled;
+      return Promise.resolve();
     },
   } as unknown as IPluginService;
-  return { service, installs };
+  return { service, installs, enabledCalls };
 }
 
 describe('parsePermissionStatus', () => {
@@ -234,5 +267,57 @@ describe('kimi-cu entry', () => {
     expect(plugins.installs).toHaveLength(1);
     expect(reports).toEqual(['plugin']);
     expect(host.calls.every((call) => call.includes('service-status') || call.includes('xpc-ping'))).toBe(true);
+  });
+
+  it('marks probe steps failed instead of throwing when the binary is wedged', async () => {
+    const applicationsDir = await fakeAppBundle();
+    const plugins = fakePlugins([]);
+    const host = fakeHostProcess([
+      { match: 'service-status', code: 0, hang: true },
+      { match: 'xpc-ping', code: 0, hang: true },
+    ]);
+    const entry = createKimiCuEntry(
+      makeCtx({
+        applicationsDir,
+        plugins: plugins.service,
+        hostProcess: host.service,
+        detectProbeTimeoutMs: 5,
+      }),
+    );
+
+    const detected = await entry.detect();
+    expect(detected.steps.find((s) => s.id === 'service')).toEqual({
+      id: 'service',
+      state: 'failed',
+      detail: expect.stringContaining('timed out'),
+    });
+    expect(detected.steps.find((s) => s.id === 'permissions')).toEqual({
+      id: 'permissions',
+      state: 'failed',
+      detail: expect.stringContaining('timed out'),
+    });
+
+    // The install path uses the same detect — it must still repair the
+    // wiring layer instead of dying on the wedged probes. The service
+    // itself legitimately stays broken and reports the clean error.
+    await expect(entry.install(() => {})).rejects.toThrow(/not running after install/);
+    expect(plugins.installs).toHaveLength(1);
+  });
+
+  it('re-enables a previously disabled wiring plugin during setup', async () => {
+    const applicationsDir = await fakeAppBundle();
+    const plugins = fakePlugins([{ id: 'kimi-cu', enabled: false, state: 'ok', version: '0.5.4' }]);
+    const host = fakeHostProcess([
+      { match: 'service-status', code: 0, stdout: 'SMAppService status=1' },
+      { match: 'xpc-ping', code: 0, stdout: 'permissionStatus: accessibility=true screenRecording=true' },
+    ]);
+    const entry = createKimiCuEntry(
+      makeCtx({ applicationsDir, plugins: plugins.service, hostProcess: host.service }),
+    );
+
+    // Everything else ready, only the disabled wiring blocks readiness —
+    // setup must not strand the capability at partial by leaving it off.
+    await entry.install(() => {});
+    expect(plugins.enabledCalls).toEqual([{ id: 'kimi-cu', enabled: true }]);
   });
 });

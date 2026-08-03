@@ -23,4 +23,6 @@ export interface CapabilityEntryContext {
   readonly applicationsDir?: string;
   /** kimi-webbridge only: defaults to `http://127.0.0.1:10086`. */
   readonly webbridgeBaseUrl?: string;
+  /** kimi-cu only: detect-probe command timeout; defaults to 3s. */
+  readonly detectProbeTimeoutMs?: number;
 }

@@ -5,7 +5,7 @@
  * (temp dirs, scripted fetch, scripted host processes, fake plugins).
  */
 
-import { mkdtemp, readFile, rm, mkdir, writeFile, access } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, mkdir, writeFile, access, chmod, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -66,8 +66,10 @@ function fakeHostProcess(script?: Array<{ match: string; code: number; stdout?: 
 function fakePlugins(installed: Array<{ id: string; enabled: boolean; state: string; version?: string }>): {
   service: IPluginService;
   installs: string[];
+  enabledCalls: Array<{ id: string; enabled: boolean }>;
 } {
   const installs: string[] = [];
+  const enabledCalls: Array<{ id: string; enabled: boolean }> = [];
   const service = {
     listPlugins: () =>
       Promise.resolve(
@@ -88,11 +90,25 @@ function fakePlugins(installed: Array<{ id: string; enabled: boolean; state: str
       ),
     installPlugin: (input: { source: string }) => {
       installs.push(input.source);
-      installed.push({ id: 'kimi-webbridge', enabled: true, state: 'ok', version: '1.11.3' });
-      return Promise.resolve({} as never);
+      // Upsert semantics of the real manager: a new id installs enabled, an
+      // existing record keeps its (possibly disabled) enabled flag.
+      const existing = installed.find((p) => p.id === 'kimi-webbridge');
+      if (existing === undefined) {
+        installed.push({ id: 'kimi-webbridge', enabled: true, state: 'ok', version: '1.11.3' });
+        return Promise.resolve({ enabled: true } as never);
+      }
+      existing.state = 'ok';
+      existing.version = '1.11.3';
+      return Promise.resolve({ enabled: existing.enabled } as never);
+    },
+    setPluginEnabled: (input: { id: string; enabled: boolean }) => {
+      enabledCalls.push(input);
+      const existing = installed.find((p) => p.id === input.id);
+      if (existing !== undefined) existing.enabled = input.enabled;
+      return Promise.resolve();
     },
   } as unknown as IPluginService;
-  return { service, installs };
+  return { service, installs, enabledCalls };
 }
 
 /** Scripted fetch: answers daemon /status and CDN binary downloads. */
@@ -162,7 +178,9 @@ describe('kimi-webbridge entry', () => {
   it('detects a fully installed daemon with extension as soft gate', async () => {
     const userHome = path.join(root, 'user-home');
     await mkdir(path.join(userHome, '.kimi-webbridge', 'bin'), { recursive: true });
-    await writeFile(path.join(userHome, '.kimi-webbridge', 'bin', 'kimi-webbridge'), 'bin');
+    const binPath = path.join(userHome, '.kimi-webbridge', 'bin', 'kimi-webbridge');
+    await writeFile(binPath, 'bin');
+    await chmod(binPath, 0o755);
     const plugins = fakePlugins([{ id: 'kimi-webbridge', enabled: true, state: 'ok', version: '1.11.3' }]);
     const { fetchImpl } = fakeFetch({
       statusSequence: [{ running: true, version: 'v1.11.3', extension_connected: false }],
@@ -256,6 +274,7 @@ describe('kimi-webbridge entry', () => {
     await mkdir(path.join(userHome, '.kimi-webbridge', 'bin'), { recursive: true });
     const binPath = path.join(userHome, '.kimi-webbridge', 'bin', 'kimi-webbridge');
     await writeFile(binPath, 'old-bin');
+    await chmod(binPath, 0o755);
     const plugins = fakePlugins([{ id: 'kimi-webbridge', enabled: true, state: 'ok', version: '1.11.3' }]);
     const host = fakeHostProcess();
     const { fetchImpl } = fakeFetch({
@@ -281,7 +300,9 @@ describe('kimi-webbridge entry', () => {
   it('resumes partial setup without repeating completed runtime layers', async () => {
     const userHome = path.join(root, 'user-home');
     await mkdir(path.join(userHome, '.kimi-webbridge', 'bin'), { recursive: true });
-    await writeFile(path.join(userHome, '.kimi-webbridge', 'bin', 'kimi-webbridge'), 'bin');
+    const binPath = path.join(userHome, '.kimi-webbridge', 'bin', 'kimi-webbridge');
+    await writeFile(binPath, 'bin');
+    await chmod(binPath, 0o755);
     const plugins = fakePlugins([]);
     const host = fakeHostProcess();
     const { fetchImpl } = fakeFetch({
@@ -307,4 +328,44 @@ describe('kimi-webbridge entry', () => {
     await expect(entry.install(() => {})).rejects.toThrow(/not supported/);
     expect(plugins.installs).toEqual([]);
   });
+  it('treats a non-executable leftover binary as missing and re-downloads it', async () => {
+    const userHome = path.join(root, 'user-home');
+    await mkdir(path.join(userHome, '.kimi-webbridge', 'bin'), { recursive: true });
+    // An install interrupted between rename and chmod leaves this behind.
+    const binPath = path.join(userHome, '.kimi-webbridge', 'bin', 'kimi-webbridge');
+    await writeFile(binPath, 'stale');
+    await chmod(binPath, 0o644);
+    const plugins = fakePlugins([]);
+    const host = fakeHostProcess();
+    const { fetchImpl } = fakeFetch({
+      statusSequence: [{ running: true, version: 'v1.11.3', extension_connected: true }],
+    });
+    const entry = createKimiWebbridgeEntry(
+      makeCtx({ plugins: plugins.service, hostProcess: host.service, fetchImpl }),
+    );
+
+    const detected = await entry.detect();
+    expect(detected.steps.find((step) => step.id === 'daemon-binary')).toEqual({
+      id: 'daemon-binary',
+      state: 'missing',
+      detail: 'not executable',
+    });
+
+    await entry.install(() => {});
+    expect((await stat(binPath)).mode & 0o111).not.toBe(0);
+  });
+
+  it('re-enables a previously disabled wiring plugin during setup', async () => {
+    const plugins = fakePlugins([{ id: 'kimi-webbridge', enabled: false, state: 'ok', version: '1.11.3' }]);
+    const { fetchImpl } = fakeFetch({
+      statusSequence: [{ running: true, version: 'v1.11.3', extension_connected: true }],
+    });
+    const entry = createKimiWebbridgeEntry(makeCtx({ plugins: plugins.service, fetchImpl }));
+
+    // installPlugin preserves the disabled flag, but setup must not strand
+    // the capability at partial by leaving the wiring off.
+    await entry.install(() => {});
+    expect(plugins.enabledCalls).toEqual([{ id: 'kimi-webbridge', enabled: true }]);
+  });
 });
+

@@ -70,11 +70,16 @@ function appleScriptQuote(script: string): string {
   return script.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
   const applicationsDir = ctx.applicationsDir ?? '/Applications';
   const appPath = path.join(applicationsDir, APP_BUNDLE);
   const appBin = path.join(appPath, 'Contents', 'MacOS', 'kimi-cu');
   const infoPlist = path.join(appPath, 'Contents', 'Info.plist');
+  const probeTimeoutMs = ctx.detectProbeTimeoutMs ?? DETECT_PROBE_TIMEOUT_MS;
   const supported = ctx.platform === 'darwin';
 
   async function exists(p: string): Promise<boolean> {
@@ -87,7 +92,7 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
   async function serviceRunning(): Promise<boolean> {
     if (!(await exists(appBin))) return false;
     const result = await runCommand(ctx.hostProcess, appBin, ['service-status'], {
-      timeout: DETECT_PROBE_TIMEOUT_MS,
+      timeout: probeTimeoutMs,
     });
     // `SMAppService status=1` means enabled (1=enabled, 2=requiresApproval, 3=notFound).
     return /status=1\b/.test(result.stdout);
@@ -96,7 +101,7 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
   async function permissionStatus(): Promise<PermissionStatus | undefined> {
     if (!(await exists(appBin))) return undefined;
     const result = await runCommand(ctx.hostProcess, appBin, ['xpc-ping'], {
-      timeout: DETECT_PROBE_TIMEOUT_MS,
+      timeout: probeTimeoutMs,
     });
     return parsePermissionStatus(result.stdout);
   }
@@ -115,29 +120,43 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
 
     const version = await readAppBundleVersion(infoPlist);
     const appPresent = await exists(appBin);
-    steps.push({
-      id: 'app',
-      state: appPresent ? 'ok' : 'missing',
-      ...(version !== undefined ? { detail: version } : {}),
-    });
+    steps.push({ id: 'app', state: appPresent ? 'ok' : 'missing', ...(version !== undefined ? { detail: version } : {}) });
 
-    steps.push({ id: 'service', state: (await serviceRunning()) ? 'ok' : 'missing' });
+    // A wedged binary turns these CLI probes into timeouts — mark the step
+    // failed instead of throwing, so status views and the detect-first
+    // install path can still see and repair the other layers.
+    try {
+      steps.push({ id: 'service', state: (await serviceRunning()) ? 'ok' : 'missing' });
+    } catch (error) {
+      steps.push({ id: 'service', state: 'failed', detail: errorMessage(error) });
+    }
 
-    const permissions = await permissionStatus();
-    const granted = permissions !== undefined && permissions.accessibility && permissions.screenRecording;
-    const missingPermissions = permissions === undefined
-      ? undefined
-      : [
-          ...(permissions.accessibility ? [] : ['accessibility']),
-          ...(permissions.screenRecording ? [] : ['screenRecording']),
-        ].join(',');
-    steps.push({
-      id: 'permissions',
-      state: granted ? 'ok' : 'missing',
-      ...(granted || missingPermissions === undefined || missingPermissions.length === 0
-        ? {}
-        : { detail: missingPermissions }),
-    });
+    let permissions: PermissionStatus | undefined;
+    let permissionsProbeError: string | undefined;
+    try {
+      permissions = await permissionStatus();
+    } catch (error) {
+      permissionsProbeError = errorMessage(error);
+    }
+    if (permissionsProbeError !== undefined) {
+      steps.push({ id: 'permissions', state: 'failed', detail: permissionsProbeError });
+    } else {
+      const granted =
+        permissions !== undefined && permissions.accessibility && permissions.screenRecording;
+      const missingPermissions = permissions === undefined
+        ? undefined
+        : [
+            ...(permissions.accessibility ? [] : ['accessibility']),
+            ...(permissions.screenRecording ? [] : ['screenRecording']),
+          ].join(',');
+      steps.push({
+        id: 'permissions',
+        state: granted ? 'ok' : 'missing',
+        ...(granted || missingPermissions === undefined || missingPermissions.length === 0
+          ? {}
+          : { detail: missingPermissions }),
+      });
+    }
 
     return {
       steps,
@@ -202,7 +221,13 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
 
     if (stepStates.get('plugin') !== 'ok' || readyBefore) {
       report('plugin');
-      await ctx.plugins.installPlugin({ source: PLUGIN_ZIP_URL });
+      const summary = await ctx.plugins.installPlugin({ source: PLUGIN_ZIP_URL });
+      if (!summary.enabled) {
+        // installPlugin preserves a previous disabled state, but detection
+        // requires an enabled plugin — leaving it disabled would strand the
+        // capability at partial after a successful setup.
+        await ctx.plugins.setPluginEnabled({ id: PLUGIN_ID, enabled: true });
+      }
     }
 
     const installApp = stepStates.get('app') !== 'ok' || readyBefore;
@@ -249,7 +274,10 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
       await new Promise((resolve) => {
         setTimeout(resolve, 1_000);
       });
-      if (!(await serviceRunning())) {
+      // The verification probe itself may time out on a wedged binary —
+      // report the clean failure, not the raw timeout.
+      const running = await serviceRunning().catch(() => false);
+      if (!running) {
         throw new Error('kimi-cu background service is not running after install');
       }
     }

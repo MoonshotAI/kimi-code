@@ -10,6 +10,7 @@
  * from the latest channel, which takes effect the next time the daemon starts.
  */
 
+import { constants } from 'node:fs';
 import { access, chmod, mkdir, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -72,6 +73,13 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     );
   }
 
+  async function executable(p: string): Promise<boolean> {
+    return access(p, constants.X_OK).then(
+      () => true,
+      () => false,
+    );
+  }
+
   async function fetchDaemonStatus(): Promise<DaemonStatus | undefined> {
     const fetchImpl = ctx.fetchImpl ?? fetch;
     try {
@@ -89,7 +97,16 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     const steps: CapabilityStep[] = [];
 
     const binaryPresent = await exists(binPath);
-    steps.push({ id: 'daemon-binary', state: binaryPresent ? 'ok' : 'missing' });
+    // POSIX installs chmod +x after the rename; an install interrupted in
+    // between leaves an unusable file behind, which must read as missing so
+    // the next install re-downloads instead of failing `start` with EACCES.
+    const binaryUsable =
+      binaryPresent && (ctx.platform === 'win32' || (await executable(binPath)));
+    steps.push({
+      id: 'daemon-binary',
+      state: binaryUsable ? 'ok' : 'missing',
+      ...(binaryPresent && !binaryUsable ? { detail: 'not executable' } : {}),
+    });
 
     const daemon = await fetchDaemonStatus();
     const daemonRunning = daemon?.running === true;
@@ -173,7 +190,13 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
 
     if (stepStates.get('skill') !== 'ok' || readyBefore) {
       report('skill');
-      await ctx.plugins.installPlugin({ source: PLUGIN_ZIP_URL });
+      const summary = await ctx.plugins.installPlugin({ source: PLUGIN_ZIP_URL });
+      if (!summary.enabled) {
+        // installPlugin preserves a previous disabled state, but detection
+        // requires an enabled plugin — leaving it disabled would strand the
+        // capability at partial after a successful setup.
+        await ctx.plugins.setPluginEnabled({ id: PLUGIN_ID, enabled: true });
+      }
     }
   }
 
