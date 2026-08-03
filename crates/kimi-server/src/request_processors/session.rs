@@ -888,6 +888,40 @@ impl Processor for SessionProcessor {
             })
         });
 
+        // `session/list_skills` — registered skills (sorted by name).
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_LIST_SKILLS, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: SessionGoalParams = serde_json::from_value(params)
+                    .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                let mut skills = agent.skill_manager.registry.list_skills();
+                skills.sort_by(|a, b| a.name.cmp(&b.name));
+                let skills: Vec<kimi_protocol::wire_types::SkillSummaryRpc> = skills
+                    .into_iter()
+                    .map(|s| kimi_protocol::wire_types::SkillSummaryRpc {
+                        name: s.name.clone(),
+                        description: s.description.clone(),
+                        skill_type: s.skill_type.clone(),
+                        source: s.source.clone(),
+                        path: s.path.clone(),
+                        dir: s.dir.clone(),
+                    })
+                    .collect();
+                serde_json::to_value(kimi_protocol::wire_types::SkillListResult { skills })
+                    .map_err(|e| {
+                        JsonRpcError::internal_error(format!("list_skills serialize failed: {e}"))
+                    })
+            })
+        });
+
         // `session/get_status` — live engine status snapshot.
         let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_GET_STATUS, move |params| {
