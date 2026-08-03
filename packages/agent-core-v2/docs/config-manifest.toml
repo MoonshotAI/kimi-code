@@ -152,15 +152,18 @@ extra_skill_dirs = []
 # loopControl (config.toml: loop_control)
 #   owner: src/agent/loop/configSection.ts
 #   scope: core
-#   hooks: custom fromToml · custom toToml · stripEnv
+#   hooks: custom toToml · stripEnv
+#   deprecations (old key is ignored + warns; rename manually):
+#     max_retries_per_step -> max_attempts_per_step
+#     max_steps_per_run -> max_steps_per_turn
 #   env:
 #     max_steps_per_turn <- KIMI_LOOP_MAX_STEPS_PER_TURN (custom parse)
-#     max_retries_per_step <- KIMI_LOOP_MAX_RETRIES_PER_STEP (custom parse)
+#     max_attempts_per_step <- KIMI_LOOP_MAX_ATTEMPTS_PER_STEP (custom parse; deprecated fallback KIMI_LOOP_MAX_RETRIES_PER_STEP)
 # ##########################################################################
 
 [loop_control]
 # max_steps_per_turn: integer
-# max_retries_per_step: integer
+# max_attempts_per_step: integer
 # max_ralph_iterations: integer
 # reserved_context_size: integer
 # compaction_trigger_ratio: number

@@ -22,6 +22,9 @@ export class StubConfigService implements IConfigService {
   private readonly _onDidChange = new Emitter<ConfigChangedEvent>();
   readonly onDidChangeConfiguration: Event<ConfigChangedEvent> = this._onDidChange.event;
   readonly onDidSectionChange: Event<ConfigChangedEvent> = this._onDidChange.event;
+  private readonly _onDidChangeDiagnostics = new Emitter<readonly ConfigDiagnostic[]>();
+  readonly onDidChangeDiagnostics: Event<readonly ConfigDiagnostic[]> =
+    this._onDidChangeDiagnostics.event;
   private readonly _values = new Map<string, unknown>();
 
   constructor(initial?: Record<string, unknown>) {
