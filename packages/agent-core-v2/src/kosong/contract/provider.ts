@@ -96,6 +96,7 @@ export interface GenerateOptions {
   sampling?: SamplingOptions;
   thinking?: ThinkingRequestOptions;
   maxCompletionTokens?: number;
+  maxCompletionTokensExplicit?: boolean;
   usedContextTokens?: number;
   maxContextTokens?: number;
   onRequestStart?: () => void;

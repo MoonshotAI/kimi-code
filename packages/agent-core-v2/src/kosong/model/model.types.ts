@@ -38,6 +38,7 @@ export interface CompletionBudgetConfig {
 
 export interface CompletionBudgetParams {
   readonly maxCompletionTokens: number;
+  readonly maxCompletionTokensExplicit?: boolean;
   readonly usedContextTokens?: number;
   readonly maxContextTokens?: number;
 }

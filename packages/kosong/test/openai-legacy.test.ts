@@ -875,6 +875,17 @@ describe('OpenAILegacyChatProvider', () => {
       // the request trace records this field.
       expect(provider.maxCompletionTokens).toBe(131072);
     });
+
+    it('withMaxCompletionTokens honors an explicit cap above the 128k ceiling', async () => {
+      const provider = createProvider().withMaxCompletionTokens(393216, { explicit: true });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['max_tokens']).toBe(393216);
+      expect(provider.maxCompletionTokens).toBe(393216);
+    });
   });
 
   describe('maxTokens option', () => {

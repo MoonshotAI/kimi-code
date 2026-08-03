@@ -11,7 +11,7 @@ import {
 } from '#/errors';
 import { extractText } from '#/message';
 import type { ContentPart, Message } from '#/message';
-import type { FinishReason } from '#/provider';
+import type { FinishReason, MaxCompletionTokensOptions } from '#/provider';
 import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
 import {
@@ -302,4 +302,37 @@ export function convertToolMessageContent(
   return message.content
     .map((p) => convertContentPart(p))
     .filter((p): p is OpenAIContentPart => p !== null);
+}
+
+/**
+ * Hard upper bound on the completion-token cap sent to OpenAI-compatible
+ * endpoints. Many third-party providers reject `max_tokens` /
+ * `max_output_tokens` above this limit (the documented range is
+ * `[1, 131072]`).
+ */
+export const OPENAI_MAX_OUTPUT_TOKENS_CEILING = 128 * 1024;
+
+/**
+ * Fold a per-request completion-token budget into the wire cap: clamp to the
+ * remaining context window when the caller measured it, then to
+ * {@link OPENAI_MAX_OUTPUT_TOKENS_CEILING}, floored at 1. An explicit
+ * (authoritative) cap skips the transport ceiling — only the window clamp
+ * applies.
+ */
+export function clampCompletionTokens(
+  maxCompletionTokens: number,
+  options?: MaxCompletionTokensOptions,
+): number {
+  let cap = maxCompletionTokens;
+  if (
+    options?.usedContextTokens !== undefined &&
+    options.maxContextTokens !== undefined &&
+    options.maxContextTokens > 0
+  ) {
+    cap = Math.min(cap, options.maxContextTokens - options.usedContextTokens);
+  }
+  if (options?.explicit === true) {
+    return Math.max(1, cap);
+  }
+  return Math.max(1, Math.min(cap, OPENAI_MAX_OUTPUT_TOKENS_CEILING));
 }

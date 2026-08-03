@@ -1198,6 +1198,75 @@ describe('Anthropic max-tokens profile', () => {
   });
 });
 
+describe('OpenAI Responses max_output_tokens ceiling', () => {
+  it('clamps a per-turn budget above 128K to the 131072 transport ceiling', async () => {
+    const provider = new OpenAIResponsesChatProvider({ model: 'gpt-4.1', apiKey: 'sk-probe' });
+
+    const body = await captureResponsesBody(provider, { maxCompletionTokens: 1000000 });
+
+    expect(body['max_output_tokens']).toBe(131072);
+  });
+
+  it('uses the remaining context window when it is below the transport ceiling', async () => {
+    const provider = new OpenAIResponsesChatProvider({ model: 'gpt-4.1', apiKey: 'sk-probe' });
+
+    const body = await captureResponsesBody(provider, {
+      maxCompletionTokens: 1000000,
+      usedContextTokens: 90000,
+      maxContextTokens: 100000,
+    });
+
+    expect(body['max_output_tokens']).toBe(10000);
+  });
+
+  it('uses the transport ceiling when the remaining context window is larger', async () => {
+    const provider = new OpenAIResponsesChatProvider({ model: 'gpt-4.1', apiKey: 'sk-probe' });
+
+    const body = await captureResponsesBody(provider, {
+      maxCompletionTokens: 1000000,
+      usedContextTokens: 30000,
+      maxContextTokens: 1000000,
+    });
+
+    expect(body['max_output_tokens']).toBe(131072);
+  });
+
+  it('honors an explicit cap above the transport ceiling', async () => {
+    const provider = new OpenAIResponsesChatProvider({ model: 'gpt-4.1', apiKey: 'sk-probe' });
+
+    const body = await captureResponsesBody(provider, {
+      maxCompletionTokens: 393216,
+      maxCompletionTokensExplicit: true,
+    });
+
+    expect(body['max_output_tokens']).toBe(393216);
+  });
+
+  it('still applies the window clamp to an explicit cap', async () => {
+    const provider = new OpenAIResponsesChatProvider({ model: 'gpt-4.1', apiKey: 'sk-probe' });
+
+    const body = await captureResponsesBody(provider, {
+      maxCompletionTokens: 393216,
+      maxCompletionTokensExplicit: true,
+      usedContextTokens: 90000,
+      maxContextTokens: 100000,
+    });
+
+    expect(body['max_output_tokens']).toBe(10000);
+  });
+
+  it('honors an explicit cap above the transport ceiling on chat completions too', async () => {
+    const provider = new OpenAILegacyChatProvider({ model: 'gpt-4.1', apiKey: 'sk-probe' });
+
+    const body = await captureOpenAIBody(provider, {
+      maxCompletionTokens: 393216,
+      maxCompletionTokensExplicit: true,
+    });
+
+    expect(body['max_tokens']).toBe(393216);
+  });
+});
+
 describe('OpenAI reasoning_effort path (issue #1616)', () => {
   it('auto-enables reasoning_effort=medium from think-part history when no withThinking hook exists', async () => {
     const provider = new OpenAILegacyChatProvider({

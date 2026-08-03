@@ -4,9 +4,9 @@
  * The budget no longer morphs a Model (there is no `applyCompletionBudget`):
  * the caller resolves a `CompletionBudgetConfig`, folds it into a per-turn cap
  * with `computeCompletionBudgetCap`, and passes the result through
- * `ModelRequestParams` (`maxCompletionTokens` + the window-clamp companions). The
- * wire base clamps the cap against the context window before any dialect
- * ceiling applies.
+ * `ModelRequestParams` (`maxCompletionTokens` + the window-clamp companions +
+ * the explicit marker for hardCap-sourced caps). The wire base clamps the cap
+ * against the context window before any dialect ceiling applies.
  *
  * Load-bearing rule: `usedContextTokens` is the caller's MEASURED in-context
  * tokens and is only folded in when the request did not explicitly override
@@ -62,6 +62,7 @@ export function completionBudgetParams(args: {
       budget: args.budget,
       capability: args.capability,
     }),
+    maxCompletionTokensExplicit: args.budget.hardCap !== undefined,
     usedContextTokens: args.usedContextTokens,
     maxContextTokens: args.capability?.max_context_tokens,
   };

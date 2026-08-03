@@ -1039,6 +1039,7 @@ export interface AgentStateSnapshot {
       readonly thinkingEffort?: 'off' | 'on' | (string & {});
       readonly thinkingKeep?: string;
       readonly maxCompletionTokens?: number;
+      readonly maxCompletionTokensExplicit?: boolean;
       readonly usedContextTokens?: number;
       readonly maxContextTokens?: number;
       readonly onTraceId?: (traceId: string | null) => void;

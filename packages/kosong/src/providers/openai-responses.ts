@@ -11,6 +11,7 @@ import type {
   ChatProvider,
   FinishReason,
   GenerateOptions,
+  MaxCompletionTokensOptions,
   ProviderRequestAuth,
   ResponseFormat,
   StreamedMessage,
@@ -22,6 +23,7 @@ import OpenAI from 'openai';
 
 import { usesOpenAIResponsesDeveloperRole } from './capability-registry';
 import {
+  clampCompletionTokens,
   convertOpenAIError,
   isMediaPart,
   isOpenAIInsufficientQuotaCode,
@@ -1189,8 +1191,13 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     return clone;
   }
 
-  withMaxCompletionTokens(maxCompletionTokens: number): OpenAIResponsesChatProvider {
-    return this.withGenerationKwargs({ max_output_tokens: maxCompletionTokens });
+  withMaxCompletionTokens(
+    maxCompletionTokens: number,
+    options?: MaxCompletionTokensOptions,
+  ): OpenAIResponsesChatProvider {
+    return this.withGenerationKwargs({
+      max_output_tokens: clampCompletionTokens(maxCompletionTokens, options),
+    });
   }
 
   private _clone(): OpenAIResponsesChatProvider {

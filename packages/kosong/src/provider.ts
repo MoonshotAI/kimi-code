@@ -50,6 +50,14 @@ export interface MaxCompletionTokensOptions {
   readonly usedContextTokens?: number;
   /** Model context-window size in tokens (`max_context_size`). */
   readonly maxContextTokens?: number;
+  /**
+   * True when the cap is an authoritative declared limit (user
+   * `max_output_size`, env override, model-catalog metadata, or an explicit
+   * engine policy cap such as the compaction default) rather than an
+   * inferred budget. Providers should honor it as-is and skip generic
+   * transport fallback ceilings.
+   */
+  readonly explicit?: boolean;
 }
 
 /**

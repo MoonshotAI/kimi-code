@@ -950,6 +950,71 @@ describe('OpenAIResponsesChatProvider', () => {
       expect(provider.maxCompletionTokens).toBe(1024);
     });
 
+    it('withMaxCompletionTokens clamps to the 128k ceiling', async () => {
+      const provider = createProvider().withMaxCompletionTokens(1000000);
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['max_output_tokens']).toBe(131072);
+      expect(provider.maxCompletionTokens).toBe(131072);
+    });
+
+    it('withMaxCompletionTokens sizes the cap to the remaining context window', async () => {
+      const provider = createProvider().withMaxCompletionTokens(100000, {
+        usedContextTokens: 90000,
+        maxContextTokens: 100000,
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['max_output_tokens']).toBe(10000);
+      expect(provider.maxCompletionTokens).toBe(10000);
+    });
+
+    it('withMaxCompletionTokens takes the smaller of the context window and the ceiling', async () => {
+      const provider = createProvider().withMaxCompletionTokens(1000000, {
+        usedContextTokens: 30000,
+        maxContextTokens: 1000000,
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['max_output_tokens']).toBe(131072);
+      expect(provider.maxCompletionTokens).toBe(131072);
+    });
+
+    it('withMaxCompletionTokens honors an explicit cap above the 128k ceiling', async () => {
+      const provider = createProvider().withMaxCompletionTokens(393216, { explicit: true });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['max_output_tokens']).toBe(393216);
+      expect(provider.maxCompletionTokens).toBe(393216);
+    });
+
+    it('withMaxCompletionTokens still applies the window clamp to explicit caps', async () => {
+      const provider = createProvider().withMaxCompletionTokens(393216, {
+        explicit: true,
+        usedContextTokens: 90000,
+        maxContextTokens: 100000,
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['max_output_tokens']).toBe(10000);
+      expect(provider.maxCompletionTokens).toBe(10000);
+    });
+
     it('maps json_schema response format to text.format', async () => {
       const provider = createProvider();
       const history: Message[] = [

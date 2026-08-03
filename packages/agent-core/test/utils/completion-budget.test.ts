@@ -150,6 +150,24 @@ describe('applyCompletionBudget', () => {
     expect(withMaxCompletionTokens.mock.calls[0]?.[0]).toBe(8192);
     expect(result).not.toBe(original);
   });
+
+  it('forwards the explicit marker for hard-cap budgets only', () => {
+    applyCompletionBudget({
+      provider: original,
+      budget: { hardCap: 8192 },
+      capability: makeCapability(10000),
+    });
+    expect(withMaxCompletionTokens.mock.calls[0]?.[1]).toMatchObject({ explicit: true });
+
+    withMaxCompletionTokens.mockClear();
+
+    applyCompletionBudget({
+      provider: original,
+      budget: { fallback: 32000 },
+      capability: makeCapability(10000),
+    });
+    expect(withMaxCompletionTokens.mock.calls[0]?.[1]).toMatchObject({ explicit: false });
+  });
 });
 
 describe('resolveCompletionBudget', () => {

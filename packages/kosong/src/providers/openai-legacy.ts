@@ -15,6 +15,7 @@ import type { TokenUsage } from '#/usage';
 import OpenAI from 'openai';
 
 import {
+  clampCompletionTokens,
   convertContentPart,
   convertOpenAIError,
   convertToolMessageContent,
@@ -48,12 +49,6 @@ import {
 // (detected by ReasoningKeyDialect), defaulting to `reasoning_content`. Both
 // arms can be pinned by an explicit `reasoningKey` on the provider config.
 
-/**
- * Hard upper bound on `max_tokens` for OpenAI-compatible chat-completions
- * endpoints. Many third-party providers reject `max_tokens` above this limit
- * (the documented range is `[1, 131072]`).
- */
-const CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING = 128 * 1024;
 const OPENAI_CHAT_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   normalize: (id) => sanitizeToolCallId(id, 64),
   maxLength: 64,
@@ -665,16 +660,9 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     maxCompletionTokens: number,
     options?: MaxCompletionTokensOptions,
   ): OpenAILegacyChatProvider {
-    let cap = maxCompletionTokens;
-    if (
-      options?.usedContextTokens !== undefined &&
-      options?.maxContextTokens !== undefined &&
-      options.maxContextTokens > 0
-    ) {
-      cap = Math.min(cap, options.maxContextTokens - options.usedContextTokens);
-    }
-    cap = Math.min(cap, CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING);
-    return this.withGenerationKwargs(completionTokenKwargs(this._model, Math.max(1, cap)));
+    return this.withGenerationKwargs(
+      completionTokenKwargs(this._model, clampCompletionTokens(maxCompletionTokens, options)),
+    );
   }
 
   private _clone(): OpenAILegacyChatProvider {

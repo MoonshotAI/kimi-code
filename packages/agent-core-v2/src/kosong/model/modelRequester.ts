@@ -4,7 +4,8 @@
  *
  * `ModelRequestParams` is how every per-turn intent reaches the wire: prompt-cache
  * key, sampling overrides, thinking effort/keep, and the completion-token
- * budget (with its window-clamp companions). It is deliberately dialect-free —
+ * budget (with its window-clamp companions and explicit marker). It is
+ * deliberately dialect-free —
  * each wire dialect encodes (or silently drops) an intent in its own hooks.
  * The requester maps the params onto `GenerateOptions` 1:1; the fixed overlay
  * order inside the bases is `cacheKey → sampling → thinking →
@@ -59,6 +60,7 @@ export interface ModelRequestParams {
   readonly thinkingEffort?: ThinkingEffort;
   readonly thinkingKeep?: string;
   readonly maxCompletionTokens?: number;
+  readonly maxCompletionTokensExplicit?: boolean;
   readonly usedContextTokens?: number;
   readonly maxContextTokens?: number;
   readonly onTraceId?: (traceId: string | null) => void;

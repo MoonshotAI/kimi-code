@@ -159,6 +159,7 @@ describe('ModelRequesterImpl request execution', () => {
           thinkingEffort: 'high',
           thinkingKeep: 'all',
           maxCompletionTokens: 1024,
+          maxCompletionTokensExplicit: true,
           usedContextTokens: 5000,
           maxContextTokens: 128000,
         },
@@ -173,6 +174,7 @@ describe('ModelRequesterImpl request execution', () => {
     expect(options?.sampling).toEqual({ temperature: 0.5, topP: 0.9 });
     expect(options?.thinking).toEqual({ effort: 'high', keep: 'all' });
     expect(options?.maxCompletionTokens).toBe(1024);
+    expect(options?.maxCompletionTokensExplicit).toBe(true);
     expect(options?.usedContextTokens).toBe(5000);
     expect(options?.maxContextTokens).toBe(128000);
     expect(options?.responseFormat).toEqual({ type: 'json_object' });
