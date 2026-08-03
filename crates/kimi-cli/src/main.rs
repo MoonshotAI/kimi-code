@@ -208,6 +208,7 @@ async fn handle_chat_command(
             println!("/quit        exit the chat");
             println!("/resume <id> switch to (and resume) another session");
             println!("/model <id>  set the session model");
+            println!("/models      list configured model aliases");
             println!("/status      session status snapshot");
             println!("/usage       token usage");
             println!("/clear       clear the session context");
@@ -255,6 +256,26 @@ async fn handle_chat_command(
                 return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
             }
             println!("model set to {rest}");
+            ChatCommand::Handled
+        }
+        "/models" => {
+            // List the configured model aliases + default (from config).
+            let body = client.call(kimi_protocol::methods::CONFIG_GET, serde_json::Value::Null).await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            let config = &body["result"];
+            let default_model = config["defaultModel"].as_str().unwrap_or("");
+            let models = config["models"].as_object().cloned().unwrap_or_default();
+            if models.is_empty() {
+                println!("no model aliases configured (default: {default_model})");
+            }
+            for (alias, _) in models {
+                println!("{alias}");
+            }
+            if !default_model.is_empty() {
+                println!("default: {default_model}");
+            }
             ChatCommand::Handled
         }
         "/status" => {
