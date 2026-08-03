@@ -44,5 +44,65 @@ impl Processor for PermissionProcessor {
                 Ok(serde_json::json!({ "ok": true, "mode": mode }))
             })
         });
+
+        // `permission/add_rule` — add a rule to the gate (SDK `addRule`
+        // parity); the rule arrives as the whole params object.
+        let perm = self.permission.clone();
+        processor.register(kimi_protocol::methods::PERMISSION_ADD_RULE, move |params| {
+            let perm = perm.clone();
+            Box::pin(async move {
+                let rule: kimi_agent::permission::types::PermissionRule =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid rule: {e}")))?;
+                perm.add_rule(rule);
+                Ok(serde_json::json!({ "ok": true }))
+            })
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kimi_protocol::rpc::JsonRpcRequest;
+
+    #[tokio::test]
+    async fn add_rule_shows_up_in_snapshot() {
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = PermissionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "permission/add_rule".into(),
+                params: serde_json::json!({
+                    "decision": "allow",
+                    "scope": "user",
+                    "pattern": "Read(**)",
+                    "reason": "test rule",
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "add_rule failed: {body}");
+        assert_eq!(body["result"]["ok"], true);
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "permission/get".into(),
+                params: serde_json::Value::Null,
+            })
+            .await;
+        assert!(body.get("error").is_none());
+        assert!(
+            body["result"]["rules"]
+                .as_array()
+                .is_some_and(|r| r.iter().any(|x| x["pattern"] == "Read(**)")),
+            "added rule should appear in snapshot: {body}"
+        );
     }
 }

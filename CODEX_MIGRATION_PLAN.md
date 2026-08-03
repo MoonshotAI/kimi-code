@@ -284,9 +284,9 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 1. ✅ `kimi-server` crate（MessageProcessor + in_process + ServerHostCallbacks/EventBus + ServerState/Server::build）
 2. ✅ `kimi-server-transport`（stdio serve）
 3. ✅ `kimi-server-client`（AppServerClient{InProcess, Remote} 门面）
-4. ✅ **方法族迁移完成（11 processor）**：session **35 方法**（create/prompt/cancel/run_shell/cancel_shell_command/compact/save/load/delete/fork/export/set_model/set_thinking/set_swarm_mode/set_plan_mode/clear_context/get_context/get_status/list/get_usage/get_plan/get_warnings/list_mcp_servers/list_skills/undo_history/import_context/activate_skill/steer/goal 全生命周期/start_btw/end_btw）+ health/config(get+set)/fs/git/approval/plugin/permission/cron/bg（register/list/get/stop/output/append_output/**settle/detach**）/task——引擎 RPC 全部方法族在 Rust 宿主协议层，全部与 main.rs handler 同源
+4. ✅ **方法族迁移完成（11 processor）**：session **44 方法**（create/prompt/cancel/run_shell/cancel_shell_command/compact/save/load/delete/fork/export/set_model/set_thinking/set_swarm_mode/set_plan_mode/clear_context/get_context/get_status/list/get_usage/get_plan/get_warnings/list_mcp_servers/list_skills/undo_history/import_context/activate_skill/steer/goal 全生命周期/start_btw/end_btw/**init/destroy/clear_plan/get_mcp_startup_metrics/reconnect_mcp_server/list_tools/add_additional_dir/remove_additional_dir/update_metadata**）+ health/config(get+set)/fs/git/approval/plugin/permission(get/set_mode/**add_rule**)/cron/bg（register/list/get/stop/output/append_output/**settle/detach**）/task——宿主可服务的全部请求方法在 Rust 协议层，与 main.rs handler 同源（`agent/*`、`host/*` 属引擎侧 stdio 协议，由 kimi-agent 原生实现；bg/event、cron/fired 为事件流 wire 常量）
 5. [ ] kap-server 测试平移（377 基线，TS 面，阶段 B 收尾可选）
-6. **验证**：kimi-server 25 测试 + client 2 + exec 2 全绿；workspace check 干净；0 warnings
+6. **验证**：kimi-server 27 测试 + client 2 + exec 2 全绿；workspace check 干净；0 warnings
 
 ### 阶段 C — CLI + exec
 1. `kimi-cli`：clap 分发 + 子命令平移（acp/doctor/export/login/provider/upgrade/vis/web）

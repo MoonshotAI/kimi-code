@@ -1117,6 +1117,283 @@ impl Processor for SessionProcessor {
                     })
             })
         });
+
+        // `session/clear_plan` — clear the active plan's file content (SDK
+        // `clearPlan` parity).
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_CLEAR_PLAN, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: SessionGoalParams = serde_json::from_value(params)
+                    .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                agent
+                    .clear_plan()
+                    .map_err(JsonRpcError::internal_error)?;
+                Ok(serde_json::json!({ "cleared": true }))
+            })
+        });
+
+        // `session/get_mcp_startup_metrics` — the connect duration recorded at
+        // session/create (SDK `getMcpStartupMetrics` parity).
+        let mgr = self.state.manager.clone();
+        processor.register(
+            kimi_protocol::methods::SESSION_GET_MCP_STARTUP_METRICS,
+            move |params| {
+                let mgr = mgr.clone();
+                Box::pin(async move {
+                    let input: SessionGoalParams = serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                    let mut manager = mgr.lock().await;
+                    let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                        JsonRpcError::internal_error(format!(
+                            "no agent for session: {}",
+                            input.session_id
+                        ))
+                    })?;
+                    serde_json::to_value(
+                        kimi_protocol::wire_types::McpStartupMetricsResult {
+                            duration_ms: agent.mcp_startup_ms,
+                        },
+                    )
+                    .map_err(|e| {
+                        JsonRpcError::internal_error(format!(
+                            "get_mcp_startup_metrics serialize failed: {e}"
+                        ))
+                    })
+                })
+            },
+        );
+
+        // `session/init` — generate AGENTS.md (SDK `Session.init` parity): the
+        // engine explores the project with native Read/Write tools and writes
+        // the file.
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_INIT, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionInitParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                agent
+                    .init_agents_md()
+                    .await
+                    .map_err(|e| JsonRpcError::internal_error(format!("init failed: {e}")))?;
+                Ok(serde_json::json!({ "ok": true }))
+            })
+        });
+
+        // `session/reconnect_mcp_server` — reconnect a single MCP server (SDK
+        // `reconnectMcpServer` parity). Clones the runtime handle inside the
+        // manager lock, then reconnects outside it so a slow reconnect cannot
+        // deadlock against a running turn (same order as list_mcp_servers).
+        let mgr = self.state.manager.clone();
+        processor.register(
+            kimi_protocol::methods::SESSION_RECONNECT_MCP_SERVER,
+            move |params| {
+                let mgr = mgr.clone();
+                Box::pin(async move {
+                    let input: kimi_protocol::wire_types::SessionReconnectMcpParams =
+                        serde_json::from_value(params).map_err(|e| {
+                            JsonRpcError::internal_error(format!("Invalid params: {e}"))
+                        })?;
+                    let mcp = {
+                        let mut manager = mgr.lock().await;
+                        let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                            JsonRpcError::internal_error(format!(
+                                "no agent for session: {}",
+                                input.session_id
+                            ))
+                        })?;
+                        agent.mcp.clone()
+                    };
+                    // `reconnect` connects the transport, whose stdio channel
+                    // holds a `!Send` receiver across awaits — drive it on a
+                    // blocking thread via `Handle::block_on` and only await the
+                    // Send `JoinHandle` here (same technique as session/create).
+                    let name = input.name.clone();
+                    let handle = tokio::runtime::Handle::current();
+                    let entry = tokio::task::spawn_blocking(move || {
+                        handle.block_on(async move { mcp.lock().await.reconnect(&name).await })
+                    })
+                    .await
+                    .map_err(|e| {
+                        JsonRpcError::internal_error(format!("reconnect join: {e}"))
+                    })?
+                    .map_err(JsonRpcError::internal_error)?;
+                    serde_json::to_value(kimi_protocol::wire_types::McpServerInfoRpc {
+                        name: entry.name,
+                        transport: entry.transport.as_str().to_string(),
+                        status: entry.status.as_str().to_string(),
+                        tool_count: entry.tool_count,
+                        error: entry.error,
+                    })
+                    .map_err(|e| {
+                        JsonRpcError::internal_error(format!(
+                            "reconnect_mcp_server serialize failed: {e}"
+                        ))
+                    })
+                })
+            },
+        );
+
+        // `session/update_metadata` — patch the session's metadata blob (SDK
+        // `updateMetadata` parity).
+        let mgr = self.state.manager.clone();
+        processor.register(
+            kimi_protocol::methods::SESSION_UPDATE_METADATA,
+            move |params| {
+                let mgr = mgr.clone();
+                Box::pin(async move {
+                    let input: kimi_protocol::wire_types::SessionUpdateMetadataParams =
+                        serde_json::from_value(params).map_err(|e| {
+                            JsonRpcError::internal_error(format!("Invalid params: {e}"))
+                        })?;
+                    if !input.metadata.is_object() {
+                        return Err(JsonRpcError::internal_error(
+                            "metadata must be a JSON object".to_string(),
+                        ));
+                    }
+                    let mut manager = mgr.lock().await;
+                    let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                        JsonRpcError::internal_error(format!(
+                            "no agent for session: {}",
+                            input.session_id
+                        ))
+                    })?;
+                    agent.update_metadata(input.metadata);
+                    Ok(serde_json::json!({ "ok": true, "metadata": agent.metadata }))
+                })
+            },
+        );
+
+        // `session/destroy` — runtime teardown (SDK close parity): SessionEnd
+        // hooks fire first (fire-and-forget), then the in-memory agent + side
+        // agent are dropped. The persisted record is intentionally left for
+        // later `session/load` — destroy is not a delete.
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_DESTROY, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionIdParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let existed = manager.get_agent(&input.session_id).is_some()
+                    || manager.get_btw_agent(&input.session_id).is_some();
+                if let Some(agent) = manager.get_agent(&input.session_id) {
+                    agent
+                        .fire_lifecycle_hook(
+                            kimi_agent::hooks::external::HookEventType::SessionEnd,
+                            serde_json::json!({ "session_id": input.session_id }),
+                        )
+                        .await;
+                }
+                manager
+                    .destroy_agent(&input.session_id)
+                    .map_err(|e| JsonRpcError::internal_error(e.to_string()))?;
+                Ok(serde_json::json!({ "destroyed": existed }))
+            })
+        });
+
+        // `session/list_tools` — native tool definitions for the session
+        // workspace (web `GET /tools` parity).
+        processor.register(kimi_protocol::methods::SESSION_LIST_TOOLS, move |params| {
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionListToolsParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let root = input.homedir.clone().unwrap_or_default();
+                let mut defs: Vec<kimi_protocol::wire_types::ToolDef> =
+                    kimi_agent::tools::NativeToolset::new(&root)
+                        .map(|ts| {
+                            ts.tool_definitions()
+                                .into_iter()
+                                .map(|td| kimi_protocol::wire_types::ToolDef {
+                                    name: td.name,
+                                    description: td.description,
+                                    input_schema: td.input_schema.unwrap_or(serde_json::Value::Null),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                // Goal tools advertised with an active goal (mirror agent.rs).
+                defs.extend(
+                    kimi_agent::agent::agent::goal_tool_definitions()
+                        .into_iter()
+                        .map(|td| kimi_protocol::wire_types::ToolDef {
+                            name: td.name,
+                            description: td.description,
+                            input_schema: td.input_schema,
+                        }),
+                );
+                serde_json::to_value(kimi_protocol::wire_types::ListToolsResult { tools: defs })
+                    .map_err(|e| {
+                        JsonRpcError::internal_error(format!("list_tools serialize failed: {e}"))
+                    })
+            })
+        });
+
+        // `session/add_additional_dir` / `session/remove_additional_dir` — the
+        // session's extra workspace dirs (SDK `addAdditionalDir` parity).
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_ADD_DIR, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionAddDirParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                let success = agent.add_additional_dir(input.path);
+                let result = kimi_protocol::wire_types::SessionAddDirResult {
+                    success,
+                    additional_dirs: agent.additional_dirs().to_vec(),
+                };
+                Ok(serde_json::to_value(result).unwrap())
+            })
+        });
+
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_REMOVE_DIR, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionRemoveDirParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                let success = agent.remove_additional_dir(&input.path);
+                let result = kimi_protocol::wire_types::SessionRemoveDirResult {
+                    success,
+                    additional_dirs: agent.additional_dirs().to_vec(),
+                };
+                Ok(serde_json::to_value(result).unwrap())
+            })
+        });
     }
 }
 
@@ -1213,6 +1490,120 @@ mod create_tests {
             sessions.iter().any(|s| s["id"] == "s-test-create"),
             "created session should appear in list: {body}"
         );
+    }
+
+    #[tokio::test]
+    async fn extended_session_methods_roundtrip() {
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = SessionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/create".into(),
+                params: serde_json::json!({ "session_id": "s-test-ext" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "create failed: {body}");
+
+        // update_metadata merges a JSON object and echoes it back.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/update_metadata".into(),
+                params: serde_json::json!({
+                    "session_id": "s-test-ext",
+                    "metadata": { "kind": "test" },
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "update_metadata failed: {body}");
+        assert_eq!(body["result"]["metadata"]["kind"], "test");
+
+        // get_mcp_startup_metrics exposes a duration_ms counter.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(3),
+                method: "session/get_mcp_startup_metrics".into(),
+                params: serde_json::json!({ "session_id": "s-test-ext" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "metrics failed: {body}");
+        assert!(body["result"]["duration_ms"].is_u64());
+
+        // clear_plan succeeds even without an active plan.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(4),
+                method: "session/clear_plan".into(),
+                params: serde_json::json!({ "session_id": "s-test-ext" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "clear_plan failed: {body}");
+        assert_eq!(body["result"]["cleared"], true);
+
+        // add/remove additional dir roundtrip on a real temp dir.
+        let tmp = std::env::temp_dir().join(format!("kimi-ext-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).expect("mkdir");
+        let dir = tmp.to_string_lossy().to_string();
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(5),
+                method: "session/add_additional_dir".into(),
+                params: serde_json::json!({
+                    "session_id": "s-test-ext",
+                    "path": dir,
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "add_additional_dir failed: {body}");
+        assert_eq!(body["result"]["success"], true);
+        assert!(
+            body["result"]["additional_dirs"].as_array().is_some_and(|a| a.len() >= 1),
+            "dir should be listed: {body}"
+        );
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(6),
+                method: "session/remove_additional_dir".into(),
+                params: serde_json::json!({
+                    "session_id": "s-test-ext",
+                    "path": dir,
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "remove_additional_dir failed: {body}");
+        assert_eq!(body["result"]["success"], true);
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        // destroy tears down the runtime agent (persisted record stays).
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(7),
+                method: "session/destroy".into(),
+                params: serde_json::json!({ "session_id": "s-test-ext" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "destroy failed: {body}");
+        assert_eq!(body["result"]["destroyed"], true);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(8),
+                method: "session/destroy".into(),
+                params: serde_json::json!({ "session_id": "s-test-ext" }),
+            })
+            .await;
+        assert_eq!(body["result"]["destroyed"], false);
     }
 
 
