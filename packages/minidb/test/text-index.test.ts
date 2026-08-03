@@ -10,7 +10,7 @@ import fssync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { MiniDb } from '../src/index.js';
-import { TextIndex } from '../src/text-index.js';
+import { TextIndex, tokenize } from '../src/text-index.js';
 import { normalizeLiteral, ngramTerm, createNgramTokenizer } from '../src/trigram.js';
 import {
   encodePostingList,
@@ -935,6 +935,168 @@ test('MiniDb: dropTextIndex persist window: a compaction postings rebuild skips 
     assert.deepEqual((await fs.readdir(dir)).filter((f) => f.includes('postings')), []);
     assert.equal((ti as unknown as { pf: unknown }).pf, null);
     assert.deepEqual(await textSidecarNames(dir), []);
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- stage 11: tokenizer output validated at the write boundary ------------
+
+type TiPrivates = {
+  delta: Map<string, Map<number, number>>;
+  deltaCount: number;
+  docLen: Map<number, number>;
+  keys: (string | undefined)[];
+  keyToId: Map<string, number>;
+  buildQueue: unknown;
+};
+
+test('TextIndex: a throwing tokenizer leaves the live view, delta and buildQueue untouched (review #24)', () => {
+  let fail = false;
+  const ti = new TextIndex({
+    tokenizer: (s) => {
+      if (fail) throw new Error('boom');
+      return tokenize(s);
+    },
+    // A working query tokenizer (the ngram pair pattern): searches must not
+    // go through the failing index-side tokenizer.
+    queryTokenizer: (s) => tokenize(s),
+  });
+  const priv = ti as unknown as TiPrivates;
+
+  ti.add('k', { bio: 'hello world' });
+  assert.deepEqual(ti.search('hello').map((h) => h.key), ['k']);
+
+  // Overwrite with a failing tokenizer: rejected BEFORE any mutation, so the
+  // old document stays searchable instead of being tombstoned into a ghost.
+  fail = true;
+  assert.throws(() => {
+    ti.add('k', { bio: 'goodbye world' });
+  }, /boom/);
+  assert.equal(ti.N, 1);
+  assert.deepEqual(ti.search('hello').map((h) => h.key), ['k'], 'old doc survives the failed overwrite');
+  assert.deepEqual(ti.search('goodbye'), []);
+  assert.equal(priv.docLen.size, 1, 'no ghost docLen entry');
+  assert.equal(priv.keys.length, 1, 'no ghost docID');
+  assert.equal(priv.deltaCount, 2, 'delta holds exactly the old doc’s terms');
+
+  // A fresh key fails just as cleanly.
+  assert.throws(() => {
+    ti.add('fresh', { bio: 'quux' });
+  }, /boom/);
+  assert.equal(ti.N, 1);
+  assert.equal(priv.keyToId.has('fresh'), false);
+
+  // Mid-build: the failed write never reaches the build queue either, so the
+  // swap-time replay cannot re-throw half-way through the queue.
+  fail = false;
+  const b = ti.beginBuild();
+  b.add('staged', { bio: 'staged doc' });
+  fail = true;
+  assert.throws(() => {
+    ti.add('q', { bio: 'queued?' });
+  }, /boom/);
+  assert.equal((priv.buildQueue as unknown[] | null)?.length, 0, 'the failed add was never queued');
+  assert.deepEqual(ti.search('hello').map((h) => h.key), ['k'], 'live view intact during the build');
+  b.abort();
+  ti.close();
+});
+
+test('TextIndex: an overlong custom-tokenizer term is rejected before any mutation (review #27)', async () => {
+  const dir = await tmpDir();
+  try {
+    const ti = new TextIndex({ postingsPath: path.join(dir, 't.postings'), tokenizer: () => ['你'.repeat(30000)] });
+    const priv = ti as unknown as TiPrivates;
+    // '你'.repeat(30000) is 90000 utf8 bytes > 0xffff — it would have made
+    // every postings rebuild throw RangeError, permanently poisoning the index.
+    assert.throws(() => {
+      ti.add('k', { bio: 'x' });
+    }, /longer than 65535 utf8 bytes/);
+    assert.equal(ti.N, 0);
+    assert.equal(priv.docLen.size, 0);
+    assert.equal(priv.deltaCount, 0);
+    // The build path validates at the same boundary (and aborts cleanly).
+    await assert.rejects(ti.build([{ key: 'k', value: { bio: 'x' } }]), /longer than 65535 utf8 bytes/);
+    ti.close();
+
+    // A healthy index over the same postings path builds and searches fine.
+    const ti2 = new TextIndex({ postingsPath: path.join(dir, 't.postings') });
+    ti2.add('k', { bio: 'hello world' });
+    await ti2.build([{ key: 'k', value: { bio: 'hello world' } }]);
+    assert.deepEqual(ti2.search('hello').map((h) => h.key), ['k']);
+    ti2.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('MiniDb: a throwing tokenizer rejects set with zero side effects; the old doc stays searchable (review #24)', async () => {
+  const dir = await tmpDir();
+  try {
+    let db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+    await db.createTextIndex('ft', { fields: ['t'] });
+    await db.set('k1', { t: 'hello world' });
+    const ti = (db as unknown as { text: Map<string, { tokenizer: (s: string) => string[] }> }).text.get('ft')!;
+    const priv = ti as unknown as TiPrivates & { N: number };
+    const origTokenizer = ti.tokenizer;
+    ti.tokenizer = () => {
+      throw new Error('boom');
+    };
+
+    // Insert rejected: store, delta, buildQueue, N, docLen all untouched.
+    await assert.rejects(db.set('k2', { t: 'bad insert' }), /boom/);
+    assert.equal(db.get('k2'), undefined);
+    assert.equal(db.size, 1);
+    // Overwrite rejected: the old document is fully intact.
+    await assert.rejects(db.set('k1', { t: 'goodbye' }), /boom/);
+    assert.deepEqual(db.get('k1'), { t: 'hello world' });
+    assert.deepEqual(db.search('ft', 'hello').map((h) => h.key), ['k1'], 'old doc still searchable');
+    assert.deepEqual(db.search('ft', 'goodbye'), []);
+    assert.equal(priv.N, 1);
+    assert.equal(priv.docLen.size, 1);
+    assert.equal(priv.deltaCount, 2, 'delta holds exactly the old doc’s terms');
+    assert.equal(priv.buildQueue, null);
+
+    // Restored tokenizer: writes flow again; reopen agrees.
+    ti.tokenizer = origTokenizer;
+    await db.set('k2', { t: 'fine' });
+    await db.close();
+    db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+    assert.deepEqual(db.get('k1'), { t: 'hello world' });
+    assert.deepEqual(db.get('k2'), { t: 'fine' });
+    assert.deepEqual(db.search('ft', 'hello').map((h) => h.key), ['k1']);
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('MiniDb: an overlong tokenizer term rejects set/batch; the postings rebuild stays healthy (review #27)', async () => {
+  const dir = await tmpDir();
+  try {
+    const db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+    await db.createTextIndex('ft', { fields: ['t'] });
+    await db.set('good', { t: 'hello world' });
+    const ti = (db as unknown as { text: Map<string, { tokenizer: (s: string) => string[]; customTokenizer: boolean }> }).text.get('ft')!;
+    const origTokenizer = ti.tokenizer;
+    // Simulate a custom tokenizer (the MiniDb definition only ever wires
+    // default/ngram): the length validation only guards custom output.
+    ti.customTokenizer = true;
+    ti.tokenizer = () => ['你'.repeat(30000)];
+
+    await assert.rejects(db.set('bad', { t: 'x' }), /longer than 65535 utf8 bytes/);
+    await assert.rejects(db.batch([{ op: 'set', key: 'bad2', value: { t: 'x' } }]), /longer than 65535 utf8 bytes/);
+    assert.equal(db.get('bad'), undefined, 'the poisonous doc never enters the store');
+    assert.equal(db.get('bad2'), undefined);
+
+    // Back to a healthy tokenizer: writes and the postings rebuild both work.
+    ti.customTokenizer = false;
+    ti.tokenizer = origTokenizer;
+    await db.set('good2', { t: 'another doc' });
+    await db.compact(); // rotates + rebuilds text postings from the store
+    assert.deepEqual(db.search('ft', 'hello').map((h) => h.key), ['good']);
+    assert.deepEqual(db.search('ft', 'another').map((h) => h.key), ['good2']);
     await db.close();
   } finally {
     await fs.rm(dir, { recursive: true, force: true });

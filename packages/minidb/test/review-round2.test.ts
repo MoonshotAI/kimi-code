@@ -9,8 +9,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
-import { MiniDb } from '../src/index.js';
+import { MiniDb, UniqueViolationError } from '../src/index.js';
 import { startServer } from '../src/server.js';
+import { encodeBatchOps, encodeFrame, TYPE_BATCH, TYPE_SET } from '../src/codec.js';
 
 async function tmpDir() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'minidb-r2-'));
@@ -550,15 +551,18 @@ test('WAL poison: an applyOp contract violation poisons the WAL and rolls the gr
   const dir = await tmpDir();
   let db = await MiniDb.open<{ t: string }>({ dir, valueCodec: 'json', fsyncPolicy: 'no', activeExpireIntervalMs: 0 });
   await db.createTextIndex('ft', { fields: ['t'] });
-  const ti = (db as unknown as { text: Map<string, { add: (k: string, v: unknown) => void }> }).text.get('ft')!;
-  const origAdd = ti.add.bind(ti);
+  // Stage 11: applyOp's text-index entry point is addPrepared (pre-validated
+  // tokens); breaking its must-not-throw contract exercises the same
+  // defensive path the old ti.add injection did.
+  const ti = (db as unknown as { text: Map<string, { addPrepared: (k: string, t: readonly string[]) => void }> }).text.get('ft')!;
+  const origAdd = ti.addPrepared.bind(ti);
   let boom = true;
-  ti.add = (k: string, v: unknown) => {
+  ti.addPrepared = (k: string, t: readonly string[]) => {
     if (boom) {
       boom = false;
       throw new Error('injected apply failure');
     }
-    origAdd(k, v);
+    origAdd(k, t);
   };
 
   const err: Error = await db.set('doc', { t: 'hello world' }).then(
@@ -662,15 +666,15 @@ test('WAL poison: an applyOp violation queued behind an in-flight batch still le
   const opA = db.set('a', { t: 'first' });
   await waitFor(() => writevCalls === 1, "op A's writev to be in flight");
 
-  const ti = (db as unknown as { text: Map<string, { add: (k: string, v: unknown) => void }> }).text.get('ft')!;
-  const origAdd = ti.add.bind(ti);
+  const ti = (db as unknown as { text: Map<string, { addPrepared: (k: string, t: readonly string[]) => void }> }).text.get('ft')!;
+  const origAdd = ti.addPrepared.bind(ti);
   let boom = true;
-  ti.add = (k: string, v: unknown) => {
+  ti.addPrepared = (k: string, t: readonly string[]) => {
     if (boom) {
       boom = false;
       throw new Error('injected apply failure');
     }
-    origAdd(k, v);
+    origAdd(k, t);
   };
   await assert.rejects(db.set('b', { t: 'second' }), /injected apply failure/);
   assert.ok(db.wal.poison, 'the apply violation poisoned the pending queue');
@@ -704,8 +708,8 @@ test('WAL poison: an applyOp violation on a never-enqueued frame (sealed WAL) do
   await db.createTextIndex('ft', { fields: ['t'] });
   await db.set('old', { t: 'keep' });
 
-  const ti = (db as unknown as { text: Map<string, { add: (k: string, v: unknown) => void }> }).text.get('ft')!;
-  ti.add = () => {
+  const ti = (db as unknown as { text: Map<string, { addPrepared: (k: string, t: readonly string[]) => void }> }).text.get('ft')!;
+  ti.addPrepared = () => {
     throw new Error('injected apply failure');
   };
   // Simulate the rotation seal (what db.wal.seal() does inside compaction).
@@ -838,4 +842,164 @@ test('backup waits out an in-flight WAL recovery instead of copying the un-acked
   await fs.rm(dir, { recursive: true, force: true });
   await fs.rm(backupDir, { recursive: true, force: true });
   await fs.rm(restoreDir, { recursive: true, force: true });
+});
+
+// --- stage 11: validation before side effects --------------------------------
+//
+// The write pipeline is prepare (encode + canonical + tokenize) → unique
+// check → ensureMemoryFor (eviction) → commit, so a rejected write leaves the
+// database untouched (review #6), and a structurally corrupt batch frame is
+// skipped wholesale by recovery (review #9).
+
+test('a unique-conflicting insert is rejected before any eviction side effect (review #6)', async () => {
+  const dir = await tmpDir();
+  try {
+    const db = await MiniDb.open({
+      dir,
+      valueCodec: 'json',
+      fsyncPolicy: 'no',
+      autoCompact: false,
+      maxMemoryBytes: 190,
+      maxMemoryPolicy: 'evict-lru',
+    });
+    await db.createIndex('u', { field: 'u', unique: true });
+    await db.set('owner', { u: 'taken', pad: 'x'.repeat(20) });
+    await db.set('victim', { u: 'free', pad: 'y'.repeat(20) });
+    db.get('owner'); // touch: 'victim' becomes the LRU eviction candidate
+    const evictionsBefore = db.stats.evictions;
+
+    // The conflicting value fails the unique check; before stage 11 the
+    // eviction ran FIRST and the rejected insert still deleted the victim.
+    await assert.rejects(db.set('bad', { u: 'taken', pad: 'z'.repeat(100) }), UniqueViolationError);
+    assert.equal(db.get('bad'), undefined);
+    assert.ok(db.get('owner'), 'untouched keys stay');
+    assert.ok(db.get('victim'), 'the failed insert must not evict the LRU victim');
+    assert.equal(db.stats.evictions, evictionsBefore, 'zero side effects: no eviction ran');
+
+    // Sanity: a LEGAL oversized write under the same budget still evicts —
+    // the eviction pressure is real, only the ordering changed.
+    await db.set('big', { u: 'new', pad: 'z'.repeat(100) });
+    assert.ok(db.stats.evictions > evictionsBefore, 'a legal write still evicts under pressure');
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+/** Hand-rolled batch-body encoder without encodeBatchOps' type assertion, so
+ *  a test can craft a body the real encoder would never emit (review #9). */
+function rawBatchBody(ops: { type: number; key: string; value?: string }[]): Buffer {
+  const parts: { type: number; key: Buffer; value: Buffer }[] = [];
+  let total = 2;
+  for (const op of ops) {
+    const key = Buffer.from(op.key);
+    const value = op.value === undefined ? Buffer.alloc(0) : Buffer.from(op.value);
+    total += 1 + 2 + 4 + 4 + 8 + key.length + value.length;
+    parts.push({ type: op.type, key, value });
+  }
+  const body = Buffer.alloc(total);
+  let o = 0;
+  body.writeUInt16LE(parts.length, o); o += 2;
+  for (const op of parts) {
+    body.writeUInt8(op.type, o); o += 1;
+    body.writeUInt16LE(op.key.length, o); o += 2;
+    body.writeUInt32LE(op.value.length, o); o += 4;
+    body.writeUInt32LE(0, o); o += 4; // metaLen
+    body.writeBigInt64LE(0n, o); o += 8; // expireAt
+    op.key.copy(body, o); o += op.key.length;
+    op.value.copy(body, o); o += op.value.length;
+  }
+  return body;
+}
+
+/** Append a raw TYPE_BATCH frame (valid CRC) to a closed db's WAL and reopen:
+ *  the frame's body fails strict validation, so recovery must skip the WHOLE
+ *  batch — the `accepted` sub-op must not be applied (review #9). */
+async function reopenWithAppendedBatch(body: Buffer): Promise<{ dir: string; db: MiniDb<string> }> {
+  const dir = await tmpDir();
+  let db = await MiniDb.open<string>({ dir, ...MEM_OPTS });
+  await db.close();
+  await fs.appendFile(path.join(dir, 'db.wal'), encodeFrame({ type: TYPE_BATCH, key: Buffer.alloc(0), value: body }));
+  db = await MiniDb.open<string>({ dir, ...MEM_OPTS });
+  return { dir, db };
+}
+
+test('recovery skips a batch with an unknown sub-op type wholesale (review #9)', async () => {
+  const body = rawBatchBody([
+    { type: TYPE_SET, key: 'accepted', value: 'yes' },
+    { type: 99, key: 'unknown', value: 'ignored' },
+  ]);
+  const { dir, db } = await reopenWithAppendedBatch(body);
+  try {
+    assert.equal(db.get('accepted'), undefined, 'the whole batch is skipped, not half-applied');
+    assert.equal(db.get('unknown'), undefined);
+    assert.equal(db.recoveryInfo!.corruptBatches, 1, 'the skipped batch is accounted');
+    // The db stays fully usable after the skip.
+    await db.set('after', 'ok');
+    assert.equal(db.get('after'), 'ok');
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('recovery skips a batch with trailing bytes wholesale (review #9)', async () => {
+  const valid = encodeBatchOps([{ type: TYPE_SET, key: Buffer.from('accepted'), value: Buffer.from('yes'), meta: null, expireAt: 0 }]);
+  const body = Buffer.concat([valid, Buffer.from([0xde, 0xad])]);
+  const { dir, db } = await reopenWithAppendedBatch(body);
+  try {
+    assert.equal(db.get('accepted'), undefined, 'trailing bytes invalidate the whole batch');
+    assert.equal(db.recoveryInfo!.corruptBatches, 1);
+    await db.set('after', 'ok');
+    assert.equal(db.get('after'), 'ok');
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a mid-batch applyOp violation rolls the whole batch back — memory and reopen agree (stage 7 group rollback)', async () => {
+  const dir = await tmpDir();
+  let db = await MiniDb.open<{ t: string }>({ dir, valueCodec: 'json', fsyncPolicy: 'no', activeExpireIntervalMs: 0 });
+  await db.createTextIndex('ft', { fields: ['t'] });
+  // Break applyOp's must-not-throw contract on the SECOND op of the batch:
+  // the first op is already applied when the batch fails, and both must
+  // disappear (stage 11 keeps applyOp pure; this exercises the defensive
+  // poison + group rollback that remains as the backstop).
+  const ti = (db as unknown as { text: Map<string, { addPrepared: (k: string, t: readonly string[]) => void }> }).text.get('ft')!;
+  const origAdd = ti.addPrepared.bind(ti);
+  let calls = 0;
+  ti.addPrepared = (k: string, t: readonly string[]) => {
+    calls++;
+    if (calls === 2) throw new Error('injected mid-batch apply failure');
+    origAdd(k, t);
+  };
+
+  const err: Error = await db
+    .batch([
+      { op: 'set', key: 'x1', value: { t: 'first' } },
+      { op: 'set', key: 'x2', value: { t: 'second' } },
+    ])
+    .then(
+      () => {
+        throw new Error('expected the batch to reject');
+      },
+      (e) => e as Error,
+    );
+  assert.match(String(err), /injected mid-batch apply failure/);
+  assert.equal((err as { ambiguous?: boolean }).ambiguous, true);
+  assert.equal(db.get('x1'), undefined, 'the op applied before the failure is rolled back too');
+  assert.equal(db.get('x2'), undefined);
+  assert.deepEqual(db.search('ft', 'first'), [], 'no half-batch in the text index');
+  assert.deepEqual(db.search('ft', 'second'), []);
+
+  // Later writes land after the in-place recovery; reopen agrees with memory.
+  await db.set('after', { t: 'fine' });
+  await db.close();
+  db = await MiniDb.open<{ t: string }>({ dir, valueCodec: 'json', fsyncPolicy: 'no', activeExpireIntervalMs: 0 });
+  assert.equal(db.get('x1'), undefined, 'the revoked batch never reached disk');
+  assert.equal(db.get('x2'), undefined);
+  assert.equal(db.get('after')?.t, 'fine');
+  await db.close();
+  await fs.rm(dir, { recursive: true, force: true });
 });

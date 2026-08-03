@@ -35,6 +35,11 @@ const CJK = /[\u3400-\u9fff\u3040-\u30ff\uff00-\uffef]+/g;
 // tokens can never be real query terms — drop them at tokenization so one
 // pathological document cannot destroy the index.
 const MAX_TERM_CHARS = 0xffff;
+// The same postings uint16 limit in UTF-8 BYTES (encodeRecord's unit). A
+// custom tokenizer's output is validated against it at every write boundary
+// (tokensFor): an overlong term rejects the write loudly instead of poisoning
+// the next postings rebuild (review #27).
+const MAX_TERM_BYTES = 0xffff;
 
 const yieldToLoop = (): Promise<void> => new Promise((r) => setImmediate(r));
 // `build()` yields to the event loop at the first of these two watermarks, so
@@ -131,9 +136,12 @@ export interface TextIndexBuild {
 
 const EMPTY_MAP: ReadonlyMap<number, number> = new Map();
 
-/** One write that landed while a `build()` was in flight (see buildQueue). */
+/** One write that landed while a `build()` was in flight (see buildQueue).
+ *  Carries the VALIDATED mutation — key + precomputed tokens, never the raw
+ *  doc — so the swap-time replay cannot throw on a tokenizer failure
+ *  (review #24). */
 type BuildOp =
-  | { readonly kind: 'add'; readonly key: string; readonly doc: unknown }
+  | { readonly kind: 'add'; readonly key: string; readonly tokens: readonly string[] }
   | { readonly kind: 'remove'; readonly key: string };
 
 /** Bounded collector for the K best hits by (score desc, key asc). The heap
@@ -189,6 +197,10 @@ export class TextIndex {
   private readonly fields: readonly string[] | null;
   private readonly tokenizer: (text: string) => string[];
   private readonly queryTokenizer: (text: string) => string[];
+  /** True when a custom (injected) index tokenizer is in use: its output is
+   *  untrusted and gets the per-term length validation in tokensFor. The
+   *  built-in tokenizer enforces the limit itself and skips the check. */
+  private readonly customTokenizer: boolean;
   private readonly path: string | null;
   private readonly cacheTerms: number;
 
@@ -236,6 +248,7 @@ export class TextIndex {
   constructor(opts: TextIndexOptions = {}) {
     this.fields = opts.fields ?? null;
     this.tokenizer = opts.tokenizer ?? tokenize;
+    this.customTokenizer = opts.tokenizer !== undefined;
     this.queryTokenizer = opts.queryTokenizer ?? this.tokenizer;
     this.path = opts.postingsPath ?? null;
     this.cacheTerms = opts.cacheTerms ?? 1024;
@@ -250,6 +263,31 @@ export class TextIndex {
         .join(' ');
     }
     return stringLeaves(doc).join(' ');
+  }
+
+  /** Extract + tokenize a document, validating a CUSTOM tokenizer's output at
+   *  this boundary: every term must fit the postings record's uint16 utf8
+   *  length, or one pathological document would make every later postings
+   *  rebuild throw (review #27). Throws BEFORE any state mutates, so a bad
+   *  document can never pollute the live view, the delta, or the build queue
+   *  (review #24). */
+  private tokensFor(doc: unknown): string[] {
+    const tokens = this.tokenizer(this.extract(doc));
+    if (this.customTokenizer) {
+      for (const t of tokens) {
+        if (Buffer.byteLength(t, 'utf8') > MAX_TERM_BYTES) {
+          throw new RangeError(`text index tokenizer produced a term longer than ${MAX_TERM_BYTES} utf8 bytes`);
+        }
+      }
+    }
+    return tokens;
+  }
+
+  /** The write path's prepare boundary: tokenize + validate a document for a
+   *  later infallible `addPrepared`. A throwing (custom) tokenizer rejects the
+   *  write HERE — before the store, delta, or build queue can be touched. */
+  prepareAdd(doc: unknown): readonly string[] {
+    return this.tokensFor(doc);
   }
 
   /** Number of distinct terms currently indexed (base + delta). */
@@ -353,10 +391,12 @@ export class TextIndex {
     return {
       add: (key, value): number => {
         if (done) throw new Error('text index build already finished');
+        // Tokenize (and validate) BEFORE staging anything: a throwing
+        // tokenizer must not leave a ghost docID in the staged state.
+        const tokens = this.tokensFor(value);
         const docID = newKeys.length;
         newKeys.push(key);
         newKeyToId.set(key, docID);
-        const tokens = this.tokenizer(this.extract(value));
         const counts = new Map<string, number>();
         for (const t of tokens) counts.set(t, (counts.get(t) ?? 0) + 1);
         for (const [t, c] of counts) {
@@ -461,14 +501,27 @@ export class TextIndex {
     this.N = n;
     this.buildQueue = null;
     for (const op of queue) {
-      if (op.kind === 'add') this.add(op.key, op.doc);
+      // The queue carries validated mutations (key + tokens), so the replay
+      // cannot throw — no half-replayed queue on a tokenizer failure.
+      if (op.kind === 'add') this.addPrepared(op.key, op.tokens);
       else this.remove(op.key);
     }
   }
 
-  /** Add or replace a document. Overwrites tombstone the old docID. */
+  /** Add or replace a document. Tokenizes (and validates a custom tokenizer's
+   *  output) BEFORE any state changes, so a throwing tokenizer leaves the
+   *  live view, the delta, and the build queue untouched (review #24); an
+   *  overwrite's old document stays searchable. */
   add(key: string, doc: unknown): void {
-    this.buildQueue?.push({ kind: 'add', key, doc });
+    this.addPrepared(key, this.tokensFor(doc));
+  }
+
+  /** Apply an already-tokenized, already-validated document write (see
+   *  prepareAdd). Overwrites tombstone the old docID. Must not throw: pure
+   *  map/set bookkeeping — this is the only text-index entry point the db's
+   *  purified applyOp uses. */
+  addPrepared(key: string, tokens: readonly string[]): void {
+    this.buildQueue?.push({ kind: 'add', key, tokens });
     // The overwrite's internal remove must NOT queue a second op: replaying
     // the queue applies the add (which itself displaces the old docID), and a
     // queued remove would then delete the freshly-added doc.
@@ -476,7 +529,6 @@ export class TextIndex {
     const docID = this.keys.length;
     this.keys.push(key);
     this.keyToId.set(key, docID);
-    const tokens = this.tokenizer(this.extract(doc));
     const counts = new Map<string, number>();
     for (const t of tokens) counts.set(t, (counts.get(t) ?? 0) + 1);
     for (const [t, c] of counts) {

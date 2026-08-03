@@ -61,6 +61,10 @@ export interface RecoveryInfo {
    *  none). */
   snapshotDev: number;
   snapshotIno: number;
+  /** BATCH frames whose body failed strict structure validation (valid outer
+   *  CRC but malformed sub-ops — review #9): the whole batch was skipped
+   *  rather than half-applied. */
+  corruptBatches: number;
   /** Generation-churn retries recovery needed before it paired a consistent
    *  snapshot/WAL set (0 on a stable directory — see the file header). */
   generationRetries: number;
@@ -127,8 +131,15 @@ function* setRefToOps(
  *  ref (inline bytes in memory mode, a {file, off, len} pointer in disk mode);
  *  expired-at-replay SETs become DELs (see setRefToOps). A BATCH frame yields
  *  its sub-ops in order; a malformed body with a valid outer CRC skips the
- *  whole batch rather than half-applying it. Unknown frame types yield nothing. */
-export function* frameToOps(f: FrameRef, file: ValueLoc['file'], fd: number, valueMode: ValueMode): Generator<RecoveredOp> {
+ *  whole batch rather than half-applying it (and is reported through
+ *  `onCorruptBatch` so recovery can account it). Unknown frame types yield nothing. */
+export function* frameToOps(
+  f: FrameRef,
+  file: ValueLoc['file'],
+  fd: number,
+  valueMode: ValueMode,
+  onCorruptBatch?: () => void,
+): Generator<RecoveredOp> {
   if (f.type === TYPE_SET) {
     yield* setRefToOps(f, file, fd, valueMode);
   } else if (f.type === TYPE_DEL) {
@@ -141,6 +152,7 @@ export function* frameToOps(f: FrameRef, file: ValueLoc['file'], fd: number, val
       // A malformed body with a valid outer CRC can only come from an encoder
       // bug. Skip the whole batch rather than half-apply it, preserving the
       // all-or-nothing guarantee.
+      onCorruptBatch?.();
       return;
     }
     for (const op of ops) {
@@ -150,9 +162,16 @@ export function* frameToOps(f: FrameRef, file: ValueLoc['file'], fd: number, val
   }
 }
 
-function applyFrames(frames: FrameRef[], file: ValueLoc['file'], fd: number, store: Store, valueMode: ValueMode): void {
+function applyFrames(
+  frames: FrameRef[],
+  file: ValueLoc['file'],
+  fd: number,
+  store: Store,
+  valueMode: ValueMode,
+  onCorruptBatch?: () => void,
+): void {
   for (const f of frames) {
-    for (const op of frameToOps(f, file, fd, valueMode)) {
+    for (const op of frameToOps(f, file, fd, valueMode, onCorruptBatch)) {
       if (op.type === TYPE_SET) store.setRef(op.key, op.ref!, op.expireAt, op.dt);
       else if (op.type === TYPE_DEL) store.del(op.key);
     }
@@ -286,6 +305,10 @@ async function recoverPass({
   truncate: boolean;
   valueMode: ValueMode;
 }): Promise<RecoverPassResult> {
+  let corruptBatches = 0;
+  const countCorruptBatch = (): void => {
+    corruptBatches++;
+  };
   let snapshotFrames = 0;
   let snapshotBytes = 0;
   let snapshotCorrupt: [number, number][] = [];
@@ -297,7 +320,7 @@ async function recoverPass({
       snapScanned = { dev: st.dev, ino: st.ino, size: st.size };
       snapshotBytes = st.size;
       const r = scanFrameRefsFd(fd, { onCorrupt: mode });
-      applyFrames(r.frames, 'snapshot', fd, store, valueMode);
+      applyFrames(r.frames, 'snapshot', fd, store, valueMode, countCorruptBatch);
       snapshotFrames = r.frames.length;
       snapshotCorrupt = r.corruptRanges;
     } finally {
@@ -323,7 +346,7 @@ async function recoverPass({
       walSizeFloor = st.size;
       walBytes = st.size;
       const r = scanFrameRefsFd(fd, { onCorrupt: mode });
-      applyFrames(r.frames, 'wal', fd, store, valueMode);
+      applyFrames(r.frames, 'wal', fd, store, valueMode, countCorruptBatch);
       walFrames = r.frames.length;
       walCorrupt = r.corruptRanges;
       walScanEnd = r.eofOffset;
@@ -366,6 +389,7 @@ async function recoverPass({
       walIno: walScanned?.ino ?? 0,
       snapshotDev: snapScanned?.dev ?? 0,
       snapshotIno: snapScanned?.ino ?? 0,
+      corruptBatches,
       generationRetries: 0, // recover() overwrites with the real attempt count
     },
     anchors: {

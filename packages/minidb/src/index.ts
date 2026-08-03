@@ -244,7 +244,23 @@ interface PreparedOp<V> {
   expireAt: number;
   dtNorm: Record<string, number> | null;
   pk: string;
-  valueDecoded: V | undefined;
+  /** The ONE value representation every downstream consumer (unique checks,
+   *  secondary / compound / text indexes) sees. For the json codec this is the
+   *  decoded form of `value` — exactly what the WAL stores and what a reopen
+   *  rebuilds — so getter/toJSON/Proxy are consumed exactly once, at encode
+   *  time, and the index view can never diverge from the storage view
+   *  (review #5, stage 11). For the buffer/string codecs (no canonical
+   *  concept, no value-derived indexes) it is the value as passed. */
+  canonical: V | undefined;
+  /** Per-text-index precomputed tokens for `canonical` (null per index = not
+   *  indexable → remove at apply). Tokenization and custom-tokenizer
+   *  validation happen HERE, at the prepare boundary, so a throwing tokenizer
+   *  rejects the write before any side effect and applyOp stays infallible
+   *  (reviews #24/#27). Null when there were no text indexes at prepare time.
+   *  Keyed by the TextIndex INSTANCE, not its name: a same-name drop+create
+   *  between prepare and apply must not feed tokens produced by the old
+   *  index's tokenizer into the new one. */
+  textTokens: Map<TextIndex, readonly string[] | null> | null;
 }
 
 /** Per-flush-group rollback state: the pre-group logical record of every key
@@ -1238,16 +1254,32 @@ export class MiniDb<V = unknown> {
     this.ensureWritable();
     this.checkKey(key);
     await this.awaitRotation();
-    const op = this.prepareSet(key, value, { ttl, dt });
-    await this.ensureMemoryFor([op]);
+    // Validation before side effects (stage 11): prepare (key/ttl checks,
+    // encode + canonical, tokenize + custom-tokenizer validation) and the
+    // unique check run BEFORE ensureMemoryFor can evict anything, so a
+    // rejected write leaves the database untouched — no eviction, no WAL, no
+    // memory change (review #6). The whole pipeline runs inside the
+    // unique-write chain when a unique index exists: check-then-commit stays
+    // atomic for the chain's whole lifetime, so a WAL-seal retry needs no
+    // re-check (every violation-creating writer is serialized out).
+    const run = async (): Promise<void> => {
+      const op = this.prepareSet(key, value, { ttl, dt });
+      if (this.indexes.size && this.indexable(op.canonical)) this.indexes.checkUnique(op.pk, op.canonical);
+      await this.ensureMemoryFor([op]);
+      await this.retryOnWalSeal(() => this.commitSetOp(op));
+    };
+    if (this.hasUniqueIndexes()) await this.serializeUniqueWrites(run);
+    else await run();
+  }
 
-    const commit = async (): Promise<void> => {
+  /** The set() commit body: append the frame and apply the prepared op,
+   *  rolling back (per-op or group) when the WAL write fails. */
+  private async commitSetOp(op: PreparedOp<V>): Promise<void> {
       // Queue behind any in-place WAL recovery: a write issued after a
       // failure waits for the truncate + poison-clear instead of hitting the
       // still-poisoned WAL. Null (and zero-cost) when no recovery is running.
       const recoveryGate = this.walRecoveryGate();
       if (recoveryGate) await recoveryGate;
-      if (this.indexes.size && this.indexable(value)) this.indexes.checkUnique(op.pk, value);
       const frame = encodeFrame({ type: TYPE_SET, key: op.key, value: op.value, meta: op.meta, expireAt: op.expireAt });
       const wal = this.wal;
       const appended = wal.appendLoc(frame);
@@ -1310,10 +1342,6 @@ export class MiniDb<V = unknown> {
         );
       }
       this.maybeAutoCompact();
-    };
-
-    if (this.hasUniqueIndexes()) await this.serializeUniqueWrites(() => this.retryOnWalSeal(commit));
-    else await this.retryOnWalSeal(commit);
   }
 
   async del(key: string | Buffer): Promise<boolean> {
@@ -1372,21 +1400,34 @@ export class MiniDb<V = unknown> {
     this.ensureWritable();
     await this.awaitRotation();
     if (!ops || ops.length === 0) return;
-    const prepared = ops.map((o) => this.prepareOp(o));
-    await this.ensureMemoryFor(prepared);
-
-    const commit = async (): Promise<void> => {
-      const recoveryGate = this.walRecoveryGate();
-      if (recoveryGate) await recoveryGate;
+    // Same stage-11 ordering as set(): every fallible validation (per-op
+    // prepare, then the whole-batch unique check against canonical docs)
+    // precedes ensureMemoryFor's evictions, so a rejected batch has zero
+    // side effects; the pipeline holds the unique-write chain end to end, so
+    // a WAL-seal retry of the commit needs no re-check.
+    const run = async (): Promise<void> => {
+      const prepared = ops.map((o) => this.prepareOp(o));
       if (this.indexes.size) {
         this.indexes.checkUniqueBatch(
           prepared.map((o) => ({
             pk: o.pk,
             op: o.type === TYPE_DEL ? ('del' as const) : ('set' as const),
-            doc: o.valueDecoded,
+            doc: o.canonical,
           })),
         );
       }
+      await this.ensureMemoryFor(prepared);
+      await this.retryOnWalSeal(() => this.commitBatchOps(prepared));
+    };
+    if (this.hasUniqueIndexes()) await this.serializeUniqueWrites(run);
+    else await run();
+  }
+
+  /** The batch() commit body: append one BATCH frame and apply every prepared
+   *  op, rolling the whole batch back when the WAL write fails. */
+  private async commitBatchOps(prepared: readonly PreparedOp<V>[]): Promise<void> {
+      const recoveryGate = this.walRecoveryGate();
+      if (recoveryGate) await recoveryGate;
       const body = encodeBatchOps(
         prepared.map<EncodedBatchOp>((op) => ({ type: op.type, key: op.key, value: op.value, meta: op.meta, expireAt: op.expireAt })),
       );
@@ -1456,10 +1497,6 @@ export class MiniDb<V = unknown> {
         this.publishWalRef(pk, wal, seq, loc, op.expireAt, op.dtNorm);
       }
       this.maybeAutoCompact();
-    };
-
-    if (this.hasUniqueIndexes()) await this.serializeUniqueWrites(() => this.retryOnWalSeal(commit));
-    else await this.retryOnWalSeal(commit);
   }
 
   private prepareOp(o: BatchInputOp<V>): PreparedOp<V> {
@@ -1480,13 +1517,39 @@ export class MiniDb<V = unknown> {
     if (ttl !== undefined && !Number.isFinite(ttl)) throw new RangeError('ttl must be a finite number of milliseconds');
     const expireAt = ttl ? Date.now() + Math.floor(ttl) : 0;
     const vbuf = this.encode(value);
+    // Canonical value (stage 11): the json codec re-parses the encoded bytes
+    // ONCE, so every downstream consumer sees exactly the persisted value
+    // (review #5). The decode is infallible here — it re-parses what
+    // JSON.stringify just produced. Buffer/string codecs have no canonical
+    // concept and keep the value as passed (their paths never feed indexes).
+    const canonical = this.codecName === 'json' ? (this.decode(vbuf) as V) : value;
+    // Tokenize at the prepare boundary (stage 11): a throwing custom
+    // tokenizer — or one producing an overlong term — rejects the write here,
+    // before the store/delta/buildQueue can be polluted (reviews #24/#27).
+    let textTokens: Map<TextIndex, readonly string[] | null> | null = null;
+    if (this.text.size) {
+      textTokens = new Map();
+      for (const ti of this.text.values()) {
+        textTokens.set(ti, this.indexable(canonical) ? ti.prepareAdd(canonical) : null);
+      }
+    }
     const meta = dtNorm ? Buffer.from(JSON.stringify({ dt: dtNorm })) : null;
-    return { type: TYPE_SET, key: toBuf(key), value: vbuf, meta, expireAt, dtNorm, pk, valueDecoded: value };
+    return { type: TYPE_SET, key: toBuf(key), value: vbuf, meta, expireAt, dtNorm, pk, canonical, textTokens };
   }
 
   private prepareDel(key: string | Buffer): PreparedOp<V> {
     this.checkKey(key);
-    return { type: TYPE_DEL, key: toBuf(key), value: null, meta: null, expireAt: 0, dtNorm: null, pk: this.pk(key), valueDecoded: undefined };
+    return {
+      type: TYPE_DEL,
+      key: toBuf(key),
+      value: null,
+      meta: null,
+      expireAt: 0,
+      dtNorm: null,
+      pk: this.pk(key),
+      canonical: undefined,
+      textTokens: null,
+    };
   }
 
   /** Apply a prepared op to the store + derived indexes, writing the key's
@@ -1494,12 +1557,15 @@ export class MiniDb<V = unknown> {
    *  poison + group-rollback) on failure. `out.prev` is assigned before any
    *  mutation, so it is valid even when the apply throws.
    *
-   *  CONTRACT: applyOp must not throw — every fallible input validation
-   *  belongs to the prepare phase (stage 11 moves unique checks, the
-   *  tokenizer and canonical extraction there, making this structural).
-   *  Until then the commit bodies wrap the call in a defensive try that
-   *  converts a throw into a WAL poison + group rollback + in-place recovery;
-   *  that path is not the normal one. */
+   *  CONTRACT: applyOp must not throw. Stage 11 makes this structural: every
+   *  fallible input validation lives in the prepare phase (key/ttl checks,
+   *  encoding, the canonical decode, tokenization + custom-tokenizer output
+   *  validation) and unique checks run before ensureMemoryFor, so the body
+   *  below is pure assignment against pre-validated data. The ONE remaining
+   *  fallible branch is a text index registered between prepare and apply
+   *  (a createTextIndex racing this write — see the comment inline); the
+   *  commit bodies' defensive try (stage 7) stays as the backstop for it and
+   *  for catastrophic store I/O. */
   private applyOp(op: PreparedOp<V>, out: { prev: StoreRecord | undefined }): void {
     const oldBuf = this.store.get(op.pk);
     out.prev = oldBuf !== undefined ? this.store.map.get(op.pk) : undefined;
@@ -1510,14 +1576,28 @@ export class MiniDb<V = unknown> {
       // are durably in db.wal.
       this.store.set(op.key, op.value!, op.expireAt, op.dtNorm);
       this.dt.set(op.pk, op.dtNorm);
-      this.compound.add(op.pk, op.valueDecoded, op.dtNorm);
+      this.compound.add(op.pk, op.canonical, op.dtNorm);
       if (this.indexes.size) {
         if (this.indexable(oldDoc)) this.indexes.remove(op.pk, oldDoc);
-        if (this.indexable(op.valueDecoded)) this.indexes.add(op.pk, op.valueDecoded);
+        if (this.indexable(op.canonical)) this.indexes.add(op.pk, op.canonical);
       }
       for (const ti of this.text.values()) {
-        if (this.indexable(op.valueDecoded)) ti.add(op.pk, op.valueDecoded);
-        else ti.remove(op.pk);
+        const tokens = op.textTokens?.get(ti);
+        if (tokens !== undefined) {
+          // Pre-tokenized and validated at the prepare boundary (null = the
+          // canonical doc is not indexable → drop the key from this index).
+          if (tokens === null) ti.remove(op.pk);
+          else ti.addPrepared(op.pk, tokens);
+        } else if (this.indexable(op.canonical)) {
+          // An index registered AFTER this op was prepared (createTextIndex
+          // registered it mid-write), or replaced by a same-name drop+create
+          // since: it has no prepared tokens, so tokenize here. A throwing
+          // tokenizer in this narrow race is covered by the commit body's
+          // defensive try (stage 7), exactly as before stage 11.
+          ti.add(op.pk, op.canonical);
+        } else {
+          ti.remove(op.pk);
+        }
       }
     } else if (op.type === TYPE_DEL) {
       const existed = this.store.del(op.key);

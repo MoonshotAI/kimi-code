@@ -326,7 +326,10 @@ export class IndexManager {
     }));
   }
 
-  /** Throw a UniqueViolationError if adding `doc` for `pk` would violate a unique index. */
+  /** Throw a UniqueViolationError if adding `doc` for `pk` would violate a unique index.
+   *  `doc` must be the CANONICAL (persisted-view) value — what the json codec
+   *  actually stored — so the constraint view always matches what a reopen
+   *  rebuilds (stage 11). */
   checkUnique(pk: string, doc: unknown): void {
     for (const idx of this.indexes.values()) checkUniqueOnIndex(idx, pk, doc);
     // A staged unique index already constrains writes (see `staged`).
@@ -340,7 +343,9 @@ export class IndexManager {
    * one key and reusing its value in another, are accepted (their final state
    * is still unique).
    *
-   * `ops` is the full op list (set AND del); the last op per key wins.
+   * `ops` is the full op list (set AND del); the last op per key wins. Every
+   * `doc` must be the CANONICAL (persisted-view) value, the same contract as
+   * checkUnique (stage 11).
    *
    * Incremental: for every value claimed by the batch it probes only that
    * value's current posting (O(1) equality / O(log N) range per value) and a

@@ -446,3 +446,81 @@ test('a staged unique index constrains writes during its persist window', async 
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+// ---- stage 11: canonical value — one representation for every view --------
+
+test('toJSON/getter/Proxy docs: get, secondary/compound/text indexes and unique checks all see the persisted view (and reopen agrees)', async () => {
+  const dir = await tmpDir();
+  try {
+    let db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+    await db.createIndex('byV', { field: 'v' });
+    await db.createIndex('byW', { field: 'w' });
+    await db.createIndex('byU', { field: 'u', unique: true });
+    await db.createCompoundIndex('byG', { groupBy: 'g', orderBy: 'o' });
+    await db.createTextIndex('ft', { fields: ['t'] });
+
+    // A getter whose value CHANGES per read: encode sees 'v-1'; before stage
+    // 11 the secondary index re-read the getter and indexed 'v-2' — the live
+    // index and the store (and every reopen) disagreed.
+    let reads = 0;
+    const getterDoc: Record<string, unknown> = { u: 'u1', g: 'G', o: 5, t: 'alpha bravo' };
+    Object.defineProperty(getterDoc, 'v', {
+      enumerable: true,
+      get: () => `v-${++reads}`,
+    });
+    await db.set('k1', getterDoc);
+    assert.equal(reads, 1, 'the getter is consumed exactly once (at encode)');
+
+    // toJSON replaces the persisted shape entirely.
+    const toJsonDoc = { u: 'u2', w: 'raw-w', t: 'hidden', toJSON: () => ({ u: 'u2', w: 'json-w' }) };
+    await db.set('k2', toJsonDoc as unknown as Record<string, unknown>);
+
+    // A Proxy is transparently persisted as the plain object it wraps.
+    const proxyDoc = new Proxy({ u: 'u3', w: 'pw', t: 'proxied term' }, {});
+    await db.set('k3', proxyDoc);
+
+    const assertViews = (label: string, db: MiniDb) => {
+      // get(): the decoded stored bytes.
+      assert.equal((db.get('k1') as { v: string }).v, 'v-1', `${label}: get returns the persisted getter value`);
+      assert.deepEqual(db.get('k2'), { u: 'u2', w: 'json-w' }, `${label}: get returns the toJSON shape`);
+      assert.deepEqual(db.get('k3'), { u: 'u3', w: 'pw', t: 'proxied term' }, `${label}: get returns the Proxy target shape`);
+      // Secondary indexes: the persisted values, never a second getter read.
+      assert.deepEqual(db.findEq('byV', 'v-1').map((r) => r.key), ['k1'], `${label}: index has the persisted value`);
+      assert.deepEqual(db.findEq('byV', 'v-2'), [], `${label}: the never-persisted second getter read is NOT indexed`);
+      assert.deepEqual(db.findEq('byW', 'json-w').map((r) => r.key), ['k2']);
+      assert.deepEqual(db.findEq('byW', 'raw-w'), [], `${label}: the raw (unpersisted) toJSON field is NOT indexed`);
+      assert.deepEqual(db.findEq('byW', 'pw').map((r) => r.key), ['k3']);
+      // Compound index.
+      assert.deepEqual(db.compoundRange('byG', 'G').map((r) => r.key), ['k1'], `${label}: compound index view`);
+      // Text index: toJSON dropped 't' from k2, so only k1/k3 have text.
+      assert.deepEqual(db.search('ft', 'alpha').map((r) => r.key), ['k1'], `${label}: text index view`);
+      assert.deepEqual(db.search('ft', 'hidden'), [], `${label}: text the toJSON hid is NOT indexed`);
+      assert.deepEqual(db.search('ft', 'proxied').map((r) => r.key), ['k3']);
+    };
+    assertViews('live', db);
+
+    // Unique checks consume the canonical view too: a conflicting plain doc
+    // is rejected against the value the getter/toJSON/Proxy actually stored.
+    await assert.rejects(db.set('k4', { u: 'u1' }), UniqueViolationError);
+    await assert.rejects(db.batch([{ op: 'set', key: 'k5', value: { u: 'u3' } }]), UniqueViolationError);
+    // And re-setting k1 (holder = same key) stays legal despite the getter.
+    await db.set('k1', getterDoc);
+    assert.equal((db.get('k1') as { v: string }).v, 'v-2', 're-set re-encodes (one more getter read)');
+
+    await db.close();
+    db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+    // The reopened index views are rebuilt from the persisted bytes — they
+    // must be identical to the live views (v-2 now, after the re-set).
+    assert.deepEqual(db.findEq('byV', 'v-2').map((r) => r.key), ['k1'], 'reopen: same persisted view');
+    assert.equal((db.get('k1') as { v: string }).v, 'v-2');
+    assert.deepEqual(db.get('k2'), { u: 'u2', w: 'json-w' });
+    assert.deepEqual(db.findEq('byW', 'json-w').map((r) => r.key), ['k2']);
+    assert.deepEqual(db.compoundRange('byG', 'G').map((r) => r.key), ['k1']);
+    assert.deepEqual(db.search('ft', 'alpha').map((r) => r.key), ['k1']);
+    assert.deepEqual(db.search('ft', 'proxied').map((r) => r.key), ['k3']);
+    await assert.rejects(db.set('k6', { u: 'u1' }), UniqueViolationError);
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

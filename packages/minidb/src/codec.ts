@@ -157,6 +157,11 @@ const SUB_HEADER = 1 + 2 + 4 + 4 + 8;
 export function encodeBatchOps(ops: BatchOp[]): Buffer {
   let total = 2;
   for (const op of ops) {
+    // Encode-side assertion mirroring the strict decode validation: a batch
+    // body only ever carries SET/DEL sub-ops (review #9).
+    if (op.type !== TYPE_SET && op.type !== TYPE_DEL) {
+      throw new RangeError(`batch op type must be SET or DEL, got ${op.type}`);
+    }
     total += SUB_HEADER + op.key.length + (op.value ? op.value.length : 0) + (op.meta ? op.meta.length : 0);
   }
   const body = Buffer.allocUnsafe(total);
@@ -181,11 +186,12 @@ export function encodeBatchOps(ops: BatchOp[]): Buffer {
 export function decodeBatchOps(body: Buffer): BatchOp[] {
   const ops: BatchOp[] = [];
   let o = 0;
-  if (body.length < 2) return ops;
+  if (body.length < 2) throw new RangeError('batch body truncated: op count');
   const count = body.readUInt16LE(o); o += 2;
   for (let i = 0; i < count; i++) {
     if (o + SUB_HEADER > body.length) throw new RangeError('batch op header truncated');
     const type = body.readUInt8(o); o += 1;
+    if (type !== TYPE_SET && type !== TYPE_DEL) throw new RangeError(`batch op has unknown type ${type}`);
     const keyLen = body.readUInt16LE(o); o += 2;
     const valLen = body.readUInt32LE(o); o += 4;
     const metaLen = body.readUInt32LE(o); o += 4;
@@ -196,6 +202,9 @@ export function decodeBatchOps(body: Buffer): BatchOp[] {
     const meta = metaLen ? Buffer.from(body.subarray(o, o + metaLen)) : null; o += metaLen;
     ops.push({ type, key, value, meta, expireAt });
   }
+  // All-or-nothing structure check: a valid batch body ends exactly after its
+  // last op — trailing bytes mean the body is malformed (review #9).
+  if (o !== body.length) throw new RangeError(`batch body has ${body.length - o} trailing byte(s)`);
   return ops;
 }
 
@@ -452,17 +461,22 @@ export function scanFrameRefsFile(
 }
 
 /** Scan BATCH body op refs without copying op values. `bodyOff` is the absolute
- *  file offset where the BATCH body (the outer frame's value) starts. */
+ *  file offset where the BATCH body (the outer frame's value) starts.
+ *  Strictly validated (review #9): sub-op types must be SET/DEL, every op must
+ *  stay in bounds, and the body must end exactly after its last op — a
+ *  violation throws, so the caller (frameToOps) skips the whole batch instead
+ *  of half-applying it. */
 export function scanBatchOpRefs(body: Buffer, bodyOff: number): BatchOpRef[] {
   const ops: BatchOpRef[] = [];
   let o = 0;
-  if (body.length < 2) return ops;
+  if (body.length < 2) throw new RangeError('batch body truncated: op count');
   const count = body.readUInt16LE(o);
   o += 2;
   for (let i = 0; i < count; i++) {
     if (o + SUB_HEADER > body.length) throw new RangeError('batch op header truncated');
     const type = body.readUInt8(o);
     o += 1;
+    if (type !== TYPE_SET && type !== TYPE_DEL) throw new RangeError(`batch op has unknown type ${type}`);
     const keyLen = body.readUInt16LE(o);
     o += 2;
     const valLen = body.readUInt32LE(o);
@@ -479,6 +493,7 @@ export function scanBatchOpRefs(body: Buffer, bodyOff: number): BatchOpRef[] {
     o += metaLen;
     ops.push({ type, key, valueOff, valLen, meta, expireAt });
   }
+  if (o !== body.length) throw new RangeError(`batch body has ${body.length - o} trailing byte(s)`);
   return ops;
 }
 
