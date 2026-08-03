@@ -1,3 +1,16 @@
+/**
+ * Scenario: the builtin skill source's product-documentation switch.
+ *
+ * Asserts that `builtinProductSkills` gates only the skills marked
+ * `productSpecific` and that an unset section behaves like the shipped
+ * default, so the filtering happens while the catalog is assembled rather than
+ * after the names already reached the system prompt.
+ *
+ * Runs the real `BuiltinSkillSource` over a stub config service. Run with
+ * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/app/skillCatalog/builtinSkillSource.test.ts`.
+ */
+
 import { describe, expect, it } from 'vitest';
 
 import { TestInstantiationService } from '#/_base/di/test';

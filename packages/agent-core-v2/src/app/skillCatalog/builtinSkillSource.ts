@@ -9,7 +9,8 @@
  * `builtinProductSkills` is off: a skill's name and description live in the
  * system prompt for the whole session, so dropping them has to happen while
  * the catalog is assembled — a later filter would leave them advertised to
- * the model.
+ * the model. Only an explicit opt-out drops them, so a missing or
+ * not-yet-registered section behaves like the shipped default.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -39,8 +40,6 @@ export class BuiltinSkillSource implements IBuiltinSkillSource {
   constructor(@IConfigService private readonly config: IConfigService) {}
 
   async load(): Promise<SkillContribution> {
-    // Only an explicit opt-out drops them, so a missing or unregistered
-    // section behaves like the shipped default.
     const enabled =
       this.config.get<BuiltinProductSkillsConfig>(BUILTIN_PRODUCT_SKILLS_SECTION) !== false;
     if (enabled) return { skills: BUILTIN_SKILLS };

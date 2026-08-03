@@ -5,6 +5,21 @@
  * `mergeAllAvailableSkills`, plus `builtinProductSkills`. Values stay camelCase
  * in memory; TOML uses the snake_case keys `extra_skill_dirs`,
  * `merge_all_available_skills`, and `builtin_product_skills`.
+ *
+ * `builtinProductSkills` decides whether the builtin skills documenting this
+ * CLI itself — its `config.toml` / `tui.toml` settings, custom themes, MCP
+ * setup, the official docs lookup, and the Claude Code / Codex import — are
+ * offered to the model. On by default; turning it off trims their names and
+ * descriptions from the system prompt, where they otherwise sit on every turn,
+ * at the cost of the guided flows for those tasks. Useful for unattended runs,
+ * or deployments where nobody reconfigures the CLI mid-task.
+ *
+ * That section is a whole-section scalar rather than an object of fields, so
+ * the env binding covers it directly and it needs its own strip:
+ * `stripEnvBoundFields` only walks object fields, so an env override would
+ * otherwise be written back into `config.toml`. The strip restores the
+ * env-free file value while the env var resolves, and drops the field when the
+ * file held anything but a boolean.
  */
 
 import { z } from 'zod';
@@ -33,20 +48,6 @@ registerConfigSection(MERGE_ALL_AVAILABLE_SKILLS_SECTION, MergeAllAvailableSkill
   defaultValue: true,
 });
 
-/**
- * Whether the builtin skills documenting this CLI itself — its `config.toml` /
- * `tui.toml` settings, custom themes, MCP setup, the official docs lookup, and
- * the Claude Code / Codex import — are offered to the model.
- *
- * On by default. Turning it off trims their names and descriptions from the
- * system prompt, where they otherwise sit on every turn; the trade is that the
- * model loses the guided flows for those tasks. Useful for unattended runs, or
- * for deployments where nobody is going to reconfigure the CLI mid-task.
- *
- * The whole section is one scalar, so the env binding covers it directly, and
- * `stripBuiltinProductSkillsEnv` keeps an env override from being written back
- * into `config.toml`.
- */
 export const BUILTIN_PRODUCT_SKILLS_SECTION = 'builtinProductSkills';
 export const BuiltinProductSkillsConfigSchema = z.boolean().optional();
 export type BuiltinProductSkillsConfig = z.infer<typeof BuiltinProductSkillsConfigSchema>;
@@ -59,11 +60,6 @@ export const builtinProductSkillsEnvBindings: EnvBindings<BuiltinProductSkillsCo
     parse: parseBooleanEnv,
   });
 
-/**
- * Scalar-section counterpart to `stripEnvBoundFields`, which only walks object
- * fields: while the env var resolves, writes restore the env-free file value
- * instead of persisting the echoed override.
- */
 export const stripBuiltinProductSkillsEnv: ConfigStripEnv<BuiltinProductSkillsConfig> = (
   value,
   raw,
@@ -71,8 +67,6 @@ export const stripBuiltinProductSkillsEnv: ConfigStripEnv<BuiltinProductSkillsCo
 ) => {
   if (getEnv === undefined) return value;
   if (parseBooleanEnv(getEnv(BUILTIN_PRODUCT_SKILLS_ENV)) === undefined) return value;
-  // `raw` is the unvalidated file value; anything but a boolean means the file
-  // held nothing usable, so the field is dropped rather than written back.
   return typeof raw === 'boolean' ? raw : undefined;
 };
 

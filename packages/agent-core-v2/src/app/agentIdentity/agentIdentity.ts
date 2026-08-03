@@ -17,11 +17,17 @@
  *
  * The asymmetry is what keeps the feature safe: with no identity configured,
  * the protocol-rewriting code paths are equivalent to not existing at all.
+ *
+ * `normalizeIdentitySlug` folds an arbitrary human name into that protocol-safe
+ * token: everything outside `[a-z0-9]` collapses to `-`, which is what stops a
+ * non-ASCII name from reaching the User-Agent builder — that builder throws on
+ * a blank or non-ASCII product token. A name leaving nothing behind (CJK-only,
+ * punctuation-only, blank) yields `DEFAULT_IDENTITY_SLUG` instead of an empty
+ * token.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
-/** Fallback slug when a name normalizes to nothing (e.g. a CJK-only name). */
 export const DEFAULT_IDENTITY_SLUG = 'agent';
 
 export interface IAgentIdentity {
@@ -43,16 +49,6 @@ export interface IAgentIdentity {
 export const IAgentIdentity: ServiceIdentifier<IAgentIdentity> =
   createDecorator<IAgentIdentity>('agentIdentity');
 
-/**
- * Fold an arbitrary human name into a protocol-safe token.
- *
- * Everything outside `[a-z0-9]` collapses to `-`, so the result is ASCII by
- * construction — this is what stops a non-ASCII name from reaching the
- * User-Agent builder, which rejects a blank/non-ASCII product token by
- * throwing. A name that leaves nothing behind (CJK-only, punctuation-only,
- * blank) falls back to {@link DEFAULT_IDENTITY_SLUG} rather than producing an
- * empty token.
- */
 export function normalizeIdentitySlug(raw: string): string {
   const folded = raw
     .toLowerCase()

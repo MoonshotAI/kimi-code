@@ -306,6 +306,8 @@ Both fields can be set through the `KIMI_CODE_IDENTITY_NAME` and `KIMI_CODE_IDEN
 
 A name that contains no ASCII letters or digits (for example a purely Chinese name) leaves nothing to derive a slug from and falls back to `agent`; write `slug` explicitly if you need a specific protocol token.
 
+This section is read by the `agent-core-v2` engine, which currently backs `kimi web` and the `KIMI_CODE_EXPERIMENTAL_FLAG` paths. On the default `kimi` / `kimi -p` engine it is ignored.
+
 ## `tools`
 
 `tools` is the global tool switch: it applies to every agent in all sessions and intersects with each agent's own `tools` / `disallowedTools` policy.

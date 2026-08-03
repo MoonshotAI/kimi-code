@@ -6,6 +6,11 @@
  * (usually built through `createKimiDefaultHeaders`), exposed through
  * `IBootstrapService.args`. kosong's model catalog only sees the port. Bound
  * at App scope.
+ *
+ * The headers are a constructor snapshot (bootstrap args are frozen for the
+ * process) while the identity slug is read lazily on each access: config loads
+ * asynchronously, so a snapshot taken here would freeze the pre-load value and
+ * silently drop a configured identity.
  */
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -23,8 +28,6 @@ export class HostRequestHeadersAdapter implements IHostRequestHeaders {
     this.headers = bootstrap.args.requestHeaders;
   }
 
-  /** Read lazily: config loads asynchronously, a constructor snapshot would
-      freeze the pre-load value and silently drop a configured identity. */
   get identitySlug(): string | undefined {
     return this.identity.slug;
   }

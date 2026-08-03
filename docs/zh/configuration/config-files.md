@@ -306,6 +306,8 @@ slug = "acme-dev"        # 可选
 
 如果名称中不含任何 ASCII 字母或数字（例如纯中文名称），就无法派生出 slug，此时回退为 `agent`；需要特定协议标识请显式填写 `slug`。
 
+本节由 `agent-core-v2` 引擎读取，目前 `kimi web` 和开启 `KIMI_CODE_EXPERIMENTAL_FLAG` 的路径使用该引擎。默认的 `kimi` / `kimi -p` 引擎会忽略此配置。
+
 ## `tools`
 
 `tools` 设置全局工具开关，对所有会话中的每个 Agent 生效，并在 Agent 自身的 `tools` / `disallowedTools` 策略之上再取一次交集。

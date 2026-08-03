@@ -469,11 +469,6 @@ function attributeCapabilities(
   );
 }
 
-/**
- * Explain where an outbound header came from. Only the `User-Agent` sent to a
- * third-party provider can carry the configured custom identity — official
- * vendors (`hostHeaders: 'full'`) always receive the host's own token.
- */
 function hostHeaderDetail(
   forwardsAll: boolean,
   key: string,

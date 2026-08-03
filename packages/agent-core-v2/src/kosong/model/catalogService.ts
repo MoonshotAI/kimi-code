@@ -42,6 +42,14 @@
  * provider registry plus credential state. `setDefaultModel` writes the
  * global default-model pointer (through `IModelService`) after a
  * materialization gate — the catalog's only write.
+ *
+ * Outbound headers: vendors declaring `hostHeaders: 'full'` receive the host's
+ * complete identity header set and stay consistent with it — that set is the
+ * host's to define, and backends key on the product token it carries (log
+ * filtering, rollout gating). The configured custom identity applies to the
+ * third-party path instead, rewriting only the `User-Agent` product token. A
+ * host that supplies no `User-Agent` gets none synthesized, so an embedding
+ * host that deliberately sends no identity keeps sending none.
  */
 
 import {
@@ -569,10 +577,6 @@ export function resolveOutboundHeaders(
   const forwardsAll =
     providerType !== undefined &&
     getProviderDefinition(providerType)?.hostHeaders === 'full';
-  // Vendors declaring `hostHeaders: 'full'` receive the host's complete
-  // identity header set and stay consistent with it: that set is the host's to
-  // define, and backends key on the product token it carries (log filtering,
-  // rollout gating). The configured identity applies to the third-party path.
   const hostLayer = forwardsAll
     ? hostHeaders
     : userAgentOnly(hostHeaders, identitySlug);
@@ -584,8 +588,6 @@ function userAgentOnly(
   identitySlug: string | undefined,
 ): Record<string, string> {
   const userAgent = headers['User-Agent'];
-  // No host User-Agent means nothing to rewrite — never synthesize one, or an
-  // embedding host that deliberately sends no identity would start leaking one.
   if (userAgent === undefined) return {};
   return {
     'User-Agent':

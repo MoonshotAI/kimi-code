@@ -10,6 +10,14 @@
  * in boot would otherwise freeze the pre-load defaults and silently ignore a
  * configured identity — a race that only shows up under particular startup
  * orderings and is near-impossible to reproduce.
+ *
+ * Blank and whitespace-only values read as unset on both sides, matching what
+ * the env bindings already do: without that a stray `name = ""` in the file
+ * would claim an identity, rendering an empty display name into the prompt and
+ * falling through slug normalization to the neutral token — silently rewriting
+ * the User-Agent sent to third parties. The slug follows the explicit `slug`
+ * when set and the declared name otherwise; both are normalized, since a
+ * hand-written slug may still carry spaces or non-ASCII characters.
  */
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -19,13 +27,6 @@ import { IConfigService } from '#/app/config/config';
 import { IAgentIdentity, normalizeIdentitySlug } from './agentIdentity';
 import { IDENTITY_SECTION, type IdentityConfig } from './configSection';
 
-/**
- * Blank / whitespace-only values read as unset, matching what the env bindings
- * already do for `KIMI_CODE_IDENTITY_*`. Without this a stray `name = ""` in
- * `config.toml` would claim an identity: the display name would render empty
- * and the slug would fall back to the neutral token, silently rewriting the
- * User-Agent sent to third-party providers.
- */
 function declared(raw: string | undefined): string | undefined {
   const trimmed = raw?.trim();
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
@@ -45,10 +46,6 @@ export class AgentIdentityService implements IAgentIdentity {
 
   get slug(): string | undefined {
     const section = this.section();
-    // A slug is claimed only when the user declared an identity at all. The
-    // explicit slug wins; otherwise it derives from the declared name. Both go
-    // through normalization — a user-written slug may still carry spaces or
-    // non-ASCII characters.
     const raw = declared(section.slug) ?? declared(section.name);
     return raw === undefined ? undefined : normalizeIdentitySlug(raw);
   }

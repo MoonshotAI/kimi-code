@@ -38,7 +38,6 @@ export type IdentityConfig = z.infer<typeof IdentityConfigSchema>;
 export const IDENTITY_NAME_ENV = 'KIMI_CODE_IDENTITY_NAME';
 export const IDENTITY_SLUG_ENV = 'KIMI_CODE_IDENTITY_SLUG';
 
-/** Blank values read as "unset" so an empty env var does not claim an identity. */
 function parseIdentityEnv(raw: string): string | undefined {
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : undefined;

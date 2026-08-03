@@ -49,8 +49,6 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     @IAgentIdentity private readonly identity: IAgentIdentity,
   ) {
     super();
-    // Resolved per connection rather than captured here: the identity reads
-    // from config, which loads asynchronously.
     const resolveClientName = (): string | undefined => this.identity.slug;
     const oauthService = new McpOAuthService({ store: oauthStore, resolveClientName });
     this.manager = new McpConnectionManager({

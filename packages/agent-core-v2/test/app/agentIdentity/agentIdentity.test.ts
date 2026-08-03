@@ -1,4 +1,19 @@
-import { describe, expect, it } from 'vitest';
+/**
+ * Scenario: custom agent identity resolution.
+ *
+ * Asserts the two faces the identity exposes — the filling `displayName`
+ * (config > host-declared > unset) and the rewriting `slug` (claimed only when
+ * the user declares one) — plus the slug normalization that guarantees a
+ * non-empty ASCII token for any input, including the blank and CJK-only cases
+ * that would otherwise reach the User-Agent builder.
+ *
+ * Runs the real `AgentIdentityService` over a stub config service and a stub
+ * bootstrap; nothing else is wired. Run with
+ * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/app/agentIdentity/agentIdentity.test.ts`.
+ */
+
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost } from '#/_base/di/test';
 import {
@@ -15,6 +30,12 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { stubBootstrap } from '../bootstrap/stubs';
 import { StubConfigService } from '../../kosong/stubs';
 
+const hosts: Array<{ dispose(): void }> = [];
+
+afterEach(() => {
+  while (hosts.length > 0) hosts.pop()?.dispose();
+});
+
 function resolve(
   section: Record<string, unknown> | undefined,
   hostDisplayName?: string,
@@ -27,6 +48,7 @@ function resolve(
     ],
     [IBootstrapService, stubBootstrap('/home', {}, { displayName: hostDisplayName })],
   ]);
+  hosts.push(host);
   return host.app.accessor.get(IAgentIdentity);
 }
 
