@@ -5,8 +5,10 @@
 use std::sync::{Arc, Mutex};
 
 use kimi_agent::background::manager::BackgroundManager;
-use kimi_agent::background::types::BackgroundTaskKind;
 use kimi_agent::background::persist::BackgroundTaskPersistence;
+use kimi_agent::background::types::{
+    BackgroundTaskKind, BackgroundTaskSettlement, BackgroundTaskSettlementStatus,
+};
 use kimi_agent::persistence::SqliteBackgroundStore;
 use kimi_protocol::rpc::JsonRpcError;
 use kimi_protocol::wire_types::{
@@ -217,6 +219,64 @@ impl Processor for BgProcessor {
                 }
             })
         });
+
+        // `bg/settle` — settle a task with a terminal status and mirror it to
+        // the persisted store (ghosts restore with the terminal info next boot).
+        let bm = self.manager.clone();
+        let bp = self.persist.clone();
+        processor.register(kimi_protocol::methods::BG_SETTLE, move |params| {
+            let bm = bm.clone();
+            let bp = bp.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::BgSettleParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let settlement_status = match input.status.as_str() {
+                    "completed" => BackgroundTaskSettlementStatus::Completed,
+                    "failed" => BackgroundTaskSettlementStatus::Failed,
+                    "timed_out" => BackgroundTaskSettlementStatus::TimedOut,
+                    "killed" => BackgroundTaskSettlementStatus::Killed,
+                    other => {
+                        return Err(JsonRpcError::internal_error(format!(
+                            "Unknown settlement status: {other}"
+                        )));
+                    }
+                };
+                let mut manager = bm.lock().unwrap_or_else(|e| e.into_inner());
+                match manager.settle(
+                    &input.task_id,
+                    BackgroundTaskSettlement {
+                        status: settlement_status,
+                        stop_reason: input.stop_reason,
+                    },
+                ) {
+                    Ok(()) => {
+                        if let Some(t) = manager.get(&input.task_id) {
+                            let _ = bp.write_info(&t.to_info());
+                        }
+                        Ok(serde_json::json!({ "ok": true }))
+                    }
+                    Err(e) => Err(JsonRpcError::internal_error(e)),
+                }
+            })
+        });
+
+        // `bg/detach` — detach a task from its foreground tool call (SDK
+        // `detachBackgroundTask`); returns the task info, or null if unknown.
+        let bm = self.manager.clone();
+        processor.register(kimi_protocol::methods::BG_DETACH, move |params| {
+            let bm = bm.clone();
+            Box::pin(async move {
+                let input: BgGetParams = serde_json::from_value(params)
+                    .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = bm.lock().unwrap_or_else(|e| e.into_inner());
+                match manager.detach(&input.task_id) {
+                    Some(info) => serde_json::to_value(&info)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Serialize error: {e}"))),
+                    None => Ok(serde_json::Value::Null),
+                }
+            })
+        });
     }
 }
 
@@ -259,5 +319,90 @@ mod tests {
             tasks.iter().any(|t| t["base"]["task_id"] == id),
             "registered task listed: {body}"
         );
+    }
+
+    #[tokio::test]
+    async fn bg_settle_then_get() {
+        let processor = BgProcessor::new().expect("bg processor");
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "bg/register".into(),
+                params: serde_json::json!({
+                    "prefix": "settle-test",
+                    "kind": "process",
+                    "description": "smoke",
+                }),
+            })
+            .await;
+        let id = body["result"]["task_id"].as_str().expect("task_id").to_string();
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "bg/settle".into(),
+                params: serde_json::json!({
+                    "task_id": id,
+                    "status": "completed",
+                    "stop_reason": "all done",
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "bg/settle failed: {body}");
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(3),
+                method: "bg/get".into(),
+                params: serde_json::json!({ "task_id": id }),
+            })
+            .await;
+        assert_eq!(body["result"]["base"]["status"], "completed");
+    }
+
+    #[tokio::test]
+    async fn bg_detach_returns_info() {
+        let processor = BgProcessor::new().expect("bg processor");
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "bg/register".into(),
+                params: serde_json::json!({
+                    "prefix": "detach-test",
+                    "kind": "agent",
+                    "description": "smoke",
+                }),
+            })
+            .await;
+        let id = body["result"]["task_id"].as_str().expect("task_id").to_string();
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "bg/detach".into(),
+                params: serde_json::json!({ "task_id": id }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "bg/detach failed: {body}");
+        assert_eq!(body["result"]["base"]["task_id"], id);
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(3),
+                method: "bg/detach".into(),
+                params: serde_json::json!({ "task_id": "does-not-exist" }),
+            })
+            .await;
+        assert!(body["result"].is_null(), "unknown task yields null: {body}");
     }
 }
