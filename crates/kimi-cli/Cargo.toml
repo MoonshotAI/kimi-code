@@ -13,6 +13,7 @@ path = "src/main.rs"
 anyhow = "1"
 base64 = "0.22"
 clap = { workspace = true }
+kimi-agent = { path = "../../packages/kimi-agent" }
 kimi-exec = { path = "../kimi-exec" }
 kimi-protocol = { path = "../kimi-protocol" }
 kimi-server = { path = "../kimi-server" }

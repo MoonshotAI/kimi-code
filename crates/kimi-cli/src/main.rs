@@ -176,6 +176,29 @@ async fn main() -> anyhow::Result<()> {
                 let provider = config["result"]["provider"].as_str().unwrap_or("");
                 println!("config: model={model} provider={provider}");
             }
+
+            // File-level config checks (TS `kimi doctor` parity): report every
+            // well-known config path with OK / SKIP / ERROR, then verify the
+            // merged config parses at all.
+            let mut found = 0usize;
+            for path in kimi_agent::config::loader::find_config_paths() {
+                if path.exists() {
+                    println!("config file: OK   {}", path.display());
+                    found += 1;
+                } else {
+                    println!("config file: SKIP {}", path.display());
+                }
+            }
+            if found == 0 {
+                println!("config file: SKIP (no config.toml found — defaults in effect)");
+            }
+            match kimi_agent::config::loader::load_config_with_env() {
+                Ok(_) => println!("config parse: OK"),
+                Err(e) => {
+                    println!("config parse: ERROR — {e}");
+                    std::process::exit(1);
+                }
+            }
         }
         Commands::Health => {
             let mut client = connect(&server)?;

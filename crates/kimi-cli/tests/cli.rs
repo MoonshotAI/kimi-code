@@ -127,3 +127,16 @@ fn server_mode_sessions_empty() {
     assert!(output.status.success(), "server-mode sessions exited {}", output.status);
     assert_eq!(stdout(&output), "", "no sessions -> no output");
 }
+
+#[test]
+fn doctor_reports_health_and_config_files() {
+    let home = temp_dir("doctor");
+    let output = run(&home, &["doctor"]);
+    assert!(output.status.success(), "doctor exited {}", output.status);
+    let out = stdout(&output);
+    assert!(out.contains("health: ok"), "health line: {out}");
+    assert!(
+        out.contains("config parse:") && out.contains("config file:"),
+        "config checks present: {out}"
+    );
+}
