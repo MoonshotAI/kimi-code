@@ -859,6 +859,35 @@ impl Processor for SessionProcessor {
             })
         });
 
+        // `session/export` — zip the session's records + files.
+        processor.register(kimi_protocol::methods::SESSION_EXPORT, move |params| {
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionExportParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let store = crate::state::open_session_store()
+                    .map_err(|e| JsonRpcError::internal_error(format!("open store: {e}")))?;
+                let record_store = kimi_agent::persistence::RecordStore::new(store);
+                let session_dir = input
+                    .homedir
+                    .clone()
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| std::env::current_dir().ok())
+                    .unwrap_or_default();
+                let zip_bytes = kimi_agent::session::export::export_session_with_web_log(
+                    &input.session_id,
+                    &session_dir,
+                    &record_store,
+                    input.web_log.as_deref(),
+                )
+                .map_err(|e| JsonRpcError::internal_error(format!("export: {e}")))?;
+                Ok(serde_json::json!({
+                    "session_id": input.session_id,
+                    "zip_base64": zip_bytes,
+                }))
+            })
+        });
+
         // `session/get_status` — live engine status snapshot.
         let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_GET_STATUS, move |params| {
