@@ -3,6 +3,7 @@
 //! engine's config lookup (project `.kimi-code/config.toml`, user config)
 //! never leaks real settings in.
 
+use std::io::BufRead;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -139,4 +140,62 @@ fn doctor_reports_health_and_config_files() {
         out.contains("config parse:") && out.contains("config file:"),
         "config checks present: {out}"
     );
+}
+
+#[test]
+fn server_mode_verbose_emits_events() {
+    // `--verbose` over the Remote path: the serve binary fans engine events
+    // to stderr (session.turn.started fires before the LLM call, so it lands
+    // even when the LLM is unreachable). Read stderr until the event appears,
+    // then kill the CLI (its prompt may hang on an offline LLM afterwards).
+    let Some(serve) = serve_bin() else {
+        eprintln!("skipping: kimi-server-serve binary not built");
+        return;
+    };
+    let home = temp_dir("server-verbose");
+    let cwd = temp_dir("cwd");
+    let mut child = Command::new(binary())
+        .args([
+            "--server",
+            serve.to_str().unwrap(),
+            "print",
+            "hello",
+            "--verbose",
+        ])
+        .current_dir(&cwd)
+        .env("KIMI_AGENT_HOME", &home)
+        .env("HOME", &home)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn kimi");
+    let stderr = child.stderr.take().expect("stderr");
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stderr).lines() {
+            match line {
+                Ok(line) => {
+                    if tx.send(line).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut seen = false;
+    while std::time::Instant::now() < deadline {
+        match rx.recv_timeout(std::time::Duration::from_millis(500)) {
+            Ok(line) if line.contains("[event]") => {
+                seen = true;
+                break;
+            }
+            Ok(_) => {}
+            Err(_) => {}
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(seen, "expected an [event] line on stderr");
 }

@@ -82,21 +82,40 @@ async fn main() -> anyhow::Result<()> {
     match command {
         Commands::Print { prompt, verbose } => {
             if verbose {
-                let embedded = kimi_server::Server::build()?;
-                let mut events = embedded.state.subscribe_events();
-                let mut client = connect(&server)?;
-                let spawned = tokio::spawn(async move {
-                    let mut lines = 0usize;
-                    while let Ok(event) = events.recv().await {
-                        eprintln!("[event] {}", serde_json::to_string(&event).unwrap_or_default());
-                        lines += 1;
-                        if lines > 64 {
-                            break; // bound verbose output
-                        }
+                // Verbose mode prints engine events as they arrive. Embedded:
+                // subscribe the in-process EventBus. Remote (`--server`): the
+                // serve binary already fans events to stderr (inherited), so
+                // no second channel is needed — just don't build a stray
+                // embedded server.
+                let mut events = None;
+                let mut client = match &server {
+                    Some(bin) => kimi_server_client::AppServerClient::Remote(
+                        kimi_server_client::stdio_client::StdioClient::spawn(bin)?,
+                    ),
+                    None => {
+                        let embedded = kimi_server::Server::build()?;
+                        events = Some(embedded.state.subscribe_events());
+                        kimi_server_client::AppServerClient::InProcess(
+                            kimi_server::in_process::spawn(embedded.processor),
+                        )
                     }
+                };
+                let spawned = events.map(|mut rx| {
+                    tokio::spawn(async move {
+                        let mut lines = 0usize;
+                        while let Ok(event) = rx.recv().await {
+                            eprintln!("[event] {}", serde_json::to_string(&event).unwrap_or_default());
+                            lines += 1;
+                            if lines > 64 {
+                                break; // bound verbose output
+                            }
+                        }
+                    })
                 });
                 let result = kimi_exec::run_prompt(&mut client, "kimi-exec", &prompt, kimi_exec::native_llm_from_config()).await;
-                spawned.abort();
+                if let Some(spawned) = spawned {
+                    spawned.abort();
+                }
                 if let Some(error) = result.get("error") {
                     eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
                     std::process::exit(1);

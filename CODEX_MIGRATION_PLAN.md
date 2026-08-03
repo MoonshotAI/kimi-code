@@ -282,7 +282,7 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 
 ### 阶段 B — 宿主协议层（方法族迁移完成 ✅）
 1. ✅ `kimi-server` crate（MessageProcessor + in_process + ServerHostCallbacks/EventBus + ServerState/Server::build）
-2. ✅ `kimi-server-transport`（stdio serve + **`kimi-server-serve` 二进制**：独立进程宿主，Remote 客户端经 stdio 驱动，端到端测试）
+2. ✅ `kimi-server-transport`（stdio serve + **`kimi-server-serve` 二进制**：独立进程宿主，Remote 客户端经 stdio 驱动，端到端测试；**引擎事件扇出到 stderr**，Remote `--verbose` 免第二通道）
 3. ✅ `kimi-server-client`（AppServerClient{InProcess, Remote} 门面；Remote 经 stdio 全链路测试）
 4. ✅ **方法族迁移完成（11 processor）**：session **44 方法**（create/prompt/cancel/run_shell/cancel_shell_command/compact/save/load/delete/fork/export/set_model/set_thinking/set_swarm_mode/set_plan_mode/clear_context/get_context/get_status/list/get_usage/get_plan/get_warnings/list_mcp_servers/list_skills/undo_history/import_context/activate_skill/steer/goal 全生命周期/start_btw/end_btw/**init/destroy/clear_plan/get_mcp_startup_metrics/reconnect_mcp_server/list_tools/add_additional_dir/remove_additional_dir/update_metadata**）+ health/config(get+set)/fs/git/approval/plugin/permission(get/set_mode/**add_rule**)/cron/bg（register/list/get/stop/output/append_output/**settle/detach**）/task——宿主可服务的全部请求方法在 Rust 协议层，与 main.rs handler 同源（`agent/*`、`host/*` 属引擎侧 stdio 协议，由 kimi-agent 原生实现；bg/event、cron/fired 为事件流 wire 常量）
 5. [ ] kap-server 测试平移（377 基线，TS 面，阶段 B 收尾可选）
@@ -291,7 +291,7 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 ### 阶段 C — CLI + exec
 1. ✅ `kimi-cli`：clap 分发 + 子命令平移（print/sessions/resume/config/doctor/health/**export**；acp/login/provider/upgrade/vis/web 待）+ **全局 `--server <bin>`**：所有子命令可选走 Remote stdio 传输（独立 `kimi-server-serve` 进程），而非内嵌 server；**doctor 含 config 文件级检查**（OK/SKIP/ERROR + 合并解析验证，TS parity）
 2. ✅ `kimi-exec`：-p/print + run_prompt 经 AppServerClient（InProcess/Remote）
-3. ✅ **验证**：`kimi -p "..."` 端到端；CLI 集成测试（health/sessions/export/config/doctor/--server 驱动真实二进制，8 用例）；CLI 测试平移（55 用例，TS 面待）
+3. ✅ **验证**：`kimi -p "..."` 端到端；CLI 集成测试（health/sessions/export/config/doctor/--server/verbose 事件流驱动真实二进制，9 用例）；CLI 测试平移（55 用例，TS 面待）
 
 ### 阶段 D — TUI
 1. `kimi-tui`：app 主循环 + custom_terminal + 事件流
