@@ -342,6 +342,78 @@ impl Processor for SessionProcessor {
             })
         });
 
+        // `session/set_thinking` — reasoning effort.
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_SET_THINKING, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionSetThinkingParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                agent.set_thinking(input.effort);
+                Ok(serde_json::json!({ "ok": true }))
+            })
+        });
+
+        // `session/set_swarm_mode` — toggle the swarm state machine.
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_SET_SWARM_MODE, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionSetSwarmModeParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let trigger = match input.trigger.as_deref() {
+                    None | Some("manual") => kimi_agent::swarm::SwarmModeTrigger::Manual,
+                    Some("task") => kimi_agent::swarm::SwarmModeTrigger::Task,
+                    Some("tool") => kimi_agent::swarm::SwarmModeTrigger::Tool,
+                    Some(other) => {
+                        return Err(JsonRpcError::internal_error(format!(
+                            "invalid swarm trigger: {other}"
+                        )));
+                    }
+                };
+                let mut manager = mgr.lock().await;
+                let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                let active = agent.set_swarm_mode(input.enabled, trigger);
+                Ok(serde_json::json!({ "active": active }))
+            })
+        });
+
+        // `session/set_plan_mode` — toggle plan mode.
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_SET_PLAN_MODE, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionSetPlanModeParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                let plan_mode = agent
+                    .set_plan_mode(input.enabled)
+                    .map_err(JsonRpcError::internal_error)?;
+                Ok(serde_json::json!({ "plan_mode": plan_mode }))
+            })
+        });
+
         // `session/get_status` — live engine status snapshot.
         let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_GET_STATUS, move |params| {
