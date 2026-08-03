@@ -280,11 +280,11 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 5. **验证**：cargo test --lib 2027 绿；node-sdk/kimi-code typecheck 0；gen:wire 幂等
 6. **ts-rs 决策**：离线环境（crates.io 不可达）无法引入 ts-rs/schemars；TS 绑定由 `gen-wire-contract.mjs` 生成（自研，从 kimi-protocol Rust 类型导出，已验证覆盖 serde default/rename/tagged/元组变体/跨文件引用）。联网后可评估 ts-rs 迁移（可选优化，非必需）。
 
-### 阶段 B — 宿主协议层
-1. `kimi-server`：MessageProcessor + request_processors 骨架（thread/turn/fs/git/config/mcp/approval…）
-2. `kimi-server-transport`：stdio（替代 rust-loop stdio）+ in_process 通道
-3. `kimi-server-client`：AppServerClient 门面
-4. kap-server 路由逐个平移（先读面：sessions/fs/config/skills，再写面）
+### 阶段 B — 宿主协议层（进行中）
+1. ✅ `kimi-server` crate 骨架（commit aaa47b5ac）：MessageProcessor（方法→handler 表 + JSON-RPC 错误信封）+ `in_process`（bounded mpsc 通道，与传输同 envelope）+ `request_processors/health.rs`（最小方法族，证明分发/未知方法/错误信封）。4 测试绿，workspace check 干净。
+2. [ ] `kimi-server-transport`（stdio/unix-socket/websocket）
+3. [ ] `kimi-server-client`（AppServerClient{InProcess, Remote} 门面）
+4. [ ] kap-server 路由逐个平移（先读面：sessions/fs/config/skills，再写面）
 5. **验证**：in_process 与 stdio 双模式跑通同一测试；kap-server 测试平移（377 用例）；node-sdk 425 用例回归
 
 ### 阶段 C — CLI + exec
