@@ -57,4 +57,32 @@ describe('BuiltinSkillSource product-skill switch', () => {
     expect(names).toEqual(NEUTRAL_SKILLS);
     for (const name of PRODUCT_SKILLS) expect(names).not.toContain(name);
   });
+
+  // This is the lowest-priority source, so the workspace catalog loads it
+  // first — before config has finished loading — and keeps the contribution
+  // for the life of the handler with no reload path. Reading the switch
+  // eagerly would strand the startup configuration.
+  it('waits for config readiness before reading the switch', async () => {
+    let release = (): void => {};
+    const ready = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let loaded = false;
+    const config = {
+      _serviceBrand: undefined,
+      ready,
+      get: () => (loaded ? false : undefined),
+    } as unknown as IConfigService;
+
+    const ix = new TestInstantiationService();
+    ix.set(IConfigService, config);
+    const source = ix.createInstance(BuiltinSkillSource);
+
+    const loading = source.load();
+    loaded = true;
+    release();
+
+    const names = (await loading).skills.map((s) => s.name);
+    expect(names).toEqual(NEUTRAL_SKILLS);
+  });
 });

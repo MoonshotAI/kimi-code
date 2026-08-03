@@ -11,6 +11,11 @@
  * the catalog is assembled — a later filter would leave them advertised to
  * the model. Only an explicit opt-out drops them, so a missing or
  * not-yet-registered section behaves like the shipped default.
+ *
+ * The load awaits config readiness before reading that switch: this is the
+ * lowest-priority source, so the workspace catalog loads it first, and the
+ * contribution it produces is kept for the life of the handler with no reload
+ * path — reading too early would strand the startup configuration.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -40,6 +45,7 @@ export class BuiltinSkillSource implements IBuiltinSkillSource {
   constructor(@IConfigService private readonly config: IConfigService) {}
 
   async load(): Promise<SkillContribution> {
+    await this.config.ready;
     const enabled =
       this.config.get<BuiltinProductSkillsConfig>(BUILTIN_PRODUCT_SKILLS_SECTION) !== false;
     if (enabled) return { skills: BUILTIN_SKILLS };

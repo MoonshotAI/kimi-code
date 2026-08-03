@@ -61,8 +61,9 @@
  * fields because the container only holds pure data structures. After every
  * successful bind / apply / refresh (never before the new prompt commits,
  * so a failed build cannot poison the set), the injected AGENTS.md paths are
- * seeded into `agentsMdReminder`'s known-set with the effective cwd. Bound at
- * Agent scope.
+ * seeded into `agentsMdReminder`'s known-set with the effective cwd. Fills the
+ * prompt's product-name slot from `agentIdentity`, leaving the template's own
+ * default to apply when nothing is configured. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';

@@ -13,6 +13,10 @@
  * whose cwd is the handler root) lives as long as the handler — i.e. the
  * process — so a stateful stdio server is shared by concurrent sessions of
  * the workspace rather than owned by one session. Bound at Workspace scope.
+ *
+ * Resolves the client name announced to MCP servers — on initialize and on
+ * OAuth dynamic registration — through `agentIdentity`, per connection rather
+ * than once at construction.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
