@@ -125,6 +125,86 @@ impl Processor for SessionProcessor {
                     .map_err(|e| JsonRpcError::internal_error(e.to_string()))
             })
         });
+
+        // `session/get_plan` — active plan snapshot (null when none).
+        let mgr = self.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_GET_PLAN, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: SessionGoalParams = serde_json::from_value(params)
+                    .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                let plan = agent.get_plan().map_err(JsonRpcError::internal_error)?;
+                match plan {
+                    Some(p) => serde_json::to_value(p)
+                        .map_err(|e| JsonRpcError::internal_error(format!("serialize plan: {e}"))),
+                    None => Ok(serde_json::Value::Null),
+                }
+            })
+        });
+
+        // `session/get_warnings` — failed / needs-auth MCP servers surface as
+        // session warnings (the engine's own signal).
+        let mgr = self.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_GET_WARNINGS, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: SessionGoalParams = serde_json::from_value(params)
+                    .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mcp = {
+                    let mut manager = mgr.lock().await;
+                    let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                        JsonRpcError::internal_error(format!(
+                            "no agent for session: {}",
+                            input.session_id
+                        ))
+                    })?;
+                    agent.mcp.clone()
+                };
+                // Same lock-after-release order as list_mcp_servers.
+                use kimi_agent::mcp::connection_manager::McpServerStatus;
+                let warnings: Vec<kimi_protocol::wire_types::SessionWarning> = mcp
+                    .lock()
+                    .await
+                    .list()
+                    .into_iter()
+                    .filter(|e| {
+                        matches!(e.status, McpServerStatus::Failed | McpServerStatus::NeedsAuth)
+                    })
+                    .map(|e| {
+                        let (code, detail) = match e.status {
+                            McpServerStatus::NeedsAuth => (
+                                "mcp-server-needs-auth",
+                                e.error
+                                    .clone()
+                                    .unwrap_or_else(|| "authentication required".to_string()),
+                            ),
+                            _ => (
+                                "mcp-server-failed",
+                                e.error
+                                    .clone()
+                                    .unwrap_or_else(|| "connection failed".to_string()),
+                            ),
+                        };
+                        kimi_protocol::wire_types::SessionWarning {
+                            code: code.to_string(),
+                            message: format!("MCP server \"{}\": {}", e.name, detail),
+                            severity: "warning".to_string(),
+                        }
+                    })
+                    .collect();
+                serde_json::to_value(kimi_protocol::wire_types::WarningsResult { warnings })
+                    .map_err(|e| {
+                        JsonRpcError::internal_error(format!("get_warnings serialize failed: {e}"))
+                    })
+            })
+        });
     }
 }
 
