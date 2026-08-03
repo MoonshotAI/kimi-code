@@ -16,6 +16,8 @@ import { type QuestionRequest, ISessionQuestionService } from '#/session/questio
 import { SessionQuestionService } from '#/session/question/questionService';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
+import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
+import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 
 const noopEventBus: IEventBus = {
   _serviceBrand: undefined,
@@ -49,7 +51,9 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
 
     disposables = new DisposableStore();
     host = createScopedTestHost([stubPair(IEventBus, noopEventBus)]);
-    session = host.child(LifecycleScope.Session, 'session-a');
+    session = host.child(LifecycleScope.Session, 'session-a', [
+      stubPair(IWorkspaceStateService, new WorkspaceStateService()),
+    ]);
   });
 
   afterEach(() => {
@@ -170,7 +174,9 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
   });
 
   it('Session scope isolates brokers: a question parked in A is invisible to B', () => {
-    const sessionB = host.child(LifecycleScope.Session, 'session-b');
+    const sessionB = host.child(LifecycleScope.Session, 'session-b', [
+      stubPair(IWorkspaceStateService, new WorkspaceStateService()),
+    ]);
     const questionsA = session.accessor.get(ISessionQuestionService);
     const questionsB = sessionB.accessor.get(ISessionQuestionService);
 

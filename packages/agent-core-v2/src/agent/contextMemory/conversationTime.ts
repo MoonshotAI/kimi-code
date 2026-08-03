@@ -1,5 +1,5 @@
 /**
- * `contextMemory` domain (L4) — shared conversation clock and checkpointed
+ * `contextMemory` domain — shared conversation clock and checkpointed
  * wire-Model factory.
  *
  * Defines the undo anchor vocabulary and registers conversation-time Models

@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — skill config sections.
+ * `skillCatalog` domain — skill config sections.
  *
  * Registers the v1-compatible top-level config domains `extraSkillDirs` and
  * `mergeAllAvailableSkills`. Values stay camelCase in memory; TOML uses the

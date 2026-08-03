@@ -12,7 +12,7 @@ import type { ToolCall } from '#/kosong/contract/message';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
 import { Error2, ErrorCodes, toErrorPayload } from '#/errors';
@@ -24,7 +24,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IConfigRegistry, IConfigService } from '#/app/config/config';
+import { ConfigTarget, IConfigRegistry, IConfigService } from '#/app/config/config';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import '#/app/cron/configSection';
@@ -41,12 +41,15 @@ import { IMAGE_SECTION, type ImageConfig } from '#/agent/media/configSection';
 import '#/agent/loop/configSection';
 import {
   LOOP_CONTROL_SECTION,
+  LOOP_MAX_ATTEMPTS_PER_STEP_ENV,
   LOOP_MAX_RETRIES_PER_STEP_ENV,
   LOOP_MAX_STEPS_PER_TURN_ENV,
   type LoopControl,
 } from '#/agent/loop/configSection';
 import {
+  DEFAULT_MODEL_SECTION,
   MODELS_SECTION,
+  PROVIDERS_SECTION,
   SECONDARY_MODEL_EFFORT_ENV,
   SECONDARY_MODEL_ENV,
   SECONDARY_MODEL_SECTION,
@@ -82,14 +85,14 @@ import {
 } from '#/app/auth/configSection';
 import { SECONDARY_DERIVED_MODEL_ID } from '#/app/kosongConfig/secondaryModelOverlay';
 import { type SecondaryModelConfig } from '#/app/kosongConfig/configSection';
-import '#/agent/mcp/configSection';
+import '#/app/mcpConfig/configSection';
 import {
   MCP_SECTION,
   MCP_STARTUP_TIMEOUT_ENV,
   MCP_TOOL_TIMEOUT_ENV,
   McpSectionSchema,
   type McpSection,
-} from '#/agent/mcp/configSection';
+} from '#/app/mcpConfig/configSection';
 import { ILogService } from '#/_base/log/log';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -195,7 +198,7 @@ describe('Agent config', () => {
     });
 
     expect(ctx.newEvents()).toMatchInlineSnapshot(`
-      [wire] config.update            { "profileName": "test-profile", "systemPrompt": "Profile system prompt.", "disallowedTools": [], "time": "<time>" }
+      [wire] config.update            { "profileName": "test-profile", "systemPrompt": "Profile system prompt.", "agentsMdPaths": [], "disallowedTools": [], "time": "<time>" }
       [emit] agent.status.updated     { "model": "mock-model", "maxContextTokens": 1000000 }
       [wire] tools.set_active_tools   { "names": [ "Read" ], "time": "<time>" }
     `);
@@ -237,11 +240,13 @@ describe('Agent config', () => {
         created_at: 1,
       },
       {
-        type: 'config.update',
+        type: 'profile.bind',
         cwd: '/restored-cwd',
         modelAlias: 'restored-model',
         profileName: 'restored-profile',
+        thinkingEffort: 'off',
         systemPrompt: 'Restored prompt.',
+        disallowedTools: [],
       },
       {
         type: 'tools.set_active_tools',
@@ -250,7 +255,6 @@ describe('Agent config', () => {
     ]);
 
     expect(profile.data()).toMatchObject({
-      cwd: '/restored-cwd',
       modelAlias: 'restored-model',
       profileName: 'restored-profile',
       systemPrompt: 'Restored prompt.',
@@ -258,7 +262,7 @@ describe('Agent config', () => {
     });
   });
 
-  it('config.update with cwd initializes builtin tools', async () => {
+  it('config.update initializes builtin tools', async () => {
     const tools = await ctx.rpc.getTools({});
 
     expect(toolNames(tools)).toEqual(
@@ -358,6 +362,7 @@ describe('Agent config', () => {
       [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 2, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-5>", "turnId": "0", "step": 2, "stepUuid": "<uuid-4>", "part": { "type": "text", "text": "Still using the original turn config." } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-4>", "turnId": "0", "step": 2, "finishReason": "end_turn", "usage": { "inputOther": 31, "output": 13, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-2", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
+      [wire] turn.ended                  { "turnId": 0, "reason": "completed", "time": "<time>" }
       [emit] turn.ended                  { "turnId": 0, "reason": "completed" }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
@@ -392,6 +397,7 @@ describe('Agent config', () => {
       [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 1, "origin": { "kind": "user" }, "phase": "running", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-7>", "turnId": "1", "step": 1, "stepUuid": "<uuid-6>", "part": { "type": "text", "text": "Now the changed config is active." } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-6>", "turnId": "1", "step": 1, "finishReason": "end_turn", "usage": { "inputOther": 50, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-3", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
+      [wire] turn.ended                  { "turnId": 1, "reason": "completed", "time": "<time>" }
       [emit] turn.ended                  { "turnId": 1, "reason": "completed" }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
@@ -767,10 +773,10 @@ describe('loopControl config section', () => {
 
     expect(registry.validate(LOOP_CONTROL_SECTION, {})).toEqual({});
     expect(
-      registry.validate(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 100, maxRetriesPerStep: 3 }),
-    ).toEqual({ maxStepsPerTurn: 100, maxRetriesPerStep: 3 });
+      registry.validate(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 100, maxAttemptsPerStep: 3 }),
+    ).toEqual({ maxStepsPerTurn: 100, maxAttemptsPerStep: 3 });
     expect(() => registry.validate(LOOP_CONTROL_SECTION, { maxStepsPerTurn: -1 })).toThrow();
-    expect(() => registry.validate(LOOP_CONTROL_SECTION, { maxRetriesPerStep: 1.5 })).toThrow();
+    expect(() => registry.validate(LOOP_CONTROL_SECTION, { maxAttemptsPerStep: 1.5 })).toThrow();
   });
 
   it('re-applies loopControl env bindings on every get() and ignores invalid env', async () => {
@@ -789,14 +795,14 @@ describe('loopControl config section', () => {
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({});
 
     env[LOOP_MAX_STEPS_PER_TURN_ENV] = 'abc';
-    env[LOOP_MAX_RETRIES_PER_STEP_ENV] = '-1';
+    env[LOOP_MAX_ATTEMPTS_PER_STEP_ENV] = '-1';
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({});
 
     env[LOOP_MAX_STEPS_PER_TURN_ENV] = '100';
-    env[LOOP_MAX_RETRIES_PER_STEP_ENV] = '3';
+    env[LOOP_MAX_ATTEMPTS_PER_STEP_ENV] = '3';
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({
       maxStepsPerTurn: 100,
-      maxRetriesPerStep: 3,
+      maxAttemptsPerStep: 3,
     });
 
     env[LOOP_MAX_STEPS_PER_TURN_ENV] = '50';
@@ -808,7 +814,7 @@ describe('loopControl config section', () => {
   it('restores env-owned fields to the raw value on set() while the env var is set', async () => {
     const env: Record<string, string> = {
       [LOOP_MAX_STEPS_PER_TURN_ENV]: '7',
-      [LOOP_MAX_RETRIES_PER_STEP_ENV]: '2',
+      [LOOP_MAX_ATTEMPTS_PER_STEP_ENV]: '2',
     };
     const disposables = new DisposableStore();
     const ix = disposables.add(new TestInstantiationService());
@@ -830,14 +836,14 @@ describe('loopControl config section', () => {
     // A client echoing the env-overlaid section back (plus a genuine edit).
     await config.set(LOOP_CONTROL_SECTION, {
       maxStepsPerTurn: 7,
-      maxRetriesPerStep: 2,
+      maxAttemptsPerStep: 2,
       reservedContextSize: 5000,
     });
 
     // Runtime resolution still lets the env win…
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({
       maxStepsPerTurn: 7,
-      maxRetriesPerStep: 2,
+      maxAttemptsPerStep: 2,
       reservedContextSize: 5000,
     });
     // …but persistence keeps the raw value and drops the env-only field.
@@ -848,7 +854,7 @@ describe('loopControl config section', () => {
     const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
     expect(onDisk).toContain('max_steps_per_turn = 100');
     expect(onDisk).toContain('reserved_context_size = 5000');
-    expect(onDisk).not.toContain('max_retries_per_step');
+    expect(onDisk).not.toContain('max_attempts_per_step');
 
     disposables.dispose();
   });
@@ -940,7 +946,7 @@ describe('loopControl config section', () => {
     disposables.dispose();
   });
 
-  it('restores the env-owned field from the normalized raw base when the config uses the legacy key', async () => {
+  it('warns and ignores the deprecated max_steps_per_run key without rewriting the file', async () => {
     const env: Record<string, string> = { [LOOP_MAX_STEPS_PER_TURN_ENV]: '7' };
     const disposables = new DisposableStore();
     const ix = disposables.add(new TestInstantiationService());
@@ -959,13 +965,25 @@ describe('loopControl config section', () => {
     const config = ix.get(IConfigService);
     await config.ready;
 
-    await config.set(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 7 });
-
-    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(7);
-    // The legacy `max_steps_per_run` value is honored as the field's raw value.
+    // The deprecated key no longer maps onto maxStepsPerTurn: the resolved
+    // section carries only the env override, and the raw user value is the
+    // un-normalized echo of the file (preserved, not applied).
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({ maxStepsPerTurn: 7 });
     expect(config.inspect<LoopControl>(LOOP_CONTROL_SECTION).userValue).toEqual({
-      maxStepsPerTurn: 100,
+      maxStepsPerRun: 100,
     });
+    // …its presence is reported as a deprecation warning…
+    expect(config.diagnostics()).toContainEqual({
+      domain: LOOP_CONTROL_SECTION,
+      severity: 'warning',
+      message:
+        "[loop_control] 'max_steps_per_run' is deprecated and no longer used; rename it to 'max_steps_per_turn'. Run /update-config to fix it.",
+    });
+    // …and a stripped write leaves the on-disk legacy key untouched.
+    await config.set(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 7 });
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(7);
+    const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(onDisk).toContain('max_steps_per_run = 100');
 
     disposables.dispose();
   });
@@ -1030,6 +1048,184 @@ describe('loopControl config section', () => {
     const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
     expect(onDisk).toContain('max_steps_per_turn = -1');
     expect(onDisk).not.toContain('reserved_context_size');
+
+    disposables.dispose();
+  });
+});
+
+describe('config deprecations', () => {
+  async function createConfig(env: Record<string, string>, toml?: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    if (toml !== undefined) {
+      await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    }
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables, storage };
+  }
+
+  it('warns and ignores a deprecated TOML key whose value no longer applies', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[loop_control]\nmax_retries_per_step = 3\n',
+    );
+
+    // The old value is NOT mapped onto the new field…
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({});
+    // …and the file is left untouched — the warning is the migration guide.
+    expect(config.diagnostics()).toContainEqual({
+      domain: LOOP_CONTROL_SECTION,
+      severity: 'warning',
+      message:
+        "[loop_control] 'max_retries_per_step' is deprecated and no longer used; rename it to 'max_attempts_per_step'. Run /update-config to fix it.",
+    });
+
+    disposables.dispose();
+  });
+
+  it('lets the replacement key win when both are present, still warning', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[loop_control]\nmax_retries_per_step = 3\nmax_attempts_per_step = 2\n',
+    );
+
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({ maxAttemptsPerStep: 2 });
+    expect(config.diagnostics()).toContainEqual({
+      domain: LOOP_CONTROL_SECTION,
+      severity: 'warning',
+      message:
+        "[loop_control] 'max_retries_per_step' is deprecated and no longer used; rename it to 'max_attempts_per_step'. Run /update-config to fix it.",
+    });
+
+    disposables.dispose();
+  });
+
+  it('resolves a deprecated env var as a fallback with a warning, new var first', async () => {
+    const env: Record<string, string> = { [LOOP_MAX_RETRIES_PER_STEP_ENV]: '4' };
+    const { config, disposables } = await createConfig(env);
+
+    // The deprecated var still supplies the value…
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({ maxAttemptsPerStep: 4 });
+    // …with a deprecation warning…
+    expect(config.diagnostics()).toContainEqual({
+      domain: LOOP_CONTROL_SECTION,
+      severity: 'warning',
+      message: `Environment variable ${LOOP_MAX_RETRIES_PER_STEP_ENV} is deprecated; use ${LOOP_MAX_ATTEMPTS_PER_STEP_ENV} instead.`,
+    });
+    // …and the replacement var wins as soon as it appears.
+    env[LOOP_MAX_ATTEMPTS_PER_STEP_ENV] = '2';
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({ maxAttemptsPerStep: 2 });
+
+    disposables.dispose();
+  });
+
+  it('reports no env deprecation when only the replacement var is set', async () => {
+    const env: Record<string, string> = { [LOOP_MAX_ATTEMPTS_PER_STEP_ENV]: '4' };
+    const { config, disposables } = await createConfig(env);
+
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({ maxAttemptsPerStep: 4 });
+    expect(config.diagnostics()).toEqual([]);
+
+    disposables.dispose();
+  });
+
+  it('keeps the deprecated env warning across a no-op reload', async () => {
+    const env: Record<string, string> = { [LOOP_MAX_RETRIES_PER_STEP_ENV]: '4' };
+    const { config, disposables } = await createConfig(env);
+
+    const warning = {
+      domain: LOOP_CONTROL_SECTION,
+      severity: 'warning' as const,
+      message: `Environment variable ${LOOP_MAX_RETRIES_PER_STEP_ENV} is deprecated; use ${LOOP_MAX_ATTEMPTS_PER_STEP_ENV} instead.`,
+    };
+    expect(config.diagnostics()).toContainEqual(warning);
+
+    // The file never changed, so reload takes the unchanged early return —
+    // the env-derived warning must survive it.
+    await config.reload();
+
+    expect(config.diagnostics()).toContainEqual(warning);
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({ maxAttemptsPerStep: 4 });
+
+    disposables.dispose();
+  });
+
+  it('restores the env-owned field on set() when only the deprecated env var is set', async () => {
+    const env: Record<string, string> = { [LOOP_MAX_RETRIES_PER_STEP_ENV]: '2' };
+    const { config, disposables, storage } = await createConfig(
+      env,
+      '[loop_control]\nmax_attempts_per_step = 9\n',
+    );
+
+    // A client echoing the env-overlaid section back (plus a genuine edit).
+    await config.set(LOOP_CONTROL_SECTION, { maxAttemptsPerStep: 2, reservedContextSize: 5000 });
+
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({
+      maxAttemptsPerStep: 2,
+      reservedContextSize: 5000,
+    });
+    // The deprecated env still owns the field: persistence restores the raw
+    // value instead of leaking the echoed env value.
+    expect(config.inspect<LoopControl>(LOOP_CONTROL_SECTION).userValue).toEqual({
+      maxAttemptsPerStep: 9,
+      reservedContextSize: 5000,
+    });
+    const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(onDisk).toContain('max_attempts_per_step = 9');
+
+    disposables.dispose();
+  });
+
+  it('emits onDidChangeDiagnostics on load and again when the warning clears', async () => {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    await storage.write(
+      '',
+      'config.toml',
+      new TextEncoder().encode('[loop_control]\nmax_retries_per_step = 3\n'),
+    );
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', {}));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    const emissions: Array<readonly unknown[]> = [];
+    config.onDidChangeDiagnostics((diagnostics) => {
+      emissions.push(diagnostics);
+    });
+    await config.ready;
+
+    expect(emissions).toHaveLength(1);
+    expect(emissions[0]).toContainEqual({
+      domain: LOOP_CONTROL_SECTION,
+      severity: 'warning',
+      message:
+        "[loop_control] 'max_retries_per_step' is deprecated and no longer used; rename it to 'max_attempts_per_step'. Run /update-config to fix it.",
+    });
+
+    // Renaming the key on disk clears the warning on the next reload.
+    await storage.write(
+      '',
+      'config.toml',
+      new TextEncoder().encode('[loop_control]\nmax_attempts_per_step = 3\n'),
+    );
+    await config.reload();
+
+    expect(emissions).toHaveLength(2);
+    expect(emissions[1]).toEqual([]);
+    expect(config.diagnostics()).toEqual([]);
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({ maxAttemptsPerStep: 3 });
 
     disposables.dispose();
   });
@@ -1314,7 +1510,7 @@ describe('applyPrintModeConfigDefaults', () => {
   it('keeps sibling user keys of a filled section visible', async () => {
     const { config, disposables } = await createConfig(
       {},
-      '[task]\nprint_background_mode = "drain"\n\n[loop_control]\nmax_retries_per_step = 5\n',
+      '[task]\nprint_background_mode = "drain"\n\n[loop_control]\nmax_attempts_per_step = 5\n',
     );
 
     await applyPrintModeConfigDefaults(config);
@@ -1322,7 +1518,7 @@ describe('applyPrintModeConfigDefaults', () => {
     expect(resolvePrintBackgroundMode(config)).toBe('drain');
     expect(resolveAgentTaskConfig(config)?.bashTaskTimeoutS).toBe(0);
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toMatchObject({
-      maxRetriesPerStep: 5,
+      maxAttemptsPerStep: 5,
       maxStepsPerTurn: 0,
     });
 
@@ -1885,6 +2081,181 @@ describe('ConfigService thinking effort max migration', () => {
 
     expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({ effort: 'low' });
     expect(readMarkers()['thinking-effort-max-to-high']).toBeDefined();
+
+    disposables.dispose();
+  });
+});
+
+describe('ConfigService replaceSections', () => {
+  // Top-level keys must precede every [table] header in TOML.
+  const SEED_TOML = [
+    'default_model = "acme/m1"',
+    '',
+    '[providers.acme]',
+    'type = "openai"',
+    'api_key = "sk-acme"',
+    '',
+    '[models."acme/m1"]',
+    'provider = "acme"',
+    'model = "m1"',
+    'max_context_size = 1000',
+    '',
+    '[thinking]',
+    'enabled = true',
+    '',
+  ].join('\n');
+
+  async function createSectionsConfig(toml = SEED_TOML) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg-replace-sections'));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    const store = ix.get(IAtomicTomlDocumentStore);
+    return { config, disposables, store, storage };
+  }
+
+  it('applies every domain in one transition with a single disk write, clearing undefined domains', async () => {
+    const { config, disposables, store } = await createSectionsConfig();
+    const setSpy = vi.spyOn(store, 'set');
+
+    await config.replaceSections({
+      [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
+      [MODELS_SECTION]: { 'acme/m2': { provider: 'acme', model: 'm2', maxContextSize: 2000 } },
+      [DEFAULT_MODEL_SECTION]: undefined,
+      [THINKING_SECTION]: undefined,
+    });
+
+    expect(setSpy).toHaveBeenCalledTimes(1);
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme-2' },
+    });
+    expect(config.get<Record<string, unknown>>(MODELS_SECTION)).toEqual({
+      'acme/m2': { provider: 'acme', model: 'm2', maxContextSize: 2000 },
+    });
+    expect(config.get(DEFAULT_MODEL_SECTION)).toBeUndefined();
+    expect(config.get(THINKING_SECTION)).toEqual({});
+    expect(config.inspect(DEFAULT_MODEL_SECTION).userValue).toBeUndefined();
+    // `stripThinkingEnv` maps a clear to `{}` (`{...undefined}`), so the user
+    // layer collapses to an empty object instead of disappearing — the
+    // long-standing `replace(domain, undefined)` behavior, unchanged here.
+    expect(config.inspect(THINKING_SECTION).userValue).toEqual({});
+
+    disposables.dispose();
+  });
+
+  it('treats null as clear — the wire encoding JSON transports use for undefined', async () => {
+    const { config, disposables, store } = await createSectionsConfig();
+    const setSpy = vi.spyOn(store, 'set');
+
+    await config.replaceSections({
+      [DEFAULT_MODEL_SECTION]: null,
+      [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
+    });
+
+    expect(setSpy).toHaveBeenCalledTimes(1);
+    expect(config.get(DEFAULT_MODEL_SECTION)).toBeUndefined();
+    expect(config.inspect(DEFAULT_MODEL_SECTION).userValue).toBeUndefined();
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme-2' },
+    });
+
+    // `replace(domain, null)` clears too, so JSON transports behave
+    // identically to in-process `replace(domain, undefined)` callers.
+    await config.replace(DEFAULT_MODEL_SECTION, 'acme/m1');
+    await config.replace(DEFAULT_MODEL_SECTION, null);
+    expect(config.inspect(DEFAULT_MODEL_SECTION).userValue).toBeUndefined();
+
+    disposables.dispose();
+  });
+
+  it('fires change events only after all domains have taken effect', async () => {
+    const { config, disposables } = await createSectionsConfig();
+    const domains: string[] = [];
+    let snapshotDuringFirstEvent:
+      | { providers: unknown; models: unknown; defaultModel: unknown; thinking: unknown }
+      | undefined;
+    config.onDidSectionChange((e) => {
+      domains.push(e.domain);
+      snapshotDuringFirstEvent ??= {
+        providers: config.get(PROVIDERS_SECTION),
+        models: config.get(MODELS_SECTION),
+        defaultModel: config.get(DEFAULT_MODEL_SECTION),
+        thinking: config.get(THINKING_SECTION),
+      };
+    });
+
+    await config.replaceSections({
+      [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
+      [MODELS_SECTION]: { 'acme/m2': { provider: 'acme', model: 'm2', maxContextSize: 2000 } },
+      [DEFAULT_MODEL_SECTION]: undefined,
+      [THINKING_SECTION]: undefined,
+    });
+
+    // Every event — including the very first one — already observes the fully
+    // applied state; no listener can catch the write half-applied. (The
+    // cleared thinking section still resolves to its schema default `{}`.)
+    expect(snapshotDuringFirstEvent).toEqual({
+      providers: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
+      models: { 'acme/m2': { provider: 'acme', model: 'm2', maxContextSize: 2000 } },
+      defaultModel: undefined,
+      thinking: {},
+    });
+    expect([...domains].sort()).toEqual(
+      [PROVIDERS_SECTION, MODELS_SECTION, DEFAULT_MODEL_SECTION, THINKING_SECTION].sort(),
+    );
+
+    disposables.dispose();
+  });
+
+  it('supports the memory target without touching the persisted user layer', async () => {
+    const { config, disposables, store } = await createSectionsConfig();
+    const setSpy = vi.spyOn(store, 'set');
+
+    await config.replaceSections(
+      { [THINKING_SECTION]: { enabled: false, effort: 'low' } },
+      ConfigTarget.Memory,
+    );
+
+    expect(setSpy).not.toHaveBeenCalled();
+    expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({
+      enabled: false,
+      effort: 'low',
+    });
+    expect(config.inspect<ThinkingConfig>(THINKING_SECTION).userValue).toEqual({ enabled: true });
+
+    disposables.dispose();
+  });
+
+  it('leaves the user layer untouched when a later domain fails validation', async () => {
+    const { config, disposables, store } = await createSectionsConfig();
+    const setSpy = vi.spyOn(store, 'set');
+
+    // Providers is applied first in key order and validates fine; thinking
+    // then fails schema validation (`enabled` must be a boolean). The batch
+    // must reject with NO observable partial application.
+    await expect(
+      config.replaceSections({
+        [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
+        [THINKING_SECTION]: { enabled: 'yes' },
+      }),
+    ).rejects.toThrow();
+
+    expect(setSpy).not.toHaveBeenCalled();
+    expect(config.inspect<Record<string, unknown>>(PROVIDERS_SECTION).userValue).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme' },
+    });
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme' },
+    });
+    expect(config.inspect<ThinkingConfig>(THINKING_SECTION).userValue).toEqual({ enabled: true });
 
     disposables.dispose();
   });

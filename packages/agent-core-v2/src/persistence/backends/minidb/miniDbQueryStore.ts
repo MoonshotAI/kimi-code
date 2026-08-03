@@ -6,9 +6,8 @@
  * ordinary `MiniDb` directories, so multiple kimi processes can read and
  * write the same read model concurrently (a single writer per shard, readers
  * that never take write locks) instead of failing against a database-wide
- * single-writer lock. Authoritative data lives in `IAppendLogStore` /
- * `IAtomicDocumentStore`, never here, so losing the read model is always
- * safe.
+ * single-writer lock. Authoritative data lives elsewhere, never here, so
+ * losing the read model is always safe.
  *
  * Values are JSON (`valueCodec: 'json'`, required by secondary indexes and
  * `query`) and held in memory (`valueMode: 'memory'`); durability is
@@ -21,7 +20,7 @@
  * The database is opened **lazily** on the first actual IO, not at
  * construction. Construction therefore does no filesystem work — important
  * because `MiniDbQueryStore` is resolved transitively whenever a consumer
- * (e.g. `SessionMetadata`) is constructed, including in tests that share a
+ * is constructed, including in tests that share a
  * home dir and never read or write the read model.
  *
  * Corruption handling lifts `MiniDb.openOrRebuild`'s predicate
@@ -78,8 +77,6 @@ function indexName(collection: string, name: string): string {
   return `${collection}:${name}`;
 }
 
-/** The `MiniDb.openOrRebuild` rebuildable predicate: only unrecoverable
- *  on-disk corruption justifies wiping the read model. */
 function isRebuildable(error: unknown): boolean {
   return error instanceof SyntaxError || (error as { name?: string }).name === 'CorruptFrameError';
 }
@@ -104,8 +101,6 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
   }
 
   private openDb(): Promise<ClusterDb> {
-    // A rebuild wipes and recreates the directory; opens started while one is
-    // in flight must wait for it instead of racing the rm.
     if (this.rebuildPromise !== undefined) return this.openDbAfterRebuild();
     this.dbPromise ??= this.openFresh();
     return this.dbPromise;
@@ -128,8 +123,6 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
     });
   }
 
-  /** One process-lifetime rebuild: wipe the corrupt store and let the next
-   *  open start empty. Concurrent callers share the same in-flight rebuild. */
   private rebuild(cause: unknown): Promise<void> {
     this.rebuildPromise ??= (async () => {
       this.log.warn('minidb query-store rebuilt after corruption', {
@@ -137,8 +130,6 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
         error: String(cause),
       });
       const previous = this.dbPromise;
-      // Reset before the first await so a concurrent openDb() waits on
-      // rebuildPromise instead of reusing the corrupt instance.
       this.dbPromise = undefined;
       this.ensuredIndexes.clear();
       if (previous !== undefined) {
@@ -156,7 +147,6 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
     } catch (error) {
       if (!isRebuildable(error)) throw error;
       await this.rebuild(error);
-      // One retry on the fresh store; a second failure propagates as-is.
       return op(await this.openDb());
     }
   }
@@ -204,8 +194,6 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
           await db.createTextIndex(name, { fields: def.fields });
         }
       } catch (error) {
-        // A raced ensure (a peer process created it first, or a rebuild
-        // replayed this call) is a no-op: the definition already exists.
         if (!(error instanceof Error) || !error.message.includes('already exists')) throw error;
       }
     });

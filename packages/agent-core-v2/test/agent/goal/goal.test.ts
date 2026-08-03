@@ -6,6 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { isUserCancellation } from '#/_base/utils/abort';
 import type { TurnEndedEvent } from '#/agent/loop/turnEvents';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
@@ -257,6 +258,7 @@ async function runTerminalUpdateGoalResult(
     toolCall,
     toolCalls: [toolCall],
     args: { status },
+    outcome: 'executed',
     result: { output, stopTurn: true },
   });
 }
@@ -1160,7 +1162,8 @@ describe('AgentGoalService core workflow hooks', () => {
     await goals.cancelGoal();
 
     expect(abort).toHaveBeenCalledOnce();
-    expect(cancel).toHaveBeenCalledWith(41);
+    expect(cancel).toHaveBeenCalledWith(41, expect.any(Error));
+    expect(isUserCancellation(cancel.mock.calls[0]?.[1])).toBe(false);
   });
 
   it.each(['turn', 'token', 'wall-clock'] as const)(
@@ -1753,7 +1756,7 @@ describe('goal pause classification on provider errors', () => {
     return {
       initialConfig: {
         providers: {},
-        loopControl: { maxRetriesPerStep: 1 },
+        loopControl: { maxAttemptsPerStep: 1 },
       },
     };
   }
@@ -1928,7 +1931,7 @@ describe('AgentGoalService hard wall-clock deadline', () => {
     }
   });
 
-  it('keeps user cancellation authoritative when it precedes the wall-clock deadline', async () => {
+  it('keeps the goal-cancellation abort authoritative when it precedes the wall-clock deadline', async () => {
     const clock = new ManualGoalDeadlineScheduler();
     const llm = blockingGenerate();
     const ctx = createTestAgent(appService(IGoalDeadlineScheduler, clock), {
@@ -1946,8 +1949,9 @@ describe('AgentGoalService hard wall-clock deadline', () => {
       await ctx.rpc.cancelGoal({});
       expect(llm.signal()).toMatchObject({
         aborted: true,
-        reason: expect.objectContaining({ userCancelled: true }),
+        reason: expect.objectContaining({ message: 'Goal cancelled' }),
       });
+      expect(isUserCancellation(llm.signal().reason)).toBe(false);
       clock.advanceBy(1_000);
 
       await ctx.untilTurnEnd();

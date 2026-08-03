@@ -3,13 +3,8 @@
  * metadata backing serialization.
  *
  * Owns the `ErrorDomain` contract every business domain uses to contribute its
- * codes, the registry (`registerErrorDomain` / `errorInfo` / `isErrorCode`) the
- * serializer reads, and the domain-independent core codes (`internal`,
- * `not_implemented`). Domain-owned codes live next to their owning domain and
- * are aggregated into the public `ErrorCodes` const by `#/errors`, which also
- * derives the `ErrorCode` union type from that aggregate — so each domain's
- * `errors.ts` is the single source of truth and there is no central
- * hand-maintained list to keep in sync.
+ * codes, the registry (`registerErrorDomain` / `errorInfo` / `isErrorCode`),
+ * and the domain-independent core codes (`internal`, `not_implemented`).
  */
 
 export interface ErrorInfo {
@@ -25,9 +20,6 @@ export interface ErrorDomain {
   readonly info?: { readonly [code: string]: ErrorInfo };
 }
 
-// Maps each registered code to the `codes` object that contributed it: a
-// domain re-registering itself stays idempotent, while two different domains
-// claiming the same code fail loudly at registration time.
 const registeredCodes = new Map<string, object>();
 const retryableCodes = new Set<string>();
 const infoOverrides: { [code: string]: ErrorInfo } = {};

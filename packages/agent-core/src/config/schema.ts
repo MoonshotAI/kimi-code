@@ -93,6 +93,19 @@ export const ModelAliasSchema = ModelAliasBaseSchema.extend({
 
 export type ModelAlias = z.infer<typeof ModelAliasSchema>;
 
+/**
+ * The secondary-model recipe (`[secondary_model]` on disk): `model` points at
+ * a `[models]` entry and every remaining field is a subagent-only patch,
+ * materialized into a synthesized derived model entry at runtime (see
+ * `config/secondary-model.ts`). `default_effort` doubles as the subagent
+ * thinking effort.
+ */
+export const SecondaryModelConfigSchema = ModelAliasOverrideSchema.extend({
+  model: z.string().min(1).optional(),
+});
+
+export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;
+
 export const ThinkingConfigSchema = z.object({
   enabled: z.boolean().optional(),
   effort: z.string().optional(),
@@ -338,9 +351,11 @@ export const KimiConfigSchema = z.object({
   services: ServicesConfigSchema.optional(),
   mergeAllAvailableSkills: z.boolean().optional(),
   extraSkillDirs: z.array(z.string()).optional(),
+  extraAgentDirs: z.array(z.string()).optional(),
   loopControl: LoopControlSchema.optional(),
   background: BackgroundConfigSchema.optional(),
   subagent: SubagentConfigSchema.optional(),
+  secondaryModel: SecondaryModelConfigSchema.optional(),
   mcp: McpConfigSchema.optional(),
   image: ImageConfigSchema.optional(),
   modelCatalog: ModelCatalogConfigSchema.optional(),
@@ -358,6 +373,7 @@ const PermissionConfigPatchSchema = PermissionConfigSchema.partial();
 const LoopControlPatchSchema = LoopControlSchema.partial();
 const BackgroundConfigPatchSchema = BackgroundConfigSchema.partial();
 const SubagentConfigPatchSchema = SubagentConfigSchema.partial();
+const SecondaryModelConfigPatchSchema = SecondaryModelConfigSchema.partial();
 const McpConfigPatchSchema = McpConfigSchema.partial();
 const ImageConfigPatchSchema = ImageConfigSchema.partial();
 const ModelCatalogConfigPatchSchema = ModelCatalogConfigSchema.partial();
@@ -384,9 +400,11 @@ export const KimiConfigPatchSchema = z
     services: ServicesConfigPatchSchema.optional(),
     mergeAllAvailableSkills: z.boolean().optional(),
     extraSkillDirs: z.array(z.string()).optional(),
+    extraAgentDirs: z.array(z.string()).optional(),
     loopControl: LoopControlPatchSchema.optional(),
     background: BackgroundConfigPatchSchema.optional(),
     subagent: SubagentConfigPatchSchema.optional(),
+    secondaryModel: SecondaryModelConfigPatchSchema.optional(),
     mcp: McpConfigPatchSchema.optional(),
     image: ImageConfigPatchSchema.optional(),
     modelCatalog: ModelCatalogConfigPatchSchema.optional(),

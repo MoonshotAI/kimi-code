@@ -26,11 +26,11 @@ import { loadTuiConfig, TuiConfigParseError } from '#/tui/config';
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
 import { KimiTUI } from '#/tui/index';
 import { currentTheme, getColorPalette } from '#/tui/theme';
-import { combineStartupNotice } from '#/tui/utils/startup';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
 
 import type { CLIOptions } from './options';
+import { resolveAgentProfileSelection } from './agent-selection';
 import { isKimiV2Enabled } from './experimental-v2';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
@@ -83,7 +83,8 @@ export async function runShell(
   // Experimental agent-core-v2 route (same master switch as `kimi -p`): the
   // harness is the SDK's v2-backed client, so the whole TUI runs on the
   // agent-core-v2 engine.
-  const harness = isKimiV2Enabled()
+  const engineV2 = isKimiV2Enabled();
+  const harness = engineV2
     ? createKimiHarnessV2(harnessOptions)
     : createKimiHarness(harnessOptions);
   log.info('kimi-code starting', {
@@ -106,12 +107,16 @@ export async function runShell(
     return;
   }
   const config = await harness.getConfig();
-  for (const warning of (await harness.getConfigDiagnostics()).warnings) {
-    configWarning = combineStartupNotice(configWarning, warning);
-  }
+  // Config diagnostics (deprecated keys, invalid sections, ...) are surfaced
+  // by the TUI itself at `finishStartup` via `showConfigWarningsIfAny` —
+  // folded into the dim startup notice they were too easy to miss.
   const configMs = Date.now() - configStartedAt;
+  // Resolve --agent/--agent-file once for the startup session; validateOptions
+  // has already rejected them alongside --session/--continue.
+  const agentProfile = await resolveAgentProfileSelection(opts, workDir);
   const tui = new KimiTUI(harness, {
     cliOptions: opts,
+    agentProfile,
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
     tuiConfig,
     version,
@@ -119,6 +124,7 @@ export async function runShell(
     startupNotice: configWarning,
     migrationPlan,
     migrateOnly: runOptions.migrateOnly,
+    engineV2,
   });
 
   initializeCliTelemetry({

@@ -43,6 +43,8 @@ import {
   LifecycleScope,
   ScopeActivation,
   registerScopedService,
+  sessionDirOf,
+  workspacePersistenceScope,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { LockError, MiniDb, normalizeLiteral, tokenize, type BatchInputOp } from '@moonshot-ai/minidb';
@@ -780,7 +782,11 @@ export class GlobalSearchService implements IGlobalSearchService {
   }
 
   private async syncSession(db: MiniDb<SearchDoc>, summary: SessionSummary): Promise<void> {
-    const sessionDir = this.bootstrap.sessionDir(summary.workspaceId, summary.id);
+    const sessionDir = sessionDirOf(
+      this.bootstrap.homeDir,
+      workspacePersistenceScope(this.bootstrap.scope('sessions'), summary.workspaceId),
+      summary.id,
+    );
     const wireFiles = await collectWireFiles(sessionDir);
     const seenPaths = new Set(wireFiles.map((file) => file.path));
 

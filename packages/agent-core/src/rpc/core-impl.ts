@@ -49,8 +49,10 @@ import {
   type BeginAuthorizationResult,
   type SessionMcpConfig,
 } from '../mcp';
+import { SessionAgentProfileCatalog } from '../profile';
 import { Session, type SessionMeta, type SessionSkillConfig } from '../session';
 import { exportSessionDirectory } from '../session/export';
+import { resolveMainAgentProfile } from '../session/main-agent-profile';
 import {
   registerBuiltinSkills,
   SessionSkillRegistry,
@@ -335,6 +337,34 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       ...localWorkspaceDirs.additionalDirs,
       ...callerAdditionalDirs,
     ]);
+    const agentCatalogWarnings: Array<{ readonly message: string; readonly error?: unknown }> = [];
+    const reportAgentCatalogWarnings = (logger: Logger): void => {
+      for (const warning of agentCatalogWarnings) {
+        logger.warn(
+          warning.message,
+          warning.error === undefined ? undefined : { error: warning.error },
+        );
+      }
+    };
+    await this.pluginsReady;
+    const agentCatalog = new SessionAgentProfileCatalog({
+      workDir,
+      brandHomeDir: this.homeDir,
+      osHomeDir: this.userHomeDir,
+      extraDirs: config.extraAgentDirs,
+      explicitFiles: options.agentFiles,
+      pluginRoots: this.plugins.pluginAgentRoots(),
+      warn: (message, error) => {
+        agentCatalogWarnings.push({ message, error });
+      },
+    });
+    try {
+      await agentCatalog.ready;
+      resolveMainAgentProfile(agentCatalog, options.agentProfile);
+    } catch (error) {
+      reportAgentCatalogWarnings(log.createChild({ sessionId: id }));
+      throw error;
+    }
     const summary = await this.sessionStore.create({
       id,
       workDir,
@@ -378,17 +408,23 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       hooks: [...(config.hooks ?? []), ...this.plugins.enabledHooks()],
       permissionRules: config.permission?.rules,
       skills: this.resolveSessionSkillConfig(config),
+      agents: {
+        catalog: agentCatalog,
+        profileName: options.agentProfile,
+      },
       mcpConfig,
       experimentalFlags: this.experimentalFlags,
       imageLimits: this.imageLimits,
       telemetry: sessionTelemetry,
       pluginSessionStarts,
       pluginCommands,
+      pluginSystemPrompts: this.plugins.enabledSystemPrompts(),
       appVersion: this.appVersion,
       additionalDirs,
       drainAgentTasksOnStop: options.drainAgentTasksOnStop,
     });
     try {
+      reportAgentCatalogWarnings(session.log);
       session.metadata = {
         ...session.metadata,
         createdAt: new Date(summary.createdAt).toISOString(),
@@ -464,6 +500,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       kaos?: Kaos;
       persistenceKaos?: Kaos;
       forcePluginSessionStartReminder?: boolean;
+      refreshPluginAgents?: boolean;
     },
   ): Promise<ResumeSessionResult> {
     const summary = await this.sessionStore.get(input.sessionId);
@@ -485,6 +522,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     ]);
     const active = this.sessions.get(summary.id);
     if (active !== undefined) {
+      await active.assertMainProfileSelection(input.agentProfile);
       if (overrides.kaos !== undefined) {
         active.setToolKaos(overrides.kaos.withCwd(summary.workDir));
       }
@@ -529,6 +567,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       hooks: [...(config.hooks ?? []), ...this.plugins.enabledHooks()],
       permissionRules: config.permission?.rules,
       skills: this.resolveSessionSkillConfig(config),
+      agents: {
+        userHomeDir: this.userHomeDir,
+        extraDirs: config.extraAgentDirs,
+        pluginRoots:
+          overrides.refreshPluginAgents === true ? this.plugins.pluginAgentRoots() : undefined,
+        refreshPluginAgents: overrides.refreshPluginAgents,
+      },
       mcpConfig,
       experimentalFlags: this.experimentalFlags,
       imageLimits: this.imageLimits,
@@ -536,6 +581,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       initializeMainAgent: false,
       pluginSessionStarts,
       pluginCommands,
+      pluginSystemPrompts: this.plugins.enabledSystemPrompts(),
       appVersion: this.appVersion,
       additionalDirs,
     });
@@ -543,7 +589,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     try {
       const resumeResult = await session.resume();
       warning = resumeResult.warning;
+      await session.assertMainProfileSelection(input.agentProfile);
       await this.refreshSessionRuntimeConfig(session, config);
+      if (overrides.refreshPluginAgents === true) {
+        await session.writeMetadata();
+      }
     } catch (error) {
       await session.close().catch(() => {});
       withTelemetryContext(this.telemetry, { sessionId: summary.id }).track('session_load_failed', {
@@ -587,7 +637,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     }
     return this.resumeSessionWithOverrides(
       { sessionId: summary.id },
-      { forcePluginSessionStartReminder: input.forcePluginSessionStartReminder },
+      {
+        forcePluginSessionStartReminder: input.forcePluginSessionStartReminder,
+        refreshPluginAgents: true,
+      },
     );
   }
 
@@ -1037,6 +1090,14 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).getSessionWarnings(payload);
   }
 
+  applyPersistedSecondaryModel({ sessionId }: SessionScopedPayload<EmptyPayload>): void {
+    // Apply the same fully resolved snapshot the provider manager reads. In
+    // particular, keep every persisted recipe patch and the synthesized
+    // `__secondary__` entry instead of exposing an incomplete setter payload.
+    const config = this.withPrintModeDefaults(this.reloadProviderManager());
+    this.requireSession(sessionId).setSecondaryModelConfig(config);
+  }
+
   waitForBackgroundTasksOnPrint({ sessionId, ...payload }: SessionScopedPayload<EmptyPayload>): Promise<void> {
     return this.sessionApi(sessionId).waitForBackgroundTasksOnPrint(payload);
   }
@@ -1131,10 +1192,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   async reloadPlugins(_: EmptyPayload): Promise<ReloadPluginsResult> {
+    let summary: ReloadPluginsResult;
     try {
-      const summary = await this.plugins.reload();
+      summary = await this.plugins.reload();
       this.pluginsLoadError = undefined;
-      return summary;
     } catch (error) {
       this.pluginsLoadError = error instanceof Error ? error : new Error(String(error));
       throw new KimiError(
@@ -1143,6 +1204,14 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
         { cause: error, details: { kimiHomeDir: this.homeDir } },
       );
     }
+    // Live sessions pick up the reloaded plugin system-prompt contributions
+    // here — the same point where plugin skills take effect. Install / enable
+    // / disable / remove without a reload leave live prompts unchanged.
+    const pluginSystemPrompts = this.plugins.enabledSystemPrompts();
+    for (const session of this.sessions.values()) {
+      await session.setPluginSystemPrompts(pluginSystemPrompts);
+    }
+    return summary;
   }
 
   async getPluginInfo({ id }: GetPluginInfoPayload): Promise<PluginInfo> {

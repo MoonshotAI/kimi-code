@@ -12,21 +12,23 @@ When writing business code you declare three things; the container handles the r
 
 Classes talk only to interfaces and never care how an implementation is constructed.
 
-## The three `LifecycleScope` tiers
+## The four `LifecycleScope` tiers
 
 Lifetimes form a tree, from longest to shortest:
 
 ```text
-App (0)         process-wide, single global instance
- └── Session (1)    one session
-      └── Agent (2)    one agent
+App (0)             process-wide, single global instance
+ └── Workspace (1)     one workspace handler (a materialized workspace root)
+      └── Session (2)    one session
+           └── Agent (3)    one agent
 ```
 
 ```ts
 export enum LifecycleScope {
   App = 0,
-  Session = 1,
-  Agent = 2,
+  Workspace = 1,
+  Session = 2,
+  Agent = 3,
 }
 ```
 
@@ -47,33 +49,20 @@ A child scope sees its ancestors; a parent never sees its children. Resolution w
 
 Deterministic: **child scopes die first; within one scope, instances dispose in reverse construction order** (last constructed, first disposed). Business code declares which tier it lives in and never disposes by hand.
 
-## The `(Ln)` layer number in headers
+## Import boundaries
 
-The `Ln` in a file-header identity line is the domain's **dependency layer** (L0–L7), **not** its `LifecycleScope`. They are easy to confuse because both are small integers, but they answer different questions:
+There is no domain-layer numbering — a domain may import any other domain, guided by the dependency-direction judgment in design.md. The only mechanically enforced import boundaries are (`lint:imports`, `scripts/check-import-boundaries.mjs`):
 
-- `LifecycleScope` (App=0 / Session=1 / Agent=2) — **lifetime & visibility** (this stage).
-- Dependency layer `Ln` (L0–L7) — **who may import whom**: a domain at layer `L` may import only domains at layer `<= L`. Enforced by `lint:domain` from the authoritative `DOMAIN_LAYER` map in `scripts/check-domain-layers.mjs`.
-
-So a Session-scoped service is not "L1" — e.g. `session` is Session-scoped but lives at **L6**. When you write the header, read the number from the layer map, not from the scope.
-
-| Layer | Role | Representative domains |
-|---|---|---|
-| L0 | base infrastructure | `_base`, `errors`, `llmProtocol` |
-| L1 | bridges & low-level capabilities | `log`, `telemetry`, `event`, `environment`, `bootstrap`, `storage` |
-| L2 | data & cross-cutting capabilities | `records`, `wireRecord`, `config`, `provider`, `auth`, `workspace` |
-| L3 | registries & capabilities | `tool`, `toolRegistry`, `permission*`, `flag`, `skill`, `plugin` |
-| L4 | agent behaviour | `turn`, `loop`, `prompt`, `profile`, `contextMemory`, `goal`, `plan`, `swarm` |
-| L5 | async lifecycle | `background`, `mcp`, `cron`, `agentTool` |
-| L6 | coordination | `session`, `agentLifecycle`, `sessionMetadata`, `interaction`, `terminal`, `undo` |
-| L7 | boundary / edge | `gateway`, `rpc`, `approval`, `question`, `*Legacy` |
+- v2 never imports v1 (`@moonshot-ai/agent-core` or any subpath).
+- The kosong subtree (`src/kosong/{contract,protocol,provider,model}`) keeps its strict internal order (`contract ← protocol ← provider/model`), purity bans (no SDKs in `contract`/`protocol`), and the `provider/bases` registration boundary.
 
 ## File-header comment convention
 
 `packages/agent-core-v2/AGENTS.md` mandates a header-only comment style:
 
 - **Header only.** Comments live solely in the top-of-file `/** */` block — never beside functions, methods, or statements. The code is the source of truth for *how*; the header states *what the module exposes and the responsibility it owns*.
-- **Identity line first.** Start with `` `<domain>` domain (Ln) — <one-line role>. `` Keep an existing `(cross-cutting)` label as-is. Write the role as a responsibility ("drives the turn lifecycle"), not a symbol list.
-- **Scope is in the filename.** `session*.ts` = Session, `agent*.ts` = Agent, no prefix = App (see service-authoring.md). State the same scope in the header so the two never drift.
+- **Identity line first.** Start with `` `<domain>` domain — <one-line role>. `` Keep an existing `(cross-cutting)` label as-is. Write the role as a responsibility ("drives the turn lifecycle"), not a symbol list.
+- **Scope is in the filename.** `workspace*.ts` = Workspace, `session*.ts` = Session, `agent*.ts` = Agent, no prefix = App (see service-authoring.md). State the same scope in the header so the two never drift.
 - **Interface files** (`<name>.ts`) state the public contract + scope: which `IXxx` they define and what it is for.
 - **Impl files** (`<name>Service.ts`) add collaborators + scope: list every imported cross-domain collaborator as a role ("persists records through `records`"); read scope from `registerScopedService(LifecycleScope.X, …)`.
 - **Contribution files** (`<targetDomain>.ts` / `<what>.contrib.ts`) state what they register into the target domain (e.g. "registers the `log` config section into `config`").
@@ -83,7 +72,7 @@ Impl file example (`sessionMetadataService.ts`):
 
 ```ts
 /**
- * `sessionMetadata` domain (L6) — `ISessionMetadata` implementation.
+ * `sessionMetadata` domain — `ISessionMetadata` implementation.
  *
  * Persists the session metadata document (`state.json`) through the `storage`
  * access-pattern store (`IAtomicDocumentStore`), rooted at the `metaScope`

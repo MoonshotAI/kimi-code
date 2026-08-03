@@ -1,12 +1,11 @@
 /**
- * `tools` domain (L7) — `WebSearchTool` implementation (the `WebSearch` tool).
+ * `tools` domain — `WebSearchTool` implementation (the `WebSearch` tool).
  *
  * Resolves the host-injected `WebSearchProvider` from the App-scope
  * `IWebSearchProviderService` (`auth` domain) at construction — the tool only
  * activates when a provider is configured, because there is no local search
  * backend — renders the results through `ToolResultBuilder`, and classifies
- * provider errors into model-readable output. The public contract (schemas,
- * provider types, `IWebSearchTool`) lives in `./web-search`.
+ * provider errors into model-readable output.
  *
  * Registered via the module-level `registerAgentToolService(IWebSearchTool,
  * WebSearchTool)` at the bottom of this file — the same "import = register"
@@ -24,6 +23,7 @@ import {
 import { ToolResultBuilder } from '#/tool/result-builder';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
+import { Error2, ErrorCodes } from '#/errors';
 
 import {
   IWebSearchTool,
@@ -47,7 +47,7 @@ export class WebSearchTool implements IWebSearchTool {
   ) {
     const provider = providerService.getWebSearchProvider();
     if (provider === undefined) {
-      throw new Error('WebSearchProviderService returned no provider during tool activation.');
+      throw new Error2(ErrorCodes.INTERNAL, 'WebSearchProviderService returned no provider during tool activation.');
     }
     this.provider = provider;
   }

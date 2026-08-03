@@ -32,7 +32,7 @@ import { IConfigService } from '#/app/config/config';
 import { ConfigRegistry } from '#/app/config/configService';
 import { type DomainEvent, IEventService } from '#/app/event/event';
 import { ILogService } from '#/_base/log/log';
-import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IModelService, type ModelRecord } from '#/kosong/model/model';
 import { MODELS_SECTION } from '#/app/kosongConfig/configSection';
 import { IProviderService, type ProviderConfig, type ProvidersChangedEvent } from '#/kosong/provider/provider';
@@ -79,6 +79,7 @@ interface FakeToolkit {
   readonly getCachedAccessToken: ReturnType<typeof vi.fn>;
   readonly tokenProvider: ReturnType<typeof vi.fn>;
   readonly getManagedUsage: ReturnType<typeof vi.fn>;
+  readonly getManagedUserInfo: ReturnType<typeof vi.fn>;
 }
 
 describe('OAuthService', () => {
@@ -155,6 +156,7 @@ describe('OAuthService', () => {
       getCachedAccessToken: vi.fn().mockResolvedValue(undefined),
       tokenProvider: vi.fn().mockReturnValue({ getAccessToken: async () => 'access-token' }),
       getManagedUsage: vi.fn().mockResolvedValue({ kind: 'error', message: 'not configured' }),
+      getManagedUserInfo: vi.fn().mockResolvedValue({ kind: 'error', message: 'not configured' }),
     };
     ix = createServices(disposables, {
       base: [registerBootstrapServices, registerTelemetryServices],
@@ -693,6 +695,30 @@ describe('OAuthService', () => {
     });
   });
 
+  it('getManagedUserInfo resolves the managed runtime auth and delegates to the toolkit', async () => {
+    const userInfo = {
+      kind: 'ok' as const,
+      userInfo: {
+        userId: 'u_1',
+        nickname: 'moonwalker',
+        status: 'USER_STATUS_NORMAL',
+        region: 'REGION_CN',
+        userLevel: 30,
+        userLevelName: 'Vivace',
+        domain: 1,
+        domainName: 'DOMAIN_EXAMPLE',
+      },
+    };
+    toolkit.getManagedUserInfo.mockResolvedValue(userInfo);
+    const svc = createService();
+
+    await expect(svc.getManagedUserInfo(OAUTH_PROVIDER)).resolves.toBe(userInfo);
+    expect(toolkit.getManagedUserInfo).toHaveBeenCalledWith(OAUTH_PROVIDER, {
+      oauthRef: EXAMPLE_COM_SCOPED_REF,
+      baseUrl: 'https://api.example.com',
+    });
+  });
+
   it('refreshOAuthProviderModels returns an empty result when no Kimi Code provider is configured', async () => {
     providers = { [NON_OAUTH_PROVIDER]: { type: 'openai', apiKey: 'sk-test' } };
     const svc = createService();
@@ -809,10 +835,12 @@ describe('WebSearchProviderService', () => {
           resolveTokenProvider:
             resolveTokenProvider as unknown as IOAuthService['resolveTokenProvider'],
         });
-        reg.definePartialInstance(IHostRequestHeaders, {
-          headers: {
-            'User-Agent': 'kimi-code-cli/test',
-            'X-Msh-Device-Id': 'device-test',
+        reg.definePartialInstance(IBootstrapService, {
+          args: {
+            requestHeaders: {
+              'User-Agent': 'kimi-code-cli/test',
+              'X-Msh-Device-Id': 'device-test',
+            },
           },
         });
         reg.definePartialInstance(IConfigService, {

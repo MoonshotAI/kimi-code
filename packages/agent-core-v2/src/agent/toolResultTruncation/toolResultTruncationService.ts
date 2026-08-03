@@ -1,5 +1,5 @@
 /**
- * `toolResultTruncation` domain (L3) — `IAgentToolResultTruncationService` implementation.
+ * `toolResultTruncation` domain — `IAgentToolResultTruncationService` implementation.
  *
  * Persists complete oversized text tool results through `storage`, addressed
  * under the current `scopeContext` agent root, and renders a model-visible

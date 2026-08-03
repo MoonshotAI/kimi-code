@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { fixedTokenAuth } from './helpers/fixedAuth';
 
 const TOKEN = 'test-token';
@@ -68,6 +69,7 @@ describe('server-v2 disableAuth (--dangerous-bypass-auth)', () => {
   async function boot(disableAuth?: boolean): Promise<{ base: string; port: number }> {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-disable-auth-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,

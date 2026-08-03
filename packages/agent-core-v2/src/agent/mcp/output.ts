@@ -7,7 +7,6 @@
  *     (dropping unsupported shapes).
  *  2. Wrap media-only outputs in `<mcp_tool_result name="…">` tags so the
  *     model can attribute binary output when several tools return media.
- *     Mirrors the in-tree `ReadMediaFile` convention.
  *  3. Apply the 100K text/think character budget to the tool's own text.
  *     This runs BEFORE captions exist, so a chatty tool (page text + a
  *     screenshot) can never evict or slice the compression caption — that
@@ -36,7 +35,7 @@ import {
   isModelAcceptedImageMime,
 } from '#/agent/media/image-format-policy';
 import { persistOriginalImage } from '#/agent/media/image-originals';
-import type { MCPContentBlock, MCPToolResult } from './types';
+import type { MCPContentBlock, MCPToolResult } from '#/mcpCore/types';
 
 export interface McpOutputOptions {
   readonly originalsDir?: string;

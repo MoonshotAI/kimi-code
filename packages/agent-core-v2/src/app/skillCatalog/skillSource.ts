@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — skill-source contract.
+ * `skillCatalog` domain — skill-source contract.
  *
  * `ISkillSource` is the producer half of the skill subsystem: each source loads
  * a `SkillContribution` and advertises a `priority` so the Session sink can
@@ -29,6 +29,8 @@ export const SKILL_SOURCE_PRIORITY = {
   user: 20,
   workspace: 30,
 } as const;
+
+export const PLUGIN_SKILL_SOURCE_ID = 'plugin';
 
 export interface ISkillSource {
   readonly _serviceBrand: undefined;

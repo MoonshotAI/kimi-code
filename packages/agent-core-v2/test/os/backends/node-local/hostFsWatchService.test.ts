@@ -1,5 +1,5 @@
 /**
- * `hostFsWatch` domain (L1) — integration test against the real `chokidar`
+ * `hostFsWatch` domain — integration test against the real `chokidar`
  * watcher on a temporary directory.
  */
 

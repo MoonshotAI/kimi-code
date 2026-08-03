@@ -2889,8 +2889,13 @@ function agentSwarmCall(): ToolCall {
 function mockSubagentHost<T extends Partial<SessionSubagentHost>>(
   host: T,
 ): T & SessionSubagentHost {
-  return { spawn: vi.fn(), resume: vi.fn(), runQueued: vi.fn(), ...host } as unknown as T &
-    SessionSubagentHost;
+  return {
+    spawn: vi.fn(),
+    resume: vi.fn(),
+    runQueued: vi.fn(),
+    delegatableSubagents: vi.fn(() => ({})),
+    ...host,
+  } as unknown as T & SessionSubagentHost;
 }
 
 interface ApiErrorTelemetryCase {

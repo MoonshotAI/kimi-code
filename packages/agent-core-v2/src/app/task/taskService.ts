@@ -1,5 +1,5 @@
 /**
- * `task` domain (L1) — `ITaskService` implementation.
+ * `task` domain — `ITaskService` implementation.
  *
  * Manages task handles: each handle owns a state machine, an optional
  * `AbortController` (for `run()`), and `Emitter` pairs for state changes

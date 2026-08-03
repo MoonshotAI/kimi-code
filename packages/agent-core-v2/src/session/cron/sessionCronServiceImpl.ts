@@ -1,5 +1,5 @@
 /**
- * `cron` domain (L5) — `SessionCronService` implementation.
+ * `cron` domain — `SessionCronService` implementation.
  *
  * Session-level scheduling engine. Holds the in-memory task map (filtered
  * from `ICronTaskPersistence` by `sessionId` tag), runs the polling timer
@@ -47,6 +47,7 @@ import { IWireService } from '#/wire/wire';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
+import { BugIndicatingError } from '#/errors';
 
 import { ICronCreateTool } from '#/agent/tools/cron/cron-create/cron-create';
 import { ICronListTool } from '#/agent/tools/cron/cron-list/cron-list';
@@ -662,7 +663,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
       if (!CRON_ID_REGEX.test(candidate)) continue;
       if (!this.tasks.has(candidate)) return candidate;
     }
-    throw new Error(
+    throw new BugIndicatingError(
       `SessionCronService: failed to generate a unique ULID after ${MAX_ID_ATTEMPTS} attempts`,
     );
   }

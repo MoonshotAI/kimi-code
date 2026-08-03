@@ -74,6 +74,17 @@ export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/k
 
 export type PermissionMode = 'yolo' | 'manual' | 'auto';
 
+/**
+ * Trust state of a workspace directory. Only meaningful on the agent-core-v2
+ * engine; the v1 engine has no workspace-trust concept and reports
+ * `{ trusted: true, gatedMcpServers: [] }`.
+ */
+export interface WorkspaceTrustInfo {
+  readonly trusted: boolean;
+  /** Names of project-level MCP servers that trusting the workspace would enable. */
+  readonly gatedMcpServers: readonly string[];
+}
+
 export interface CreateGoalInput {
   readonly objective: string;
   readonly replace?: boolean;
@@ -107,6 +118,16 @@ export interface CreateSessionOptions {
   readonly kaos?: Kaos | undefined;
   readonly persistenceKaos?: Kaos | undefined;
   readonly additionalDirs?: readonly string[];
+  /**
+   * Main-agent profile name (`--agent`): a builtin profile or one defined by
+   * an agentfile discovered from the user/project agent directories.
+   */
+  readonly agentProfile?: string;
+  /**
+   * Explicit agentfiles (`--agent-file`) loaded for this session with the
+   * highest precedence; an invalid file fails session creation.
+   */
+  readonly agentFiles?: readonly string[];
   readonly sessionStartedProperties?: TelemetryProperties;
   /**
    * Print-mode (`kimi -p`) only: when the main agent ends a turn while
@@ -128,6 +149,8 @@ export interface ResumeSessionInput {
   readonly kaos?: Kaos | undefined;
   readonly persistenceKaos?: Kaos | undefined;
   readonly additionalDirs?: readonly string[];
+  /** Re-select the session's already-bound main profile; a different name fails. */
+  readonly agentProfile?: string;
   /** Include persisted subagent states in the returned replay snapshot. */
   readonly includeSubagents?: boolean;
   /**

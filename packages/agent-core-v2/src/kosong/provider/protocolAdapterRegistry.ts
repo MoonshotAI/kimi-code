@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — the single production implementation of
+ * `kosong/provider` domain — the single production implementation of
  * `IProtocolAdapterRegistry`.
  *
  * This is the one resolution point for "(protocol, providerType) → which base
@@ -45,12 +45,6 @@ import type { ProtocolTrait, ResolvedTrait, TraitContext } from '#/kosong/protoc
 
 import { getProviderDefinition } from './providerDefinition';
 
-/**
- * The trailing synthetic trait that lets config `defaultHeaders` win: it is
- * appended after every vendor trait so its headers merge last in
- * `traitDefaultHeaders` aggregation. It declares nothing else — composition
- * (which picks the last `withThinking` declarer, etc.) is unaffected.
- */
 const CONFIG_DEFAULT_HEADERS_TRAIT: ProtocolTrait = {
   defaultHeaders: (ctx) =>
     ctx.config.defaultHeaders === undefined ? undefined : { ...ctx.config.defaultHeaders },
@@ -69,9 +63,6 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     const baseId: ProtocolBaseId = protocol;
     const traits: readonly ProtocolTrait[] = definition?.traits ?? [];
 
-    // Identity resolution has no live adapter config, so contexts are bound
-    // to a stub here; `createChatProvider` re-binds them to the real config
-    // before composition.
     const context: TraitContext = {
       config: { protocol, providerType, modelName: '' },
       providerId: providerType,
@@ -81,11 +72,6 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     return { baseId, traits: resolved };
   }
 
-  /**
-   * Kept for interface stability. A pair registration composes with the
-   * protocol it registered for, so its `baseProtocol` IS the protocol — this
-   * currently always answers the protocol itself.
-   */
   resolveProviderBaseId(protocol: Protocol, providerType?: string): ProtocolBaseId {
     const definition =
       providerType === undefined ? undefined : getProviderDefinition(providerType, protocol);

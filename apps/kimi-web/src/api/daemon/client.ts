@@ -968,7 +968,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
   }
 
   async searchFiles(
-    sessionId: string,
+    workspace: string,
     input: { query: string; limit?: number },
   ): Promise<{
     items: Array<{
@@ -980,10 +980,10 @@ export class DaemonKimiWebApi implements KimiWebApi {
     }>;
     truncated: boolean;
   }> {
-    const body: Record<string, unknown> = { query: input.query };
+    const body: Record<string, unknown> = { workspace, query: input.query };
     if (input.limit !== undefined) body['limit'] = input.limit;
     const data = await this.http.post<WireSearchFilesResult>(
-      `/sessions/${encodeURIComponent(sessionId)}/fs:search`,
+      `/workspace/fs:search`,
       body,
     );
     return {

@@ -1,5 +1,5 @@
 /**
- * `permissionGate` domain (L3) — `IAgentPermissionGate` implementation.
+ * `permissionGate` domain — `IAgentPermissionGate` implementation.
  *
  * Runs the `permissionPolicy` chain for every tool execution as an
  * `onBeforeExecuteTool` veto listener: `deny` / `result` resolutions veto,
@@ -7,9 +7,8 @@
  * `waitUntil` factory so the approval round-trip only starts once no other
  * listener vetoed or allowed the call. Reports `permission_policy_decision`
  * through `telemetry`, and delegates the ask round-trip (broker, events,
- * session-rule recording) to `toolApproval`. Harness constraints (plan
- * guard, swarm exclusivity, btw deny) live in their own domains as veto
- * listeners — this gate only adjudicates risk. Bound at Agent scope.
+ * session-rule recording) to `toolApproval`. This gate only adjudicates
+ * risk. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';

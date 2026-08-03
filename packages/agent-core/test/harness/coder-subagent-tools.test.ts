@@ -136,7 +136,7 @@ function createVerifyGenerate(steps: StepRecord[]): GenerateFn {
           break;
         }
         case 5:
-          parts = callTool('TaskOutput', { task_id: taskId, block: false });
+          parts = callTool('TaskOutput', { task_id: taskId });
           break;
         case 6:
           parts = callTool('TaskStop', { task_id: taskId });

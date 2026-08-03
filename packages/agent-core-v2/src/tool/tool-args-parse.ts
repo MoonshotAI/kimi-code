@@ -1,5 +1,5 @@
 /**
- * `tool` domain (L3) — tool-call arguments parsing.
+ * `tool` domain — tool-call arguments parsing.
  *
  * Decodes the provider's raw `arguments` payload into a plain value. A
  * payload that fails JSON parsing is normalized to `{}` and flagged with

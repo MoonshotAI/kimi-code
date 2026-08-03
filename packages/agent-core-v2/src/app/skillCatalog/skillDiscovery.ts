@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — catalog discovery contract.
+ * `skillCatalog` domain — catalog discovery contract.
  *
  * `ISkillDiscovery` is the single generic filesystem primitive that hides how
  * skill bundles are discovered: a backend walks the caller-supplied skill

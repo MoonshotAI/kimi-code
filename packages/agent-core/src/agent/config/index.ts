@@ -31,6 +31,7 @@ export class ConfigState {
   private _cwd: string;
   private _modelAlias: string | undefined;
   private _profileName: string | undefined;
+  private _subagentNames: readonly string[] | undefined;
   // `undefined` until an effort has actually been resolved: a bare modelAlias
   // update must then fall through to the model's own default instead of
   // treating the never-chosen initial "off" as an explicit user choice.
@@ -44,6 +45,20 @@ export class ConfigState {
   }
 
   update(changed: AgentConfigUpdateData): void {
+    this.applyUpdate(changed, true);
+  }
+
+  /**
+   * Restore config state without synthesizing a v1 replay record. This is
+   * used when a v2-only wire record is projected onto v1 state: the state
+   * should be available to the resumed agent, but the v2 record must not
+   * appear as a `config_updated` event in the replay surface.
+   */
+  restore(changed: AgentConfigUpdateData): void {
+    this.applyUpdate(changed, false);
+  }
+
+  private applyUpdate(changed: AgentConfigUpdateData, emitReplayRecord: boolean): void {
     if (Object.keys(changed).length === 0) return;
 
     const targetAlias = changed.modelAlias ?? this._modelAlias;
@@ -85,10 +100,12 @@ export class ConfigState {
       type: 'config.update',
       ...effectiveChanged,
     });
-    this.agent.replayBuilder.push({
-      type: 'config_updated',
-      config: effectiveChanged,
-    });
+    if (emitReplayRecord) {
+      this.agent.replayBuilder.push({
+        type: 'config_updated',
+        config: effectiveChanged,
+      });
+    }
     if (changed.cwd) {
       this._cwd = changed.cwd;
       this.agent.setKaos(this.agent.kaos.withCwd(changed.cwd));
@@ -98,6 +115,9 @@ export class ConfigState {
     }
     if (changed.profileName) {
       this._profileName = changed.profileName;
+    }
+    if (changed.subagentNames !== undefined) {
+      this._subagentNames = [...changed.subagentNames];
     }
     if (unforcedThinkingEffort !== undefined && thinkingEffort !== undefined) {
       this._unforcedThinkingEffort = unforcedThinkingEffort;
@@ -137,6 +157,7 @@ export class ConfigState {
       modelAlias: this._modelAlias,
       modelCapabilities: resolved?.modelCapabilities ?? UNKNOWN_CAPABILITY,
       profileName: this.profileName,
+      subagentNames: this.subagentNames,
       thinkingEffort: this.thinkingEffort,
       systemPrompt: this.systemPrompt,
     };
@@ -247,6 +268,10 @@ export class ConfigState {
 
   get profileName(): string | undefined {
     return this._profileName;
+  }
+
+  get subagentNames(): readonly string[] | undefined {
+    return this._subagentNames;
   }
 
   get systemPrompt(): string {

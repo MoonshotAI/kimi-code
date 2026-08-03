@@ -1,7 +1,7 @@
 /**
  * `loop` domain — the `turn.*` / delta event payloads published through
  * `IEventBus` as a turn runs. These are the loop's share of the agent event
- * stream; consumers (transports, replay, telemetry) subscribe by `type`.
+ * stream; consumers subscribe by `type`.
  * `turn.started` additionally carries the text extracted from the turn's
  * input parts (absent when the turn opened with no text part): consumers
  * that render the user's prompt must take it from there, because the context
@@ -18,8 +18,15 @@ import type { FinishReason } from '#/kosong/contract/provider';
 import type { ContentPart, TextPart } from '#/kosong/contract/message';
 import type { TokenUsage } from '#/kosong/contract/usage';
 
-/** Why a turn ended. `blocked` folds into `failed` at the wire edge. */
 export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
+
+export type TurnInterruptReason =
+  | 'user_cancelled'
+  | 'aborted'
+  | 'max_steps'
+  | 'error'
+  | 'filtered'
+  | 'blocked';
 
 export interface TurnStartedEvent {
   readonly type: 'turn.started';
@@ -50,6 +57,7 @@ export interface TurnEndedEvent {
   readonly reason: TurnEndReason;
   readonly error?: KimiErrorPayload;
   readonly durationMs?: number;
+  readonly interruptReason?: TurnInterruptReason;
 }
 
 export interface TurnStepStartedEvent {
@@ -68,18 +76,8 @@ export interface TurnStepCompletedEvent {
   readonly finishReason?: string;
   readonly llmFirstTokenLatencyMs?: number;
   readonly llmStreamDurationMs?: number;
-  /**
-   * Split of `llmFirstTokenLatencyMs`: in-process request-building time on the
-   * client vs. network + API-server time to the first token. Both omitted when
-   * the provider does not report the client/server boundary.
-   */
   readonly llmRequestBuildMs?: number;
   readonly llmServerFirstTokenMs?: number;
-  /**
-   * Split of `llmStreamDurationMs` (the decode window): time awaiting parts from
-   * the provider vs. time processing parts in-process. Both omitted when the
-   * provider stream did not report decode accounting.
-   */
   readonly llmServerDecodeMs?: number;
   readonly llmClientConsumeMs?: number;
   readonly providerFinishReason?: FinishReason;

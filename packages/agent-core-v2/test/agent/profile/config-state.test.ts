@@ -88,6 +88,37 @@ describe('ConfigState model capabilities', () => {
     });
   });
 
+  it('republishes the model status slice on demand', () => {
+    kimiConfig = {
+      providers: {
+        kimi: {
+          type: 'kimi',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.test/v1',
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: 'kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+          supportEfforts: ['low', 'high'],
+        },
+      },
+    };
+    profile.update({ modelAlias: 'kimi-code/kimi-for-coding' });
+    const before = ctx.allEvents.filter((entry) => entry.event === 'agent.status.updated').length;
+
+    profile.republishStatus();
+
+    const statuses = ctx.allEvents.filter((entry) => entry.event === 'agent.status.updated');
+    expect(statuses).toHaveLength(before + 1);
+    expect(statuses.at(-1)?.args).toMatchObject({
+      model: 'kimi-code/kimi-for-coding',
+      maxContextTokens: 1_000_000,
+    });
+  });
+
   it('tracks thinking_toggle with the effort payload when effort changes', () => {
     kimiConfig = {
       providers: {

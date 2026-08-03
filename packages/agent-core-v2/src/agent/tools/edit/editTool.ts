@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `EditTool` implementation, the Agent entry for exact
+ * `tools` domain — `EditTool` implementation, the Agent entry for exact
  * string replacement in a text file.
  *
  * Agent-scope adapter over the App-scope {@link IFileEditService} capability.
@@ -14,7 +14,7 @@
  * `hostEnvironment` domain; the workspace and skill roots come from
  * `ISessionWorkspaceContext` / `ISessionSkillCatalog`.
  *
- * Ported from v1 (`packages/agent-core/src/tools/builtin/file/edit.ts`).
+ * Ported from v1.
  * Bound at Agent scope; self-registers via `registerAgentToolService(...)` at module
  * load.
  */

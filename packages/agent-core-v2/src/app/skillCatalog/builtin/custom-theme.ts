@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — builtin `custom-theme` skill definition.
+ * `skillCatalog` domain — builtin `custom-theme` skill definition.
  */
 
 import type { SkillDefinition } from '#/app/skillCatalog/types';

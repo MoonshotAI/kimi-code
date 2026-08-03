@@ -33,7 +33,8 @@
 //                     finishes; the pause scales with the tail the pre-copy did
 //                     not drain — the same bounded end-of-rewrite pause Redis
 //                     accepts for its AOF diff flush.
-//   4. bookkeeping  — stats + onCompacted() (rebuild derived text postings).
+//   4. bookkeeping  — stats + awaiting onCompacted() (rebuild derived text
+//                     postings — yields to the event loop, writers unaffected).
 //
 // Crash safety: recovery is `load db.snapshot` + `replay db.wal`, last-writer
 // wins. We rename the snapshot BEFORE the WAL. If a crash lands between the two
@@ -71,10 +72,10 @@ export interface CompactionTarget {
    *  remapped value pointers read from the new files. On Windows it is also
    *  closed before the rotation renames (see rotateReplace). */
   valueReader?: { reopenBoth(): void; close?(): void };
-  /** Optional hook invoked after the snapshot + WAL rotation succeeds, so the
-   *  owner can rewrite derived on-disk state (e.g. text postings) against the
-   *  new live set. */
-  onCompacted?: () => void;
+  /** Optional hook invoked (and awaited) after the snapshot + WAL rotation
+   *  succeeds, so the owner can rewrite derived on-disk state (e.g. text
+   *  postings) against the new live set. */
+  onCompacted?: () => void | Promise<void>;
 }
 
 export function shouldCompact(db: CompactionTarget): boolean {
@@ -161,7 +162,7 @@ export async function compact(db: CompactionTarget): Promise<void> {
       await runCompaction(db);
       // The onCompacted hook is part of the compaction: a run whose hook
       // throws is counted as a compactError, not a successful compaction.
-      db.onCompacted?.();
+      await db.onCompacted?.();
       db.stats.compactions++;
       db.lastCompactError = null;
     } catch (err) {

@@ -1,5 +1,5 @@
 /**
- * `agentPlugin` domain (L4) — `IAgentPluginService` implementation.
+ * `agentPlugin` domain — `IAgentPluginService` implementation.
  *
  * Renders session-start skills from `plugin` and `sessionSkillCatalog`, injects
  * them through `contextInjector` and `systemReminder`, and uses `contextMemory`
@@ -20,17 +20,15 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSessionStart } from '#/app/plugin/types';
+import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
 import type { SkillCatalog, SkillDefinition } from '#/app/skillCatalog/types';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
-import { PLUGIN_SKILL_SOURCE_ID } from '#/session/sessionSkillCatalog/pluginSkillSource';
 
 import { IAgentPluginService } from './agentPlugin';
 
 const SESSION_START_INJECTION_VARIANT = 'plugin_session_start';
 
-// The main agent's id, kept as a local literal: `MAIN_AGENT_ID` lives in the
-// L6 `agentLifecycle` domain and this L4 domain must not import it.
 const MAIN_AGENT_ID = 'main';
 
 export class AgentPluginService extends Disposable implements IAgentPluginService {
@@ -47,10 +45,6 @@ export class AgentPluginService extends Disposable implements IAgentPluginServic
     @ILogService private readonly log: ILogService,
   ) {
     super();
-    // Plugin session-start guidance is main-agent-only (v1 parity:
-    // `pluginSessionStarts: type === 'main' ? … : undefined`). Agent scope
-    // creation instantiates this service for every agent; non-main agents
-    // no-op.
     if (scopeContext.agentId !== MAIN_AGENT_ID) return;
     this._register(
       injector.register(

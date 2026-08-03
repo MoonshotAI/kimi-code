@@ -9,8 +9,7 @@
  * drained). Idempotent — repeated `end`/`fail`/`push` after termination are
  * no-ops.
  *
- * Layer L0 substrate — used both by the Agent-scope `llmRequester` (turn
- * driver) and the App-scope `Model.request(...)` god-object stream.
+ * Layer L0 substrate.
  */
 
 export class AsyncEventQueue<T> implements AsyncIterable<T>, AsyncIterator<T> {

@@ -61,7 +61,7 @@ effort = "high"
 keep = "all"
 
 [loop_control]
-max_retries_per_step = 10
+max_attempts_per_step = 10
 reserved_context_size = 50000
 
 [background]
@@ -107,7 +107,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `providers` | `table` | `{}` | API provider table → [`providers`](#providers) |
 | `models` | `table` | — | Model alias table → [`models`](#models) |
 | `thinking` | `table` | — | Default parameters for Thinking mode → [`thinking`](#thinking) |
-| `loop_control` | `table` | — | Agent loop control parameters → [`loop_control`](#loop_control) |
+| `loop_control` | `table` | — | Agent loop control parameters → [`loop_control`](#loop-control) |
 | `background` | `table` | — | Background task runtime parameters → [`background`](#background) |
 | `tools` | `table` | — | Global tool switch → [`tools`](#tools) |
 | `image` | `table` | — | Image compression parameters → [`image`](#image) |
@@ -186,17 +186,23 @@ display_name = "Kimi for Coding (custom)"
 
 `[models."<alias>".overrides]` accepts ordinary model fields such as `max_context_size`, `max_input_size`, `max_output_size`, `capabilities`, `display_name`, `reasoning_key`, `adaptive_thinking`, `support_efforts`, `default_effort`, and `off_effort`. It does not accept identity / routing fields: `provider`, `model`, `protocol`, `beta_api`, and `base_url`.
 
-You can also switch models temporarily without touching the config file — by setting `KIMI_MODEL_*` environment variables, the CLI synthesizes a temporary provider in memory that does not persist after restart. See [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi_model).
+You can also switch models temporarily without touching the config file — by setting `KIMI_MODEL_*` environment variables, the CLI synthesizes a temporary provider in memory that does not persist after restart. See [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi-model).
 
 ## `secondary_model`
 
-The secondary model is a second model pointer next to the primary `default_model` — typically a cheaper model that features can bind to when they do not need the main model. Its consumer today is subagent spawning: when set, newly spawned subagents (`Agent` / `AgentSwarm`) bind to it by default instead of inheriting the main agent's model, and the main agent is told it can pick per spawn between `"secondary"` (this model) and `"primary"` (the main model). When unset, subagents inherit the main agent's model.
+The secondary model is a second model configuration alongside the main model — typically a cheaper one, for features that do not need the main model's capability. Its consumer today is subagent spawning: when set, newly spawned subagents (`Agent` / `AgentSwarm`) bind to it by default instead of inheriting the main agent's model; when unset, subagents inherit the main agent's model.
 
-This feature is experimental and disabled by default. Under `kimi web`, enable it with `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1`. Under `kimi -p`, `KIMI_CODE_EXPERIMENTAL_FLAG=1` is already required to select the v2 engine and also enables this feature. The interactive TUI ignores the configuration.
+This is a default binding, not a forced one. With the experiment enabled, the `Agent` / `AgentSwarm` tools gain a `model` parameter (accepting only the symbolic values `"secondary"` / `"primary"`), and the tool description lists the available models with the default marked. A spawn resolves the subagent's model in this order: an explicit tool-call `model` → the profile's [`model_preference`](../customization/agents.md#agent-file-format) → the configured secondary model (the default). Here `"primary"` means the model the main agent is currently running, not necessarily `default_model` — for example after a mid-session `/model` switch.
+
+Because overriding the default is the main agent's own decision (the tool description merely suggests `"secondary"` for routine tasks and `"primary"` for hard, quality-sensitive ones), there is no per-spawn switch on the user side. To steer a specific subagent to the main model, ask the main agent in your prompt to pass `model: "primary"`, or set `model_preference: "primary"` in the corresponding profile.
+
+This feature is experimental and disabled by default. Enable it with `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1`, or the master `KIMI_CODE_EXPERIMENTAL_FLAG=1`. It takes effect in every launch mode, including the interactive TUI.
+
+In the interactive TUI, the [`/secondary_model`](../reference/slash-commands.md) command opens a model picker that writes this section and live-applies it to the current session, so newly spawned subagents bind the new secondary model right away.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `model` | `string` | — | A model id from your configured `[models]` (any provider, not limited to Kimi models) |
+| `model` | `string` | — | The alias of a configured [`[models]`](#models) entry, e.g. `kimi-code/kimi-k2.5` (any provider, not limited to Kimi models) |
 | `default_effort` | `string` | — | Thinking effort applied when subagents bind to the secondary model. Unset, the effort resolves naturally (global `[thinking]` config → the bound model's default effort) instead of inheriting the main agent's effort. Follows the main model's thinking-effort semantics: models with strict effort validation (e.g. Kimi models) fall back to their default effort for unsupported values; other providers receive the value as-is |
 | Other fields | — | — | Accepts every field of [`[models."<alias>".overrides]`](#models) (`max_context_size`, `max_output_size`, `support_efforts`, …) as a model patch applied only to subagents |
 
@@ -229,18 +235,20 @@ When the experiment is enabled, the configuration is validated as the session st
 | --- | --- | --- |
 | `default_thinking` | 0.21.0 | Top-level boolean, replaced by `[thinking] enabled`. Migrate `default_thinking = true` to `enabled = true`, and `default_thinking = false` to `enabled = false`. |
 | `thinking.mode` | 0.21.0 | One of `auto` / `on` / `off`, replaced by `[thinking] enabled`. `mode = "off"` becomes `enabled = false`; `mode = "on"` and `mode = "auto"` are equivalent to `enabled = true` (the default) and can be removed. |
+| `loop_control.max_retries_per_step` | 0.32.0 | Replaced by `loop_control.max_attempts_per_step` (the value was always a total-attempt limit, including the first try). The old key is ignored and reports a warning on startup; rename it in `config.toml`. |
+| `loop_control.max_steps_per_run` | 0.32.0 | Replaced by `loop_control.max_steps_per_turn`. The old key is ignored and reports a warning on startup; rename it in `config.toml`. |
 
 ## `loop_control`
 
-`loop_control` governs the step count limit, per-step retry count, and the threshold that triggers automatic context compaction in the Agent execution loop.
+`loop_control` governs the step count limit, the per-step attempt limit, and the threshold that triggers automatic context compaction in the Agent execution loop.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `max_steps_per_turn` | `integer` | — | Maximum steps per turn; unset or `0` means unlimited |
-| `max_retries_per_step` | `integer` | `10` | Maximum retries after a step failure |
+| `max_attempts_per_step` | `integer` | `10` | Maximum total attempts for a failing step, including the initial attempt |
 | `reserved_context_size` | `integer` | — | Number of tokens reserved for model output; automatic compaction is triggered when the remaining context window falls below this value |
 
-`max_steps_per_turn` can be overridden by the `KIMI_LOOP_MAX_STEPS_PER_TURN` environment variable, and `max_retries_per_step` by `KIMI_LOOP_MAX_RETRIES_PER_STEP`; both take higher priority than the config file.
+`max_steps_per_turn` can be overridden by the `KIMI_LOOP_MAX_STEPS_PER_TURN` environment variable, and `max_attempts_per_step` by `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP`; both take higher priority than the config file. The former `KIMI_LOOP_MAX_RETRIES_PER_STEP` variable is deprecated but still honored (with a startup warning) when the new one is unset.
 
 Retries only apply to transient failures — connection errors, timeouts, HTTP 429 rate limits, and 5xx server errors. A 429 caused by an exhausted quota or insufficient account balance is not retried and fails immediately, since it cannot succeed until the account is recharged.
 
@@ -384,7 +392,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `theme` | `string` | `auto` | Color theme: `auto` (follow the terminal), `dark`, `light`, or the name of a [custom theme](../customization/themes) |
+| `theme` | `string` | `auto` | Color theme: `auto` (follow the terminal), `dark`, `light`, or the name of a [custom theme](../customization/themes.md) |
 | `disable_paste_burst` | `boolean` | `false` | Disable the non-bracketed paste-burst fallback that keeps rapid multi-line pastes from submitting line by line |
 | `[editor].command` | `string` | `""` | External editor command for composing long input; empty falls back to `$VISUAL` / `$EDITOR` |
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |

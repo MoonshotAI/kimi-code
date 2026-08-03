@@ -267,7 +267,7 @@ describe('runShell', () => {
     expect(mocks.kimiHarnessConstructor).toHaveBeenCalledWith(
       expect.objectContaining({
         identity: expect.objectContaining({
-          userAgentProduct: 'kimi-code-cli',
+          productName: 'kimi-code-cli',
           version: '1.2.3-test',
         }),
         sessionStartedProperties: { yolo: true, auto: false, plan: true, afk: false },
@@ -317,6 +317,35 @@ describe('runShell', () => {
       init_ms: expect.any(Number),
       mcp_ms: 47,
     });
+  });
+
+  it('resolves the --agent profile into the TUI startup input', async () => {
+    mocks.loadTuiConfig.mockResolvedValue({
+      theme: 'dark',
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+    });
+    mocks.tuiStart.mockResolvedValue(undefined);
+
+    await runShell(
+      {
+        session: undefined,
+        continue: false,
+        yolo: false,
+        auto: false,
+        plan: false,
+        model: undefined,
+        outputFormat: undefined,
+        prompt: undefined,
+        skillsDirs: [],
+        agent: 'reviewer',
+        agentFiles: [],
+      },
+      '1.2.3-test',
+    );
+
+    const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+    expect(startupInput).toMatchObject({ agentProfile: 'reviewer' });
   });
 
   it('forwards skillsDirs from CLI options to the harness', async () => {
@@ -566,7 +595,7 @@ describe('runShell', () => {
     });
   });
 
-  it('forwards config.toml diagnostics as startup notices', async () => {
+  it('leaves config.toml diagnostics to the TUI instead of the startup notice', async () => {
     mocks.loadTuiConfig.mockResolvedValue({
       theme: 'dark',
       editorCommand: null,
@@ -594,9 +623,12 @@ describe('runShell', () => {
       '1.2.3-test',
     );
 
+    // Diagnostics render in warning yellow via `showConfigWarningsIfAny` at
+    // `finishStartup`; the (dim) startup notice stays reserved for things like
+    // tui.toml parse errors, so the same warning is not shown twice.
     const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
     expect(startupInput).toMatchObject({
-      startupNotice: 'Ignored invalid config in config.toml: loop_control.',
+      startupNotice: undefined,
     });
   });
 

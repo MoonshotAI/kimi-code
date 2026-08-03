@@ -24,8 +24,8 @@ kimi <subcommand> [options]
 | `--auto` | | 以 auto 权限模式启动；工具审批自动处理，Agent 不会向用户提问 |
 | `--plan` | | 以 Plan 模式启动新会话，AI 会优先使用只读工具进行探索和规划 |
 | `--skills-dir <dir>` | | 从指定目录加载 Skills，替换自动发现的用户和项目目录。可重复传入 |
-| `--agent <name>` | | 以指定 Agent 作为主 Agent 启动会话（仅实验性 `kimi -p`） |
-| `--agent-file <path>` | | 从 Markdown 文件加载自定义 Agent（仅本次启动、仅实验性 `kimi -p`）并选中它。不可重复传入，也不能与 `--agent` 同时使用 |
+| `--agent <name>` | | 以指定 Agent 作为主 Agent 启动新会话。不能与 `--session`/`--continue` 同时使用 |
+| `--agent-file <path>` | | 从 Markdown 文件加载自定义 Agent 并为新会话选中它。不可重复传入，也不能与 `--agent`、`--session` 或 `--continue` 同时使用 |
 | `--add-dir <dir>` | | 为本次会话添加额外的工作目录。相对路径按当前工作目录解析。可重复传入 |
 
 `-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。
@@ -98,13 +98,14 @@ kimi --plan
 
 ### 自定义 Agent
 
-`--agent` 和 `--agent-file` 用于选择驱动会话的 Agent。目前二者仅在 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 时的 `kimi -p` 下可用，其他启动方式会以明确错误拒绝：
+`--agent` 和 `--agent-file` 用于选择驱动新会话的 Agent，在 print 模式（`kimi -p`）和交互式 TUI 中均可使用：
 
 ```sh
-KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "审查这个分支上的改动"
+kimi --agent reviewer
+kimi -p --agent reviewer "审查这个分支上的改动"
 ```
 
-`--agent-file` 以最高优先级注册单个 Agent 文件（仅本次启动）并选中它；该 flag 不可重复传入，且 `--agent` 与 `--agent-file` 互斥。选择在会话首次绑定后即固定：以相同的 `--agent` 恢复会话是 no-op，换成不同的 Agent 会报 "already bound" 错误。Agent 文件格式与发现目录详见 [Agent 与子 Agent](../customization/agents.md#自定义-agent)。
+`--agent-file` 以最高优先级注册单个 Agent 文件（仅本次启动）并选中它；该 flag 不可重复传入，`--agent` 与 `--agent-file` 互斥。两个 flag 都仅在新建会话时有效——都不能与 `--session`/`--continue` 组合，因为 Agent 在会话创建时绑定，恢复会话时会自动还原已绑定的 Agent。选择在会话首次绑定后即固定，之后不可切换；在 TUI 中，这些 flag 只绑定启动时的会话，之后在同一进程内新建的会话（例如通过 `/new`）使用默认 Agent。Agent 文件格式与发现目录详见 [Agent 与子 Agent](../customization/agents.md#自定义-agent)。
 
 ## 非交互执行
 

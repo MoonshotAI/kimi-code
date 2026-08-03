@@ -1,5 +1,65 @@
 # @moonshot-ai/kimi-code
 
+## 0.31.1
+
+### Patch Changes
+
+- [#2410](https://github.com/MoonshotAI/kimi-code/pull/2410) [`f1a3475`](https://github.com/MoonshotAI/kimi-code/commit/f1a3475ad5d6540447496701aa75fd4b035ecb28) Thanks [@sailist](https://github.com/sailist)! - Fix sporadic "model is not configured" errors when starting kimi web, caused by the background provider-model refresh transiently clearing the model catalog while the first session was being created.
+
+- [#2400](https://github.com/MoonshotAI/kimi-code/pull/2400) [`1f3f5da`](https://github.com/MoonshotAI/kimi-code/commit/1f3f5dadaaa4a1d705cc98aee1dbbef13680502c) Thanks [@7Sageer](https://github.com/7Sageer)! - Preserve the assistant's partial output when a turn is interrupted with Esc, and remind the model that the previous turn was deliberately interrupted.
+
+- [#2415](https://github.com/MoonshotAI/kimi-code/pull/2415) [`5c0ec29`](https://github.com/MoonshotAI/kimi-code/commit/5c0ec2938ac3a01624b6503e5e5df80c9b08f46a) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Enable Monaco-based highlighting for code blocks, and fix line numbers overlapping or drifting out of alignment in fallback-rendered code blocks.
+
+- [#2442](https://github.com/MoonshotAI/kimi-code/pull/2442) [`bb2919e`](https://github.com/MoonshotAI/kimi-code/commit/bb2919eb818a6cb51c71cbabf1bac9020131bce7) Thanks [@liruifengv](https://github.com/liruifengv)! - Reduce frequent full-screen redraws in the TUI.
+
+- [#2125](https://github.com/MoonshotAI/kimi-code/pull/2125) [`e111c87`](https://github.com/MoonshotAI/kimi-code/commit/e111c878fd5cd07994e125b9e4e07e4069f01be1) Thanks [@bowenliang123](https://github.com/bowenliang123)! - web: Order permission modes from safest to most permissive across settings surfaces, and fix the swapped yolo/auto risk colors in the status panel and mobile settings.
+
+- [#2459](https://github.com/MoonshotAI/kimi-code/pull/2459) [`326e1fb`](https://github.com/MoonshotAI/kimi-code/commit/326e1fb6ce59fbf2d6c7646e6d587759565814fd) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Fix chat code blocks rendering in the proportional UI font at the wrong size after the markdown renderer upgrade, and align the loading fallback with the highlighted block so the upgrade no longer shifts layout.
+
+- [#2437](https://github.com/MoonshotAI/kimi-code/pull/2437) [`ed7a4cc`](https://github.com/MoonshotAI/kimi-code/commit/ed7a4cc095e1619e4dbb6c2c77c89a52e312b085) Thanks [@sailist](https://github.com/sailist)! - web: Make the @ file mention work in a new-session draft, before the first prompt creates the session.
+
+- [#2437](https://github.com/MoonshotAI/kimi-code/pull/2437) [`ed7a4cc`](https://github.com/MoonshotAI/kimi-code/commit/ed7a4cc095e1619e4dbb6c2c77c89a52e312b085) Thanks [@sailist](https://github.com/sailist)! - web: Fix new sessions showing the thinking level (e.g. Max) while the first message actually ran with thinking off.
+
+## 0.31.0
+
+### Minor Changes
+
+- [#2365](https://github.com/MoonshotAI/kimi-code/pull/2365) [`fa2c5ce`](https://github.com/MoonshotAI/kimi-code/commit/fa2c5ce18b70577fa3ada4eb8bdd4993891994ce) Thanks [@7Sageer](https://github.com/7Sageer)! - Add support for plugin-contributed custom agents, discovered automatically and available for sub-agent delegation. Ship an `agents/` directory in the plugin (or declare `agents` paths in the plugin manifest) to provide them.
+
+- [#2314](https://github.com/MoonshotAI/kimi-code/pull/2314) [`02d77b2`](https://github.com/MoonshotAI/kimi-code/commit/02d77b20d941873563f14890e049ffe40cec76e4) Thanks [@7Sageer](https://github.com/7Sageer)! - Allow enabled plugins to contribute agent system-prompt instructions through `systemPrompt` or `systemPromptPath` in `kimi.plugin.json`, effective on both agent engines (the TUI, `kimi -p`, and `kimi web`).
+
+- [#2232](https://github.com/MoonshotAI/kimi-code/pull/2232) [`efac96c`](https://github.com/MoonshotAI/kimi-code/commit/efac96c8a95a3c3ca4e1ae9bce38082498a02b2e) Thanks [@7Sageer](https://github.com/7Sageer)! - Support Markdown-defined custom agents on agent-core.
+
+- [#2232](https://github.com/MoonshotAI/kimi-code/pull/2232) [`efac96c`](https://github.com/MoonshotAI/kimi-code/commit/efac96c8a95a3c3ca4e1ae9bce38082498a02b2e) Thanks [@7Sageer](https://github.com/7Sageer)! - Add the /secondary_model slash command to configure the secondary model used by subagents.
+
+### Patch Changes
+
+- [#2382](https://github.com/MoonshotAI/kimi-code/pull/2382) [`40172c7`](https://github.com/MoonshotAI/kimi-code/commit/40172c7ca96ca981b043b793588dd32e898979fa) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix request headers not being passed correctly on some requests.
+
+- [#2379](https://github.com/MoonshotAI/kimi-code/pull/2379) [`691ec46`](https://github.com/MoonshotAI/kimi-code/commit/691ec4679ea19d6be8ac18f359088384ed3e446d) Thanks [@RealKai42](https://github.com/RealKai42)! - Remove the blocking `block`/`timeout` wait from the TaskOutput tool so checking a background task can no longer stall the conversation; it now always returns an immediate snapshot, and completion still arrives via automatic notification.
+
+- [#2395](https://github.com/MoonshotAI/kimi-code/pull/2395) [`d10b1c1`](https://github.com/MoonshotAI/kimi-code/commit/d10b1c130813dbd6ee8c8599a6a98feb36aea67f) Thanks [@sailist](https://github.com/sailist)! - Fix sessions missing from the session picker when their cached metadata predates the archived flag.
+
+## 0.30.0
+
+### Minor Changes
+
+- [#2255](https://github.com/MoonshotAI/kimi-code/pull/2255) [`67dd031`](https://github.com/MoonshotAI/kimi-code/commit/67dd03149f36be91a0c081e70d8a2d721b0f1c64) Thanks [@he-yufeng](https://github.com/he-yufeng)! - Add a customizable footer status line, configured via `[status_line]` in `tui.toml`.
+
+### Patch Changes
+
+- [#2313](https://github.com/MoonshotAI/kimi-code/pull/2313) [`de0ba9d`](https://github.com/MoonshotAI/kimi-code/commit/de0ba9d0654273ff6b028a7a561983ebee4e723e) Thanks [@starquakee](https://github.com/starquakee)! - Stop the turn after repeated invalid tool calls instead of retrying indefinitely.
+
+- [#2147](https://github.com/MoonshotAI/kimi-code/pull/2147) [`29783e4`](https://github.com/MoonshotAI/kimi-code/commit/29783e471afcf7975852e496907646458264d2e6) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Show a quota note after installing official plugins that bill against plan quota (such as Kimi Datasource).
+
+- [#2147](https://github.com/MoonshotAI/kimi-code/pull/2147) [`29783e4`](https://github.com/MoonshotAI/kimi-code/commit/29783e471afcf7975852e496907646458264d2e6) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Show a notice when an official plugin used in the session has an update available. Run /plugins to install it.
+
+- [#1857](https://github.com/MoonshotAI/kimi-code/pull/1857) [`cdbd33c`](https://github.com/MoonshotAI/kimi-code/commit/cdbd33c13c7f5cd4c49ec112ee4313b3938a7752) Thanks [@vinlee19](https://github.com/vinlee19)! - Fail fast when account quota or balance is exhausted instead of silently retrying for ~3 minutes.
+
+- [#2294](https://github.com/MoonshotAI/kimi-code/pull/2294) [`425cfdf`](https://github.com/MoonshotAI/kimi-code/commit/425cfdf53f0fd3b01527f5fba87acff68f49f368) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Fix garbled line numbers in code blocks.
+
+- [#2312](https://github.com/MoonshotAI/kimi-code/pull/2312) [`d03a488`](https://github.com/MoonshotAI/kimi-code/commit/d03a4886fdf7c35014c10079a3d417aeb0447d9a) Thanks [@sailist](https://github.com/sailist)! - Remove the 50 MB size limit on file uploads to the built-in server.
+
 ## 0.29.2
 
 ### Patch Changes

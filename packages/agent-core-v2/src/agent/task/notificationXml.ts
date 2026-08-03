@@ -1,5 +1,5 @@
 /**
- * `task` domain (L5) — renders task terminal notification XML for context injection.
+ * `task` domain — renders task terminal notification XML for context injection.
  *
  * Produces the model-visible `<notification ...>` block inserted through
  * `contextMemory` for detached task settlement. The opening tag name is

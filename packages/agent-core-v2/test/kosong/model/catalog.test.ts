@@ -52,7 +52,7 @@ import {
 } from '#/kosong/model/catalog';
 import { ModelCatalog } from '#/kosong/model/catalogService';
 import '#/kosong/model/errors';
-import { HostRequestHeaders, IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
+import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
 import { IModelService, type ModelRecord, type ModelsSection } from '#/kosong/model/model';
 import '#/kosong/model/modelService';
 import { IModelOAuthTokens } from '#/kosong/model/modelOAuth';
@@ -75,7 +75,7 @@ function createHost(
   const host = createScopedTestHost([
     [IConfigService, config],
     [IModelOAuthTokens, oauthTokens],
-    [IHostRequestHeaders, new HostRequestHeaders(HOST_HEADERS)],
+    [IHostRequestHeaders, { headers: HOST_HEADERS }],
   ]);
   // Kosong's registries are pure in-memory stores now (persistence lives in
   // the app/kosongConfig bridge): seed them from the fixture sections.
@@ -807,7 +807,7 @@ describe('ModelCatalog ping', () => {
         models,
         stubModelOAuthTokens(),
         registry,
-        new HostRequestHeaders({}),
+        { headers: {} },
       );
       const result = await catalog.ping('k1');
       expect(result).toMatchObject({ ok: true, text: 'pong', finishReason: 'completed' });

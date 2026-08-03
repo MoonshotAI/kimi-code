@@ -22,7 +22,7 @@ import { pollDeviceToken, refreshAccessToken, requestDeviceAuthorization } from 
 import type { DevicePollResult, RefreshOptions } from './oauth';
 import type { TokenStorage } from './storage';
 import { classifyToken, revokedTombstone, type TokenState } from './token-state';
-import type { DeviceAuthorization, DeviceHeaders, OAuthFlowConfig, TokenInfo } from './types';
+import type { DeviceAuthorization, OAuthFlowConfig, OAuthRequestHeaders, TokenInfo } from './types';
 
 const MIN_REFRESH_THRESHOLD_SECONDS = 300;
 const REFRESH_THRESHOLD_RATIO = 0.5;
@@ -68,7 +68,7 @@ export interface OAuthManagerOptions {
   readonly pollDeviceImpl?:
     | ((config: OAuthFlowConfig, deviceCode: string) => Promise<DevicePollResult>)
     | undefined;
-  readonly deviceHeaders?: (() => DeviceHeaders | undefined) | undefined;
+  readonly deviceHeaders?: (() => OAuthRequestHeaders | undefined) | undefined;
   /**
    * Root directory for per-provider lock files; resolves to
    * `{configDir}/oauth/{providerName}.lock`.
@@ -104,7 +104,7 @@ export class OAuthManager {
   private readonly refreshImpl: NonNullable<OAuthManagerOptions['refreshTokenImpl']>;
   private readonly requestImpl: NonNullable<OAuthManagerOptions['requestDeviceImpl']>;
   private readonly pollImpl: NonNullable<OAuthManagerOptions['pollDeviceImpl']>;
-  private readonly deviceHeaders: (() => DeviceHeaders | undefined) | undefined;
+  private readonly deviceHeaders: (() => OAuthRequestHeaders | undefined) | undefined;
   private readonly configDir: string | undefined;
   private readonly onRefresh: ((outcome: OAuthRefreshOutcome) => void) | undefined;
 
@@ -155,7 +155,7 @@ export class OAuthManager {
     this.configDir = options.configDir ?? envConfigDir;
   }
 
-  private resolveDeviceHeaders(): DeviceHeaders | undefined {
+  private resolveDeviceHeaders(): OAuthRequestHeaders | undefined {
     return this.deviceHeaders?.();
   }
 

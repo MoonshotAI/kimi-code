@@ -55,9 +55,13 @@ export function recordAgentEvents() {
   const emit = (entry: RecordedEventEntry): RecordedEventEntry => {
     entries.push(entry);
 
+    // Snapshot-returning waiters match EMIT entries only: a persisted wire
+    // record can share its type with an event (e.g. `turn.ended`), and the
+    // waiter's intent is the event — resolving on the wire entry would also
+    // truncate the matching emit entry out of the returned snapshot.
     for (let index = eventWaiters.length - 1; index >= 0; index -= 1) {
       const waiter = eventWaiters[index]!;
-      if (waiter.event !== entry.event) continue;
+      if (entry.type !== '[rpc]' || waiter.event !== entry.event) continue;
       eventWaiters.splice(index, 1);
       cursor = Math.max(cursor, entries.length);
       waiter.resolve(snapshotFrom(waiter.start));
@@ -79,7 +83,7 @@ export function recordAgentEvents() {
 
     for (let index = takeWaiters.length - 1; index >= 0; index -= 1) {
       const waiter = takeWaiters[index]!;
-      if (waiter.event !== entry.event) continue;
+      if (entry.type !== '[rpc]' || waiter.event !== entry.event) continue;
       takeWaiters.splice(index, 1);
       cursor = Math.max(cursor, entries.length);
       waiter.resolve({

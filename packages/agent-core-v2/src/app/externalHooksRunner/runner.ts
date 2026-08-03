@@ -1,8 +1,8 @@
 /**
- * `externalHooksRunner` domain (L6) — pure hook matching/dispatch logic.
+ * `externalHooksRunner` domain — pure hook matching/dispatch logic.
  *
- * Owns everything the `IExternalHooksRunnerService` needs to decide *which*
- * hooks run for an event and to execute them: building the event→hooks index,
+ * Owns deciding *which* hooks run for an event and executing them: building
+ * the event→hooks index,
  * regex matching by matcher value, de-duplication per `(cwd, command)`, and
  * spawning each matched command via the shared `runHook` spawner (which runs
  * through the App-scope `IHostProcessService` passed in by the service). Holds

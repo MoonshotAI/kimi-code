@@ -1,54 +1,38 @@
 /**
- * `GET /sessions/{session_id}/snapshot` — IM-style initial sync.
+ * `GET /sessions/{session_id}/snapshot` — atomic session snapshot for client
+ * rebuild: state + `as_of_seq` watermark + `epoch`, assembled from the engine
+ * services. Cold sessions are resumed through `ISessionLifecycleService.resume`
+ * — the same path `messages` and `:undo` use — and the message page comes from
+ * the shared full-transcript loader (`services/messages/messageHistory`), so
+ * this endpoint and `GET /sessions/{sid}/messages` serve the same history:
+ * full across compactions, media rehydrated.
  *
- * **Reader strategy** (controlled by `KIMI_SNAPSHOT_READER`):
- *
- *   - `auto` (default) — delegate to `ISnapshotReader`, which reads
- *     `state.json` + `agents/main/wire.jsonl` directly from disk and bypasses
- *     the heavy `ISessionLifecycleService.resume` chain (DI scope, MCP connect,
- *     full wire replay). Sub-200ms warm / sub-1s cold.
- *   - `legacy` — fall back to `resume` + live service assembly. Pure operator
- *     escape hatch; no silent per-request fallback.
- *
- * **Timeout**: the auto path races against a hard `KIMI_SNAPSHOT_TIMEOUT_MS`
- * ceiling (default 4000ms, under traefik's 5s cut-off). Timeout returns 50001
- * with a structured `snapshot.timeout` log line so the gateway never sees a 499.
- *
- * **Error mapping**: `SnapshotNotFoundError` → 40401; `SnapshotTimeoutError` →
- * 50001; everything else falls through to the global error handler (→ 50001).
+ * **Error mapping**: `SnapshotNotFoundError` → 40401; everything else falls
+ * through to the global error handler (→ 50001).
  */
 
 import {
-  IAgentContextMemoryService,
-  IAgentLifecycleService,
+  ensureMainAgent,
   IAgentPromptService,
-  ILogService,
-  ISessionInteractionService,
   ISessionContext,
-  ISessionLifecycleService,
+  ISessionInteractionService,
   ISessionMetadata,
   IWorkspaceService,
-  toProtocolMessage,
+  resumeSessionById,
   type IAgentScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import type { Message } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
+import { z } from 'zod';
+
+import { errEnvelope, okEnvelope } from '../envelope';
+import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
   sessionSnapshotResponseSchema,
   type InFlightTurn,
   type SessionSnapshotResponse,
 } from '../protocol/rest-snapshot';
-import { z } from 'zod';
-
-import { errEnvelope, okEnvelope } from '../envelope';
-import { defineRoute } from '../middleware/defineRoute';
-import {
-  SnapshotNotFoundError,
-  SnapshotTimeoutError,
-  loadSnapshotConfig,
-} from '../services/snapshot';
-import type { ISnapshotReader } from '../services/snapshot';
+import { loadMessageHistory } from '../services/messages/messageHistory';
 import { type SessionEventBroadcaster } from '../transport/ws/v1/sessionEventBroadcaster';
 import { toWireApproval } from './approvals';
 import { toWireQuestion } from './questions';
@@ -56,6 +40,14 @@ import { resolveSessionFacts, toWireSession } from './sessions';
 
 /** Most-recent messages included in the snapshot page. */
 const SNAPSHOT_MESSAGE_PAGE_SIZE = 100;
+
+/** Sentinel — the handler maps it to 40401. */
+class SnapshotNotFoundError extends Error {
+  constructor(sessionId: string) {
+    super(`session ${sessionId} does not exist`);
+    this.name = 'SnapshotNotFoundError';
+  }
+}
 
 const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
@@ -75,13 +67,10 @@ interface SnapshotRouteHost {
 export interface SnapshotRouteDeps {
   readonly core: Scope;
   readonly broadcaster: SessionEventBroadcaster;
-  readonly reader: ISnapshotReader;
 }
 
 export function registerSnapshotRoutes(app: SnapshotRouteHost, deps: SnapshotRouteDeps): void {
-  const { core, broadcaster, reader } = deps;
-  const config = loadSnapshotConfig();
-  const useReader = config.mode !== 'legacy';
+  const { core, broadcaster } = deps;
 
   const route = defineRoute(
     {
@@ -100,20 +89,11 @@ export function registerSnapshotRoutes(app: SnapshotRouteHost, deps: SnapshotRou
     async (req, reply) => {
       const { session_id } = req.params;
       try {
-        const data = useReader
-          ? await readViaReader(reader, session_id, config.timeoutMs)
-          : await readViaLegacyAssembly(core, broadcaster, session_id);
+        const data = await assembleSnapshot(core, broadcaster, session_id);
         reply.send(okEnvelope(data, req.id));
       } catch (err) {
         if (err instanceof SnapshotNotFoundError) {
           reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, req.id, err.stack));
-          return;
-        }
-        if (err instanceof SnapshotTimeoutError) {
-          core.accessor
-            .get(ILogService)
-            .warn('snapshot.timeout', { sid: session_id, duration_ms: err.timeoutMs });
-          reply.send(errEnvelope(ErrorCode.INTERNAL_ERROR, err.message, req.id, err.stack));
           return;
         }
         throw err;
@@ -123,24 +103,7 @@ export function registerSnapshotRoutes(app: SnapshotRouteHost, deps: SnapshotRou
   app.get(route.path, route.options, route.handler as Parameters<SnapshotRouteHost['get']>[2]);
 }
 
-async function readViaReader(
-  reader: ISnapshotReader,
-  sid: string,
-  timeoutMs: number,
-): Promise<SessionSnapshotResponse> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeoutPromise = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new SnapshotTimeoutError(sid, timeoutMs)), timeoutMs);
-    timer.unref?.();
-  });
-  try {
-    return await Promise.race([reader.read(sid), timeoutPromise]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
-
-async function readViaLegacyAssembly(
+async function assembleSnapshot(
   core: Scope,
   broadcaster: SessionEventBroadcaster,
   sessionId: string,
@@ -148,7 +111,7 @@ async function readViaLegacyAssembly(
   // Resolve the live handle, loading the session from disk when it is cold
   // (created by a previous process or by v1). `resume` returns `undefined`
   // only when the session is unknown or its workspace is gone → 404.
-  const handle = await core.accessor.get(ISessionLifecycleService).resume(sessionId);
+  const handle = await resumeSessionById(core.accessor, sessionId);
   if (handle === undefined) {
     throw new SnapshotNotFoundError(sessionId);
   }
@@ -170,19 +133,14 @@ async function readViaLegacyAssembly(
     resolveSessionFacts(core, sessionId),
   );
 
-  // Messages — most recent page of the main agent's live history.
-  const main = handle.accessor.get(IAgentLifecycleService).get('main');
-  let items: Message[] = [];
-  let hasMore = false;
-  if (main !== undefined) {
-    const history = main.accessor.get(IAgentContextMemoryService).get();
-    hasMore = history.length > SNAPSHOT_MESSAGE_PAGE_SIZE;
-    const page = history.slice(-SNAPSHOT_MESSAGE_PAGE_SIZE);
-    const offset = history.length - page.length;
-    items = page.map((msg, i) => toProtocolMessage(sessionId, offset + i, msg, meta.createdAt));
-  }
-  const currentPromptId =
-    snapState.inFlightTurn === null ? undefined : readCurrentPromptId(main);
+  // Messages — most recent page of the main agent's full history, from the
+  // loader shared with the `messages` routes.
+  const main = await ensureMainAgent(handle);
+  const all = await loadMessageHistory(core, main, sessionId, meta.createdAt);
+  const hasMore = all.length > SNAPSHOT_MESSAGE_PAGE_SIZE;
+  const items = all.slice(-SNAPSHOT_MESSAGE_PAGE_SIZE);
+
+  const currentPromptId = snapState.inFlightTurn === null ? undefined : readCurrentPromptId(main);
   const inFlightTurn = attachCurrentPromptIdToInFlight(snapState.inFlightTurn, currentPromptId);
 
   // Pending approvals / questions.

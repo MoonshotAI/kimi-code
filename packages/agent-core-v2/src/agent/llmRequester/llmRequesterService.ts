@@ -1,5 +1,5 @@
 /**
- * `llmRequester` domain (L3) — `IAgentLLMRequesterService` implementation.
+ * `llmRequester` domain — `IAgentLLMRequesterService` implementation.
  *
  * Assembles per-turn `ModelRequestInput` from `profile` (system prompt),
  * `contextMemory` + `contextProjector` (history), `toolRegistry` (tools), and
@@ -8,8 +8,7 @@
  * params, then drives a bounded request chain through the `ModelRequester`
  * resolved from `IModelCatalog`: one primary `requester.request(input, signal,
  * params)` attempt plus projection rebuilds for request structure or media
- * compatibility; general retry policy remains in the loop's `stepRetry`
- * plugin. Before each request the projected messages pass through `media`'s
+ * compatibility. Before each request the projected messages pass through `media`'s
  * video resolver, which rewrites every `kimi-file://` prompt-video reference
  * to a provider-acceptable part (uploaded `ms://`, inline base64, or a
  * `<video path>` tag) so the internal reference never reaches the wire. When a
@@ -39,10 +38,6 @@ import {
   type MediaStripSnapshot,
 } from '#/agent/contextProjector/contextProjector';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
-import {
-  IFaultInjectionService,
-  type FaultKind,
-} from '#/agent/faultInjection/faultInjection';
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -101,7 +96,7 @@ import {
   type LlmRequestToolSchema,
 } from './llmRequestOps';
 import { isAbortError } from '#/_base/utils/abort';
-import { unwrapErrorCause } from '#/errors';
+import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { retryErrorFields } from '#/_base/utils/retry';
 
 const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
@@ -184,7 +179,6 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IWireService private readonly wire: IWireService,
-    @IFaultInjectionService private readonly faultInjection: IFaultInjectionService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
@@ -387,11 +381,6 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       this.logRequest(logInput);
       this.recordRequest(logInput);
 
-      const fault = this.faultInjection.take();
-      if (fault !== undefined) {
-        throw faultToError(fault);
-      }
-
       let message: Message | undefined;
       let usage = emptyUsage();
       let timing: ModelRequestTiming | undefined;
@@ -427,7 +416,10 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       }
 
       if (message === undefined || finish === undefined) {
-        throw new Error('LLM request stream ended without a finish event.');
+        throw new Error2(
+          ErrorCodes.PROVIDER_API_ERROR,
+          'LLM request stream ended without a finish event.',
+        );
       }
 
       this.usage.record(request.modelAlias, usage, request.source);
@@ -804,12 +796,6 @@ function projectionField(
   return value === 'strict' || value === 'media-degraded' || value === 'media-stripped'
     ? value
     : undefined;
-}
-
-function faultToError(kind: FaultKind): Error {
-  return kind === 'request-too-large'
-    ? new APIRequestTooLargeError(413, 'Request Entity Too Large (fault injection)')
-    : new APIStatusError(400, 'unsupported image format: image/avif (fault injection)');
 }
 
 function fingerprint(content: string): string {

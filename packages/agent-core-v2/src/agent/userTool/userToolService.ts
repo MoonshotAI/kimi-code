@@ -1,5 +1,5 @@
 /**
- * `userTool` domain (L4) — `IAgentUserToolService` implementation.
+ * `userTool` domain — `IAgentUserToolService` implementation.
  *
  * Holds the set of host-registered user tools in the `wire` `UserToolModel`
  * (`Map<string, UserToolRegistration>`), mutating it only through the

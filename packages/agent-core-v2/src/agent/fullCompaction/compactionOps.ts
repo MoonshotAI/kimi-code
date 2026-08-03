@@ -1,5 +1,5 @@
 /**
- * `fullCompaction` domain (L4) — wire Model (`CompactionModel`) and the
+ * `fullCompaction` domain — wire Model (`CompactionModel`) and the
  * `full_compaction.begin` (`fullCompactionBegin`) / `full_compaction.cancel`
  * (`fullCompactionCancel`) / `full_compaction.complete`
  * (`fullCompactionComplete`) Ops that mirror the full-compaction lifecycle into
@@ -14,7 +14,7 @@
  * rides the `begin` payload (and is persisted on the record for audit) but is
  * not stored in the Model; result numbers are consumed live by the
  * `compaction.completed` signal and their durable effect (the summary message
- * plus compaction metrics) already lives in `contextMemory`. The live
+ * plus compaction metrics) already lives in the context history. The live
  * `complete` payload is empty to match the v1 wire shape; legacy logs may still
  * carry result numbers, and `apply` accepts and ignores them while collapsing
  * to `idle`. Each `apply` returns the same reference on a no-op so the wire's
@@ -24,15 +24,13 @@
  * the in-flight worker promise — stays OUT of the Model (live-only service
  * members): none of it can be resumed, and a session never restores mid-flight.
  * A `running` phase stranded by a crash is reset to `idle` by the service's
- * `wire.hooks.onDidRestore` hook (mirroring `goal`'s post-replay normalization).
+ * `wire.hooks.onDidRestore` hook.
  *
  * The `compaction.*` events publish to `IEventBus` (`compaction.started` via the
  * `begin` Op's `toEvent`; the rest directly from the service); they are
- * declared here via interface-merge (`error` is already declared by `mcp`, so
- * it is not re-declared). The `full_compaction.*` record shapes are registered in
- * `PersistedOpMap` (`#/wire/types`, below) because the records still
+ * declared here via interface-merge. The `full_compaction.*` record shapes are registered in
+ * `PersistedOpMap` (below) because the records still
  * ride the per-agent `wire.jsonl` journal restored by `IWireService`.
- * Consumed by the Agent-scope `fullCompactionService`.
  */
 
 import { z } from 'zod';
