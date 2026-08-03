@@ -221,6 +221,7 @@ async fn handle_chat_command(
             println!("/goal-cancel cancel the active goal");
             println!("/plan on|off toggle plan mode");
             println!("/swarm on|off toggle swarm mode");
+            println!("/thinking <e> set thinking effort (low/medium/high)");
             ChatCommand::Handled
         }
         "/resume" => {
@@ -466,6 +467,23 @@ async fn handle_chat_command(
                 return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
             }
             println!("swarm mode {}", if enabled { "on" } else { "off" });
+            ChatCommand::Handled
+        }
+        "/thinking" => {
+            // `/thinking <effort>` sets the thinking effort (low/medium/high).
+            if rest.is_empty() {
+                return ChatCommand::Error("usage: /thinking <low|medium|high>".into());
+            }
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_SET_THINKING,
+                    serde_json::json!({ "session_id": *session_id, "effort": rest }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            println!("thinking effort set to {rest}");
             ChatCommand::Handled
         }
         "/goal-resume" => {
