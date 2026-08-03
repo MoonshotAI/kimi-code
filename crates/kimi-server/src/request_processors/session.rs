@@ -722,6 +722,38 @@ impl Processor for SessionProcessor {
             })
         });
 
+        // `session/start_btw` — spawn a side-question subagent.
+        let mgr = self.state.manager.clone();
+        let callbacks = self.state.callbacks.clone();
+        processor.register(kimi_protocol::methods::SESSION_START_BTW, move |params| {
+            let mgr = mgr.clone();
+            let callbacks = callbacks.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionIdParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let btw_id = manager
+                    .start_btw(&input.session_id, callbacks)
+                    .map_err(|e| JsonRpcError::internal_error(e))?;
+                Ok(serde_json::json!({ "btw_id": btw_id }))
+            })
+        });
+
+        // `session/end_btw` — destroy the side-question subagent.
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_END_BTW, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionIdParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let ended = manager.end_btw(&input.session_id);
+                Ok(serde_json::json!({ "ended": ended }))
+            })
+        });
+
         // `session/get_status` — live engine status snapshot.
         let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_GET_STATUS, move |params| {
