@@ -161,9 +161,12 @@ export class AgentRPCService implements IAgentRPCService {
     active?.abortController.abort();
   }
 
-  async activateSkill(payload: ActivateSkillPayload): Promise<void> {
-    void this.skills.activate(payload);
+  async activateSkill(payload: ActivateSkillPayload): Promise<PromptLaunchResult | undefined> {
+    // Awaited (not fire-and-forget): the caller gets the launched turn id and
+    // activation failures (unknown skill, busy) surface instead of vanishing.
+    const turn = await this.skills.activate(payload);
     await this.updatePromptMetadata(promptMetadataTextFromSkill(payload));
+    return { turn_id: turn.id };
   }
 
   async activatePluginCommand(payload: ActivatePluginCommandPayload): Promise<void> {

@@ -47,6 +47,34 @@ interface InternalEntry {
 
 export type McpStatusListener = (entry: McpServerEntry) => void;
 
+/**
+ * The consumer surface of a connection manager. `McpConnectionManager`
+ * implements it directly; the session domain's `MergedMcpConnectionView`
+ * implements it over a workspace manager plus a session overlay, so session
+ * and agent consumers never care which manager owns a server.
+ */
+export interface McpConnectionView {
+  readonly oauthService: McpOAuthService | undefined;
+  list(): readonly McpServerEntry[];
+  get(name: string): McpServerEntry | undefined;
+  resolved(
+    name: string,
+  ):
+    | {
+        client: MCPClient;
+        tools: readonly Tool[];
+        rawTools: readonly MCPToolDefinition[];
+        enabledNames: ReadonlySet<string>;
+      }
+    | undefined;
+  getRemoteServerUrl(name: string): string | undefined;
+  reconnect(name: string): Promise<void>;
+  reconnectAndJoin(name: string): Promise<void>;
+  waitForInitialLoad(signal?: AbortSignal): Promise<void>;
+  initialLoadDurationMs(): number;
+  onStatusChange(listener: McpStatusListener): () => void;
+}
+
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 
 type RuntimeMcpClient = StdioMcpClient | HttpMcpClient | SseMcpClient;
@@ -71,7 +99,7 @@ export interface McpConnectionManagerOptions {
   readonly resolveDefaultTimeouts?: () => McpDefaultTimeouts;
 }
 
-export class McpConnectionManager {
+export class McpConnectionManager implements McpConnectionView {
   private readonly entries = new Map<string, InternalEntry>();
   private readonly listeners = new Set<McpStatusListener>();
   private readonly inFlightReconnects = new Map<string, Promise<void>>();

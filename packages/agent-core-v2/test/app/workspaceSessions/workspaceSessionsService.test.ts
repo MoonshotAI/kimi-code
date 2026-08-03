@@ -38,6 +38,8 @@ class FakeSessionIndex implements ISessionIndex {
   async countActive(_workspaceIds: readonly string[]): Promise<number> {
     return 0;
   }
+
+  async remove(_id: string): Promise<void> {}
 }
 
 class FakeWorkspaceAliases implements IWorkspaceAliases {
