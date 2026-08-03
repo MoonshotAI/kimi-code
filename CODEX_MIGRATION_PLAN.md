@@ -289,7 +289,7 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 6. **验证**：kimi-server 27 测试 + client 2 + exec 2 全绿；workspace check 干净；0 warnings
 
 ### 阶段 C — CLI + exec
-1. ✅ `kimi-cli`：clap 分发 + 子命令平移（print/sessions/resume/config/doctor/health/**export**；acp/login/provider/upgrade/vis/web 待）+ **全局 `--server <bin>`**：所有子命令可选走 Remote stdio 传输（独立 `kimi-server-serve` 进程），而非内嵌 server；**doctor 含 config 文件级检查**（OK/SKIP/ERROR + 合并解析验证，TS parity）；**`print --verbose` 事件渲染器**（turn/tool/usage 等 → 人类可读进度行，内嵌与 Remote 统一）
+1. ✅ `kimi-cli`：clap 分发 + 子命令平移（print/sessions/resume/config/doctor/health/**export**；acp/login/provider/upgrade/vis/web 待）+ **全局 `--server <bin>`**：所有子命令可选走 Remote stdio 传输（独立 `kimi-server-serve` 进程），而非内嵌 server；**doctor 含 config 文件级检查**（OK/SKIP/ERROR + 合并解析验证，TS parity）；**`print --verbose` 事件渲染器**（turn/tool/usage 等 → 人类可读进度行，内嵌与 Remote 统一；非 verbose 在 stderr 为 TTY 时同样渲染，脚本管道保持 stdout JSON 契约））
 2. ✅ `kimi-exec`：-p/print + run_prompt 经 AppServerClient（InProcess/Remote）
 3. ✅ **验证**：`kimi -p "..."` 端到端；CLI 集成测试（health/sessions/export/config/doctor/--server/verbose 事件流驱动真实二进制，9 用例）；CLI 测试平移（55 用例，TS 面待）
 

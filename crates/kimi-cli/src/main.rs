@@ -5,6 +5,7 @@
 
 use base64::Engine;
 use clap::{Parser, Subcommand};
+use std::io::IsTerminal;
 use tokio::io::AsyncBufReadExt;
 
 #[derive(Parser)]
@@ -123,80 +124,89 @@ fn render_event(event: &serde_json::Value) -> Option<String> {
     }
 }
 
+/// Connect the protocol client and — when `capture` is set — start the event
+/// renderer (embedded EventBus / Remote captured stderr), so progress lines
+/// appear on stderr while the prompt runs. Returns the client and the renderer
+/// task handle (abort it after the prompt completes).
+fn connect_with_renderer(
+    server: &Option<String>,
+    capture: bool,
+) -> anyhow::Result<(
+    kimi_server_client::AppServerClient,
+    Option<tokio::task::JoinHandle<()>>,
+)> {
+    if !capture {
+        return Ok((connect(server)?, None));
+    }
+    let mut events = None;
+    let mut captured_stderr = None;
+    let client = match server {
+        Some(bin) => {
+            let (client, stderr) =
+                kimi_server_client::stdio_client::StdioClient::spawn_captured(bin)?;
+            captured_stderr = Some(stderr);
+            kimi_server_client::AppServerClient::Remote(client)
+        }
+        None => {
+            let embedded = kimi_server::Server::build()?;
+            events = Some(embedded.state.subscribe_events());
+            kimi_server_client::AppServerClient::InProcess(
+                kimi_server::in_process::spawn(embedded.processor),
+            )
+        }
+    };
+    let renderer = tokio::spawn(async move {
+        let mut printed = 0usize;
+        if let Some(mut rx) = events {
+            while let Ok(event) = rx.recv().await {
+                if let Some(line) = render_event(&event) {
+                    eprintln!("{line}");
+                    printed += 1;
+                    if printed > 64 {
+                        break; // bound verbose output
+                    }
+                }
+            }
+        } else if let Some(stderr) = captured_stderr {
+            let mut lines = tokio::io::BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let rendered = line
+                    .strip_prefix("[event] ")
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                    .and_then(|e| render_event(&e))
+                    .unwrap_or_else(|| line.clone());
+                eprintln!("{rendered}");
+                if line.starts_with("[event] ") {
+                    printed += 1;
+                    if printed > 64 {
+                        break; // bound verbose output
+                    }
+                }
+            }
+        }
+    });
+    Ok((client, Some(renderer)))
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let Cli { server, command } = Cli::parse();
     match command {
         Commands::Print { prompt, verbose } => {
-            if verbose {
-                // Verbose mode renders engine events as progress lines.
-                // Embedded: subscribe the in-process EventBus. Remote
-                // (`--server`): capture the serve process's stderr (its event
-                // fan-out) and render the same way.
-                let mut events = None;
-                let mut captured_stderr = None;
-                let mut client = match &server {
-                    Some(bin) => {
-                        let (client, stderr) =
-                            kimi_server_client::stdio_client::StdioClient::spawn_captured(bin)?;
-                        captured_stderr = Some(stderr);
-                        kimi_server_client::AppServerClient::Remote(client)
-                    }
-                    None => {
-                        let embedded = kimi_server::Server::build()?;
-                        events = Some(embedded.state.subscribe_events());
-                        kimi_server_client::AppServerClient::InProcess(
-                            kimi_server::in_process::spawn(embedded.processor),
-                        )
-                    }
-                };
-                let renderer = tokio::spawn(async move {
-                    let mut printed = 0usize;
-                    if let Some(mut rx) = events {
-                        while let Ok(event) = rx.recv().await {
-                            if let Some(line) = render_event(&event) {
-                                eprintln!("{line}");
-                                printed += 1;
-                                if printed > 64 {
-                                    break; // bound verbose output
-                                }
-                            }
-                        }
-                    } else if let Some(stderr) = captured_stderr {
-                        let mut lines =
-                            tokio::io::BufReader::new(stderr).lines();
-                        while let Ok(Some(line)) = lines.next_line().await {
-                            let rendered = line
-                                .strip_prefix("[event] ")
-                                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-                                .and_then(|e| render_event(&e))
-                                .unwrap_or_else(|| line.clone());
-                            eprintln!("{rendered}");
-                            if line.starts_with("[event] ") {
-                                printed += 1;
-                                if printed > 64 {
-                                    break; // bound verbose output
-                                }
-                            }
-                        }
-                    }
-                });
-                let result = kimi_exec::run_prompt(&mut client, "kimi-exec", &prompt, kimi_exec::native_llm_from_config()).await;
+            // Progress on stderr: always with `--verbose`, and by default when
+            // stderr is a terminal (script pipes stay clean — stdout keeps the
+            // result JSON contract either way).
+            let capture = verbose || std::io::stderr().is_terminal();
+            let (mut client, renderer) = connect_with_renderer(&server, capture)?;
+            let result = kimi_exec::run_prompt(&mut client, "kimi-exec", &prompt, kimi_exec::native_llm_from_config()).await;
+            if let Some(renderer) = renderer {
                 renderer.abort();
-                if let Some(error) = result.get("error") {
-                    eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
-                    std::process::exit(1);
-                }
-                println!("{result}");
-            } else {
-                let mut client = connect(&server)?;
-                let result = kimi_exec::run_prompt(&mut client, "kimi-exec", &prompt, kimi_exec::native_llm_from_config()).await;
-                if let Some(error) = result.get("error") {
-                    eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
-                    std::process::exit(1);
-                }
-                println!("{result}");
             }
+            if let Some(error) = result.get("error") {
+                eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
+                std::process::exit(1);
+            }
+            println!("{result}");
         }
         Commands::Sessions { limit } => {
             let mut client = connect(&server)?;
