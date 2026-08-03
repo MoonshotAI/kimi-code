@@ -137,6 +137,9 @@ function parseEnums(text) {
       // struct variant: Name { a: T, b: T }
       const structM = t.match(/^(\w+)\s*\{\s*(.*?)\s*\}$/);
       const unitM = t.match(/^(\w+)$/);
+      // tuple/newtype variant: Name(T) — serde tag flattens the inner type's
+      // fields under the tag (e.g. TaskInfoByKind::Process(ProcessTaskInfo)).
+      const tupleM = t.match(/^(\w+)\((\w+)\)$/);
       if (structM) {
         const fields = [];
         for (const f of structM[2].split(',').filter(Boolean)) {
@@ -144,6 +147,8 @@ function parseEnums(text) {
           fields.push({ name: fn, rawType: rest.join(':') });
         }
         variants.push({ name: renameLine ?? structM[1], kind: 'struct', fields });
+      } else if (tupleM) {
+        variants.push({ name: renameLine ?? tupleM[1], kind: 'tuple', type: tupleM[2] });
       } else if (unitM) {
         variants.push({ name: renameLine ?? unitM[1], kind: 'unit' });
       }
@@ -259,14 +264,18 @@ function renderEnum(enumDef, attrs) {
   };
   // Tagged enum with struct variants → discriminated union. Unit variants
   // serialize as `{"kind":"user"}`-style objects under the tag, so they are
-  // members too.
-  if (enumDef.variants.some((v) => v.kind === 'struct')) {
+  // members too. Tuple/newtype variants flatten the inner type under the tag
+  // (`{ kind: 'process' } & ProcessTaskInfo`).
+  if (enumDef.variants.some((v) => v.kind === 'struct' || v.kind === 'tuple')) {
     const tag = attrs.tag ?? 'type';
     const members = enumDef.variants.map((v) => {
       const tagName = `'${wireName(v.name)}'`;
       if (v.kind === 'struct') {
         const fields = v.fields.map((f) => `${f.name}: ${mapType(f.rawType)}`).join('; ');
         return `  | { ${tag}: ${tagName}; ${fields} }`;
+      }
+      if (v.kind === 'tuple') {
+        return `  | { ${tag}: ${tagName} } & ${mapType(v.type)}`;
       }
       return `  | { ${tag}: ${tagName} }`;
     });
@@ -296,7 +305,17 @@ for (const m of primary.matchAll(STRUCT_RE)) seed.add(m[1]);
 for (const m of primary.matchAll(ENUM_RE)) seed.add(m[1]);
 for (const m of primary.matchAll(ALIAS_RE)) seed.add(m[1]);
 for (const [key, text] of SOURCES) {
-  if (key === 'rpc.rs' || key === 'wire_types.rs') {
+  // kimi-protocol wire modules (layer-1 files, no engine dependency)
+  if (
+    key === 'rpc.rs' ||
+    key === 'wire_types.rs' ||
+    key === 'context.rs' ||
+    key === 'goal.rs' ||
+    key === 'hooks.rs' ||
+    key === 'plan.rs' ||
+    key === 'task.rs' ||
+    key === 'usage.rs'
+  ) {
     for (const m of text.matchAll(STRUCT_RE)) seed.add(m[1]);
     for (const m of text.matchAll(ENUM_RE)) seed.add(m[1]);
     for (const m of text.matchAll(ALIAS_RE)) seed.add(m[1]);
@@ -319,13 +338,17 @@ function emit(name) {
   } else if (registry.enums.has(name)) {
     const e = registry.enums.get(name);
     // Enum struct-variant fields may reference crate types (e.g. `ContentPart`
-    // → `ImageUrlValue`) — emit them before rendering the enum.
+    // → `ImageUrlValue`) — emit them before rendering the enum. Tuple/newtype
+    // variants flatten their inner type, which must be emitted too.
     for (const v of e.variants) {
       if (v.kind === 'struct') {
         for (const f of v.fields) {
           const dep = baseName(f.rawType);
           if (dep && (registry.structs.has(dep) || registry.enums.has(dep))) emit(dep);
         }
+      } else if (v.kind === 'tuple') {
+        const dep = baseName(v.type);
+        if (dep && (registry.structs.has(dep) || registry.enums.has(dep))) emit(dep);
       }
     }
     // Serde attrs come from the enum's own source file — `rename_all` /

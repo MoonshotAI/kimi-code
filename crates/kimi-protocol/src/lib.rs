@@ -6,6 +6,12 @@
 //! every interface layer consume these types. TS bindings are generated
 //! (ts-rs / schemars) rather than hand-maintained.
 
+pub mod context;
+pub mod goal;
+pub mod hooks;
 pub mod methods;
+pub mod plan;
 pub mod rpc;
+pub mod task;
+pub mod usage;
 pub mod wire_types;

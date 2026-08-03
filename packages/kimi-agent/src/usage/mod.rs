@@ -9,23 +9,9 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use serde::{Deserialize, Serialize};
-
 use crate::rpc::types::TokenUsage;
 
-/// Per-model usage summary.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UsageStatus {
-    /// Usage broken down by model alias.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub by_model: Option<HashMap<String, TokenUsage>>,
-    /// Total usage across all models.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub total: Option<TokenUsage>,
-    /// Usage for the current turn (if any).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub current_turn: Option<TokenUsage>,
-}
+pub use kimi_protocol::usage::UsageStatus;
 
 /// Scope for a usage record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

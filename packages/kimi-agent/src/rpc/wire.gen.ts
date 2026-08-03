@@ -9,53 +9,6 @@
  * Regenerate with: `pnpm gen:wire`
  */
 
-export type ContentBlock =
-  | { type: 'text'; text: string }
-  | { type: 'image'; media_type: string; data: string }
-  | { type: 'image_url'; url: string };
-
-export interface LlmToolCall {
-  id: string;
-  name: string;
-  arguments: unknown;
-}
-
-export interface Message {
-  role: string;
-  content: string;
-  blocks?: Array<ContentBlock>;
-  tool_calls?: Array<LlmToolCall>;
-  tool_call_id?: string | undefined;
-}
-
-export interface ToolDef {
-  name: string;
-  description: string;
-  input_schema?: unknown;
-}
-
-export interface LlmProviderDef {
-  name: string;
-  model: string;
-  system_prompt: string;
-}
-
-export type GoalStatus = 'active' | 'paused' | 'blocked' | 'complete' | 'budgetLimited' | 'usageLimited';
-
-export interface GoalContext {
-  goal_id: string;
-  objective: string;
-  status: GoalStatus;
-  /** Optional token budget (total tokens allowed). */
-  token_budget?: number | undefined;
-  /** Optional turn budget (max turns). */
-  turn_budget?: number | undefined;
-  /** Cumulative tokens consumed so far (before this turn). */
-  tokens_used: number;
-  /** Cumulative turns run so far (before this turn). */
-  turns_used: number;
-}
-
 export interface NativeLlmConfig {
   /** Wire protocol: `"openai"` (Chat Completions), `"anthropic"` (Messages), or `"google"` / `"google-genai"` (Gemini streamGenerateContent). */
   protocol: string;
@@ -70,18 +23,10 @@ export interface NativeLlmConfig {
   reasoning_effort?: string | undefined;
 }
 
-export interface RunTurnParams {
-  turn_id: string;
-  system_prompt: string;
-  model_name: string;
-  messages: Array<Message>;
-  tools: Array<ToolDef>;
-  max_steps?: number | undefined;
-  providers?: Array<LlmProviderDef>;
-  goal?: GoalContext | undefined;
-  native_llm?: NativeLlmConfig | undefined;
-  workspace_root?: string | undefined;
-  native_tools?: boolean;
+export interface ToolDef {
+  name: string;
+  description: string;
+  input_schema?: unknown;
 }
 
 export interface McpServerSpecInput {
@@ -143,87 +88,27 @@ export interface SessionCreateParams {
   native_tools?: boolean;
 }
 
-export interface TokenUsage {
-  input_tokens?: number;
-  output_tokens?: number;
-  total_tokens?: number;
+export interface MediaContainer {
+  url: string;
+  id?: string | undefined;
 }
 
-export interface UsageStatus {
-  by_model?: Record<string, TokenUsage> | undefined;
-  total?: TokenUsage | undefined;
-  current_turn?: TokenUsage | undefined;
-}
-
-export interface SessionStatusResult {
-  model?: string | undefined;
-  thinking_effort: string;
-  permission: string;
-  plan_mode: boolean;
-  swarm_mode: boolean;
-  goal_enabled: boolean;
-  context_tokens: number;
-  max_context_tokens: number;
-  context_usage: number;
-  usage?: UsageStatus | undefined;
-}
-
-export type SessionUsageResult = UsageStatus;
-
-export interface PlanData {
+export interface ToolCall {
+  type: string;
   id: string;
-  content: string;
-  path: string;
-}
-
-export type SessionPlanResult = PlanData | null;
-
-export type TaskStatus = 'running' | 'completed' | 'failed' | 'timed_out' | 'killed' | 'lost';
-
-export interface TaskInfoBase {
-  task_id: string;
-  description: string;
-  status: TaskStatus;
-  kind: string;
-  started_at: number;
-  ended_at?: number | undefined;
-  /** Whether the task currently runs detached. Derived from whether a foreground release is still outstanding, never stored on the live entry. */
-  detached: boolean;
-  stop_reason?: string | undefined;
-  terminal_notification_suppressed?: boolean;
-  timeout_ms?: number | undefined;
-  agent_id?: string | undefined;
-}
-
-export type TaskListResult = Array<TaskInfoBase>;
-
-export interface ImageUrlValue {
-  url: string;
-  id?: string | undefined;
-}
-
-export interface AudioUrlValue {
-  url: string;
-  id?: string | undefined;
-}
-
-export interface VideoUrlValue {
-  url: string;
-  id?: string | undefined;
+  name: string;
+  arguments: unknown;
+  extras?: unknown;
 }
 
 export type ContentPart =
   | { type: 'text'; text: string }
-  | { type: 'think'; think: string; encrypted: string }
-  | { type: 'image_url'; image_url: ImageUrlValue }
-  | { type: 'audio_url'; audio_url: AudioUrlValue }
-  | { type: 'video_url'; video_url: VideoUrlValue };
-
-export interface ToolCall {
-  id: string;
-  name: string;
-  arguments: unknown;
-}
+  | { type: 'think'; think: string; encrypted: string; signature: string }
+  | { type: 'image_url'; image_url: MediaContainer }
+  | { type: 'audio_url'; audio_url: MediaContainer }
+  | { type: 'video_url'; video_url: MediaContainer }
+  | { type: 'tool_use'; id: string; name: string; input: unknown }
+  | { type: 'tool_result'; tool_use_id: string; content: Array<ContentPart>; is_error: boolean };
 
 export type MessageOrigin =
   | { kind: 'user' }
@@ -263,7 +148,53 @@ export interface AgentContextData {
   token_count: number;
 }
 
-export type SessionContextResult = AgentContextData;
+export interface CompactionResult {
+  summary: string;
+  context_summary: string;
+  compacted_count: number;
+  tokens_before: number;
+  tokens_after: number;
+  kept_user_message_count: number;
+  kept_head_user_message_count?: number | undefined;
+  dropped_count: number;
+}
+
+export interface CompactionInput {
+  summary: string;
+  context_summary?: string | undefined;
+  compacted_count: number;
+  tokens_before: number;
+  tokens_after?: number | undefined;
+  kept_user_message_count?: number | undefined;
+  kept_head_user_message_count?: number | undefined;
+  dropped_count: number;
+}
+
+export type MediaStripSnapshot = Array<string>;
+
+export type GoalStatus = 'active' | 'paused' | 'blocked' | 'complete' | 'budgetLimited' | 'usageLimited';
+
+export interface GoalContext {
+  goal_id: string;
+  objective: string;
+  status: GoalStatus;
+  /** Optional token budget (total tokens allowed). */
+  token_budget?: number | undefined;
+  /** Optional turn budget (max turns). */
+  turn_budget?: number | undefined;
+  /** Cumulative tokens consumed so far (before this turn). */
+  tokens_used: number;
+  /** Cumulative turns run so far (before this turn). */
+  turns_used: number;
+}
+
+export interface PlanData {
+  id: string;
+  content: string;
+  path: string;
+}
+
+export type PlanFilePath = string | null;
 
 export interface JsonRpcRequest {
   jsonrpc: string;
@@ -297,6 +228,63 @@ export interface JsonRpcNotification {
 }
 
 export type RequestId = unknown;
+
+export type TaskStatus = 'running' | 'completed' | 'failed' | 'timed_out' | 'killed' | 'lost';
+
+export interface TaskInfoBase {
+  task_id: string;
+  description: string;
+  status: TaskStatus;
+  kind: string;
+  started_at: number;
+  ended_at?: number | undefined;
+  /** Whether the task currently runs detached. Derived from whether a foreground release is still outstanding, never stored on the live entry. */
+  detached: boolean;
+  stop_reason?: string | undefined;
+  terminal_notification_suppressed?: boolean;
+  timeout_ms?: number | undefined;
+  agent_id?: string | undefined;
+}
+
+export interface ProcessTaskInfo {
+  base: TaskInfoBase;
+  command?: string | undefined;
+  pid?: number | undefined;
+  exit_code?: number | undefined;
+}
+
+export interface AgentSubTaskInfo {
+  base: TaskInfoBase;
+  agent_id?: string | undefined;
+  subagent_type?: string | undefined;
+}
+
+export interface QuestionTaskInfo {
+  base: TaskInfoBase;
+}
+
+export type TaskInfoByKind =
+  | { kind: 'process' } & ProcessTaskInfo
+  | { kind: 'agent' } & AgentSubTaskInfo
+  | { kind: 'question' } & QuestionTaskInfo;
+
+export interface TokenUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+}
+
+export interface UsageStatus {
+  by_model?: Record<string, TokenUsage> | undefined;
+  total?: TokenUsage | undefined;
+  current_turn?: TokenUsage | undefined;
+}
+
+export interface LlmProviderDef {
+  name: string;
+  model: string;
+  system_prompt: string;
+}
 
 export interface CancelTurnParams {
   turn_id: string;
@@ -489,6 +477,25 @@ export interface SessionUpdateMetadataParams {
 export interface SessionListParams {
   limit?: number | undefined;
   offset?: number | undefined;
+}
+
+export type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; media_type: string; data: string }
+  | { type: 'image_url'; url: string };
+
+export interface LlmToolCall {
+  id: string;
+  name: string;
+  arguments: unknown;
+}
+
+export interface Message {
+  role: string;
+  content: string;
+  blocks?: Array<ContentBlock>;
+  tool_calls?: Array<LlmToolCall>;
+  tool_call_id?: string | undefined;
 }
 
 export interface RunTurnResult {
@@ -808,4 +815,39 @@ export interface BgEventPayload {
   description?: string | undefined;
 }
 
+export interface RunTurnParams {
+  turn_id: string;
+  system_prompt: string;
+  model_name: string;
+  messages: Array<Message>;
+  tools: Array<ToolDef>;
+  max_steps?: number | undefined;
+  providers?: Array<LlmProviderDef>;
+  goal?: GoalContext | undefined;
+  native_llm?: NativeLlmConfig | undefined;
+  workspace_root?: string | undefined;
+  native_tools?: boolean;
+}
+
+export interface SessionStatusResult {
+  model?: string | undefined;
+  thinking_effort: string;
+  permission: string;
+  plan_mode: boolean;
+  swarm_mode: boolean;
+  goal_enabled: boolean;
+  context_tokens: number;
+  max_context_tokens: number;
+  context_usage: number;
+  usage?: UsageStatus | undefined;
+}
+
 export type FinalizeToolResponse = ExecutableToolResultData | null;
+
+export type SessionUsageResult = UsageStatus;
+
+export type SessionPlanResult = PlanData | null;
+
+export type TaskListResult = Array<TaskInfoBase>;
+
+export type SessionContextResult = AgentContextData;

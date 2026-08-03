@@ -914,3 +914,66 @@ pub struct BgEventPayload {
     pub description: Option<String>,
 }
 
+/// Input for a run_turn RPC call.
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct RunTurnParams {
+    pub turn_id: String,
+    pub system_prompt: String,
+    pub model_name: String,
+    pub messages: Vec<Message>,
+    pub tools: Vec<ToolDef>,
+    pub max_steps: Option<u32>,
+    /// Multiple LLM providers for concurrent execution (MultiLLM).
+    /// When present, overrides `system_prompt` + `model_name`.
+    #[serde(default)]
+    pub providers: Vec<LlmProviderDef>,
+    /// Optional goal context for budget-aware execution.
+    /// When present, the loop checks budgets before each step and
+    /// injects steering text into the system prompt.
+    #[serde(default)]
+    pub goal: Option<crate::goal::GoalContext>,
+    /// Native HTTP LLM transport. When present, the Rust engine calls the
+    /// provider directly (streaming) instead of proxying through the host.
+    #[serde(default)]
+    pub native_llm: Option<NativeLlmConfig>,
+    /// Workspace root used to sandbox native tool execution.
+    #[serde(default)]
+    pub workspace_root: Option<String>,
+    /// When true (and `workspace_root` is set), read-only tools
+    /// (Read/Grep/Glob/ListDirectory) execute inside the Rust process,
+    /// bypassing the host round-trip.
+    #[serde(default)]
+    pub native_tools: bool,
+}
+
+/// Result of `session/get_usage` — engine cumulative usage.
+pub type SessionUsageResult = crate::usage::UsageStatus;
+
+/// Result of `session/get_plan` — active plan data, or null.
+pub type SessionPlanResult = Option<crate::plan::PlanData>;
+
+/// Result of `task/list` — flat array of task records (no `{tasks}` wrapper).
+pub type TaskListResult = Vec<crate::task::TaskInfoBase>;
+
+/// Result of `session/get_context` — engine context snapshot.
+pub type SessionContextResult = crate::context::AgentContextData;
+
+/// Result of `session/get_status` — live engine status snapshot. Wire shape
+/// mirrors the previous `serde_json::json!` literal: `model` and `usage`
+/// serialize as `null` when absent (no skip), `permission` is the stringified
+/// permission mode.
+#[derive(Debug, Serialize)]
+pub struct SessionStatusResult {
+    pub model: Option<String>,
+    pub thinking_effort: String,
+    pub permission: String,
+    pub plan_mode: bool,
+    pub swarm_mode: bool,
+    pub goal_enabled: bool,
+    pub context_tokens: u64,
+    pub max_context_tokens: u64,
+    pub context_usage: f64,
+    pub usage: Option<crate::usage::UsageStatus>,
+}
+

@@ -11,23 +11,11 @@
 pub mod injection;
 pub mod ops;
 
-use serde::{Deserialize, Serialize};
-
-/// Plan data returned by `data()`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlanData {
-    pub id: String,
-    pub content: String,
-    pub path: String,
-}
-
-/// A plan file path, or null when no plan is active.
-pub type PlanFilePath = Option<String>;
+pub use kimi_protocol::plan::*;
 
 /// Configuration for PlanMode.
 #[derive(Debug, Clone)]
-pub struct PlanConfig {
-    /// Directory where plan files are stored. Default: "plan".
+pub struct PlanConfig {    /// Directory where plan files are stored. Default: "plan".
     pub plan_dir: String,
 }
 
