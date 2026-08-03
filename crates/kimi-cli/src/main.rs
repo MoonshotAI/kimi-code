@@ -26,6 +26,13 @@ enum Commands {
         #[arg(default_value_t = 50)]
         limit: u32,
     },
+    /// Resume a session and run a prompt on it.
+    Resume {
+        /// Session id to resume.
+        session_id: String,
+        /// The prompt to run.
+        prompt: String,
+    },
     /// Environment + config diagnostics.
     Doctor,
     /// Engine health check.
@@ -57,6 +64,39 @@ async fn main() -> anyhow::Result<()> {
             for session in body["result"]["sessions"].as_array().unwrap_or(&vec![]) {
                 println!("{}  {}", session["id"], session["title"]);
             }
+        }
+        Commands::Resume { session_id, prompt } => {
+            let server = kimi_server::Server::build()?;
+            let mut client = kimi_server_client::AppServerClient::InProcess(
+                kimi_server::in_process::spawn(server.processor),
+            );
+            let native_llm = kimi_exec::native_llm_from_config();
+            let mut create_params = serde_json::json!({ "session_id": session_id });
+            if let Some(nllm) = native_llm {
+                create_params["native_llm"] = serde_json::to_value(&nllm).unwrap_or_default();
+            }
+            let created = client.call(kimi_protocol::methods::SESSION_CREATE, create_params).await;
+            if created.get("error").is_some() {
+                eprintln!("error: {}", created["error"]["message"].as_str().unwrap_or("unknown"));
+                std::process::exit(1);
+            }
+            client
+                .call(kimi_protocol::methods::SESSION_LOAD, serde_json::json!({ "session_id": session_id }))
+                .await;
+            let result = client
+                .call(
+                    kimi_protocol::methods::SESSION_PROMPT,
+                    serde_json::json!({
+                        "session_id": session_id,
+                        "input": [{ "type": "text", "text": prompt }],
+                    }),
+                )
+                .await;
+            if let Some(error) = result.get("error") {
+                eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
+                std::process::exit(1);
+            }
+            println!("{result}");
         }
         Commands::Doctor => {
             let server = kimi_server::Server::build()?;
