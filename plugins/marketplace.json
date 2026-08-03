@@ -11,23 +11,6 @@
       "source": "./official/kimi-datasource"
     },
     {
-      "id": "kimi-cu",
-      "tier": "official",
-      "displayName": "Kimi Computer Use",
-      "description": "macOS GUI automation in the background — click, type, scroll, and drag without taking over your mouse. Requires the KimiCU.app runtime (macOS only); current clients set it up automatically on install.",
-      "keywords": ["computer-use", "macos", "accessibility", "automation", "gui"],
-      "source": "https://cdn.kimi.com/kimi-computer-use/latest/kimi-cu-plugin.zip"
-    },
-    {
-      "id": "kimi-webbridge",
-      "tier": "official",
-      "displayName": "Kimi WebBridge",
-      "description": "Control your real browser from Kimi Code — navigate, click, type, and screenshot. Requires the WebBridge daemon + browser extension.",
-      "homepage": "https://www.kimi.com/features/webbridge",
-      "keywords": ["browser", "webbridge", "cdp", "automation", "web"],
-      "source": "./official/kimi-webbridge"
-    },
-    {
       "id": "superpowers",
       "tier": "curated",
       "displayName": "Superpowers",
