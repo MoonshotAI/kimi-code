@@ -76,9 +76,11 @@ async function pathExists(filePath: string): Promise<boolean> {
   try {
     await stat(filePath);
     return true;
-  } catch (error: unknown) {
-    if (isPathMissing(error)) return false;
-    throw error;
+  } catch {
+    // Probing an optional marker file (e.g. `.git` while walking up parents)
+    // must never throw: on Windows UNC shares, stat past the share root can
+    // fail with UNKNOWN/EPERM instead of ENOENT.
+    return false;
   }
 }
 
@@ -154,11 +156,6 @@ function isWindowsAbsolutePath(value: string): boolean {
 
 function isFileNotFound(error: unknown): boolean {
   return getErrorCode(error) === 'ENOENT';
-}
-
-function isPathMissing(error: unknown): boolean {
-  const code = getErrorCode(error);
-  return code === 'ENOENT' || code === 'ENOTDIR';
 }
 
 function getErrorCode(error: unknown): unknown {

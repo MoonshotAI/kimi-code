@@ -3,10 +3,27 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ErrorCodes, KimiError } from '../../src/errors';
 import { loadMcpServers, resolveMcpJsonPaths } from '../../src/mcp/config-loader';
+
+// Lets individual tests make `.git` marker probes fail with a specific error
+// code (e.g. UNKNOWN on Windows UNC shares); everything else stats through.
+const probeFailure = vi.hoisted(() => ({ code: undefined as string | undefined }));
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  const stat = (path: Parameters<typeof actual.stat>[0], options?: Parameters<typeof actual.stat>[1]) => {
+    if (probeFailure.code !== undefined && String(path).endsWith('.git')) {
+      const error: NodeJS.ErrnoException = new Error(`unknown error, stat '${String(path)}'`);
+      error.code = probeFailure.code;
+      return Promise.reject(error);
+    }
+    return actual.stat(path, options);
+  };
+  return { ...actual, stat };
+});
 
 const tempDirs: string[] = [];
 
@@ -40,6 +57,22 @@ describe('resolveMcpJsonPaths', () => {
     expect(paths.projectRoot).toBe(join(repoRoot, '.mcp.json'));
     expect(paths.project).toBe(join(cwd, '.kimi-code', 'mcp.json'));
   });
+
+  // Windows can fail a `.git` probe past a UNC share root with UNKNOWN/EPERM
+  // instead of ENOENT; the walk must treat that as "not found" (#2540).
+  it.each(['UNKNOWN', 'EPERM'])(
+    'falls back to the cwd when .git probes fail with %s',
+    async (code) => {
+      const cwd = makeTempDir();
+      probeFailure.code = code;
+      try {
+        const paths = await resolveMcpJsonPaths({ cwd, homeDir: '/home/user/.kimi-code' });
+        expect(paths.projectRoot).toBe(join(cwd, '.mcp.json'));
+      } finally {
+        probeFailure.code = undefined;
+      }
+    },
+  );
 });
 
 describe('loadMcpServers', () => {
