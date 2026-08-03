@@ -112,6 +112,19 @@ describe('permissionResponseToApprovalResponse', () => {
     ).toEqual({ decision: 'rejected' });
   });
 
+  it('maps the legacy Python kimi-cli optionIds like their canonical counterparts', () => {
+    // < v0.9.0 clients answer with 'approve' / 'approve_for_session'.
+    expect(
+      permissionResponseToApprovalResponse(makeRequest(commandDisplay), selected('approve')),
+    ).toEqual({ decision: 'approved' });
+    expect(
+      permissionResponseToApprovalResponse(
+        makeRequest(commandDisplay),
+        selected('approve_for_session'),
+      ),
+    ).toEqual({ decision: 'approved', scope: 'session' });
+  });
+
   it('maps plan_opt_<i> to approved with the option label as selectedLabel', () => {
     const display: ToolInputDisplay = {
       kind: 'plan_review',

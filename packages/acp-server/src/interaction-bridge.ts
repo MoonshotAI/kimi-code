@@ -14,7 +14,6 @@
  * settles the parked request via `session.interactions.respond(id, ...)`.
  */
 
-import type { AgentSideConnection } from '@agentclientprotocol/sdk';
 import type {
   Interaction,
   QuestionAnswers,
@@ -23,6 +22,8 @@ import type {
   SessionApprovalResponse as ApprovalResponse,
 } from '@moonshot-ai/agent-core-v2';
 import type { IDisposable, SessionHandle } from '@moonshot-ai/klient';
+
+import type { AcpClient } from './acp-client';
 
 import {
   approvalRequestToPermissionOptions,
@@ -41,7 +42,7 @@ export class AcpInteractionBridge {
   private disposed = false;
 
   constructor(
-    private readonly conn: AgentSideConnection,
+    private readonly conn: AcpClient,
     private readonly session: SessionHandle,
     private readonly sessionId: string,
   ) {

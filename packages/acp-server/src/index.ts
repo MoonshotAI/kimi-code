@@ -1,7 +1,9 @@
 export type { Implementation } from '@agentclientprotocol/sdk';
 
-export { AcpServer } from './server';
-export type { AcpServerOptions } from './server';
+export { AcpServer, createAcpAgentApp } from './server';
+export type { AcpServerOptions, SetSessionModelParams } from './server';
+export { acpClientFromContext } from './acp-client';
+export type { AcpClient } from './acp-client';
 export { AcpSession } from './session';
 export { runAcpServer, runAcpServerWithStream } from './start';
 export type { RunAcpServerOptions, RunningAcpServer } from './start';
@@ -77,3 +79,10 @@ export {
   questionItemToPermissionOptions,
 } from './question';
 export { projectHistoryToSessionUpdates } from './replay';
+export { AcpProcessRunner } from './acp-terminal';
+export type {
+  AcpTerminalCreatedEvent,
+  AcpTerminalCreatedListener,
+  IAcpTerminalClient,
+  IAcpTerminalHandle,
+} from './acp-fs';

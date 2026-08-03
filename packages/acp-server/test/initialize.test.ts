@@ -7,6 +7,7 @@ import { ndJsonStream } from '@agentclientprotocol/sdk';
 import { describe, expect, it } from 'vitest';
 
 import { runAcpServerWithStream } from '../src/start';
+import { CURRENT_VERSION, MIN_PROTOCOL_VERSION, negotiateVersion } from '../src/version';
 
 interface JsonRpcMessage {
   readonly jsonrpc?: string;
@@ -28,6 +29,32 @@ async function readOneMessage(readable: Readable): Promise<JsonRpcMessage> {
   }
   throw new Error('stream closed before a full JSON-RPC message was received');
 }
+
+describe('negotiateVersion', () => {
+  it('returns CURRENT_VERSION when the client version is below MIN_PROTOCOL_VERSION', () => {
+    const result = negotiateVersion(0);
+    expect(result).toBe(CURRENT_VERSION);
+    expect(result.protocolVersion).toBe(1);
+  });
+
+  it('returns the matching spec when the client requests the current version', () => {
+    const result = negotiateVersion(1);
+    expect(result).toBe(CURRENT_VERSION);
+    expect(result.protocolVersion).toBe(1);
+    expect(result.specTag).toBe('v0.10.x');
+    expect(result.sdkVersion).toBe('0.23.0');
+  });
+
+  it('returns the highest supported version when the client advertises a newer one', () => {
+    const result = negotiateVersion(99);
+    expect(result).toBe(CURRENT_VERSION);
+    expect(result.protocolVersion).toBe(1);
+  });
+
+  it('exposes MIN_PROTOCOL_VERSION = 1', () => {
+    expect(MIN_PROTOCOL_VERSION).toBe(1);
+  });
+});
 
 describe('acp-server initialize handshake', () => {
   it(
@@ -53,8 +80,46 @@ describe('acp-server initialize handshake', () => {
         expect(response.id).toBe(1);
         expect(response.error).toBeUndefined();
         expect(response.result).toMatchObject({
-          agentCapabilities: { loadSession: true },
+          agentCapabilities: {
+            loadSession: true,
+            auth: { logout: {} },
+            mcpCapabilities: { http: true, sse: true },
+            sessionCapabilities: { additionalDirectories: {}, delete: {}, fork: {} },
+          },
         });
+
+        await server.close();
+        toAgent.end();
+        toClient.end();
+      } finally {
+        await rm(homeDir, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
+  it(
+    'negotiates down to the highest supported version when the client advertises a newer one',
+    async () => {
+      const homeDir = await mkdtemp(join(tmpdir(), 'acp-server-neg-'));
+      const toAgent = new PassThrough();
+      const toClient = new PassThrough();
+      try {
+        const stream = ndJsonStream(Writable.toWeb(toClient), Readable.toWeb(toAgent));
+        const server = await runAcpServerWithStream(stream, { homeDir });
+
+        toAgent.write(
+          `${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'initialize',
+            params: { protocolVersion: 99, clientCapabilities: {} },
+          })}\n`,
+        );
+
+        const response = await readOneMessage(toClient);
+        expect(response.error).toBeUndefined();
+        expect((response.result as { protocolVersion?: number })?.protocolVersion).toBe(1);
 
         await server.close();
         toAgent.end();

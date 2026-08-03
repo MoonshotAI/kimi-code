@@ -1,9 +1,10 @@
-import type { AgentSideConnection, RequestPermissionResponse } from '@agentclientprotocol/sdk';
+import type { RequestPermissionResponse } from '@agentclientprotocol/sdk';
 import type { Interaction } from '@moonshot-ai/agent-core-v2';
 import type { SessionHandle } from '@moonshot-ai/klient';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 import { describe, expect, it } from 'vitest';
 
+import type { AcpClient } from '../src/acp-client';
 import { AcpInteractionBridge } from '../src/interaction-bridge';
 
 const SESSION_ID = 'session_test';
@@ -59,7 +60,7 @@ function makeFakeSession(): FakeSession {
 }
 
 interface FakeConn {
-  readonly conn: AgentSideConnection;
+  readonly conn: AcpClient;
   readonly calls: Array<Record<string, unknown>>;
 }
 
@@ -72,7 +73,7 @@ function makeFakeConn(
       calls.push(params);
       return handler(params);
     },
-  } as unknown as AgentSideConnection;
+  } as unknown as AcpClient;
   return { conn, calls };
 }
 
@@ -138,7 +139,7 @@ describe('AcpInteractionBridge', () => {
       requestPermission: async () => {
         throw new Error('transport dropped');
       },
-    } as unknown as AgentSideConnection;
+    } as unknown as AcpClient;
     session.setPending([approvalInteraction]);
     const bridge = new AcpInteractionBridge(conn, session.handle, SESSION_ID);
     await flush();

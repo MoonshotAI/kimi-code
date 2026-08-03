@@ -13,26 +13,33 @@
 
 import { Readable, Writable } from 'node:stream';
 
-import { AgentSideConnection, ndJsonStream, type Stream } from '@agentclientprotocol/sdk';
+import { ndJsonStream, type AgentConnection, type Stream } from '@agentclientprotocol/sdk';
 import {
   bootstrap,
+  getLiveSessionById,
   IAppendLogStore,
+  ISessionContext,
   logSeed,
   resolveConfigPath,
   resolveKimiHome,
   resolveLoggingConfig,
   type Scope,
   type ScopeSeed,
+  sessionMediaOriginalsDir,
 } from '@moonshot-ai/agent-core-v2';
 import type { Klient } from '@moonshot-ai/klient';
 import { createKlient } from '@moonshot-ai/klient/memory';
 
+import { acpClientFromContext } from './acp-client';
 // Importing the `acp-fs` barrel also registers the ACP-backed Session-scope
 // `IHostFileSystem` and the App-scope `IAcpConnection` holder via the barrel's
 // module side effects. `IAcpConnection` is used below to bind the ACP client
 // connection.
 import { IAcpConnection } from './acp-fs';
-import { AcpServer, type AcpServerOptions } from './server';
+// Importing the `acp-terminal` barrel registers the ACP-backed Agent-scope
+// `ISessionProcessRunner` (capability-gated — see the module doc).
+import './acp-terminal';
+import { AcpServer, type AcpServerOptions, createAcpAgentApp } from './server';
 
 export interface RunAcpServerOptions extends AcpServerOptions {
   readonly homeDir?: string;
@@ -51,7 +58,7 @@ export interface RunAcpServerOptions extends AcpServerOptions {
 export interface RunningAcpServer {
   readonly core: Scope;
   readonly klient: Klient;
-  readonly conn: AgentSideConnection;
+  readonly conn: AgentConnection;
   close(): Promise<void>;
 }
 
@@ -88,11 +95,23 @@ export async function runAcpServerWithStream(
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
   // `bootstrap()` seeds `IFileSystemStorageService` with a `FileStorageService`
   // rooted at `homeDir`, so session metadata, wire records, blobs, and the
-  // session index all persist to disk.
-  const { app: core } = bootstrap({ homeDir, configPath }, [
-    ...logSeed(logging),
-    ...(opts.extraSeeds ?? []),
-  ]);
+  // session index all persist to disk. `clientIdentity` is required by the
+  // engine: reuse the advertised ACP `agentInfo` (the embedding CLI's
+  // name/version) with the CLI platform — the literal matches
+  // `KIMI_CODE_PLATFORM` from `@moonshot-ai/kimi-code-oauth`, which this
+  // package does not depend on.
+  const { app: core } = bootstrap(
+    {
+      homeDir,
+      configPath,
+      clientIdentity: {
+        productName: opts.agentInfo?.name ?? 'kimi-code-acp',
+        version: opts.agentInfo?.version ?? '0.0.0',
+        platform: 'kimi_code_cli',
+      },
+    },
+    [...logSeed(logging), ...(opts.extraSeeds ?? [])],
+  );
 
   // The klient dispatches against the same app scope — calls and events stay
   // in-process but observe wire-shaped (JSON-cloned) data. The klient does
@@ -100,18 +119,36 @@ export async function runAcpServerWithStream(
   const klient = createKlient({ scope: core });
   const acpConnection = core.accessor.get(IAcpConnection);
 
-  const conn = new AgentSideConnection((c) => {
-    // Bind the process-wide ACP client connection before any session performs
-    // file IO. The `acp` `IHostFileSystem` reads it lazily via
-    // `IAcpConnection.get()`.
-    acpConnection.bind(c);
-    return new AcpServer(c, klient, acpConnection, {
-      agentInfo: opts.agentInfo,
-      disableAuth: opts.disableAuth,
-      terminalAuthEnv: opts.terminalAuthEnv,
-      terminalAuthLegacyCommand: opts.terminalAuthLegacyCommand,
-    });
-  }, stream);
+  // Route every inbound ACP method to the `AcpServer`. The app must be
+  // connected before the outbound client surface (`conn.client`) — and thus
+  // the server — exists, so handlers dereference `server` lazily. No inbound
+  // message can be dispatched before this synchronous block yields (the
+  // connection's reader only runs on later microtasks), so `server` is always
+  // assigned by the time a handler fires.
+  let server: AcpServer;
+  const app = createAcpAgentApp(() => server);
+  const conn = app.connect(stream);
+  const client = acpClientFromContext(conn.client);
+  // Bind the process-wide ACP client connection before any session performs
+  // file IO. The `acp` `IHostFileSystem` reads it lazily via
+  // `IAcpConnection.get()`.
+  acpConnection.bind(client);
+  server = new AcpServer(client, klient, acpConnection, {
+    agentInfo: opts.agentInfo,
+    disableAuth: opts.disableAuth,
+    terminalAuthEnv: opts.terminalAuthEnv,
+    terminalAuthLegacyCommand: opts.terminalAuthLegacyCommand,
+    // Prompt-image compression persists originals into the session's own
+    // media-originals dir (same resolution as kap-server's prompt route):
+    // live session scope → `ISessionContext.sessionDir`. A session that is
+    // not live in this process yields undefined → temp-dir fallback.
+    resolveOriginalsDir: (sessionId) => {
+      const handle = getLiveSessionById(core.accessor, sessionId);
+      return handle === undefined
+        ? undefined
+        : sessionMediaOriginalsDir(handle.accessor.get(ISessionContext).sessionDir);
+    },
+  });
 
   const close = async (): Promise<void> => {
     // Detach the klient's event subscriptions first so disposal below cannot

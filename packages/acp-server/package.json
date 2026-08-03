@@ -19,7 +19,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "^0.23.0",
+    "@agentclientprotocol/sdk": "^1.3.0",
     "@moonshot-ai/agent-core-v2": "workspace:^",
     "@moonshot-ai/klient": "workspace:^",
     "@moonshot-ai/protocol": "workspace:^"

@@ -20,10 +20,10 @@ import {
   type HostDirEntry,
   type HostFileStat,
   IHostFileSystem,
-  InstantiationType,
   ISessionContext,
   LifecycleScope,
   registerScopedService,
+  ScopeActivation,
 } from '@moonshot-ai/agent-core-v2';
 
 import { IAcpConnection } from './acpConnection';
@@ -109,6 +109,10 @@ export class AcpHostFileSystem implements IHostFileSystem {
     return this.inner.stat(path);
   }
 
+  lstat(path: string): Promise<HostFileStat> {
+    return this.inner.lstat(path);
+  }
+
   realpath(path: string): Promise<string> {
     return this.inner.realpath(path);
   }
@@ -130,6 +134,6 @@ registerScopedService(
   LifecycleScope.Session,
   IHostFileSystem,
   AcpHostFileSystem,
-  InstantiationType.Delayed,
+  ScopeActivation.OnDemand,
   'acp',
 );

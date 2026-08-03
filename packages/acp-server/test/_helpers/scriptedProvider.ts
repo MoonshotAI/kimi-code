@@ -23,6 +23,7 @@ import {
   IProtocolAdapterRegistry,
   type IProtocolAdapterRegistry as IProtocolAdapterRegistryType,
   type Message,
+  ProtocolAdapterRegistry,
   type ProtocolAdapterConfig,
   type StreamedMessagePart,
   type TokenUsage,
@@ -34,15 +35,6 @@ interface ScriptedResponse {
   readonly finishReason?: FinishReason | null;
   readonly rawFinishReason?: string | null;
 }
-
-const SUPPORTED_PROTOCOLS = [
-  'kimi',
-  'anthropic',
-  'openai',
-  'openai_responses',
-  'google-genai',
-  'vertexai',
-] as const;
 
 const ZERO_USAGE: TokenUsage = {
   inputOther: 0,
@@ -135,6 +127,8 @@ export interface ScriptedProvider {
   }): void;
   /** Number of `generate()` calls the engine has made so far. */
   callCount(): number;
+  /** The `history` argument of every `generate()` call so far, in order. */
+  callHistory(): ReadonlyArray<readonly Message[]>;
 }
 
 export function createScriptedProvider(): ScriptedProvider {
@@ -143,9 +137,19 @@ export function createScriptedProvider(): ScriptedProvider {
   // Single shared provider so every ModelImpl in the process (main agent,
   // sub-agents) draws from the same FIFO queue.
   const provider = new ScriptedChatProvider(queue, calls);
+  // Identity/capability resolution delegates to the real registry (the
+  // interface grew `resolveAdapterIdentity` / `resolveProviderBaseId` /
+  // `resolveCapability` / `explainCapability` — delegating keeps the stub
+  // truthful and immune to further growth); only `createChatProvider` is
+  // scripted.
+  const real = new ProtocolAdapterRegistry();
   const registry: IProtocolAdapterRegistryType = {
     _serviceBrand: undefined,
-    supportedProtocols: () => SUPPORTED_PROTOCOLS,
+    supportedProtocols: () => real.supportedProtocols(),
+    resolveAdapterIdentity: real.resolveAdapterIdentity.bind(real),
+    resolveProviderBaseId: real.resolveProviderBaseId.bind(real),
+    resolveCapability: real.resolveCapability.bind(real),
+    explainCapability: real.explainCapability.bind(real),
     // `createChatProvider` is called by `ModelImpl` (a package-internal method
     // not on the public interface); present at runtime, cast for the type gap.
     createChatProvider: (_input: ProtocolAdapterConfig) => provider,
@@ -167,5 +171,6 @@ export function createScriptedProvider(): ScriptedProvider {
       });
     },
     callCount: () => calls.length,
+    callHistory: () => calls,
   };
 }

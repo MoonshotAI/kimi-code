@@ -18,6 +18,8 @@ export type RequestHandler = (params: unknown) => unknown | Promise<unknown>;
 export interface TestClient {
   /** Send a JSON-RPC request and resolve with the `result` (rejects on `error`). */
   send(method: string, params?: unknown): Promise<unknown>;
+  /** Send a JSON-RPC notification (no id — no response is expected). */
+  notify(method: string, params?: unknown): void;
   /** All messages received from the agent so far (responses + notifications + requests). */
   readonly received: readonly RpcMessage[];
   /** `session/update` notifications received so far. */
@@ -137,6 +139,11 @@ export async function createTestClient(opts: {
     });
   }
 
+  function notify(method: string, params?: unknown): void {
+    const notification = { jsonrpc: '2.0', method, params: params ?? {} };
+    toAgent.write(`${JSON.stringify(notification)}\n`);
+  }
+
   function sessionUpdates(): readonly RpcMessage[] {
     return received.filter((m) => m.method === 'session/update');
   }
@@ -171,5 +178,5 @@ export async function createTestClient(opts: {
     requestHandlers.set(method, handler);
   }
 
-  return { send, received, sessionUpdates, waitForSessionUpdate, onRequest, server, close };
+  return { send, notify, received, sessionUpdates, waitForSessionUpdate, onRequest, server, close };
 }

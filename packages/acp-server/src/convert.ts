@@ -1,5 +1,13 @@
-import type { ContentBlock, ToolCallContent } from '@agentclientprotocol/sdk';
-import { type ContentPart } from '@moonshot-ai/agent-core-v2';
+import type { ContentBlock, McpServer, ToolCallContent } from '@agentclientprotocol/sdk';
+import {
+  buildImageCompressionCaption,
+  compressBase64ForModel,
+  type ContentPart,
+  gateImageFormatParts,
+  type McpServerConfig,
+  parseImageDataUrl,
+  persistOriginalImage,
+} from '@moonshot-ai/agent-core-v2';
 import type { ToolInputDisplay, ToolResultEvent } from '@moonshot-ai/protocol';
 
 import { log } from './log';
@@ -9,10 +17,11 @@ import { isHideOutputMarker } from './marker';
  * Convert an array of ACP {@link ContentBlock}s into agent-core-v2
  * {@link ContentPart}s suitable for a user `ContextMessage`'s `content`.
  *
- * Image blocks are passed through as `image_url` data URLs (input-stage
- * compression is a later phase). Audio and blob embedded resources are dropped
- * with a warning (ACP `promptCapabilities` currently advertise audio as
- * unsupported).
+ * Image parts are built from the client-declared MIME verbatim; run the
+ * result through {@link compressPromptImageParts} before submitting so
+ * unsupported formats are dropped and MIME aliases canonicalized. Audio and
+ * blob embedded resources are dropped with a warning (ACP
+ * `promptCapabilities` currently advertise audio as unsupported).
  */
 export function acpBlocksToContentParts(blocks: readonly ContentBlock[]): readonly ContentPart[] {
   const out: ContentPart[] = [];
@@ -66,6 +75,137 @@ export function acpBlocksToContentParts(blocks: readonly ContentBlock[]): readon
     });
   }
   return out;
+}
+
+/**
+ * Shrink oversized inline images in a prompt-part list — the ACP ingestion
+ * point's input-stage compression, mirroring kap-server's upload-time step
+ * (`resolvePromptMediaFiles`). Best effort: a part that cannot be compressed
+ * is passed through unchanged.
+ *
+ * This is NOT duplicated by the engine: agent-core-v2's prompt pipeline
+ * (`agent/prompt/promptService.ts`) only *extracts* pre-existing compression
+ * captions from user text (rerouting them to system reminders) — it never
+ * gates or compresses images at the prompt entry, so the edge ingestion point
+ * owns the step.
+ *
+ * The format gate (`gateImageFormatParts`) runs first: parts whose MIME is
+ * outside the provider-accepted set are never forwarded — the part is
+ * dropped and a text notice stands in, so one unsupported image cannot
+ * poison the session history; accepted MIME aliases (`image/jpg`,
+ * case/whitespace variants) are rewritten to the canonical form strict
+ * provider whitelists require.
+ *
+ * Compression is never silent: a re-encoded image gains a caption text part
+ * immediately before it stating what the original was, and the original bytes
+ * are persisted (into `originalsDir` — typically the session's
+ * media-originals dir — or the shared temp-dir fallback) so the model can
+ * read fine detail back via ReadMediaFile + region.
+ */
+export async function compressPromptImageParts(
+  parts: readonly ContentPart[],
+  options: {
+    readonly originalsDir?: string | undefined;
+    /**
+     * Longest-edge ceiling (px) override. The ACP server runs the engine
+     * in-process, so the Agent-scope `ImageConfigBridge` has already pushed
+     * the env-resolved `[image]` config section into the compression module's
+     * global seam — leave this `undefined` (the default) and the configured /
+     * built-in cap applies. The override exists for tests.
+     */
+    readonly maxImageEdgePx?: number | undefined;
+  } = {},
+): Promise<ContentPart[]> {
+  const out: ContentPart[] = [];
+  for (const part of gateImageFormatParts(parts)) {
+    if (part.type === 'image_url') {
+      const parsed = parseImageDataUrl(part.imageUrl.url);
+      if (parsed !== null) {
+        const result = await compressBase64ForModel(parsed.base64, parsed.mimeType, {
+          maxEdge: options.maxImageEdgePx,
+        });
+        if (result.changed) {
+          const originalPath = await persistOriginalImage(
+            Buffer.from(parsed.base64, 'base64'),
+            parsed.mimeType,
+            { dir: options.originalsDir },
+          );
+          out.push({
+            type: 'text',
+            text: buildImageCompressionCaption({
+              original: {
+                width: result.originalWidth,
+                height: result.originalHeight,
+                byteLength: result.originalByteLength,
+                mimeType: parsed.mimeType,
+              },
+              final: {
+                width: result.width,
+                height: result.height,
+                byteLength: result.finalByteLength,
+                mimeType: result.mimeType,
+              },
+              originalPath,
+            }),
+          });
+          out.push({
+            type: 'image_url',
+            imageUrl: { ...part.imageUrl, url: `data:${result.mimeType};base64,${result.base64}` },
+          });
+          continue;
+        }
+      }
+    }
+    out.push(part);
+  }
+  return out;
+}
+
+/**
+ * Convert ACP `session/new` / `session/load` `mcpServers` — a named array
+ * discriminated by `type` (absent = stdio) — into the engine's name-keyed
+ * {@link McpServerConfig} record. Returns `undefined` for an absent/empty
+ * list (or when every entry was dropped) so the engine builds no session
+ * overlay. The unstable `type: 'acp'` transport is unsupported and dropped
+ * with a warning.
+ */
+export function acpMcpServersToConfigRecord(
+  servers: readonly McpServer[] | undefined,
+): Record<string, McpServerConfig> | undefined {
+  if (servers === undefined || servers.length === 0) return undefined;
+  const out: Record<string, McpServerConfig> = {};
+  for (const server of servers) {
+    if (!('type' in server)) {
+      out[server.name] = {
+        transport: 'stdio',
+        command: server.command,
+        args: server.args,
+        env: namedPairsToRecord(server.env),
+      };
+      continue;
+    }
+    if (server.type === 'http' || server.type === 'sse') {
+      out[server.name] = {
+        transport: server.type,
+        url: server.url,
+        headers: namedPairsToRecord(server.headers),
+      };
+      continue;
+    }
+    log.warn('acp: dropping unsupported MCP server transport', {
+      name: server.name,
+      type: server.type,
+    });
+  }
+  return Object.keys(out).length === 0 ? undefined : out;
+}
+
+/** ACP env/header lists are `{name, value}` arrays; the engine wants a record. */
+function namedPairsToRecord(
+  pairs: readonly { readonly name: string; readonly value: string }[],
+): Record<string, string> | undefined {
+  if (pairs.length === 0) return undefined;
+  return Object.fromEntries(pairs.map((p) => [p.name, p.value]));
 }
 
 /**
@@ -165,7 +305,9 @@ export function displayBlockToAcpContent(block: ToolInputDisplay): ToolCallConte
  * (caller drops the entry). When `block.path` is set, prefix with the on-disk
  * location so the client can show it alongside the markdown body.
  */
-function composePlanContent(block: Extract<ToolInputDisplay, { kind: 'plan_review' }>): string | null {
+function composePlanContent(
+  block: Extract<ToolInputDisplay, { kind: 'plan_review' }>,
+): string | null {
   if (block.plan.trim().length === 0) return null;
   if (block.path !== undefined) {
     return `Plan saved to: ${block.path}\n\n${block.plan}`;

@@ -1,3 +1,5 @@
+import { isAbsolute } from 'node:path';
+
 import type {
   AvailableCommand,
   PlanEntry,
@@ -5,6 +7,7 @@ import type {
   SessionConfigOption,
   SessionNotification,
   ToolCallContent,
+  ToolCallLocation,
   ToolKind,
 } from '@agentclientprotocol/sdk';
 import type {
@@ -143,6 +146,48 @@ export function stringifyArgs(args: unknown): string {
 }
 
 /**
+ * File tools whose raw args carry a path worth advertising as a location.
+ * v2 tools use `path`; `file_path` is accepted too for legacy-style args.
+ */
+const FILE_TOOL_NAMES: ReadonlySet<string> = new Set(['Read', 'Write', 'Edit', 'Glob', 'Grep']);
+
+function argsPath(name: string, args: unknown): string | undefined {
+  if (!FILE_TOOL_NAMES.has(name) || typeof args !== 'object' || args === null) return undefined;
+  const record = args as Record<string, unknown>;
+  for (const key of ['file_path', 'path']) {
+    const value = record[key];
+    if (typeof value === 'string' && value.length > 0) return value;
+  }
+  return undefined;
+}
+
+/**
+ * Derive the ACP {@link ToolCallLocation}s for a tool call, best-effort.
+ *
+ * Priority: the display block's path (diff / file_io — the same display data
+ * `displayBlockToAcpContent` reads), then the raw args of the known file
+ * tools. Only absolute paths are advertised (the wire contract requires
+ * them); when nothing qualifies the caller omits the field rather than
+ * fabricating one. No line information exists in either source, so `line`
+ * stays unset.
+ */
+export function toolCallLocations(
+  name: string,
+  args: unknown,
+  display: ToolInputDisplay | undefined,
+): ToolCallLocation[] | undefined {
+  const displayPath =
+    display !== undefined && (display.kind === 'diff' || display.kind === 'file_io')
+      ? display.path
+      : undefined;
+  const path = [displayPath, argsPath(name, args)].find(
+    (candidate): candidate is string => candidate !== undefined && isAbsolute(candidate),
+  );
+  if (path === undefined) return undefined;
+  return [{ path }];
+}
+
+/**
  * Build the ACP `session/update` for the **initial** `tool_call` create
  * notification from a `tool.call.started` event.
  */
@@ -174,6 +219,7 @@ export function toolCallStartToSessionUpdate(
       kind: inferToolKind(event.name),
       status: 'in_progress',
       rawInput: event.args,
+      locations: toolCallLocations(event.name, event.args, event.display),
       content,
     },
   };
@@ -272,6 +318,7 @@ export function toolCallStartedUpgradeToSessionUpdate(
       kind: inferToolKind(event.name),
       status: 'in_progress',
       rawInput: event.args,
+      locations: toolCallLocations(event.name, event.args, event.display),
       content,
     },
   };
@@ -320,10 +367,13 @@ export function thinkingDeltaToSessionUpdate(
  * notification for that call. `status` flips to `completed` (success) or
  * `failed` (`event.isError === true`); content replaces the streaming args
  * preview with the final tool output; `rawOutput` preserves the raw output.
+ * `ToolResultEvent` carries no args/display, so `locations` (derived at
+ * `tool.call.started` by the caller) is re-attached here when available.
  */
 export function toolResultToSessionUpdate(
   sessionId: string,
   event: ToolResultEvent,
+  locations?: ToolCallLocation[],
 ): SessionNotification {
   return {
     sessionId,
@@ -333,6 +383,7 @@ export function toolResultToSessionUpdate(
       status: event.isError ? 'failed' : 'completed',
       content: toolResultToAcpContent(event),
       rawOutput: event.output,
+      locations,
     },
   };
 }
@@ -408,6 +459,26 @@ export function availableCommandsUpdateNotification(
 }
 
 /**
+ * Build a `current_mode_update` session notification, emitted after
+ * `session/set_mode` (or the `mode` config-option arm) changes the active
+ * mode. Coexists with `config_option_update`: the two serve clients reading
+ * the first-class `modes` state and clients reading `configOptions`
+ * respectively.
+ */
+export function currentModeUpdateNotification(
+  sessionId: string,
+  currentModeId: string,
+): SessionNotification {
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: 'current_mode_update',
+      currentModeId,
+    },
+  };
+}
+
+/**
  * Build a `config_option_update` session notification, emitted after the model
  * / mode / thinking pickers change so clients repaint the dropdown's selected
  * indicator.
@@ -421,6 +492,44 @@ export function configOptionUpdateNotification(
     update: {
       sessionUpdate: 'config_option_update',
       configOptions: [...configOptions],
+    },
+  };
+}
+
+/**
+ * Build a one-shot `usage_update` session notification, emitted after a turn
+ * settles. `used` is the agent's current context token count, `size` the bound
+ * model's max context size; `cost` stays omitted (the engine has no cost
+ * data).
+ */
+export function usageUpdateNotification(
+  sessionId: string,
+  used: number,
+  size: number,
+): SessionNotification {
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: 'usage_update',
+      used,
+      size,
+    },
+  };
+}
+
+/**
+ * Build a `session_info_update` session notification for a title change.
+ * `title: null` clears the title client-side.
+ */
+export function sessionInfoUpdateNotification(
+  sessionId: string,
+  title: string | null,
+): SessionNotification {
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: 'session_info_update',
+      title,
     },
   };
 }

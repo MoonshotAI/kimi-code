@@ -9,11 +9,12 @@
  *   - `id: 'thinking'` (`type: 'select'`, `category: 'thought_level'`) —
  *     appears ONLY when the currently-selected model's catalog row has
  *     `thinkingSupported === true`; otherwise omitted so the client doesn't
- *     render a non-actionable toggle. Encoded as a 2-entry select
- *     (`off` / `on`) for Zed compatibility (its chip strip only renders
- *     `select` options; the spec's `boolean` arm shows as "Unknown"). Effort
- *     granularity stays hidden behind the host — the runtime uses a single
- *     non-`'off'` level (the model's default effort).
+ *     render a non-actionable toggle. Encoded as a `select` for Zed
+ *     compatibility (its chip strip only renders `select` options; the spec's
+ *     `boolean` arm shows as "Unknown"). The entries adapt to the model's
+ *     declared capability: a model with `supportEfforts` offers `off` plus
+ *     every declared effort level; a boolean model keeps the plain
+ *     `off` / `on` pair. `always_thinking` models drop the `off` entry.
  *   - `id: 'mode'`     (`type: 'select'`, `category: 'mode'`) — the locked
  *     4-mode taxonomy ({@link ACP_MODES}).
  */
@@ -47,32 +48,39 @@ export function buildModelOption(
 }
 
 /**
- * Build the `thinking` toggle. `alwaysThinking` models collapse the select to a
- * single locked `on` entry (the state stays visible but there is no off option
- * to pick — ACP has no "disabled entry" concept).
+ * Build the `thinking` select. Entries adapt to the model's declared
+ * capability: with `supportEfforts` the select is `off` plus every declared
+ * effort level; without them it stays the boolean `off` / `on` pair.
+ * `alwaysThinking` models drop the `off` entry (thinking cannot be disabled —
+ * ACP has no "disabled entry" concept). A `currentLevel` not present in the
+ * entries (e.g. an engine-resolved effort the catalog didn't declare) is
+ * appended so `currentValue` always stays selectable.
  */
-export function buildThinkingOption(enabled: boolean, alwaysThinking = false): SessionConfigOption {
-  if (alwaysThinking) {
-    return {
-      type: 'select',
-      id: 'thinking',
-      name: 'Thinking',
-      category: 'thought_level',
-      currentValue: 'on',
-      options: [{ value: 'on', name: 'Thinking On' }],
-    };
+export function buildThinkingOption(
+  currentLevel: string,
+  alwaysThinking = false,
+  supportEfforts?: readonly string[],
+): SessionConfigOption {
+  const values = supportEfforts !== undefined ? ['off', ...supportEfforts] : ['off', 'on'];
+  const options: SessionConfigSelectOption[] = values
+    .filter((value) => !(alwaysThinking && value === 'off'))
+    .map((value) => ({ value, name: thinkingOptionName(value) }));
+  if (!options.some((option) => option.value === currentLevel)) {
+    options.push({ value: currentLevel, name: thinkingOptionName(currentLevel) });
   }
   return {
     type: 'select',
     id: 'thinking',
     name: 'Thinking',
     category: 'thought_level',
-    currentValue: enabled ? 'on' : 'off',
-    options: [
-      { value: 'off', name: 'Thinking Off' },
-      { value: 'on', name: 'Thinking On' },
-    ],
+    currentValue: currentLevel,
+    options,
   };
+}
+
+/** Display name for a thinking select entry (`off` → `Thinking Off`). */
+function thinkingOptionName(value: string): string {
+  return `Thinking ${value.charAt(0).toUpperCase()}${value.slice(1)}`;
 }
 
 /**
@@ -111,7 +119,7 @@ export function buildModeOption(currentModeId: AcpModeId): SessionConfigOption {
 export function buildSessionConfigOptions(
   models: readonly AcpModelEntry[],
   currentBaseModelId: string,
-  currentThinkingEnabled: boolean,
+  currentThinkingLevel: string,
   currentModeId: AcpModeId,
 ): SessionConfigOption[] {
   const currentModelEntry = models.find((m) => m.id === currentBaseModelId);
@@ -120,8 +128,9 @@ export function buildSessionConfigOptions(
   const out: SessionConfigOption[] = [buildModelOption(models, currentBaseModelId)];
   if (showThinking) {
     // Always-thinking models render locked-on regardless of the session's
-    // recorded toggle state — the runtime clamps the same way.
-    out.push(buildThinkingOption(alwaysThinking || currentThinkingEnabled, alwaysThinking));
+    // recorded level — the runtime clamps the same way.
+    const level = alwaysThinking && currentThinkingLevel === 'off' ? 'on' : currentThinkingLevel;
+    out.push(buildThinkingOption(level, alwaysThinking, currentModelEntry?.supportEfforts));
   }
   out.push(buildModeOption(currentModeId));
   return out;
