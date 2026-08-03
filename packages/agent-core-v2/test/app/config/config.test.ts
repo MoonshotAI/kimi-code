@@ -30,6 +30,7 @@ import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import '#/app/cron/configSection';
 import type { CronConfig } from '#/app/cron/configSection';
 import '#/app/skillCatalog/configSection';
+import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/app/skillCatalog/configSection';
 import {
   EXTRA_SKILL_DIRS_SECTION,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
@@ -428,6 +429,36 @@ describe('ConfigService env overlay (live)', () => {
     expect(config.get<CronConfig>('cron').disabled).toBe(true);
     env['KIMI_DISABLE_CRON'] = '0';
     expect(config.get<CronConfig>('cron').disabled).toBe(false);
+
+    disposables.dispose();
+  });
+
+  // `builtinProductSkills` is a whole-section scalar rather than an object of
+  // fields, so it exercises the section-level env binding branch and needs its
+  // own strip — `stripEnvBoundFields` only walks object fields.
+  it('applies a scalar section env binding and keeps it out of the file', async () => {
+    const env: Record<string, string> = {};
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    expect(config.get(BUILTIN_PRODUCT_SKILLS_SECTION)).toBe(true);
+
+    env['KIMI_CODE_BUILTIN_PRODUCT_SKILLS'] = '0';
+    expect(config.get(BUILTIN_PRODUCT_SKILLS_SECTION)).toBe(false);
+
+    // A write while the env var is active must persist the file's own value,
+    // never the env override echoed back.
+    await config.replace(BUILTIN_PRODUCT_SKILLS_SECTION, true);
+    delete env['KIMI_CODE_BUILTIN_PRODUCT_SKILLS'];
+    expect(config.get(BUILTIN_PRODUCT_SKILLS_SECTION)).toBe(true);
 
     disposables.dispose();
   });
