@@ -397,6 +397,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
         providerConfig?.type,
         providerConfig?.customHeaders,
         this.hostRequestHeaders.headers,
+        resolvedBaseUrl,
       ),
       capabilities,
       maxContextSize: model.maxContextSize,
@@ -559,12 +560,30 @@ export function resolveOutboundHeaders(
   providerType: string | undefined,
   customHeaders: Readonly<Record<string, string>> | undefined,
   hostHeaders: Readonly<Record<string, string>>,
+  baseUrl: string | undefined,
 ): Readonly<Record<string, string>> {
+  // A vendor's `hostHeaders: 'full'` contract is meant for the vendor's own
+  // endpoint. A provider that speaks the same protocol but points elsewhere
+  // must not receive the host identity set (device id included).
   const forwardsAll =
     providerType !== undefined &&
-    getProviderDefinition(providerType)?.hostHeaders === 'full';
+    getProviderDefinition(providerType)?.hostHeaders === 'full' &&
+    isFirstPartyBaseUrl(baseUrl);
   const hostLayer = forwardsAll ? hostHeaders : userAgentOnly(hostHeaders);
   return { ...parseKimiCodeCustomHeaders(), ...hostLayer, ...customHeaders };
+}
+
+const FIRST_PARTY_HOSTS = new Set(['api.moonshot.ai', 'api.moonshot.cn']);
+
+function isFirstPartyBaseUrl(baseUrl: string | undefined): boolean {
+  if (baseUrl === undefined) {
+    return true;
+  }
+  try {
+    return FIRST_PARTY_HOSTS.has(new URL(baseUrl).hostname);
+  } catch {
+    return false;
+  }
 }
 
 function userAgentOnly(headers: Readonly<Record<string, string>>): Record<string, string> {
