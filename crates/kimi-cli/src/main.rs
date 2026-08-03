@@ -20,6 +20,12 @@ enum Commands {
         /// The prompt to run.
         prompt: String,
     },
+    /// List persisted sessions.
+    Sessions {
+        /// Max sessions to list.
+        #[arg(default_value_t = 50)]
+        limit: u32,
+    },
     /// Engine health check.
     Health,
 }
@@ -35,6 +41,20 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
             println!("{result}");
+        }
+        Commands::Sessions { limit } => {
+            let server = kimi_server::Server::build()?;
+            let mut client = kimi_server_client::AppServerClient::InProcess(
+                kimi_server::in_process::spawn(server.processor),
+            );
+            let body = client.session_list(limit).await;
+            if let Some(error) = body.get("error") {
+                eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
+                std::process::exit(1);
+            }
+            for session in body["result"]["sessions"].as_array().unwrap_or(&vec![]) {
+                println!("{}  {}", session["id"], session["title"]);
+            }
         }
         Commands::Health => {
             let server = kimi_server::Server::build()?;
