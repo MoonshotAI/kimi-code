@@ -1,0 +1,14 @@
+[package]
+name = "kimi-sdk"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Kimi Code client SDK — high-level harness over the host protocol (stage E: node-sdk/klient surface)"
+
+[dependencies]
+anyhow = "1"
+kimi-protocol = { path = "../kimi-protocol" }
+kimi-server = { path = "../kimi-server" }
+kimi-server-client = { path = "../kimi-server-client" }
+serde_json = { workspace = true }
+tokio = { workspace = true }

@@ -1440,6 +1440,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kimi-sdk"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "kimi-protocol",
+ "kimi-server",
+ "kimi-server-client",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "kimi-server"
 version = "0.1.0"
 dependencies = [

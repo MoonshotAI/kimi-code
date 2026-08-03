@@ -308,7 +308,7 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - `session/fs` action=list 从不传 Glob `pattern`（main.rs 同款 bug 继承）→ query→pattern 映射 + 缺 pattern 报错
 
 ### 阶段 E — SDK/ACP/OAuth/Config
-1. `kimi-sdk`：session/harness/auth/catalog 平移；klient 并入
+1. 🔶 `kimi-sdk`：**`Harness`（内嵌/Remote 引擎生命周期 + `Session` typed 门面，2 集成测试）已落地**；session/harness/auth/catalog 平移继续；klient 并入
 2. `kimi-acp`：ACP stdio 适配
 3. `kimi-oauth`：流程状态机
 4. `kimi-config`：TOML/env/diagnostics

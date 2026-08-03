@@ -7,6 +7,7 @@ members = [
     "crates/kimi-server",
     "crates/kimi-server-client",
     "crates/kimi-server-transport",
+    "crates/kimi-sdk",
     "crates/kimi-ui",
     "packages/kimi-agent",
     "packages/kimi-build",
