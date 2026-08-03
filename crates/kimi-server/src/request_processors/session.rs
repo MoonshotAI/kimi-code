@@ -458,6 +458,62 @@ impl Processor for SessionProcessor {
             })
         });
 
+        // `session/import_context` — append imported transcript text.
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_IMPORT_CONTEXT, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionImportContextParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                agent
+                    .context
+                    .import_context(
+                        &input.content,
+                        &input.source,
+                        Some(agent.compaction.strategy().max_size()),
+                    )
+                    .map_err(JsonRpcError::internal_error)?;
+                Ok(serde_json::json!({ "imported": true }))
+            })
+        });
+
+        // `session/activate_skill` — render a skill prompt + run a turn.
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_ACTIVATE_SKILL, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionActivateSkillParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                let agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                let result = agent
+                    .activate_skill(input.name, input.args)
+                    .await
+                    .map_err(|e| {
+                        JsonRpcError::internal_error(format!("activate_skill failed: {e}"))
+                    })?;
+                Ok(serde_json::json!({
+                    "stop_reason": format!("{:?}", result.stop_reason),
+                    "steps": result.steps,
+                    "usage": result.usage,
+                }))
+            })
+        });
+
         // `session/get_status` — live engine status snapshot.
         let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_GET_STATUS, move |params| {
