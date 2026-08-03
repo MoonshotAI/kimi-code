@@ -141,6 +141,7 @@ import {
 } from '@moonshot-ai/agent-core';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { MCP_SECTION, type McpSection } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configSection';
+import { IAgentIdentity } from '@moonshot-ai/agent-core-v2/app/agentIdentity/agentIdentity';
 import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import {
   AlreadyAuthorizedError,
@@ -2029,11 +2030,20 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   // either group).
   // -----------------------------------------------------------------------
 
+  /**
+   * Configured custom identity announced to MCP servers, so these global flows
+   * match what the workspace-owned manager sends.
+   */
+  private resolveMcpClientName(): string | undefined {
+    return this.engineAccessor.get(IAgentIdentity).slug;
+  }
+
   /** v1's per-core `globalMcpOAuth`, built over the app-scope document store. */
   private get globalMcpOAuthService(): McpOAuthService {
     if (this.globalMcpOAuth === undefined) {
       this.globalMcpOAuth = new McpOAuthService({
         store: createMcpOAuthStore(this.engineAccessor.get(IAtomicDocumentStore)),
+        resolveClientName: () => this.resolveMcpClientName(),
       });
     }
     return this.globalMcpOAuth;
@@ -2136,6 +2146,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const manager = new McpConnectionManager({
       stdioCwd: options.cwd,
       oauthService: this.globalMcpOAuthService,
+      resolveClientName: () => this.resolveMcpClientName(),
       resolveDefaultTimeouts: () => ({
         startupTimeoutMs: section?.startupTimeoutMs,
         toolTimeoutMs: section?.toolTimeoutMs,
