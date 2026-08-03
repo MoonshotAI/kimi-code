@@ -291,7 +291,7 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 ### 阶段 C — CLI + exec
 1. ✅ `kimi-cli`：clap 分发 + 子命令平移（print/sessions/resume/config/doctor/health/**export**；acp/login/provider/upgrade/vis/web 待）
 2. ✅ `kimi-exec`：-p/print + run_prompt 经 AppServerClient（InProcess/Remote）
-3. **验证**：`kimi -p "..."` 端到端；CLI 测试平移（55 用例）
+3. ✅ **验证**：`kimi -p "..."` 端到端；CLI 集成测试（health/sessions/export/config 驱动真实二进制，5 用例）；CLI 测试平移（55 用例，TS 面待）
 
 ### 阶段 D — TUI
 1. `kimi-tui`：app 主循环 + custom_terminal + 事件流
