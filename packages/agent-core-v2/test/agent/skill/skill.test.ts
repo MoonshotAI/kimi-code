@@ -217,7 +217,7 @@ describe('SkillTool', () => {
 
     expect(tool.name).toBe('Skill');
     expect(tool.description).toContain('Invoke a registered skill');
-    expect(tool.description).toContain('kimi-skill-loaded');
+    expect(tool.description).toContain('skill-loaded');
     expect(tool.description).toContain('with the same `args`');
     expect(tool.parameters).toMatchObject({
       type: 'object',
@@ -299,7 +299,7 @@ describe('SkillTool', () => {
     expect(result.delivery?.message.content[0]).toMatchObject({
       type: 'text',
       text: expect.stringContaining(
-        '<kimi-skill-loaded name="commit" trigger="model-tool" source="user" dir="/skills/commit" args="src/app.ts">',
+        '<skill-loaded name="commit" trigger="model-tool" source="user" dir="/skills/commit" args="src/app.ts">',
       ),
     });
     expect(result.delivery?.message.content[0]).toMatchObject({
