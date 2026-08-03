@@ -20,6 +20,7 @@ import {
   IAgentTokenCountingService,
   IAgentUsageService,
   IModelCatalog,
+  IModelService,
   SECONDARY_DERIVED_MODEL_ID,
   type IAgentScopeHandle,
   type UsageStatus,
@@ -98,7 +99,8 @@ export type AgentPhase =
 export interface LegacyStatusSnapshot {
   readonly usage?: UsageStatus;
   readonly contextTokens: number;
-  readonly maxContextTokens: number;
+  /** Omitted when the context limit is unknown — 0 is never pushed (0 is the engine's "unknown" marker, not a real limit). */
+  readonly maxContextTokens?: number;
   readonly model: string;
 }
 
@@ -127,9 +129,39 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
   // rebases the measured model first, so the max only wins in that window.
   const contextTokens = Math.max(tokenCounting.get().size, tokenCounting.latestMeasured());
   const capabilities = profile.getModelCapabilities();
-  const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
+  let maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
+  if (maxContextTokens === 0 && profile.getModel() === '') {
+    // No model bound yet (e.g. a draft session): fall back to the configured
+    // default model's limit, mirroring the REST status rollup
+    // (`ISessionLegacyService.status`), so the push and REST agree.
+    maxContextTokens = defaultModelContextTokens(agent) ?? 0;
+  }
   const model = displayModelAlias(agent, profile.getModel());
-  return { usage, contextTokens, maxContextTokens, model };
+  return {
+    usage,
+    contextTokens,
+    maxContextTokens: maxContextTokens > 0 ? maxContextTokens : undefined,
+    model,
+  };
+}
+
+/**
+ * Context limit of the configured default model, or `undefined` when no
+ * default model is configured or it does not resolve.
+ */
+function defaultModelContextTokens(agent: IAgentScopeHandle): number | undefined {
+  const models = agent.accessor.get(IModelService) as IModelService | undefined;
+  const catalog = agent.accessor.get(IModelCatalog) as IModelCatalog | undefined;
+  const defaultModel = models?.getDefaultModel();
+  if (defaultModel === undefined || defaultModel.length === 0 || catalog === undefined) {
+    return undefined;
+  }
+  try {
+    const capabilities = catalog.get(defaultModel).capabilities;
+    return capabilities.max_input_tokens ?? capabilities.max_context_tokens;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

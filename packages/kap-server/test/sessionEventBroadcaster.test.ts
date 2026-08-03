@@ -25,6 +25,7 @@ import {
   IEventBus,
   IEventService,
   IModelCatalog,
+  IModelService,
   ISessionActivityView,
   ISessionInteractionService,
   ISessionMetadata,
@@ -666,6 +667,89 @@ describe('SessionEventBroadcaster', () => {
     expect(statuses.map((envelope) => envelope.payload)).toMatchObject([
       { type: 'agent.status.updated', maxContextTokens: 64_000 },
     ]);
+  });
+
+  it('omits maxContextTokens instead of pushing 0 when the context limit is unknown', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    main.set(IAgentTokenCountingService, { get: () => ({ size: 10 }), latestMeasured: () => 8 });
+    // A bound alias whose model entry no longer resolves surfaces as the
+    // UNKNOWN_CAPABILITY marker (max_context_tokens: 0) — 0 means "unknown",
+    // not a real limit, so the wire event must drop the field entirely.
+    main.set(IAgentProfileService, {
+      getModel: () => 'ghost-model',
+      getModelCapabilities: () => ({ max_context_tokens: 0 }),
+    });
+    main.set(IAgentUsageService, { status: () => ({}) });
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(agentEvent('agent.status.updated', {}));
+    await bc.getCursor('s1');
+
+    const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
+    expect(statuses).toHaveLength(1);
+    const payload = statuses[0]!.payload as Record<string, unknown>;
+    expect(payload['maxContextTokens']).toBeUndefined();
+    expect(JSON.stringify(payload)).not.toContain('maxContextTokens');
+  });
+
+  it('falls back to the default model limit when no model is bound', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    main.set(IAgentTokenCountingService, { get: () => ({ size: 10 }), latestMeasured: () => 8 });
+    // Draft-session shape: no model bound, so the capabilities are unknown;
+    // the push mirrors the REST status rollup and reads the default model.
+    main.set(IAgentProfileService, {
+      getModel: () => '',
+      getModelCapabilities: () => ({ max_context_tokens: 0 }),
+    });
+    main.set(IAgentUsageService, { status: () => ({}) });
+    main.set(IModelService, { getDefaultModel: () => 'default-model' });
+    main.set(IModelCatalog, {
+      get: (id: string) => {
+        expect(id).toBe('default-model');
+        return { capabilities: { max_context_tokens: 200_000 } };
+      },
+    });
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(agentEvent('agent.status.updated', {}));
+    await bc.getCursor('s1');
+
+    const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0]!.payload).toMatchObject({ maxContextTokens: 200_000, model: '' });
+  });
+
+  it('omits maxContextTokens when no model is bound and no default model resolves', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    main.set(IAgentTokenCountingService, { get: () => ({ size: 10 }), latestMeasured: () => 8 });
+    main.set(IAgentProfileService, {
+      getModel: () => '',
+      getModelCapabilities: () => ({ max_context_tokens: 0 }),
+    });
+    main.set(IAgentUsageService, { status: () => ({}) });
+    main.set(IModelService, { getDefaultModel: () => 'removed-model' });
+    main.set(IModelCatalog, {
+      get: () => {
+        throw new Error('unknown model');
+      },
+    });
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(agentEvent('agent.status.updated', {}));
+    await bc.getCursor('s1');
+
+    const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
+    expect(statuses).toHaveLength(1);
+    expect(JSON.stringify(statuses[0]!.payload)).not.toContain('maxContextTokens');
   });
 
   it('projects agent activity state into legacy running and ended phases', async () => {
