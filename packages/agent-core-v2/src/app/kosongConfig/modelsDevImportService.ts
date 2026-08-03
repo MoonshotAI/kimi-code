@@ -26,9 +26,11 @@
  * bridge then pushes the change into the registries, which is also what
  * invalidates the runtime model catalog.
  *
- * The custom-registry import targets a user-supplied third-party URL, so its
- * request carries the host User-Agent under the configured identity — the same
- * value the scheduled refresh sends, rather than a hardcoded product token.
+ * Both third-party fetches — the models.dev directory and the custom-registry
+ * import — send the host User-Agent under the configured identity, matching
+ * what the scheduled refresh of the same registry sends. Where the host states
+ * no User-Agent at all, a neutral token stands in rather than dropping the
+ * header, since these are directories this service chooses to call.
  */
 
 import {
@@ -42,7 +44,11 @@ import {
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
-import { IAgentIdentity, identityUserAgent } from '#/app/agentIdentity/agentIdentity';
+import {
+  DEFAULT_IDENTITY_SLUG,
+  IAgentIdentity,
+  identityUserAgent,
+} from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog } from '#/kosong/model/catalog';
@@ -86,13 +92,20 @@ export class ModelsDevImportService implements IModelsDevImportService {
     @IAgentIdentity private readonly identity: IAgentIdentity,
   ) {}
 
+  private outboundUserAgent(): string {
+    return (
+      identityUserAgent(this.bootstrap.args.requestHeaders['User-Agent'], this.identity.slug) ??
+      DEFAULT_IDENTITY_SLUG
+    );
+  }
+
   async listModelsDevProviders(): Promise<ModelsDevProviderItem[]> {
-    const catalog = await getModelsDevCatalog();
+    const catalog = await getModelsDevCatalog(this.outboundUserAgent());
     return Object.entries(catalog).map(([id, entry]) => toModelsDevProviderItem(id, entry));
   }
 
   async getModelsDevProvider(catalogId: string): Promise<ModelsDevProviderItem> {
-    const catalog = await getModelsDevCatalog();
+    const catalog = await getModelsDevCatalog(this.outboundUserAgent());
     const entry = modelsDevEntry(catalog, catalogId);
     if (entry === undefined) {
       throw new Error2(
@@ -134,7 +147,7 @@ export class ModelsDevImportService implements IModelsDevImportService {
     options: ImportModelsDevProviderOptions,
   ): Promise<ImportModelsDevProviderResult> {
     const { catalogId } = options;
-    const catalog = await getModelsDevCatalog();
+    const catalog = await getModelsDevCatalog(this.outboundUserAgent());
     const entry = modelsDevEntry(catalog, catalogId);
     if (entry === undefined) {
       throw new Error2(
@@ -224,10 +237,7 @@ export class ModelsDevImportService implements IModelsDevImportService {
     try {
       entries = await fetchCustomRegistry(source, {
         fetchImpl: upstreamFetch(),
-        userAgent: identityUserAgent(
-          this.bootstrap.args.requestHeaders['User-Agent'],
-          this.identity.slug,
-        ),
+        userAgent: this.outboundUserAgent(),
         signal: AbortSignal.timeout(UPSTREAM_FETCH_TIMEOUT_MS),
       });
     } catch (err) {

@@ -20,7 +20,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost } from '#/_base/di/test';
 import { Error2, isError2 } from '#/_base/errors/errors';
-import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
+import { DEFAULT_IDENTITY_SLUG, IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import {
@@ -151,6 +151,7 @@ function stubModelCatalog(): IModelCatalog {
 function createHost(
   sections: Record<string, unknown> = {},
   identitySlug?: string,
+  hostHeaders: Record<string, string> = HOST_HEADERS,
 ): {
   config: StubConfigService;
   imports: IModelsDevImportService;
@@ -160,7 +161,7 @@ function createHost(
     [IConfigService, config],
     [IKosongConfigService, stubKosongConfig()],
     [IModelCatalog, stubModelCatalog()],
-    [IBootstrapService, stubBootstrap('/home', {}, { requestHeaders: HOST_HEADERS })],
+    [IBootstrapService, stubBootstrap('/home', {}, { requestHeaders: hostHeaders })],
     [IAgentIdentity, stubAgentIdentity({ slug: identitySlug })],
   ]);
   return { config, imports: host.app.accessor.get(IModelsDevImportService) };
@@ -329,6 +330,28 @@ describe('IModelsDevImportService', () => {
     await imports.importCustomRegistry({ url: REGISTRY_URL });
 
     expect(seen).toEqual([HOST_HEADERS['User-Agent']]);
+  });
+
+  it('sends the configured identity when browsing the models.dev directory', async () => {
+    const seen: Array<string | null> = [];
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJsonRecordingUserAgent(CATALOG, seen) });
+    const { imports } = createHost({}, 'acme');
+
+    await imports.listModelsDevProviders();
+
+    expect(seen).toEqual(['acme/1.0']);
+  });
+
+  // These directories are ones this service chooses to call, so a host that
+  // states no User-Agent gets a neutral token rather than no header at all.
+  it('falls back to a neutral token when the host states no User-Agent', async () => {
+    const seen: Array<string | null> = [];
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJsonRecordingUserAgent(REGISTRY_DOC, seen) });
+    const { imports } = createHost({}, undefined, {});
+
+    await imports.importCustomRegistry({ url: REGISTRY_URL });
+
+    expect(seen).toEqual([DEFAULT_IDENTITY_SLUG]);
   });
 
   it('imports a custom registry with a source blob and drops providers vanished upstream', async () => {
