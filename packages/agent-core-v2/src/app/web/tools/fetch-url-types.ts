@@ -2,6 +2,10 @@
  * `web` domain — host-injected `UrlFetcher` contract.
  */
 
+import { Error2 } from '#/_base/errors/errors';
+
+import { WebErrors } from '../errors';
+
 /**
  * How the returned content relates to the original response body.
  *
@@ -24,11 +28,11 @@ export interface UrlFetcher {
   ): Promise<UrlFetchResult>;
 }
 
-export class HttpFetchError extends Error {
+export class HttpFetchError extends Error2 {
   override readonly name = 'HttpFetchError';
   readonly status: number;
   constructor(status: number, message: string) {
-    super(message);
+    super(WebErrors.codes.WEB_FETCH_FAILED, message, { details: { status } });
     this.status = status;
   }
 }

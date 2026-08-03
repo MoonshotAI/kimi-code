@@ -16,6 +16,7 @@
  */
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { BugIndicatingError } from '#/errors';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 
@@ -32,7 +33,7 @@ export class SessionProcessRunner implements ISessionProcessRunner {
   async exec(args: readonly string[], options?: ProcessExecOptions): Promise<IProcess> {
     const command = args[0];
     if (command === undefined) {
-      throw new Error(
+      throw new BugIndicatingError(
         'SessionProcessRunner.exec(): at least one argument (the command to run) is required.',
       );
     }

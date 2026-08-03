@@ -8,27 +8,31 @@
 
 import path from 'pathe';
 
+import { Error2 } from '#/_base/errors/errors';
 import { FrontmatterError, parseFrontmatter } from '#/_base/text/frontmatter';
 
+import { SkillErrors } from './errors';
 import type { SkillDefinition, SkillMetadata, SkillSource } from './types';
 import { isSupportedSkillType } from './types';
 
-export class SkillParseError extends Error {
+export class SkillParseError extends Error2 {
   readonly reason?: unknown;
 
   constructor(message: string, cause?: unknown) {
-    super(message);
+    super(SkillErrors.codes.SKILL_PARSE_FAILED, message, { cause });
     this.name = 'SkillParseError';
     if (cause !== undefined) this.reason = cause;
   }
 }
 
-export class UnsupportedSkillTypeError extends Error {
+export class UnsupportedSkillTypeError extends Error2 {
   readonly skillType: string;
 
   constructor(skillType: string) {
     super(
+      SkillErrors.codes.SKILL_TYPE_UNSUPPORTED,
       `Skill type "${skillType}" is not supported; only "prompt", "inline", and "flow" are supported.`,
+      { details: { skillType } },
     );
     this.name = 'UnsupportedSkillTypeError';
     this.skillType = skillType;

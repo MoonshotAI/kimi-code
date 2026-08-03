@@ -23,6 +23,7 @@ import {
 import { ToolResultBuilder } from '#/tool/result-builder';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
+import { Error2, ErrorCodes } from '#/errors';
 
 import {
   IWebSearchTool,
@@ -46,7 +47,7 @@ export class WebSearchTool implements IWebSearchTool {
   ) {
     const provider = providerService.getWebSearchProvider();
     if (provider === undefined) {
-      throw new Error('WebSearchProviderService returned no provider during tool activation.');
+      throw new Error2(ErrorCodes.INTERNAL, 'WebSearchProviderService returned no provider during tool activation.');
     }
     this.provider = provider;
   }

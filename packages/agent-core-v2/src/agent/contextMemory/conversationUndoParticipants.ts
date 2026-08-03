@@ -8,6 +8,7 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { BugIndicatingError } from '#/errors';
 
 export interface AgentConversationUndoParticipant {
   readonly id: string;
@@ -36,7 +37,7 @@ class AgentConversationUndoParticipantRegistry
 
   register(participant: AgentConversationUndoParticipant): IDisposable {
     if (this.participants.has(participant.id)) {
-      throw new Error(
+      throw new BugIndicatingError(
         `Conversation undo participant "${participant.id}" is already registered`,
       );
     }
