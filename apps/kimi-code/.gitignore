@@ -1,5 +1,5 @@
 # Copied from packages/kimi-core at build time
-/agents/
+agents/
 
 # Generated at build time by scripts/build-vis-asset.mjs.
 # Only the ~150KB base64 VALUE file is ignored; the committed `.d.ts` stub
@@ -8,5 +8,4 @@
 src/generated/vis-web-asset.ts
 
 # Copied from packages/pi-tui/native at build time by scripts/copy-native-assets.mjs
-# (anchored: src/native and test/native hold tracked sources)
-/native/
+native/

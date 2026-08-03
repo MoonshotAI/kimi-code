@@ -88,9 +88,6 @@ export class PluginService extends Disposable implements IPluginService {
       const info = this.manager.info(record.id);
       if (info === undefined)
         throw new BugIndicatingError(`Plugin "${record.id}" missing right after install`);
-      // Mutations fire the same change event as an explicit reload so live
-      // sessions see the new plugin without a process restart.
-      this.onDidReloadEmitter.fire({ added: [record.id], removed: [], errors: [] });
       return info;
     });
   }
@@ -98,7 +95,6 @@ export class PluginService extends Disposable implements IPluginService {
   setPluginEnabled(input: SetPluginEnabledInput): Promise<void> {
     return this.runSerializedOperation(async () => {
       await this.manager.setEnabled(input.id, input.enabled);
-      this.onDidReloadEmitter.fire({ added: [], removed: [], errors: [] });
     });
   }
 
@@ -111,7 +107,6 @@ export class PluginService extends Disposable implements IPluginService {
   removePlugin(input: RemovePluginInput): Promise<void> {
     return this.runSerializedOperation(async () => {
       await this.manager.remove(input.id);
-      this.onDidReloadEmitter.fire({ added: [], removed: [input.id], errors: [] });
     });
   }
 

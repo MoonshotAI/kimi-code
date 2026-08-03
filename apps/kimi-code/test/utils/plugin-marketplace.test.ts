@@ -142,13 +142,12 @@ describe('loadPluginMarketplace', () => {
       expect.objectContaining({
         id: 'kimi-cu',
         tier: 'official',
-        source: 'https://cdn.kimi.com/kimi-computer-use/latest/kimi-cu-plugin.zip',
+        source: 'capability:kimi-cu',
       }),
       expect.objectContaining({
         id: 'kimi-webbridge',
         tier: 'official',
-        // In a source checkout the entry installs the repo's own plugin copy.
-        source: join(REPO_ROOT, 'plugins/official/kimi-webbridge'),
+        source: 'capability:kimi-webbridge',
       }),
     ]);
     expect(marketplace.plugins.map((entry) => entry.version)).toEqual([undefined, undefined]);
@@ -183,7 +182,7 @@ describe('loadPluginMarketplace', () => {
     // survives — a future official listing would only reach older clients.
     const webbridge = marketplace.plugins.filter((entry) => entry.id === 'kimi-webbridge');
     expect(webbridge).toHaveLength(1);
-    expect(webbridge[0]?.source).toBe(join(REPO_ROOT, 'plugins/official/kimi-webbridge'));
+    expect(webbridge[0]?.source).toBe('capability:kimi-webbridge');
     expect(marketplace.plugins.some((entry) => entry.id === 'kimi-cu')).toBe(true);
   });
 

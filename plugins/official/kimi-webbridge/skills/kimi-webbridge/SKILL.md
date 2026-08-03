@@ -148,31 +148,7 @@ Decoded PDF cap is 100 MB. Above that the daemon refuses; reduce `scale` or spli
 
 ## If a tool call fails (daemon or extension not ready)
 
-**If a tool call can't reach the daemon (connection refused), start it yourself — don't ask the user. This is safe to run anytime: it no-ops if the daemon is already up.**
-
-**macOS / Linux:**
-
-```bash
-~/.kimi-webbridge/bin/kimi-webbridge start
-```
-
-**Windows (PowerShell):**
-
-```powershell
-& "$env:USERPROFILE\.kimi-webbridge\bin\kimi-webbridge.exe" start
-```
-
-Then retry the tool call. If it still fails, point the user to the help page instead of deep-troubleshooting:
-
-- English: https://www.kimi.com/features/webbridge
-- 中文: https://www.kimi.com/zh-cn/features/webbridge
-
-If the daemon is reachable but the browser extension is missing or won't connect, give the user both official installation paths:
-
-1. Chrome Web Store: https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc
-2. Restricted-network fallback: download https://kimi-web-img.moonshot.cn/webbridge/latest/extension/kimi-webbridge-extension.zip, unzip it, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select the extracted folder.
-
-Never run `stop` / `restart` / `uninstall` automatically — those kill a running daemon. See `references/operations.md` for anything deeper.
+Read [operations.md](references/operations.md) when the daemon or extension is unavailable, or when the user asks to install, start, or troubleshoot WebBridge. Follow its recovery order and never stop, restart, or uninstall the daemon automatically.
 
 ## Version mismatches
 

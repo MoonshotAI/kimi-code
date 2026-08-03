@@ -51,12 +51,23 @@ describe('plugins command capability surface', () => {
 
   it('routes built-in entries through capabilities only on v2', () => {
     const v2 = fakeHost({ engineV2: true });
-    expect(isCapabilityEntry(v2.host, 'kimi-cu')).toBe(true);
-    expect(isCapabilityEntry(v2.host, 'kimi-webbridge')).toBe(true);
-    expect(isCapabilityEntry(v2.host, 'superpowers')).toBe(false);
+    expect(
+      isCapabilityEntry(v2.host, { id: 'kimi-cu', source: 'capability:kimi-cu' } as never),
+    ).toBe(true);
+    expect(
+      isCapabilityEntry(v2.host, {
+        id: 'kimi-webbridge',
+        source: 'capability:kimi-webbridge',
+      } as never),
+    ).toBe(true);
+    expect(
+      isCapabilityEntry(v2.host, { id: 'kimi-cu', source: 'https://example.test/plugin.zip' } as never),
+    ).toBe(false);
 
     const v1 = fakeHost({});
-    expect(isCapabilityEntry(v1.host, 'kimi-cu')).toBe(false);
+    expect(
+      isCapabilityEntry(v1.host, { id: 'kimi-cu', source: 'capability:kimi-cu' } as never),
+    ).toBe(false);
   });
 
   it('polls progress into the panel until the install settles', async () => {

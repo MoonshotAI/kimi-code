@@ -119,14 +119,14 @@ export async function loadPluginMarketplace(
  * clients (whose fix is to upgrade). No `version` is pinned: reinstalling
  * uses the latest managed artifacts.
  */
-async function withBuiltInEntries(marketplace: PluginMarketplace): Promise<PluginMarketplace> {
-  const builtIns = await builtInMarketplaceEntries();
+function withBuiltInEntries(marketplace: PluginMarketplace): PluginMarketplace {
+  const builtIns = builtInMarketplaceEntries();
   const builtInIds = new Set(builtIns.map((entry) => entry.id));
   const catalog = marketplace.plugins.filter((entry) => !builtInIds.has(entry.id));
   return { ...marketplace, plugins: [...catalog, ...builtIns] };
 }
 
-async function builtInMarketplaceEntries(): Promise<readonly PluginMarketplaceEntry[]> {
+function builtInMarketplaceEntries(): readonly PluginMarketplaceEntry[] {
   return [
     {
       id: 'kimi-cu',
@@ -135,7 +135,7 @@ async function builtInMarketplaceEntries(): Promise<readonly PluginMarketplaceEn
       description:
         'macOS GUI automation in the background — click, type, scroll, and drag without taking over your mouse. Requires the KimiCU.app runtime (macOS only); current clients set it up automatically on install.',
       keywords: ['computer-use', 'macos', 'accessibility', 'automation', 'gui'],
-      source: 'https://cdn.kimi.com/kimi-computer-use/latest/kimi-cu-plugin.zip',
+      source: 'capability:kimi-cu',
     },
     {
       id: 'kimi-webbridge',
@@ -145,23 +145,9 @@ async function builtInMarketplaceEntries(): Promise<readonly PluginMarketplaceEn
         'Control your real browser from Kimi Code — navigate, click, type, and screenshot. Requires the WebBridge daemon + browser extension.',
       homepage: 'https://www.kimi.com/features/webbridge',
       keywords: ['browser', 'webbridge', 'cdp', 'automation', 'web'],
-      source: await resolveBuiltInWebbridgeSource(),
+      source: 'capability:kimi-webbridge',
     },
   ];
-}
-
-const BUILT_IN_WEBBRIDGE_ZIP_URL =
-  'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip';
-
-/**
- * In a source checkout the built-in webbridge entry installs the repo's own
- * plugin copy (dev); every packaged build installs the official CDN zip.
- */
-async function resolveBuiltInWebbridgeSource(): Promise<string> {
-  const sourceDir = dirname(fileURLToPath(import.meta.url));
-  const repoDir = resolve(sourceDir, '../../../../plugins/official/kimi-webbridge');
-  const info = await stat(join(repoDir, 'kimi.plugin.json')).catch(() => undefined);
-  return info?.isFile() === true ? repoDir : BUILT_IN_WEBBRIDGE_ZIP_URL;
 }
 
 async function withLatestVersions(

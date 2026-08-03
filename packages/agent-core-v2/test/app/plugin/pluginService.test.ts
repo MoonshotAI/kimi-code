@@ -359,31 +359,6 @@ describe('PluginService (plugin boundary)', () => {
     }
   });
 
-  it('fires onDidReload on install, enable-toggle, and remove (not just explicit reload)', async () => {
-    const home = await makeHome();
-    await writeValidInstalledFile(home);
-    const source = await makePluginDir('events-demo', { version: '1.0.0' });
-    createdDirs.push(source);
-    const host = makeHost(home);
-    try {
-      const svc = host.app.accessor.get(IPluginService);
-      const summaries: ReloadSummary[] = [];
-      svc.onDidReload((summary) => summaries.push(summary));
-
-      await svc.installPlugin({ source });
-      await svc.setPluginEnabled({ id: 'events-demo', enabled: false });
-      await svc.removePlugin({ id: 'events-demo' });
-
-      expect(summaries).toEqual([
-        { added: ['events-demo'], removed: [], errors: [] },
-        { added: [], removed: [], errors: [] },
-        { added: [], removed: ['events-demo'], errors: [] },
-      ]);
-    } finally {
-      host.dispose();
-    }
-  });
-
   it('restores the previous managed copy when reinstall persistence fails', async () => {
     const home = await makeHome();
     await writeValidInstalledFile(home);

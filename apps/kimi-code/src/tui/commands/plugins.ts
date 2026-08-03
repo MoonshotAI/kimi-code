@@ -318,8 +318,12 @@ async function confirmInstallTrust(
 const CAPABILITY_POLL_INTERVAL_MS = 700;
 const CAPABILITY_POLL_ATTEMPTS = 260; // ~3 minutes of runtime setup budget
 
-/** v2-only marketplace entries install their runtime and plugin together. */
-function isCapabilityEntry(host: SlashCommandHost, id: string): boolean {
+/** Client-injected v2 entries install their runtime and plugin together. */
+function isCapabilityEntry(host: SlashCommandHost, entry: PluginMarketplaceEntry): boolean {
+  return host.engineV2 && entry.source === `capability:${entry.id}`;
+}
+
+function isCapabilityId(host: SlashCommandHost, id: string): boolean {
   return host.engineV2 && (id === 'kimi-cu' || id === 'kimi-webbridge');
 }
 
@@ -522,7 +526,7 @@ async function handlePluginsPanelSelection(
       await showPluginsPicker(host, { initialTab: 'installed' });
       return;
     case 'install':
-      if (isCapabilityEntry(host, selection.entry.id)) {
+      if (isCapabilityEntry(host, selection.entry)) {
         await installCapabilityFromPanel(host, panel, selection.entry);
         return;
       }
@@ -580,7 +584,7 @@ async function handlePluginMcpSelection(
 async function removePlugin(host: SlashCommandHost, id: string): Promise<void> {
   await host.requireSession().removePlugin(id);
   host.showStatus(`Removed ${id}.`);
-  if (isCapabilityEntry(host, id)) {
+  if (isCapabilityId(host, id)) {
     host.showStatus(
       'Note: the runtime binaries were left untouched, but Kimi Code plugin wiring is disabled for new sessions. Reinstall any time from the Official tab.',
     );
