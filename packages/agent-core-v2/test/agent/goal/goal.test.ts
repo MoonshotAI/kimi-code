@@ -258,6 +258,7 @@ async function runTerminalUpdateGoalResult(
     toolCall,
     toolCalls: [toolCall],
     args: { status },
+    outcome: 'executed',
     result: { output, stopTurn: true },
   });
 }
@@ -1755,7 +1756,7 @@ describe('goal pause classification on provider errors', () => {
     return {
       initialConfig: {
         providers: {},
-        loopControl: { maxRetriesPerStep: 1 },
+        loopControl: { maxAttemptsPerStep: 1 },
       },
     };
   }

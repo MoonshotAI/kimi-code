@@ -3,12 +3,17 @@
  * TOML transforms.
  *
  * Owns the `[loop_control]` configuration section (step / retry / context-size
- * limits), plus the snake_case ↔ camelCase TOML transforms (including
- * the legacy `max_steps_per_run` → `maxStepsPerTurn` rename). The step and retry
- * budgets also accept operational env overrides (`KIMI_LOOP_MAX_STEPS_PER_TURN`
- * / `KIMI_LOOP_MAX_RETRIES_PER_STEP`); `config` resolves each field as
- * `env > config.toml > default` and re-applies the env binding on every read.
- * Self-registered at module load via `registerConfigSection`.
+ * limits). Renamed keys are declared through the config domain's deprecation
+ * mechanism (`deprecations`): a deprecated key in `config.toml` no longer
+ * applies and reports a warning pointing at its replacement — this covers the
+ * `max_retries_per_step` → `max_attempts_per_step` rename and the older
+ * `max_steps_per_run` → `max_steps_per_turn` one. The step and retry budgets
+ * also accept operational env overrides (`KIMI_LOOP_MAX_STEPS_PER_TURN` /
+ * `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP`; the former
+ * `KIMI_LOOP_MAX_RETRIES_PER_STEP` still resolves as a deprecated fallback
+ * with a warning); `config` resolves each field as `env > config.toml >
+ * default` and re-applies the env binding on every read. Self-registered at
+ * module load via `registerConfigSection`.
  *
  * While a field's env var is set, `stripEnvBoundFields` restores its env-free
  * raw value before `set`/`replace` persists, so an env override echoed
@@ -19,16 +24,18 @@ import { z } from 'zod';
 
 import { type EnvBindings, envBindings, stripEnvBoundFields } from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
-import { plainObjectToToml, transformPlainObject } from '#/app/config/toml';
+import { plainObjectToToml } from '#/app/config/toml';
 
 export const LOOP_CONTROL_SECTION = 'loopControl';
 
 export const LOOP_MAX_STEPS_PER_TURN_ENV = 'KIMI_LOOP_MAX_STEPS_PER_TURN';
+export const LOOP_MAX_ATTEMPTS_PER_STEP_ENV = 'KIMI_LOOP_MAX_ATTEMPTS_PER_STEP';
+/** Deprecated former name of {@link LOOP_MAX_ATTEMPTS_PER_STEP_ENV}. */
 export const LOOP_MAX_RETRIES_PER_STEP_ENV = 'KIMI_LOOP_MAX_RETRIES_PER_STEP';
 
 export const LoopControlSchema = z.object({
   maxStepsPerTurn: z.number().int().min(0).optional(),
-  maxRetriesPerStep: z.number().int().min(0).optional(),
+  maxAttemptsPerStep: z.number().int().min(0).optional(),
   maxRalphIterations: z.number().int().min(-1).optional(),
   reservedContextSize: z.number().int().min(0).optional(),
   compactionTriggerRatio: z.number().min(0.5).max(0.99).optional(),
@@ -45,20 +52,14 @@ function parseNonNegativeInt(raw: string): number | undefined {
 
 export const loopControlEnvBindings: EnvBindings<LoopControl> = envBindings(LoopControlSchema, {
   maxStepsPerTurn: { env: LOOP_MAX_STEPS_PER_TURN_ENV, parse: parseNonNegativeInt },
-  maxRetriesPerStep: { env: LOOP_MAX_RETRIES_PER_STEP_ENV, parse: parseNonNegativeInt },
+  maxAttemptsPerStep: {
+    env: LOOP_MAX_ATTEMPTS_PER_STEP_ENV,
+    deprecatedEnv: LOOP_MAX_RETRIES_PER_STEP_ENV,
+    parse: parseNonNegativeInt,
+  },
 });
 
 export const stripLoopControlEnv = stripEnvBoundFields(loopControlEnvBindings);
-
-export const loopControlFromToml = (rawSnake: unknown): unknown => {
-  if (rawSnake === null || typeof rawSnake !== 'object' || Array.isArray(rawSnake)) return rawSnake;
-  const out = transformPlainObject(rawSnake as Record<string, unknown>);
-  if (out['maxStepsPerTurn'] === undefined && out['maxStepsPerRun'] !== undefined) {
-    out['maxStepsPerTurn'] = out['maxStepsPerRun'];
-  }
-  delete out['maxStepsPerRun'];
-  return out;
-};
 
 export const loopControlToToml = (value: unknown, rawSnake: unknown): unknown => {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
@@ -66,8 +67,11 @@ export const loopControlToToml = (value: unknown, rawSnake: unknown): unknown =>
 };
 
 registerConfigSection(LOOP_CONTROL_SECTION, LoopControlSchema, {
-  fromToml: loopControlFromToml,
   toToml: loopControlToToml,
   env: loopControlEnvBindings,
   stripEnv: stripLoopControlEnv,
+  deprecations: [
+    { key: 'max_retries_per_step', replacement: 'max_attempts_per_step' },
+    { key: 'max_steps_per_run', replacement: 'max_steps_per_turn' },
+  ],
 });

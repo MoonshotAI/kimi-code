@@ -1091,6 +1091,49 @@ describe('SessionEventBroadcaster', () => {
       await bc.getCursor('s1'); // drain any would-be duplicate
       expect(both.envelopes).toHaveLength(1);
     });
+
+    it('delivers event.config.warning to a global-only target that never subscribed', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      const warnings = [
+        {
+          domain: 'loopControl',
+          message:
+            "[loop_control] 'max_retries_per_step' is deprecated and no longer used; rename it to 'max_attempts_per_step'.",
+        },
+        { message: 'Environment variable OLD_VAR is deprecated; use NEW_VAR instead.' },
+      ];
+      eventBus.emit({ type: 'event.config.warning', payload: { warnings } });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.config.warning',
+        session_id: '__global__',
+        payload: { warnings },
+      });
+      expect(globalView.deliveries).toEqual(['immediate']);
+    });
+
+    it('drops malformed event.config.warning payloads', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      eventBus.emit({ type: 'event.config.warning', payload: { warnings: [{ message: 42 }] } });
+      eventBus.emit({ type: 'event.config.warning', payload: { warnings: 'nope' } });
+      eventBus.emit({ type: 'event.config.warning', payload: null });
+
+      // A valid frame right after proves the malformed ones were dropped, not
+      // merely slow.
+      const warnings = [{ message: 'something deprecated' }];
+      eventBus.emit({ type: 'event.config.warning', payload: { warnings } });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.config.warning',
+        payload: { warnings },
+      });
+    });
   });
 
   it('emits a durable event.session.work_changed(busy) trailing turn.started', async () => {

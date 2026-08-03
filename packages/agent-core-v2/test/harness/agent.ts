@@ -1924,7 +1924,7 @@ export class AgentTestContext {
     const env = this.root.accessor.get(IHostEnvironment);
     const bootstrapService = this.root.accessor.get(IBootstrapService);
     const cwd = this.cwd;
-    let current: LoadedAgentsMd = { content: '', warning: undefined };
+    let current: LoadedAgentsMd = { content: '', warning: undefined, paths: [] };
     return {
       _serviceBrand: undefined,
       get ready(): Promise<void> {
@@ -1939,6 +1939,9 @@ export class AgentTestContext {
       },
       get agentsMdWarning() {
         return current.warning;
+      },
+      get agentsMdPaths() {
+        return current.paths;
       },
       onDidChange: Event.None as Event<void>,
     };
