@@ -25,4 +25,6 @@ export interface CapabilityEntryContext {
   readonly webbridgeBaseUrl?: string;
   /** kimi-cu only: detect-probe command timeout; defaults to 3s. */
   readonly detectProbeTimeoutMs?: number;
+  /** kimi-cu only: install/cleanup command timeout; defaults to 30s. */
+  readonly commandTimeoutMs?: number;
 }

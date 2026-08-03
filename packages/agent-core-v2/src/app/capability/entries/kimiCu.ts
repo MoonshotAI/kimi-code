@@ -81,6 +81,7 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
   const appBin = path.join(appPath, 'Contents', 'MacOS', 'kimi-cu');
   const infoPlist = path.join(appPath, 'Contents', 'Info.plist');
   const probeTimeoutMs = ctx.detectProbeTimeoutMs ?? DETECT_PROBE_TIMEOUT_MS;
+  const commandTimeoutMs = ctx.commandTimeoutMs ?? COMMAND_TIMEOUT_MS;
   const supported = ctx.platform === 'darwin';
 
   async function exists(p: string): Promise<boolean> {
@@ -184,22 +185,22 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     };
   }
 
+  /** Mirrors the official script's `|| true`: cleanup failures — including
+   * a timeout on a wedged old binary — must never block the replacement. */
+  async function bestEffort(command: string, args: readonly string[]): Promise<void> {
+    await runCommand(ctx.hostProcess, command, args, { timeout: commandTimeoutMs }).catch(
+      () => undefined,
+    );
+  }
+
   async function stopOldProcesses(): Promise<void> {
     const uid = typeof process.getuid === 'function' ? String(process.getuid()) : '501';
-    // All best-effort: mirrors the official script's `|| true` guards.
     if (await exists(appBin)) {
-      await runCommand(ctx.hostProcess, appBin, ['uninstall'], { timeout: COMMAND_TIMEOUT_MS });
+      await bestEffort(appBin, ['uninstall']);
     }
-    await runCommand(ctx.hostProcess, 'launchctl', ['bootout', `gui/${uid}/${LAUNCHD_LABEL}`], {
-      timeout: COMMAND_TIMEOUT_MS,
-    });
+    await bestEffort('launchctl', ['bootout', `gui/${uid}/${LAUNCHD_LABEL}`]);
     for (const mode of ['mcp', 'service', 'overlay']) {
-      await runCommand(
-        ctx.hostProcess,
-        'pkill',
-        ['-f', `${APP_BUNDLE}/Contents/MacOS/kimi-cu[[:space:]]+${mode}`],
-        { timeout: COMMAND_TIMEOUT_MS },
-      );
+      await bestEffort('pkill', ['-f', `${APP_BUNDLE}/Contents/MacOS/kimi-cu[[:space:]]+${mode}`]);
     }
     await new Promise((resolve) => {
       setTimeout(resolve, 1_000);
@@ -209,7 +210,7 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
   async function moveAppIntoPlace(unzippedApp: string): Promise<void> {
     await rm(appPath, { recursive: true, force: true }).catch(() => undefined);
     const direct = await runCommand(ctx.hostProcess, 'ditto', [unzippedApp, appPath], {
-      timeout: COMMAND_TIMEOUT_MS,
+      timeout: commandTimeoutMs,
     });
     if (direct.code === 0) return;
     // /Applications not writable → elevate via the native auth dialog.
@@ -276,7 +277,7 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
         }
         await moveAppIntoPlace(path.join(unzipDir, APP_BUNDLE));
         await runCommand(ctx.hostProcess, 'xattr', ['-dr', 'com.apple.quarantine', appPath], {
-          timeout: COMMAND_TIMEOUT_MS,
+          timeout: commandTimeoutMs,
         });
       } finally {
         await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
@@ -286,7 +287,7 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     if (installApp || stepStates.get('service') !== 'ok') {
       report('service');
       const registered = await runCommand(ctx.hostProcess, appBin, ['install'], {
-        timeout: COMMAND_TIMEOUT_MS,
+        timeout: commandTimeoutMs,
       });
       if (registered.code !== 0) {
         throw new Error(`kimi-cu install failed: ${registered.stderr || registered.stdout}`);

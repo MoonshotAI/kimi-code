@@ -324,6 +324,54 @@ describe('kimi-cu entry', () => {
     expect(plugins.enabledCalls).toEqual([{ id: 'kimi-cu', enabled: true }]);
   });
 
+  it('continues the replacement when the old-binary cleanup hangs', async () => {
+    const applicationsDir = await fakeAppBundle();
+    const plugins = fakePlugins([{ id: 'kimi-cu', enabled: true, state: 'ok', version: '0.5.4' }]);
+    const host = fakeHostProcess([
+      // The wedged old binary makes `kimi-cu uninstall` hang — cleanup must
+      // swallow the timeout (`|| true` semantics) instead of killing the
+      // reinstall before ditto can replace the app.
+      { match: 'uninstall', code: 0, hang: true },
+      { match: 'service-status', code: 0, stdout: 'SMAppService status=1' },
+      { match: 'xpc-ping', code: 0, stdout: 'permissionStatus: accessibility=true screenRecording=true' },
+    ]);
+    const fetchImpl = (() =>
+      Promise.resolve(
+        new Response(new Uint8Array([1, 2, 3]), {
+          status: 200,
+          headers: { 'content-length': '3' },
+        }),
+      )) as never;
+    // The fake ditto must materialize the copied binary: moveAppIntoPlace
+    // rm's the old bundle first, and the post-install service check probes
+    // the new one.
+    const appBin = path.join(applicationsDir, 'KimiCU.app', 'Contents', 'MacOS', 'kimi-cu');
+    const hostProcess = {
+      spawn: async (command: string, args: readonly string[] = []) => {
+        const proc = await host.service.spawn(command, args);
+        if (command === 'ditto' && String(args.at(-1)).includes('KimiCU.app')) {
+          await mkdir(path.dirname(appBin), { recursive: true });
+          await writeFile(appBin, '#!/bin/sh\n');
+          await chmod(appBin, 0o755);
+        }
+        return proc;
+      },
+    } as IHostProcessService;
+    const entry = createKimiCuEntry(
+      makeCtx({
+        applicationsDir,
+        plugins: plugins.service,
+        hostProcess,
+        fetchImpl,
+        commandTimeoutMs: 5,
+      }),
+    );
+
+    // Fully ready → explicit reinstall exercises the cleanup path.
+    await entry.install(() => {});
+    expect(host.calls.some((call) => call.includes('ditto'))).toBe(true);
+  });
+
   it('reads a non-executable leftover app binary as a broken install', async () => {
     const applicationsDir = await fakeAppBundle();
     // An interrupted ditto leaves the binary present but not executable.
