@@ -4316,9 +4316,9 @@ command = "vim"
     await vi.waitFor(() => {
       expect(stripSgr(panel.render(120).join('\n'))).toContain('Kimi Datasource');
     });
-    // The pinned Kimi WebBridge row leads the Official tab, so move down to
-    // the Kimi Datasource entry before installing.
-    panel.handleInput('\u001B[B');
+    // The client-injected capability entries (kimi-cu, kimi-webbridge) follow
+    // the catalog's own rows and suppress the WebBridge promo, so Kimi
+    // Datasource leads the Official tab and installs directly.
     panel.handleInput('\r');
 
     await vi.waitFor(() => {
@@ -4526,9 +4526,9 @@ command = "vim"
       await vi.waitFor(() => {
         expect(stripSgr(panel.render(120).join('\n'))).toContain('Kimi Datasource');
       });
-      // The pinned Kimi WebBridge row leads the Official tab, so move down to
-      // the Kimi Datasource entry before installing.
-      panel.handleInput('\u001B[B');
+      // The client-injected capability entries (kimi-cu, kimi-webbridge)
+      // follow the catalog's own rows and suppress the WebBridge promo, so
+      // Kimi Datasource leads the Official tab and installs directly.
       panel.handleInput('\r');
 
       await vi.waitFor(() => {
