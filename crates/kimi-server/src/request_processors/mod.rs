@@ -2,6 +2,7 @@
 //! `app-server/src/request_processors/`).
 
 pub mod approval;
+pub mod bg;
 pub mod config;
 pub mod cron;
 pub mod fs;
@@ -12,6 +13,7 @@ pub mod plugin;
 pub mod session;
 
 pub use approval::ApprovalProcessor;
+pub use bg::BgProcessor;
 pub use config::ConfigProcessor;
 pub use cron::CronProcessor;
 pub use fs::FsProcessor;
