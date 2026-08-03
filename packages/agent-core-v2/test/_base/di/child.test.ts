@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, afterEach } from 'vitest';
 
+import {
+  resetUnexpectedErrorHandler,
+  setUnexpectedErrorHandler,
+} from '#/_base/errors/unexpectedError';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import {
   IInstantiationService,
@@ -351,7 +355,7 @@ describe('InstantiationService.createChild', () => {
 });
 
 describe('Disposable base class', () => {
-  it('insertion order on dispose', () => {
+  it('reverse registration order on dispose (ledger teardown)', () => {
     const events: string[] = [];
     class Child implements IDisposable {
       constructor(public readonly label: string) {}
@@ -369,7 +373,7 @@ describe('Disposable base class', () => {
     }
     const o = new Owner();
     o.dispose();
-    expect(events).toEqual(['disposed first', 'disposed second', 'disposed third']);
+    expect(events).toEqual(['disposed third', 'disposed second', 'disposed first']);
   });
 
   it('idempotent dispose on the base class', () => {
@@ -409,8 +413,15 @@ describe('Disposable base class', () => {
     expect(events).toEqual(['disposed']);
   });
 
-  it('continues teardown and rethrows if one child throws', () => {
+  it('continues teardown and reports if one child throws (rollback is uninterruptible)', () => {
     const events: string[] = [];
+    const reported: unknown[] = [];
+    setUnexpectedErrorHandler((err) => {
+      reported.push(err);
+    });
+    afterEach(() => {
+      resetUnexpectedErrorHandler();
+    });
     class GoodChild implements IDisposable {
       dispose(): void {
         events.push('good');
@@ -436,7 +447,11 @@ describe('Disposable base class', () => {
       }
     }
     const o = new Owner();
-    expect(() => { o.dispose(); }).toThrow('boom');
-    expect(events).toEqual(['good', 'bad-attempted', 'tail']);
+    // Ledger semantics: teardown is uninterruptible — a failing entry is
+    // reported via onUnexpectedError and teardown continues (reverse order).
+    expect(() => { o.dispose(); }).not.toThrow();
+    expect(events).toEqual(['tail', 'bad-attempted', 'good']);
+    expect(reported).toHaveLength(1);
+    expect((reported[0] as Error).message).toContain('boom');
   });
 });
