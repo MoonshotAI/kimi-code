@@ -140,9 +140,83 @@ async fn handle(
                 Err(e) => error(-32603, &format!("session/delete failed: {e}")),
             }
         }
+        "session/get_config" => {
+            // Per-session config projection (model/mode/thinking) for the
+            // ACP client. `model` falls back to the config default.
+            let session_id = params.get("sessionId").and_then(|v| v.as_str()).unwrap_or("");
+            if session_id.is_empty() {
+                return error(-32602, "session/get_config requires sessionId");
+            }
+            let mut client = harness.client().await;
+            let status = client.session_get_status(session_id).await;
+            if let Some(e) = status.get("error") {
+                return error(-32603, e["message"].as_str().unwrap_or("status failed"));
+            }
+            let config = client.config_get().await;
+            let model = config["result"]["defaultModel"].as_str().unwrap_or("");
+            let mode = if status["result"]["plan_mode"].as_bool().unwrap_or(false) {
+                "plan"
+            } else {
+                "default"
+            };
+            let thinking = status["result"]["thinking_effort"].as_str().unwrap_or("");
+            result(serde_json::json!({
+                "sessionId": session_id,
+                "config": {
+                    "model": model,
+                    "mode": mode,
+                    "thinking": thinking,
+                },
+            }))
+        }
+        "session/set_config_option" => {
+            let session_id = params.get("sessionId").and_then(|v| v.as_str()).unwrap_or("");
+            let config_id = params.get("configId").and_then(|v| v.as_str()).unwrap_or("");
+            let value = params.get("value").cloned().unwrap_or(serde_json::Value::Null);
+            if session_id.is_empty() || config_id.is_empty() {
+                return error(-32602, "session/set_config_option requires sessionId and configId");
+            }
+            let mut client = harness.client().await;
+            let outcome = match (config_id, value.as_str()) {
+                ("model", Some(model)) if !model.is_empty() => {
+                    client
+                        .call(
+                            kimi_protocol::methods::SESSION_SET_MODEL,
+                            serde_json::json!({ "session_id": session_id, "model": model }),
+                        )
+                        .await
+                }
+                ("mode", Some("plan")) => client
+                    .call(
+                        kimi_protocol::methods::SESSION_SET_PLAN_MODE,
+                        serde_json::json!({ "session_id": session_id, "enabled": true }),
+                    )
+                    .await,
+                ("mode", Some("default")) => client
+                    .call(
+                        kimi_protocol::methods::SESSION_SET_PLAN_MODE,
+                        serde_json::json!({ "session_id": session_id, "enabled": false }),
+                    )
+                    .await,
+                ("thinking", Some(effort)) if !effort.is_empty() => client
+                    .call(
+                        kimi_protocol::methods::SESSION_SET_THINKING,
+                        serde_json::json!({ "session_id": session_id, "effort": effort }),
+                    )
+                    .await,
+                _ => {
+                    return error(
+                        -32602,
+                        &format!("unsupported config option {config_id}={value}"),
+                    );
+                }
+            };
+            if let Some(e) = outcome.get("error") {
+                return error(-32603, e["message"].as_str().unwrap_or("set_config_option failed"));
+            }
+            result(serde_json::json!({ "sessionId": session_id }))
+        }
         "session/prompt" => {
-            // LLM-bound: the harness runs the prompt and returns the
-            // transcript as an assistant message.
             let session_id = params.get("sessionId").and_then(|v| v.as_str()).unwrap_or("");
             let prompt = params.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
             if session_id.is_empty() || prompt.is_empty() {
@@ -349,5 +423,40 @@ mod tests {
         )
         .await;
         assert_eq!(body["error"]["code"], -32602, "missing sessionId: {body}");
+    }
+
+    #[tokio::test]
+    async fn session_config_round_trip() {
+        let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = std::env::temp_dir().join(format!("kimi-acp-config-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("mkdir");
+        std::env::set_var("KIMI_AGENT_HOME", &home);
+
+        // Create, set plan mode via config option, and read it back. A single
+        // shared harness keeps the in-process engine (and its live agents).
+        let harness = Harness::embedded().expect("embedded");
+        let body = round_trip(
+            harness.clone(),
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"session/new\",\"params\":{\"sessionId\":\"acp-cfg\"}}\n",
+        )
+        .await;
+        assert!(body.get("error").is_none(), "session/new: {body}");
+
+        let body = round_trip(
+            harness.clone(),
+            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"session/set_config_option\",\"params\":{\"sessionId\":\"acp-cfg\",\"configId\":\"mode\",\"value\":\"plan\"}}\n",
+        )
+        .await;
+        assert!(body.get("error").is_none(), "set_config_option: {body}");
+
+        let body = round_trip(
+            harness,
+            "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"session/get_config\",\"params\":{\"sessionId\":\"acp-cfg\"}}\n",
+        )
+        .await;
+        assert!(body.get("error").is_none(), "get_config: {body}");
+        assert_eq!(body["result"]["config"]["mode"], "plan", "config: {body}");
+        assert!(body["result"]["config"]["model"].is_string());
     }
 }
