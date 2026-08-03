@@ -200,6 +200,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     const preparedTasks: Array<{
       task: ToolExecutionTask;
       call: PreflightedToolCall;
+      resolvedAccesses?: ToolAccesses;
       stopBatchAfterThis?: boolean;
     }> = [];
 
@@ -214,6 +215,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       preparedTasks.push({
         task: prepared.task,
         call,
+        resolvedAccesses: prepared.resolvedAccesses,
         stopBatchAfterThis: prepared.stopBatchAfterThis,
       });
       if (prepared.stopBatchAfterThis === true) {
@@ -285,13 +287,19 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
   private async finalizeTimedResult(
     prepared: {
       readonly call: PreflightedToolCall;
+      readonly resolvedAccesses?: ToolAccesses;
     },
     timedResult: TimedToolResult,
     options: ToolExecutorExecuteOptions,
   ): Promise<ToolExecutionResult> {
     const { call } = prepared;
     const rawResult = timedResult.result;
-    const finalized = await this.finalizeToolResult(call, rawResult, options);
+    const finalized = await this.finalizeToolResult(
+      call,
+      rawResult,
+      options,
+      prepared.resolvedAccesses,
+    );
 
     this.dispatchToolResult(call, finalized, options);
     this.trackToolCall(call, finalized, timedResult.durationMs, options);
@@ -332,6 +340,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     options: ToolExecutorExecuteOptions,
   ): Promise<{
     task: ToolExecutionTask;
+    resolvedAccesses?: ToolAccesses;
     stopBatchAfterThis?: boolean;
   }> {
     const settleError = (
@@ -349,8 +358,10 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       args: unknown,
       result: ExecutableToolResult,
       displayFields?: ToolCallDisplayFields,
+      resolvedAccesses?: ToolAccesses,
     ): {
       task: ToolExecutionTask;
+      resolvedAccesses?: ToolAccesses;
       stopBatchAfterThis?: boolean;
     } => {
       const toolResult = this.normalizeAndMergeResult(result, call.toolName, undefined);
@@ -363,6 +374,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
           result: toolResult,
           stopTurn: toolResult.stopTurn === true,
         }),
+        resolvedAccesses,
         stopBatchAfterThis: toolResult.stopBatchAfterThis ?? toolResult.stopTurn,
       };
     };
@@ -400,7 +412,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     const decision = await this.beforeExecuteEmitter.fireBeforeExecute(beforeContext);
 
     if (decision?.veto !== undefined) {
-      return settleSynthetic(call.args, decision.veto, displayFields);
+      return settleSynthetic(call.args, decision.veto, displayFields, execution.accesses);
     }
 
     const executionMetadata = decision?.executionMetadata;
@@ -423,6 +435,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         execute: async (taskSignal) =>
           this.runSingleExecution(call, execution, executionMetadata, options, taskSignal),
       },
+      resolvedAccesses: execution.accesses,
       stopBatchAfterThis: execution.stopBatchAfterThis,
     };
   }
@@ -592,6 +605,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     call: PreflightedToolCall,
     result: ToolResult,
     options: ToolExecutorExecuteOptions,
+    resolvedAccesses?: ToolAccesses,
   ): Promise<ToolResult> {
     const didCtx: ToolDidExecuteContext = {
       turnId: options.turnId,
@@ -601,6 +615,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       toolCalls: [call.toolCall],
       tool: call.kind === 'runnable' ? call.tool : undefined,
       args: call.args,
+      accesses: resolvedAccesses,
       result: result as ExecutableToolResult,
     };
 

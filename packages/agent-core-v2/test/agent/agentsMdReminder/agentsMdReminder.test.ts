@@ -1,3 +1,10 @@
+/**
+ * Scenario: discover uninjected AGENTS.md files from canonical tool accesses and Bash targets.
+ * Responsibilities: seeding, once-only reminders, result delivery, probing, and path extraction.
+ * Wiring: real reminder, executor, parser, and host filesystem with flag/telemetry/event stubs.
+ * Run: pnpm exec vitest run test/agent/agentsMdReminder/agentsMdReminder.test.ts
+ */
+
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, normalize } from 'pathe';
@@ -15,6 +22,10 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import {
+  ToolAccesses,
+  type ToolAccesses as ToolAccessesType,
+} from '#/tool/toolContract';
 import type {
   ExecutableTool,
   ExecutableToolContext,
@@ -152,6 +163,7 @@ function didCtx(
     readonly id?: string;
     readonly result?: ExecutableToolResult;
     readonly preflightRejected?: boolean;
+    readonly accesses?: ToolAccessesType;
   } = {},
 ): ToolDidExecuteContext {
   const toolCall: ToolCall = {
@@ -167,8 +179,24 @@ function didCtx(
     toolCalls: [toolCall],
     args,
     tool: options.preflightRejected === true ? undefined : ({} as ExecutableTool),
+    accesses:
+      options.preflightRejected === true
+        ? undefined
+        : options.accesses ?? testAccesses(name, args),
     result: options.result ?? { output: 'original result' },
   };
+}
+
+function testAccesses(name: string, args: unknown): ToolAccessesType | undefined {
+  if (typeof args !== 'object' || args === null) return undefined;
+  const path = (args as Record<string, unknown>)['path'];
+  if (name === 'Read' || name === 'Edit' || name === 'Write') {
+    return typeof path === 'string' ? ToolAccesses.readFile(path) : undefined;
+  }
+  if (name === 'Glob' || name === 'Grep') {
+    return ToolAccesses.searchTree(typeof path === 'string' ? path : workDir);
+  }
+  return undefined;
 }
 
 function willCtx(id: string, name: string, args: unknown): ResolvedToolExecutionHookContext {
@@ -463,8 +491,9 @@ describe('agentsMdReminder toolDedupe interplay', () => {
       readonly name = 'Read';
       readonly description = 'Returns file contents.';
       readonly parameters = { type: 'object', additionalProperties: true };
-      resolveExecution(_args: Record<string, unknown>): ToolExecution {
+      resolveExecution(args: Record<string, unknown>): ToolExecution {
         return {
+          accesses: ToolAccesses.readFile(String(args['path'])),
           approvalRule: this.name,
           execute: async (_ctx: ExecutableToolContext) => ({ output: 'file contents' }),
         };
@@ -749,8 +778,9 @@ describe('agentsMdReminder round-2 hardening', () => {
       readonly name = 'Read';
       readonly description = 'Returns a huge output.';
       readonly parameters = { type: 'object', additionalProperties: true };
-      resolveExecution(_args: Record<string, unknown>): ToolExecution {
+      resolveExecution(args: Record<string, unknown>): ToolExecution {
         return {
+          accesses: ToolAccesses.readFile(String(args['path'])),
           approvalRule: this.name,
           execute: async (_ctx: ExecutableToolContext) => ({ output: 'x'.repeat(60_000) }),
         };
@@ -778,6 +808,45 @@ describe('agentsMdReminder round-2 hardening', () => {
     expect(text).toContain('output_path:');
     expect(text.indexOf('<system-reminder>')).toBeLessThan(2_000);
     expect(text).toContain(subAgentsMd);
+  });
+
+  it('uses the resolved file access instead of reparsing the raw path', async () => {
+    const h = createHarness({ withRealExecutor: true });
+    const homePackage = join(homeDir, 'pkg');
+    const homeAgentsMd = await writeAgentsMd(homePackage, 'home package instructions');
+
+    class ResolvedReadTool implements ExecutableTool<Record<string, unknown>> {
+      readonly name = 'Read';
+      readonly description = 'Returns a resolved file result.';
+      readonly parameters = { type: 'object', additionalProperties: true };
+
+      resolveExecution(_args: Record<string, unknown>): ToolExecution {
+        return {
+          accesses: ToolAccesses.readFile(join(homePackage, 'index.ts')),
+          approvalRule: this.name,
+          execute: async (_ctx: ExecutableToolContext) => ({ output: 'home file contents' }),
+        };
+      }
+    }
+    h.ix.get(IAgentToolRegistryService).register(new ResolvedReadTool());
+
+    const results = [];
+    for await (const item of h.ix.get(IAgentToolExecutorService).execute(
+      [
+        {
+          type: 'function',
+          id: 'call-resolved-read',
+          name: 'Read',
+          arguments: JSON.stringify({ path: '~/pkg/index.ts' }),
+        },
+      ],
+      { turnId: 1, signal: new AbortController().signal },
+    )) {
+      results.push(item);
+    }
+
+    expect(results).toHaveLength(1);
+    expect(outputText(results[0]!.result)).toContain(homeAgentsMd);
   });
 });
 

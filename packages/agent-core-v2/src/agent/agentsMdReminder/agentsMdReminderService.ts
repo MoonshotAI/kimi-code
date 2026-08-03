@@ -9,11 +9,12 @@
  * insertion on purpose: oversized results are truncated to a short head
  * preview later in the execution pipeline, and a tail reminder would be
  * silently dropped after the file was already counted as reminded).
- * `Read`/`Edit`/`Write` contribute their `path`'s directory (a successful
- * touch landing on an AGENTS.md itself marks just that file known),
- * `Glob`/`Grep` contribute their optional search root, and `Bash` contributes
- * its explicit `cwd` plus the literal directory operands extracted from the
- * command's syntax tree (see `./bashTargets`), resolved against the frozen
+ * `Read`/`Edit`/`Write` consume the canonical file access declared by their
+ * resolved execution (a successful touch landing on an AGENTS.md itself marks
+ * just that file known), `Glob`/`Grep` consume their canonical search root,
+ * and `Bash` contributes its explicit `cwd` plus the literal directory
+ * operands extracted from the command's syntax tree (see `./bashTargets`),
+ * resolved against the frozen
  * `sessionContext.cwd` exactly like the Bash tool itself (`args.cwd ??
  * sessionContext.cwd` — a base that deliberately differs from the live agent
  * cwd after a chdir). Preflight-rejected calls (no `tool` on the context —
@@ -232,26 +233,16 @@ export class AgentAgentsMdReminderService
   }
 
   private targetDirs(ctx: ToolDidExecuteContext): { dirs: string[]; selfKnown: string[] } {
-    const args = ctx.args;
     const selfKnown: string[] = [];
     switch (ctx.toolCall.name) {
       case 'Read':
       case 'Edit':
-      case 'Write': {
-        const path = stringArg(args, 'path');
-        if (path === undefined) return { dirs: [], selfKnown };
-        const resolved = this.resolve(path);
-        if (ctx.result.isError !== true && AGENTS_MD_BASENAMES.has(basename(resolved))) {
-          selfKnown.push(resolved);
-        }
-        return { dirs: [dirname(resolved)], selfKnown };
-      }
+      case 'Write':
       case 'Glob':
-      case 'Grep': {
-        const path = stringArg(args, 'path');
-        return { dirs: [path === undefined ? this.agentCwd : this.resolve(path)], selfKnown };
-      }
+      case 'Grep':
+        return this.targetDirsFromAccesses(ctx);
       case 'Bash': {
+        const args = ctx.args;
         const command = stringArg(args, 'command');
         if (command === undefined) return { dirs: [], selfKnown };
         const cwdArg = stringArg(args, 'cwd');
@@ -273,8 +264,28 @@ export class AgentAgentsMdReminderService
     }
   }
 
-  private resolve(path: string): string {
-    return normalize(isAbsolute(path) ? path : join(this.agentCwd, path));
+  private targetDirsFromAccesses(ctx: ToolDidExecuteContext): {
+    dirs: string[];
+    selfKnown: string[];
+  } {
+    const dirs: string[] = [];
+    const selfKnown: string[] = [];
+    const targetsFiles =
+      ctx.toolCall.name === 'Read' ||
+      ctx.toolCall.name === 'Edit' ||
+      ctx.toolCall.name === 'Write';
+    for (const access of ctx.accesses ?? []) {
+      if (access.kind !== 'file') continue;
+      if (
+        targetsFiles &&
+        ctx.result.isError !== true &&
+        AGENTS_MD_BASENAMES.has(basename(access.path))
+      ) {
+        selfKnown.push(access.path);
+      }
+      dirs.push(targetsFiles ? dirname(access.path) : access.path);
+    }
+    return { dirs: [...new Set(dirs)], selfKnown: [...new Set(selfKnown)] };
   }
 
   private async probeDir(dir: string): Promise<string[]> {

@@ -18,9 +18,10 @@
  *   `waitUntil(promise)`; the executor awaits all of them before dispatching
  *   an allowed call (e.g. MCP initial load).
  * - `hooks.onDidExecuteTool` (ordered hook slot, `ToolDidExecuteContext`):
- *   post-execution result finalization, kept as an `OrderedHookSlot`. Every
- *   call reaches it — including preflight-rejected ones (missing/unavailable
- *   tool, guard denial, invalid args), which arrive without `tool` set.
+ *   post-execution result finalization with the resolved execution's canonical
+ *   resource accesses, kept as an `OrderedHookSlot`. Every call reaches it —
+ *   including preflight-rejected ones (missing/unavailable tool, guard denial,
+ *   invalid args), which arrive without `tool` or `accesses` set.
  *
  * Pure contract (types only); no scoped service.
  */
@@ -29,7 +30,12 @@ import type { IWaitUntil } from '#/_base/event';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 
-import type { ExecutableTool, ExecutableToolResult, RunnableToolExecution } from '#/tool/toolContract';
+import type {
+  ExecutableTool,
+  ExecutableToolResult,
+  RunnableToolExecution,
+  ToolAccesses,
+} from '#/tool/toolContract';
 
 export interface ToolExecutionHookContext {
   readonly turnId: number;
@@ -65,6 +71,7 @@ export interface WillExecuteToolEvent extends IWaitUntil {
 }
 
 export interface ToolDidExecuteContext extends ToolExecutionHookContext {
+  readonly accesses?: ToolAccesses;
   result: ExecutableToolResult;
   stopTurn?: boolean;
 }
