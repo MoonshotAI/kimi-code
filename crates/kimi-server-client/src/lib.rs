@@ -91,6 +91,48 @@ impl AppServerClient {
         )
         .await
     }
+
+    /// Typed: request cancellation of a running turn.
+    pub async fn session_cancel(&mut self, session_id: &str) -> serde_json::Value {
+        self.call(
+            kimi_protocol::methods::SESSION_CANCEL,
+            serde_json::json!({ "session_id": session_id }),
+        )
+        .await
+    }
+
+    /// Typed: run a shell command in the session workspace.
+    pub async fn session_run_shell(&mut self, session_id: &str, command: &str) -> serde_json::Value {
+        self.call(
+            kimi_protocol::methods::SESSION_RUN_SHELL,
+            serde_json::json!({ "session_id": session_id, "command": command }),
+        )
+        .await
+    }
+
+    /// Typed: pending approvals for a session scope (all when `None`).
+    pub async fn approval_list(&mut self, session_id: Option<&str>) -> serde_json::Value {
+        let params = match session_id {
+            Some(id) => serde_json::json!({ "session_id": id }),
+            None => serde_json::Value::Null,
+        };
+        self.call(kimi_protocol::methods::SESSION_APPROVAL_LIST, params).await
+    }
+
+    /// Typed: resolve a pending approval (`allow` or `deny` with a reason).
+    pub async fn approval_resolve(
+        &mut self,
+        id: &str,
+        allow: bool,
+        reason: Option<&str>,
+    ) -> serde_json::Value {
+        let params = if allow {
+            serde_json::json!({ "id": id, "decision": "allow" })
+        } else {
+            serde_json::json!({ "id": id, "decision": "deny", "reason": reason })
+        };
+        self.call(kimi_protocol::methods::SESSION_APPROVAL_RESOLVE, params).await
+    }
 }
 
 #[cfg(test)]
@@ -143,5 +185,33 @@ mod tests {
         let body = client.session_get_context("s-typed").await;
         assert!(body.get("error").is_none(), "get_context: {body}");
         assert!(body["result"]["history"].is_array());
+    }
+
+    #[tokio::test]
+    async fn typed_control_methods_round_trip() {
+        let server = Server::build().expect("server");
+        let mut client = AppServerClient::InProcess(kimi_server::in_process::spawn(server.processor));
+        let body = client.session_create("s-ctrl").await;
+        assert_eq!(body["result"]["session_id"], "s-ctrl");
+
+        // Cancel of a created (idle) session sets its flag and reports true —
+        // the flag is registered at session/create (unknown sessions -> false).
+        let body = client.session_cancel("s-ctrl").await;
+        assert!(body.get("error").is_none(), "cancel: {body}");
+        assert_eq!(body["result"]["cancelled"], true);
+        let body = client.session_cancel("does-not-exist").await;
+        assert_eq!(body["result"]["cancelled"], false);
+
+        // run_shell reaches the bash runner even without a turn.
+        let body = client.session_run_shell("s-ctrl", "echo kimi-client-test").await;
+        assert!(body.get("error").is_none(), "run_shell: {body}");
+
+        // Approval surface: empty list; unknown resolve -> false.
+        let body = client.approval_list(Some("s-ctrl")).await;
+        assert!(body.get("error").is_none(), "approval_list: {body}");
+        assert_eq!(body["result"]["pending"], serde_json::json!([]));
+        let body = client.approval_resolve("nope", true, None).await;
+        assert!(body.get("error").is_none(), "approval_resolve: {body}");
+        assert_eq!(body["result"]["resolved"], false);
     }
 }
