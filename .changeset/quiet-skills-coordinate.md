@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Separate inline skill preparation from prompt submission orchestration.
+Keep inline skill prompt submission atomic and undoable across both agent engines.

@@ -73,9 +73,11 @@ export type {
   McpServerEntry,
   PlanData,
   PromptLaunchResult,
+  PromptWithSkillsInput,
   SetModelResult,
   ShellCommandResult,
   ThinkingLevel,
+  SkillSummary,
   UsageStatus,
 } from './core/facade/agent.js';
 

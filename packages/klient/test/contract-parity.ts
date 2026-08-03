@@ -132,6 +132,7 @@ import type {
   CompactionStartedEvent,
   PromptAbortedEvent,
   PromptCompletedEvent,
+  SkillActivatedEvent,
   TaskInfo,
   ThinkingDeltaEvent,
   ToolCallDeltaEvent,
@@ -163,6 +164,7 @@ import {
   cancelPayloadSchema,
   cancelPlanPayloadSchema,
   cancelShellCommandPayloadSchema,
+  activateSkillPayloadSchema,
   emptyPayloadSchema,
   getTaskOutputPayloadSchema,
   getTasksPayloadSchema,
@@ -170,6 +172,8 @@ import {
   promptLaunchResultSchema,
   promptPartSchema,
   promptPayloadSchema,
+  promptSkillActivationSchema,
+  promptWithSkillsPayloadSchema,
   runCommandPayloadSchema,
   runShellCommandPayloadSchema,
   setModelPayloadSchema,
@@ -178,8 +182,10 @@ import {
   shellCommandResultSchema,
   steerPayloadSchema,
   stopTaskPayloadSchema,
+  skillSummarySchema,
   tokenUsageSchema,
   usageStatusSchema,
+  undoHistoryPayloadSchema,
 } from '../src/contract/agent/rpc.js';
 import {
   assistantDeltaEventSchema,
@@ -189,6 +195,7 @@ import {
   compactionStartedEventSchema,
   promptAbortedEventSchema,
   promptCompletedEventSchema,
+  skillActivatedEventSchema,
   thinkingDeltaEventSchema,
   toolCallDeltaEventSchema,
   toolCallStartedEventSchema,
@@ -528,9 +535,14 @@ const _agentActivityState: AssertEngineToWire<typeof agentActivityStateSchema, A
 // directly (shellCommand / profile / usage / plan / task) are imported from
 // `core-api.ts` (they no longer have `AgentAPI` entries).
 type PromptPayload = Parameters<AgentAPI['prompt']>[0];
+type PromptWithSkillsPayload = Parameters<AgentAPI['promptWithSkills']>[0];
+type PromptSkillActivation = PromptWithSkillsPayload['skills'][number];
 type PromptLaunchResult = NonNullable<ReturnType<AgentAPI['prompt']>>;
 type SteerPayload = Parameters<AgentAPI['steer']>[0];
 type CancelPayload = Parameters<AgentAPI['cancel']>[0];
+type UndoHistoryPayload = Parameters<AgentAPI['undoHistory']>[0];
+type ActivateSkillPayload = Parameters<AgentAPI['activateSkill']>[0];
+type SkillSummary = ReturnType<AgentAPI['listSkills']>[number];
 type SetPermissionPayload = Parameters<AgentAPI['setPermission']>[0];
 type AgentCommandInfo = Awaited<ReturnType<AgentAPI['listCommands']>>[number];
 type RunCommandPayload = Parameters<AgentAPI['runCommand']>[0];
@@ -542,11 +554,22 @@ const _promptPart: AssertWire<typeof promptPartSchema, PromptPart> = true;
 // the full `ContentPart` union (also think/audio parts); the wire mirrors the
 // `PromptPart` subset clients may send, so the reverse direction fails.
 const _promptPayload: AssertWireToEngine<typeof promptPayloadSchema, PromptPayload> = true;
+const _promptSkillActivation: AssertWire<
+  typeof promptSkillActivationSchema,
+  PromptSkillActivation
+> = true;
+const _promptWithSkillsPayload: AssertWireToEngine<
+  typeof promptWithSkillsPayloadSchema,
+  PromptWithSkillsPayload
+> = true;
 const _steerPayload: AssertWireToEngine<typeof steerPayloadSchema, SteerPayload> = true;
 const _activateSkillPayload: AssertWire<typeof activateSkillPayloadSchema, ActivateSkillPayload> =
   true;
 const _promptLaunchResult: AssertWire<typeof promptLaunchResultSchema, PromptLaunchResult> = true;
 const _cancelPayload: AssertWire<typeof cancelPayloadSchema, CancelPayload> = true;
+const _undoHistoryPayload: AssertWire<typeof undoHistoryPayloadSchema, UndoHistoryPayload> = true;
+const _activateSkillPayload: AssertWire<typeof activateSkillPayloadSchema, ActivateSkillPayload> = true;
+const _skillSummary: AssertWire<typeof skillSummarySchema, SkillSummary> = true;
 const _runShellCommandPayload: AssertWire<
   typeof runShellCommandPayloadSchema,
   RunShellCommandPayload
@@ -618,6 +641,7 @@ const _compactionCompletedEvent: AssertWire<
   typeof compactionCompletedEventSchema,
   CompactionCompletedEvent
 > = true;
+const _skillActivatedEvent: AssertWire<typeof skillActivatedEventSchema, SkillActivatedEvent> = true;
 const _warningEvent: AssertWire<typeof warningEventSchema, WarningEvent> = true;
 // No parity assertions for `errorEventSchema`, `permissionApproval*Schema`,
 // and `agentStatusUpdatedEventSchema`: they are deliberately `z.looseObject`s

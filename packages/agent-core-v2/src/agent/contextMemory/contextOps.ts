@@ -49,18 +49,14 @@ import {
   createCompactionSummaryMessage,
   type ContextCompactionShapeInput,
 } from './compactionHandoff';
-import {
-  isPromptOwnedInjection,
-  isUndoAnchor,
-  isValidUndoCount,
-} from './conversationTime';
+import { isPromptOwnedInjection, isValidUndoCount } from './conversationTime';
 import {
   foldAppendMessage,
   foldLoopEvent,
   resetFold,
   type LoopRecordedEvent,
 } from './loopEventFold';
-import type { ContextMessage } from './types';
+import type { ContextMessage, PromptOrigin } from './types';
 
 async function dehydrateMessages(
   messages: readonly ContextMessage[],
@@ -340,14 +336,22 @@ export function computeUndoCut(state: readonly ContextMessage[], count: number):
   let cutIndex = -1;
   let removedCount = 0;
   let stoppedAtCompaction = false;
-  for (let i = state.length - 1; i >= 0 && remaining > 0; i--) {
+  let completingSubmissionId: string | undefined;
+  for (let i = state.length - 1; i >= 0; i--) {
     const message = state[i];
     if (message === undefined || message.origin?.kind === 'injection') continue;
+    const submissionId = promptSubmissionId(message.origin);
+    if (
+      remaining <= 0 &&
+      (completingSubmissionId === undefined || submissionId !== completingSubmissionId)
+    ) {
+      break;
+    }
     if (message.origin?.kind === 'compaction_summary') {
       stoppedAtCompaction = true;
       break;
     }
-    if (isUndoAnchor(message)) {
+    if (isUserUndoAnchor(message)) {
       remaining--;
       removedCount++;
       cutIndex = i;
@@ -357,6 +361,14 @@ export function computeUndoCut(state: readonly ContextMessage[], count: number):
       ) {
         cutIndex--;
       }
+      completingSubmissionId = submissionId;
+    } else if (
+      completingSubmissionId !== undefined &&
+      submissionId === completingSubmissionId
+    ) {
+      // Non-anchor messages of the submission being completed (inline skill
+      // activations) are cut together with their prompt.
+      cutIndex = i;
     }
   }
   return { cutIndex, removedCount, stoppedAtCompaction };
@@ -418,3 +430,17 @@ export const contextUndo = ContextModel.defineOp('context.undo', {
     return resetFold(state.slice(0, cut.cutIndex)) as ContextMessage[];
   },
 });
+export function promptSubmissionId(origin: PromptOrigin | undefined): string | undefined {
+  if (origin?.kind !== 'user' && origin?.kind !== 'skill_activation') return undefined;
+  return origin.submissionId;
+}
+
+export function isUserUndoAnchor(message: ContextMessage): boolean {
+  if (message.role !== 'user') return false;
+  const origin = message.origin;
+  if (origin === undefined || origin.kind === 'user') return true;
+  if (origin.kind === 'skill_activation') {
+    return origin.trigger === 'user-slash' && origin.submissionId === undefined;
+  }
+  return origin.kind === 'plugin_command' && origin.trigger === 'user-slash';
+}

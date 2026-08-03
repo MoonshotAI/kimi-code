@@ -95,6 +95,33 @@ describe('computeUndoCut', () => {
     expect(cut.stoppedAtCompaction).toBe(true);
     expect(isFullyUndoable(cut, 2)).toBe(false);
   });
+
+  it('counts one prompt submission and cuts all of its skill activations', () => {
+    const history = [
+      user({
+        kind: 'skill_activation',
+        activationId: 'activation-1',
+        skillName: 'review',
+        trigger: 'user-slash',
+        submissionId: 'submission-1',
+      }),
+      user({
+        kind: 'skill_activation',
+        activationId: 'activation-2',
+        skillName: 'security',
+        trigger: 'user-slash',
+        submissionId: 'submission-1',
+      }),
+      user({ kind: 'user', submissionId: 'submission-1' }),
+      assistant(),
+    ];
+
+    expect(computeUndoCut(history, 1)).toEqual({
+      cutIndex: 0,
+      removedCount: 1,
+      stoppedAtCompaction: false,
+    });
+  });
 });
 
 describe('contextUndo op', () => {

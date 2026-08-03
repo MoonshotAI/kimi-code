@@ -13,7 +13,8 @@ import {
   collectCompactableUserMessages,
   selectRecentUserMessages,
 } from './compactionHandoff';
-import { isPromptOwnedInjection, isUndoAnchor } from './conversationTime';
+import { isUserUndoAnchor, promptSubmissionId } from './contextOps';
+import { isPromptOwnedInjection } from './conversationTime';
 import type { LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
 import { isVacuousContentPart } from './vacuousContent';
@@ -167,13 +168,21 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   const applyUndo = (count: number): void => {
     if (count <= 0) return;
     let removedUserCount = 0;
+    let completingSubmissionId: string | undefined;
     for (let i = transcript.length - 1; i >= clearFloor; i--) {
       const message = transcript[i]!.message;
       if (message.origin?.kind === 'injection') continue;
+      const submissionId = promptSubmissionId(message.origin);
+      if (
+        removedUserCount >= count &&
+        (completingSubmissionId === undefined || submissionId !== completingSubmissionId)
+      ) {
+        break;
+      }
       if (message.origin?.kind === 'compaction_summary') break;
       transcript.splice(i, 1);
       foldedLength = Math.max(0, foldedLength - 1);
-      if (isUndoAnchor(message)) {
+      if (isUserUndoAnchor(message)) {
         removedUserCount++;
         if (removedUserCount >= count) {
           while (
@@ -184,8 +193,8 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
             i--;
             foldedLength = Math.max(0, foldedLength - 1);
           }
-          break;
         }
+        completingSubmissionId = submissionId;
       }
     }
     resetOpenState();

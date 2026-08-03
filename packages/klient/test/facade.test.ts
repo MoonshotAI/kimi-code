@@ -154,6 +154,41 @@ describe('facade routing', () => {
     expect(again.platform).toBe('v');
     expect(channel.calls).toHaveLength(12);
   });
+
+  it('routes skill prompt operations through the agent RPC service', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+
+    channel.result = { turn_id: 7 };
+    await expect(
+      agent.promptWithSkills({
+        input: [{ type: 'text', text: 'Review this change.' }],
+        skills: [{ name: 'review' }, { name: 'security', args: 'src/app.ts' }],
+        submissionId: 'submission-1',
+      }),
+    ).resolves.toEqual({ turn_id: 7 });
+    expect(channel.calls[0]).toEqual({
+      scope: { sessionId: 's1', agentId: 'main' },
+      service: 'agentRPCService',
+      method: 'promptWithSkills',
+      args: [
+        {
+          input: [{ type: 'text', text: 'Review this change.' }],
+          skills: [{ name: 'review' }, { name: 'security', args: 'src/app.ts' }],
+          submissionId: 'submission-1',
+        },
+      ],
+    });
+
+    channel.result = 1;
+    await expect(agent.undoHistory(1)).resolves.toBe(1);
+    expect(channel.calls[1]).toMatchObject({
+      service: 'agentRPCService',
+      method: 'undoHistory',
+      args: [{ count: 1 }],
+    });
+  });
 });
 
 describe('agent profile routing', () => {
@@ -531,5 +566,33 @@ describe('event hub', () => {
     expect(seen.completed).toEqual([completed]);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toBeInstanceOf(KlientValidationError);
+  });
+
+  it('exposes skill activation submission ids on the agent event stream', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const seen: unknown[] = [];
+    klient.session('s1').agent('main').events.on('skill.activated', (event) => {
+      seen.push(event);
+    });
+
+    channel.emit(0, {
+      type: 'skill.activated',
+      activationId: 'activation-1',
+      skillName: 'review',
+      trigger: 'user-slash',
+      submissionId: 'submission-1',
+    });
+    await tick();
+
+    expect(seen).toEqual([
+      {
+        type: 'skill.activated',
+        activationId: 'activation-1',
+        skillName: 'review',
+        trigger: 'user-slash',
+        submissionId: 'submission-1',
+      },
+    ]);
   });
 });

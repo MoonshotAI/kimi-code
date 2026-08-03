@@ -24,6 +24,8 @@ import type { ScopedCaller } from './session.js';
 // Wire-type aliases derived through the engine service interfaces (keeps
 // klient free of protocol-package imports).
 export type PromptLaunchResult = Awaited<ReturnType<IAgentRPCService['prompt']>>;
+export type PromptWithSkillsInput = Parameters<IAgentRPCService['promptWithSkills']>[0];
+export type SkillSummary = Awaited<ReturnType<IAgentRPCService['listSkills']>>[number];
 export type ShellCommandResult = Awaited<ReturnType<IAgentShellCommandService['run']>>;
 export type SetModelResult = Awaited<ReturnType<IAgentProfileService['setModel']>>;
 export type ThinkingLevel = ReturnType<IAgentProfileService['getEffectiveThinkingLevel']>;
@@ -39,6 +41,7 @@ export interface AgentFacade {
     input: readonly ContentPart[];
     disabledTools?: readonly string[];
   }): Promise<PromptLaunchResult>;
+  promptWithSkills(input: PromptWithSkillsInput): Promise<PromptLaunchResult>;
   steer(input: { input: readonly ContentPart[] }): Promise<PromptLaunchResult>;
   /**
    * Activate a skill as a user-slash activation: the engine renders the skill
@@ -48,6 +51,7 @@ export interface AgentFacade {
    */
   activateSkill(input: { name: string; args?: string }): Promise<PromptLaunchResult>;
   cancel(input?: { turnId?: number }): Promise<void>;
+  undoHistory(count: number): Promise<number>;
   runShellCommand(input: { command: string; commandId?: string }): Promise<ShellCommandResult>;
   cancelShellCommand(input: { commandId: string }): Promise<void>;
   getModel(): Promise<string>;
@@ -59,6 +63,8 @@ export interface AgentFacade {
   getContext(): Promise<AgentContextData>;
   listCommands(): Promise<readonly AgentCommandInfo[]>;
   runCommand(input: { name: string; args?: string }): Promise<void>;
+  listSkills(): Promise<readonly SkillSummary[]>;
+  activateSkill(input: { name: string; args?: string }): Promise<void>;
   getPlan(): Promise<PlanData>;
   enterPlan(): Promise<void>;
   clearPlan(): Promise<void>;
@@ -86,9 +92,11 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
 
   return {
     prompt: (input) => rpc('prompt', input) as Promise<PromptLaunchResult>,
+    promptWithSkills: (input) => rpc('promptWithSkills', input) as Promise<PromptLaunchResult>,
     steer: (input) => rpc('steer', input) as Promise<PromptLaunchResult>,
     activateSkill: (input) => rpc('activateSkill', input) as Promise<PromptLaunchResult>,
     cancel: (input) => rpc('cancel', input ?? {}) as Promise<void>,
+    undoHistory: (count) => rpc('undoHistory', { count }) as Promise<number>,
     runShellCommand: (input) =>
       call(scope, 'agentShellCommandService', 'run', [input]) as Promise<ShellCommandResult>,
     cancelShellCommand: (input) =>
@@ -105,6 +113,8 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
     getContext: () => rpc('getContext', {}) as Promise<AgentContextData>,
     listCommands: () => rpc('listCommands', {}) as Promise<readonly AgentCommandInfo[]>,
     runCommand: (input) => rpc('runCommand', input) as Promise<void>,
+    listSkills: () => rpc('listSkills', {}) as Promise<readonly SkillSummary[]>,
+    activateSkill: (input) => rpc('activateSkill', input) as Promise<void>,
     getPlan: () => call(scope, 'agentPlanService', 'status', []) as Promise<PlanData>,
     enterPlan: () => call(scope, 'agentPlanService', 'enter', []) as Promise<void>,
     clearPlan: () => call(scope, 'agentPlanService', 'clear', []) as Promise<void>,

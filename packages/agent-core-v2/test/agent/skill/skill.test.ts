@@ -4,6 +4,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { promptSubmissionId } from '#/agent/contextMemory/contextOps';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentSkillService } from '#/agent/skill/skill';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -24,6 +25,7 @@ import type { Turn } from '#/agent/loop/loop';
 import { executeTool } from '../../tools/fixtures/execute-tool';
 import { stubSkill } from '../../app/skillCatalog/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';
+import { createTestAgent, skillServices } from '../../harness';
 
 const COMMIT_SKILL = stubSkill('commit', {
   description: 'commit changes',
@@ -150,6 +152,88 @@ describe('AgentSkillService', () => {
   });
 });
 
+describe('promptWithSkills RPC', () => {
+  it('submits prepared skills and the user prompt in one undoable turn', async () => {
+    const catalog = new InMemorySkillCatalog();
+    catalog.register(stubSkill('review', { content: 'Review the requested code.' }));
+    catalog.register(stubSkill('security', { content: 'Check for security issues.' }));
+    const ctx = createTestAgent(skillServices(catalog));
+
+    try {
+      const eventStart = ctx.allEvents.length;
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+      await ctx.rpc.promptWithSkills({
+        input: [{ type: 'text', text: 'Review this change.' }],
+        skills: [{ name: 'review' }, { name: 'security' }],
+        submissionId: 'submission-1',
+      });
+      await ctx.untilTurnEnd();
+      const events = ctx.allEvents.slice(eventStart);
+
+      expect(
+        events
+          .filter(
+            (event) =>
+              event.type === '[rpc]' &&
+              (event.event === 'skill.activated' || event.event === 'turn.started'),
+          )
+          .map((event) => event.event),
+      ).toEqual(['skill.activated', 'skill.activated', 'turn.started']);
+
+      const grouped = ctx.context
+        .get()
+        .filter((message) => promptSubmissionId(message.origin) === 'submission-1');
+      expect(grouped).toHaveLength(3);
+      expect(grouped.map((message) => message.origin?.kind)).toEqual([
+        'skill_activation',
+        'skill_activation',
+        'user',
+      ]);
+      expect(ctx.llmCalls).toHaveLength(1);
+
+      await expect(ctx.rpc.undoHistory({ count: 1 })).resolves.toBe(1);
+      expect(
+        ctx.context
+          .get()
+          .some((message) => promptSubmissionId(message.origin) === 'submission-1'),
+      ).toBe(false);
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('rejects the whole submission before recording any valid skill', async () => {
+    const catalog = new InMemorySkillCatalog();
+    catalog.register(stubSkill('review', { content: 'Review the requested code.' }));
+    const ctx = createTestAgent(skillServices(catalog));
+
+    try {
+      const eventStart = ctx.allEvents.length;
+      await expect(
+        ctx.rpc.promptWithSkills({
+          input: [{ type: 'text', text: 'Review this change.' }],
+          skills: [{ name: 'review' }, { name: 'missing' }],
+          submissionId: 'submission-invalid',
+        }),
+      ).rejects.toThrow('Skill "missing" was not found');
+
+      expect(ctx.llmCalls).toHaveLength(0);
+      expect(
+        ctx.context
+          .get()
+          .some((message) => promptSubmissionId(message.origin) === 'submission-invalid'),
+      ).toBe(false);
+      expect(
+        ctx.allEvents.slice(eventStart).some(
+          (event) => event.type === '[rpc]' && event.event === 'skill.activated',
+        ),
+      ).toBe(false);
+    } finally {
+      await ctx.dispose();
+    }
+  });
+});
+
 describe('SkillTool', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
@@ -203,6 +287,8 @@ describe('SkillTool', () => {
     return {
       _serviceBrand: undefined,
       activate: () => Promise.reject(new Error('not implemented')),
+      prepareAll: () => Promise.resolve([]),
+      recordActivation: () => {},
       recordModelToolActivation: () => {},
     };
   }

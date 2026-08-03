@@ -26,6 +26,7 @@ declare module '#/app/event/eventBus' {
       skillArgs?: string;
       skillPath?: string;
       skillSource?: SkillSource;
+      submissionId?: string;
     };
   }
 }
@@ -50,5 +51,6 @@ export const skillActivate = SkillModel.defineOp('skill.activate', {
     skillArgs: p.origin.skillArgs,
     skillPath: p.origin.skillPath,
     skillSource: p.origin.skillSource,
+    submissionId: p.origin.submissionId,
   }),
 });

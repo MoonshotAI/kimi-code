@@ -9,7 +9,7 @@
  */
 
 import { createDecorator } from "#/_base/di/instantiation";
-import type { SkillActivationOrigin } from '#/agent/contextMemory/types';
+import type { ContextMessage, SkillActivationOrigin } from '#/agent/contextMemory/types';
 import type { Turn } from '#/agent/loop/loop';
 import type { ContentPart } from '#/kosong/contract/message';
 
@@ -19,10 +19,20 @@ export interface SkillActivationInput {
   readonly content?: readonly ContentPart[];
 }
 
+export interface PreparedSkillActivation {
+  readonly origin: SkillActivationOrigin;
+  readonly message: ContextMessage;
+}
+
 export interface IAgentSkillService {
   readonly _serviceBrand: undefined;
 
   activate(input: SkillActivationInput): Promise<Turn>;
+  prepareAll(
+    inputs: readonly SkillActivationInput[],
+    submissionId: string,
+  ): Promise<readonly PreparedSkillActivation[]>;
+  recordActivation(origin: SkillActivationOrigin): void;
   recordModelToolActivation(origin: SkillActivationOrigin): void;
 }
 

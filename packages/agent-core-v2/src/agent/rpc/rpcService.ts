@@ -23,6 +23,8 @@ import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAgentSkillService } from '#/agent/skill/skill';
+import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { summarizeSkill } from '#/app/skillCatalog/types';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -33,6 +35,7 @@ import type {
   EmptyPayload,
   PromptLaunchResult,
   PromptPayload,
+  PromptWithSkillsPayload,
   RunCommandPayload,
   SetPermissionPayload,
   SteerPayload,
@@ -85,6 +88,7 @@ export class AgentRPCService implements IAgentRPCService {
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @IAgentCommandService private readonly commands: IAgentCommandService,
+    @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
   ) { }
 
   async prompt(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
@@ -105,6 +109,29 @@ export class AgentRPCService implements IAgentRPCService {
       toolCalls: [],
       origin: { kind: 'user' },
     } });
+    if (handle.state === 'pending') return undefined;
+    const turn = await handle.launched;
+    return turn === undefined ? undefined : { turn_id: turn.id };
+  }
+
+  async promptWithSkills(
+    payload: PromptWithSkillsPayload,
+  ): Promise<PromptLaunchResult | undefined> {
+    const submissionId = payload.submissionId ?? randomUUID();
+    const prepared = await this.skills.prepareAll(payload.skills, submissionId);
+    for (const activation of prepared) {
+      this.skills.recordActivation(activation.origin);
+    }
+    const handle = await this.promptService.enqueue({
+      message: {
+        role: 'user',
+        content: [...payload.input],
+        toolCalls: [],
+        origin: { kind: 'user', submissionId },
+      },
+      messagesBefore: prepared.map((activation) => activation.message),
+    });
+    await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));
     if (handle.state === 'pending') return undefined;
     const turn = await handle.launched;
     return turn === undefined ? undefined : { turn_id: turn.id };
@@ -162,6 +189,11 @@ export class AgentRPCService implements IAgentRPCService {
       });
     }
     active?.abortController.abort();
+  }
+
+  async listSkills(_payload: EmptyPayload) {
+    await this.skillCatalog.ready;
+    return this.skillCatalog.catalog.listSkills().map(summarizeSkill);
   }
 
   async activateSkill(payload: ActivateSkillPayload): Promise<PromptLaunchResult | undefined> {

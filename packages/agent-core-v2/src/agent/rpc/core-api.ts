@@ -120,6 +120,16 @@ export interface PromptPayload {
   readonly input: readonly ContentPart[];
   readonly disabledTools?: readonly string[];
 }
+
+export interface PromptSkillActivation {
+  readonly name: string;
+  readonly args?: string;
+}
+
+export interface PromptWithSkillsPayload extends PromptPayload {
+  readonly skills: readonly PromptSkillActivation[];
+  readonly submissionId?: string;
+}
 export interface RunShellCommandPayload {
   readonly command: string;
   readonly commandId?: string;
@@ -302,11 +312,13 @@ export interface PromptLaunchResult {
 
 export interface AgentAPI {
   prompt: (payload: PromptPayload) => PromptLaunchResult | undefined;
+  promptWithSkills: (payload: PromptWithSkillsPayload) => PromptLaunchResult | undefined;
   steer: (payload: SteerPayload) => PromptLaunchResult | undefined;
   cancel: (payload: CancelPayload) => void;
   undoHistory: (payload: UndoHistoryPayload) => Promise<number>;
   setPermission: (payload: SetPermissionPayload) => void;
   cancelCompaction: (payload: EmptyPayload) => void;
+  listSkills: (payload: EmptyPayload) => readonly SkillSummary[];
   activateSkill: (payload: ActivateSkillPayload) => PromptLaunchResult | undefined;
   activatePluginCommand: (payload: ActivatePluginCommandPayload) => void;
   listCommands: (payload: EmptyPayload) => readonly AgentCommandInfo[];
@@ -321,7 +333,6 @@ export interface SessionAPI extends AgentAPIWithId {
   renameSession: (payload: RenameSessionPayload) => void;
   updateSessionMetadata: (payload: UpdateSessionMetadataPayload) => void;
   getSessionMetadata: (payload: EmptyPayload) => SessionMeta;
-  listSkills: (payload: EmptyPayload) => readonly SkillSummary[];
   listPluginCommands: (payload: EmptyPayload) => readonly PluginCommandDef[];
   listMcpServers: (payload: EmptyPayload) => readonly McpServerInfo[];
   getMcpStartupMetrics: (payload: EmptyPayload) => McpStartupMetrics;

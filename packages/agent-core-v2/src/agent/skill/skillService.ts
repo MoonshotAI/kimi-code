@@ -18,7 +18,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import type { ContentPart } from '#/kosong/contract/message';
 
-import type { ContextMessage, SkillActivationOrigin } from '#/agent/contextMemory/types';
+import type { SkillActivationOrigin } from '#/agent/contextMemory/types';
 import { renderUserSlashSkillPrompt } from './prompt';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { Service } from '#/_base/di/service';
@@ -28,7 +28,11 @@ import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { Turn } from '#/agent/loop/loop';
 import { IWireService } from '#/wire/wire';
-import { IAgentSkillService, type SkillActivationInput } from './skill';
+import {
+  IAgentSkillService,
+  type PreparedSkillActivation,
+  type SkillActivationInput,
+} from './skill';
 import { skillActivate } from './skillOps';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 
@@ -47,6 +51,39 @@ export class AgentSkillService extends Service implements IAgentSkillService {
 
   async activate(input: SkillActivationInput): Promise<Turn> {
     await this.skillCatalog.ready;
+    const prepared = this.prepare(input);
+    this.recordActivation(prepared.origin);
+    const turn = await (await this.prompt.enqueue({ message: prepared.message })).launched;
+    if (turn === undefined) {
+      throw new Error2(
+        ErrorCodes.TURN_AGENT_BUSY,
+        'Cannot activate skill while another turn is active',
+      );
+    }
+    return turn;
+  }
+
+  async prepareAll(
+    inputs: readonly SkillActivationInput[],
+    submissionId: string,
+  ): Promise<readonly PreparedSkillActivation[]> {
+    await this.skillCatalog.ready;
+    return inputs.map((input) => this.prepare(input, submissionId));
+  }
+
+  recordActivation(origin: SkillActivationOrigin): void {
+    this.wire.dispatch(skillActivate({ origin }));
+    this.publishActivation(origin);
+  }
+
+  recordModelToolActivation(origin: SkillActivationOrigin): void {
+    this.recordActivation(origin);
+  }
+
+  private prepare(
+    input: SkillActivationInput,
+    submissionId?: string,
+  ): PreparedSkillActivation {
     const skill = this.skillCatalog.catalog.getSkill(input.name);
     if (skill === undefined) {
       throw new Error2(ErrorCodes.SKILL_NOT_FOUND, `Skill "${input.name}" was not found`);
@@ -74,47 +111,26 @@ export class AgentSkillService extends Service implements IAgentSkillService {
       ...(input.content ?? []),
     ];
 
-    const turn = await this.recordActivation(
-      {
-        kind: 'skill_activation',
-        activationId: randomUUID(),
-        skillName: skill.name,
-        trigger: 'user-slash',
-        skillType: skill.metadata.type,
-        skillPath: skill.path,
-        skillSource: skill.source,
-        skillArgs: input.args,
-      },
-      content,
-    );
-    if (turn === undefined) {
-      throw new Error2(
-        ErrorCodes.TURN_AGENT_BUSY,
-        'Cannot activate skill while another turn is active',
-      );
-    }
-    return turn;
-  }
-
-  recordModelToolActivation(origin: SkillActivationOrigin): void {
-    void this.recordActivation(origin);
-  }
-
-  private async recordActivation(
-    origin: SkillActivationOrigin,
-    input?: readonly ContentPart[],
-  ): Promise<Turn | undefined> {
-    this.wire.dispatch(skillActivate({ origin }));
-    this.publishActivation(origin);
-
-    if (input === undefined) return undefined;
-    const message: ContextMessage = {
-      role: 'user',
-      content: [...input],
-      toolCalls: [],
-      origin,
+    const origin: SkillActivationOrigin = {
+      kind: 'skill_activation',
+      activationId: randomUUID(),
+      skillName: skill.name,
+      trigger: 'user-slash',
+      skillType: skill.metadata.type,
+      skillPath: skill.path,
+      skillSource: skill.source,
+      skillArgs: input.args,
+      submissionId,
     };
-    return (await this.prompt.enqueue({ message })).launched;
+    return {
+      origin,
+      message: {
+        role: 'user',
+        content,
+        toolCalls: [],
+        origin,
+      },
+    };
   }
 
   private renderSkillPrompt(skill: SkillDefinition, rawArgs: string): string {

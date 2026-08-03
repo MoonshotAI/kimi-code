@@ -190,6 +190,36 @@ describe('reduceContextTranscript', () => {
     expect(texts(result)).toEqual(['keep me', 'kept answer']);
   });
 
+  it('undo removes inline skill activations with their prompt submission', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('message A')),
+      appendMessage(assistantMessage('reply A')),
+      appendMessage(
+        userMessage('review skill', {
+          kind: 'skill_activation',
+          activationId: 'activation-1',
+          skillName: 'review',
+          trigger: 'user-slash',
+          submissionId: 'submission-1',
+        }),
+      ),
+      appendMessage(
+        userMessage('security skill', {
+          kind: 'skill_activation',
+          activationId: 'activation-2',
+          skillName: 'security',
+          trigger: 'user-slash',
+          submissionId: 'submission-1',
+        }),
+      ),
+      appendMessage(userMessage('message B', { kind: 'user', submissionId: 'submission-1' })),
+      appendMessage(assistantMessage('reply B')),
+      undo(1),
+    ]);
+
+    expect(texts(result)).toEqual(['message A', 'reply A']);
+  });
+
   it('undo stops at a compaction summary', () => {
     const result = reduceContextTranscript([
       appendMessage(userMessage('old')),

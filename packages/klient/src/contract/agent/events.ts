@@ -152,6 +152,17 @@ export const compactionCompletedEventSchema = z.object({
   }),
 });
 
+export const skillActivatedEventSchema = z.object({
+  type: z.literal('skill.activated'),
+  activationId: z.string(),
+  skillName: z.string(),
+  trigger: z.enum(['user-slash', 'model-tool', 'nested-skill']),
+  skillArgs: z.string().optional(),
+  skillPath: z.string().optional(),
+  skillSource: z.enum(['project', 'user', 'extra', 'builtin']).optional(),
+  submissionId: z.string().optional(),
+});
+
 /** Engine `permission.approval.requested` — not in the protocol union; loose. */
 export const permissionApprovalRequestedEventSchema = z.looseObject({
   turnId: z.number(),
@@ -200,6 +211,7 @@ export interface AgentEventPayloads {
   'compaction.blocked': z.infer<typeof compactionBlockedEventSchema>;
   'compaction.cancelled': z.infer<typeof compactionCancelledEventSchema>;
   'compaction.completed': z.infer<typeof compactionCompletedEventSchema>;
+  'skill.activated': z.infer<typeof skillActivatedEventSchema>;
   'permission.approval.requested': z.infer<typeof permissionApprovalRequestedEventSchema>;
   'permission.approval.resolved': z.infer<typeof permissionApprovalResolvedEventSchema>;
   error: z.infer<typeof errorEventSchema>;
@@ -245,6 +257,7 @@ export const agentEvents = {
     type: 'compaction.completed',
     schema: compactionCompletedEventSchema,
   },
+  'skill.activated': { kind: 'stream', name: 'events', type: 'skill.activated', schema: skillActivatedEventSchema },
   'permission.approval.requested': {
     kind: 'stream',
     name: 'events',
