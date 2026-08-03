@@ -88,3 +88,42 @@ fn config_prints_without_errors() {
         .expect("config output is valid JSON");
     assert!(value.is_object());
 }
+
+/// The built `kimi-server-serve` binary lives next to `kimi` in target/debug.
+fn serve_bin() -> Option<std::path::PathBuf> {
+    let kimi = std::path::Path::new(binary());
+    let dir = kimi.parent()?;
+    let exe = if cfg!(windows) { "kimi-server-serve.exe" } else { "kimi-server-serve" };
+    let bin = dir.join(exe);
+    bin.exists().then_some(bin)
+}
+
+#[test]
+fn server_mode_health_ok() {
+    // Drive a separate server process over stdio (`--server <bin>`).
+    let Some(serve) = serve_bin() else {
+        eprintln!("skipping: kimi-server-serve binary not built");
+        return;
+    };
+    let home = temp_dir("server-health");
+    let output = run(&home, &["--server", serve.to_str().unwrap(), "health"]);
+    assert!(
+        output.status.success(),
+        "server-mode health exited {}: {}",
+        output.status,
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output).trim(), "ok");
+}
+
+#[test]
+fn server_mode_sessions_empty() {
+    let Some(serve) = serve_bin() else {
+        eprintln!("skipping: kimi-server-serve binary not built");
+        return;
+    };
+    let home = temp_dir("server-sessions");
+    let output = run(&home, &["--server", serve.to_str().unwrap(), "sessions"]);
+    assert!(output.status.success(), "server-mode sessions exited {}", output.status);
+    assert_eq!(stdout(&output), "", "no sessions -> no output");
+}

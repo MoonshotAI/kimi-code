@@ -9,8 +9,28 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(name = "kimi", version, about = "Kimi Code CLI (Rust-first)")]
 struct Cli {
+    /// Drive a separate server process (`kimi-server-serve`) over stdio
+    /// instead of an embedded in-process server.
+    #[arg(long, global = true)]
+    server: Option<String>,
     #[command(subcommand)]
     command: Commands,
+}
+
+/// Build the protocol client: an embedded in-process server by default, or a
+/// spawned server process when `--server <bin>` is given.
+fn connect(server: &Option<String>) -> anyhow::Result<kimi_server_client::AppServerClient> {
+    match server {
+        Some(bin) => Ok(kimi_server_client::AppServerClient::Remote(
+            kimi_server_client::stdio_client::StdioClient::spawn(bin)?,
+        )),
+        None => {
+            let server = kimi_server::Server::build()?;
+            Ok(kimi_server_client::AppServerClient::InProcess(
+                kimi_server::in_process::spawn(server.processor),
+            ))
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -58,15 +78,13 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
-    match cli.command {
+    let Cli { server, command } = Cli::parse();
+    match command {
         Commands::Print { prompt, verbose } => {
             if verbose {
-                let server = kimi_server::Server::build()?;
-                let mut events = server.state.subscribe_events();
-                let mut client = kimi_server_client::AppServerClient::InProcess(
-                    kimi_server::in_process::spawn(server.processor),
-                );
+                let embedded = kimi_server::Server::build()?;
+                let mut events = embedded.state.subscribe_events();
+                let mut client = connect(&server)?;
                 let spawned = tokio::spawn(async move {
                     let mut lines = 0usize;
                     while let Ok(event) = events.recv().await {
@@ -85,7 +103,8 @@ async fn main() -> anyhow::Result<()> {
                 }
                 println!("{result}");
             } else {
-                let result = kimi_exec::run_prompt_in_process(&prompt).await?;
+                let mut client = connect(&server)?;
+                let result = kimi_exec::run_prompt(&mut client, "kimi-exec", &prompt, kimi_exec::native_llm_from_config()).await;
                 if let Some(error) = result.get("error") {
                     eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
                     std::process::exit(1);
@@ -94,10 +113,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Sessions { limit } => {
-            let server = kimi_server::Server::build()?;
-            let mut client = kimi_server_client::AppServerClient::InProcess(
-                kimi_server::in_process::spawn(server.processor),
-            );
+            let mut client = connect(&server)?;
             let body = client.session_list(limit).await;
             if let Some(error) = body.get("error") {
                 eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
@@ -108,10 +124,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Resume { session_id, prompt } => {
-            let server = kimi_server::Server::build()?;
-            let mut client = kimi_server_client::AppServerClient::InProcess(
-                kimi_server::in_process::spawn(server.processor),
-            );
+            let mut client = connect(&server)?;
             let native_llm = kimi_exec::native_llm_from_config();
             let mut create_params = serde_json::json!({ "session_id": session_id });
             if let Some(nllm) = native_llm {
@@ -141,10 +154,7 @@ async fn main() -> anyhow::Result<()> {
             println!("{result}");
         }
         Commands::Config => {
-            let server = kimi_server::Server::build()?;
-            let mut client = kimi_server_client::AppServerClient::InProcess(
-                kimi_server::in_process::spawn(server.processor),
-            );
+            let mut client = connect(&server)?;
             let config = client
                 .call(kimi_protocol::methods::CONFIG_GET, serde_json::Value::Null)
                 .await;
@@ -155,10 +165,7 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", serde_json::to_string_pretty(&config["result"]).unwrap_or_default());
         }
         Commands::Doctor => {
-            let server = kimi_server::Server::build()?;
-            let mut client = kimi_server_client::AppServerClient::InProcess(
-                kimi_server::in_process::spawn(server.processor),
-            );
+            let mut client = connect(&server)?;
             let health = client.health().await;
             println!("health: {}", health["result"]["status"].as_str().unwrap_or("?"));
             let config = client.call(kimi_protocol::methods::CONFIG_GET, serde_json::Value::Null).await;
@@ -171,18 +178,12 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Health => {
-            let server = kimi_server::Server::build()?;
-            let mut client = kimi_server_client::AppServerClient::InProcess(
-                kimi_server::in_process::spawn(server.processor),
-            );
+            let mut client = connect(&server)?;
             let body = client.health().await;
             println!("{}", body["result"]["status"].as_str().unwrap_or("?"));
         }
         Commands::Export { session_id, output, yes } => {
-            let server = kimi_server::Server::build()?;
-            let mut client = kimi_server_client::AppServerClient::InProcess(
-                kimi_server::in_process::spawn(server.processor),
-            );
+            let mut client = connect(&server)?;
             // Resolve the session id: explicit, or the most recent session when
             // `-y` opts in (mirrors the TS CLI's previous-session flow).
             let resolved_id = match session_id {
