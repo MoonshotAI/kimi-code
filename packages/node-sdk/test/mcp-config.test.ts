@@ -20,7 +20,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 const tempDirs: string[] = [];
 const stdioFixture = join(
   import.meta.dirname,
-  '../../agent-core/test/mcp/fixtures/mock-stdio-server.mjs',
+  './mcp/fixtures/mock-stdio-server.mjs',
 );
 
 afterEach(async () => {

@@ -35,6 +35,7 @@ import { join } from 'node:path';
 
 import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
 import { createKlient } from '@moonshot-ai/klient/memory';
+import { buildEngineAccess } from './helpers/engineAccess.js';
 
 const SEEDED_MODEL_ID = 'klient-example-model';
 
@@ -63,11 +64,12 @@ async function main(): Promise<void> {
   }
 
   const homeDir = await mkdtemp(join(tmpdir(), 'klient-context-usage-'));
+  const engine = buildEngineAccess();
   const { app } = bootstrap({ homeDir }, [
     ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
   ]);
   try {
-    const klient = createKlient({ scope: app });
+    const klient = createKlient({ scope: app, engine });
 
     const session = await klient.global.sessions.create({ workDir: process.cwd() });
     console.log('[session] created ->', session.id);

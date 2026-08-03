@@ -1,8 +1,9 @@
 /**
  * `createKlient` over an in-process engine scope — the host bootstraps the
- * engine (`bootstrap()` from agent-core-v2) and passes the app scope (or its
- * handle) in. Calls and events never leave the process, but everything the
- * facade returns has crossed the same JSON round-trip as the networked
+ * engine (e.g. `bootstrap()` from the retired agent-core-v2 package) and
+ * passes the app scope plus the engine access (DI tokens, main-agent
+ * materializer) in. Calls and events never leave the process, but everything
+ * the facade returns has crossed the same JSON round-trip as the networked
  * transports, so behavior is indistinguishable.
  */
 
@@ -13,9 +14,14 @@ import type {
   ScopeRef,
 } from '../../core/channel.js';
 import { createKlientFromChannel, type Klient, type KlientOptions } from '../../core/klient.js';
-import { createMemoryDispatcher, type ScopeLike } from './dispatcher.js';
+import {
+  createMemoryDispatcher,
+  type ScopeLike,
+} from './dispatcher.js';
+import type { MemoryEngineAccess } from './engine.js';
 
-export type { ScopeLike } from './dispatcher.js';
+export type { MemoryEngineAccess, EngineToken, ScopeLike } from './engine.js';
+export { createMemoryDispatcher, type MemoryDispatcher } from './dispatcher.js';
 
 export interface MemoryKlientOptions extends KlientOptions {
   /**
@@ -24,13 +30,19 @@ export interface MemoryKlientOptions extends KlientOptions {
    * leaves the scope alone.
    */
   readonly scope: ScopeLike;
+  /**
+   * Engine access (DI token map + main-agent materializer), supplied by the
+   * host that bootstrapped the engine. klient never imports the engine
+   * package; hosts build this from it (see `test/helpers/engine.ts`).
+   */
+  readonly engine: MemoryEngineAccess;
 }
 
 class MemoryChannel implements KlientChannel {
   private readonly dispatcher;
 
-  constructor(scope: ScopeLike) {
-    this.dispatcher = createMemoryDispatcher(scope);
+  constructor(scope: ScopeLike, engine: MemoryEngineAccess) {
+    this.dispatcher = createMemoryDispatcher(scope, engine);
   }
 
   call(scope: ScopeRef, service: string, method: string, args: unknown[]): Promise<unknown> {
@@ -57,5 +69,5 @@ class MemoryChannel implements KlientChannel {
 }
 
 export function createKlient(options: MemoryKlientOptions): Klient {
-  return createKlientFromChannel(new MemoryChannel(options.scope), options);
+  return createKlientFromChannel(new MemoryChannel(options.scope, options.engine), options);
 }

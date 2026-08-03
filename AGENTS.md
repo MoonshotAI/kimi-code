@@ -73,7 +73,7 @@ This is a TypeScript monorepo built for agent-assisted development. This file is
 
 - **Engine functionality (session loop, tools, context, goal, plan, approval, permission, MCP, skill, records, compaction …) → Rust only**, in `packages/kimi-agent/src/`, `packages/kimi-native-tools/src/`, or `packages/kimi-shared/src/`. Follow the module map in `packages/kimi-agent/GAP_ANALYSIS.md`. Add `cargo test` coverage and keep `cargo test -p kimi-agent` green (0 warnings).
 - **RPC/wire types are generated**: change the Rust type in `src/rpc/types.rs`, then run `pnpm gen:wire` and commit the generated `src/rpc/wire.gen.ts`. Never hand-edit `wire.gen.ts`.
-- **Do NOT implement or modify engine behavior in TypeScript.** `packages/agent-core/` and `packages/agent-core-v2/` are **frozen** — the JS engine loop is retired and unreachable. Their code is kept only because host packages still reference types/tools/host services; physical deletion happens after hosts unbind. Do not extend them.
+- **Do NOT implement or modify engine behavior in TypeScript.** `packages/agent-core/` has been **physically moved to `retired/agent-core/`** (2026-08-03) — hosts no longer reference it. `packages/agent-core-v2/` remains **frozen** — the JS engine loop is retired and unreachable; it is kept only because `packages/klient` still consumes its v2 dispatcher and will move to `retired/` once the klient Rust transport (⑤) lands. Do not extend either package.
 
 ### TS side is allowed only for the host layer (whitelist)
 

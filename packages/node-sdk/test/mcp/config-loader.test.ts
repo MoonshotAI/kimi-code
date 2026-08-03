@@ -30,7 +30,7 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 describe('resolveMcpJsonPaths', () => {
   it('returns the canonical user, project-root, and project-local paths', async () => {
     const repoRoot = makeTempDir();
-    const cwd = join(repoRoot, 'packages', 'agent-core');
+    const cwd = join(repoRoot, 'packages', 'kimi-agent');
     await mkdir(join(repoRoot, '.git'), { recursive: true });
     await mkdir(cwd, { recursive: true });
 
@@ -95,7 +95,7 @@ describe('loadMcpServers', () => {
   it('loads root .mcp.json from the repo root and lets project-local .kimi-code/mcp.json override it', async () => {
     const home = makeTempDir();
     const repoRoot = makeTempDir();
-    const cwd = join(repoRoot, 'packages', 'agent-core');
+    const cwd = join(repoRoot, 'packages', 'kimi-agent');
     await mkdir(join(repoRoot, '.git'), { recursive: true });
     await mkdir(cwd, { recursive: true });
 
@@ -138,7 +138,7 @@ describe('loadMcpServers', () => {
   it.skipIf(process.platform === 'win32')('resolves project-root stdio cwd relative to the root .mcp.json directory', async () => {
     const home = makeTempDir();
     const repoRoot = makeTempDir();
-    const cwd = join(repoRoot, 'packages', 'agent-core');
+    const cwd = join(repoRoot, 'packages', 'kimi-agent');
     await mkdir(join(repoRoot, '.git'), { recursive: true });
     await mkdir(cwd, { recursive: true });
 
@@ -183,7 +183,7 @@ describe('loadMcpServers', () => {
   it('preserves an UNC-style project root when resolving a relative stdio cwd', async () => {
     const home = makeTempDir();
     const repoRoot = makeTempDir();
-    const cwd = join(repoRoot, 'packages', 'agent-core');
+    const cwd = join(repoRoot, 'packages', 'kimi-agent');
     await mkdir(join(repoRoot, '.git'), { recursive: true });
     await mkdir(cwd, { recursive: true });
     await writeJson(join(repoRoot, '.mcp.json'), {

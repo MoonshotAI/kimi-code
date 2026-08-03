@@ -24,7 +24,6 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@moonshot-ai/agent-core": "workspace:^",
     "pathe": "^2.0.3",
     "smol-toml": "^1.6.1",
     "zod": "^4.3.6"

@@ -11,6 +11,7 @@ import { unlink } from 'node:fs/promises';
 import type { EventSourceRef, IDisposable, ScopeRef } from '../../core/channel.js';
 import { RPCError } from '../../core/errors.js';
 import { createMemoryDispatcher, type ScopeLike } from '../memory/dispatcher.js';
+import type { MemoryEngineAccess } from '../memory/engine.js';
 import { encodeFrame, NdjsonDecoder, type IpcFrame } from './codec.js';
 
 const REQUEST_INVALID = 40001;
@@ -19,6 +20,8 @@ const UNAUTHORIZED = 40100;
 export interface ServeKlientIpcOptions {
   /** A bootstrapped engine app scope (same value `createKlient({ scope })` takes). */
   readonly scope: ScopeLike;
+  /** Engine access (DI token map + main-agent materializer) — see `MemoryEngineAccess`. */
+  readonly engine: MemoryEngineAccess;
   /** Unix socket path to listen on. A stale file at the path is removed first. */
   readonly socketPath: string;
   /** Optional token; when set, the client's `hello` must carry the same token. */
@@ -48,7 +51,7 @@ function eventSourceFromFrame(frame: IpcFrame): EventSourceRef {
 }
 
 export async function serveKlientIpc(options: ServeKlientIpcOptions): Promise<KlientIpcHost> {
-  const dispatcher = createMemoryDispatcher(options.scope);
+  const dispatcher = createMemoryDispatcher(options.scope, options.engine);
 
   // Best-effort cleanup of a stale socket file; ignore everything but a real
   // leftover (ENOENT = nothing to remove).

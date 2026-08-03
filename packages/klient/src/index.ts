@@ -84,51 +84,38 @@ export type {
 export type { SessionEventPayloads } from './contract/session/events.js';
 export type { AgentEventPayloads } from './contract/agent/events.js';
 
-// Wire types re-exported for consumer convenience (type-only; the engine is
-// not pulled in at runtime for http consumers).
+// Wire types re-exported for consumer convenience (type-only). Sourced from
+// `./legacy-types.js` — the frozen local mirror of the retired
+// `@moonshot-ai/agent-core-v2` shapes, pinned by the compile-time parity
+// assertions in `test/contract-parity.ts` — so the engine package is not a
+// klient dependency and consumers get byte-identical signatures.
 export type {
   SessionListQuery,
   SessionSummary,
-} from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
-export type { Page } from '@moonshot-ai/agent-core-v2/persistence/interface/queryStore';
-export type {
+  Page,
   Workspace,
   WorkspaceUpdate,
-} from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
-export type {
   ConfigDiagnostic,
   ConfigInspectValue,
-} from '@moonshot-ai/agent-core-v2/app/config/config';
-export type { ProviderConfig } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
-export type { AuthStatus } from '@moonshot-ai/agent-core-v2/app/auth/auth';
-export type { ExperimentalFeatureState } from '@moonshot-ai/agent-core-v2/app/flag/flag';
-export type {
+  ProviderConfig,
+  AuthStatus,
+  ExperimentalFeatureState,
   FsBrowseResponse,
   FsHomeResponse,
-} from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
-export type {
   PluginCommandDef,
   PluginInfo,
   PluginSummary,
   PluginUpdateStatus,
   ReloadSummary,
-} from '@moonshot-ai/agent-core-v2/app/plugin/types';
-export type {
   AgentMeta,
   SessionMeta,
   SessionMetaPatch,
-} from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
-export type {
   ApprovalRequest,
   ApprovalResponse,
-} from '@moonshot-ai/agent-core-v2/session/approval/approval';
-export type {
   QuestionRequest,
   QuestionResult,
-} from '@moonshot-ai/agent-core-v2/session/question/question';
-export type {
   Interaction,
   InteractionKind,
-} from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
-export type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
-export type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
+  ContentPart,
+  PermissionMode,
+} from './legacy-types.js';

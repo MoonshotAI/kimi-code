@@ -14,6 +14,7 @@ import { join } from 'node:path';
 
 import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
 import { createKlient } from '@moonshot-ai/klient/memory';
+import { buildEngineAccess } from './helpers/engineAccess.js';
 
 function assert(cond: boolean, message: string): asserts cond {
   if (!cond) throw new Error(`assertion failed: ${message}`);
@@ -26,11 +27,12 @@ const tick = (ms: number): Promise<void> =>
 
 async function main(): Promise<void> {
   const homeDir = await mkdtemp(join(tmpdir(), 'klient-smoke-'));
+  const engine = buildEngineAccess();
   const { app } = bootstrap({ homeDir }, [
     ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
   ]);
   try {
-    const klient = createKlient({ scope: app });
+    const klient = createKlient({ scope: app, engine });
 
     const env = await klient.global.env();
     assert(env.platform.length > 0 && env.homeDir.length > 0, 'env snapshot is populated');

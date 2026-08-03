@@ -9,9 +9,9 @@ import { createKlient, serveKlientIpc, type KlientIpcHost } from '../src/transpo
 import { makeEngine, type TestEngine } from './helpers/engine.js';
 
 defineKlientConformance('ipc', async () => {
-  const { homeDir, app } = await makeEngine();
+  const { homeDir, app, engine } = await makeEngine();
   const socketPath = join(homeDir, 'klient.sock');
-  const host = await serveKlientIpc({ scope: app, socketPath });
+  const host = await serveKlientIpc({ scope: app, engine, socketPath });
   const klient = createKlient({ socketPath });
   return {
     klient,
@@ -27,12 +27,13 @@ defineKlientConformance('ipc', async () => {
 describe('ipc transport specifics', () => {
   let homeDir: string;
   let app: TestEngine['app'];
+  let engine: TestEngine['engine'];
   let host: KlientIpcHost | undefined;
 
   async function setup(opts: { token?: string } = {}): Promise<string> {
-    ({ homeDir, app } = await makeEngine());
+    ({ homeDir, app, engine } = await makeEngine());
     const socketPath = join(homeDir, 'klient.sock');
-    host = await serveKlientIpc({ scope: app, socketPath, token: opts.token });
+    host = await serveKlientIpc({ scope: app, engine, socketPath, token: opts.token });
     return socketPath;
   }
 

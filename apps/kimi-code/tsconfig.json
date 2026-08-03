@@ -7,5 +7,5 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src", "test", "../../packages/agent-core/src/prompt-modules.d.ts"]
+  "include": ["src", "test"]
 }

@@ -42,6 +42,7 @@ import type { AgentHandle } from '../../src/core/klient.js';
 import type { KlientEvents } from '../../src/core/events/hub.js';
 import { KlientValidationError } from '../../src/core/validation.js';
 import { createKlient as createMemoryKlient } from '../../src/transports/memory/index.js';
+import { buildEngineAccess } from '../helpers/engine.js';
 
 // The dual/http e2e suites (and their `helpers/dual.ts`) were dropped with the
 // http transport; the two wait primitives they exported are re-declared here.
@@ -295,10 +296,11 @@ const sockets = new Set<import('node:net').Socket>();
 beforeAll(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'klient-matrix-home-'));
   workRoot = await mkdtemp(join(tmpdir(), 'klient-matrix-work-'));
+  const engine = buildEngineAccess();
   ({ app } = bootstrap({ homeDir }, [
     ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
   ]));
-  klient = createMemoryKlient({ scope: app });
+  klient = createMemoryKlient({ scope: app, engine });
 
   server = createServer((req: IncomingMessage, res: ServerResponse) => {
     void (async () => {

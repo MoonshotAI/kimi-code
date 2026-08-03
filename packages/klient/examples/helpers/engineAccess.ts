@@ -1,21 +1,12 @@
 /**
- * Shared engine bootstrap for klient integration tests. Mirrors what
- * kap-server does: `bootstrap()` plus the `ILogOptions` seed the
- * Session-scoped log writer needs (bare `bootstrap({ homeDir })` leaves
- * `logOptions` unregistered and any eager service depending on `ILogService`
- * fails to instantiate).
+ * Host-side engine access for the klient examples (memory transport).
  *
- * Host-side glue: klient never imports the engine package — the memory/ipc
- * transports take the DI token map and the `main`-agent materializer via
- * `MemoryEngineAccess`, which is built here from the retired
- * `@moonshot-ai/agent-core-v2` package.
+ * klient never imports the retired `@moonshot-ai/agent-core-v2` package —
+ * the transports take the DI token map and the `main`-agent materializer via
+ * `MemoryEngineAccess`. This module builds that glue from the engine package,
+ * exactly like `test/helpers/engine.ts` does for the test suites.
  */
 
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
 import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
@@ -49,13 +40,6 @@ import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
 import { IAgentUsageService } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 
 import type { MemoryEngineAccess, ScopeLike } from '../../src/transports/memory/engine.js';
-
-export interface TestEngine {
-  readonly homeDir: string;
-  readonly app: ReturnType<typeof bootstrap>['app'];
-  /** Engine access (DI tokens + main-agent materializer) for the transports. */
-  readonly engine: MemoryEngineAccess;
-}
 
 /** Build the wire service-name → engine DI token map for the in-process transports. */
 export function buildEngineAccess(): MemoryEngineAccess {
@@ -95,12 +79,4 @@ export function buildEngineAccess(): MemoryEngineAccess {
     ensureMainAgent: (session: ScopeLike) =>
       ensureMainAgent(session as Parameters<typeof ensureMainAgent>[0]),
   };
-}
-
-export async function makeEngine(prefix = 'klient-test-engine-'): Promise<TestEngine> {
-  const homeDir = await mkdtemp(join(tmpdir(), prefix));
-  const { app } = bootstrap({ homeDir }, [
-    ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
-  ]);
-  return { homeDir, app, engine: buildEngineAccess() };
 }

@@ -43,11 +43,11 @@
     "docker:e2e": "bash scripts/run-docker-e2e.sh"
   },
   "dependencies": {
-    "@moonshot-ai/agent-core-v2": "workspace:^",
     "@moonshot-ai/kimi-i18n": "workspace:^",
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@moonshot-ai/agent-core-v2": "workspace:^",
     "@moonshot-ai/protocol": "workspace:^",
     "@types/ws": "^8.18.0",
     "ulid": "^3.0.1",

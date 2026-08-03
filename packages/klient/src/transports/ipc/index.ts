@@ -11,6 +11,7 @@ export {
   type KlientIpcHost,
   type ServeKlientIpcOptions,
 } from './host.js';
+export type { MemoryEngineAccess } from '../memory/engine.js';
 
 export interface IpcKlientOptions extends KlientOptions, IpcChannelOptions {}
 

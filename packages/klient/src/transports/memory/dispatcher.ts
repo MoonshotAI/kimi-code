@@ -2,33 +2,53 @@
  * In-process dispatcher — resolves a wire triple `(service, method, args)`
  * against a live engine scope and mirrors kap-server's dispatcher semantics
  * (reflection call, non-function members are property reads, `main` agent
- * auto-materialized via `ensureMainAgent`). Scope routing walks
- * `ISessionLifecycleService` / `IAgentLifecycleService` exactly like the
- * server's `resolveScope`. Every argument, result, and event payload passes
- * through `wireClone` (a JSON round-trip), so consumers observe
+ * auto-materialized via the host-supplied `ensureMainAgent`). Scope routing
+ * walks `ISessionLifecycleService` / `IAgentLifecycleService` exactly like
+ * the server's `resolveScope`. Every argument, result, and event payload
+ * passes through `wireClone` (a JSON round-trip), so consumers observe
  * byte-identical data no matter whether the call crossed a socket or stayed
  * in-process — and non-serializable leaks fail early.
+ *
+ * The engine is never imported here: the host hands the DI token map and
+ * the `main`-agent materializer in via `MemoryEngineAccess` (see
+ * `engine.ts`), keeping klient independent of the retired
+ * `@moonshot-ai/agent-core-v2` package.
  *
  * Shared by the memory transport and the IPC host, which guarantees ipc and
  * memory behave identically by construction.
  */
 
-import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
-import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
-import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
-import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
-import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
-import { IEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
-
 import type { EventSourceRef, IDisposable, ScopeRef } from '../../core/channel.js';
 import { RPCError } from '../../core/errors.js';
-import { IEventService, serviceTokens } from './serviceRegistry.js';
+import {
+  type EngineToken,
+  type MemoryEngineAccess,
+  type ScopeLike,
+} from './engine.js';
 
-/** Structural minimum of an engine `Scope` / `IScopeHandle`. */
-export interface ScopeLike {
-  readonly accessor: {
-    get<T>(id: ServiceIdentifier<T>): T;
-  };
+export type { ScopeLike } from './engine.js';
+
+/** Structural minimum of the engine `ISessionLifecycleService`. */
+interface SessionLifecycleLike {
+  get(id: string): ScopeLike | undefined;
+}
+
+/** Structural minimum of the engine `IAgentLifecycleService`. */
+interface AgentLifecycleLike {
+  get(id: string): ScopeLike | undefined;
+  create(opts: { agentId: string }): Promise<ScopeLike>;
+}
+
+/** Structural minimum of the engine `IEventService` / `IEventBus` bus. */
+interface EventBusLike {
+  subscribe(listener: (event: unknown) => void): IDisposable;
+}
+
+/** Structural minimum of the engine `ISessionInteractionService`. */
+interface SessionInteractionLike {
+  onDidChangePending(listener: () => void): IDisposable;
+  listPending(): unknown[];
+  onDidResolve(listener: (resolution: unknown) => void): IDisposable;
 }
 
 /** JSON round-trip so in-process data matches wire data exactly. */
@@ -58,19 +78,28 @@ interface ResolvedScope {
   readonly like: ScopeLike;
 }
 
-export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
+function getService(like: ScopeLike, token: EngineToken): unknown {
+  return like.accessor.get(token);
+}
+
+export function createMemoryDispatcher(
+  root: ScopeLike,
+  engine: MemoryEngineAccess,
+): MemoryDispatcher {
   /** Mirrors kap-server's `resolveScope`, incl. main-agent materialization. */
   async function resolveScope(scope: ScopeRef): Promise<ResolvedScope> {
     if (scope.sessionId === undefined) return { kind: 'core', like: root };
-    const session = root.accessor.get(ISessionLifecycleService).get(scope.sessionId);
+    const lifecycle = getService(root, engine.sessionLifecycleServiceToken) as SessionLifecycleLike;
+    const session = lifecycle.get(scope.sessionId);
     if (session === undefined) {
       throw new RPCError(NOT_FOUND, `session not found: ${scope.sessionId}`);
     }
     if (scope.agentId === undefined) return { kind: 'session', like: session };
     if (scope.agentId === 'main') {
-      return { kind: 'agent', like: await ensureMainAgent(session) };
+      return { kind: 'agent', like: await engine.ensureMainAgent(session) };
     }
-    const agent = session.accessor.get(IAgentLifecycleService).get(scope.agentId);
+    const agentLifecycle = getService(session, engine.agentLifecycleServiceToken) as AgentLifecycleLike;
+    const agent = agentLifecycle.get(scope.agentId);
     if (agent === undefined) {
       throw new RPCError(NOT_FOUND, `agent not found: ${scope.agentId}`);
     }
@@ -78,11 +107,11 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
   }
 
   function resolveService(resolved: ResolvedScope, service: string): Record<string, unknown> {
-    const token = serviceTokens[service];
+    const token = engine.serviceTokens[service];
     if (token === undefined) {
       throw new RPCError(REQUEST_INVALID, `unknown service: ${service}`);
     }
-    return resolved.like.accessor.get(token) as Record<string, unknown>;
+    return getService(resolved.like, token) as Record<string, unknown>;
   }
 
   /** Mirrors kap-server's WS `eventMap` per scope kind. */
@@ -92,25 +121,31 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     handler: (data: unknown) => void,
   ): IDisposable {
     if (resolved.kind === 'core' && name === 'events') {
-      const bus = resolved.like.accessor.get(IEventService);
+      const bus = getService(resolved.like, engine.eventServiceToken) as EventBusLike;
       return bus.subscribe((event) => {
         handler(wireClone(event));
       });
     }
     if (resolved.kind === 'session' && name === 'interactions') {
-      const interaction = resolved.like.accessor.get(ISessionInteractionService);
+      const interaction = getService(
+        resolved.like,
+        engine.sessionInteractionServiceToken,
+      ) as SessionInteractionLike;
       return interaction.onDidChangePending(() => {
         handler(wireClone(interaction.listPending()));
       });
     }
     if (resolved.kind === 'session' && name === 'interactions:resolved') {
-      const interaction = resolved.like.accessor.get(ISessionInteractionService);
+      const interaction = getService(
+        resolved.like,
+        engine.sessionInteractionServiceToken,
+      ) as SessionInteractionLike;
       return interaction.onDidResolve((resolution) => {
         handler(wireClone(resolution));
       });
     }
     if (resolved.kind === 'agent' && name === 'events') {
-      const bus = resolved.like.accessor.get(IEventBus);
+      const bus = getService(resolved.like, engine.eventBusToken) as EventBusLike;
       return bus.subscribe((event) => {
         handler(wireClone(event));
       });

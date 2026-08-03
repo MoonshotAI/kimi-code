@@ -1,4 +1,14 @@
 
+> **✅ 2026-08-03 ⑥ agent-core 物理隔离（v1 完成，已提交）**：
+> - **目标**：agent-core/agent-core-v2 物理移入 `retired/`（端状态：packages/* 无 TS 引擎，`@moonshot-ai/agent-core` 依赖清零，kimi-code typecheck 43 错误 → 0）。
+> - **解绑（AgentSwarm T1-T3 并行）**：
+>   - klient：47 处 `@moonshot-ai/agent-core-v2` 类型 re-export 全部本地化（31 类型 → `legacy-types.ts` 镜像；内存/ipc 传输的 ~34 个运行时 DI token 改为宿主注入 `engine` 参数——公开 options 签名新增 `engine` 字段）；agent-core-v2 降为 devDependencies（测试/示例仍需 v2 引擎运行时，待 ⑤ Rust 传输替代）。
+>   - apps/kimi-code：`rust-engine.test.ts` 的 McpServerConfig 改引 `@moonshot-ai/kimi-code-sdk`；tsconfig include 的 agent-core prompt-modules.d.ts 本地化为 `src/types/raw-modules.d.ts`；package.json 依赖移除。typecheck **43 → 0**。
+>   - 残留审计：kimi-inspect/kimi-web/acp-adapter/kap-server 真实 import 全 0（此前匹配均为注释）；kimi-agent/migration-legacy 遗留依赖移除；migration-legacy 删除绑定退役引擎的 `resume.integration.test.ts`（5 用例，全包唯一 agent-core 引用）；migration-legacy typecheck 10 → 0。
+> - **物理移动**：`git mv packages/agent-core → retired/agent-core`（688 文件重命名无丢失；Windows 目录被瞬时句柄锁，rm 路径绕过）；flake.nix workspacePaths/workspaceNames 移除 v1（v2 保留）；清理死配置别名（node-sdk tsdown/vitest 的 6 条、vscode tsdown、vis-server/acp-adapter externals）；.deploy-staging 移除两个遗留依赖；node-sdk 本地 `*?raw` 声明（tsconfig 移除 agent-core include）；MCP 测试夹具本地化（mock-stdio-server 复制到 node-sdk/test/mcp/fixtures，config-loader 测试 cwd 改 kimi-agent）。`pnpm install` 干净通过。
+> - **验证**：node-sdk 425 全绿回归；kimi-code typecheck 0；node-sdk/klient/protocol/acp-adapter/kap-server/migration-legacy/kimi-web typecheck 0；kimi-agent vitest 36/36；klient 仅 2 个预存 ipc EACCES（Windows unix socket 环境性，HEAD 已红）；kimi-inspect 2 个预存 i18n-shared 错误。
+> - **遗留**：agent-core-v2 仍驻留 packages/（klient v2 dispatcher 依赖），随 ⑤ klient Rust 传输落地后迁移；④ SDK v1 wire 公开类型切 Rust 形状；C3 插件通知核对。
+
 > **✅ 2026-08-03 event-contract 阶段 6 收尾——node-sdk 集成测试 43→0（已提交）**：
 > - **目标**：node-sdk vitest 43 个运行时失败全部清零（34 文件 425 passed / 0 failed；node-sdk typecheck 0 错误）。
 > - **测试适配（引擎唯一语义）**：

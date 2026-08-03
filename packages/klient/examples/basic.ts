@@ -13,14 +13,16 @@ import { join } from 'node:path';
 
 import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
 import { createKlient } from '@moonshot-ai/klient/memory';
+import { buildEngineAccess } from './helpers/engineAccess.js';
 
 async function main(): Promise<void> {
   const homeDir = await mkdtemp(join(tmpdir(), 'klient-basic-'));
+  const engine = buildEngineAccess();
   const { app } = bootstrap({ homeDir }, [
     ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
   ]);
   try {
-    const klient = createKlient({ scope: app });
+    const klient = createKlient({ scope: app, engine });
 
     // 1) Aggregated host snapshot.
     const env = await klient.global.env();

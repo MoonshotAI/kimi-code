@@ -9,8 +9,8 @@ import { RPCError } from '../src/core/errors.js';
 import { makeEngine } from './helpers/engine.js';
 
 defineKlientConformance('memory', async () => {
-  const { homeDir, app } = await makeEngine();
-  const klient = createKlient({ scope: app });
+  const { homeDir, app, engine } = await makeEngine();
+  const klient = createKlient({ scope: app, engine });
   return {
     klient,
     cleanup: async () => {
@@ -23,8 +23,8 @@ defineKlientConformance('memory', async () => {
 
 describe('memory dispatcher specifics', () => {
   it('rejects unknown services and methods with RPCError(40001)', async () => {
-    const { homeDir, app } = await makeEngine();
-    const dispatcher = createMemoryDispatcher(app);
+    const { homeDir, app, engine } = await makeEngine();
+    const dispatcher = createMemoryDispatcher(app, engine);
     await expect(dispatcher.call({}, 'noSuchService', 'get', [])).rejects.toMatchObject({
       name: 'RPCError',
       code: 40001,
@@ -38,8 +38,8 @@ describe('memory dispatcher specifics', () => {
   });
 
   it('reads non-function members as properties', async () => {
-    const { homeDir, app } = await makeEngine();
-    const dispatcher = createMemoryDispatcher(app);
+    const { homeDir, app, engine } = await makeEngine();
+    const dispatcher = createMemoryDispatcher(app, engine);
     await expect(dispatcher.call({}, 'bootstrapService', 'platform', [])).resolves.toBe(
       process.platform,
     );
@@ -48,8 +48,8 @@ describe('memory dispatcher specifics', () => {
   });
 
   it('rejects session/agent scopes for now', async () => {
-    const { homeDir, app } = await makeEngine();
-    const dispatcher = createMemoryDispatcher(app);
+    const { homeDir, app, engine } = await makeEngine();
+    const dispatcher = createMemoryDispatcher(app, engine);
     await expect(
       dispatcher.call({ sessionId: 's1' }, 'sessionIndex', 'list', [{}]),
     ).rejects.toBeInstanceOf(RPCError);
@@ -58,8 +58,8 @@ describe('memory dispatcher specifics', () => {
   });
 
   it('delivers wire-cloned payloads (no live object identity)', async () => {
-    const { homeDir, app } = await makeEngine();
-    const klient = createKlient({ scope: app });
+    const { homeDir, app, engine } = await makeEngine();
+    const klient = createKlient({ scope: app, engine });
     const list = await klient.global.workspaces.list();
     // Mutating the result must not affect what a second call returns.
     (list as unknown[]).push({ id: 'polluted' });

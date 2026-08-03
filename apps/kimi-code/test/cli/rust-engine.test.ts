@@ -1,4 +1,4 @@
-import type { McpServerConfig } from '@moonshot-ai/agent-core/config/schema';
+import type { McpServerConfigEntry } from '@moonshot-ai/kimi-code-sdk';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,7 +17,7 @@ describe('mapMcpServerConfig', () => {
       enabled: true,
       enabledTools: ['read'],
       startupTimeoutMs: 5000,
-    } as McpServerConfig;
+    } as McpServerConfigEntry;
     const out = mapMcpServerConfig('fs', config, {});
     expect(out).toMatchObject({
       name: 'fs',
@@ -42,7 +42,7 @@ describe('mapMcpServerConfig', () => {
       bearerTokenEnvVar: 'GH_TOKEN',
       headers: { 'X-Trace': '1' },
       enabled: true,
-    } as McpServerConfig;
+    } as McpServerConfigEntry;
     const out = mapMcpServerConfig('gh', config, { GH_TOKEN: 'secret-123' });
     expect(out).toMatchObject({
       name: 'gh',
@@ -60,7 +60,7 @@ describe('mapMcpServerConfig', () => {
       transport: 'sse',
       url: 'https://sse.example.com',
       bearerTokenEnvVar: 'MISSING_TOKEN',
-    } as McpServerConfig;
+    } as McpServerConfigEntry;
     const out = mapMcpServerConfig('s', config, {});
     expect(out.transport).toBe('sse');
     expect(out.bearerToken).toBeUndefined();

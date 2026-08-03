@@ -36,6 +36,7 @@ import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IKosongConfigService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/kosongConfig';
 import { type Klient } from '@moonshot-ai/klient';
 import { createKlient } from '@moonshot-ai/klient/memory';
+import { buildEngineAccess } from './helpers/engineAccess.js';
 
 function assert(cond: boolean, message: string): asserts cond {
   if (!cond) throw new Error(`assertion failed: ${message}`);
@@ -84,13 +85,14 @@ async function phase(label: string, ops: number, run: () => Promise<void>): Prom
 
 async function main(): Promise<void> {
   const homeDir = await mkdtemp(join(tmpdir(), 'klient-kosong-stress-'));
+  const engine = buildEngineAccess();
   const { app } = bootstrap({ homeDir }, [
     ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
   ]);
   // Filled in right before the restart phase.
   let snapshot: Record<string, unknown> = {};
   try {
-    const klient = createKlient({ scope: app });
+    const klient = createKlient({ scope: app, engine });
     const config = klient.global.config;
     const kosong = klient.global.kosong;
 
@@ -229,7 +231,7 @@ async function main(): Promise<void> {
       // the bridge hydrates the registries from it.
       await app2.accessor.get(IConfigService).ready;
       await app2.accessor.get(IKosongConfigService).ready;
-      const klient2: Klient = createKlient({ scope: app2 });
+      const klient2: Klient = createKlient({ scope: app2, engine });
       for (const [section, expected] of Object.entries(snapshot)) {
         const actual: unknown = await klient2.global.config.get(section);
         if (stable(actual) !== stable(expected)) {
