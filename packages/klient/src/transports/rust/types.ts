@@ -10,7 +10,7 @@
  * from node-sdk's exported host layer + `@moonshot-ai/kimi-code-oauth`).
  */
 
-import type { ScopeRef } from '../../core/channel.js';
+import type { IDisposable, ScopeRef } from '../../core/channel.js';
 import type * as RustLoop from '@moonshot-ai/kimi-agent/rust-loop';
 
 /** Host-side services the rust transport assembles (keys documented below).
@@ -19,6 +19,14 @@ import type * as RustLoop from '@moonshot-ai/kimi-agent/rust-loop';
 export interface RustHostServices {
   homeDir: string;
   configPath: string;
+  /** Local host-side event bus — port of the retired v2 per-service
+   *  `onDid*` emitters. Write-path services (`providerService` /
+   *  `modelService` / `configService`) emit here after persisting config;
+   *  emitter-kind subscriptions (`kosong.providers.changed` /
+   *  `kosong.models.changed` / `config.changed`) are wired to it by the
+   *  channel. The Rust engine itself has no such emitters, so this is the
+   *  only event surface for host-side writes. */
+  events?: RustEventBus;
   /** G1 — config read/write + diagnostics (node-sdk legacy/config exports). */
   config?: unknown;
   /** G4 — experimental feature flags (port of node-sdk legacy/flags). */
@@ -33,6 +41,15 @@ export interface RustHostServices {
   plugins?: unknown;
   /** G4 — model/provider catalog (kosong + models.dev). */
   catalog?: unknown;
+}
+
+/** Local event bus for host-side write-path notifications. Event names are
+ *  the service emitter names from `globalEvents` (`onDidChangeProviders`,
+ *  `onDidChangeModels`, …); the channel maps them to public klient event
+ *  names. */
+export interface RustEventBus {
+  on(event: string, handler: (payload: unknown) => void): IDisposable;
+  emit(event: string, payload: unknown): void;
 }
 
 export interface RustCallContext {

@@ -99,6 +99,26 @@ export class RustChannel implements KlientChannel {
     handler: (data: unknown) => void,
     onError?: (error: Error) => void,
   ): IDisposable {
+    if (source.kind === 'emitter') {
+      // Host-side `onDid*` emitters (kosong.providers.changed / models.changed
+      // / config.changed): the Rust engine hosts no such emitters, so emitter
+      // subscriptions are wired to the local host event bus instead. Without
+      // a bus there is nothing to attach — report the failure at attach time.
+      const bus = this.host.events;
+      if (bus === undefined) {
+        queueMicrotask(() =>
+          onError?.(new Error(`no local event bus for emitter ${source.event}`)),
+        );
+        return { dispose: () => {} };
+      }
+      return bus.on(source.event, (payload) => {
+        try {
+          handler(wireClone(payload));
+        } catch (error) {
+          onError?.(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
+    }
     const subscription: Subscription = { scope, source, handler, onError };
     this.subscriptions.add(subscription);
     return {
@@ -135,13 +155,11 @@ export class RustChannel implements KlientChannel {
 
   private matches(sub: Subscription, eventSessionId: string): boolean {
     const { scope, source } = sub;
-    if (source.kind === 'emitter') {
-      // The engine hosts no per-service `onDid*` emitters; emit-type
-      // subscriptions fail at attach time via onError. Filtered out here.
-      return false;
-    }
-    // Stream subscriptions: `events` (core + agent) / `interactions` /
-    // `interactions:resolved` — routed by scope session id.
+    // Emitter-kind subscriptions never reach here — `listen` routes them to
+    // the local host event bus (see above); the guard only narrows the
+    // EventSourceRef union for TypeScript. Stream subscriptions (`events` /
+    // `interactions` / `interactions:resolved`) are routed by scope session id.
+    if (source.kind === 'emitter') return false;
     if (scope.sessionId === undefined) {
       return source.name === 'events';
     }

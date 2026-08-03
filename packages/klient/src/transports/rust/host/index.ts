@@ -9,6 +9,7 @@
  */
 
 import type { RustHostServices } from '../types.js';
+import { createRustEventBus } from './events.js';
 
 // Group host builders (added by each service group as it lands):
 // import { buildConfigHost } from './config.js';        // G1 → host.config
@@ -23,6 +24,7 @@ export function buildHostServices(options: {
   return {
     homeDir: options.homeDir,
     configPath: options.configPath,
+    events: createRustEventBus(),
     // config: buildConfigHost(options),            // G1
     // auth: buildAuthHost(options),                // G3
     // flags: ..., catalog: ...,                    // G4

@@ -188,7 +188,7 @@ function explainFlag(def: FlagDefinition, configValue: boolean | undefined): Exp
   const override = parseBooleanEnv(process.env[def.env]);
   if (override !== undefined) return flagState(def, override, 'env', configValue);
   if (configValue !== undefined) return flagState(def, configValue, 'config', configValue);
-  return flagState(def, def.default, 'default', undefined);
+  return flagState(def, def.default, 'default');
 }
 
 // ── Config access (host-side read/write of config.toml) ────────────────────
@@ -259,20 +259,25 @@ function readConfig(ctx: RustCallContext): Record<string, unknown> {
 
 /** Strict parse for write paths — never rewrite a broken config. */
 function readConfigForUpdate(ctx: RustCallContext): Record<string, unknown> {
+  let text: string;
   try {
-    const text = readFileSync(ctx.host.configPath, 'utf-8');
-    if (text.trim().length === 0) return {};
-    const parsed = parseToml(text) as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(parsed)) {
-      out[snakeToCamel(key)] = value;
-    }
-    return out;
+    text = readFileSync(ctx.host.configPath, 'utf-8');
   } catch (error) {
+    // Fresh home: no config.toml yet — start from an empty config (the
+    // writer self-bootstraps the file). Anything else (unreadable file,
+    // EACCES, …) is a hard error: never rewrite a config we cannot parse.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
     throw new Error(
-      `Cannot change settings while ${ctx.host.configPath} is invalid — fix it first: ${error instanceof Error ? error.message : String(error)}`,
+      `Cannot change settings while ${ctx.host.configPath} is invalid — fix it first: ${error instanceof Error ? error.message : String(error)}`, { cause: error },
     );
   }
+  if (text.trim().length === 0) return {};
+  const parsed = parseToml(text) as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    out[snakeToCamel(key)] = value;
+  }
+  return out;
 }
 
 /** Re-serialize the camelCase view back to TOML (atomic-ish temp + rename). */
@@ -282,6 +287,26 @@ function writeConfig(ctx: RustCallContext, data: Record<string, unknown>): void 
   const tmp = `${ctx.host.configPath}.tmp-${process.pid}`;
   writeFileSync(tmp, `${stringifyToml(stripUndefined(data))}\n`, { encoding: 'utf-8', mode: 0o600 });
   renameSync(tmp, ctx.host.configPath);
+}
+
+/** Emit a `kosong.*.changed` delta after a `[providers.*]` / `[models.*]`
+ *  write (no-op when no host event bus is attached). `changed` = keys that
+ *  existed before and after (values may or may not differ). */
+function emitSectionDelta(
+  ctx: RustCallContext,
+  event: string,
+  section: string,
+  before: ReadonlySet<string>,
+): void {
+  const bus = ctx.host.events;
+  if (bus === undefined) return;
+  const current = readConfig(ctx)[section];
+  const after = new Set(Object.keys(isRecord(current) ? current : {}));
+  bus.emit(event, {
+    added: [...after].filter((id) => !before.has(id)),
+    removed: [...before].filter((id) => !after.has(id)),
+    changed: [...after].filter((id) => before.has(id)),
+  });
 }
 
 /** Facade wire objects carry `undefined` fields; TOML has no undefined. */
@@ -363,16 +388,20 @@ export const modelService: RustServiceRegistry = {
 
   async set(ctx) {
     const [modelId, record] = ctx.args as [string, ModelRecord];
+    const before = new Set(Object.keys(readModels(ctx)));
     const data = readConfigForUpdate(ctx);
     setSectionEntry(data, 'models', modelId, record);
     writeConfig(ctx, data);
+    emitSectionDelta(ctx, 'onDidChangeModels', 'models', before);
   },
 
   async delete(ctx) {
     const modelId = ctx.args[0] as string;
+    const before = new Set(Object.keys(readModels(ctx)));
     const data = readConfigForUpdate(ctx);
     setSectionEntry(data, 'models', modelId, undefined);
     writeConfig(ctx, data);
+    emitSectionDelta(ctx, 'onDidChangeModels', 'models', before);
   },
 };
 
@@ -386,16 +415,20 @@ export const providerService: RustServiceRegistry = {
 
   async set(ctx) {
     const [providerId, config] = ctx.args as [string, ProviderConfigRecord];
+    const before = new Set(Object.keys(readProviders(ctx)));
     const data = readConfigForUpdate(ctx);
     setSectionEntry(data, 'providers', providerId, config);
     writeConfig(ctx, data);
+    emitSectionDelta(ctx, 'onDidChangeProviders', 'providers', before);
   },
 
   async delete(ctx) {
     const providerId = ctx.args[0] as string;
+    const before = new Set(Object.keys(readProviders(ctx)));
     const data = readConfigForUpdate(ctx);
     setSectionEntry(data, 'providers', providerId, undefined);
     writeConfig(ctx, data);
+    emitSectionDelta(ctx, 'onDidChangeProviders', 'providers', before);
   },
 };
 
@@ -601,25 +634,24 @@ class EventQueue<T> implements AsyncIterable<T> {
 
   [Symbol.asyncIterator](): AsyncIterator<T> {
     let index = 0;
-    const queue = this;
     return {
-      next(): Promise<IteratorResult<T>> {
-        if (index < queue.buffer.length) {
-          return Promise.resolve({ done: false, value: queue.buffer[index++]! });
+      next: (): Promise<IteratorResult<T>> => {
+        if (index < this.buffer.length) {
+          return Promise.resolve({ done: false, value: this.buffer[index++]! });
         }
-        if (queue.ended) {
-          return queue.error !== undefined
-            ? Promise.reject(queue.error)
+        if (this.ended) {
+          return this.error !== undefined
+            ? Promise.reject(this.error)
             : Promise.resolve({ done: true, value: undefined });
         }
         return new Promise((resolve, reject) => {
-          queue.waiters.push({ resolve, reject });
+          this.waiters.push({ resolve, reject });
         });
       },
-      return(): Promise<IteratorResult<T>> {
-        queue.ended = true;
-        queue.buffer.length = 0;
-        for (const waiter of queue.waiters.splice(0)) {
+      return: (): Promise<IteratorResult<T>> => {
+        this.ended = true;
+        this.buffer.length = 0;
+        for (const waiter of this.waiters.splice(0)) {
           waiter.resolve({ done: true, value: undefined });
         }
         return Promise.resolve({ done: true, value: undefined });
@@ -811,6 +843,8 @@ function readManagedShape(ctx: RustCallContext): ManagedKimiConfigShape {
 
 /** Persist an orchestrator patch (deep-merge of the shape's sections). */
 function applyManagedPatch(ctx: RustCallContext, patch: ManagedKimiConfigShape): ManagedKimiConfigShape {
+  const providersBefore = new Set(Object.keys(readProviders(ctx)));
+  const modelsBefore = new Set(Object.keys(readModels(ctx)));
   const data = readConfigForUpdate(ctx);
   if (patch.providers !== undefined) {
     data['providers'] = { ...(isRecord(data['providers']) ? data['providers'] : {}), ...patch.providers };
@@ -827,6 +861,12 @@ function applyManagedPatch(ctx: RustCallContext, patch: ManagedKimiConfigShape):
     else data['thinking'] = patch.thinking;
   }
   writeConfig(ctx, data);
+  if (patch.providers !== undefined) {
+    emitSectionDelta(ctx, 'onDidChangeProviders', 'providers', providersBefore);
+  }
+  if (patch.models !== undefined) {
+    emitSectionDelta(ctx, 'onDidChangeModels', 'models', modelsBefore);
+  }
   return patch;
 }
 
@@ -849,6 +889,8 @@ export const providerDiscovery: RustServiceRegistry = {
     const host: RefreshProviderHost = {
       getConfig: async () => readManagedShape(ctx),
       removeProvider: async (providerId) => {
+        const providersBefore = new Set(Object.keys(readProviders(ctx)));
+        const modelsBefore = new Set(Object.keys(readModels(ctx)));
         const data = readConfigForUpdate(ctx);
         setSectionEntry(data, 'providers', providerId, undefined);
         const models = isRecord(data['models']) ? data['models'] : {};
@@ -859,6 +901,8 @@ export const providerDiscovery: RustServiceRegistry = {
         }
         if (Object.keys(models).length === 0) delete data['models'];
         writeConfig(ctx, data);
+        emitSectionDelta(ctx, 'onDidChangeProviders', 'providers', providersBefore);
+        emitSectionDelta(ctx, 'onDidChangeModels', 'models', modelsBefore);
         return readManagedShape(ctx);
       },
       setConfig: async (patch) => applyManagedPatch(ctx, patch),

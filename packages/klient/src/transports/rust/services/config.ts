@@ -621,6 +621,7 @@ function configPathOf(ctx: RustCallContext): string {
 async function writeDomain(
   ctx: RustCallContext,
   domain: string,
+  source: 'set' | 'replace',
   apply: (base: unknown) => unknown,
 ): Promise<void> {
   const filePath = configPathOf(ctx);
@@ -629,6 +630,7 @@ async function writeDomain(
     throw new Error(`Cannot change settings while ${filePath} is invalid — fix it first.`);
   }
   const config = readUserConfig(filePath);
+  const previousValue = config[domain];
   const next = apply(config[domain]);
   if (next === undefined) {
     delete config[domain];
@@ -636,13 +638,39 @@ async function writeDomain(
     config[domain] = next;
   }
   await writeConfigFile(filePath, config);
+  emitConfigWrite(ctx, domain, source, next, previousValue);
+}
+
+/** Emit host-side change notifications after a config write: always the
+ *  `onDidChangeConfiguration` (`config.changed`) event, plus the
+ *  `onDidChangeProviders` / `onDidChangeModels` deltas when the written
+ *  domain is a provider/model section. No-op without a host event bus. */
+function emitConfigWrite(
+  ctx: RustCallContext,
+  domain: string,
+  source: 'set' | 'replace',
+  value: unknown,
+  previousValue: unknown,
+): void {
+  const bus = ctx.host.events;
+  if (bus === undefined) return;
+  bus.emit('onDidChangeConfiguration', { domain, source, value, previousValue });
+  if (domain !== 'providers' && domain !== 'models') return;
+  const before = new Set(Object.keys(isPlainObject(previousValue) ? previousValue : {}));
+  const after = new Set(Object.keys(isPlainObject(value) ? value : {}));
+  const event = domain === 'providers' ? 'onDidChangeProviders' : 'onDidChangeModels';
+  bus.emit(event, {
+    added: [...after].filter((id) => !before.has(id)),
+    removed: [...before].filter((id) => !after.has(id)),
+    changed: [...after].filter((id) => before.has(id)),
+  });
 }
 
 const configService: RustServiceRegistry = {
   /** Resolved value for a domain: memory overlay wins, else file + env. */
   async get(ctx) {
     const domain = ctx.args[0] as string;
-    if (domain === 'raw') return undefined;
+    if (domain === 'raw') return;
     const state = getState(configPathOf(ctx));
     if (hasOwn(state.memory, domain)) return state.memory[domain];
     const config = loadRuntimeConfigSafe(state.configPath).config as Record<string, unknown>;
@@ -693,10 +721,10 @@ const configService: RustServiceRegistry = {
       } else {
         state.memory[domain] = next;
       }
-      return undefined;
+      return;
     }
-    await writeDomain(ctx, domain, (base) => deepMerge(base, patch));
-    return undefined;
+    await writeDomain(ctx, domain, 'set', (base) => deepMerge(base, patch));
+    return;
   },
 
   /** Replace a domain wholesale. Same target semantics as `set`. */
@@ -711,10 +739,10 @@ const configService: RustServiceRegistry = {
       } else {
         state.memory[domain] = value;
       }
-      return undefined;
+      return;
     }
-    await writeDomain(ctx, domain, () => value);
-    return undefined;
+    await writeDomain(ctx, domain, 'replace', () => value);
+    return;
   },
 
   /** Re-read the on-disk config. Reads are already fresh per call, so this
@@ -722,7 +750,7 @@ const configService: RustServiceRegistry = {
   async reload(ctx) {
     const state = getState(configPathOf(ctx));
     loadRuntimeConfigSafe(state.configPath);
-    return undefined;
+    return;
   },
 
   /** Config file problems, mapped from node-sdk's lenient load: an unusable
@@ -766,7 +794,7 @@ const CLIENT_VERSION = resolveClientVersion();
 
 /** Forward-slash join, matching node-sdk's path normalization. */
 function joinPath(dir: string, name: string): string {
-  return `${dir.replace(/\\/g, '/').replace(/\/+$/, '')}/${name}`;
+  return `${dir.replaceAll('\\', '/').replace(/\/+$/, '')}/${name}`;
 }
 
 const bootstrapService: RustServiceRegistry = {
