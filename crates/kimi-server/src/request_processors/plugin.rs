@@ -159,4 +159,70 @@ mod tests {
         assert!(body.get("error").is_none(), "plugin/list failed: {body}");
         assert!(body["result"]["plugins"].is_array());
     }
+
+    #[tokio::test]
+    async fn plugin_upsert_then_list_and_get() {
+        let processor = PluginProcessor::new().expect("plugin processor");
+        // Seed a record through the store's upsert, as install would.
+        processor
+            .store
+            .upsert(&kimi_agent::plugin::types::PluginRecord {
+                id: "acme-tools".into(),
+                name: "acme-tools".into(),
+                version: "1.2.3".into(),
+                description: "test plugin".into(),
+                source: kimi_agent::plugin::types::PluginSource::Github {
+                    repo: "acme/acme-tools".into(),
+                    tag: Some("v1.2.3".into()),
+                },
+                state: kimi_agent::plugin::types::PluginState::Enabled,
+                installed_at: "2026-01-01T00:00:00Z".into(),
+                skills: vec![],
+                mcp_servers: vec![],
+                hooks: vec![],
+                system_prompt: None,
+                agents: vec![],
+            })
+            .expect("upsert");
+
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "plugin/list".into(),
+                params: serde_json::Value::Null,
+            })
+            .await;
+        assert!(body.get("error").is_none(), "plugin/list failed: {body}");
+        let plugins = body["result"]["plugins"].as_array().expect("plugins");
+        assert!(
+            plugins.iter().any(|p| p["id"] == "acme-tools" && p["version"] == "1.2.3"),
+            "seeded plugin listed: {body}"
+        );
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "plugin/get".into(),
+                params: serde_json::json!({ "id": "acme-tools" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "plugin/get failed: {body}");
+        assert_eq!(body["result"]["display_name"], "acme-tools");
+        assert_eq!(body["result"]["source"], "github");
+        assert_eq!(body["result"]["enabled"], true);
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(3),
+                method: "plugin/get".into(),
+                params: serde_json::json!({ "id": "unknown-plugin" }),
+            })
+            .await;
+        assert!(body["result"].is_null(), "unknown plugin -> null: {body}");
+    }
 }
