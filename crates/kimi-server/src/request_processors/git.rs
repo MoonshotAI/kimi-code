@@ -68,4 +68,71 @@ mod tests {
         assert!(body.get("error").is_none(), "git/status should not RPC-error: {body}");
         assert!(body["result"].is_object());
     }
+
+    #[tokio::test]
+    async fn git_status_and_diff_in_real_repo() {
+        // Build a throwaway repo: init -> commit -> modify; then the methods
+        // must see the dirty file and its diff. Skipped when git is absent.
+        let repo = std::env::temp_dir().join(format!("kimi-git-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&repo);
+        std::fs::create_dir_all(&repo).expect("mkdir");
+        let run_git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+        };
+        if run_git(&["init", "-q"]).unwrap_or(false) == false {
+            eprintln!("skipping: git unavailable");
+            return;
+        }
+        std::fs::write(repo.join("a.txt"), "one\n").expect("write");
+        let _ = run_git(&["add", "a.txt"]);
+        let _ = run_git(&[
+            "-c", "user.name=test", "-c", "user.email=test@test",
+            "commit", "-q", "-m", "init",
+        ]);
+        std::fs::write(repo.join("a.txt"), "one\ntwo\n").expect("modify");
+
+        let mut server = MessageProcessor::new();
+        GitProcessor.register(&mut server);
+        let cwd = repo.to_string_lossy().to_string();
+
+        // git/status surfaces the modified file.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "git/status".into(),
+                params: serde_json::json!({ "cwd": cwd }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "git/status failed: {body}");
+        assert!(
+            serde_json::to_string(&body["result"])
+                .unwrap_or_default()
+                .contains("a.txt"),
+            "modified file in status: {body}"
+        );
+
+        // git/diff of that path shows the added line.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "git/diff".into(),
+                params: serde_json::json!({ "cwd": cwd, "path": "a.txt" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "git/diff failed: {body}");
+        assert!(
+            body["result"]["diff"].as_str().unwrap_or("").contains("+two"),
+            "diff shows the added line: {body}"
+        );
+
+        let _ = std::fs::remove_dir_all(&repo);
+    }
 }
