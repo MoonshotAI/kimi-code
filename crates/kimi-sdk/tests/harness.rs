@@ -73,6 +73,10 @@ async fn harness_exposes_engine_events() {
         .expect("event within 5s")
         .expect("stream alive");
     assert_eq!(event["type"], "session.goal.updated", "event: {event}");
+
+    // Approval surface: empty list; unknown resolve -> false.
+    assert!(harness.approvals(Some("s-events")).await.expect("approvals").is_empty());
+    assert_eq!(harness.resolve_approval("nope", true, None).await.expect("resolve"), false);
 }
 
 #[tokio::test]

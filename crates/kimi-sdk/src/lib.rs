@@ -133,6 +133,33 @@ impl Harness {
         Ok(bytes)
     }
 
+    /// Pending approvals (a session scope, or all when `None`).
+    pub async fn approvals(
+        &self,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        let body = self.client.lock().await.approval_list(session_id).await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("approval list: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"]["pending"].as_array().cloned().unwrap_or_default())
+    }
+
+    /// Resolve a pending approval: `allow`, or `deny` with a reason. Returns
+    /// whether the approval was found and resolved.
+    pub async fn resolve_approval(
+        &self,
+        id: &str,
+        allow: bool,
+        reason: Option<&str>,
+    ) -> anyhow::Result<bool> {
+        let body = self.client.lock().await.approval_resolve(id, allow, reason).await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("approval resolve: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"]["resolved"].as_bool().unwrap_or(false))
+    }
+
     /// The protocol client (borrowed) — advanced callers escape to raw RPC.
     pub async fn client(&self) -> tokio::sync::MutexGuard<'_, AppServerClient> {
         self.client.lock().await
