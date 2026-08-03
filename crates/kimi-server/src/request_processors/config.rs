@@ -122,4 +122,65 @@ mod tests {
         assert!(body.get("error").is_none(), "config/get should not error: {body}");
         assert!(body["result"].is_object() || body["result"].is_null());
     }
+
+    /// Serializes tests that touch `KIMI_CONFIG_PATH` (process-global env).
+    static CONFIG_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[tokio::test]
+    async fn config_set_writes_file_and_persists() {
+        let _guard = CONFIG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Point the highest-priority config path at a temp file so the write
+        // lands where we can assert on it.
+        let tmp = std::env::temp_dir().join(format!("kimi-config-set-{}", std::process::id()));
+        std::fs::write(
+            &tmp,
+            "[providers.mock]\ntype = \"openai\"\nbaseUrl = \"http://localhost:9999/v1\"\n",
+        )
+        .expect("seed config");
+        let previous = std::env::var_os("KIMI_CONFIG_PATH");
+        std::env::set_var("KIMI_CONFIG_PATH", &tmp);
+
+        let result = async {
+            let mut processor = MessageProcessor::new();
+            ConfigProcessor.register(&mut processor);
+            let body = processor
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(1),
+                    method: "config/set".into(),
+                    params: serde_json::json!({
+                        "patch": { "defaultModel": "kimi-k2" }
+                    }),
+                })
+                .await;
+            assert!(body.get("error").is_none(), "config/set failed: {body}");
+            assert_eq!(body["result"]["ok"], true);
+
+            // The patch value lands on disk.
+            let on_disk = std::fs::read_to_string(&tmp).expect("read back");
+            assert!(
+                on_disk.contains("defaultModel") && on_disk.contains("kimi-k2"),
+                "patched value persisted: {on_disk}"
+            );
+
+            // And config/get reflects it.
+            let body = processor
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(2),
+                    method: "config/get".into(),
+                    params: serde_json::Value::Null,
+                })
+                .await;
+            assert_eq!(body["result"]["defaultModel"], "kimi-k2", "get: {body}");
+        }
+        .await;
+
+        match previous {
+            Some(v) => std::env::set_var("KIMI_CONFIG_PATH", v),
+            None => std::env::remove_var("KIMI_CONFIG_PATH"),
+        }
+        let _ = std::fs::remove_file(&tmp);
+        result;
+    }
 }
