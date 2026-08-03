@@ -22,8 +22,13 @@ export {
   type RustRpcClientOptions,
 } from './rpc-client';
 export {
+  mapBackgroundTask,
   mapContextMessage,
+  mapCronTaskSnapshot,
   mapMcpServer,
+  mapMcpStartupMetrics,
+  mapPluginInfo,
+  mapPluginSummary,
   mapSkill,
   mapStatus,
   mapUsage,

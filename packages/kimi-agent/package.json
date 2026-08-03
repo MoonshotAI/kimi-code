@@ -20,6 +20,10 @@
     "./contract": {
       "types": "./contract.ts",
       "default": "./contract.ts"
+    },
+    "./rpc/wire": {
+      "types": "./src/rpc/wire.gen.ts",
+      "default": "./src/rpc/wire.gen.ts"
     }
   },
   "dependencies": {

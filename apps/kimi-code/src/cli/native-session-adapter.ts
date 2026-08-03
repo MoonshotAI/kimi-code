@@ -30,6 +30,29 @@ import {
   type SessionPromptOutcome,
   type ToolApprovalRequest,
 } from '@moonshot-ai/kimi-code-sdk/rust';
+import type {
+  EngineMcpServerInfo,
+  EnginePluginInfo,
+  EnginePluginSummary,
+  EngineSessionRecord,
+  EngineSessionStatus,
+  EngineSessionUsage,
+  EngineSessionWarning,
+  EngineSkillSummary,
+} from '@moonshot-ai/kimi-code-sdk/rust';
+
+// Engine wire shapes — single mirror in the SDK; re-exported so hosts that
+// shaped their adapter signatures against these keep compiling unchanged.
+export type {
+  EngineMcpServerInfo,
+  EnginePluginInfo,
+  EnginePluginSummary,
+  EngineSessionRecord,
+  EngineSessionStatus,
+  EngineSessionUsage,
+  EngineSessionWarning,
+  EngineSkillSummary,
+} from '@moonshot-ai/kimi-code-sdk/rust';
 
 export type NativePermissionMode = 'manual' | 'auto' | 'yolo';
 
@@ -132,37 +155,6 @@ export interface SessionEngineOps {
   detachBackgroundTask?: (taskId: string) => Promise<Record<string, unknown> | null>;
 }
 
-/** Engine plugin summary wire shape (SDK `PluginSummary`; serde snake_case). */
-export interface EnginePluginSummary {
-  id: string;
-  display_name: string;
-  version?: string;
-  enabled: boolean;
-  state: string;
-  skill_count: number;
-  mcp_server_count: number;
-  enabled_mcp_server_count: number;
-  hook_count: number;
-  command_count: number;
-  has_errors: boolean;
-  source: string;
-}
-
-/** Engine plugin detail wire shape (SDK `PluginInfo`; extends the summary). */
-export interface EnginePluginInfo extends EnginePluginSummary {
-  root: string;
-  installed_at: string;
-  mcp_servers: Array<{
-    name: string;
-    runtime_name: string;
-    enabled: boolean;
-    transport: string;
-    command?: string | null;
-    url?: string | null;
-  }>;
-  diagnostics: Array<{ severity: string; message: string }>;
-}
-
 /** Engine cron task wire shape (serde snake_case; SDK `CronTaskSnapshot`). */
 export interface EngineCronTask {
   id: string;
@@ -171,15 +163,6 @@ export interface EngineCronTask {
   created_at: number;
   last_fired_at?: number | null;
   next_fire_at?: number | null;
-}
-
-/** Engine persisted-session record wire shape (SDK `SessionSummary` subset). */
-export interface EngineSessionRecord {
-  id: string;
-  created_at: string;
-  updated_at: string;
-  title?: string;
-  work_dir?: string;
 }
 
 /** Engine plan info wire shape (SDK `PlanInfo` parity). */
@@ -194,53 +177,6 @@ export interface EnginePlanInfo {
 export interface EngineContextData {
   history: Array<Record<string, unknown>>;
   token_count: number;
-}
-
-/** Engine registered-skill wire shape (serde snake_case). */
-export interface EngineSkillSummary {
-  name: string;
-  description: string;
-  skill_type: string;
-  source?: string | null;
-  path?: string | null;
-  dir?: string | null;
-}
-
-/** Engine session-warning wire shape (SDK `SessionWarning` parity). */
-export interface EngineSessionWarning {
-  code: string;
-  message: string;
-  severity: 'info' | 'warning' | 'error';
-}
-
-/** Engine cumulative usage wire shape (serde snake_case). */
-export interface EngineSessionUsage {
-  by_model?: Record<string, { input_tokens: number; output_tokens: number; total_tokens: number }>;
-  total?: { input_tokens: number; output_tokens: number; total_tokens: number };
-  current_turn?: { input_tokens: number; output_tokens: number; total_tokens: number };
-}
-
-/** Engine session status wire shape (serde snake_case). */
-export interface EngineSessionStatus {
-  model?: string | null;
-  thinking_effort: string;
-  permission: NativePermissionMode;
-  plan_mode: boolean;
-  swarm_mode: boolean;
-  goal_enabled: boolean;
-  context_tokens: number;
-  max_context_tokens: number;
-  context_usage: number;
-  usage?: unknown;
-}
-
-/** Engine per-server MCP view (SDK `McpServerInfo` parity). */
-export interface EngineMcpServerInfo {
-  name: string;
-  transport: 'stdio' | 'http' | 'sse';
-  status: string;
-  tool_count: number;
-  error?: string | null;
 }
 
 /** The engine's goal snapshot wire shape (serde form of `GoalSnapshot`). */

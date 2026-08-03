@@ -18,7 +18,6 @@
  * native-session convention.
  */
 import type { SdkRpcSurface } from '../rpc';
-import type { Event } from '../events';
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'pathe';
 import { load as loadYaml } from 'js-yaml';
@@ -54,8 +53,13 @@ import type {
 } from '#/types';
 
 import {
+  mapBackgroundTask,
   mapContextMessage,
+  mapCronTaskSnapshot,
   mapMcpServer,
+  mapMcpStartupMetrics,
+  mapPluginInfo,
+  mapPluginSummary,
   mapSkill,
   mapUsage,
   nativeUnavailable,
@@ -634,7 +638,7 @@ export class RustRpcClient extends SDKRpcClientBase {
         // caller's overrides; the kept conversation's last user prompt
         // becomes the fork's `lastPrompt` (read back from the engine).
         const sourceMetadata = this.sessionSummaries.get(sessionId)?.metadata ?? {};
-        const mergedMetadata = { ...sourceMetadata, ...(metadata ?? {}) };
+        const mergedMetadata = { ...sourceMetadata, ...metadata };
         let lastPrompt: string | undefined;
         try {
           const context = await r.sessionGetContext(forkId);
@@ -734,7 +738,7 @@ export class RustRpcClient extends SDKRpcClientBase {
       setThinking: async ({ sessionId, effort }: any) => {
         await r.sessionSetThinking(sessionId, effort ?? null);
       },
-      setPermission: async ({ sessionId, mode }: any) => {
+      setPermission: async ({ sessionId: _sessionId, mode }: any) => {
         // The engine gate mode is process-wide; a per-session value is
         // approximated by the last-set mode (documented limitation).
         await (r as unknown as { permissionSetMode?(mode: string): Promise<unknown> })
@@ -781,7 +785,7 @@ export class RustRpcClient extends SDKRpcClientBase {
       unregisterTool: async () => {},
       setActiveTools: async () => {},
       getTools: async () => [] as never,
-      addAdditionalDir: async ({ sessionId, path, persist }: any) => {
+      addAdditionalDir: async ({ sessionId, path, persist: _persist }: any) => {
         // NOTE: the engine `session/add_additional_dir` RPC has no `persist`
         // parameter today — the SDK flag is accepted for contract parity but
         // silently dropped by the wire (persisted vs ephemeral dirs is an
@@ -858,7 +862,7 @@ export class RustRpcClient extends SDKRpcClientBase {
         if (status === null) throw new Error('Session not found');
         return {
           modelAlias: status.model ?? undefined,
-          provider: status.model != null ? { model: status.model } : undefined,
+          provider: status.model !== undefined && status.model !== null ? { model: status.model } : undefined,
           thinkingEffort: status.thinking_effort,
           modelCapabilities: {
             max_context_tokens: status.max_context_tokens,
@@ -908,7 +912,7 @@ export class RustRpcClient extends SDKRpcClientBase {
         const byName = new Map<string, SkillSummary>();
         for (const skill of engineSkills) byName.set(skill.name, skill);
         for (const skill of discovered) byName.set(skill.name, skill);
-        return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+        return [...byName.values()].toSorted((a, b) => a.name.localeCompare(b.name));
       },
       activateSkill: async ({ sessionId, name, args }: any) => {
         await r.sessionActivateSkill(sessionId, name, args);
@@ -918,7 +922,7 @@ export class RustRpcClient extends SDKRpcClientBase {
         return (result?.servers ?? []).map((s) => mapMcpServer(s as never));
       },
       getMcpStartupMetrics: async ({ sessionId }: any) => {
-        return (await r.sessionGetMcpStartupMetrics(sessionId)) as never;
+        return mapMcpStartupMetrics(await r.sessionGetMcpStartupMetrics(sessionId)) as never;
       },
       reconnectMcpServer: async ({ sessionId, name }: any) => {
         await r.sessionReconnectMcpServer(sessionId, name);
@@ -980,11 +984,11 @@ export class RustRpcClient extends SDKRpcClientBase {
       },
       getCronTasks: async () => {
         const result = await r.cronList();
-        return { tasks: result?.tasks ?? [] } as never;
+        return { tasks: (result?.tasks ?? []).map(mapCronTaskSnapshot) } as never;
       },
       getBackground: async () => {
         const result = await r.bgList();
-        return (result?.tasks ?? []) as never;
+        return (result?.tasks ?? []).map((t) => mapBackgroundTask(t)) as never;
       },
       getBackgroundOutput: async ({ taskId }: any) => {
         const result = await r.bgOutput(taskId);
@@ -1075,10 +1079,10 @@ export class RustRpcClient extends SDKRpcClientBase {
       },
       listPlugins: async () => {
         const result = await r.pluginList();
-        return (result?.plugins ?? []) as never;
+        return (result?.plugins ?? []).map((p) => mapPluginSummary(p as never)) as never;
       },
       getPluginInfo: async ({ id }: any) => {
-        return (await r.pluginGet(id)) as never;
+        return mapPluginInfo((await r.pluginGet(id)) as never) as never;
       },
       installPlugin: async () => nativeUnavailable('installPlugin'),
       setPluginEnabled: async () => nativeUnavailable('setPluginEnabled'),
@@ -1125,7 +1129,7 @@ export class RustRpcClient extends SDKRpcClientBase {
         if (!byName.has(skill.name)) byName.set(skill.name, skill);
       }
     }
-    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+    return [...byName.values()].toSorted((a, b) => a.name.localeCompare(b.name));
   }
 
   private async sessionSummaryFor(sessionId: string): Promise<SessionSummary> {
@@ -1159,9 +1163,7 @@ export class RustRpcClient extends SDKRpcClientBase {
   ): ResumedSessionSummary {
     const now = Date.now();
     const forkedFrom = this.forkParents.get(summary.id);
-    const mainAgent = {
-      ...(replay !== undefined ? { replay } : {}),
-    } as ResumedSessionSummary['agents'][string];
+    const mainAgent = (replay !== undefined ? { replay } : {}) as ResumedSessionSummary['agents'][string];
     return {
       ...summary,
       sessionMetadata: {
@@ -1295,9 +1297,6 @@ function lastUserPromptFromContext(raw: unknown): string | undefined {
   }
   return undefined;
 }
-
-/** Default agent id stamped onto engine events (side-agent turns override it). */
-const MAIN_AGENT_ID = 'main';
 
 /** Normalize an engine-returned path to the SDK's forward-slash convention
  *  (strips the Windows `\\?\` verbatim prefix and converts separators). */

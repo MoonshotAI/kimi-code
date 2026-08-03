@@ -1,9 +1,14 @@
 /**
- * External lifecycle hook types — local port of the retired
- * `agent-core/session/hooks` surface. Hooks run at engine lifecycle
- * boundaries (PreToolUse / UserPromptSubmit / Stop ...); the engine executes
- * them natively, hosts contribute them from config + plugins.
+ * External lifecycle hook types — the engine's wire contract is the source
+ * of truth (`@moonshot-ai/kimi-agent/rpc/wire` → `rpc/types.rs`), so
+ * `HookEventType` / `HookDef` re-export the generated wire types. The
+ * runtime `HOOK_EVENT_TYPES` array is kept locally (the generated module
+ * carries types only) and satisfies the wire union.
  */
+
+import type { HookEventType } from '@moonshot-ai/kimi-agent/rpc/wire';
+
+export type { HookDef, HookEventType } from '@moonshot-ai/kimi-agent/rpc/wire';
 
 export const HOOK_EVENT_TYPES = [
   'PreToolUse',
@@ -22,15 +27,4 @@ export const HOOK_EVENT_TYPES = [
   'PreCompact',
   'PostCompact',
   'Notification',
-] as const;
-
-export type HookEventType = (typeof HOOK_EVENT_TYPES)[number];
-
-export interface HookDef {
-  readonly event: HookEventType;
-  readonly matcher?: string;
-  readonly command: string;
-  readonly timeout?: number;
-  readonly cwd?: string;
-  readonly env?: Readonly<Record<string, string>>;
-}
+] as const satisfies readonly HookEventType[];

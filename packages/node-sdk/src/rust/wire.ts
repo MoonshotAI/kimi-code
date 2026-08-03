@@ -11,7 +11,9 @@ import type {
   BackgroundTaskInfo,
   ContextMessage,
   ContentPart,
+  CronTaskSnapshot,
   McpServerInfo,
+  McpStartupMetrics,
   PluginInfo,
   PluginSummary,
   PromptOrigin,
@@ -334,5 +336,28 @@ export function mapPluginInfo(w: EnginePluginInfo): PluginInfo {
     diagnostics: w.diagnostics.map(
       (d): Diag => ({ severity: d.severity as Diag['severity'], message: d.message }),
     ),
+  };
+}
+
+/** Map an engine cron-task wire record (`CronTaskSnapshotRpc`) onto the SDK
+ *  `CronTaskSnapshot` (created_at → createdAt, …). */
+export function mapCronTaskSnapshot(raw: unknown): CronTaskSnapshot {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    id: typeof r['id'] === 'string' ? (r['id'] as string) : '',
+    cron: typeof r['cron'] === 'string' ? (r['cron'] as string) : '',
+    recurring: r['recurring'] === true,
+    createdAt: typeof r['created_at'] === 'number' ? (r['created_at'] as number) : 0,
+    lastFiredAt: typeof r['last_fired_at'] === 'number' ? (r['last_fired_at'] as number) : undefined,
+    nextFireAt: typeof r['next_fire_at'] === 'number' ? (r['next_fire_at'] as number) : null,
+  };
+}
+
+/** Map the engine mcp startup-metrics wire record onto `McpStartupMetrics`
+ *  (duration_ms → durationMs). */
+export function mapMcpStartupMetrics(raw: unknown): McpStartupMetrics {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    durationMs: typeof r['duration_ms'] === 'number' ? (r['duration_ms'] as number) : 0,
   };
 }

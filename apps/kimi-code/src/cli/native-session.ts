@@ -27,8 +27,6 @@
 import type {
   AgentContextData,
   AgentReplayRecord,
-  ContextMessage,
-  PromptOrigin,
   ResumedAgentState,
   SwarmModeTrigger,
 } from '@moonshot-ai/kimi-code-sdk';
@@ -39,7 +37,6 @@ import type {
   ApprovalRequest,
   BackgroundTaskInfo,
   CompactOptions,
-  ContentPart,
   CreateGoalInput,
   Event,
   GetCronTasksResult,
@@ -64,7 +61,6 @@ import type {
   SessionUsage,
   SkillSummary,
   ThinkingEffort,
-  ToolCall,
   Unsubscribe,
 } from '@moonshot-ai/kimi-code-sdk';
 
@@ -79,24 +75,22 @@ import type { TuiSession } from '#/tui/tui-session';
 import {
   NativeSessionAdapter,
   nativeEngineOpsFromRustLoop,
-  type EngineMcpServerInfo,
-  type EnginePluginInfo,
-  type EnginePluginSummary,
   type EngineSessionRecord,
-  type EngineSessionStatus,
-  type EngineSessionUsage,
-  type EngineSkillSummary,
   type NativePermissionMode,
   type RustLoopSessionApi,
 } from './native-session-adapter';
+import {
+  mapBackgroundTask,
+  mapContextMessage,
+  mapMcpServer,
+  mapPluginInfo,
+  mapPluginSummary,
+  mapSkill,
+  mapStatus,
+  mapUsage,
+  promptText,
+} from '@moonshot-ai/kimi-code-sdk/rust';
 import type { SessionClientFactoryOptions, SessionClientHandle } from '@moonshot-ai/kimi-code-sdk/rust';
-
-/** Wire token-usage triple as the engine reports it. */
-interface EngineTokenTriple {
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
-}
 
 /** The rust-loop surface the native TUI session factory needs. */
 export interface NativeTuiRustLoop extends RustLoopSessionApi {
@@ -124,10 +118,6 @@ export interface NativeTuiSessionInit {
   readonly permissionMode?: NativePermissionMode;
 }
 
-const NATIVE_ENGINE_TRANSPORTS = new Set(['stdio', 'http', 'sse']);
-const SKILL_SOURCES = new Set(['builtin', 'user', 'extra', 'project']);
-const MCP_STATUSES = new Set(['pending', 'connected', 'failed', 'disabled', 'needs-auth']);
-
 /** Feature gate for the interactive TUI's native-engine sessions. ON by
  *  default (`KIMI_SESSION_ENGINE_TUI=0` opts out); every call site
  *  (startup, resume, picker, btw panel) must route through this instead of
@@ -143,204 +133,8 @@ function naError(feature: string): never {
   );
 }
 
-/** Extract the plain-text of a prompt input; multimodal parts degrade to text. */
-function promptText(input: string | PromptInput): string {
-  if (typeof input === 'string') return input;
-  return input
-    .filter((part): part is Extract<PromptInput[number], { type: 'text' }> => part.type === 'text')
-    .map((part) => part.text)
-    .join('\n');
-}
-
-function mapTokenUsage(triple: EngineTokenTriple | undefined) {
-  if (triple === undefined) return;
-  // The engine tracks a single input total and no cache split; map it onto the
-  // SDK's four-way shape with the cache lanes zeroed (documented approximation
-  // until the engine reports cache-read / cache-creation separately).
-  return {
-    inputOther: triple.input_tokens,
-    output: triple.output_tokens,
-    inputCacheRead: 0,
-    inputCacheCreation: 0,
-  };
-}
-
-function mapUsage(raw: unknown): SessionUsage | undefined {
-  if (raw === null || typeof raw !== 'object') return undefined;
-  const u = raw as EngineSessionUsage;
-  const byModel =
-    u.by_model === undefined
-      ? undefined
-      : Object.fromEntries(
-          Object.entries(u.by_model).map(([model, triple]) => [model, mapTokenUsage(triple)!]),
-        );
-  return {
-    byModel,
-    total: mapTokenUsage(u.total),
-    currentTurn: mapTokenUsage(u.current_turn),
-  };
-}
-
-function mapStatus(e: EngineSessionStatus): SessionStatus {
-  return {
-    model: e.model ?? undefined,
-    thinkingEffort: e.thinking_effort,
-    permission: e.permission,
-    planMode: e.plan_mode,
-    swarmMode: e.swarm_mode,
-    contextTokens: e.context_tokens,
-    maxContextTokens: e.max_context_tokens,
-    contextUsage: e.context_usage,
-    usage: mapUsage(e.usage),
-  };
-}
-
-function mapSkill(s: EngineSkillSummary): SkillSummary {
-  const source = SKILL_SOURCES.has(s.source ?? '')
-    ? (s.source as SkillSummary['source'])
-    : 'user';
-  return {
-    name: s.name,
-    description: s.description,
-    path: s.path ?? '',
-    source,
-    type: s.skill_type,
-  };
-}
-
-function mapMcpServer(m: EngineMcpServerInfo): McpServerInfo {
-  // The engine's `pending-approval` has no SDK counterpart; fold it into
-  // `pending`. Any other unexpected value also degrades to `pending`.
-  const status = MCP_STATUSES.has(m.status)
-    ? (m.status as McpServerInfo['status'])
-    : 'pending';
-  const transport = NATIVE_ENGINE_TRANSPORTS.has(m.transport) ? m.transport : 'stdio';
-  return {
-    name: m.name,
-    transport: transport as McpServerInfo['transport'],
-    status,
-    toolCount: m.tool_count,
-    error: m.error ?? undefined,
-  };
-}
-
-/** Map an engine tool-call (arguments is a JSON value) onto the SDK `ToolCall`
- *  (arguments is a JSON string). */
-function mapToolCall(raw: unknown): ToolCall {
-  const r = (raw ?? {}) as Record<string, unknown>;
-  const args = r['arguments'];
-  return {
-    type: typeof r['type'] === 'string' ? (r['type'] as string) : 'function',
-    id: typeof r['id'] === 'string' ? (r['id'] as string) : '',
-    name: typeof r['name'] === 'string' ? (r['name'] as string) : '',
-    arguments: typeof args === 'string' ? args : JSON.stringify(args ?? {}),
-  } as ToolCall;
-}
-
-/** Map an engine context message (serde snake_case) onto the SDK `ContextMessage`
- *  (camelCase). ContentPart type tags and origin `kind` are identical on both
- *  sides, so those pass through; only the top-level keys are renamed. */
-function mapContextMessage(raw: Record<string, unknown>): ContextMessage {
-  const toolCalls = Array.isArray(raw['tool_calls'])
-    ? (raw['tool_calls'] as unknown[]).map(mapToolCall)
-    : [];
-  return {
-    role: typeof raw['role'] === 'string' ? (raw['role'] as string) : 'user',
-    content: (Array.isArray(raw['content']) ? raw['content'] : []) as ContentPart[],
-    toolCalls,
-    toolCallId: typeof raw['tool_call_id'] === 'string' ? (raw['tool_call_id'] as string) : undefined,
-    origin: raw['origin'] as PromptOrigin | undefined,
-    isError: typeof raw['is_error'] === 'boolean' ? (raw['is_error'] as boolean) : undefined,
-    partial: typeof raw['partial'] === 'boolean' ? (raw['partial'] as boolean) : undefined,
-    name: typeof raw['name'] === 'string' ? (raw['name'] as string) : undefined,
-  } as ContextMessage;
-}
-
-/** Map an engine background-task wire record (untagged union with a nested
- *  `base` object) onto the flat SDK `BackgroundTaskInfo` union. Status/kind
- *  strings are identical on both sides, so they pass through. */
-function mapBackgroundTask(raw: unknown): BackgroundTaskInfo {
-  const r = (raw ?? {}) as Record<string, unknown>;
-  const base = (r['base'] ?? {}) as Record<string, unknown>;
-  const common = {
-    taskId: typeof base['task_id'] === 'string' ? (base['task_id'] as string) : '',
-    description: typeof base['description'] === 'string' ? (base['description'] as string) : '',
-    status: base['status'],
-    detached: typeof base['detached'] === 'boolean' ? (base['detached'] as boolean) : undefined,
-    startedAt: typeof base['started_at'] === 'number' ? (base['started_at'] as number) : 0,
-    endedAt: typeof base['ended_at'] === 'number' ? (base['ended_at'] as number) : null,
-    stopReason: typeof base['stop_reason'] === 'string' ? (base['stop_reason'] as string) : undefined,
-  };
-  const kind = r['kind'];
-  if (kind === 'agent') {
-    return {
-      ...common,
-      kind: 'agent',
-      agentId: typeof r['agent_id'] === 'string' ? (r['agent_id'] as string) : undefined,
-      subagentType: typeof r['subagent_type'] === 'string' ? (r['subagent_type'] as string) : undefined,
-    } as BackgroundTaskInfo;
-  }
-  if (kind === 'question') {
-    return {
-      ...common,
-      kind: 'question',
-      questionCount: typeof r['question_count'] === 'number' ? (r['question_count'] as number) : 0,
-      toolCallId: typeof r['tool_call_id'] === 'string' ? (r['tool_call_id'] as string) : undefined,
-    } as BackgroundTaskInfo;
-  }
-  return {
-    ...common,
-    kind: 'process',
-    command: typeof r['command'] === 'string' ? (r['command'] as string) : '',
-    pid: typeof r['pid'] === 'number' ? (r['pid'] as number) : 0,
-    exitCode: typeof r['exit_code'] === 'number' ? (r['exit_code'] as number) : null,
-  } as BackgroundTaskInfo;
-}
-
 /** Non-terminal background-task statuses (for the `activeOnly` filter). */
 const ACTIVE_BG_STATUSES = new Set(['running', 'queued', 'starting']);
-
-/** Map an engine plugin summary wire record onto the SDK `PluginSummary`. */
-function mapPluginSummary(w: EnginePluginSummary): PluginSummary {
-  return {
-    id: w.id,
-    displayName: w.display_name,
-    version: w.version,
-    enabled: w.enabled,
-    state: w.state as PluginSummary['state'],
-    skillCount: w.skill_count,
-    mcpServerCount: w.mcp_server_count,
-    enabledMcpServerCount: w.enabled_mcp_server_count,
-    hookCount: w.hook_count,
-    commandCount: w.command_count,
-    hasErrors: w.has_errors,
-    source: w.source as PluginSummary['source'],
-  };
-}
-
-/** Map an engine plugin detail wire record onto the SDK `PluginInfo`. */
-function mapPluginInfo(w: EnginePluginInfo): PluginInfo {
-  type McpInfo = PluginInfo['mcpServers'][number];
-  type Diag = PluginInfo['diagnostics'][number];
-  return {
-    ...mapPluginSummary(w),
-    root: w.root,
-    installedAt: w.installed_at,
-    mcpServers: w.mcp_servers.map(
-      (m): McpInfo => ({
-        name: m.name,
-        runtimeName: m.runtime_name,
-        enabled: m.enabled,
-        transport: m.transport as McpInfo['transport'],
-        command: m.command ?? undefined,
-        url: m.url ?? undefined,
-      }),
-    ),
-    diagnostics: w.diagnostics.map(
-      (d): Diag => ({ severity: d.severity as Diag['severity'], message: d.message }),
-    ),
-  };
-}
 
 /**
  * A native-engine session presented on the SDK `Session` surface the TUI uses.
