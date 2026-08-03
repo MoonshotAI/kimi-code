@@ -115,6 +115,16 @@ function fetchJson(doc: unknown): typeof fetch {
     })) as unknown as typeof fetch;
 }
 
+function fetchJsonRecordingUserAgent(doc: unknown, seen: Array<string | null>): typeof fetch {
+  return (async (_input: unknown, init?: { headers?: Record<string, string> }) => {
+    seen.push(new Headers(init?.headers).get('User-Agent'));
+    return new Response(JSON.stringify(doc), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as unknown as typeof fetch;
+}
+
 function fetchFail(): typeof fetch {
   return (async () => {
     throw new Error('network down');
@@ -138,7 +148,10 @@ function stubModelCatalog(): IModelCatalog {
   } as unknown as IModelCatalog;
 }
 
-function createHost(sections: Record<string, unknown> = {}): {
+function createHost(
+  sections: Record<string, unknown> = {},
+  identitySlug?: string,
+): {
   config: StubConfigService;
   imports: IModelsDevImportService;
 } {
@@ -148,7 +161,7 @@ function createHost(sections: Record<string, unknown> = {}): {
     [IKosongConfigService, stubKosongConfig()],
     [IModelCatalog, stubModelCatalog()],
     [IBootstrapService, stubBootstrap('/home', {}, { requestHeaders: HOST_HEADERS })],
-    [IAgentIdentity, stubAgentIdentity()],
+    [IAgentIdentity, stubAgentIdentity({ slug: identitySlug })],
   ]);
   return { config, imports: host.app.accessor.get(IModelsDevImportService) };
 }
@@ -293,6 +306,29 @@ describe('IModelsDevImportService', () => {
       codes.CATALOG_IMPORT_INVALID,
     );
     expect(err.message).toContain('requires a base_url');
+  });
+
+  // A custom registry is a user-supplied third-party endpoint, so this request
+  // carries the same identity the scheduled refresh of that registry sends —
+  // it used to go out with a hardcoded product token instead.
+  it('sends the configured identity as the custom-registry import User-Agent', async () => {
+    const seen: Array<string | null> = [];
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJsonRecordingUserAgent(REGISTRY_DOC, seen) });
+    const { imports } = createHost({}, 'acme');
+
+    await imports.importCustomRegistry({ url: REGISTRY_URL });
+
+    expect(seen).toEqual(['acme/1.0']);
+  });
+
+  it('keeps the host User-Agent on the import when no identity is configured', async () => {
+    const seen: Array<string | null> = [];
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJsonRecordingUserAgent(REGISTRY_DOC, seen) });
+    const { imports } = createHost();
+
+    await imports.importCustomRegistry({ url: REGISTRY_URL });
+
+    expect(seen).toEqual([HOST_HEADERS['User-Agent']]);
   });
 
   it('imports a custom registry with a source blob and drops providers vanished upstream', async () => {
