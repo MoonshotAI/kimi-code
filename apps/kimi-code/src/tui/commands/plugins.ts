@@ -238,6 +238,7 @@ function capabilityMarketplaceEntry(capability: CapabilityStatus): PluginMarketp
     description: capability.description,
     tier: 'official',
     source: `capability:${capability.id}`,
+    builtIn: true,
   };
 }
 
@@ -347,9 +348,11 @@ async function confirmInstallTrust(
 const CAPABILITY_POLL_INTERVAL_MS = 700;
 const CAPABILITY_POLL_ATTEMPTS = 260; // ~3 minutes of runtime setup budget
 
-/** Client-injected v2 entries install their runtime and plugin together. */
+/** Client-injected v2 entries install their runtime and plugin together.
+ * Trust keys on the parser-proof `builtIn` flag — the `capability:<id>`
+ * source string stays purely diagnostic. */
 function isCapabilityEntry(host: SlashCommandHost, entry: PluginMarketplaceEntry): boolean {
-  return host.engineV2 && entry.source === `capability:${entry.id}`;
+  return host.engineV2 && entry.builtIn === true;
 }
 
 /**

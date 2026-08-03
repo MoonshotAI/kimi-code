@@ -60,21 +60,26 @@ describe('plugins command capability surface', () => {
   it('routes built-in entries through capabilities only on v2', () => {
     const v2 = fakeHost({ engineV2: true });
     expect(
-      isCapabilityEntry(v2.host, { id: 'kimi-cu', source: 'capability:kimi-cu' } as never),
+      isCapabilityEntry(v2.host, { id: 'kimi-cu', source: 'capability:kimi-cu', builtIn: true } as never),
     ).toBe(true);
     expect(
       isCapabilityEntry(v2.host, {
         id: 'kimi-webbridge',
         source: 'capability:kimi-webbridge',
+        builtIn: true,
       } as never),
     ).toBe(true);
     expect(
       isCapabilityEntry(v2.host, { id: 'kimi-cu', source: 'https://example.test/plugin.zip' } as never),
     ).toBe(false);
+    // A forged capability: source without the parser-proof flag is a plain row.
+    expect(
+      isCapabilityEntry(v2.host, { id: 'kimi-cu', source: 'capability:kimi-cu' } as never),
+    ).toBe(false);
 
     const v1 = fakeHost({});
     expect(
-      isCapabilityEntry(v1.host, { id: 'kimi-cu', source: 'capability:kimi-cu' } as never),
+      isCapabilityEntry(v1.host, { id: 'kimi-cu', source: 'capability:kimi-cu', builtIn: true } as never),
     ).toBe(false);
   });
 

@@ -23,6 +23,12 @@ export interface PluginMarketplaceEntry {
   readonly description?: string;
   readonly homepage?: string;
   readonly keywords?: readonly string[];
+  /**
+   * Internal provenance flag for client-injected built-in rows. The catalog
+   * parser builds entries field-by-field and never sets it, so a custom
+   * catalog cannot forge it (unlike the `capability:<id>` source string).
+   */
+  readonly builtIn?: boolean;
 }
 
 export interface PluginMarketplace {

@@ -645,6 +645,7 @@ describe('plugins selector dialogs', () => {
         displayName: 'Kimi Computer Use',
         version: '0.5.4',
         source: 'capability:kimi-cu',
+        builtIn: true,
       },
     ];
     const { panel } = makePanel({ installed, capabilities });
@@ -712,7 +713,7 @@ describe('plugins selector dialogs', () => {
     ];
     const { panel } = makePanel({ capabilities, initialTab: 'official' });
     panel.setMarketplace(
-      [{ id: 'kimi-webbridge', displayName: 'Kimi WebBridge', source: 'capability:kimi-webbridge', tier: 'official' }],
+      [{ id: 'kimi-webbridge', displayName: 'Kimi WebBridge', source: 'capability:kimi-webbridge', tier: 'official', builtIn: true }],
       '/tmp/marketplace.json',
     );
 
@@ -737,7 +738,7 @@ describe('plugins selector dialogs', () => {
     ];
     const { panel } = makePanel({ capabilities, initialTab: 'official' });
     panel.setMarketplace(
-      [{ id: 'kimi-webbridge', displayName: 'Kimi WebBridge', source: 'capability:kimi-webbridge', tier: 'official' }],
+      [{ id: 'kimi-webbridge', displayName: 'Kimi WebBridge', source: 'capability:kimi-webbridge', tier: 'official', builtIn: true }],
       '/tmp/marketplace.json',
     );
 

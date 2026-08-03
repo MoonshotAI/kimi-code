@@ -446,11 +446,10 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   /** Capability state for a MARKETPLACE row: only our own injected rows
-   * (the `capability:<id>` source marker) may show capability status — a
-   * custom catalog row that merely reuses the id renders as a normal
-   * plugin, matching how Enter routes it. */
+   * (flagged `builtIn` — a custom catalog cannot forge the flag) may show
+   * capability status, matching how Enter routes them. */
   private capabilityForEntry(entry: PluginMarketplaceEntry): CapabilityStatus | undefined {
-    return entry.source === `capability:${entry.id}` ? this.capabilityFor(entry.id) : undefined;
+    return entry.builtIn === true ? this.capabilityFor(entry.id) : undefined;
   }
 
   private get officialEntries(): readonly PluginMarketplaceEntry[] {
@@ -896,6 +895,7 @@ function capabilityMarketplaceEntry(capability: CapabilityStatus): PluginMarketp
     source: `capability:${capability.id}`,
     tier: 'official',
     description: capability.description,
+    builtIn: true,
   };
 }
 
