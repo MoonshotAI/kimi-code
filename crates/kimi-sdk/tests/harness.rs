@@ -28,6 +28,13 @@ async fn embedded_harness_creates_sessions() {
     // Cancel of a created session reports true (flag registered at create).
     assert_eq!(session.cancel().await["result"]["cancelled"], true);
 
+    // Persistence + lifecycle ops on the typed session handle. (compact is
+    // skipped: the bare server has no compaction delegate, so the engine
+    // correctly reports "No compaction delegate set".)
+    session.save().await.expect("save");
+    session.load().await.expect("load");
+    session.set_model("sdk-test-model").await.expect("set_model");
+
     // Harness facade: config parses, the session is listed, export yields a
     // zip, and delete removes the persisted record.
     assert!(harness.config().await.expect("config").is_object());

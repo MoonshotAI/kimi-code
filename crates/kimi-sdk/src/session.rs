@@ -46,4 +46,72 @@ impl Session {
     pub async fn cancel(&mut self) -> serde_json::Value {
         self.client.lock().await.session_cancel(&self.id).await
     }
+
+    /// Persist the session to the store (engine-side `session/save`).
+    pub async fn save(&mut self) -> anyhow::Result<()> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                kimi_protocol::methods::SESSION_SAVE,
+                serde_json::json!({ "session_id": self.id }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("save session: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(())
+    }
+
+    /// Load the persisted session state into the runtime agent.
+    pub async fn load(&mut self) -> anyhow::Result<()> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                kimi_protocol::methods::SESSION_LOAD,
+                serde_json::json!({ "session_id": self.id }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("load session: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(())
+    }
+
+    /// Switch the session's model.
+    pub async fn set_model(&mut self, model: &str) -> anyhow::Result<()> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                kimi_protocol::methods::SESSION_SET_MODEL,
+                serde_json::json!({ "session_id": self.id, "model": model }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("set model: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(())
+    }
+
+    /// Compact the session's context.
+    pub async fn compact(&mut self) -> anyhow::Result<serde_json::Value> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                kimi_protocol::methods::SESSION_COMPACT,
+                serde_json::json!({ "session_id": self.id }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("compact: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"].clone())
+    }
 }
