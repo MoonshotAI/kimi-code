@@ -113,6 +113,19 @@ async fn handle(
                 Err(e) => error(-32603, &format!("session/load failed: {e}")),
             }
         }
+        "session/resume" => {
+            // The lighter-weight sibling of `session/load`: attach to the
+            // on-disk session without replaying message history. The runtime
+            // agent is created (idempotent) the same way.
+            let session_id = params.get("sessionId").and_then(|v| v.as_str()).unwrap_or("");
+            if session_id.is_empty() {
+                return error(-32602, "session/resume requires sessionId");
+            }
+            match harness.create_session(session_id).await {
+                Ok(_) => result(serde_json::json!({ "sessionId": session_id })),
+                Err(e) => error(-32603, &format!("session/resume failed: {e}")),
+            }
+        }
         "session/list" => match harness.list_sessions(100).await {
             Ok(sessions) => result(serde_json::json!({ "sessions": sessions })),
             Err(e) => error(-32603, &format!("session/list failed: {e}")),
@@ -300,5 +313,41 @@ mod tests {
         )
         .await;
         assert!(body.is_none(), "cancel notification gets no response: {body:?}");
+    }
+
+    #[tokio::test]
+    async fn session_resume_attaches() {
+        let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = std::env::temp_dir().join(format!("kimi-acp-resume-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("mkdir");
+        std::env::set_var("KIMI_AGENT_HOME", &home);
+
+        let harness = Harness::embedded().expect("embedded");
+        let body = round_trip(
+            harness,
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"session/resume\",\"params\":{\"sessionId\":\"acp-resume-1\"}}\n",
+        )
+        .await;
+        assert!(body.get("error").is_none(), "session/resume: {body}");
+        assert_eq!(body["result"]["sessionId"], "acp-resume-1");
+
+        // Resuming again is idempotent.
+        let harness = Harness::embedded().expect("embedded");
+        let body = round_trip(
+            harness,
+            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"session/resume\",\"params\":{\"sessionId\":\"acp-resume-1\"}}\n",
+        )
+        .await;
+        assert!(body.get("error").is_none(), "second resume: {body}");
+
+        // Missing sessionId is rejected.
+        let harness = Harness::embedded().expect("embedded");
+        let body = round_trip(
+            harness,
+            "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"session/resume\",\"params\":{}}\n",
+        )
+        .await;
+        assert_eq!(body["error"]["code"], -32602, "missing sessionId: {body}");
     }
 }
