@@ -18,6 +18,8 @@ use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct Harness {
     client: Arc<Mutex<AppServerClient>>,
+    /// Engine event stream (embedded EventBus / remote captured stderr).
+    events: Arc<Mutex<Option<kimi_ui::EventSource>>>,
 }
 
 impl Harness {
@@ -25,23 +27,38 @@ impl Harness {
     pub fn embedded() -> anyhow::Result<Self> {
         let server = kimi_server::Server::build()?;
         Ok(Self {
+            events: Arc::new(Mutex::new(Some(kimi_ui::EventSource::from_bus(
+                server.state.subscribe_events(),
+            )))),
             client: Arc::new(Mutex::new(AppServerClient::InProcess(
                 kimi_server::in_process::spawn(server.processor),
             ))),
         })
     }
 
-    /// Open a separate engine process over stdio (`kimi-server-serve`).
+    /// Open a separate engine process over stdio (`kimi-server-serve`); its
+    /// stderr fan-out becomes the harness event stream.
     pub fn remote(bin: &str) -> anyhow::Result<Self> {
+        let (client, stderr) =
+            kimi_server_client::stdio_client::StdioClient::spawn_captured(bin)?;
         Ok(Self {
-            client: Arc::new(Mutex::new(AppServerClient::Remote(
-                kimi_server_client::stdio_client::StdioClient::spawn(bin)?,
-            ))),
+            events: Arc::new(Mutex::new(Some(kimi_ui::EventSource::from_lines(
+                stderr,
+            )))),
+            client: Arc::new(Mutex::new(AppServerClient::Remote(client))),
         })
     }
 
+    /// The engine event stream (poll with `EventSource::next`), if the
+    /// transport provides one.
+    pub async fn events(
+        &self,
+    ) -> tokio::sync::MutexGuard<'_, Option<kimi_ui::EventSource>> {
+        self.events.lock().await
+    }
+
     /// Engine health (`ok` on success).
-    pub async fn health(&mut self) -> anyhow::Result<String> {
+    pub async fn health(&self) -> anyhow::Result<String> {
         let body = self.client.lock().await.health().await;
         if let Some(error) = body.get("error") {
             anyhow::bail!("health: {}", error["message"].as_str().unwrap_or("unknown"));
@@ -50,7 +67,7 @@ impl Harness {
     }
 
     /// Create (or resume) a session by id and return a typed handle.
-    pub async fn create_session(&mut self, session_id: &str) -> anyhow::Result<Session> {
+    pub async fn create_session(&self, session_id: &str) -> anyhow::Result<Session> {
         let body = self.client.lock().await.session_create(session_id).await;
         if let Some(error) = body.get("error") {
             anyhow::bail!("create session: {}", error["message"].as_str().unwrap_or("unknown"));
@@ -59,7 +76,7 @@ impl Harness {
     }
 
     /// Persisted sessions (newest first), as their summary objects.
-    pub async fn list_sessions(&mut self, limit: u32) -> anyhow::Result<Vec<serde_json::Value>> {
+    pub async fn list_sessions(&self, limit: u32) -> anyhow::Result<Vec<serde_json::Value>> {
         let body = self.client.lock().await.session_list(limit).await;
         if let Some(error) = body.get("error") {
             anyhow::bail!("list sessions: {}", error["message"].as_str().unwrap_or("unknown"));
@@ -68,7 +85,7 @@ impl Harness {
     }
 
     /// The engine's parsed config.
-    pub async fn config(&mut self) -> anyhow::Result<serde_json::Value> {
+    pub async fn config(&self) -> anyhow::Result<serde_json::Value> {
         let body = self.client.lock().await.config_get().await;
         if let Some(error) = body.get("error") {
             anyhow::bail!("config: {}", error["message"].as_str().unwrap_or("unknown"));
@@ -77,7 +94,7 @@ impl Harness {
     }
 
     /// Permanently delete a persisted session (engine-side `session/delete`).
-    pub async fn delete_session(&mut self, session_id: &str) -> anyhow::Result<bool> {
+    pub async fn delete_session(&self, session_id: &str) -> anyhow::Result<bool> {
         let body = self
             .client
             .lock()
@@ -94,7 +111,7 @@ impl Harness {
     }
 
     /// Export a session as a ZIP archive (decoded from the wire base64).
-    pub async fn export_session(&mut self, session_id: &str) -> anyhow::Result<Vec<u8>> {
+    pub async fn export_session(&self, session_id: &str) -> anyhow::Result<Vec<u8>> {
         let body = self
             .client
             .lock()
@@ -117,7 +134,7 @@ impl Harness {
     }
 
     /// The protocol client (borrowed) — advanced callers escape to raw RPC.
-    pub async fn client(&mut self) -> tokio::sync::MutexGuard<'_, AppServerClient> {
+    pub async fn client(&self) -> tokio::sync::MutexGuard<'_, AppServerClient> {
         self.client.lock().await
     }
 }

@@ -11,5 +11,6 @@ base64 = "0.22"
 kimi-protocol = { path = "../kimi-protocol" }
 kimi-server = { path = "../kimi-server" }
 kimi-server-client = { path = "../kimi-server-client" }
+kimi-ui = { path = "../kimi-ui" }
 serde_json = { workspace = true }
 tokio = { workspace = true }

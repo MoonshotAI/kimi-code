@@ -1444,9 +1444,11 @@ name = "kimi-sdk"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "kimi-protocol",
  "kimi-server",
  "kimi-server-client",
+ "kimi-ui",
  "serde_json",
  "tokio",
 ]

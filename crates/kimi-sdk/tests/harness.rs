@@ -48,6 +48,32 @@ async fn embedded_harness_creates_sessions() {
 }
 
 #[tokio::test]
+async fn harness_exposes_engine_events() {
+    let home = std::env::temp_dir().join(format!("kimi-sdk-events-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).expect("mkdir");
+    std::env::set_var("KIMI_AGENT_HOME", &home);
+
+    let mut harness = Harness::embedded().expect("embedded engine");
+    // Subscribe BEFORE driving the session so no event is missed.
+    let mut guard = harness.events().await;
+    let mut events = guard.as_mut().expect("embedded exposes an event source");
+
+    harness.create_session("s-events").await.expect("create");
+    harness.client().await.call(
+        kimi_protocol::methods::SESSION_LOAD,
+        serde_json::json!({ "session_id": "s-events" }),
+    ).await;
+
+    // session/load emits a goal.updated event on the harness stream.
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), events.next())
+        .await
+        .expect("event within 5s")
+        .expect("stream alive");
+    assert_eq!(event["type"], "session.goal.updated", "event: {event}");
+}
+
+#[tokio::test]
 async fn remote_harness_over_stdio() {
     // The built serve binary lives in target/debug (one level above deps/).
     let serve = std::env::current_exe()
