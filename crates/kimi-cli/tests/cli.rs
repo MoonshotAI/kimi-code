@@ -432,6 +432,32 @@ fn chat_goal_lifecycle() {
 }
 
 #[test]
+fn chat_plan_mode_toggle() {
+    // `/plan on` is a pure state op: no LLM, exit 0.
+    let home = temp_dir("chat-plan");
+    let cwd = temp_dir("chat-plan-cwd");
+    let mut child = Command::new(binary())
+        .args(["chat", "-s", "s-chat-plan"])
+        .current_dir(&cwd)
+        .env("KIMI_AGENT_HOME", &home)
+        .env("HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn kimi chat");
+    {
+        use std::io::Write;
+        let stdin = child.stdin.as_mut().expect("stdin");
+        stdin.write_all(b"/plan on\n/plan off\n/quit\n").expect("write");
+    }
+    let output = child.wait_with_output().expect("wait");
+    assert!(output.status.success(), "chat exits 0: {}", output.status);
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(out.contains("plan mode on") && out.contains("plan mode off"), "plan toggles: {out}");
+}
+
+#[test]
 fn server_mode_verbose_emits_events() {
     // `--verbose` over the Remote path: the serve binary fans engine events
     // to stderr (session.turn.started fires before the LLM call, so it lands
