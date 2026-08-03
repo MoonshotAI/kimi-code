@@ -220,6 +220,7 @@ async fn handle_chat_command(
             println!("/goal-resume resume the active goal");
             println!("/goal-cancel cancel the active goal");
             println!("/plan on|off toggle plan mode");
+            println!("/swarm on|off toggle swarm mode");
             ChatCommand::Handled
         }
         "/resume" => {
@@ -443,6 +444,28 @@ async fn handle_chat_command(
                 return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
             }
             println!("plan mode {}", if enabled { "on" } else { "off" });
+            ChatCommand::Handled
+        }
+        "/swarm" => {
+            // `/swarm on|off` toggles swarm mode (pure state op).
+            let enabled = match rest {
+                "on" => true,
+                "off" => false,
+                "" => true,
+                other => {
+                    return ChatCommand::Error(format!("usage: /swarm on|off (got: {other})"));
+                }
+            };
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_SET_SWARM_MODE,
+                    serde_json::json!({ "session_id": *session_id, "enabled": enabled }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            println!("swarm mode {}", if enabled { "on" } else { "off" });
             ChatCommand::Handled
         }
         "/goal-resume" => {

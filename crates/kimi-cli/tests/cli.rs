@@ -449,12 +449,15 @@ fn chat_plan_mode_toggle() {
     {
         use std::io::Write;
         let stdin = child.stdin.as_mut().expect("stdin");
-        stdin.write_all(b"/plan on\n/plan off\n/quit\n").expect("write");
+        stdin
+            .write_all(b"/plan on\n/plan off\n/swarm on\n/swarm off\n/quit\n")
+            .expect("write");
     }
     let output = child.wait_with_output().expect("wait");
     assert!(output.status.success(), "chat exits 0: {}", output.status);
     let out = String::from_utf8_lossy(&output.stdout);
     assert!(out.contains("plan mode on") && out.contains("plan mode off"), "plan toggles: {out}");
+    assert!(out.contains("swarm mode on") && out.contains("swarm mode off"), "swarm toggles: {out}");
 }
 
 #[test]
