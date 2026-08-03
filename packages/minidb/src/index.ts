@@ -16,6 +16,7 @@ import type { WalPoison } from './wal.js';
 import { ValueReader } from './value-reader.js';
 import { recover, catchUpWal, frameToOps } from './recovery.js';
 import { compact, shouldCompact, fsyncDir } from './compaction.js';
+import { OpTracker } from './op-tracker.js';
 import {
   SNAPSHOT_FILE,
   WAL_FILE,
@@ -152,6 +153,9 @@ async function fileSize(file: string): Promise<number> {
 // another in-flight write's tmp, and a crashed predecessor's leftovers match
 // the open-time isStaleTmpFile cleanup.
 let sidecarTmpSeq = 0;
+
+/** Unique suffixes for backup's temp/aside dirs (see copyBackupAtomic). */
+let backupTmpSeq = 0;
 
 /** Write a small metadata file atomically (unique tmp + rename + strict
  *  directory fsync), so a crash cannot leave a torn definition file that
@@ -389,6 +393,21 @@ export class MiniDb<V = unknown> {
   /** The poison object the current recovery chain covers (dedupe key for
    *  kickWalRecovery; each poison event is a fresh object identity). */
   private walRecoveryCovers: WalPoison | null = null;
+  /** Write-op gate + in-flight counter (plan 12's OpTracker): set/del/batch/
+   *  expire run inside enter/leave, and backup() pauses the gate — the drain
+   *  completion is backup's linearization point (every write acknowledged
+   *  before it is in the backup; writes submitted meanwhile reject with
+   *  BACKUP_IN_PROGRESS). close() does NOT drain it: an op in flight at close
+   *  keeps its stage-7/8 semantics (its frame rejects as the WAL closes and
+   *  the op rolls back). */
+  private readonly writeOps = new OpTracker();
+  /** Serializes whole backup() runs: two backups to the same destination would
+   *  otherwise swap each other's freshly-renamed result aside and delete it,
+   *  and even to different destinations they would duplicate the compaction +
+   *  copy work. The write-gate pause itself is reference-counted and safe to
+   *  overlap (see op-tracker.ts). Same promise-chain pattern as
+   *  serializeUniqueWrites. */
+  private readonly serializeBackups = createSerializer();
   /** Set when in-place WAL recovery's truncate fails (persistent I/O error):
    *  from then on every write op throws a WAL_WRITE_DISABLED error
    *  immediately; reads and close() keep working. The value is the truncate
@@ -504,10 +523,15 @@ export class MiniDb<V = unknown> {
       throw new RangeError('maxMemoryBytes must be a positive finite number');
     }
 
-    await fs.mkdir(db.dir, { recursive: true });
+    db.readOnly = !!opts.readOnly;
+    // A read-only open must never create the directory (review #26): probe it
+    // up front so a missing dir fails with a clear ENOENT here instead of
+    // being mkdir'd into an empty database the caller believes held data. A
+    // writer open still creates it.
+    if (db.readOnly) await fs.readdir(db.dir);
+    else await fs.mkdir(db.dir, { recursive: true });
     db.valueMode = await resolveValueMode(valueMode, db.dir, db.maxMemoryBytes);
 
-    db.readOnly = !!opts.readOnly;
     if (!db.readOnly) {
       db.lock = new LockFile(path.join(db.dir, 'db.lock'));
       const got = await db.lock.acquire();
@@ -639,6 +663,11 @@ export class MiniDb<V = unknown> {
         await db.lock.release().catch(() => {});
         db.lock = null;
       }
+      // Tag failures of a read-only open (requested OR degraded via
+      // onLockFail:'readonly'): the instance never owned the directory, so
+      // openOrRebuild must not "rebuild" (delete) anything in it — it rethrows
+      // instead of touching a live writer's files (lock-review repro).
+      if (db.readOnly && err && typeof err === 'object') (err as { readOnlyOpen?: boolean }).readOnlyOpen = true;
       throw err;
     }
     return db;
@@ -648,6 +677,13 @@ export class MiniDb<V = unknown> {
    * Open a database, and if opening fails due to corruption (not due to a live
    * lock), delete the directory and open a fresh empty database. Recommended for
    * a rebuildable cache. A live lock is rethrown.
+   *
+   * The destructive rebuild only ever runs for an open that could OWN the
+   * directory: an error tagged `readOnlyOpen` (opts.readOnly, or a lock that
+   * degraded via onLockFail:'readonly') is rethrown untouched — rebuilding
+   * means deleting files, and a read-only bystander must never mutate a live
+   * writer's directory (lock-review repro: the readonly fallback deleted the
+   * writer's sidecar, and in the strict-recovery shape the whole directory).
    */
   static async openOrRebuild<V = unknown>(
     opts: OpenOptions,
@@ -663,6 +699,7 @@ export class MiniDb<V = unknown> {
       // because of a recoverable system error.
       const rebuildable = err instanceof SyntaxError || (err as { name?: string }).name === 'CorruptFrameError';
       if (!rebuildable) throw err;
+      if ((err as { readOnlyOpen?: boolean }).readOnlyOpen) throw err;
       if (hooks.onRebuild) hooks.onRebuild(err);
       if (err instanceof SyntaxError) {
         // A corrupted index-definition sidecar holds only derived metadata and
@@ -1253,23 +1290,28 @@ export class MiniDb<V = unknown> {
     this.ensureOpen();
     this.ensureWritable();
     this.checkKey(key);
-    await this.awaitRotation();
-    // Validation before side effects (stage 11): prepare (key/ttl checks,
-    // encode + canonical, tokenize + custom-tokenizer validation) and the
-    // unique check run BEFORE ensureMemoryFor can evict anything, so a
-    // rejected write leaves the database untouched — no eviction, no WAL, no
-    // memory change (review #6). The whole pipeline runs inside the
-    // unique-write chain when a unique index exists: check-then-commit stays
-    // atomic for the chain's whole lifetime, so a WAL-seal retry needs no
-    // re-check (every violation-creating writer is serialized out).
-    const run = async (): Promise<void> => {
-      const op = this.prepareSet(key, value, { ttl, dt });
-      if (this.indexes.size && this.indexable(op.canonical)) this.indexes.checkUnique(op.pk, op.canonical);
-      await this.ensureMemoryFor([op]);
-      await this.retryOnWalSeal(() => this.commitSetOp(op));
-    };
-    if (this.hasUniqueIndexes()) await this.serializeUniqueWrites(run);
-    else await run();
+    if (!this.writeOps.enter()) throw this.backupInProgressError();
+    try {
+      await this.awaitRotation();
+      // Validation before side effects (stage 11): prepare (key/ttl checks,
+      // encode + canonical, tokenize + custom-tokenizer validation) and the
+      // unique check run BEFORE ensureMemoryFor can evict anything, so a
+      // rejected write leaves the database untouched — no eviction, no WAL, no
+      // memory change (review #6). The whole pipeline runs inside the
+      // unique-write chain when a unique index exists: check-then-commit stays
+      // atomic for the chain's whole lifetime, so a WAL-seal retry needs no
+      // re-check (every violation-creating writer is serialized out).
+      const run = async (): Promise<void> => {
+        const op = this.prepareSet(key, value, { ttl, dt });
+        if (this.indexes.size && this.indexable(op.canonical)) this.indexes.checkUnique(op.pk, op.canonical);
+        await this.ensureMemoryFor([op]);
+        await this.retryOnWalSeal(() => this.commitSetOp(op));
+      };
+      if (this.hasUniqueIndexes()) await this.serializeUniqueWrites(run);
+      else await run();
+    } finally {
+      this.writeOps.leave();
+    }
   }
 
   /** The set() commit body: append the frame and apply the prepared op,
@@ -1347,80 +1389,90 @@ export class MiniDb<V = unknown> {
   async del(key: string | Buffer): Promise<boolean> {
     this.ensureOpen();
     this.ensureWritable();
-    await this.awaitRotation();
-    const existed = this.store.has(toKStr(key));
-    if (!existed) return false;
-    const op = this.prepareDel(key);
-    await this.ensureMemoryFor([op]);
-    const commit = async (): Promise<void> => {
-      const recoveryGate = this.walRecoveryGate();
-      if (recoveryGate) await recoveryGate;
-      const wal = this.wal;
-      const appended = wal.appendLoc(encodeFrame({ type: TYPE_DEL, key: op.key }));
-      const group = this.groupFor(wal, appended.batchId);
-      const applied = this.applyBox;
-      let prev: StoreRecord | undefined;
-      let seq: number | undefined;
-      try {
-        this.applyOp(op, applied);
-        prev = applied.prev;
-        seq = this.store.map.get(op.pk)?.seq;
-      } catch (err) {
-        // See set() for this defensive path (applyOp's must-not-throw contract).
-        void appended.done.catch(() => {}); // this op throws here; swallow the frame's rejection
-        if (group) {
-          wal.poisonPending(err);
-          this.groupNoteKey(group, op.pk, applied.prev);
-          this.rollbackGroup(group, wal, appended.batchId);
-          this.kickWalRecovery(wal);
-        } else {
-          this.restoreGroupKey(op.pk, applied.prev);
+    if (!this.writeOps.enter()) throw this.backupInProgressError();
+    try {
+      await this.awaitRotation();
+      const existed = this.store.has(toKStr(key));
+      if (!existed) return false;
+      const op = this.prepareDel(key);
+      await this.ensureMemoryFor([op]);
+      const commit = async (): Promise<void> => {
+        const recoveryGate = this.walRecoveryGate();
+        if (recoveryGate) await recoveryGate;
+        const wal = this.wal;
+        const appended = wal.appendLoc(encodeFrame({ type: TYPE_DEL, key: op.key }));
+        const group = this.groupFor(wal, appended.batchId);
+        const applied = this.applyBox;
+        let prev: StoreRecord | undefined;
+        let seq: number | undefined;
+        try {
+          this.applyOp(op, applied);
+          prev = applied.prev;
+          seq = this.store.map.get(op.pk)?.seq;
+        } catch (err) {
+          // See set() for this defensive path (applyOp's must-not-throw contract).
+          void appended.done.catch(() => {}); // this op throws here; swallow the frame's rejection
+          if (group) {
+            wal.poisonPending(err);
+            this.groupNoteKey(group, op.pk, applied.prev);
+            this.rollbackGroup(group, wal, appended.batchId);
+            this.kickWalRecovery(wal);
+          } else {
+            this.restoreGroupKey(op.pk, applied.prev);
+          }
+          throw this.markAmbiguous(err);
         }
-        throw this.markAmbiguous(err);
-      }
-      this.groupNoteKey(group, op.pk, prev);
-      try {
-        await appended.done;
-      } catch (e) {
-        if (group) this.rollbackGroup(group, wal, appended.batchId);
-        else this.restoreKey(op.pk, prev, seq);
-        this.kickWalRecovery(wal);
-        throw this.markAmbiguous(e);
-      }
-      this.settleGroup(group, wal, appended.batchId);
-      this.maybeAutoCompact();
-    };
-    await this.retryOnWalSeal(commit);
-    return true;
+        this.groupNoteKey(group, op.pk, prev);
+        try {
+          await appended.done;
+        } catch (e) {
+          if (group) this.rollbackGroup(group, wal, appended.batchId);
+          else this.restoreKey(op.pk, prev, seq);
+          this.kickWalRecovery(wal);
+          throw this.markAmbiguous(e);
+        }
+        this.settleGroup(group, wal, appended.batchId);
+        this.maybeAutoCompact();
+      };
+      await this.retryOnWalSeal(commit);
+      return true;
+    } finally {
+      this.writeOps.leave();
+    }
   }
 
   /** Atomically apply a batch of operations (all-or-nothing). */
   async batch(ops: readonly BatchInputOp<V>[]): Promise<void> {
     this.ensureOpen();
     this.ensureWritable();
-    await this.awaitRotation();
-    if (!ops || ops.length === 0) return;
-    // Same stage-11 ordering as set(): every fallible validation (per-op
-    // prepare, then the whole-batch unique check against canonical docs)
-    // precedes ensureMemoryFor's evictions, so a rejected batch has zero
-    // side effects; the pipeline holds the unique-write chain end to end, so
-    // a WAL-seal retry of the commit needs no re-check.
-    const run = async (): Promise<void> => {
-      const prepared = ops.map((o) => this.prepareOp(o));
-      if (this.indexes.size) {
-        this.indexes.checkUniqueBatch(
-          prepared.map((o) => ({
-            pk: o.pk,
-            op: o.type === TYPE_DEL ? ('del' as const) : ('set' as const),
-            doc: o.canonical,
-          })),
-        );
-      }
-      await this.ensureMemoryFor(prepared);
-      await this.retryOnWalSeal(() => this.commitBatchOps(prepared));
-    };
-    if (this.hasUniqueIndexes()) await this.serializeUniqueWrites(run);
-    else await run();
+    if (!this.writeOps.enter()) throw this.backupInProgressError();
+    try {
+      await this.awaitRotation();
+      if (!ops || ops.length === 0) return;
+      // Same stage-11 ordering as set(): every fallible validation (per-op
+      // prepare, then the whole-batch unique check against canonical docs)
+      // precedes ensureMemoryFor's evictions, so a rejected batch has zero
+      // side effects; the pipeline holds the unique-write chain end to end, so
+      // a WAL-seal retry of the commit needs no re-check.
+      const run = async (): Promise<void> => {
+        const prepared = ops.map((o) => this.prepareOp(o));
+        if (this.indexes.size) {
+          this.indexes.checkUniqueBatch(
+            prepared.map((o) => ({
+              pk: o.pk,
+              op: o.type === TYPE_DEL ? ('del' as const) : ('set' as const),
+              doc: o.canonical,
+            })),
+          );
+        }
+        await this.ensureMemoryFor(prepared);
+        await this.retryOnWalSeal(() => this.commitBatchOps(prepared));
+      };
+      if (this.hasUniqueIndexes()) await this.serializeUniqueWrites(run);
+      else await run();
+    } finally {
+      this.writeOps.leave();
+    }
   }
 
   /** The batch() commit body: append one BATCH frame and apply every prepared
@@ -1721,73 +1773,78 @@ export class MiniDb<V = unknown> {
   async expire(key: string | Buffer, ttlMs: number): Promise<boolean> {
     this.ensureOpen();
     this.ensureWritable();
-    await this.awaitRotation();
-    const k = toKStr(key);
-    const cur = this.store.getRecord(k);
-    if (cur === undefined) return false;
-    // Same validation as set(): the TTL is stored as an int64, so it must be a
-    // finite integer of milliseconds (fractional values are floored).
-    if (!Number.isFinite(ttlMs)) throw new RangeError('ttl must be a finite number of milliseconds');
-    const expireAt = Date.now() + Math.floor(ttlMs);
-    const curValue = this.store.get(k);
-    if (curValue === undefined) return false;
-    const meta = cur.dt ? Buffer.from(JSON.stringify({ dt: cur.dt })) : null;
-    const keyBuf = toBuf(key);
-    const frame = encodeFrame({ type: TYPE_SET, key: keyBuf, value: curValue, meta, expireAt });
-    const commit = async (): Promise<void> => {
-      const recoveryGate = this.walRecoveryGate();
-      if (recoveryGate) await recoveryGate;
-      const wal = this.wal;
-      const appended = wal.appendLoc(frame);
-      const group = this.groupFor(wal, appended.batchId);
-      // In-memory ref first (see set()); the disk pointer is published once the
-      // frame's bytes are durably in db.wal. prev/seq are captured per attempt
-      // (as in set()): a rotation retry can find a different record in place,
-      // and restoreKey's seq guard then leaves that newer durable state alone.
-      const prev = this.store.map.get(k);
-      let seq: number | undefined;
-      try {
-        this.store.set(k, curValue, expireAt, cur.dt);
-        seq = this.store.map.get(k)?.seq;
-      } catch (err) {
-        // The in-memory mutation failed: an enqueued frame poisons the WAL
-        // exactly like a write failure and rolls the group back; a
-        // never-enqueued one only needs the per-op undo (see set()).
-        void appended.done.catch(() => {}); // this op throws here; swallow the frame's rejection
-        if (group) {
-          wal.poisonPending(err);
-          this.groupNoteKey(group, k, prev);
-          this.rollbackGroup(group, wal, appended.batchId);
-          this.kickWalRecovery(wal);
-        } else {
-          this.restoreGroupKey(k, prev);
+    if (!this.writeOps.enter()) throw this.backupInProgressError();
+    try {
+      await this.awaitRotation();
+      const k = toKStr(key);
+      const cur = this.store.getRecord(k);
+      if (cur === undefined) return false;
+      // Same validation as set(): the TTL is stored as an int64, so it must be a
+      // finite integer of milliseconds (fractional values are floored).
+      if (!Number.isFinite(ttlMs)) throw new RangeError('ttl must be a finite number of milliseconds');
+      const expireAt = Date.now() + Math.floor(ttlMs);
+      const curValue = this.store.get(k);
+      if (curValue === undefined) return false;
+      const meta = cur.dt ? Buffer.from(JSON.stringify({ dt: cur.dt })) : null;
+      const keyBuf = toBuf(key);
+      const frame = encodeFrame({ type: TYPE_SET, key: keyBuf, value: curValue, meta, expireAt });
+      const commit = async (): Promise<void> => {
+        const recoveryGate = this.walRecoveryGate();
+        if (recoveryGate) await recoveryGate;
+        const wal = this.wal;
+        const appended = wal.appendLoc(frame);
+        const group = this.groupFor(wal, appended.batchId);
+        // In-memory ref first (see set()); the disk pointer is published once the
+        // frame's bytes are durably in db.wal. prev/seq are captured per attempt
+        // (as in set()): a rotation retry can find a different record in place,
+        // and restoreKey's seq guard then leaves that newer durable state alone.
+        const prev = this.store.map.get(k);
+        let seq: number | undefined;
+        try {
+          this.store.set(k, curValue, expireAt, cur.dt);
+          seq = this.store.map.get(k)?.seq;
+        } catch (err) {
+          // The in-memory mutation failed: an enqueued frame poisons the WAL
+          // exactly like a write failure and rolls the group back; a
+          // never-enqueued one only needs the per-op undo (see set()).
+          void appended.done.catch(() => {}); // this op throws here; swallow the frame's rejection
+          if (group) {
+            wal.poisonPending(err);
+            this.groupNoteKey(group, k, prev);
+            this.rollbackGroup(group, wal, appended.batchId);
+            this.kickWalRecovery(wal);
+          } else {
+            this.restoreGroupKey(k, prev);
+          }
+          throw this.markAmbiguous(err);
         }
-        throw this.markAmbiguous(err);
-      }
-      this.groupNoteKey(group, k, prev);
-      try {
-        await appended.done;
-      } catch (e) {
-        if (group) this.rollbackGroup(group, wal, appended.batchId);
-        else this.restoreKey(k, prev, seq);
-        this.kickWalRecovery(wal);
-        throw this.markAmbiguous(e);
-      }
-      this.settleGroup(group, wal, appended.batchId);
-      if (this.valueMode === 'disk') {
-        this.publishWalRef(
-          k,
-          wal,
-          seq,
-          { file: 'wal', off: appended.offset + HEADER_SIZE + keyBuf.length, len: curValue.length },
-          expireAt,
-          cur.dt,
-        );
-      }
-      this.maybeAutoCompact();
-    };
-    await this.retryOnWalSeal(commit);
-    return true;
+        this.groupNoteKey(group, k, prev);
+        try {
+          await appended.done;
+        } catch (e) {
+          if (group) this.rollbackGroup(group, wal, appended.batchId);
+          else this.restoreKey(k, prev, seq);
+          this.kickWalRecovery(wal);
+          throw this.markAmbiguous(e);
+        }
+        this.settleGroup(group, wal, appended.batchId);
+        if (this.valueMode === 'disk') {
+          this.publishWalRef(
+            k,
+            wal,
+            seq,
+            { file: 'wal', off: appended.offset + HEADER_SIZE + keyBuf.length, len: curValue.length },
+            expireAt,
+            cur.dt,
+          );
+        }
+        this.maybeAutoCompact();
+      };
+      await this.retryOnWalSeal(commit);
+      return true;
+    } finally {
+      this.writeOps.leave();
+    }
   }
 
   ttl(key: string | Buffer): number {
@@ -2343,7 +2400,29 @@ export class MiniDb<V = unknown> {
     }
   }
 
-  /** Write a consistent online backup of this database directory. */
+  /** The rejection a write op gets while a backup holds the write gate: the
+   *  fence is short (file copies) and retryable, so callers can simply
+   *  re-issue the write afterwards. */
+  private backupInProgressError(): Error {
+    return Object.assign(new Error('MiniDb backup is in progress: writes are fenced until it completes'), {
+      code: 'BACKUP_IN_PROGRESS',
+    });
+  }
+
+  /** Write a consistent online backup of this database directory.
+   *
+   *  Semantics (plan 12): backup pauses the write gate — new writes reject
+   *  with BACKUP_IN_PROGRESS — and waits for every in-flight write to settle.
+   *  That drain completion IS the linearization point: every write
+   *  acknowledged before it is included in the backup, every write submitted
+   *  after it is not. The copy itself is an atomic commit: persistent files
+   *  go to a sibling temp dir, every copied file is fsync'd, the manifest is
+   *  written LAST (the commit marker — a manifest on disk implies every file
+   *  it lists is fully copied and durable), then the temp dir is renamed over
+   *  the destination (an existing previous backup is swapped aside first and
+   *  restored if the rename fails). A failure anywhere before the rename
+   *  leaves the destination untouched and the temp dir removed — never a half
+   *  backup. Concurrent backups serialize on serializeBackups. */
   async backup(destDir: string, opts: { compact?: boolean } = {}): Promise<void> {
     this.ensureOpen();
     if (!destDir) throw new TypeError('backup: destDir is required');
@@ -2351,32 +2430,100 @@ export class MiniDb<V = unknown> {
     if (opts.compact !== false && !this.readOnly) await this.compact();
     if (this.compacting) await this._compactDone;
 
-    let releaseRotation!: () => void;
-    this._rotateLock = new Promise<void>((resolve) => {
-      releaseRotation = resolve;
-    });
+    // The gate closes SYNCHRONOUSLY here (pause's first statement): a write
+    // submitted from the same synchronous segment as this backup() call
+    // already sees the fence. pause is reference-counted, so a second backup
+    // queued on the serializer keeps the gate closed until the last one
+    // resumes.
+    const drain = this.writeOps.pause();
     try {
-      // Wait out any in-flight WAL recovery before fencing: a WAL failure
-      // racing the backup leaves un-acked bytes in db.wal that the recovery
-      // is about to truncate away, and the fence must land on the recovered
-      // (possibly truncated) file rather than copying bytes that are about
-      // to disappear. A persistent failure keeps the WAL poisoned and the
-      // flush below then rejects the backup. (Stage 12 rewrites backup with
-      // OpTracker; this is the minimal guard.)
-      await this.walRecoveryChain;
-      await this.wal.flush();
-      await fs.mkdir(destDir, { recursive: true });
+      await this.serializeBackups(async () => {
+        // Fence + drain. After the drain resolves, no write op is running and
+        // no new one can start, so the on-disk files are quiescent (this
+        // instance is the only writer — a read-only instance backing up a
+        // LIVE writer's dir can only fence itself and stays best-effort, as
+        // before).
+        await drain;
+        // A compaction kicked by the just-drained writes must finish before
+        // the copy; no new one can start with the gate closed (kicks come from
+        // write commit bodies only).
+        if (this.compacting) await this._compactDone;
+        // Wait out any in-flight WAL recovery inside the fence: a WAL failure
+        // racing the backup leaves un-acked bytes in db.wal that the recovery
+        // is about to truncate away, and the copy must land on the recovered
+        // (possibly truncated) file rather than copying bytes that are about
+        // to disappear. With the gate closed no new recovery can be kicked,
+        // and a persistent failure keeps the WAL poisoned, so the flush below
+        // rejects the backup.
+        await this.walRecoveryChain;
+        await this.wal.flush();
+        await this.copyBackupAtomic(destDir);
+      });
+    } finally {
+      this.writeOps.resume();
+    }
+  }
+
+  /** The atomic-copy core of backup(): temp dir → per-file fsync → manifest
+   *  (commit marker) → dir fsync → rename swap → parent fsync. Runs with the
+   *  write gate paused. */
+  private async copyBackupAtomic(destDir: string): Promise<void> {
+    const parent = path.dirname(destDir);
+    const base = path.basename(destDir);
+    const tmp = path.join(parent, `.${base}.backup-tmp-${process.pid}-${++backupTmpSeq}`);
+    const aside = path.join(parent, `.${base}.backup-old-${process.pid}-${++backupTmpSeq}`);
+    await fs.mkdir(parent, { recursive: true });
+    // Sweep orphans from a crashed previous backup of this destination.
+    for (const name of await fs.readdir(parent)) {
+      if (name.startsWith(`.${base}.backup-tmp-`) || name.startsWith(`.${base}.backup-old-`)) {
+        await fs.rm(path.join(parent, name), { recursive: true, force: true });
+      }
+    }
+    await fs.mkdir(tmp);
+    try {
       const files = await this.persistentFiles();
       const copied: string[] = [];
-      for (const name of files) if (await this.copyIfExists(name, destDir)) copied.push(name);
-      await fs.writeFile(
-        path.join(destDir, 'backup.manifest.json'),
-        JSON.stringify({ version: 1, createdAt: Date.now(), files: copied }, null, 2),
-        'utf8',
-      );
+      for (const name of files) if (await this.copyIfExists(name, tmp)) copied.push(name);
+      // Fsync every copied file BEFORE the manifest: the manifest is the
+      // commit marker, so a durable manifest must imply durable payloads.
+      for (const name of copied) {
+        const h = await fs.open(path.join(tmp, name), 'r');
+        try {
+          await h.sync();
+        } finally {
+          await h.close();
+        }
+      }
+      const manifest = path.join(tmp, 'backup.manifest.json');
+      await fs.writeFile(manifest, JSON.stringify({ version: 1, createdAt: Date.now(), files: copied }, null, 2), 'utf8');
+      const mh = await fs.open(manifest, 'r');
+      try {
+        await mh.sync();
+      } finally {
+        await mh.close();
+      }
+      await fsyncDir(tmp, { strict: true, stats: this.stats });
+      // Swap into place: move an existing previous backup aside, rename the
+      // temp dir over the destination, restore the aside on failure.
+      let asideUsed = false;
+      try {
+        try {
+          await fs.rename(destDir, aside);
+          asideUsed = true;
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+        }
+        await fs.rename(tmp, destDir);
+      } catch (err) {
+        if (asideUsed) await fs.rename(aside, destDir).catch(() => {});
+        throw err;
+      }
+      await fs.rm(aside, { recursive: true, force: true });
+      await fsyncDir(parent, { strict: true, stats: this.stats });
     } finally {
-      releaseRotation();
-      this._rotateLock = null;
+      // A successful rename already moved the temp dir away (this rm is a
+      // no-op); a failed copy must not strand it (review #22: no half backup).
+      await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
     }
   }
 

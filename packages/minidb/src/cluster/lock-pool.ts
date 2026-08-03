@@ -27,6 +27,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { MiniDb } from '../index.js';
 import { LockError } from '../lockfile.js';
+import { OpTracker } from '../op-tracker.js';
 import { FINGERPRINT_FILES } from '../persistent-files.js';
 import { ShardHandle } from './shard.js';
 import type { ShardOpenOptions } from './shard.js';
@@ -101,6 +102,13 @@ export class ShardLockPool {
   private readonly openingWriters = new Map<number, Promise<WriterEntry>>();
   private readonly openingReaders = new Map<number, Promise<ReaderEntry>>();
   private closed = false;
+  /** Lifecycle gates behind closeAll() (review #18): every withWriter /
+   *  withReader — acquire AND callback — runs inside one enter/leave, so the
+   *  trackers' drain in closeAll() means "no callback can still touch a
+   *  handle". The per-entry busy counters stay: LRU eviction, retire and the
+   *  reader-reopen drain make their synchronous decisions on them. */
+  private readonly writerOps = new OpTracker();
+  private readonly readerOps = new OpTracker();
 
   readonly stats = {
     writerOpens: 0,
@@ -125,21 +133,25 @@ export class ShardLockPool {
    *  process does not hold it yet. The writer cannot be evicted while busy. */
   async withWriter<T>(shardId: number, dir: string, fn: (db: MiniDb<unknown>) => T | Promise<T>): Promise<T> {
     if (this.opts.readOnly) throw new Error('ClusterDb is open in read-only mode');
-    if (this.closed) throw new Error('ClusterDb is closed');
-    const entry = await this.acquireWriter(shardId, dir);
-    entry.busy++;
+    if (!this.writerOps.enter()) throw new Error('ClusterDb is closed');
     try {
-      return await fn(entry.handle.db);
-    } finally {
-      entry.busy--;
-      entry.lastUsedAt = Date.now();
-      if (entry.retire && entry.busy === 0) {
-        // The hold window expired while ops were in flight: yield the lock so
-        // other processes can take the shard over.
-        if (this.writers.get(shardId) === entry) this.writers.delete(shardId);
-        await entry.handle.close().catch(() => {});
+      const entry = await this.acquireWriter(shardId, dir);
+      entry.busy++;
+      try {
+        return await fn(entry.handle.db);
+      } finally {
+        entry.busy--;
+        entry.lastUsedAt = Date.now();
+        if (entry.retire && entry.busy === 0) {
+          // The hold window expired while ops were in flight: yield the lock so
+          // other processes can take the shard over.
+          if (this.writers.get(shardId) === entry) this.writers.delete(shardId);
+          await entry.handle.close().catch(() => {});
+        }
+        await this.evictWriters();
       }
-      await this.evictWriters();
+    } finally {
+      this.writerOps.leave();
     }
   }
 
@@ -147,39 +159,48 @@ export class ShardLockPool {
    *  writer when this process holds the shard (current and lock-free), else a
    *  fingerprint-revalidated read-only instance. */
   async withReader<T>(shardId: number, dir: string, fn: (db: MiniDb<unknown>) => T | Promise<T>): Promise<T> {
-    if (this.closed) throw new Error('ClusterDb is closed');
-    if (!this.opts.readOnly) {
-      const w = this.writers.get(shardId);
-      if (w) {
-        w.busy++;
-        try {
-          return await fn(w.handle.db);
-        } finally {
-          w.busy--;
-          w.lastUsedAt = Date.now();
+    if (!this.readerOps.enter()) throw new Error('ClusterDb is closed');
+    try {
+      if (!this.opts.readOnly) {
+        const w = this.writers.get(shardId);
+        if (w) {
+          w.busy++;
+          try {
+            return await fn(w.handle.db);
+          } finally {
+            w.busy--;
+            w.lastUsedAt = Date.now();
+          }
         }
       }
-    }
-    const entry = await this.acquireReader(shardId, dir);
-    entry.busy++;
-    try {
-      return await fn(entry.handle.db);
+      const entry = await this.acquireReader(shardId, dir);
+      entry.busy++;
+      try {
+        return await fn(entry.handle.db);
+      } finally {
+        entry.busy--;
+        entry.lastUsedAt = Date.now();
+        await this.evictReaders();
+      }
     } finally {
-      entry.busy--;
-      entry.lastUsedAt = Date.now();
-      await this.evictReaders();
+      this.readerOps.leave();
     }
   }
 
   async closeAll(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    // Opens already in flight are not in writers/readers yet: wait for every
-    // one of them to settle FIRST, so their entries land in the maps below and
-    // their handles get closed too. Without this a late open would outlive
-    // closeAll — holding its lock and recreating db.wal/lock files after the
-    // owner had already started tearing the directory down. New opens cannot
-    // start meanwhile: withWriter/withReader throw on this.closed.
+    // Close both gates and wait for every in-flight op — including its user
+    // callback — to settle (review #18). New withWriter/withReader reject at
+    // enter() from now on, so after the drain no busy counter can be non-zero
+    // and no callback can still touch a handle. Before this, closeAll was the
+    // pool's only close path that ignored busy: it closed handles under live
+    // callbacks, which then died on 'MiniDb is closed'.
+    await Promise.all([this.writerOps.close(), this.readerOps.close()]);
+    // Defense in depth: opens in flight are wrapped by the trackers above,
+    // but a late entry landing here after the drain would outlive closeAll —
+    // holding its lock and recreating db.wal/lock files after the owner had
+    // already started tearing the directory down.
     for (const opening of [...this.openingWriters.values(), ...this.openingReaders.values()]) {
       await opening.catch(() => {});
     }

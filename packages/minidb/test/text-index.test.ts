@@ -19,6 +19,7 @@ import {
   decodeRecord,
   PostingsFile,
 } from '../src/text-postings.js';
+import { barrier } from './helpers.js';
 
 async function tmpDir(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), 'minidb-text-'));
@@ -339,23 +340,32 @@ test('MiniDb: compaction skips the postings rebuild when the index is clean', as
 
 test('MiniDb: writes during a compaction postings rebuild stay consistent', async () => {
   const dir = await tmpDir();
+  // Deterministic barrier instead of the old "3000 docs keep the compaction
+  // busy long enough" timing inference (review #28): the compaction's
+  // postings rebuild (TextIndex.build) is parked on a deferred, so the writes
+  // PROVABLY land while the rebuild is in flight, and each write's promise is
+  // explicitly settled instead of fire-and-forget. The barrier arms AFTER
+  // createTextIndex so its call 1 is the compaction rebuild, not the create.
+  let gate!: ReturnType<typeof barrier>;
   try {
     const db = await MiniDb.open({ dir, valueCodec: 'json', autoCompact: false });
     await db.createTextIndex('bio', { fields: ['bio'] });
-    // More docs than the snapshot yield cadence, so the compaction is still
-    // running when the setImmediate writes below land.
-    for (let i = 0; i < 3000; i++) await db.set(`d${i}`, { bio: `hello doc${i}` });
+    for (let i = 0; i < 50; i++) await db.set(`d${i}`, { bio: `hello doc${i}` });
 
+    gate = barrier(TextIndex.prototype, 'build');
     const compactP = db.compact();
-    setImmediate(() => {
-      void db.set('extra', { bio: 'hello extra' });
-      void db.set('d0', { bio: 'goodbye replaced' });
-      void db.del('d1');
-    });
+    await gate.entered; // the compaction is provably inside the postings rebuild
+    const writes = Promise.all([
+      db.set('extra', { bio: 'hello extra' }),
+      db.set('d0', { bio: 'goodbye replaced' }),
+      db.del('d1'),
+    ]);
+    gate.release();
+    await writes;
     await compactP;
     assert.equal(db.stats.compactions, 1);
 
-    assert.equal(db.search('bio', 'hello', { limit: 10_000 }).length, 2999);
+    assert.equal(db.search('bio', 'hello', { limit: 10_000 }).length, 49);
     assert.deepEqual(db.search('bio', 'extra').map((h) => h.key), ['extra']);
     assert.deepEqual(db.search('bio', 'goodbye').map((h) => h.key), ['d0']);
     assert.deepEqual(db.search('bio', 'doc1').map((h) => h.key), []);
@@ -363,10 +373,11 @@ test('MiniDb: writes during a compaction postings rebuild stay consistent', asyn
 
     // The mid-compaction writes are durable and consistent across a reopen.
     const db2 = await MiniDb.open({ dir, valueCodec: 'json' });
-    assert.equal(db2.search('bio', 'hello', { limit: 10_000 }).length, 2999);
+    assert.equal(db2.search('bio', 'hello', { limit: 10_000 }).length, 49);
     assert.deepEqual(db2.search('bio', 'extra').map((h) => h.key), ['extra']);
     await db2.close();
   } finally {
+    gate?.restore();
     await fs.rm(dir, { recursive: true, force: true });
   }
 });

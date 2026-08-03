@@ -97,6 +97,40 @@ test('delete removes from the compound index', async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
+test('remove() reaps emptied groups: the groups map stays bounded after high-cardinality churn (review #25)', async () => {
+  const dir = await tmpDir();
+  const db = await MiniDb.open({ dir, valueCodec: 'json' });
+  await db.createCompoundIndex('byWsUpdated', { groupBy: 'workspaceId', orderBy: 'updatedAt' });
+  const entry = (db.compound as unknown as { indexes: Map<string, { groups: Map<unknown, unknown>; byPk: Map<string, unknown> }> }).indexes.get(
+    'byWsUpdated',
+  )!;
+  try {
+    // One group per key (max cardinality): the groups map tracks live groups.
+    const N = 300;
+    for (let i = 0; i < N; i++) await db.set(`k${i}`, { workspaceId: `W${i}` }, { dt: { updatedAt: i } });
+    assert.equal(entry.groups.size, N);
+
+    // Remove half via del (the removeFromEntry path), half by overwriting
+    // with a doc that no longer belongs to any group (the addToEntry path):
+    // both must reap the emptied group.
+    for (let i = 0; i < N; i += 2) await db.del(`k${i}`);
+    for (let i = 1; i < N; i += 2) await db.set(`k${i}`, { other: 1 });
+    assert.equal(entry.groups.size, 0, 'every emptied group is reaped, del and overwrite alike');
+    assert.equal(entry.byPk.size, 0);
+
+    // Churn again to prove the map does not grow monotonically across rounds.
+    for (let round = 0; round < 3; round++) {
+      for (let i = 0; i < N; i++) await db.set(`k${i}`, { workspaceId: `W${i}` }, { dt: { updatedAt: i } });
+      for (let i = 0; i < N; i++) await db.del(`k${i}`);
+    }
+    assert.equal(entry.groups.size, 0, 'bounded across add/remove rounds');
+    await db.close();
+  } finally {
+    await db.close().catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 
 // ---- plan 10: sidecar mutation serialization + staged → persist → publish --
 

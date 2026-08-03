@@ -278,9 +278,13 @@ await db.backup('./backup');
 const restored = await MiniDb.restore('./backup', './restored', { valueCodec: 'json' });
 ```
 
-`backup()` flushes the WAL, optionally compacts, and copies the snapshot, WAL,
-index definitions, and text postings while writers are briefly parked, producing
-a consistent directory that `restore()` can reopen.
+`backup()` optionally compacts, then fences writes at a linearization point —
+writes submitted while the backup runs reject with a `BACKUP_IN_PROGRESS`
+error, and every write acknowledged before the fence is included — and copies
+the snapshot, WAL, index definitions, and text postings into a sibling temp
+directory that is fsync'd and atomically renamed over the destination (the
+manifest, written last, is the commit marker). A failed backup leaves no
+partial directory behind, and `restore()` can reopen the result.
 
 ### Write throughput & SSD endurance
 

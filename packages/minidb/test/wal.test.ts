@@ -6,9 +6,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { WAL } from '../src/wal.js';
 import { encodeFrame, FrameParser, CorruptFrameError, TYPE_SET, TYPE_DEL } from '../src/codec.js';
+import { barrier } from './helpers.js';
 
 const B = (s) => Buffer.from(s);
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Drive one everysec background-sync tick deterministically (review #28):
+ *  tests open the WAL with a huge syncIntervalMs so the real timer never
+ *  fires, then call the extracted tick directly instead of racing sleeps
+ *  against a 25ms interval. Returns the tick's settle promise (null when the
+ *  tick was skipped — clean WAL / stacked / closed gate). */
+const tick = (wal) => wal.backgroundTick();
 
 function freshStats() {
   return {
@@ -165,23 +172,27 @@ test("everysec: idle WAL performs zero background fsyncs; only dirty intervals s
   const { dir, file } = await tmpWalPath();
   try {
     const stats = freshStats();
-    const wal = new WAL(file, { fsyncPolicy: 'everysec', syncIntervalMs: 25, stats });
+    // Huge interval: the real timer never fires during the test — every tick
+    // below is driven explicitly (see `tick`), so the fsync counts are exact
+    // by construction, not by sleeping past a 25ms interval (review #28).
+    const wal = new WAL(file, { fsyncPolicy: 'everysec', syncIntervalMs: 3_600_000, stats });
     await wal.open();
 
-    // ~5 intervals with no writes: not a single fsync.
-    await sleep(120);
+    // Idle ticks are skipped without an fsync.
+    assert.equal(await tick(wal), null, 'an idle tick is skipped');
+    assert.equal(await tick(wal), null);
     assert.equal(stats.walFsyncs, 0, 'idle everysec WAL must not fsync');
 
     // A write dirties the WAL: exactly one background fsync, then quiet again.
     await wal.append(encodeFrame({ type: TYPE_SET, key: B('k'), value: B('v') }));
-    await sleep(120);
-    assert.equal(stats.walFsyncs, 1, 'one background fsync per dirty interval');
-    await sleep(120);
+    await tick(wal);
+    assert.equal(stats.walFsyncs, 1, 'one background fsync per dirty window');
+    assert.equal(await tick(wal), null, 'clean again: the next tick is skipped');
     assert.equal(stats.walFsyncs, 1, 'fsync count does not grow once synced');
 
     // Another write: one more fsync, no burst.
     await wal.append(encodeFrame({ type: TYPE_SET, key: B('k2'), value: B('v2') }));
-    await sleep(120);
+    await tick(wal);
     assert.equal(stats.walFsyncs, 2);
 
     // close() keeps its unconditional final sync even though the WAL is clean.
@@ -210,10 +221,12 @@ test('background sync failure is recorded but neither rejects writes nor clears 
   const { dir, file } = await tmpWalPath();
   try {
     const stats = freshStats();
-    const wal = new WAL(file, { fsyncPolicy: 'everysec', syncIntervalMs: 25, stats });
+    // Explicitly driven ticks again (see `tick`): the failure and the retry
+    // land exactly where the test puts them, no sleep windows (review #28).
+    const wal = new WAL(file, { fsyncPolicy: 'everysec', syncIntervalMs: 3_600_000, stats });
     await wal.open();
 
-    const fh = (wal as unknown as { fh: { sync: () => Promise<void> } }).fh;
+    const fh = wal.fh;
     const orig = fh.sync.bind(fh);
     const boom = new Error('injected fsync failure');
     fh.sync = () => Promise.reject(boom);
@@ -221,24 +234,66 @@ test('background sync failure is recorded but neither rejects writes nor clears 
     // Writes are acknowledged from the page cache: the failing background
     // fsync never rejects them.
     await wal.append(encodeFrame({ type: TYPE_SET, key: B('k'), value: B('v') }));
-    await sleep(120);
-    assert.ok(stats.walFsyncErrors >= 1, `expected fsync errors, got ${stats.walFsyncErrors}`);
+    await tick(wal);
+    assert.equal(stats.walFsyncErrors, 1, 'the failing tick records exactly one error');
     assert.equal(stats.lastWalFsyncError, boom, 'sticky error is observable');
     assert.equal(stats.walFsyncs, 0, 'no successful fsync meanwhile');
 
     // A failed sync must not clear the dirty mark: once the failure goes away
     // the next tick retries and the WAL converges to synced.
     fh.sync = orig;
-    await sleep(120);
-    assert.ok(stats.walFsyncs >= 1, 'sync retried after the failure');
+    await tick(wal);
+    assert.equal(stats.walFsyncs, 1, 'sync retried after the failure');
     assert.equal(stats.lastWalFsyncError, boom, 'sticky error is not cleared by a later success');
     assert.equal(wal.poison, null, 'a background sync failure must never poison the WAL');
 
     // Clean again: no more background fsyncs.
-    const n = stats.walFsyncs;
-    await sleep(120);
-    assert.equal(stats.walFsyncs, n);
+    assert.equal(await tick(wal), null, 'synced: the next tick is skipped');
+    assert.equal(stats.walFsyncs, 1);
     await wal.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('close() waits for an in-flight background sync before closing the fd (review #13)', async () => {
+  const { dir, file } = await tmpWalPath();
+  try {
+    const stats = freshStats();
+    const wal = new WAL(file, { fsyncPolicy: 'everysec', syncIntervalMs: 3_600_000, stats });
+    await wal.open();
+    await wal.append(encodeFrame({ type: TYPE_SET, key: B('k'), value: B('v') }));
+
+    // Park the background sync inside fh.sync, then start close(): it must
+    // drain the tracker instead of closing the fd under the flying sync.
+    const fh = wal.fh;
+    const gate = barrier(fh, 'sync', 1);
+    const events: string[] = [];
+    const origClose = fh.close.bind(fh);
+    fh.close = async () => {
+      events.push('fd-close');
+      await origClose();
+    };
+
+    const bg = tick(wal);
+    void bg!.then(() => events.push('bg-sync-settled'));
+    await gate.entered; // the background sync is provably in flight
+
+    const closing = wal.close();
+    let closed = false;
+    void closing.then(() => {
+      closed = true;
+    });
+    // close()'s only path to resolution goes through the parked tracker
+    // drain, so no amount of yielding can settle it here.
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    assert.equal(closed, false, 'close() must wait for the in-flight background sync');
+
+    gate.release();
+    await bg;
+    await closing;
+    assert.deepEqual(events, ['bg-sync-settled', 'fd-close'], 'the fd closes only after the background sync settled');
+    assert.equal(stats.walFsyncs, 2, 'the background sync plus close() final sync');
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

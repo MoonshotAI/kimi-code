@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { MiniDb } from '../src/index.js';
 import { encodeFrame, TYPE_SET } from '../src/codec.js';
+import { barrier } from './helpers.js';
 
 const B = (s) => Buffer.from(s);
 
@@ -167,6 +168,116 @@ test('backup + restore preserves data, indexes, and text search', async () => {
     await fs.rm(dir, { recursive: true, force: true });
     await fs.rm(backupDir, { recursive: true, force: true });
     await fs.rm(restoreDir, { recursive: true, force: true });
+  }
+});
+
+test('backup fences writes at a linearization point: every pre-fence ack is in, concurrent writes reject (review #22)', async () => {
+  const dir = await tmpDir();
+  const parent = await tmpDir();
+  const backupDir = path.join(parent, 'backup-dest'); // intentionally absent
+  const restoreDir = await tmpDir();
+  try {
+    const db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false });
+    await db.set('seed1', 'a');
+    await db.set('seed2', 'b');
+
+    // Park the WAL writev of the NEXT write so a set is provably in flight
+    // when the backup starts: the backup's drain must wait for it, and its
+    // ack then lands INSIDE the backup (it entered before the fence).
+    const fh = (db as unknown as { wal: { fh: { writev: (...a: unknown[]) => Promise<unknown> } } }).wal.fh;
+    const gate = barrier(fh, 'writev', 1);
+    const inFlight = db.set('inflight', 'c');
+    await gate.entered;
+
+    const backingUp = db.backup(backupDir, { compact: false });
+    let backupDone = false;
+    void backingUp.then(() => {
+      backupDone = true;
+    });
+
+    // Writes submitted behind the fence reject with a clear, retryable error.
+    await assert.rejects(db.set('late', 'd'), (e: unknown) => (e as { code?: string }).code === 'BACKUP_IN_PROGRESS');
+    await assert.rejects(db.batch([{ op: 'set', key: 'late2', value: 'd' }]), /backup is in progress/i);
+    // The backup cannot complete while the fenced-in write is still parked.
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    assert.equal(backupDone, false, 'backup waits for the in-flight write (its linearization point)');
+
+    gate.release();
+    gate.restore();
+    await inFlight;
+    await backingUp;
+    assert.equal(backupDone, true);
+
+    // After the backup the gate is lifted: writes work again.
+    await db.set('after', 'e');
+    assert.equal(db.get('after'), 'e');
+    await db.close();
+
+    // The manifest is the commit marker and lists the copied files.
+    const manifest = JSON.parse(await fs.readFile(path.join(backupDir, 'backup.manifest.json'), 'utf8')) as { files: string[] };
+    assert.ok(manifest.files.includes('db.wal'), 'manifest lists the WAL');
+
+    // Restore: every write ack'd before the fence is in; the rejected ones are not.
+    const restored = await MiniDb.restore<string>(backupDir, restoreDir, { valueCodec: 'string' });
+    assert.equal(restored.get('seed1'), 'a');
+    assert.equal(restored.get('seed2'), 'b');
+    assert.equal(restored.get('inflight'), 'c', 'the write drained before the fence is included');
+    assert.equal(restored.get('late'), undefined);
+    assert.equal(restored.get('late2'), undefined);
+    assert.equal(restored.get('after'), undefined, 'a post-backup write is not included');
+    await restored.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(parent, { recursive: true, force: true });
+    await fs.rm(restoreDir, { recursive: true, force: true });
+  }
+});
+
+test('backup copy failure leaves no partial backup behind and reopens the write gate (review #22)', async () => {
+  const dir = await tmpDir();
+  const parent = await tmpDir();
+  const backupDir = path.join(parent, 'backup-dest');
+  try {
+    const db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false });
+    await db.set('k', 'v');
+
+    // Fail the copy phase: every fs.copyFile rejects.
+    const boom = new Error('injected copy failure');
+    const origCopy = fs.copyFile;
+    (fs as unknown as { copyFile: unknown }).copyFile = () => Promise.reject(boom);
+    try {
+      await assert.rejects(db.backup(backupDir, { compact: false }), /injected copy failure/);
+    } finally {
+      (fs as unknown as { copyFile: unknown }).copyFile = origCopy;
+    }
+
+    // No half backup: the destination was never created, and no temp/aside
+    // dir is stranded next to it.
+    assert.equal(await fs.stat(backupDir).then(() => true, () => false), false, 'destination untouched');
+    const leftovers = (await fs.readdir(parent)).filter((n) => n.includes('.backup-'));
+    assert.deepEqual(leftovers, [], `stranded temp dirs: ${leftovers.join(', ')}`);
+
+    // The write gate was released: the db keeps working.
+    await db.set('after', 'w');
+    assert.equal(db.get('after'), 'w');
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(parent, { recursive: true, force: true });
+  }
+});
+
+test('readOnly open of a non-existent directory fails with ENOENT and creates nothing (review #26)', async () => {
+  const parent = await tmpDir();
+  const dir = path.join(parent, 'missing');
+  try {
+    await assert.rejects(
+      MiniDb.open({ dir, valueCodec: 'string', readOnly: true }),
+      (e: unknown) => (e as NodeJS.ErrnoException).code === 'ENOENT',
+    );
+    assert.equal(await fs.stat(dir).then(() => true, () => false), false, 'no directory was created');
+  } finally {
+    await fs.rm(parent, { recursive: true, force: true });
   }
 });
 

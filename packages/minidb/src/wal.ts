@@ -25,6 +25,7 @@
 
 import fs from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
+import { OpTracker } from './op-tracker.js';
 
 export type FsyncPolicy = 'always' | 'everysec' | 'no';
 
@@ -118,6 +119,10 @@ export class WAL {
   /** Set while a background (everysec) sync is in flight, so a slow fsync
    *  never stacks a second background fsync on top of itself. */
   private bgSyncing = false;
+  /** Tracks every in-flight background sync so close() can drain them before
+   *  the final flush/sync/fd-close (review #13): the timer only FIRES ticks,
+   *  the tracker owns their lifetimes. */
+  private readonly bgSync = new OpTracker();
 
   constructor(path: string, opts: WALOptions = {}) {
     const policy = opts.fsyncPolicy ?? 'everysec';
@@ -136,22 +141,33 @@ export class WAL {
     this.nextOffset = st.size;
     if (this.policy === 'everysec') {
       this.timer = setInterval(() => {
-        // Skip idle ticks entirely: an everysec WAL with no unsynced writes
-        // must not fsync (the previous unconditional fsync cost one syscall +
-        // disk wake-up per second for the database's whole lifetime).
-        // Sync failures do not reject any write (the page-cache copy is the
-        // acknowledged one); they are recorded in stats.walFsyncErrors /
-        // lastWalFsyncError instead of being silently swallowed.
-        if (this.writeGen === this.syncedGen || this.bgSyncing) return;
-        this.bgSyncing = true;
-        this.sync()
-          .catch(() => {})
-          .finally(() => {
-            this.bgSyncing = false;
-          });
+        void this.backgroundTick();
       }, this.syncIntervalMs);
       this.timer.unref?.();
     }
+  }
+
+  /** One everysec background-sync tick. Extracted from the timer callback so
+   *  tests can drive it deterministically (the wal/stats suites open with a
+   *  huge syncIntervalMs and call this directly instead of racing the wall
+   *  clock). Returns the tracked sync's settle promise, or null when the tick
+   *  was skipped: the WAL is clean (idle ticks must not fsync — the previous
+   *  unconditional fsync cost one syscall + disk wake-up per second for the
+   *  database's whole lifetime), a sync is already in flight, or close() shut
+   *  the tracker's gate. Sync failures do not reject any write (the page-cache
+   *  copy is the acknowledged one); they are recorded in stats.walFsyncErrors /
+   *  lastWalFsyncError instead of being silently swallowed. */
+  private backgroundTick(): Promise<void> | null {
+    if (this.writeGen === this.syncedGen || this.bgSyncing) return null;
+    if (!this.bgSync.enter()) return null;
+    this.bgSyncing = true;
+    const run = this.sync()
+      .catch(() => {})
+      .finally(() => {
+        this.bgSyncing = false;
+        this.bgSync.leave();
+      });
+    return run;
   }
 
   /** Reject new appends from now on; already-queued frames stay flushable.
@@ -423,6 +439,11 @@ export class WAL {
       clearInterval(this.timer);
       this.timer = null;
     }
+    // Drain any background sync already in flight before the final
+    // flush/sync/fd-close below (review #13): the timer is stopped, so no new
+    // tick fires, and the closed tracker gate rejects any tick racing in —
+    // what is already flying settles here instead of fsync'ing a dying fd.
+    await this.bgSync.close();
     // Release the file handle even when the final flush/fsync fails: the error
     // still propagates to the caller, but a half-closed WAL must not leak its
     // fd (a compaction rotation recovering from a failed close swaps in a

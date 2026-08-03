@@ -180,7 +180,13 @@ export class CompoundIndexManager {
     const prev = entry.byPk.get(pk);
     if (prev) {
       const oldList = entry.groups.get(prev.group);
-      if (oldList) oldList.delete(prev.order, pk);
+      if (oldList) {
+        oldList.delete(prev.order, pk);
+        // Reap the emptied group (same rule as addToEntry's move path):
+        // without this the groups map grew monotonically with the number of
+        // distinct group values ever seen (review #25).
+        if (oldList.length === 0) entry.groups.delete(prev.group);
+      }
       entry.byPk.delete(pk);
     }
   }

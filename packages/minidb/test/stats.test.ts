@@ -11,8 +11,6 @@ async function tmpDir() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'minidb-stats-'));
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
 // Frame overhead is 22 (header) + 4 (crc) = 26 bytes, plus key + value.
 const FRAME_OVERHEAD = 26;
 
@@ -96,20 +94,26 @@ test('batch writes a single frame (lower write amplification than per-key sets)'
 
 test("everysec: idle db performs zero background fsyncs; a dirty window syncs once then goes quiet", async () => {
   const dir = await tmpDir();
-  const db = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'everysec', syncIntervalMs: 25, autoCompact: false });
+  // Huge syncIntervalMs: the real timer never fires during the test. Every
+  // background-sync tick is driven explicitly through the WAL's extracted
+  // tick method (review #28), so the fsync counts are exact by construction
+  // instead of inferred from 25ms-interval sleeps.
+  const db = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'everysec', syncIntervalMs: 3_600_000, autoCompact: false });
+  const tick = (): Promise<void> | null =>
+    (db.wal as unknown as { backgroundTick(): Promise<void> | null }).backgroundTick();
   try {
-    await sleep(120);
+    assert.equal(await tick(), null, 'idle ticks are skipped');
     assert.equal(db.stats.walFsyncs, 0, 'idle everysec db must not fsync in the background');
 
     await db.set('k', 'v');
-    await sleep(120);
-    assert.equal(db.stats.walFsyncs, 1, 'the dirty interval fsyncs once');
+    await tick();
+    assert.equal(db.stats.walFsyncs, 1, 'the dirty window fsyncs once');
 
-    await sleep(120);
+    assert.equal(await tick(), null, 'clean again: the next tick is skipped');
     assert.equal(db.stats.walFsyncs, 1, 'no fsync growth after the writes stopped');
 
     await db.set('k2', 'v2');
-    await sleep(120);
+    await tick();
     assert.equal(db.stats.walFsyncs, 2, 'the next dirty window fsyncs once more');
   } finally {
     await db.close(); // final close sync runs after our assertions
@@ -119,7 +123,9 @@ test("everysec: idle db performs zero background fsyncs; a dirty window syncs on
 
 test('everysec background sync failure is observable in stats but does not change write semantics', async () => {
   const dir = await tmpDir();
-  const db = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'everysec', syncIntervalMs: 25, autoCompact: false });
+  const db = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'everysec', syncIntervalMs: 3_600_000, autoCompact: false });
+  const tick = (): Promise<void> | null =>
+    (db.wal as unknown as { backgroundTick(): Promise<void> | null }).backgroundTick();
   try {
     const fh = (db as unknown as { wal: { fh: { sync: () => Promise<void> } } }).wal.fh;
     const orig = fh.sync.bind(fh);
@@ -129,14 +135,14 @@ test('everysec background sync failure is observable in stats but does not chang
     // The cache-rebuildable write contract is unchanged: sets resolve from the
     // page cache even while every background fsync fails.
     await db.set('k', 'v');
-    await sleep(150);
-    assert.ok(db.stats.walFsyncErrors >= 1, `expected walFsyncErrors >= 1, got ${db.stats.walFsyncErrors}`);
+    await tick();
+    assert.equal(db.stats.walFsyncErrors, 1, 'the failing tick records exactly one error');
     assert.equal(db.stats.lastWalFsyncError, boom, 'the failure is observable via stats');
     assert.equal(db.stats.walFsyncs, 0, 'no successful fsync yet');
 
     fh.sync = orig;
-    await sleep(150);
-    assert.ok(db.stats.walFsyncs >= 1, 'background sync recovers once the failure clears');
+    await tick();
+    assert.equal(db.stats.walFsyncs, 1, 'background sync recovers once the failure clears');
     assert.equal(db.stats.lastWalFsyncError, boom, 'sticky error survives later successes');
   } finally {
     await db.close();
