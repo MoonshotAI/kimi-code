@@ -12,6 +12,10 @@ import type { EnabledPluginSystemPrompt } from '#/app/plugin/types';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
+import { DEFAULT_PRODUCT_NAME } from '#/app/agentProfileCatalog/profile-shared';
+
+import { stubAgentIdentity } from '../../app/agentIdentity/stubs';
 
 import {
   appService,
@@ -80,6 +84,35 @@ describe('AgentProfileService.applyProfile', () => {
     );
     return { ctx, profile: ctx.get(IAgentProfileService) };
   }
+
+  describe('custom identity', () => {
+    // The default builtin profile opens with `You are ${product_name}`.
+    const selfNaming: ResolvedAgentProfile = {
+      name: 'self-naming',
+      systemPrompt: (context) => `You are ${context.productName ?? DEFAULT_PRODUCT_NAME}`,
+      tools: [],
+    };
+
+    it('names the agent after the configured identity', async () => {
+      const { profile: svc } = buildContext(
+        appService(IAgentIdentity, stubAgentIdentity({ displayName: 'Acme Dev', slug: 'acme' })),
+      );
+
+      await svc.applyProfile(selfNaming);
+
+      expect(svc.data().systemPrompt).toBe('You are Acme Dev');
+    });
+
+    it('keeps the built-in product name when no identity is configured', async () => {
+      const { profile: svc } = buildContext(
+        appService(IAgentIdentity, stubAgentIdentity()),
+      );
+
+      await svc.applyProfile(selfNaming);
+
+      expect(svc.data().systemPrompt).toBe(`You are ${DEFAULT_PRODUCT_NAME}`);
+    });
+  });
 
   it('loads AGENTS.md into the rendered system prompt', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');

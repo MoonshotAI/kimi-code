@@ -44,7 +44,10 @@
  * materialization gate — the catalog's only write.
  */
 
-import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
+import {
+  parseKimiCodeCustomHeaders,
+  replaceUserAgentProduct,
+} from '@moonshot-ai/kimi-code-oauth';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -387,6 +390,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     const declared = new Set((model.capabilities ?? []).map((c) => c.trim().toLowerCase()));
 
     trace.capture(TRACE.hostHeaders, this.hostRequestHeaders.headers);
+    trace.capture(TRACE.identitySlug, this.hostRequestHeaders.identitySlug);
     return {
       id,
       name: wireName,
@@ -397,6 +401,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
         providerConfig?.type,
         providerConfig?.customHeaders,
         this.hostRequestHeaders.headers,
+        this.hostRequestHeaders.identitySlug,
       ),
       capabilities,
       maxContextSize: model.maxContextSize,
@@ -559,17 +564,35 @@ export function resolveOutboundHeaders(
   providerType: string | undefined,
   customHeaders: Readonly<Record<string, string>> | undefined,
   hostHeaders: Readonly<Record<string, string>>,
+  identitySlug?: string,
 ): Readonly<Record<string, string>> {
   const forwardsAll =
     providerType !== undefined &&
     getProviderDefinition(providerType)?.hostHeaders === 'full';
-  const hostLayer = forwardsAll ? hostHeaders : userAgentOnly(hostHeaders);
+  // Vendors declaring `hostHeaders: 'full'` receive the host's complete
+  // identity header set and stay consistent with it: that set is the host's to
+  // define, and backends key on the product token it carries (log filtering,
+  // rollout gating). The configured identity applies to the third-party path.
+  const hostLayer = forwardsAll
+    ? hostHeaders
+    : userAgentOnly(hostHeaders, identitySlug);
   return { ...parseKimiCodeCustomHeaders(), ...hostLayer, ...customHeaders };
 }
 
-function userAgentOnly(headers: Readonly<Record<string, string>>): Record<string, string> {
+function userAgentOnly(
+  headers: Readonly<Record<string, string>>,
+  identitySlug: string | undefined,
+): Record<string, string> {
   const userAgent = headers['User-Agent'];
-  return userAgent === undefined ? {} : { 'User-Agent': userAgent };
+  // No host User-Agent means nothing to rewrite — never synthesize one, or an
+  // embedding host that deliberately sends no identity would start leaking one.
+  if (userAgent === undefined) return {};
+  return {
+    'User-Agent':
+      identitySlug === undefined
+        ? userAgent
+        : replaceUserAgentProduct(userAgent, identitySlug),
+  };
 }
 
 function resolveModelCapabilities(

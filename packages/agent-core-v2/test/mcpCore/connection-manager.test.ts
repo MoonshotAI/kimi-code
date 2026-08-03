@@ -30,6 +30,7 @@ import { z } from 'zod';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Error2 } from '#/errors';
+import { KIMI_MCP_CLIENT_NAME } from '#/mcpCore/client-shared';
 import { McpConnectionManager, type McpServerEntry } from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 
@@ -62,7 +63,7 @@ describe('McpConnectionManager', () => {
       expect(entries.map((e) => e.name).toSorted()).toEqual(['alpha', 'beta']);
       for (const entry of entries) {
         expect(entry.status).toBe('connected');
-        expect(entry.toolCount).toBe(3);
+        expect(entry.toolCount).toBe(4);
         expect(entry.transport).toBe('stdio');
       }
     } finally {
@@ -168,6 +169,34 @@ describe('McpConnectionManager', () => {
     }
   }, 15000);
 
+  it('announces the resolved custom identity as the MCP client name', async () => {
+    const cm = new McpConnectionManager({ resolveClientName: () => 'acme-dev' });
+    try {
+      await cm.connectAll({ mock: stdioConfig() });
+      const resolved = cm.resolved('mock');
+      if (resolved === undefined) throw new Error('Expected mock MCP server to connect');
+      const result = await resolved.client.callTool('whoami', {});
+      expect((result.content[0] as { type: 'text'; text: string }).text).toBe('acme-dev');
+    } finally {
+      await cm.shutdown();
+    }
+  }, 15000);
+
+  it('keeps the builtin MCP client name when no identity is configured', async () => {
+    const cm = new McpConnectionManager();
+    try {
+      await cm.connectAll({ mock: stdioConfig() });
+      const resolved = cm.resolved('mock');
+      if (resolved === undefined) throw new Error('Expected mock MCP server to connect');
+      const result = await resolved.client.callTool('whoami', {});
+      expect((result.content[0] as { type: 'text'; text: string }).text).toBe(
+        KIMI_MCP_CLIENT_NAME,
+      );
+    } finally {
+      await cm.shutdown();
+    }
+  }, 15000);
+
   it('emits status transitions in order per server', async () => {
     const cm = new McpConnectionManager();
     const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
@@ -226,7 +255,7 @@ describe('McpConnectionManager', () => {
 
       expect(cm.get('slow')).toMatchObject({
         status: 'connected',
-        toolCount: 3,
+        toolCount: 4,
       });
       expect(seen.filter((event) => event.name === 'slow').map((event) => event.status)).toEqual([
         'pending',

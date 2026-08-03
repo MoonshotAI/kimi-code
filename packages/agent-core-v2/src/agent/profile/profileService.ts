@@ -84,6 +84,7 @@ import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { ErrorCodes, Error2 } from "#/errors";
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import type { LoopControl } from '#/agent/loop/configSection';
@@ -220,6 +221,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IBuiltinAgentProfileLoader private readonly builtinProfiles: IBuiltinAgentProfileLoader,
     @IAgentStateService private readonly states: IAgentStateService,
     @IPluginService private readonly plugins: IPluginService,
+    @IAgentIdentity private readonly identity: IAgentIdentity,
   ) {
     super();
     this.states.register(profileActiveToolNamesOverlayKey);
@@ -869,7 +871,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       skills,
       pluginSections,
       skillActive: this.isToolActiveForProfile(profile, 'Skill'),
-      productName: this.bootstrap.args.displayName,
+      productName: this.identity.displayName,
       replyStyleGuide: this.bootstrap.args.replyStyleGuide,
     };
   }

@@ -33,6 +33,12 @@ import { mcpOAuthStoreKey, type McpOAuthStore } from './store';
 export interface McpOAuthServiceOptions {
   readonly store: McpOAuthStore;
   readonly clientLabel?: string;
+  /**
+   * Product token for provider default labels; carries the configured custom
+   * identity. Resolved per provider so an identity configured after this
+   * service is constructed still applies.
+   */
+  readonly resolveClientName?: () => string | undefined;
 }
 
 export interface BeginAuthorizationOptions {
@@ -48,11 +54,13 @@ export interface BeginAuthorizationResult {
 export class McpOAuthService {
   private readonly store: McpOAuthStore;
   private readonly clientLabel: string | undefined;
+  private readonly resolveClientName: (() => string | undefined) | undefined;
   private readonly providers = new Map<string, McpOAuthClientProvider>();
 
   constructor(options: McpOAuthServiceOptions) {
     this.store = options.store;
     this.clientLabel = options.clientLabel;
+    this.resolveClientName = options.resolveClientName;
   }
 
   getProvider(serverName: string, serverUrl: string | URL): McpOAuthClientProvider {
@@ -64,6 +72,7 @@ export class McpOAuthService {
         serverUrl,
         store: this.store,
         clientLabel: this.clientLabel,
+        clientName: this.resolveClientName?.(),
       });
       this.providers.set(provider.storeKey, provider);
     }
@@ -86,6 +95,7 @@ export class McpOAuthService {
           serverUrl,
           store: this.store,
           clientLabel: options.clientLabel,
+          clientName: this.resolveClientName?.(),
         });
     if (options.clientLabel !== undefined) {
       this.providers.set(provider.storeKey, provider);

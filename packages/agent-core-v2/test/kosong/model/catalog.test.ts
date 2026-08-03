@@ -64,6 +64,9 @@ const HOST_HEADERS = { 'User-Agent': 'kimi-test/1.0', 'X-Msh-Device-Id': 'device
 function createHost(
   sections: Record<string, unknown> = {},
   oauthTokens: IModelOAuthTokens = stubModelOAuthTokens(),
+  hostHeaders: { headers: Record<string, string>; identitySlug?: string } = {
+    headers: HOST_HEADERS,
+  },
 ): {
   host: ReturnType<typeof createScopedTestHost>;
   config: StubConfigService;
@@ -75,7 +78,7 @@ function createHost(
   const host = createScopedTestHost([
     [IConfigService, config],
     [IModelOAuthTokens, oauthTokens],
-    [IHostRequestHeaders, { headers: HOST_HEADERS }],
+    [IHostRequestHeaders, hostHeaders],
   ]);
   // Kosong's registries are pure in-memory stores now (persistence lives in
   // the app/kosongConfig bridge): seed them from the fixture sections.
@@ -182,6 +185,79 @@ describe('Model assembly (pure data)', () => {
     } finally {
       host.dispose();
     }
+  });
+
+  describe('custom identity', () => {
+    const THIRD_PARTY = {
+      providers: {
+        openai: { type: 'openai', apiKey: 'sk-o', baseUrl: 'https://api.openai.com/v1' },
+      },
+      models: { gpt: { provider: 'openai', model: 'gpt-5', maxContextSize: 128000 } },
+    };
+    const OFFICIAL = {
+      providers: { kimi: { type: 'kimi', apiKey: 'sk', baseUrl: 'https://api.example.test/v1' } },
+      models: { k2: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 200000 } },
+    };
+
+    it('rewrites the User-Agent product token for third-party vendors', () => {
+      const { host, catalog } = createHost(THIRD_PARTY, stubModelOAuthTokens(), {
+        headers: HOST_HEADERS,
+        identitySlug: 'acme-dev',
+      });
+      try {
+        // Version preserved, product token swapped, device headers still absent.
+        expect(catalog.get('gpt').headers).toEqual({ 'User-Agent': 'acme-dev/1.0' });
+      } finally {
+        host.dispose();
+      }
+    });
+
+    it('preserves a parenthesized User-Agent suffix while rewriting', () => {
+      const { host, catalog } = createHost(THIRD_PARTY, stubModelOAuthTokens(), {
+        headers: { 'User-Agent': 'kimi-test/1.0 (web)' },
+        identitySlug: 'acme-dev',
+      });
+      try {
+        expect(catalog.get('gpt').headers).toEqual({ 'User-Agent': 'acme-dev/1.0 (web)' });
+      } finally {
+        host.dispose();
+      }
+    });
+
+    it('leaves full-header vendor requests byte-for-byte unchanged', () => {
+      // Vendors on the full-header path keep the host's own product token:
+      // that header set is built around it and backends key on it.
+      const { host, catalog } = createHost(OFFICIAL, stubModelOAuthTokens(), {
+        headers: HOST_HEADERS,
+        identitySlug: 'acme-dev',
+      });
+      try {
+        expect(catalog.get('k2').headers).toEqual(HOST_HEADERS);
+      } finally {
+        host.dispose();
+      }
+    });
+
+    it('changes nothing when no identity is configured', () => {
+      const { host, catalog } = createHost(THIRD_PARTY);
+      try {
+        expect(catalog.get('gpt').headers).toEqual({ 'User-Agent': 'kimi-test/1.0' });
+      } finally {
+        host.dispose();
+      }
+    });
+
+    it('never synthesizes a User-Agent the host did not provide', () => {
+      const { host, catalog } = createHost(THIRD_PARTY, stubModelOAuthTokens(), {
+        headers: {},
+        identitySlug: 'acme-dev',
+      });
+      try {
+        expect(catalog.get('gpt').headers).toEqual({});
+      } finally {
+        host.dispose();
+      }
+    });
   });
 
   it('keeps an explicit foreign protocol for a kimi model (the dialect path)', () => {

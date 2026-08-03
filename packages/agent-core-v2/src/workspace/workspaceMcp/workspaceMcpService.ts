@@ -21,6 +21,7 @@ import { ILogService } from '#/_base/log/log';
 
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
@@ -45,14 +46,19 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     @IMcpOAuthStore oauthStore: IMcpOAuthStore,
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IAgentIdentity private readonly identity: IAgentIdentity,
   ) {
     super();
-    const oauthService = new McpOAuthService({ store: oauthStore });
+    // Resolved per connection rather than captured here: the identity reads
+    // from config, which loads asynchronously.
+    const resolveClientName = (): string | undefined => this.identity.slug;
+    const oauthService = new McpOAuthService({ store: oauthStore, resolveClientName });
     this.manager = new McpConnectionManager({
       log: this.log,
       oauthService,
       stdioCwd: workspace.cwd,
       resolveDefaultTimeouts: () => this.mcpConfig.tunables(),
+      resolveClientName,
     });
     this._register({ dispose: () => void this.manager.shutdown() });
     this._register(

@@ -69,6 +69,13 @@ export interface McpConnectionManagerOptions {
   readonly oauthService?: McpOAuthService;
   readonly log?: Logger;
   readonly resolveDefaultTimeouts?: () => McpDefaultTimeouts;
+  /**
+   * Client name announced to MCP servers during initialize (and used for the
+   * OAuth dynamic-registration label). Resolved per connection so a custom
+   * identity configured after construction still applies; omitted / resolving
+   * to `undefined` keeps the built-in name.
+   */
+  readonly resolveClientName?: () => string | undefined;
 }
 
 export class McpConnectionManager {
@@ -343,11 +350,13 @@ export class McpConnectionManager {
   ): Promise<RuntimeMcpClient> {
     const toolCallTimeoutMs =
       config.toolTimeoutMs ?? this.options.resolveDefaultTimeouts?.().toolTimeoutMs;
+    const clientName = this.options.resolveClientName?.();
     if (config.transport === 'stdio') {
       return new StdioMcpClient(config, {
         startupTimeoutMs,
         toolCallTimeoutMs,
         defaultCwd: this.options.stdioCwd,
+        clientName,
       });
     }
     if (config.transport === 'sse') {
@@ -356,6 +365,7 @@ export class McpConnectionManager {
         toolCallTimeoutMs,
         envLookup: this.options.envLookup,
         oauthProvider: await this.resolveOAuthProvider(config, name),
+        clientName,
       });
     }
     return new HttpMcpClient(config, {
@@ -363,6 +373,7 @@ export class McpConnectionManager {
       toolCallTimeoutMs,
       envLookup: this.options.envLookup,
       oauthProvider: await this.resolveOAuthProvider(config, name),
+      clientName,
     });
   }
 

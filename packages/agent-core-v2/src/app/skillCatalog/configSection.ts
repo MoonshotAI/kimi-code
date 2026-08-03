@@ -71,7 +71,9 @@ export const stripBuiltinProductSkillsEnv: ConfigStripEnv<BuiltinProductSkillsCo
 ) => {
   if (getEnv === undefined) return value;
   if (parseBooleanEnv(getEnv(BUILTIN_PRODUCT_SKILLS_ENV)) === undefined) return value;
-  return raw as BuiltinProductSkillsConfig;
+  // `raw` is the unvalidated file value; anything but a boolean means the file
+  // held nothing usable, so the field is dropped rather than written back.
+  return typeof raw === 'boolean' ? raw : undefined;
 };
 
 registerConfigSection(BUILTIN_PRODUCT_SKILLS_SECTION, BuiltinProductSkillsConfigSchema, {
