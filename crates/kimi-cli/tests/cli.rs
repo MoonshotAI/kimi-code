@@ -187,7 +187,9 @@ fn server_mode_verbose_emits_events() {
     let mut seen = false;
     while std::time::Instant::now() < deadline {
         match rx.recv_timeout(std::time::Duration::from_millis(500)) {
-            Ok(line) if line.contains("[event]") => {
+            // The CLI renders engine events into progress lines ("turn 0
+            // started (session …)") rather than raw "[event] {json}".
+            Ok(line) if line.contains("turn ") && line.contains(" started") => {
                 seen = true;
                 break;
             }
@@ -197,5 +199,5 @@ fn server_mode_verbose_emits_events() {
     }
     let _ = child.kill();
     let _ = child.wait();
-    assert!(seen, "expected an [event] line on stderr");
+    assert!(seen, "expected a rendered progress line on stderr");
 }

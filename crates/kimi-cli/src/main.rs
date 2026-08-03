@@ -5,6 +5,7 @@
 
 use base64::Engine;
 use clap::{Parser, Subcommand};
+use tokio::io::AsyncBufReadExt;
 
 #[derive(Parser)]
 #[command(name = "kimi", version, about = "Kimi Code CLI (Rust-first)")]
@@ -76,22 +77,71 @@ enum Commands {
     },
 }
 
+/// Render an engine event as a compact human-readable progress line. Returns
+/// `None` for unknown event types so the caller can fall back to raw output.
+fn render_event(event: &serde_json::Value) -> Option<String> {
+    let r#type = event.get("type")?.as_str()?;
+    // Field accessor tolerant of both string and number payloads (turn_id,
+    // task_id are numbers; tool_name, session_id are strings).
+    let field = |name: &str| -> String {
+        match event.get(name) {
+            Some(v) if v.is_string() => v.as_str().unwrap_or("").to_string(),
+            Some(v) if v.is_number() => v.to_string(),
+            Some(v) => v.to_string(),
+            None => String::new(),
+        }
+    };
+    match r#type {
+        "session.turn.started" => {
+            Some(format!("turn {} started (session {})", field("turn_id"), field("session_id")))
+        }
+        "session.turn.ended" => {
+            Some(format!("turn {} ended (session {})", field("turn_id"), field("session_id")))
+        }
+        "session.tool.started" => Some(format!("tool {} started", field("tool_name"))),
+        "session.tool.settled" => {
+            let ok = !event.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
+            let label = if ok { "ok" } else { "error" };
+            Some(format!("tool {} -> {label}", field("tool_name")))
+        }
+        "session.usage.updated" => {
+            let total = event.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+            Some(format!("usage: {total} tokens"))
+        }
+        "session.task.started" => Some(format!("task {} started", field("task_id"))),
+        "session.task.terminated" => Some(format!("task {} terminated", field("task_id"))),
+        "session.shell.output" => {
+            let text = field("content");
+            let text = if text.len() > 80 { format!("{}…", &text[..80]) } else { text.to_string() };
+            Some(format!("shell: {text}"))
+        }
+        "session.compaction.started" => Some("context compaction started".to_string()),
+        "session.approval.requested" => Some("approval requested".to_string()),
+        "session.goal.updated" => Some("goal updated".to_string()),
+        "session.hook.result" => Some(format!("hook ran: {}", field("name"))),
+        _ => None,
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let Cli { server, command } = Cli::parse();
     match command {
         Commands::Print { prompt, verbose } => {
             if verbose {
-                // Verbose mode prints engine events as they arrive. Embedded:
-                // subscribe the in-process EventBus. Remote (`--server`): the
-                // serve binary already fans events to stderr (inherited), so
-                // no second channel is needed — just don't build a stray
-                // embedded server.
+                // Verbose mode renders engine events as progress lines.
+                // Embedded: subscribe the in-process EventBus. Remote
+                // (`--server`): capture the serve process's stderr (its event
+                // fan-out) and render the same way.
                 let mut events = None;
+                let mut captured_stderr = None;
                 let mut client = match &server {
-                    Some(bin) => kimi_server_client::AppServerClient::Remote(
-                        kimi_server_client::stdio_client::StdioClient::spawn(bin)?,
-                    ),
+                    Some(bin) => {
+                        let (client, stderr) =
+                            kimi_server_client::stdio_client::StdioClient::spawn_captured(bin)?;
+                        captured_stderr = Some(stderr);
+                        kimi_server_client::AppServerClient::Remote(client)
+                    }
                     None => {
                         let embedded = kimi_server::Server::build()?;
                         events = Some(embedded.state.subscribe_events());
@@ -100,22 +150,39 @@ async fn main() -> anyhow::Result<()> {
                         )
                     }
                 };
-                let spawned = events.map(|mut rx| {
-                    tokio::spawn(async move {
-                        let mut lines = 0usize;
+                let renderer = tokio::spawn(async move {
+                    let mut printed = 0usize;
+                    if let Some(mut rx) = events {
                         while let Ok(event) = rx.recv().await {
-                            eprintln!("[event] {}", serde_json::to_string(&event).unwrap_or_default());
-                            lines += 1;
-                            if lines > 64 {
-                                break; // bound verbose output
+                            if let Some(line) = render_event(&event) {
+                                eprintln!("{line}");
+                                printed += 1;
+                                if printed > 64 {
+                                    break; // bound verbose output
+                                }
                             }
                         }
-                    })
+                    } else if let Some(stderr) = captured_stderr {
+                        let mut lines =
+                            tokio::io::BufReader::new(stderr).lines();
+                        while let Ok(Some(line)) = lines.next_line().await {
+                            let rendered = line
+                                .strip_prefix("[event] ")
+                                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                                .and_then(|e| render_event(&e))
+                                .unwrap_or_else(|| line.clone());
+                            eprintln!("{rendered}");
+                            if line.starts_with("[event] ") {
+                                printed += 1;
+                                if printed > 64 {
+                                    break; // bound verbose output
+                                }
+                            }
+                        }
+                    }
                 });
                 let result = kimi_exec::run_prompt(&mut client, "kimi-exec", &prompt, kimi_exec::native_llm_from_config()).await;
-                if let Some(spawned) = spawned {
-                    spawned.abort();
-                }
+                renderer.abort();
                 if let Some(error) = result.get("error") {
                     eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
                     std::process::exit(1);
@@ -277,4 +344,48 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_event;
+
+    #[test]
+    fn render_known_event_types() {
+        let cases = [
+            (
+                serde_json::json!({ "type": "session.turn.started", "session_id": "s1", "turn_id": 3 }),
+                "turn 3 started (session s1)",
+            ),
+            (
+                serde_json::json!({ "type": "session.turn.ended", "session_id": "s1", "turn_id": 3 }),
+                "turn 3 ended (session s1)",
+            ),
+            (
+                serde_json::json!({ "type": "session.tool.started", "tool_name": "Read" }),
+                "tool Read started",
+            ),
+            (
+                serde_json::json!({ "type": "session.tool.settled", "tool_name": "Read", "is_error": true }),
+                "tool Read -> error",
+            ),
+            (
+                serde_json::json!({ "type": "session.usage.updated", "total_tokens": 42 }),
+                "usage: 42 tokens",
+            ),
+            (
+                serde_json::json!({ "type": "session.compaction.started" }),
+                "context compaction started",
+            ),
+        ];
+        for (event, expected) in cases {
+            assert_eq!(render_event(&event).as_deref(), Some(expected), "event: {event}");
+        }
+    }
+
+    #[test]
+    fn render_unknown_event_passes_through() {
+        let event = serde_json::json!({ "type": "mystery.thing", "x": 1 });
+        assert_eq!(render_event(&event), None);
+    }
 }

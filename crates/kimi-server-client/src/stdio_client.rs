@@ -31,6 +31,29 @@ impl StdioClient {
         })
     }
 
+    /// Spawn with the server's stderr piped back to the caller (for hosts that
+    /// want to render the engine's event stream instead of inheriting it).
+    pub fn spawn_captured(
+        bin: &str,
+    ) -> std::io::Result<(Self, tokio::process::ChildStderr)> {
+        let mut child = Command::new(bin)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let stdin = child.stdin.take().expect("stdin");
+        let stdout = child.stdout.take().expect("stdout");
+        let stderr = child.stderr.take().expect("stderr");
+        Ok((
+            Self {
+                child,
+                stdin,
+                reader: BufReader::new(stdout),
+            },
+            stderr,
+        ))
+    }
+
     /// Make a JSON-RPC call; resolves with the full wire response body.
     pub async fn call(&mut self, method: &str, params: serde_json::Value) -> serde_json::Value {
         let request = serde_json::json!({
