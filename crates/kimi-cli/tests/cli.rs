@@ -247,6 +247,24 @@ fn chat_with_closed_stdin_exits_cleanly() {
 }
 
 #[test]
+fn every_subcommand_help_renders() {
+    let home = temp_dir("help-all");
+    for sub in ["print", "sessions", "resume", "config", "doctor", "health", "export", "chat", "acp"] {
+        let output = run(&home, &[sub, "--help"]);
+        assert!(
+            output.status.success(),
+            "{sub} --help exits 0: {} — {}",
+            output.status,
+            stderr(&output)
+        );
+        assert!(
+            !stdout(&output).trim().is_empty(),
+            "{sub} --help prints a description"
+        );
+    }
+}
+
+#[test]
 fn chat_quit_command_exits() {
     let home = temp_dir("chat-quit");
     let cwd = temp_dir("chat-cwd");
