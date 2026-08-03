@@ -111,7 +111,8 @@ function applyEnvBindings(
 
 function applySectionEnv(base: unknown, env: AnyEnvBindings, getEnv: GetEnv): unknown {
   if (isEnvBinding(env)) {
-    return resolveBinding(env, getEnv, base);
+    const resolved = resolveBinding(env, getEnv, base);
+    return resolved === undefined ? base : resolved;
   }
   const target: Record<string, unknown> = isPlainObject(base) ? { ...base } : {};
   applyEnvBindings(target, env, getEnv);

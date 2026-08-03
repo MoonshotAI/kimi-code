@@ -463,6 +463,34 @@ describe('ConfigService env overlay (live)', () => {
     disposables.dispose();
   });
 
+  // Contract: "an env value that fails its binding's parse is ignored". Object
+  // fields already honored it; a whole-section scalar binding must too, or a
+  // blank / mistyped variable silently clears the configured value.
+  it('keeps the file value when a scalar section env value fails to parse', async () => {
+    const env: Record<string, string> = {};
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    await config.replace(BUILTIN_PRODUCT_SKILLS_SECTION, false);
+
+    for (const invalid of ['', '   ', 'maybe']) {
+      env['KIMI_CODE_BUILTIN_PRODUCT_SKILLS'] = invalid;
+      expect(config.get(BUILTIN_PRODUCT_SKILLS_SECTION)).toBe(false);
+    }
+
+    env['KIMI_CODE_BUILTIN_PRODUCT_SKILLS'] = 'on';
+    expect(config.get(BUILTIN_PRODUCT_SKILLS_SECTION)).toBe(true);
+
+    disposables.dispose();
+  });
+
   it('keeps the Kimi effort force separate from the configured effort', async () => {
     const env: Record<string, string> = { KIMI_MODEL_THINKING_EFFORT: 'max' };
     const disposables = new DisposableStore();
