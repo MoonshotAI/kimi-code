@@ -44,6 +44,7 @@ import type {
   PluginUpdateStatus,
   ReloadSummary,
 } from '@moonshot-ai/agent-core-v2/app/plugin/types';
+import type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
 
 /** Low-level caller the klient factory builds: routes + validates one service call. */
 export type Caller = (service: string, method: string, args: unknown[]) => Promise<unknown>;
@@ -197,6 +198,12 @@ export interface GlobalFlagsFacade {
   snapshot(): Promise<Record<string, boolean>>;
 }
 
+export interface GlobalCapabilitiesFacade {
+  list(): Promise<readonly CapabilityStatus[]>;
+  get(id: string): Promise<CapabilityStatus>;
+  install(id: string): Promise<CapabilityStatus>;
+}
+
 export interface GlobalPluginsFacade {
   list(): Promise<readonly PluginSummary[]>;
   info(id: string): Promise<PluginInfo>;
@@ -238,6 +245,7 @@ export interface GlobalFacade {
   readonly auth: GlobalAuthFacade;
   readonly flags: GlobalFlagsFacade;
   readonly plugins: GlobalPluginsFacade;
+  readonly capabilities: GlobalCapabilitiesFacade;
   readonly hostFs: GlobalHostFsFacade;
   env(): Promise<KlientEnvInfo>;
 }
@@ -446,6 +454,13 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
         call('pluginService', 'checkUpdates', []) as Promise<readonly PluginUpdateStatus[]>,
       listCommands: () =>
         call('pluginService', 'listPluginCommands', []) as Promise<readonly PluginCommandDef[]>,
+    },
+
+    capabilities: {
+      list: () => call('capabilityService', 'listCapabilities', []) as Promise<readonly CapabilityStatus[]>,
+      get: (id) => call('capabilityService', 'getCapability', [id]) as Promise<CapabilityStatus>,
+      install: (id) =>
+        call('capabilityService', 'installCapability', [id]) as Promise<CapabilityStatus>,
     },
 
     hostFs: {

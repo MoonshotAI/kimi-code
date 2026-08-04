@@ -12,8 +12,11 @@
  * `ISessionAgentProfileCatalog`, and the caller's `IAgentProfileService`) and
  * threads it through the swarm tasks; otherwise binding is left to the
  * service, which keeps its own "no model bound" check and inherit-caller
- * fallback. Swarm mode is entered through `IAgentSwarmService`; the caller's
- * agent id comes from `IAgentScopeContext`. Pure tool — owns no scoped state.
+ * fallback. The advertised `model` parameter lists the secondary/primary
+ * pair via `buildSubagentModelDescriptions`, suffixing each line with the
+ * entry's capability flags resolved through `IModelCatalog`. Swarm mode is
+ * entered through `IAgentSwarmService`; the caller's agent id comes from
+ * `IAgentScopeContext`. Pure tool — owns no scoped state.
  *
  * Registered via the module-level `registerAgentToolService(IAgentSwarmTool,
  * AgentSwarmTool)` at the bottom of this file — the same "import = register"
@@ -31,6 +34,7 @@ import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution'
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
+import { IModelCatalog } from '#/kosong/model/catalog';
 import { ISessionSwarmService, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -112,6 +116,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
     @IFlagService private readonly flags: IFlagService,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {
     this.callerAgentId = scopeContext.agentId;
   }
@@ -121,6 +126,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
       this.config,
       this.flags,
       this.profile.data().modelAlias,
+      this.modelCatalog,
     );
     return modelLines === undefined
       ? AGENT_SWARM_DESCRIPTION
