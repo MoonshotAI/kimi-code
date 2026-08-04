@@ -140,6 +140,11 @@ enum ProviderCmd {
         #[arg(long)]
         json: bool,
     },
+    /// Search providers/models by keyword.
+    Search {
+        /// Keyword to match against provider and model names.
+        query: String,
+    },
 }
 
 /// Sub-targets of `kimi doctor`.
@@ -935,6 +940,45 @@ async fn main() -> anyhow::Result<()> {
                                         provider.models.len()
                                     );
                                 }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("error: catalog fetch failed — {e}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                ProviderCmd::Search { query } => {
+                    let query = query.to_lowercase();
+                    match kimi_sdk::catalog::fetch_catalog(kimi_sdk::catalog::DEFAULT_CATALOG_URL).await {
+                        Ok(catalog) => {
+                            let mut matched = 0usize;
+                            let mut providers: Vec<_> = catalog.into_iter().collect();
+                            providers.sort_by(|a, b| a.0.cmp(&b.0));
+                            for (id, provider) in providers {
+                                let model_hits: Vec<&str> = provider
+                                    .models
+                                    .keys()
+                                    .filter(|m| m.to_lowercase().contains(&query))
+                                    .map(|m| m.as_str())
+                                    .collect();
+                                let provider_hit =
+                                    id.to_lowercase().contains(&query)
+                                        || provider.name.to_lowercase().contains(&query);
+                                if provider_hit || !model_hits.is_empty() {
+                                    println!(
+                                        "{id}  {}  ({} models)",
+                                        provider.name,
+                                        provider.models.len()
+                                    );
+                                    for m in model_hits.iter().take(5) {
+                                        println!("    {m}");
+                                    }
+                                    matched += 1;
+                                }
+                            }
+                            if matched == 0 {
+                                println!("no providers match \"{query}\"");
                             }
                         }
                         Err(e) => {
