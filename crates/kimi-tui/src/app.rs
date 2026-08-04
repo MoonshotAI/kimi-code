@@ -7,16 +7,95 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line as RenderLine, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Terminal;
 
 use kimi_sdk::Harness;
 
+/// All slash commands the chat surface understands (shared with `/help`).
+const SLASH_COMMANDS: &[&str] = &[
+    "/clear",
+    "/compact",
+    "/exit",
+    "/export",
+    "/goal",
+    "/goal-cancel",
+    "/goal-pause",
+    "/goal-resume",
+    "/goal-status",
+    "/help",
+    "/model",
+    "/models",
+    "/plan",
+    "/quit",
+    "/resume",
+    "/sessions",
+    "/status",
+    "/swarm",
+    "/thinking",
+    "/usage",
+];
+
+/// Closed argument sets for Tab completion of a few commands.
+const ON_OFF_ARGS: &[&str] = &["on", "off"];
+const THINKING_ARGS: &[&str] = &["low", "medium", "high"];
+
+/// The role/source of a transcript line, driving its render style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TranscriptKind {
+    /// The user's own prompt (`▶ …`).
+    User,
+    /// Assistant text (final transcript of a turn).
+    Assistant,
+    /// Engine tool progress (`⚙ …`).
+    Tool,
+    /// Status / informational messages (command echoes, engine events).
+    Status,
+    /// Errors.
+    Error,
+}
+
+/// A single transcript line: text plus the role it renders as.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TranscriptLine {
+    pub kind: TranscriptKind,
+    pub text: String,
+}
+
+impl TranscriptLine {
+    pub fn user(text: impl Into<String>) -> Self {
+        Self { kind: TranscriptKind::User, text: text.into() }
+    }
+    pub fn assistant(text: impl Into<String>) -> Self {
+        Self { kind: TranscriptKind::Assistant, text: text.into() }
+    }
+    pub fn tool(text: impl Into<String>) -> Self {
+        Self { kind: TranscriptKind::Tool, text: text.into() }
+    }
+    pub fn status(text: impl Into<String>) -> Self {
+        Self { kind: TranscriptKind::Status, text: text.into() }
+    }
+    pub fn error(text: impl Into<String>) -> Self {
+        Self { kind: TranscriptKind::Error, text: text.into() }
+    }
+}
+
+/// State for an in-progress Tab completion cycle.
+#[derive(Debug, Clone, PartialEq)]
+struct TabState {
+    /// The input as it was when the cycle started (matches cycle on this).
+    base: String,
+    /// Index into the current match list.
+    idx: usize,
+}
+
 /// The interactive chat application.
 pub struct App {
     harness: Harness,
     /// Transcript lines rendered in the chat panel.
-    transcript: Vec<String>,
+    transcript: Vec<TranscriptLine>,
     /// The user's current input line.
     input: String,
     /// Prompt history (up/down).
@@ -26,7 +105,8 @@ pub struct App {
     session: Option<kimi_sdk::Session>,
     /// Model aliases for `/model` Tab completion.
     model_aliases: Vec<String>,
-    tab_idx: Option<usize>,
+    /// Active Tab completion cycle, if any.
+    tab: Option<TabState>,
     /// Transcript scroll offset (lines from the bottom).
     scroll: u16,
     /// Session status summary for the footer (plan/swarm).
@@ -45,7 +125,7 @@ impl App {
             session_id: session_id.to_string(),
             session: None,
             model_aliases: Vec::new(),
-            tab_idx: None,
+            tab: None,
             scroll: 0,
             status: String::new(),
         }
@@ -61,7 +141,7 @@ impl App {
         let swarm = status["result"]["swarm_mode"].as_bool().unwrap_or(false);
         self.status = format!("plan={} swarm={}", if plan { "on" } else { "off" }, if swarm { "on" } else { "off" });
         self.session = Some(session);
-        self.transcript.push(format!("session {} ready — type /help", self.session_id));
+        self.transcript.push(TranscriptLine::status(format!("session {} ready — type /help", self.session_id)));
         // Preload model aliases for `/model` Tab completion (best-effort).
         if let Ok((aliases, _)) = self.harness.list_models().await {
             self.model_aliases = aliases;
@@ -87,11 +167,16 @@ impl App {
                     KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
                         return Ok(());
                     }
-                    KeyCode::Char(ch) => self.input.push(ch),
+                    KeyCode::Char(ch) => {
+                        self.tab = None;
+                        self.input.push(ch);
+                    }
                     KeyCode::Backspace => {
+                        self.tab = None;
                         self.input.pop();
                     }
                     KeyCode::Enter => {
+                        self.tab = None;
                         let line = std::mem::take(&mut self.input);
                         if line.trim().is_empty() {
                             continue;
@@ -102,11 +187,17 @@ impl App {
                         self.history.push(line);
                         self.history_idx = None;
                     }
-                    KeyCode::Tab => self.complete_model(),
+                    KeyCode::Tab => self.complete(),
                     KeyCode::PageUp => self.scroll = self.scroll.saturating_add(5),
                     KeyCode::PageDown => self.scroll = self.scroll.saturating_sub(5),
-                    KeyCode::Up => self.history_back(),
-                    KeyCode::Down => self.history_forward(),
+                    KeyCode::Up => {
+                        self.tab = None;
+                        self.history_back();
+                    }
+                    KeyCode::Down => {
+                        self.tab = None;
+                        self.history_forward();
+                    }
                     KeyCode::Esc => return Ok(()),
                     _ => {}
                 },
@@ -123,109 +214,128 @@ impl App {
             match cmd {
                 "/quit" | "/exit" => return Ok(true),
                 "/help" => {
-                    self.transcript.push("/quit /help /model <id> /plan on|off /status /goal <obj> /goal-status /goal-cancel /clear /usage /sessions /export".into());
+                    self.transcript
+                        .push(TranscriptLine::status(format!("commands: {}", SLASH_COMMANDS.join(" "))));
                 }
                 "/status" => {
                     let status = self.session.as_mut().expect("session").get_status().await;
-                    self.transcript.push(format!("status: {}", serde_json::to_string_pretty(&status["result"]).unwrap_or_default()));
+                    self.transcript.push(TranscriptLine::status(format!(
+                        "status: {}",
+                        serde_json::to_string_pretty(&status["result"]).unwrap_or_default()
+                    )));
                 }
                 "/plan" => {
                     let enabled = rest == "on" || rest.is_empty();
                     self.session.as_mut().expect("session").set_plan_mode(enabled).await?;
-                    self.transcript.push(format!("plan mode {}", if enabled { "on" } else { "off" }));
+                    self.transcript.push(TranscriptLine::status(format!(
+                        "plan mode {}",
+                        if enabled { "on" } else { "off" }
+                    )));
                     self.refresh_status().await;
                 }
                 "/swarm" => {
                     let enabled = rest == "on" || rest.is_empty();
                     self.session.as_mut().expect("session").set_swarm_mode(enabled).await?;
-                    self.transcript.push(format!("swarm mode {}", if enabled { "on" } else { "off" }));
+                    self.transcript.push(TranscriptLine::status(format!(
+                        "swarm mode {}",
+                        if enabled { "on" } else { "off" }
+                    )));
                     self.refresh_status().await;
                 }
                 "/thinking" => {
                     if rest.is_empty() {
-                        self.transcript.push("usage: /thinking <low|medium|high>".into());
+                        self.transcript.push(TranscriptLine::status("usage: /thinking <low|medium|high>"));
                     } else {
                         self.session.as_mut().expect("session").set_thinking(Some(rest)).await?;
-                        self.transcript.push(format!("thinking effort set to {rest}"));
+                        self.transcript.push(TranscriptLine::status(format!("thinking effort set to {rest}")));
                     }
                 }
                 "/models" => {
                     let (aliases, default_model) = self.harness.list_models().await?;
                     if aliases.is_empty() {
-                        self.transcript.push("no model aliases configured".into());
+                        self.transcript.push(TranscriptLine::status("no model aliases configured"));
                     }
                     for alias in aliases.iter().take(20) {
-                        self.transcript.push(alias.clone());
+                        self.transcript.push(TranscriptLine::status(alias.clone()));
                     }
                     if let Some(default_model) = default_model {
-                        self.transcript.push(format!("default: {default_model}"));
+                        self.transcript.push(TranscriptLine::status(format!("default: {default_model}")));
                     }
                 }
                 "/model" => {
                     if rest.is_empty() {
-                        self.transcript.push("usage: /model <model-id>".into());
+                        self.transcript.push(TranscriptLine::status("usage: /model <model-id>"));
                     } else {
                         self.session.as_mut().expect("session").set_model(rest).await?;
-                        self.transcript.push(format!("model set to {rest}"));
+                        self.transcript.push(TranscriptLine::status(format!("model set to {rest}")));
                     }
                 }
                 "/resume" => {
                     if rest.is_empty() {
-                        self.transcript.push("usage: /resume <session-id>".into());
+                        self.transcript.push(TranscriptLine::status("usage: /resume <session-id>"));
                     } else {
                         let new_session = self.harness.create_session(rest).await?;
                         self.session = Some(new_session);
                         self.session_id = rest.to_string();
-                        self.transcript.push(format!("switched to session {rest}"));
+                        self.transcript.push(TranscriptLine::status(format!("switched to session {rest}")));
                     }
                 }
                 "/goal" => {
                     if rest.is_empty() {
-                        self.transcript.push("usage: /goal <objective>".into());
+                        self.transcript.push(TranscriptLine::status("usage: /goal <objective>"));
                     } else {
                         let snapshot = self.session.as_mut().expect("session").create_goal(rest).await?;
-                        self.transcript.push(format!("goal created: {}", snapshot["objective"]));
+                        self.transcript.push(TranscriptLine::status(format!(
+                            "goal created: {}",
+                            snapshot["objective"]
+                        )));
                     }
                 }
                 "/goal-cancel" => {
                     self.session.as_mut().expect("session").cancel_goal().await?;
-                    self.transcript.push("goal cancelled".into());
+                    self.transcript.push(TranscriptLine::status("goal cancelled"));
                 }
                 "/goal-pause" => {
                     self.session.as_mut().expect("session").pause_goal(Some(rest)).await?;
-                    self.transcript.push("goal paused".into());
+                    self.transcript.push(TranscriptLine::status("goal paused"));
                 }
                 "/goal-resume" => {
                     self.session.as_mut().expect("session").resume_goal(Some(rest)).await?;
-                    self.transcript.push("goal resumed".into());
+                    self.transcript.push(TranscriptLine::status("goal resumed"));
                 }
                 "/clear" => {
                     self.session.as_mut().expect("session").clear_context().await?;
-                    self.transcript.push("context cleared".into());
+                    self.transcript.push(TranscriptLine::status("context cleared"));
                 }
                 "/compact" => {
                     match self.session.as_mut().expect("session").compact().await {
-                        Ok(_) => self.transcript.push("context compacted".into()),
-                        Err(e) => self.transcript.push(format!("compact failed: {e}")),
+                        Ok(_) => self.transcript.push(TranscriptLine::status("context compacted")),
+                        Err(e) => self.transcript.push(TranscriptLine::error(format!("compact failed: {e}"))),
                     }
                 }
                 "/usage" => {
                     let usage = self.session.as_mut().expect("session").get_usage().await?;
-                    self.transcript.push(format!("usage: {}", serde_json::to_string(&usage).unwrap_or_default()));
+                    self.transcript.push(TranscriptLine::status(format!(
+                        "usage: {}",
+                        serde_json::to_string(&usage).unwrap_or_default()
+                    )));
                 }
                 "/goal-status" => {
                     let goal = self.session.as_mut().expect("session").goal().await?;
-                    self.transcript.push(format!("goal: {}", serde_json::to_string(&goal["goal"]).unwrap_or_default()));
+                    self.transcript.push(TranscriptLine::status(format!(
+                        "goal: {}",
+                        serde_json::to_string(&goal["goal"]).unwrap_or_default()
+                    )));
                 }
                 "/sessions" => {
                     let sessions = self.harness.list_sessions(50).await?;
                     if sessions.is_empty() {
-                        self.transcript.push("no sessions".into());
+                        self.transcript.push(TranscriptLine::status("no sessions"));
                     }
                     for s in sessions.iter().take(20) {
                         let id = s["id"].as_str().unwrap_or("");
                         let title = s["title"].as_str().unwrap_or("(untitled)");
-                        self.transcript.push(format!("{id}  {title}"));
+                        self.transcript.push(TranscriptLine::status(format!("{id}  {title}")));
                     }
                 }
                 "/export" => {
@@ -233,21 +343,26 @@ impl App {
                         Ok(zip) => {
                             let path = format!("{}.zip", self.session_id);
                             match std::fs::write(&path, &zip) {
-                                Ok(()) => self.transcript.push(format!("exported to {path} ({} bytes)", zip.len())),
-                                Err(e) => self.transcript.push(format!("write failed: {e}")),
+                                Ok(()) => self.transcript.push(TranscriptLine::status(format!(
+                                    "exported to {path} ({} bytes)",
+                                    zip.len()
+                                ))),
+                                Err(e) => self.transcript.push(TranscriptLine::error(format!("write failed: {e}"))),
                             }
                         }
-                        Err(e) => self.transcript.push(format!("export failed: {e}")),
+                        Err(e) => self.transcript.push(TranscriptLine::error(format!("export failed: {e}"))),
                     }
                 }
-                other => self.transcript.push(format!("unknown command {other} — try /help")),
+                other => self
+                    .transcript
+                    .push(TranscriptLine::error(format!("unknown command {other} — try /help"))),
             }
             return Ok(false);
         }
         // A real prompt: run it and render the transcript, pumping engine
         // events into the panel while the turn runs. The prompt future lives
         // in a block so its `&mut session` borrow ends before we read back.
-        self.transcript.push(format!("> {line}"));
+        self.transcript.push(TranscriptLine::user(line));
         let prompt_result = {
             // Clone the session out so the prompt future (which borrows it
             // mutably) can coexist with `self.pump_one_event` in the select.
@@ -263,11 +378,14 @@ impl App {
         };
         if let Some(result) = prompt_result {
             if let Some(error) = result.get("error") {
-                self.transcript.push(format!("error: {}", error["message"].as_str().unwrap_or("unknown")));
+                self.transcript.push(TranscriptLine::error(format!(
+                    "error: {}",
+                    error["message"].as_str().unwrap_or("unknown")
+                )));
             } else {
                 match self.session.as_mut().expect("session").transcript().await? {
-                    Some(text) => self.transcript.push(text),
-                    None => self.transcript.push(result.to_string()),
+                    Some(text) => self.transcript.push(TranscriptLine::assistant(text)),
+                    None => self.transcript.push(TranscriptLine::assistant(result.to_string())),
                 }
             }
         }
@@ -293,15 +411,32 @@ impl App {
                 tokio::time::timeout(std::time::Duration::from_millis(50), source.next()).await
             {
                 let line = kimi_ui::render_event(&event).unwrap_or_else(|| event.to_string());
-                // Mark tool progress lines so they read differently from the
-                // transcript and the user's own prompts.
-                let is_tool = event.get("type").and_then(|t| t.as_str()).is_some_and(|t| t.starts_with("session.tool."));
-                if is_tool {
-                    self.transcript.push(format!("  ⚙ {line}"));
+                // Tool progress reads differently from transcript/status.
+                let is_tool = event
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .is_some_and(|t| t.starts_with("session.tool."));
+                self.transcript.push(if is_tool {
+                    TranscriptLine::tool(line)
                 } else {
-                    self.transcript.push(line);
-                }
+                    TranscriptLine::status(line)
+                });
             }
+        }
+    }
+
+    /// Complete the current input on Tab: cycle the command name or an
+    /// argument (model ids for `/model`, closed sets for `/plan|/swarm|/thinking`).
+    fn complete(&mut self) {
+        let base = self.tab.as_ref().map(|t| t.base.clone()).unwrap_or_else(|| self.input.clone());
+        let idx = self.tab.as_ref().map(|t| t.idx);
+        let (completed, next) = complete_line(&base, &self.model_aliases, idx);
+        match next {
+            Some(i) => {
+                self.input = completed;
+                self.tab = Some(TabState { base, idx: i });
+            }
+            None => self.tab = None,
         }
     }
 
@@ -325,41 +460,18 @@ impl App {
         }
     }
 
-    /// Tab completion for `/model <prefix>`: cycle the model aliases.
-    fn complete_model(&mut self) {
-        let Some(prefix) = self.input.strip_prefix("/model ") else {
-            self.tab_idx = None;
-            return;
-        };
-        if self.model_aliases.is_empty() {
-            return;
-        }
-        let matches: Vec<&String> = self
-            .model_aliases
-            .iter()
-            .filter(|a| a.starts_with(prefix))
-            .collect();
-        if matches.is_empty() {
-            return;
-        }
-        let idx = self.tab_idx.map_or(0, |i| (i + 1) % matches.len());
-        self.tab_idx = Some(idx);
-        self.input = format!("/model {}", matches[idx]);
-    }
-
     fn draw(&mut self, frame: &mut ratatui::Frame<'_>) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(3), Constraint::Length(3)])
             .split(frame.area());
-        let transcript = self.transcript.join("\n");
         let viewport = chunks[0].height.saturating_sub(2) as usize;
         let total = self.transcript.len();
         let max_scroll = total.saturating_sub(viewport);
         if self.scroll as usize > max_scroll {
             self.scroll = max_scroll as u16;
         }
-        let chat = Paragraph::new(transcript)
+        let chat = Paragraph::new(styled_lines(&self.transcript))
             .block(Block::default().borders(Borders::ALL).title("chat"))
             .scroll((self.scroll, 0));
         let input = Paragraph::new(self.input.as_str())
@@ -367,6 +479,74 @@ impl App {
         frame.render_widget(chat, chunks[0]);
         frame.render_widget(input, chunks[1]);
     }
+}
+
+/// Map transcript entries to styled render lines (role → prefix + style).
+fn styled_lines(transcript: &[TranscriptLine]) -> Vec<RenderLine<'static>> {
+    transcript
+        .iter()
+        .map(|entry| {
+            let (text, style) = match entry.kind {
+                TranscriptKind::User => (
+                    format!("▶ {}", entry.text),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                TranscriptKind::Assistant => (entry.text.clone(), Style::default()),
+                TranscriptKind::Tool => (format!("  ⚙ {}", entry.text), Style::default().fg(Color::Blue)),
+                TranscriptKind::Status => (entry.text.clone(), Style::default().fg(Color::DarkGray)),
+                TranscriptKind::Error => (entry.text.clone(), Style::default().fg(Color::Red)),
+            };
+            RenderLine::from(Span::styled(text, style))
+        })
+        .collect()
+}
+
+/// Resolve a Tab press against `base` (the input when the cycle started, or
+/// the current input). Returns the completed input and the next cycle index.
+fn complete_line(base: &str, model_aliases: &[String], tab_idx: Option<usize>) -> (String, Option<usize>) {
+    // Argument completion: `/plan `, `/swarm `, `/thinking `, `/model `.
+    if let Some((cmd, arg)) = base.split_once(' ') {
+        let next = match cmd {
+            "/plan" | "/swarm" => complete_from(cmd, arg, ON_OFF_ARGS, tab_idx),
+            "/thinking" => complete_from(cmd, arg, THINKING_ARGS, tab_idx),
+            "/model" => complete_model_arg(arg, model_aliases, tab_idx),
+            _ => None,
+        };
+        return next.map_or((base.to_string(), None), |(s, i)| (s, Some(i)));
+    }
+    // Command-name completion while typing `/…`.
+    if base.starts_with('/') {
+        let matches: Vec<&&str> = SLASH_COMMANDS.iter().filter(|c| c.starts_with(base)).collect();
+        if matches.is_empty() {
+            return (base.to_string(), None);
+        }
+        let idx = tab_idx.map_or(0, |i| (i + 1) % matches.len());
+        return ((*matches[idx]).to_string(), Some(idx));
+    }
+    (base.to_string(), None)
+}
+
+/// Cycle through a closed argument set (`on|off`, `low|medium|high`, …).
+fn complete_from(cmd: &str, arg: &str, options: &[&str], tab_idx: Option<usize>) -> Option<(String, usize)> {
+    let matches: Vec<&str> = options.iter().copied().filter(|o| o.starts_with(arg)).collect();
+    if matches.is_empty() {
+        return None;
+    }
+    let idx = tab_idx.map_or(0, |i| (i + 1) % matches.len());
+    Some((format!("{cmd} {}", matches[idx]), idx))
+}
+
+/// Cycle through live model aliases for `/model <prefix>`.
+fn complete_model_arg(prefix: &str, model_aliases: &[String], tab_idx: Option<usize>) -> Option<(String, usize)> {
+    if model_aliases.is_empty() {
+        return None;
+    }
+    let matches: Vec<&String> = model_aliases.iter().filter(|a| a.starts_with(prefix)).collect();
+    if matches.is_empty() {
+        return None;
+    }
+    let idx = tab_idx.map_or(0, |i| (i + 1) % matches.len());
+    Some((format!("/model {}", matches[idx]), idx))
 }
 
 fn init_terminal() -> anyhow::Result<Terminal<CrosstermBackend<io::Stdout>>> {
@@ -380,4 +560,66 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> an
     disable_raw_mode()?;
     crossterm::execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completes_command_names_and_cycles() {
+        assert_eq!(complete_line("/", &[], None), ("/clear".to_string(), Some(0)));
+        assert_eq!(complete_line("/", &[], Some(0)), ("/compact".to_string(), Some(1)));
+        assert_eq!(complete_line("/go", &[], None), ("/goal".to_string(), Some(0)));
+        assert_eq!(complete_line("/mod", &[], None), ("/model".to_string(), Some(0)));
+        assert_eq!(complete_line("/zzz", &[], None), ("/zzz".to_string(), None));
+        // Non-slash input is never completed.
+        assert_eq!(complete_line("hi", &[], None), ("hi".to_string(), None));
+    }
+
+    #[test]
+    fn completes_closed_argument_sets() {
+        assert_eq!(complete_line("/plan ", &[], None), ("/plan on".to_string(), Some(0)));
+        assert_eq!(complete_line("/plan ", &[], Some(0)), ("/plan off".to_string(), Some(1)));
+        assert_eq!(complete_line("/plan ", &[], Some(1)), ("/plan on".to_string(), Some(0)));
+        assert_eq!(complete_line("/swarm o", &[], None), ("/swarm on".to_string(), Some(0)));
+        assert_eq!(complete_line("/thinking med", &[], None), ("/thinking medium".to_string(), Some(0)));
+        // Commands without a closed arg set are left alone.
+        assert_eq!(complete_line("/clear ", &[], None), ("/clear ".to_string(), None));
+    }
+
+    #[test]
+    fn completes_model_aliases() {
+        let aliases = ["kimi-k2", "kimi-latest", "claude-3"].map(String::from);
+        assert_eq!(complete_line("/model ", &aliases, None), ("/model kimi-k2".to_string(), Some(0)));
+        assert_eq!(complete_line("/model ", &aliases, Some(0)), ("/model kimi-latest".to_string(), Some(1)));
+        assert_eq!(complete_line("/model kimi-", &aliases, None), ("/model kimi-k2".to_string(), Some(0)));
+        assert_eq!(complete_line("/model nope", &aliases, None), ("/model nope".to_string(), None));
+        // No aliases configured → untouched.
+        assert_eq!(complete_line("/model ", &[], None), ("/model ".to_string(), None));
+    }
+
+    #[test]
+    fn transcript_lines_render_by_kind() {
+        let transcript = vec![
+            TranscriptLine::user("hi"),
+            TranscriptLine::assistant("hello"),
+            TranscriptLine::tool("Read started"),
+            TranscriptLine::status("plan mode on"),
+            TranscriptLine::error("boom"),
+        ];
+        let lines = styled_lines(&transcript);
+        assert_eq!(lines.len(), 5);
+        // User lines are prefixed and bold.
+        assert_eq!(lines[0].spans[0].content, "▶ hi");
+        assert!(lines[0].spans[0].style.add_modifier.contains(Modifier::BOLD));
+        // Assistant text renders verbatim.
+        assert_eq!(lines[1].spans[0].content, "hello");
+        // Tool lines carry the gear prefix and blue color.
+        assert_eq!(lines[2].spans[0].content, "  ⚙ Read started");
+        assert_eq!(lines[2].spans[0].style.fg, Some(Color::Blue));
+        // Status lines are dimmed, errors are red.
+        assert_eq!(lines[3].spans[0].style.fg, Some(Color::DarkGray));
+        assert_eq!(lines[4].spans[0].style.fg, Some(Color::Red));
+    }
 }

@@ -1,4 +1,11 @@
 
+> **✅ 2026-08-03 ⑩ TUI chatwidget 细化（角色化转录 + 全命令 Tab 补全，已提交）**：
+> - **结构化转录**：`transcript: Vec<String>` → `Vec<TranscriptLine{kind, text}>`（`TranscriptKind`：User/Assistant/Tool/Status/Error）；所有 push 点按角色归类（`> prompt`→User 加粗、引擎 tool 事件→Tool 蓝+⚙、其余事件/命令回显→Status 灰、错误→Error 红、转写→Assistant）。
+> - **Tab 补全泛化**（原仅 /model）：纯函数 `complete_line`——命令名前缀补全（SLASH_COMMANDS 20 命令循环）；参数补全 `/plan|/swarm → on|off`、`/thinking → low|medium|high`、`/model → 实时别名列表`；`TabState{base,idx}` 记录循环起点（修掉旧实现「完成即断链」——首 Tab 后输入被替换导致无法继续循环）。
+> - **`/help` 从 `SLASH_COMMANDS` 常量生成**（自动同步，修旧硬编码缺 /resume /swarm /thinking /models /compact /goal-pause /goal-resume）。
+> - **测试**：kimi-tui 0 → 4（命令名循环/闭参数集/模型别名/角色渲染样式断言）。clippy kimi-tui 0 警告；workspace check 干净。
+> - **验证**：`cargo test -p kimi-tui` 4 passed；workspace check 0 warnings（kimi-tui 自身）。
+
 > **✅ 2026-08-03 ⑨ wire 真源闭环（B 类：引擎 result 类型进 wire.gen.ts，已提交）**：
 > - **gen-wire 生成器修复（scripts/gen-wire-contract.mjs，4 处）**：① alias 分支递归 emit target（`pub type X = crate::usage::UsageStatus` 不再悬空）；② 枚举 serde attrs 从定义文件提取（`MessageOrigin` 的 `tag="kind"` 正确）；③ parseEnums 支持多行 struct 变体 + `},` 闭合（ContentPart/MessageOrigin 完整渲染）；④ renderEnum tagged 分支含 unit 变体（`{kind:'user'}`）；⑤ enum struct 变体字段依赖递归（ImageUrlValue/AudioUrlValue/VideoUrlValue）。`pnpm gen:wire` 幂等。
 > - **types.rs 新增 result 类型**：A 类 4 别名（SessionUsageResult=UsageStatus / SessionPlanResult=PlanData / TaskListResult=TaskInfoBase / SessionContextResult=AgentContextData）+ B 类 15 struct（SessionStatusResult / McpServerInfoRpc+List / SkillSummaryRpc+List / SessionWarning+Warnings / McpStartupMetricsResult / ListToolsResult / SessionSummaryRpc+List / PluginSummaryRpc+List / PluginMcpServerInfoRpc / PluginInfoRpc）。wire.gen.ts 88→120 types（+32）。
