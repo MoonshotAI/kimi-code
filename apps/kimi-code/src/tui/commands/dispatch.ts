@@ -379,13 +379,24 @@ async function handleBuiltInSlashCommand(
     case 'version':
       host.showStatus(`Kimi Code v${host.state.appState.version}`);
       return;
-    case 'new':
+    case 'new': {
       // A first-use lazy creation may still be in flight: wait it out so /new
       // never races a second createSession against the pending prompt.
       await host.waitForLazyCreation();
+      // The waited-out prompt may have started a turn meanwhile; /new is
+      // idle-only, so re-run the busy gate resolved before the await.
+      const busyReason = slashCommandBusyReason({
+        isStreaming: host.state.appState.streamingPhase !== 'idle',
+        isCompacting: host.state.appState.isCompacting,
+      });
+      if (busyReason !== undefined) {
+        host.showError(slashBusyMessage(name, busyReason));
+        return;
+      }
       await host.createNewSession();
       host.state.ui.requestRender();
       return;
+    }
     case 'sessions':
       void host.showSessionPicker();
       return;

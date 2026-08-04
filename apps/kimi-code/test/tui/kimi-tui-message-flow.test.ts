@@ -590,16 +590,16 @@ describe('KimiTUI message flow', () => {
     };
     const { driver, harness } = await makeDriver(lazySession, {}, startupInput);
 
-    // Hold the lazy createSession open so the first prompt is still pending
-    // when /new arrives.
+    // Hold the lazy createSession open so it is still in flight when /new
+    // arrives (triggered directly, without a prompt starting a turn).
     let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
     harness.createSession
       .mockImplementationOnce(
         () => new Promise((resolve) => { resolveCreate = resolve; }),
       )
       .mockResolvedValueOnce(newSession);
-
-    driver.handleUserInput('hello');
+    const ensure = (driver as unknown as { ensureSession(): Promise<unknown> }).ensureSession;
+    const pending = ensure.call(driver);
     await vi.waitFor(() => {
       expect(harness.createSession).toHaveBeenCalledTimes(1);
     });
@@ -610,13 +610,45 @@ describe('KimiTUI message flow', () => {
     expect(harness.createSession).toHaveBeenCalledTimes(1);
 
     resolveCreate(lazySession);
+    await pending;
+    // No turn started, so /new proceeds after the wait.
     await vi.waitFor(() => {
       expect(harness.createSession).toHaveBeenCalledTimes(2);
-    });
-    await vi.waitFor(() => {
-      expect(lazySession.prompt).toHaveBeenCalledWith('hello');
       expect(driver.getCurrentSessionId()).toBe('ses-new');
     });
+  });
+
+  it('blocks /new while the waited-out first prompt starts a turn (v2 engine)', async () => {
+    const lazySession = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(lazySession, {}, startupInput);
+
+    // Hold the lazy createSession open so the first prompt is still pending
+    // when /new arrives.
+    let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
+    harness.createSession.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCreate = resolve; }),
+    );
+
+    driver.handleUserInput('hello');
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledTimes(1);
+    });
+    driver.handleUserInput('/new');
+
+    resolveCreate(lazySession);
+    // The prompt continuation starts its turn first; /new (idle-only) must
+    // then be blocked instead of switching away from the active session.
+    await vi.waitFor(() => {
+      expect(lazySession.prompt).toHaveBeenCalledWith('hello');
+      expect(stripSgr(renderTranscript(driver))).toContain('Cannot /new while streaming');
+    });
+    expect(harness.createSession).toHaveBeenCalledTimes(1);
+    expect(driver.getCurrentSessionId()).toBe('ses-lazy');
   });
 
   it('carries a session-only thinking choice into the lazy-created session (v2 engine)', async () => {
