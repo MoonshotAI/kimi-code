@@ -88,6 +88,19 @@ pub fn stream_delta(event: &serde_json::Value) -> Option<&str> {
     part.get("text").and_then(|t| t.as_str())
 }
 
+/// Extract a thinking delta from an `llm.delta` stream event (the model's
+/// chain-of-thought — rendered separately, never part of the transcript).
+pub fn stream_thinking(event: &serde_json::Value) -> Option<&str> {
+    if event.get("type").and_then(|t| t.as_str()) != Some("llm.delta") {
+        return None;
+    }
+    let part = event.get("part")?;
+    if part.get("type").and_then(|t| t.as_str()) != Some("think") {
+        return None;
+    }
+    part.get("think").and_then(|t| t.as_str())
+}
+
 /// Extract the last assistant message's text from a `session/get_context`
 /// result (print-mode parity: the CLI renders the transcript, not the RPC
 /// envelope). Returns `None` when the context has no assistant text.
@@ -112,7 +125,7 @@ pub fn last_assistant_text(context: &serde_json::Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{last_assistant_text, render_event, stream_delta};
+    use super::{last_assistant_text, render_event, stream_delta, stream_thinking};
 
     #[test]
     fn render_known_event_types() {
@@ -182,6 +195,16 @@ mod tests {
         // Non-stream events and malformed payloads are ignored.
         assert_eq!(stream_delta(&serde_json::json!({ "type": "session.turn.started" })), None);
         assert_eq!(stream_delta(&serde_json::json!({ "type": "llm.delta" })), None);
+    }
+
+    #[test]
+    fn stream_thinking_extracts_think_only() {
+        let think = serde_json::json!({ "type": "llm.delta", "part": { "type": "think", "think": "hmm " } });
+        assert_eq!(stream_thinking(&think), Some("hmm "));
+        // Text deltas and non-stream events yield no thinking.
+        let text = serde_json::json!({ "type": "llm.delta", "part": { "type": "text", "text": "hi" } });
+        assert_eq!(stream_thinking(&text), None);
+        assert_eq!(stream_thinking(&serde_json::json!({ "type": "turn.started" })), None);
     }
 
     #[test]

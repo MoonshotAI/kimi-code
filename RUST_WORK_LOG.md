@@ -5,6 +5,13 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㉚ TUI thinking 流式（llm.delta think 部分，已提交）**：
+> - **缺口**：引擎发 `llm.delta part.type=think`（模型推理），宿主全跳过——kimi-k2 等思考模型推理过程不可见。
+> - **kimi-ui**：`stream_thinking(&Value) -> Option<&str>`（think 部分；text/非流式 → None）+ 测试（7 → 8）。
+> - **kimi-tui**：`TranscriptKind::Thinking`（DarkGray + ITALIC，瞬态渲染）+ `append_thinking`（同 append_stream 累积语义）+ `drop_trailing_thinking`（turn 结束只删尾部 thinking 行——可见答案上方的推理保留）；pump 按 think/text 分流。
+> - **验证**：kimi-tui 测试 11 → 13（thinking_accumulates_and_drops / thinking_renders_dimmed）；clippy tui+ui 0 警告；workspace check 干净。
+> - **注意**：观察需可达 LLM（think delta 仅 native 模式真实 provider 产生）。
+
 > **✅ 2026-08-03 ㉙ login 持久化 + logout（已提交）**：
 > - **缺口**：login 完成 device flow 后只打印 token（「wire into config next」）——引擎 native 路径不可用；TS logout 无对应。
 > - **实现**：login 成功后 `CONFIG_SET {providers: {kimi: {apiKey: token}}}` 持久化（config `providers.<id>.apiKey` schema）；新增 `kimi logout` → `CONFIG_SET {providers: {kimi: null}}`（strip_null_deletes 整 provider 删除）。

@@ -55,6 +55,9 @@ pub enum TranscriptKind {
     /// Live assistant text streamed via `llm.delta` events (replaced by the
     /// final transcript when the turn ends).
     Streaming,
+    /// Live model reasoning streamed via `llm.delta` think parts (transient —
+    /// dropped when the turn ends, never part of the transcript).
+    Thinking,
     /// Engine tool progress (`⚙ …`).
     Tool,
     /// Status / informational messages (command echoes, engine events).
@@ -80,6 +83,9 @@ impl TranscriptLine {
     pub fn streaming(text: impl Into<String>) -> Self {
         Self { kind: TranscriptKind::Streaming, text: text.into() }
     }
+    pub fn thinking(text: impl Into<String>) -> Self {
+        Self { kind: TranscriptKind::Thinking, text: text.into() }
+    }
     pub fn tool(text: impl Into<String>) -> Self {
         Self { kind: TranscriptKind::Tool, text: text.into() }
     }
@@ -101,6 +107,26 @@ fn append_stream(transcript: &mut Vec<TranscriptLine>, delta: &str) {
         }
     }
     transcript.push(TranscriptLine::streaming(delta.to_string()));
+}
+
+/// Append a thinking delta to the trailing thinking line (same accumulate
+/// semantics as `append_stream`).
+fn append_thinking(transcript: &mut Vec<TranscriptLine>, delta: &str) {
+    if let Some(last) = transcript.last_mut() {
+        if last.kind == TranscriptKind::Thinking {
+            last.text.push_str(delta);
+            return;
+        }
+    }
+    transcript.push(TranscriptLine::thinking(delta.to_string()));
+}
+
+/// Drop trailing transient thinking lines (reasoning never enters the
+/// transcript once the turn closes).
+fn drop_trailing_thinking(transcript: &mut Vec<TranscriptLine>) {
+    while transcript.last().is_some_and(|l| l.kind == TranscriptKind::Thinking) {
+        transcript.pop();
+    }
 }
 
 /// Close a streaming turn: replace the trailing streaming line with the final
@@ -519,8 +545,10 @@ impl App {
                     error["message"].as_str().unwrap_or("unknown")
                 )));
             } else {
-                // Close the streamed turn: replace the live line with the
-                // final transcript (or append it when nothing streamed).
+                // Close the streamed turn: drop transient thinking, replace
+                // the live line with the final transcript (or append it when
+                // nothing streamed).
+                drop_trailing_thinking(&mut self.transcript);
                 match self.session.as_mut().expect("session").transcript().await? {
                     Some(text) => {
                         finish_stream(&mut self.transcript, text);
@@ -564,9 +592,11 @@ impl App {
             return;
         }
         if r#type == "llm.delta" {
-            // Live assistant text: append to the streaming line instead of
-            // rendering a raw JSON status line.
-            if let Some(delta) = kimi_ui::stream_delta(&event) {
+            // Live model output: thinking deltas accumulate on a transient
+            // dimmed line; text deltas stream into the assistant line.
+            if let Some(think) = kimi_ui::stream_thinking(&event) {
+                append_thinking(&mut self.transcript, think);
+            } else if let Some(delta) = kimi_ui::stream_delta(&event) {
                 append_stream(&mut self.transcript, delta);
             }
             return;
@@ -761,6 +791,11 @@ fn styled_lines(transcript: &[TranscriptLine]) -> Vec<RenderLine<'static>> {
                 // Live stream reads as a growing line in cyan (no prefix, so
                 // the final replace is seamless).
                 TranscriptKind::Streaming => (entry.text.clone(), Style::default().fg(Color::Cyan)),
+                // Reasoning is transient and dimmer than the visible stream.
+                TranscriptKind::Thinking => (
+                    entry.text.clone(),
+                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                ),
                 TranscriptKind::Tool => (format!("  ⚙ {}", entry.text), Style::default().fg(Color::Blue)),
                 TranscriptKind::Status => (entry.text.clone(), Style::default().fg(Color::DarkGray)),
                 TranscriptKind::Error => (entry.text.clone(), Style::default().fg(Color::Red)),
@@ -878,6 +913,36 @@ mod tests {
         assert_eq!(complete_line("/model nope", &aliases, None), ("/model nope".to_string(), None));
         // No aliases configured → untouched.
         assert_eq!(complete_line("/model ", &[], None), ("/model ".to_string(), None));
+    }
+
+    #[test]
+    fn thinking_accumulates_and_drops() {
+        let mut transcript = Vec::new();
+        append_thinking(&mut transcript, "let me ");
+        append_thinking(&mut transcript, "think");
+        assert_eq!(transcript, vec![TranscriptLine::thinking("let me think")]);
+        // Text streaming after thinking starts a separate assistant line.
+        append_stream(&mut transcript, "answer");
+        assert_eq!(transcript[1], TranscriptLine::streaming("answer"));
+        // Only TRAILING thinking lines are dropped at turn close: reasoning
+        // above the visible answer stays, trailing reasoning goes.
+        drop_trailing_thinking(&mut transcript);
+        assert_eq!(
+            transcript,
+            vec![TranscriptLine::thinking("let me think"), TranscriptLine::streaming("answer")],
+            "non-trailing thinking survives"
+        );
+        transcript.pop(); // the assistant line closes via finish_stream
+        drop_trailing_thinking(&mut transcript);
+        assert!(transcript.is_empty(), "trailing thinking dropped");
+    }
+
+    #[test]
+    fn thinking_renders_dimmed() {
+        let lines = styled_lines(&[TranscriptLine::thinking("reasoning")]);
+        assert_eq!(lines[0].spans[0].content, "reasoning");
+        assert_eq!(lines[0].spans[0].style.fg, Some(Color::DarkGray));
+        assert!(lines[0].spans[0].style.add_modifier.contains(Modifier::ITALIC));
     }
 
     #[test]
