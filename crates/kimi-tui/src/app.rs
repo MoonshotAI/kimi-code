@@ -48,8 +48,8 @@ impl App {
     /// Run the event loop until the user quits (`/quit` or Ctrl-C).
     pub async fn run(&mut self) -> anyhow::Result<()> {
         // Open the session up front.
-        let mut session = self.harness.create_session(&self.session_id).await?;
-        self.session = Some(session.clone());
+        let session = self.harness.create_session(&self.session_id).await?;
+        self.session = Some(session);
         self.transcript.push(format!("session {} ready — type /help", self.session_id));
         // Preload model aliases for `/model` Tab completion (best-effort).
         if let Ok((aliases, _)) = self.harness.list_models().await {
@@ -57,7 +57,7 @@ impl App {
         }
 
         let mut terminal = init_terminal()?;
-        let result = self.event_loop(&mut terminal, &mut session).await;
+        let result = self.event_loop(&mut terminal).await;
         restore_terminal(&mut terminal)?;
         result
     }
@@ -65,7 +65,6 @@ impl App {
     async fn event_loop(
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-        session: &mut kimi_sdk::Session,
     ) -> anyhow::Result<()> {
         loop {
             terminal.draw(|frame| self.draw(frame))?;
@@ -86,7 +85,7 @@ impl App {
                         if line.trim().is_empty() {
                             continue;
                         }
-                        if self.dispatch(&line, session).await? {
+                        if self.dispatch(&line).await? {
                             return Ok(());
                         }
                         self.history.push(line);
@@ -105,7 +104,7 @@ impl App {
 
     /// Handle one submitted line (slash command or prompt). Returns `true`
     /// when the app should quit.
-    async fn dispatch(&mut self, line: &str, session: &mut kimi_sdk::Session) -> anyhow::Result<bool> {
+    async fn dispatch(&mut self, line: &str) -> anyhow::Result<bool> {
         if line.starts_with('/') {
             let (cmd, rest) = line.split_once(' ').map(|(c, r)| (c, r.trim())).unwrap_or((line, ""));
             match cmd {
@@ -114,44 +113,54 @@ impl App {
                     self.transcript.push("/quit /help /model <id> /plan on|off /status /goal <obj> /goal-status /goal-cancel /clear /usage /sessions /export".into());
                 }
                 "/status" => {
-                    let status = session.get_status().await;
+                    let status = self.session.as_mut().expect("session").get_status().await;
                     self.transcript.push(format!("status: {}", serde_json::to_string_pretty(&status["result"]).unwrap_or_default()));
                 }
                 "/plan" => {
                     let enabled = rest == "on" || rest.is_empty();
-                    session.set_plan_mode(enabled).await?;
+                    self.session.as_mut().expect("session").set_plan_mode(enabled).await?;
                     self.transcript.push(format!("plan mode {}", if enabled { "on" } else { "off" }));
                 }
                 "/model" => {
                     if rest.is_empty() {
                         self.transcript.push("usage: /model <model-id>".into());
                     } else {
-                        session.set_model(rest).await?;
+                        self.session.as_mut().expect("session").set_model(rest).await?;
                         self.transcript.push(format!("model set to {rest}"));
+                    }
+                }
+                "/resume" => {
+                    if rest.is_empty() {
+                        self.transcript.push("usage: /resume <session-id>".into());
+                    } else {
+                        let new_session = self.harness.create_session(rest).await?;
+                        self.session = Some(new_session);
+                        self.session_id = rest.to_string();
+                        self.transcript.push(format!("switched to session {rest}"));
                     }
                 }
                 "/goal" => {
                     if rest.is_empty() {
                         self.transcript.push("usage: /goal <objective>".into());
                     } else {
-                        let snapshot = session.create_goal(rest).await?;
+                        let snapshot = self.session.as_mut().expect("session").create_goal(rest).await?;
                         self.transcript.push(format!("goal created: {}", snapshot["objective"]));
                     }
                 }
                 "/goal-cancel" => {
-                    session.cancel_goal().await?;
+                    self.session.as_mut().expect("session").cancel_goal().await?;
                     self.transcript.push("goal cancelled".into());
                 }
                 "/clear" => {
-                    session.clear_context().await?;
+                    self.session.as_mut().expect("session").clear_context().await?;
                     self.transcript.push("context cleared".into());
                 }
                 "/usage" => {
-                    let usage = session.get_usage().await?;
+                    let usage = self.session.as_mut().expect("session").get_usage().await?;
                     self.transcript.push(format!("usage: {}", serde_json::to_string(&usage).unwrap_or_default()));
                 }
                 "/goal-status" => {
-                    let goal = session.goal().await?;
+                    let goal = self.session.as_mut().expect("session").goal().await?;
                     self.transcript.push(format!("goal: {}", serde_json::to_string(&goal["goal"]).unwrap_or_default()));
                 }
                 "/sessions" => {
@@ -186,6 +195,9 @@ impl App {
         // in a block so its `&mut session` borrow ends before we read back.
         self.transcript.push(format!("> {line}"));
         let prompt_result = {
+            // Clone the session out so the prompt future (which borrows it
+            // mutably) can coexist with `self.pump_one_event` in the select.
+            let mut session = self.session.clone().expect("session");
             let prompt_fut = session.prompt(line);
             tokio::pin!(prompt_fut);
             loop {
@@ -199,7 +211,7 @@ impl App {
             if let Some(error) = result.get("error") {
                 self.transcript.push(format!("error: {}", error["message"].as_str().unwrap_or("unknown")));
             } else {
-                match session.transcript().await? {
+                match self.session.as_mut().expect("session").transcript().await? {
                     Some(text) => self.transcript.push(text),
                     None => self.transcript.push(result.to_string()),
                 }
