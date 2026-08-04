@@ -5,6 +5,12 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㉙ login 持久化 + logout（已提交）**：
+> - **缺口**：login 完成 device flow 后只打印 token（「wire into config next」）——引擎 native 路径不可用；TS logout 无对应。
+> - **实现**：login 成功后 `CONFIG_SET {providers: {kimi: {apiKey: token}}}` 持久化（config `providers.<id>.apiKey` schema）；新增 `kimi logout` → `CONFIG_SET {providers: {kimi: null}}`（strip_null_deletes 整 provider 删除）。
+> - **验证**：CLI 集成测试 30 → 31（logout_removes_kimi_provider：空 config no-op 删除 + 退出 0 + config 回读无 providers.kimi）；clippy kimi-cli 0 警告。
+> - **注意**：login 存储路径与 `--set` 同机制（已证）；device flow 本身需网络。
+
 > **✅ 2026-08-03 ㉘ resume/chat 旗标对称（--model/--plan，已提交）**：
 > - **缺口**：Print 有 --model/--plan，Resume/Chat 缺失（不对称）；TS 同款旗标。
 > - **实现**：`kimi resume <id> --model <m> --plan`（create 后 set_model + set_plan_mode，镜像 run_prompt_with_setup 语义）；`kimi chat --model <m>`（启动时 set_model，会话内经 /model 切换）。

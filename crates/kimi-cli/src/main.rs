@@ -172,6 +172,8 @@ enum Commands {
         #[arg(long, default_value_t = 60)]
         max_polls: u32,
     },
+    /// Remove the kimi provider credentials from the engine config.
+    Logout,
     /// Update the CLI to the latest version (managed by the distribution).
     Upgrade,
     /// Launch the web UI (frontend ships with the TS distribution).
@@ -1214,8 +1216,24 @@ async fn main() -> anyhow::Result<()> {
                     anyhow::anyhow!("token poll failed: {e}")
                 })? {
                     kimi_oauth::DevicePollResult::Success { access_token, refresh_token, .. } => {
-                        println!("logged in (access token stored below — wire into config next)");
-                        println!("{access_token}");
+                        println!("logged in — storing kimi provider key into config");
+                        // Persist the token so the native engine path can use
+                        // it (config `providers.kimi.apiKey`).
+                        let mut client = connect(&server)?;
+                        let body = client
+                            .call(
+                                kimi_protocol::methods::CONFIG_SET,
+                                serde_json::json!({
+                                    "patch": { "providers": { "kimi": { "apiKey": access_token } } }
+                                }),
+                            )
+                            .await;
+                        if let Some(error) = body.get("error") {
+                            eprintln!(
+                                "warning: token granted but config write failed: {}",
+                                error["message"].as_str().unwrap_or("unknown")
+                            );
+                        }
                         if let Some(rt) = refresh_token {
                             eprintln!("refresh token: {rt}");
                         }
@@ -1231,6 +1249,22 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             anyhow::bail!("timed out waiting for approval");
+        }
+        Commands::Logout => {
+            // Remove the kimi provider from the engine config (null patch
+            // deletes the whole provider entry, mirroring `provider remove`).
+            let mut client = connect(&server)?;
+            let body = client
+                .call(
+                    kimi_protocol::methods::CONFIG_SET,
+                    serde_json::json!({ "patch": { "providers": { "kimi": null } } }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
+                std::process::exit(1);
+            }
+            println!("logged out — kimi provider removed from config");
         }
         Commands::Upgrade => {
             // Self-update is owned by the distribution (npm wrapper / package

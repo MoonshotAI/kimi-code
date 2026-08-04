@@ -534,6 +534,26 @@ fn doctor_tui_validates_specific_file() {
 }
 
 #[test]
+fn logout_removes_kimi_provider() {
+    // `kimi logout` null-patches the kimi provider out of the engine config
+    // (offline-safe; an empty config is a no-op deletion).
+    let home = temp_dir("logout");
+    let out = run(&home, &["logout"]);
+    assert!(out.status.success(), "logout exits 0: {}", out.status);
+    assert!(stdout(&out).contains("logged out"), "stdout: {}", stdout(&out));
+    // The config file still parses afterwards and has no kimi provider.
+    let out = run(&home, &["config"]);
+    assert!(out.status.success(), "config after logout: {}", out.status);
+    let config: serde_json::Value =
+        serde_json::from_str(stdout(&out).trim()).expect("config JSON");
+    assert!(
+        config["providers"].get("kimi").is_none(),
+        "no kimi provider left: {}",
+        config["providers"]
+    );
+}
+
+#[test]
 fn chat_approval_commands_offline_safe() {
     // /approvals + /approve|/deny are pure state ops (no LLM): an empty store
     // lists nothing and unknown ids resolve to "not found" without erroring.
