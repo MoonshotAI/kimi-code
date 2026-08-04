@@ -481,6 +481,25 @@ fn completions_generate_scripts() {
 }
 
 #[test]
+fn provider_list_from_catalog() {
+    let home = temp_dir("provider");
+    let output = run(&home, &["provider", "list", "--json"]);
+    // Network-dependent: on success the raw catalog JSON is printed; on a
+    // blocked network the command reports the fetch error without panicking.
+    if output.status.success() {
+        let value: serde_json::Value =
+            serde_json::from_str(stdout(&output).trim()).expect("catalog JSON");
+        assert!(value.is_object(), "catalog is an object of providers");
+    } else {
+        assert!(
+            stderr(&output).contains("catalog fetch failed"),
+            "graceful fetch error: {}",
+            stderr(&output)
+        );
+    }
+}
+
+#[test]
 fn server_mode_verbose_emits_events() {
     // `--verbose` over the Remote path: the serve binary fans engine events
     // to stderr (session.turn.started fires before the LLM call, so it lands

@@ -124,6 +124,22 @@ enum Commands {
         /// Target shell.
         shell: clap_complete::Shell,
     },
+    /// Provider management from the models.dev catalog.
+    Provider {
+        #[command(subcommand)]
+        cmd: ProviderCmd,
+    },
+}
+
+/// Sub-commands of `kimi provider`.
+#[derive(Subcommand)]
+enum ProviderCmd {
+    /// List providers from the model catalog.
+    List {
+        /// Print the raw catalog JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Sub-targets of `kimi doctor`.
@@ -898,6 +914,36 @@ async fn main() -> anyhow::Result<()> {
             use clap::CommandFactory;
             let mut cmd = Cli::command();
             clap_complete::generate(shell, &mut cmd, "kimi", &mut std::io::stdout());
+        }
+        Commands::Provider { cmd } => {
+            match cmd {
+                ProviderCmd::List { json } => {
+                    match kimi_sdk::catalog::fetch_catalog(kimi_sdk::catalog::DEFAULT_CATALOG_URL).await {
+                        Ok(catalog) => {
+                            if json {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&catalog).unwrap_or_default()
+                                );
+                            } else {
+                                let mut providers: Vec<_> = catalog.into_iter().collect();
+                                providers.sort_by(|a, b| a.0.cmp(&b.0));
+                                for (id, provider) in providers {
+                                    println!(
+                                        "{id}  {}  ({} models)",
+                                        provider.name,
+                                        provider.models.len()
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("error: catalog fetch failed — {e}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
         }
         Commands::Export { session_id, output, yes } => {
             let mut client = connect(&server)?;
