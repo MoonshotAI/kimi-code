@@ -105,6 +105,12 @@ enum Commands {
         /// Create a goal on the session before prompting (goal mode).
         #[arg(long)]
         goal: Option<String>,
+        /// Set the session model before prompting.
+        #[arg(long)]
+        model: Option<String>,
+        /// Enable plan mode before prompting.
+        #[arg(long)]
+        plan: bool,
     },
     /// Show the engine config (model/provider); with `--set`, write a value.
     Config {
@@ -141,6 +147,9 @@ enum Commands {
         /// Resume the most recently updated session instead of a fresh one.
         #[arg(long = "continue")]
         continue_: bool,
+        /// Set the session model at startup.
+        #[arg(long)]
+        model: Option<String>,
     },
     /// Serve the Agent Client Protocol (ACP) over stdio.
     Acp,
@@ -850,7 +859,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("{id}  {title}  {work_dir}");
             }
         }
-        Commands::Resume { session_id, prompt, verbose, json, goal } => {
+        Commands::Resume { session_id, prompt, verbose, json, goal, model, plan } => {
             let (mut client, renderer) = connect_with_renderer(&server, verbose)?;
             let native_llm = kimi_exec::native_llm_from_config();
             let mut create_params = serde_json::json!({ "session_id": session_id });
@@ -861,6 +870,31 @@ async fn main() -> anyhow::Result<()> {
             if created.get("error").is_some() {
                 eprintln!("error: {}", created["error"]["message"].as_str().unwrap_or("unknown"));
                 std::process::exit(1);
+            }
+            // Model / plan-mode setup right after create (Print parity).
+            if let Some(model) = &model {
+                let body = client
+                    .call(
+                        kimi_protocol::methods::SESSION_SET_MODEL,
+                        serde_json::json!({ "session_id": session_id, "model": model }),
+                    )
+                    .await;
+                if let Some(error) = body.get("error") {
+                    eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
+                    std::process::exit(1);
+                }
+            }
+            if plan {
+                let body = client
+                    .call(
+                        kimi_protocol::methods::SESSION_SET_PLAN_MODE,
+                        serde_json::json!({ "session_id": session_id, "enabled": true }),
+                    )
+                    .await;
+                if let Some(error) = body.get("error") {
+                    eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
+                    std::process::exit(1);
+                }
             }
             // Goal mode: create the goal on the (now existing) session so the
             // engine drives continuation turns toward the objective.
@@ -1055,7 +1089,7 @@ async fn main() -> anyhow::Result<()> {
             let body = client.health().await;
             println!("{}", body["result"]["status"].as_str().unwrap_or("?"));
         }
-        Commands::Chat { session, continue_ } => {
+        Commands::Chat { session, continue_, model } => {
             // Stage-D prototype: a plain-text REPL over the same event
             // rendering as `print --verbose`. Progress goes to stderr when it
             // is a TTY; the assistant transcript goes to stdout per turn.
@@ -1077,6 +1111,19 @@ async fn main() -> anyhow::Result<()> {
             if let Some(error) = created.get("error") {
                 eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
                 std::process::exit(1);
+            }
+            // `--model` at startup (the REPL's `/model` covers mid-session).
+            if let Some(model) = &model {
+                let body = client
+                    .call(
+                        kimi_protocol::methods::SESSION_SET_MODEL,
+                        serde_json::json!({ "session_id": session_id, "model": model }),
+                    )
+                    .await;
+                if let Some(error) = body.get("error") {
+                    eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
+                    std::process::exit(1);
+                }
             }
             if std::io::stderr().is_terminal() {
                 eprintln!("chat session {session_id} — type /help for commands");

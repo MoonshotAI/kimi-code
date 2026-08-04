@@ -5,6 +5,11 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㉘ resume/chat 旗标对称（--model/--plan，已提交）**：
+> - **缺口**：Print 有 --model/--plan，Resume/Chat 缺失（不对称）；TS 同款旗标。
+> - **实现**：`kimi resume <id> --model <m> --plan`（create 后 set_model + set_plan_mode，镜像 run_prompt_with_setup 语义）；`kimi chat --model <m>`（启动时 set_model，会话内经 /model 切换）。
+> - **验证**：编译 + clippy 0 警告（flag 接线与 Print 已证路径一致；未加慢速集成测试——全管道每例 ~60s）。
+
 > **✅ 2026-08-03 ㉗ CLI 实时文本流式（--verbose，已提交）**：
 > - **发现**：llm.delta 接线只到 TUI；CLI `--verbose`/chat 渲染器对 delta 静默（render_event 返回 None）。
 > - **实现**：`cli_render(&event) -> CliRender{Stream|Line|Skip}` 纯函数（llm.delta text → Stream；已知事件 → Line；其余 → Skip）；渲染器任务——TTY 下 delta 以 `eprint!` 滚动输出（codex 风格实时文本），进度行以 `\r{line}` 先收尾流式行；非 TTY 保持干净（转录仍走 stdout）。
