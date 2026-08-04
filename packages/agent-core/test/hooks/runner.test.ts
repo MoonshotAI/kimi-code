@@ -1,6 +1,8 @@
+import { homedir } from 'node:os';
+
 import { describe, expect, it } from 'vitest';
 
-import { buildHookSpawnOptions } from '../../src/session/hooks/runner';
+import { buildHookSpawnOptions, expandLeadingTilde } from '../../src/session/hooks/runner';
 
 const RUNNER_MODULE = '../../src/session/hooks/runner' as string;
 
@@ -122,5 +124,56 @@ describe('buildHookSpawnOptions (Windows console-window regression)', () => {
     const options = buildHookSpawnOptions({ cwd: '/repo', env: { FOO: 'bar' } });
     expect(options.cwd).toBe('/repo');
     expect(options.env).toMatchObject({ FOO: 'bar' });
+  });
+});
+
+// Regression coverage for the "one `~` in a hook path breaks EVERY tool call"
+// bug. Hooks are spawned with `shell:true`; on POSIX that shell expands a
+// word-leading `~`, but on Windows the shell is cmd.exe, which has no tilde
+// concept — the literal `~` reaches the interpreter, which resolves it against
+// the working directory and fails with ENOENT. Because a PreToolUse hook that
+// cannot be found blocks the call it guards, a single mistyped path disables
+// the whole session rather than just that hook.
+describe('expandLeadingTilde', () => {
+  const home = homedir();
+
+  it('expands a command-leading ~/', () => {
+    expect(expandLeadingTilde('~/hooks/x.py')).toBe(`${home}/hooks/x.py`);
+  });
+
+  it('expands a ~ that starts an argument', () => {
+    expect(expandLeadingTilde('python3 ~/hooks/x.py')).toBe(`python3 ${home}/hooks/x.py`);
+  });
+
+  it('expands the backslash separator form, since the target shell is cmd.exe', () => {
+    expect(expandLeadingTilde('python3 ~\\hooks\\x.py')).toBe(`python3 ${home}\\hooks\\x.py`);
+  });
+
+  it('expands a bare ~ word', () => {
+    expect(expandLeadingTilde('cd ~')).toBe(`cd ${home}`);
+    expect(expandLeadingTilde('cd ~ && ls')).toBe(`cd ${home} && ls`);
+  });
+
+  it('expands every word-leading occurrence, not just the first', () => {
+    expect(expandLeadingTilde('cp ~/a ~/b')).toBe(`cp ${home}/a ${home}/b`);
+  });
+
+  it('leaves a ~ inside a word alone', () => {
+    expect(expandLeadingTilde('script --flag=a~/b')).toBe('script --flag=a~/b');
+    expect(expandLeadingTilde('cp file~/old dest')).toBe('cp file~/old dest');
+  });
+
+  it('leaves a quoted ~ alone, matching a POSIX shell', () => {
+    expect(expandLeadingTilde('python3 "~/hooks/x.py"')).toBe('python3 "~/hooks/x.py"');
+    expect(expandLeadingTilde("python3 '~/hooks/x.py'")).toBe("python3 '~/hooks/x.py'");
+  });
+
+  it('does not attempt ~user expansion', () => {
+    expect(expandLeadingTilde('cat ~other/file')).toBe('cat ~other/file');
+  });
+
+  it('leaves a command with no tilde untouched', () => {
+    expect(expandLeadingTilde('python3 hooks/x.py')).toBe('python3 hooks/x.py');
+    expect(expandLeadingTilde('')).toBe('');
   });
 });

@@ -1,8 +1,28 @@
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from 'node:child_process';
+import { homedir } from 'node:os';
 
 import { z } from 'zod';
 
 import type { HookResult } from './types';
+
+/**
+ * Expand a word-leading `~` to the home directory.
+ *
+ * Hook commands are spawned with `shell: true`. On POSIX that shell performs
+ * tilde expansion, so `python3 ~/hooks/x.py` finds the script. On Windows the
+ * shell is cmd.exe, which has no such concept: the literal `~` reaches the
+ * interpreter, which resolves it against the WORKING DIRECTORY. A hook
+ * configured with a `~` path therefore fails with ENOENT at
+ * `<cwd>/~/hooks/x.py` — and because a failed PreToolUse hook blocks the call,
+ * that silently breaks EVERY tool use in the session rather than just the hook.
+ *
+ * Expansion is applied at word boundaries only, which is where a POSIX shell
+ * does it, so a `~` inside an argument keeps its literal meaning.
+ */
+export function expandLeadingTilde(command: string): string {
+  const home = homedir();
+  return command.replace(/(^|\s)~(?=[/\\]|\s|$)/g, (_match, prefix: string) => `${prefix}${home}`);
+}
 
 export interface RunHookOptions {
   readonly timeout: number;
@@ -64,7 +84,10 @@ export async function runHook(
 ): Promise<HookResult> {
   let child: ChildProcessWithoutNullStreams;
   try {
-    child = spawn(command, buildHookSpawnOptions({ cwd: options.cwd, env: options.env }));
+    child = spawn(
+      expandLeadingTilde(command),
+      buildHookSpawnOptions({ cwd: options.cwd, env: options.env }),
+    );
   } catch (error) {
     return allowResult({ stderr: errorMessage(error) });
   }
