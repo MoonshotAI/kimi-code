@@ -5,6 +5,11 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㊲ `/import` 命令（TUI + REPL，最后未暴露会话方法，已提交）**：
+> - **缺口**：SDK Session 45 方法中唯一未在界面暴露的 import_context。
+> - **实现**：TUI `/import <text>`（source="tui"）+ chat REPL `/import <text>`（source="repl"，打印导入字符数）；SLASH_COMMANDS 26 → 27。
+> - **验证**：chat_undo_and_fork_offline 扩为含 /import（"imported 18 chars" 断言）；kimi-tui 13 绿；clippy 0 警告。
+
 > **✅ 2026-08-03 ㊱ TUI/REPL 命令面补全（/undo /fork /steer，已提交）**：
 > - **缺口**：SDK Session 有 undo_history/fork/steer，TUI 与 chat REPL 均未暴露。
 > - **实现**：TUI 加 `/undo`（undo_history）、`/fork <new-id>`（fork）、`/steer <text>`（运行中 steer）；chat REPL 加 `/undo`、`/fork`；SLASH_COMMANDS 23 → 26（/help 与 Tab 补全自动同步）；REPL /help 列表同步。

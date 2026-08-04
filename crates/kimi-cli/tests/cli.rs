@@ -592,13 +592,14 @@ fn chat_undo_and_fork_offline() {
         use std::io::Write;
         let stdin = child.stdin.as_mut().expect("stdin");
         stdin
-            .write_all(b"/undo\n/fork s-undo-fork-2\n/quit\n")
+            .write_all(b"/undo\n/fork s-undo-fork-2\n/import some prior context\n/quit\n")
             .expect("write");
     }
     let output = child.wait_with_output().expect("wait");
     assert!(output.status.success(), "chat exits 0: {}", output.status);
     let out = String::from_utf8_lossy(&output.stdout);
     assert!(out.contains("forked to s-undo-fork-2"), "fork line: {out}");
+    assert!(out.contains("imported 18 chars"), "import line: {out}");
 
     // The fork is a persisted session.
     let list = run(&home, &["sessions", "--json"]);

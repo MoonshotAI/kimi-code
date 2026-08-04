@@ -30,6 +30,7 @@ const SLASH_COMMANDS: &[&str] = &[
     "/goal-resume",
     "/goal-status",
     "/help",
+    "/import",
     "/model",
     "/models",
     "/plan",
@@ -510,6 +511,19 @@ impl App {
                             .steer(serde_json::json!([{ "type": "text", "text": rest }]))
                             .await?;
                         self.transcript.push(TranscriptLine::status(format!("steer queued: {queued}")));
+                    }
+                }
+                "/import" => {
+                    if rest.is_empty() {
+                        self.transcript.push(TranscriptLine::status("usage: /import <text>"));
+                    } else {
+                        self.session
+                            .as_mut()
+                            .expect("session")
+                            .import_context(rest, "tui")
+                            .await?;
+                        self.transcript
+                            .push(TranscriptLine::status(format!("imported {} chars", rest.chars().count())));
                     }
                 }
                 "/goal-status" => {

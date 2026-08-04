@@ -464,6 +464,7 @@ async fn handle_chat_command(
             println!("/sessions    list persisted sessions");
             println!("/undo        undo the last turn");
             println!("/fork <id>   fork this session under a new id");
+            println!("/import <t>  import prior conversation text");
             println!("/approvals   list pending tool approvals");
             println!("/approve <id> allow a pending approval");
             println!("/deny <id>   deny a pending approval");
@@ -666,6 +667,23 @@ async fn handle_chat_command(
                 return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
             }
             println!("forked to {rest}");
+            ChatCommand::Handled
+        }
+        "/import" => {
+            // Import prior conversation text into the session context.
+            if rest.is_empty() {
+                return ChatCommand::Error("usage: /import <text>".into());
+            }
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_IMPORT_CONTEXT,
+                    serde_json::json!({ "session_id": *session_id, "content": rest, "source": "repl" }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            println!("imported {} chars", rest.chars().count());
             ChatCommand::Handled
         }
         "/approvals" => {
