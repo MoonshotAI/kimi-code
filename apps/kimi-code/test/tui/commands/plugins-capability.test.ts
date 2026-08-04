@@ -9,27 +9,31 @@ function fakeHost(overrides: {
   engineV2?: boolean;
   capabilityStatus?: () => Promise<{
     state?: string;
+    steps?: readonly unknown[];
     install: { running: boolean; step?: string; percent?: number; error?: string };
   }>;
 }) {
   const statuses: string[] = [];
   const renders: number[] = [];
   const installCapability = vi.fn(() => Promise.resolve());
-  const session = {
-    getCapability:
-      overrides.capabilityStatus ??
-      (() => Promise.resolve({ state: 'ready', steps: [], install: { running: false } })),
-    installCapability,
-    removePlugin: () => Promise.resolve(),
-  };
+  const getCapability =
+    overrides.capabilityStatus ??
+    (() => Promise.resolve({ state: 'ready', steps: [], install: { running: false } }));
   const host = {
     engineV2: overrides.engineV2 ?? false,
-    // Session-less (lazy session): plugin calls fall back to the harness facade.
+    // Session-less (lazy session): plugin and capability calls fall back to
+    // the harness facade.
     session: undefined,
     harness: {
       removePlugin: () => Promise.resolve(),
+      getCapability,
+      installCapability,
+      listCapabilities: () => Promise.resolve([]),
     },
-    requireSession: () => session,
+    requireSession: () => ({
+      getCapability,
+      installCapability,
+    }),
     showStatus: (text: string) => {
       statuses.push(text);
     },
@@ -91,6 +95,7 @@ describe('plugins command capability surface', () => {
   it('polls progress into the panel until the install settles', async () => {
     let calls = 0;
     const { host } = fakeHost({
+      engineV2: true,
       capabilityStatus: () => {
         calls += 1;
         if (calls === 1) {
@@ -122,7 +127,7 @@ describe('plugins command capability surface', () => {
   });
 
   it('starts a capability install only when none is running', async () => {
-    const idle = fakeHost({});
+    const idle = fakeHost({ engineV2: true });
     await installCapabilityFromPanel(
       idle.host,
       fakePanel().panel,
@@ -134,6 +139,7 @@ describe('plugins command capability surface', () => {
   it('follows an in-progress capability install instead of restarting it', async () => {
     let calls = 0;
     const { host, installCapability, statuses } = fakeHost({
+      engineV2: true,
       capabilityStatus: () => {
         calls += 1;
         // The pre-check sees the running install; the poll then sees it settle.

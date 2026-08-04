@@ -195,6 +195,23 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
   }
 }
 
+/**
+ * Resolve the capability API. Like plugin state, capability state is
+ * app-global on the v2 engine, so a session-less startup still gets
+ * readiness and installs through the harness's global facade; with a live
+ * session the session's own API is used (v1 included, where the capability
+ * surface then reports itself unavailable).
+ */
+type CapabilityApi = Pick<Session, 'listCapabilities' | 'getCapability' | 'installCapability'>;
+
+async function resolveCapabilityApi(host: SlashCommandHost): Promise<CapabilityApi> {
+  if (host.session !== undefined) return host.session;
+  if (!host.engineV2) {
+    throw new Error(NO_ACTIVE_SESSION_MESSAGE);
+  }
+  return host.harness;
+}
+
 async function showPluginsPicker(
   host: SlashCommandHost,
   options?: ShowPluginsPickerOptions,
@@ -210,7 +227,7 @@ async function showPluginsPicker(
   let capabilities: readonly CapabilityStatus[] = [];
   if (host.engineV2) {
     try {
-      capabilities = await host.requireSession().listCapabilities();
+      capabilities = await (await resolveCapabilityApi(host)).listCapabilities();
     } catch (error) {
       host.showStatus(
         `Capability status unavailable: ${formatErrorMessage(error)}. Plugin management remains available.`,
@@ -411,12 +428,12 @@ async function pollCapabilityInstall(
   id: string,
   label: string,
 ): Promise<CapabilityStatus | undefined> {
-  const session = host.requireSession();
+  const api = await resolveCapabilityApi(host);
   for (let attempt = 0; attempt < CAPABILITY_POLL_ATTEMPTS; attempt += 1) {
     await new Promise((resolve) => {
       setTimeout(resolve, CAPABILITY_POLL_INTERVAL_MS);
     });
-    const status = await session.getCapability(id);
+    const status = await api.getCapability(id);
     if (!status.install.running) return status;
     const step = status.install.step ?? 'configuring runtime';
     const percent = status.install.percent;
@@ -445,16 +462,16 @@ async function installCapabilityFromPanel(
   // reserved for unreviewed third-party plugins.
   panel.setInstalling(truncateForStatus(label));
   host.state.ui.requestRender();
-  const session = host.requireSession();
+  const api = await resolveCapabilityApi(host);
   try {
     // An install already running (started from another panel or client) is
     // followed, not restarted — the service rejects duplicate starts even
     // though the original is healthy.
-    const alreadyRunning = await session
+    const alreadyRunning = await api
       .getCapability(entry.id)
       .then((status) => status.install.running, () => false);
     if (!alreadyRunning) {
-      await session.installCapability(entry.id);
+      await api.installCapability(entry.id);
     }
   } catch (error) {
     panel.clearInstalling();
