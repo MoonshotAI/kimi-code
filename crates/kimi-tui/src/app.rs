@@ -52,6 +52,9 @@ pub enum TranscriptKind {
     User,
     /// Assistant text (final transcript of a turn).
     Assistant,
+    /// Live assistant text streamed via `llm.delta` events (replaced by the
+    /// final transcript when the turn ends).
+    Streaming,
     /// Engine tool progress (`⚙ …`).
     Tool,
     /// Status / informational messages (command echoes, engine events).
@@ -74,6 +77,9 @@ impl TranscriptLine {
     pub fn assistant(text: impl Into<String>) -> Self {
         Self { kind: TranscriptKind::Assistant, text: text.into() }
     }
+    pub fn streaming(text: impl Into<String>) -> Self {
+        Self { kind: TranscriptKind::Streaming, text: text.into() }
+    }
     pub fn tool(text: impl Into<String>) -> Self {
         Self { kind: TranscriptKind::Tool, text: text.into() }
     }
@@ -83,6 +89,33 @@ impl TranscriptLine {
     pub fn error(text: impl Into<String>) -> Self {
         Self { kind: TranscriptKind::Error, text: text.into() }
     }
+}
+
+/// Append a live text delta to the trailing streaming line, starting one if
+/// the transcript tail is not a streaming line (e.g. after a tool event).
+fn append_stream(transcript: &mut Vec<TranscriptLine>, delta: &str) {
+    if let Some(last) = transcript.last_mut() {
+        if last.kind == TranscriptKind::Streaming {
+            last.text.push_str(delta);
+            return;
+        }
+    }
+    transcript.push(TranscriptLine::streaming(delta.to_string()));
+}
+
+/// Close a streaming turn: replace the trailing streaming line with the final
+/// assistant text (or push it when nothing streamed). Returns whether a line
+/// was replaced.
+fn finish_stream(transcript: &mut Vec<TranscriptLine>, final_text: String) -> bool {
+    if let Some(last) = transcript.last_mut() {
+        if last.kind == TranscriptKind::Streaming {
+            last.kind = TranscriptKind::Assistant;
+            last.text = final_text;
+            return true;
+        }
+    }
+    transcript.push(TranscriptLine::assistant(final_text));
+    false
 }
 
 /// State for an in-progress Tab completion cycle.
@@ -486,9 +519,15 @@ impl App {
                     error["message"].as_str().unwrap_or("unknown")
                 )));
             } else {
+                // Close the streamed turn: replace the live line with the
+                // final transcript (or append it when nothing streamed).
                 match self.session.as_mut().expect("session").transcript().await? {
-                    Some(text) => self.transcript.push(TranscriptLine::assistant(text)),
-                    None => self.transcript.push(TranscriptLine::assistant(result.to_string())),
+                    Some(text) => {
+                        finish_stream(&mut self.transcript, text);
+                    }
+                    None => {
+                        finish_stream(&mut self.transcript, result.to_string());
+                    }
                 }
             }
         }
@@ -522,6 +561,19 @@ impl App {
         let r#type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
         if r#type == "session.approval.requested" {
             self.request_approval().await;
+            return;
+        }
+        if r#type == "llm.delta" {
+            // Live assistant text: append to the streaming line instead of
+            // rendering a raw JSON status line.
+            if let Some(delta) = kimi_ui::stream_delta(&event) {
+                append_stream(&mut self.transcript, delta);
+            }
+            return;
+        }
+        if r#type.starts_with("llm.") {
+            // llm.step.begin / llm.step.end carry no transcript text; the
+            // delta stream above already renders the assistant output.
             return;
         }
         let line = kimi_ui::render_event(&event).unwrap_or_else(|| event.to_string());
@@ -703,6 +755,9 @@ fn styled_lines(transcript: &[TranscriptLine]) -> Vec<RenderLine<'static>> {
                     Style::default().add_modifier(Modifier::BOLD),
                 ),
                 TranscriptKind::Assistant => (entry.text.clone(), Style::default()),
+                // Live stream reads as a growing line in cyan (no prefix, so
+                // the final replace is seamless).
+                TranscriptKind::Streaming => (entry.text.clone(), Style::default().fg(Color::Cyan)),
                 TranscriptKind::Tool => (format!("  ⚙ {}", entry.text), Style::default().fg(Color::Blue)),
                 TranscriptKind::Status => (entry.text.clone(), Style::default().fg(Color::DarkGray)),
                 TranscriptKind::Error => (entry.text.clone(), Style::default().fg(Color::Red)),
@@ -820,6 +875,39 @@ mod tests {
         assert_eq!(complete_line("/model nope", &aliases, None), ("/model nope".to_string(), None));
         // No aliases configured → untouched.
         assert_eq!(complete_line("/model ", &[], None), ("/model ".to_string(), None));
+    }
+
+    #[test]
+    fn streaming_append_and_finish() {
+        // Deltas accumulate on a trailing streaming line.
+        let mut transcript = Vec::new();
+        append_stream(&mut transcript, "hello ");
+        append_stream(&mut transcript, "world");
+        assert_eq!(
+            transcript,
+            vec![TranscriptLine::streaming("hello world")],
+            "deltas append to the streaming line"
+        );
+        // A non-streaming line in between (e.g. a tool event) starts a new
+        // streaming line instead of corrupting the previous message.
+        transcript.push(TranscriptLine::tool("Bash started"));
+        append_stream(&mut transcript, "step 2");
+        assert_eq!(transcript[2], TranscriptLine::streaming("step 2"));
+
+        // finish_stream replaces the trailing streaming line with the final
+        // transcript, and reports the replacement.
+        assert!(finish_stream(&mut transcript, "final text".to_string()));
+        assert_eq!(transcript[2], TranscriptLine::assistant("final text"));
+        // With no streaming line it appends a fresh assistant line.
+        assert!(!finish_stream(&mut transcript, "another".to_string()));
+        assert_eq!(transcript.last(), Some(&TranscriptLine::assistant("another")));
+    }
+
+    #[test]
+    fn streaming_renders_distinct() {
+        let lines = styled_lines(&[TranscriptLine::streaming("growing")]);
+        assert_eq!(lines[0].spans[0].content, "growing");
+        assert_eq!(lines[0].spans[0].style.fg, Some(Color::Cyan));
     }
 
     #[test]

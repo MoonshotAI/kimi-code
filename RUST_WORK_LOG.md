@@ -5,6 +5,13 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㉑ TUI 流式（llm.delta 接线，阶段 D 流式缺口关闭，已提交）**：
+> - **发现**：引擎 native 模式早已把 provider token delta 以 `llm.delta` 事件（`{type, part:{type:text|think, text}}`）经 sink 转发到宿主流（agent.rs with_sink → callbacks.emit_event）；宿主侧无人消费——TUI 显示原始 JSON、CLI 静默。
+> - **kimi-ui**：新增 `stream_delta(&Value) -> Option<&str>`（仅 text 部分；think/非流式 → None）+ 测试（7 → 8）。
+> - **kimi-tui**：`TranscriptKind::Streaming` 变体（青色渲染，无前缀，终局替换无缝）；`append_stream`（delta 追加到尾部流式行，中间有 tool 事件则新起一行）+ `finish_stream`（turn 结束时把尾部流式行替换为完整转录，无流式行则追加）；pump 拦截 `llm.delta` → append，跳过 `llm.step.*` 噪音。
+> - **验证**：kimi-tui 测试 9 → 11（streaming_append_and_finish / streaming_renders_distinct）；clippy tui+ui 0 警告；workspace check 干净。
+> - **注意**：观察流式需可达 LLM（llm.delta 只在 native 模式真实 provider 调用时产生）；管线已全链路接通（引擎 → 宿主流 → TUI）。
+
 > **✅ 2026-08-03 ⑳ `kimi doctor tui`（TS parity，已提交）**：
 > - **新增 `doctor tui [path]`**：tui.toml 存在性 + TOML 语法校验（`toml::Value` parse），OK/ERROR 输出、错误 exit 1——对齐 TS doctor 的 tui 目标；全量 doctor 里 tui.toml 检查仍为存在性（SKIP/OK），`tui_config_path()` 抽为共享助手（KIMI_CODE_HOME → ~/.kimi-code，Windows USERPROFILE）。
 > - **依赖**：kimi-cli 加 toml 0.8。

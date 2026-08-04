@@ -48,6 +48,21 @@ pub fn render_event(event: &serde_json::Value) -> Option<String> {
     }
 }
 
+/// Extract the visible text delta from an `llm.delta` stream event (the
+/// engine's native-LLM path forwards provider token deltas this way). Returns
+/// `None` for thinking deltas and non-stream events, so hosts can render
+/// only what belongs in the assistant transcript.
+pub fn stream_delta(event: &serde_json::Value) -> Option<&str> {
+    if event.get("type").and_then(|t| t.as_str()) != Some("llm.delta") {
+        return None;
+    }
+    let part = event.get("part")?;
+    if part.get("type").and_then(|t| t.as_str()) != Some("text") {
+        return None;
+    }
+    part.get("text").and_then(|t| t.as_str())
+}
+
 /// Extract the last assistant message's text from a `session/get_context`
 /// result (print-mode parity: the CLI renders the transcript, not the RPC
 /// envelope). Returns `None` when the context has no assistant text.
@@ -72,7 +87,7 @@ pub fn last_assistant_text(context: &serde_json::Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{last_assistant_text, render_event};
+    use super::{last_assistant_text, render_event, stream_delta};
 
     #[test]
     fn render_known_event_types() {
@@ -111,6 +126,19 @@ mod tests {
     fn render_unknown_event_passes_through() {
         let event = serde_json::json!({ "type": "mystery.thing", "x": 1 });
         assert_eq!(render_event(&event), None);
+    }
+
+    #[test]
+    fn stream_delta_extracts_text_only() {
+        // Text deltas surface as the visible stream.
+        let delta = serde_json::json!({ "type": "llm.delta", "part": { "type": "text", "text": "hello " } });
+        assert_eq!(stream_delta(&delta), Some("hello "));
+        // Thinking deltas never enter the assistant transcript.
+        let think = serde_json::json!({ "type": "llm.delta", "part": { "type": "think", "think": "hmm" } });
+        assert_eq!(stream_delta(&think), None);
+        // Non-stream events and malformed payloads are ignored.
+        assert_eq!(stream_delta(&serde_json::json!({ "type": "session.turn.started" })), None);
+        assert_eq!(stream_delta(&serde_json::json!({ "type": "llm.delta" })), None);
     }
 
     #[test]
