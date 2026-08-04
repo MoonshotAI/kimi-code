@@ -7,6 +7,11 @@
  * provider when tokens are present, flips failing servers into `needs-auth`
  * on 401, and reconnects after authentication. Applies per-server settings
  * over the configured defaults and emits status changes to subscribers.
+ *
+ * `resolveClientName` supplies the name announced to servers during initialize
+ * (and the OAuth dynamic-registration label), consulted per connection so an
+ * identity configured after construction still applies; omitted, or resolving
+ * to `undefined`, keeps the built-in name.
  */
 
 import { ErrorCodes, Error2 } from '#/errors';
@@ -97,6 +102,7 @@ export interface McpConnectionManagerOptions {
   readonly oauthService?: McpOAuthService;
   readonly log?: Logger;
   readonly resolveDefaultTimeouts?: () => McpDefaultTimeouts;
+  readonly resolveClientName?: () => string | undefined;
 }
 
 export class McpConnectionManager implements McpConnectionView {
@@ -371,11 +377,13 @@ export class McpConnectionManager implements McpConnectionView {
   ): Promise<RuntimeMcpClient> {
     const toolCallTimeoutMs =
       config.toolTimeoutMs ?? this.options.resolveDefaultTimeouts?.().toolTimeoutMs;
+    const clientName = this.options.resolveClientName?.();
     if (config.transport === 'stdio') {
       return new StdioMcpClient(config, {
         startupTimeoutMs,
         toolCallTimeoutMs,
         defaultCwd: this.options.stdioCwd,
+        clientName,
       });
     }
     if (config.transport === 'sse') {
@@ -384,6 +392,7 @@ export class McpConnectionManager implements McpConnectionView {
         toolCallTimeoutMs,
         envLookup: this.options.envLookup,
         oauthProvider: await this.resolveOAuthProvider(config, name),
+        clientName,
       });
     }
     return new HttpMcpClient(config, {
@@ -391,6 +400,7 @@ export class McpConnectionManager implements McpConnectionView {
       toolCallTimeoutMs,
       envLookup: this.options.envLookup,
       oauthProvider: await this.resolveOAuthProvider(config, name),
+      clientName,
     });
   }
 

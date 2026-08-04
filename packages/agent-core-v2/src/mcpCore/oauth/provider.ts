@@ -13,6 +13,10 @@
  * blocking, while the data methods `await ready` before reading or writing.
  * The provider does not open browsers or run servers — it is the
  * persistence + flow-state shim.
+ *
+ * `clientName` is the product token for the default label
+ * (`<clientName> (<serverName>)`), carrying the configured custom identity; it
+ * is ignored when `clientLabel` states the whole label explicitly.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -30,6 +34,7 @@ import type {
   OAuthTokens,
 } from '@modelcontextprotocol/sdk/shared/auth.js';
 
+import { KIMI_MCP_CLIENT_NAME } from '../client-shared';
 import { canonicalMcpOAuthResource, mcpOAuthStoreKey, type McpOAuthStore } from './store';
 
 const TOKENS_SUFFIX = '-tokens.json';
@@ -42,6 +47,7 @@ export interface McpOAuthProviderOptions {
   readonly serverUrl: string | URL;
   readonly store: McpOAuthStore;
   readonly clientLabel?: string;
+  readonly clientName?: string;
 }
 
 export class McpOAuthClientProvider implements OAuthClientProvider {
@@ -63,7 +69,9 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
     this.serverUrl = canonicalMcpOAuthResource(options.serverUrl);
     this.storeKey = mcpOAuthStoreKey(options.serverName, this.serverUrl);
     this.store = options.store;
-    this.clientLabel = options.clientLabel ?? `kimi-code (${options.serverName})`;
+    this.clientLabel =
+      options.clientLabel ??
+      `${options.clientName ?? KIMI_MCP_CLIENT_NAME} (${options.serverName})`;
     this.ready = this.load();
   }
 

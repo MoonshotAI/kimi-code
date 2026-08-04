@@ -41,7 +41,12 @@
  * plugin changes reach the prompt when the skill catalog re-pulls its plugin
  * source on explicit plugin reload (the Workspace-scope catalog forwards the
  * plugin source's change through the session seed) — the same point where
- * plugin skills take effect. `refreshSystemPrompt` never rejects: a
+ * plugin skills take effect. The builtin source is refreshed on the same
+ * signal: it changes only when its config switch is toggled, so it costs what
+ * a config edit costs, unlike the file-backed sources whose fs watches would
+ * rebuild every agent's prompt on each edit. Subscribing to the catalog rather
+ * than to the config section matters — the catalog fires after the
+ * contribution is replaced, so the rebuilt prompt cannot read the old listing. `refreshSystemPrompt` never rejects: a
  * failed context build keeps the current prompt and surfaces a warning,
  * because the `[tools]` config watcher fires it voided (an unhandled
  * rejection would crash kap-server) and the Session tool-policy fan-out
@@ -61,8 +66,13 @@
  * fields because the container only holds pure data structures. After every
  * successful bind / apply / refresh (never before the new prompt commits,
  * so a failed build cannot poison the set), the injected AGENTS.md paths are
- * seeded into `agentsMdReminder`'s known-set with the effective cwd. Bound at
- * Agent scope.
+ * seeded into `agentsMdReminder`'s known-set with the effective cwd. Fills the
+ * prompt's product-name slot from the `agentIdentity` snapshot — frozen for
+ * the process, so no `[identity]` subscription belongs here; the template's
+ * own default applies when nothing is configured. `bind` gates on the freeze
+ * before materializing the model, whose resolution reads the identity through
+ * the host-headers port — a fast bootstrap must wait, not trip the pre-freeze
+ * guard. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -88,6 +98,7 @@ import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { ErrorCodes, Error2 } from "#/errors";
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import type { LoopControl } from '#/agent/loop/configSection';
@@ -99,7 +110,10 @@ import type { ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
-import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
+import {
+  BUILTIN_SKILL_SOURCE_ID,
+  PLUGIN_SKILL_SOURCE_ID,
+} from '#/app/skillCatalog/skillSource';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
@@ -231,6 +245,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IBuiltinAgentProfileLoader private readonly builtinProfiles: IBuiltinAgentProfileLoader,
     @IAgentStateService private readonly states: IAgentStateService,
     @IPluginService private readonly plugins: IPluginService,
+    @IAgentIdentity private readonly identity: IAgentIdentity,
     @IAgentAgentsMdReminderService private readonly agentsMdReminder: IAgentAgentsMdReminderService,
   ) {
     super();
@@ -260,7 +275,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     );
     this._register(
       this.skillCatalog.onDidChange((sourceId) => {
-        if (sourceId === PLUGIN_SKILL_SOURCE_ID) {
+        if (sourceId === PLUGIN_SKILL_SOURCE_ID || sourceId === BUILTIN_SKILL_SOURCE_ID) {
           void this.refreshSystemPrompt();
         }
       }),
@@ -351,6 +366,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   async bind(input: BindAgentInput): Promise<void> {
     await this.catalog.ready;
+    await this.identity.resolved();
     this.assertBindable(input.profile);
     const profile = this.catalog.get(input.profile);
     if (profile === undefined) {
@@ -925,7 +941,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       skills,
       pluginSections,
       skillActive: this.isToolActiveForProfile(profile, 'Skill'),
-      productName: this.bootstrap.args.displayName,
+      productName: (await this.identity.resolved()).displayName,
       replyStyleGuide: this.bootstrap.args.replyStyleGuide,
     };
   }

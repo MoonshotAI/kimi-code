@@ -27,6 +27,9 @@ import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionT
 import { IWireService } from '#/wire/wire';
 import type { ExecutableTool, ToolExecution, ToolResult, ToolSource } from '#/tool/toolContract';
 
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
+
+import { deferredAgentIdentityStub } from '../../app/agentIdentity/stubs';
 import {
   InMemoryWireRecordPersistence,
   agentService,
@@ -112,6 +115,25 @@ describe('AgentProfileService.bind', () => {
     expect(svc.isRunnable()).toBe(true);
     expect(svc.getActiveToolNames()?.length).toBeGreaterThan(0);
     expect(svc.getSystemPrompt()).toContain('Kimi Code CLI');
+  });
+
+  // A fast bootstrap can bind while config is still loading; the model
+  // materialization inside bind must wait for the identity freeze instead of
+  // tripping its pre-freeze guard through the host-headers port.
+  it('waits for the identity freeze instead of racing it', async () => {
+    const deferred = deferredAgentIdentityStub();
+    ctx = createTestAgent(
+      appService(IAgentIdentity, deferred.identity),
+      hostEnvironmentServices(homeDir),
+    );
+    const svc = ctx.get(IAgentProfileService);
+
+    const bound = svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    setTimeout(() => deferred.freeze(), 20);
+    await bound;
+
+    expect(svc.data().modelAlias).toBe(MOCK_MODEL);
+    expect(svc.isRunnable()).toBe(true);
   });
 
   it('renders the prompt and disclosure from the injected host clock', async () => {

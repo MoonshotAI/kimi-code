@@ -55,10 +55,10 @@ This server requires an OAuth login that has not yet been completed. ` +
 
   1. The tool prints an authorization URL.
   2. **You must show that URL to the user verbatim** and ask them to open it
-     in a browser, sign in, and approve the kimi-code client.
+     in a browser, sign in, and approve the client.
   3. The tool blocks (up to 15 minutes) until the browser redirects back to
      the local callback listener.
-  4. On success, kimi-code reconnects the MCP server and the real tools
+  4. On success, the client reconnects the MCP server and the real tools
      replace this synthetic tool.
 
 Take no arguments. Treat the URL as sensitive — do not modify it or strip
