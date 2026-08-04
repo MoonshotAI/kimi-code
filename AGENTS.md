@@ -69,7 +69,7 @@ This is a TypeScript monorepo built for agent-assisted development. This file is
 
 > **Status (2026-08-03):** the JS agent engines (`agent-core`, `agent-core-v2`) are **retired**. The only engine is the Rust engine (`packages/kimi-agent`). `schema.ts` `engine` enum is `'rust'` only — no JS fallback.
 >
-> **方向（2026-08-03 定案，见 `CODEX_MIGRATION_PLAN.md`）**：走 Codex 方向——**核心全部 Rust，TS 只留前端与分发薄壳**。当前 TS 宿主（CLI/TUI/Web/API，约 17 万行）按计划逐阶段迁入 `crates/`（kimi-cli/kimi-tui/kimi-server/kimi-sdk/…）。迁移完成前 TS 宿主保留（见下方白名单），**新增宿主逻辑优先写 Rust**；已完成迁移的模块删除对应 TS。
+> **方向（2026-08-03 定案，见 `CODEX_MIGRATION_PLAN.md`）**：走 Codex 方向——**核心全部 Rust，TS 只留前端与分发薄壳**。当前 TS 宿主（CLI/TUI/Web/API，约 17 万行）按计划逐阶段迁入 `crates/`（kimi-cli/kimi-tui/kimi-server/kimi-sdk/…）。**迁移进度（2026-08-03 会话）**：阶段 A–E 全部完成（协议/引擎/宿主协议/CLI/exec/TUI/ACP/SDK/OAuth/WS 传输+客户端，测试基线 2890+，三传输路径全 e2e）；阶段 F（入口切换与 TS 退役）按记录决策待 Rust 全绿后执行——npm 分发薄壳（kimi-code-rust-bin）已验证可用。迁移完成前 TS 宿主保留（见下方白名单），**新增宿主逻辑优先写 Rust**；已完成迁移的模块删除对应 TS。
 
 ### Where new code goes
 
