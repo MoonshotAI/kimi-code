@@ -1544,6 +1544,7 @@ dependencies = [
  "kimi-ui",
  "serde_json",
  "tokio",
+ "toml",
 ]
 
 [[package]]
@@ -1657,10 +1658,13 @@ dependencies = [
 name = "kimi-server-client"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "futures-util",
  "kimi-protocol",
  "kimi-server",
  "serde_json",
  "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]
@@ -1668,11 +1672,13 @@ name = "kimi-server-transport"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures-util",
  "kimi-protocol",
  "kimi-server",
  "kimi-server-client",
  "serde_json",
  "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]
