@@ -1,4 +1,10 @@
 
+> **✅ 2026-08-03 ⑬ TUI turn 取消（Esc/Ctrl-C，已提交）**：
+> - **合并按键轮询**：原 `poll_approval_keys` 与新增取消轮询若并存会互吞键（都调 `event::poll/read`）→ 合并为 `poll_prompt_keys` 单次读取：Esc/Ctrl-C → `Session::cancel`（session_id 走 server 端 cancel 标志，turn 在下一 LLM 调用前以 Aborted 收束，见 turn_loop/run_turn.rs:98）+ 转录「turn cancelled」；pending 审批时 y/n 仍解析队首。
+> - **纯函数**：`interrupt_action(KeyCode, KeyModifiers) -> Option<InterruptAction>`（Esc / Ctrl-C → CancelTurn），可测。
+> - **验证**：kimi-tui 测试 7 → 8（新增 interrupt_action_mapping）；clippy kimi-tui 0 警告。
+> - **价值**：本机 LLM 端点不可达时 prompt 会挂起，此前 TUI 无法中断（只能 Ctrl-C 强退）；现在可 Esc 取消 turn 并回到事件循环。
+
 > **✅ 2026-08-03 ⑫ TUI 冒烟（TestBackend 渲染测试，阶段 D 验证项 5，已提交）**：
 > - **draw 重构**：渲染逻辑提出 `render_frame(frame, transcript, input, session_id, status, scroll)` 纯函数（状态入参、无 App 借用）；`max_scroll(total, pane_height)` 提取滚动上限计算（原内联）。
 > - **冒烟测试**：`TestBackend(60x12)` + `Terminal::draw` 真实跑一遍渲染管线——断言双 pane 块标题（chat / `input — sess-1 | plan=off swarm=off`）、角色前缀顺序（▶ hi < hello there < ⚙ Read started）、样式落格（▶ 加粗、⚙ 蓝色）；`max_scroll` 边界（10→3、7→0、0→0）。

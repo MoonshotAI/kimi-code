@@ -119,6 +119,24 @@ fn queue_new_approvals(queue: &mut Vec<PendingApproval>, items: &[serde_json::Va
     added
 }
 
+/// An interrupt a running turn should react to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InterruptAction {
+    /// Abort the current turn via the session cancel flag.
+    CancelTurn,
+}
+
+/// Map a pressed key to an interrupt action (pure, tested).
+fn interrupt_action(code: KeyCode, modifiers: event::KeyModifiers) -> Option<InterruptAction> {
+    match code {
+        KeyCode::Esc => Some(InterruptAction::CancelTurn),
+        KeyCode::Char('c') if modifiers.contains(event::KeyModifiers::CONTROL) => {
+            Some(InterruptAction::CancelTurn)
+        }
+        _ => None,
+    }
+}
+
 /// The interactive chat application.
 pub struct App {
     harness: Harness,
@@ -437,9 +455,7 @@ impl App {
             let prompt_fut = session.prompt(line);
             tokio::pin!(prompt_fut);
             loop {
-                if !self.pending_approvals.is_empty() {
-                    self.poll_approval_keys().await?;
-                }
+                self.poll_prompt_keys().await?;
                 tokio::select! {
                     r = &mut prompt_fut => break Some(r.clone()),
                     _ = self.pump_one_event() => {}
@@ -524,17 +540,28 @@ impl App {
         }
     }
 
-    /// Non-blocking poll for y/n while an approval is pending, resolving the
-    /// front of the queue on a keypress.
-    async fn poll_approval_keys(&mut self) -> anyhow::Result<()> {
-        if event::poll(std::time::Duration::from_millis(0))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('y') => self.answer_approval(true).await?,
-                        KeyCode::Char('n') => self.answer_approval(false).await?,
-                        _ => {}
-                    }
+    /// Poll one key while a turn runs. Esc/Ctrl-C cancels the turn; with an
+    /// approval pending, y/n resolves the front of the queue. A single read
+    /// so y/n and interrupt keys never swallow each other.
+    async fn poll_prompt_keys(&mut self) -> anyhow::Result<()> {
+        if !event::poll(std::time::Duration::from_millis(0))? {
+            return Ok(());
+        }
+        if let Event::Key(key) = event::read()? {
+            if key.kind != KeyEventKind::Press {
+                return Ok(());
+            }
+            if interrupt_action(key.code, key.modifiers) == Some(InterruptAction::CancelTurn) {
+                let mut session = self.session.clone().expect("session");
+                session.cancel().await;
+                self.transcript.push(TranscriptLine::status("turn cancelled"));
+                return Ok(());
+            }
+            if !self.pending_approvals.is_empty() {
+                match key.code {
+                    KeyCode::Char('y') => self.answer_approval(true).await?,
+                    KeyCode::Char('n') => self.answer_approval(false).await?,
+                    _ => {}
                 }
             }
         }
@@ -825,6 +852,22 @@ mod tests {
         // Status lines are dimmed, errors are red.
         assert_eq!(lines[3].spans[0].style.fg, Some(Color::DarkGray));
         assert_eq!(lines[4].spans[0].style.fg, Some(Color::Red));
+    }
+
+    #[test]
+    fn interrupt_action_mapping() {
+        use event::KeyModifiers;
+        assert_eq!(
+            interrupt_action(KeyCode::Esc, KeyModifiers::NONE),
+            Some(InterruptAction::CancelTurn)
+        );
+        assert_eq!(
+            interrupt_action(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            Some(InterruptAction::CancelTurn)
+        );
+        // A bare 'c' or any other key is not an interrupt.
+        assert_eq!(interrupt_action(KeyCode::Char('c'), KeyModifiers::NONE), None);
+        assert_eq!(interrupt_action(KeyCode::Enter, KeyModifiers::NONE), None);
     }
 
     #[test]
