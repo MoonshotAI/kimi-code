@@ -10,12 +10,12 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Features
 
-- Add four hook events: `TurnStarted`, `UserPromptQueued`, `TaskStarted`, and `SessionHeartbeat`; `SessionEnd` now also reports `archive` when a session is archived instead of exited. Configure the events under `[[hooks]]` in `config.toml` — see [Hooks](../customization/hooks.md) for details.
+- Add four hook events: `TurnStarted`, `UserPromptQueued`, `TaskStarted`, and `SessionHeartbeat`. Configure them under `[[hooks]]` in `config.toml` — see [Hooks](https://moonshotai.github.io/kimi-code/en/customization/hooks.html) for details.
 
 ### Polish
 
-- Rename two `[loop_control]` keys: `max_retries_per_step` → `max_attempts_per_step` and `max_steps_per_run` → `max_steps_per_turn`; the old keys stop working — see [`loop_control`](../configuration/config-files.md#loop-control).
-- Add a `[token_counting]` config section: when a provider doesn't report token usage, switch the context-size display to local estimates — see [`token_counting`](../configuration/config-files.md#token-counting).
+- Rename two `[loop_control]` keys: `max_retries_per_step` → `max_attempts_per_step` and `max_steps_per_run` → `max_steps_per_turn`; the old keys stop working with a rename warning at startup — see [loop_control](https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#loop-control).
+- Add a `[token_counting]` config section: when a provider doesn't report token usage, switch the context-size display to local estimates — see [token_counting](https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#token-counting).
 
 ### Bug Fixes
 
