@@ -265,9 +265,10 @@ export async function mcpResultToExecutableOutput(
  * Drop protocol-reserved `_meta` keys before the payload reaches the model.
  *
  * Per the MCP spec's `_meta` key-name rules, a key may carry a dot-separated
- * label prefix terminated by `/`, and prefixes containing a
- * `modelcontextprotocol` or `mcp` label are reserved for protocol use (e.g.
- * `modelcontextprotocol.io/…`, `tools.mcp.com/…`). Reserved entries carry
+ * label prefix terminated by `/`; a prefix is reserved for protocol use when
+ * a `modelcontextprotocol` or `mcp` label is followed by at least one more
+ * label (e.g. `modelcontextprotocol.io/…`, `tools.mcp.com/…` — but not a
+ * vendor namespace like `com.example.mcp/…`). Reserved entries carry
  * host/protocol plumbing — progress and task wiring, UI component payloads —
  * that servers do not address to the model, so forwarding them would leak
  * side-channel data into the conversation. Unprefixed and vendor-prefixed
@@ -293,7 +294,10 @@ function isReservedMetaKey(key: string): boolean {
   const slash = key.indexOf('/');
   if (slash <= 0) return false;
   const labels = key.slice(0, slash).split('.');
-  return labels.some((label) => label === 'modelcontextprotocol' || label === 'mcp');
+  return labels.some(
+    (label, i) =>
+      (label === 'modelcontextprotocol' || label === 'mcp') && i < labels.length - 1,
+  );
 }
 
 /**

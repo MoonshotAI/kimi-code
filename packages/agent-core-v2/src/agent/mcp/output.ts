@@ -13,8 +13,10 @@
  *     budget so oversized payloads stay bounded. Literal closing tags inside
  *     the serialized payload are stripped so server data cannot fake an
  *     early end of the block. `_meta` keys with a protocol-reserved prefix
- *     (a dot-separated label list containing `modelcontextprotocol` or
- *     `mcp`, per the spec's key-name rules) are dropped first: they carry
+ *     (per the spec's key-name rules: a `modelcontextprotocol` or `mcp`
+ *     label followed by at least one more label, as in
+ *     `modelcontextprotocol.io/…` or `tools.mcp.com/…`, but not a vendor
+ *     namespace like `com.example.mcp/…`) are dropped first: they carry
  *     host/protocol plumbing rather than model-facing data, while unprefixed
  *     and vendor-prefixed keys pass through because their semantics belong
  *     to the server. Non-serialisable payloads drop the whole block rather
@@ -229,7 +231,10 @@ function isReservedMetaKey(key: string): boolean {
   const slash = key.indexOf('/');
   if (slash <= 0) return false;
   const labels = key.slice(0, slash).split('.');
-  return labels.some((label) => label === 'modelcontextprotocol' || label === 'mcp');
+  return labels.some(
+    (label, i) =>
+      (label === 'modelcontextprotocol' || label === 'mcp') && i < labels.length - 1,
+  );
 }
 
 function wrapMediaOnly(parts: readonly ContentPart[], qualifiedToolName: string): ContentPart[] {

@@ -325,6 +325,9 @@ describe('mcpResultToExecutableOutput', () => {
           'modelcontextprotocol.io/progress': 1,
           'tools.mcp.com/trace': 'x',
           'example.com/custom': 2,
+          // Reserved only when another label FOLLOWS mcp/modelcontextprotocol:
+          // a trailing reserved word is a legitimate vendor namespace.
+          'com.example.mcp/trace': 4,
           vendorKey: 3,
         },
       },
@@ -335,6 +338,7 @@ describe('mcpResultToExecutableOutput', () => {
     expect(joined).not.toContain('modelcontextprotocol.io/progress');
     expect(joined).not.toContain('tools.mcp.com/trace');
     expect(joined).toContain('"example.com/custom":2');
+    expect(joined).toContain('"com.example.mcp/trace":4');
     expect(joined).toContain('"vendorKey":3');
   });
 
