@@ -45,6 +45,7 @@ import {
   IAgentToolRegistryService,
   ISessionTodoService,
   DYNAMIC_TOOL_SCHEMA_VARIANT,
+  normalizeAgentProfile,
   type ExecutableTool,
   type ResolvedAgentProfile,
   type ToolExecution,
@@ -81,7 +82,7 @@ const SNAPSHOT_VISIBLE_TOOLS = [
   'ExitPlanMode',
 ] as const;
 const LARGE_MCP_TOOL = 'mcp__srv__large';
-const EXACT_COMPACTION_REFRESH_PROFILE: ResolvedAgentProfile = {
+const EXACT_COMPACTION_REFRESH_PROFILE: ResolvedAgentProfile = normalizeAgentProfile({
   name: 'exact-compaction-refresh',
   systemPrompt: (context) =>
     [
@@ -93,7 +94,7 @@ const EXACT_COMPACTION_REFRESH_PROFILE: ResolvedAgentProfile = {
       `extra:${context.additionalDirsInfo ?? ''}`,
     ].join('\n'),
   tools: ['Read', 'Write', 'Skill'],
-};
+});
 
 describe('FullCompaction', () => {
   it('keeps an oversized trailing user message as recent', () => {

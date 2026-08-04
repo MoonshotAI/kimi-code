@@ -7,12 +7,13 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { Event } from '#/_base/event';
 import { ConfigTarget, IConfigService } from '#/app/config/config';
 import { TOOLS_SECTION } from '#/agent/toolPolicy/configSection';
-import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { DEFAULT_AGENT_PROFILE_NAME, normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { AgentProfileRegistryService } from '#/app/agentProfileCatalog/agentProfileRegistryService';
 import { BuiltinAgentProfileLoaderService } from '#/app/agentProfileCatalog/builtinAgentProfileLoaderService';
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
+import { IHostClock } from '#/os/interface/hostClock';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -111,6 +112,26 @@ describe('AgentProfileService.bind', () => {
     expect(svc.isRunnable()).toBe(true);
     expect(svc.getActiveToolNames()?.length).toBeGreaterThan(0);
     expect(svc.getSystemPrompt()).toContain('Kimi Code CLI');
+  });
+
+  it('renders the prompt and disclosure from the injected host clock', async () => {
+    const hostClock: IHostClock = {
+      _serviceBrand: undefined,
+      now: () => new Date('2026-07-29T04:00:00.000Z'),
+      timeZone: () => 'Asia/Shanghai',
+    };
+    ctx = createTestAgent(appService(IHostClock, hostClock), hostEnvironmentServices(homeDir));
+    const svc = ctx.get(IAgentProfileService);
+
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+
+    expect(svc.getSystemPrompt()).toContain('2026-07-29T04:00:00.000Z');
+    expect(svc.data().environmentDisclosure).toMatchObject({
+      date: {
+        disclosed: true,
+        value: { localDate: '2026-07-29', timeZone: 'Asia/Shanghai' },
+      },
+    });
   });
 
   it('persists the complete binding in one journal record', async () => {
@@ -967,12 +988,12 @@ describe('AgentProfileService tool-pattern warnings', () => {
   // A file-defined agent, as far as the warning path is concerned: inline so
   // its typo stays out of the builtin-profile known-name vocabulary (a
   // registerAgentProfile contribution would legitimize its own entries).
-  const fileProfile: ResolvedAgentProfile = {
+  const fileProfile: ResolvedAgentProfile = normalizeAgentProfile({
     name: 'bad-patterns',
     tools: ['Bashh', 'mcp__github'],
     disallowedTools: ['*'],
     systemPrompt: () => 'tool pattern warning test',
-  };
+  });
 
   it('warns about profile entries that can never activate anything', async () => {
     ctx = createTestAgent(hostEnvironmentServices(homeDir));

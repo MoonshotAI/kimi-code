@@ -60,7 +60,7 @@ export class ExplicitAgentProfileLoaderService
       profiles.push(
         agentProfileFromFile(
           parseAgentFileText({ path: filePath, source: 'explicit', text }),
-          (context) => this.user.getDefaultProfile().systemPrompt(context),
+          (context) => this.user.getDefaultProfile().renderSystemPrompt(context),
         ),
       );
     }

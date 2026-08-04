@@ -53,7 +53,7 @@ import {
   type RunAgentOptions,
 } from '#/session/subagent/subagent';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
-import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { normalizeAgentProfile, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
@@ -168,17 +168,17 @@ function profileCatalogWithPreference(
   profileName: string,
   modelPreference: 'primary' | 'secondary',
 ): ISessionAgentProfileCatalog {
-  const main: AgentProfile = {
+  const main: AgentProfile = normalizeAgentProfile({
     name: 'agent',
     description: 'Main agent',
     systemPrompt: () => 'main',
-  };
-  const target: AgentProfile = {
+  });
+  const target: AgentProfile = normalizeAgentProfile({
     name: profileName,
     description: `${profileName} agent`,
     modelPreference,
     systemPrompt: () => profileName,
-  };
+  });
   return {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
@@ -566,19 +566,19 @@ describe('Agent tool description', () => {
   });
 
   it('renders effective tools after applying disallowedTools', () => {
-    const restricted: AgentProfile = {
+    const restricted: AgentProfile = normalizeAgentProfile({
       name: 'restricted',
       description: 'Restricted agent',
       tools: ['Bash', 'Read', 'mcp__github__*'],
       disallowedTools: ['Bash', 'mcp__github__*'],
       systemPrompt: () => 'restricted',
-    };
-    const allowAllExcept: AgentProfile = {
+    });
+    const allowAllExcept: AgentProfile = normalizeAgentProfile({
       name: 'allow-all-except',
       description: 'Allow all except one',
       disallowedTools: ['Bash'],
       systemPrompt: () => 'allow all except',
-    };
+    });
     const profiles = [restricted, allowAllExcept];
     const catalog: ISessionAgentProfileCatalog = {
       _serviceBrand: undefined,
@@ -601,22 +601,22 @@ describe('Agent tool description', () => {
   });
 
   it('lists only subagent types allowed by the caller profile', () => {
-    const caller: AgentProfile = {
+    const caller: AgentProfile = normalizeAgentProfile({
       name: 'orchestrator',
       description: 'Orchestrator',
       subagents: ['explore'],
       systemPrompt: () => 'orchestrator',
-    };
-    const coder: AgentProfile = {
+    });
+    const coder: AgentProfile = normalizeAgentProfile({
       name: 'coder',
       description: 'Coder',
       systemPrompt: () => 'coder',
-    };
-    const explore: AgentProfile = {
+    });
+    const explore: AgentProfile = normalizeAgentProfile({
       name: 'explore',
       description: 'Explorer',
       systemPrompt: () => 'explore',
-    };
+    });
     const profiles = [caller, coder, explore];
     const catalog: ISessionAgentProfileCatalog = {
       _serviceBrand: undefined,
@@ -638,22 +638,22 @@ describe('Agent tool description', () => {
   });
 
   it('lists subagent types from the persisted binding instead of the current catalog profile', () => {
-    const caller: AgentProfile = {
+    const caller: AgentProfile = normalizeAgentProfile({
       name: 'orchestrator',
       description: 'Orchestrator',
       subagents: ['coder'],
       systemPrompt: () => 'orchestrator',
-    };
-    const coder: AgentProfile = {
+    });
+    const coder: AgentProfile = normalizeAgentProfile({
       name: 'coder',
       description: 'Coder',
       systemPrompt: () => 'coder',
-    };
-    const explore: AgentProfile = {
+    });
+    const explore: AgentProfile = normalizeAgentProfile({
       name: 'explore',
       description: 'Explorer',
       systemPrompt: () => 'explore',
-    };
+    });
     const catalog: ISessionAgentProfileCatalog = {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
@@ -834,22 +834,22 @@ describe('Agent tool execution contract', () => {
   }
 
   function allowlistCatalog(allowlist: readonly string[]): ISessionAgentProfileCatalog {
-    const caller: AgentProfile = {
+    const caller: AgentProfile = normalizeAgentProfile({
       name: 'orchestrator',
       description: 'Orchestrator',
       subagents: allowlist,
       systemPrompt: () => 'orchestrator',
-    };
-    const coder: AgentProfile = {
+    });
+    const coder: AgentProfile = normalizeAgentProfile({
       name: 'coder',
       description: 'Coder',
       systemPrompt: () => 'coder',
-    };
-    const explore: AgentProfile = {
+    });
+    const explore: AgentProfile = normalizeAgentProfile({
       name: 'explore',
       description: 'Explorer',
       systemPrompt: () => 'explore',
-    };
+    });
     const profiles = [caller, coder, explore];
     return {
       _serviceBrand: undefined,

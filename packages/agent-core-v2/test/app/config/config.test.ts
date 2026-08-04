@@ -15,6 +15,7 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
+import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { Error2, ErrorCodes, toErrorPayload } from '#/errors';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import { createTestAgent, type TestAgentContext } from '../../harness';
@@ -192,11 +193,11 @@ describe('Agent config', () => {
   });
 
   it('useProfile emits the rendered system prompt and active tools', async () => {
-    const resolvedProfile: ResolvedAgentProfile = {
+    const resolvedProfile: ResolvedAgentProfile = normalizeAgentProfile({
       name: 'test-profile',
       systemPrompt: () => 'Profile system prompt.',
       tools: ['Read'],
-    };
+    });
 
     profile.useProfile(resolvedProfile, {
       osEnv: TEST_OS_ENV,
@@ -204,19 +205,19 @@ describe('Agent config', () => {
     });
 
     expect(ctx.newEvents()).toMatchInlineSnapshot(`
-      [wire] config.update            { "profileName": "test-profile", "systemPrompt": "Profile system prompt.", "agentsMdPaths": [], "disallowedTools": [], "time": "<time>" }
+      [wire] config.update            { "profileName": "test-profile", "systemPrompt": "Profile system prompt.", "environmentDisclosure": { "cwd": "<cwd>", "date": { "disclosed": false } }, "agentsMdPaths": [], "disallowedTools": [], "time": "<time>" }
       [emit] agent.status.updated     { "model": "mock-model", "maxContextTokens": 1000000 }
       [wire] tools.set_active_tools   { "names": [ "Read" ], "time": "<time>" }
     `);
   });
 
   it('useProfile passes additionalDirsInfo to profile system prompts', async () => {
-    const resolvedProfile: ResolvedAgentProfile = {
+    const resolvedProfile: ResolvedAgentProfile = normalizeAgentProfile({
       name: 'context-profile',
       systemPrompt: (context) =>
         `Prompt with additional dirs: ${context['additionalDirsInfo'] ?? 'none'}`,
       tools: ['Read'],
-    };
+    });
 
     profile.useProfile(resolvedProfile, {
       osEnv: TEST_OS_ENV,

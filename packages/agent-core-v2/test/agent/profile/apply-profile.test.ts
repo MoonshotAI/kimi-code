@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Emitter, Event } from '#/_base/event';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
+import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSystemPrompt } from '#/app/plugin/types';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
@@ -24,21 +25,21 @@ import {
   type TestAgentServiceOverride,
 } from '../../harness';
 
-const profile: ResolvedAgentProfile = {
+const profile: ResolvedAgentProfile = normalizeAgentProfile({
   name: 'agents-profile',
   systemPrompt: (context) =>
     typeof context['agentsMd'] === 'string' ? (context['agentsMd'] as string) : '',
   tools: [],
-};
+});
 
-const pluginProfile: ResolvedAgentProfile = {
+const pluginProfile: ResolvedAgentProfile = normalizeAgentProfile({
   name: 'plugin-profile',
   systemPrompt: (context) =>
     typeof context['pluginSections'] === 'string' ? context['pluginSections'] : '',
   tools: [],
-};
+});
 
-const exactProfile: ResolvedAgentProfile = {
+const exactProfile: ResolvedAgentProfile = normalizeAgentProfile({
   name: 'exact-profile',
   systemPrompt: (context) =>
     [
@@ -50,7 +51,7 @@ const exactProfile: ResolvedAgentProfile = {
       `extra:${context.additionalDirsInfo ?? ''}`,
     ].join('\n'),
   tools: ['Read', 'Write'],
-};
+});
 
 describe('AgentProfileService.applyProfile', () => {
   let ctx: TestAgentContext;
