@@ -24,6 +24,11 @@ function fakeHost(overrides: {
   };
   const host = {
     engineV2: overrides.engineV2 ?? false,
+    // Session-less (lazy session): plugin calls fall back to the harness facade.
+    session: undefined,
+    harness: {
+      removePlugin: () => Promise.resolve(),
+    },
     requireSession: () => session,
     showStatus: (text: string) => {
       statuses.push(text);
