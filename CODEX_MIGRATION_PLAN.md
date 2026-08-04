@@ -336,9 +336,9 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - [x] 阶段 A 框架落地（kimi-protocol + workspace + wire 类型下沉）✅
 - [x] 阶段 B 宿主协议层（kimi-server 52 测试 + transport/serve 二进制 + client InProcess/Remote 全链路）✅
 - [x] 阶段 C CLI + exec（21 集成测试 + typed client + 配置读写闭环 + chat REPL + acp 命令 + print/resume 目标模式）✅
-- [ ] 阶段 D TUI（kimi-ui 前置 ✅ + chat REPL ✅ + **kimi-tui 骨架 ✅**（ratatui 事件渲染/Tab 补全/15+ slash/会话切换）；chatwidget 细化待续）
+- [ ] 阶段 D TUI（kimi-ui 前置 ✅ + chat REPL ✅ + **kimi-tui 骨架 ✅**（ratatui 事件实时渲染/Tab 模型补全/18+ slash 全命令面/会话切换/目标生命周期）；chatwidget 细化与流式待续）
 - [ ] 阶段 E SDK/ACP/OAuth/Config（kimi-sdk 🔶 + kimi-acp 🔶 + **kimi-oauth ✅**（device flow）+ **catalog ✅**（models.dev）+ provider/login/completions 命令 ✅）
-- [ ] 阶段 F 退役
+- [ ] 阶段 F 退役（**npm 分发薄壳 ✅**：kimi-code-rust-bin 包装 + pack.mjs CI 打包；TS 删除与入口切换待续）
 
 ## 9. 迁移推进会话快照（2026-08，分支 feat/rust-agent-engine-migration）
 
@@ -360,6 +360,6 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - chat/print goal 模式需先建 session 再 goal_create
 - （附）测试基建：并行测试 KIMI_AGENT_HOME 环境变量竞争 → STORE_LOCK 串行化模式
 
-**离线边界更新（网络已恢复，2026-08）**：ratatui TUI、clap_complete、catalog（models.dev）、OAuth（kimi-oauth device flow）已落地；剩余网络项：ts-rs 绑定生成（可选）。
+**离线边界更新（网络已恢复，2026-08）**：ratatui TUI、clap_complete、catalog（models.dev）、OAuth（kimi-oauth device flow）、npm 分发薄壳全部落地；剩余：ts-rs 绑定生成（可选）。
 
 **下一步建议**：联网后先引 ratatui 建 kimi-tui 骨架（复用 kimi-ui 原语 + EventSource + Harness）；离线侧可继续 session 剩余方法（activate_skill/list_skills 注册表注入测试）与 `kimi-sdk` 的 skill/plan 面。
