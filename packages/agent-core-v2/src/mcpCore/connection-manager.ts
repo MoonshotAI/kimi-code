@@ -410,7 +410,7 @@ export class McpConnectionManager implements McpConnectionView {
     if (this.oauthService === undefined) return false;
     if (!isRemoteMcpConfig(entry.config)) return false;
     if (entry.config.bearerTokenEnvVar !== undefined) return false;
-    if (entry.config.headers !== undefined) return false;
+    if (entry.config.headers !== undefined && entry.config.auth !== 'oauth') return false;
     return isUnauthorizedLikeError(error);
   }
 

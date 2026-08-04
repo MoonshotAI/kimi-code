@@ -549,6 +549,65 @@ describe('McpConnectionManager', () => {
     }
   }, 15000);
 
+  it('marks an explicitly OAuth HTTP server as needs-auth when non-auth headers accompany a 401', async () => {
+    const server: HttpServer = createHttpServer((_req, res) => {
+      res.writeHead(401, {
+        'content-type': 'application/json',
+        'www-authenticate':
+          'Bearer realm="mcp", resource_metadata="http://x/.well-known/oauth-protected-resource"',
+      });
+      res.end(JSON.stringify({ error: 'unauthorized' }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as HttpAddress).port;
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    const cm = new McpConnectionManager({ oauthService });
+    try {
+      await cm.connectAll({
+        gated: {
+          transport: 'http',
+          url: `http://127.0.0.1:${port}/mcp`,
+          headers: { 'X-Tenant': 'example' },
+          auth: 'oauth',
+          startupTimeoutMs: 5_000,
+        },
+      });
+      const entry = cm.get('gated');
+      expect(entry?.status).toBe('needs-auth');
+      expect(entry?.error).toContain('run /mcp-config login gated');
+      expect(entry?.toolCount).toBe(0);
+    } finally {
+      await cm.shutdown();
+      await closeServer(server);
+    }
+  }, 15000);
+
+  it('keeps a headers-only HTTP server failed (not needs-auth) on 401', async () => {
+    const server: HttpServer = createHttpServer((_req, res) => {
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'unauthorized' }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as HttpAddress).port;
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    const cm = new McpConnectionManager({ oauthService });
+    try {
+      await cm.connectAll({
+        keyed: {
+          transport: 'http',
+          url: `http://127.0.0.1:${port}/mcp`,
+          headers: { Authorization: 'Bearer static-key' },
+          startupTimeoutMs: 5_000,
+        },
+      });
+      const entry = cm.get('keyed');
+      expect(entry?.status).toBe('failed');
+    } finally {
+      await cm.shutdown();
+      await closeServer(server);
+    }
+  }, 15000);
+
   it('flips SSE servers into needs-auth when the server returns 401 and no static token is set', async () => {
     const server: HttpServer = createHttpServer((_req, res) => {
       res.writeHead(401, {
