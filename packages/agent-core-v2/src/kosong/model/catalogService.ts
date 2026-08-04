@@ -45,7 +45,7 @@ import {
   toProtocolProvider,
 } from './catalog';
 import { ModelCatalogErrors } from './errors';
-import { IHostRequestHeaders } from './hostRequestHeaders';
+import { IHostRequestHeaders, isFirstPartyBaseUrl } from './hostRequestHeaders';
 import {
   assembleModelInspection,
   attributeEffectiveFields,
@@ -519,9 +519,6 @@ export function resolveOutboundHeaders(
   host: Pick<IHostRequestHeaders, 'headers' | 'thirdPartyHeaders'>,
   baseUrl: string | undefined,
 ): Readonly<Record<string, string>> {
-  // A vendor's `hostHeaders: 'full'` contract is meant for the vendor's own
-  // endpoint. A provider that speaks the same protocol but points elsewhere
-  // must not receive the host identity set (device id included).
   const forwardsAll =
     providerType !== undefined &&
     getProviderDefinition(providerType)?.hostHeaders === 'full' &&
@@ -529,20 +526,6 @@ export function resolveOutboundHeaders(
   const hostLayer = forwardsAll ? host.headers : host.thirdPartyHeaders;
   return { ...parseKimiCodeCustomHeaders(), ...hostLayer, ...customHeaders };
 }
-
-const FIRST_PARTY_HOSTS = new Set(['api.moonshot.ai', 'api.moonshot.cn']);
-
-function isFirstPartyBaseUrl(baseUrl: string | undefined): boolean {
-  if (baseUrl === undefined) {
-    return true;
-  }
-  try {
-    return FIRST_PARTY_HOSTS.has(new URL(baseUrl).hostname);
-  } catch {
-    return false;
-  }
-}
-
 
 function resolveModelCapabilities(
   declaredCapabilities: readonly string[] | undefined,

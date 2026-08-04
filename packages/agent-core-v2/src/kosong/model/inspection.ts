@@ -12,6 +12,7 @@ import { getProviderDefinition } from '../provider/providerDefinition';
 
 import type { ModelRecord } from './model';
 import type { ResolvedModelAuthMaterial } from './model.types';
+import { isFirstPartyBaseUrl } from './hostRequestHeaders';
 
 export interface InspectedAuth {
   readonly kind: 'apiKey' | 'oauth' | 'none';
@@ -468,7 +469,8 @@ function attributeHeaders(
   const identitySlug = trace.captured<string | undefined>(TRACE.identitySlug);
   const forwardsAll =
     providerConfig?.type !== undefined &&
-    getProviderDefinition(providerConfig.type)?.hostHeaders === 'full';
+    getProviderDefinition(providerConfig.type)?.hostHeaders === 'full' &&
+    isFirstPartyBaseUrl(providerConfig.baseUrl);
   const hostLayer: Readonly<Record<string, string>> = forwardsAll
     ? rawHost
     : trace.captured<Readonly<Record<string, string>>>(TRACE.thirdPartyHeaders) ?? {};
