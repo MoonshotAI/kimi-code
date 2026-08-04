@@ -82,9 +82,9 @@ import { resolvePasswordHash } from './services/auth/password';
 import { createTokenStore } from './services/auth/tokenStore';
 
 // Temporary feature: global message search. Importing this module registers
-// `IGlobalSearchService` (App scope) into the DI registry as a side effect, so
-// it MUST stay above any `bootstrap()` call — registration happens at module
-// evaluation time.
+// `IGlobalSearchService` (App scope, OnDemand) into the DI registry as a side
+// effect, so it MUST stay above any `bootstrap()` call — registration happens
+// at module evaluation time. The server explicitly resolves it after bootstrap.
 import { drainGlobalSearchDisposals, IGlobalSearchService } from './search/searchService';
 
 export interface ServerHostIdentity extends KimiHostIdentity {
@@ -378,8 +378,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
   const connectionRegistry = new ConnectionRegistry();
   const transcriptService = new TranscriptService({ homeDir, core, logger });
-  // The global search service is DI-managed (App scope) while the transcript
-  // service is constructed here by hand — wire the former to the latter so
+  // The global search service is DI-managed (App scope, OnDemand) while the
+  // transcript service is constructed here by hand. This resolve is what ACTIVATES
+  // the search service — it starts background indexing for the server, so it must
+  // stay ahead of route registration. Wire the former to the latter so
   // container-scoped searches on live sessions scan the in-memory transcript.
   core.accessor.get(IGlobalSearchService).setLiveTranscriptSource(transcriptService);
   const broadcaster = new SessionEventBroadcaster({
