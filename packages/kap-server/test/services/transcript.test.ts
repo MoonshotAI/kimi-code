@@ -2157,6 +2157,72 @@ describe('bindSessionTranscript', () => {
     expect(fallback).toMatchObject({ turn: { attachmentIds: ['att_1'] } });
   });
 
+  it('terminal turn.upsert inherits the backfilled header when the projector missed turn.started', () => {
+    const agents = new FakeAgents();
+    const store = new TranscriptStore('s1');
+    const ops: TranscriptOperation[] = [];
+    const binding = bindSessionTranscript(
+      store,
+      fakeSession(new SessionInteractionService(new TestSessionStateService()), agents),
+      undefined,
+      (event) => ops.push(...event.ops),
+    );
+    const main = agents.add('main');
+
+    // The history backfill landed first: the store already holds the running
+    // turn with its cold attachment ids…
+    store.ensureAgent('main').apply([
+      {
+        op: 'attachment.upsert',
+        attachment: {
+          attachmentId: 'att_1',
+          mediaType: 'image/*',
+          name: 'shot.png',
+          source: { kind: 'file', fileId: 'f_1' },
+        },
+      },
+      {
+        op: 'turn.upsert',
+        turn: {
+          kind: 'turn',
+          turnId: 't0',
+          ordinal: 0,
+          state: 'running',
+          origin: { kind: 'user' },
+          prompt: 'hi',
+          attachmentIds: ['att_1'],
+          startedAt: '2026-08-04T00:00:00.000Z',
+        },
+      },
+    ]);
+
+    // …but the projector attached mid-turn: the only live event it ever sees
+    // for this turn is the terminal one. The terminal batch itself must carry
+    // the inherited header — waiting for the debounced heal is too late (the
+    // whole-header replace has already wiped the ids, and the session may
+    // close before the heal runs).
+    main.bus.emit(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+
+    const terminal = ops.filter((op) => op.op === 'turn.upsert');
+    expect(terminal).toHaveLength(1);
+    expect(terminal[0]).toMatchObject({
+      turn: {
+        turnId: 't0',
+        state: 'completed',
+        origin: { kind: 'user' },
+        prompt: 'hi',
+        attachmentIds: ['att_1'],
+        startedAt: '2026-08-04T00:00:00.000Z',
+      },
+    });
+    expect(store.getAgent('main')?.getTurn('t0')).toMatchObject({
+      state: 'completed',
+      prompt: 'hi',
+      attachmentIds: ['att_1'],
+    });
+    binding.dispose();
+  });
+
   it('seeds pending interactions per agent, not before that agent is backfilled', () => {
     const interactions = new SessionInteractionService(new TestSessionStateService());
     interactions.enqueue({ id: 'q-main', kind: 'question', payload: { toolCallId: 'call_main' }, origin: { agentId: 'main', turnId: 0 } });

@@ -162,11 +162,19 @@ export type ProjectorToolFrameLookup = (toolCallId: string) => ToolFrameRecord |
  */
 export type ProjectorStepOrdinalLookup = (turnId: string) => number | undefined;
 
+/**
+ * Read access to one turn's current header (the producer store). Used when
+ * the projector attached mid-turn and never saw `turn.started` — see
+ * `onTurnEnded`.
+ */
+export type ProjectorTurnLookup = (turnId: string) => TurnHeader | undefined;
+
 /** Optional producer-store lookups that let the projector adopt seeded state. */
 export interface ProjectorLookups {
   readonly stepFrames?: ProjectorFrameLookup;
   readonly toolFrame?: ProjectorToolFrameLookup;
   readonly stepOrdinal?: ProjectorStepOrdinalLookup;
+  readonly turn?: ProjectorTurnLookup;
 }
 
 interface OpenTextFrame {
@@ -357,7 +365,13 @@ export class AgentTranscriptProjector {
       this.currentStep = step;
       ops.push({ op: 'step.upsert', turnId: step.turnId, step });
     }
-    const prev = this.currentTurn?.turnId === turnId ? this.currentTurn : undefined;
+    // Mid-turn attach: when this projector never saw `turn.started`, inherit
+    // the header the history backfill already seeded into the store —
+    // otherwise this terminal upsert (a whole-header replace downstream)
+    // would wipe the backfilled origin / prompt / attachmentIds until the
+    // next heal, and for good if the session closes before it runs.
+    const prev =
+      this.currentTurn?.turnId === turnId ? this.currentTurn : this.lookups?.turn?.(turnId);
     const state = mapTurnEndState(event.reason);
     this.currentTurn = {
       kind: 'turn',
