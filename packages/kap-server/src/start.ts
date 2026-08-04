@@ -12,6 +12,7 @@ import {
   IConfigService,
   IEventService,
   IProviderDiscoveryService,
+  IRemoteControlService,
   IWorkspaceService,
   logSeed,
   resolveConfigPath,
@@ -40,6 +41,7 @@ import {
   type ServerLogger,
   type ServerLogLevel,
 } from './services/pinoLoggerService';
+import { hostname } from 'node:os';
 import { join } from 'node:path';
 import type { Socket } from 'node:net';
 import type { IncomingMessage } from 'node:http';
@@ -124,6 +126,11 @@ export interface ServerStartOptions {
    * unset unless a second, distinct RPC credential is genuinely needed.
    */
   readonly rpcToken?: string;
+  /** Optional relay endpoint for the experimental Remote Control tunnel. */
+  readonly remoteControl?: {
+    readonly relayBaseUrl: string;
+    readonly alias?: string;
+  };
   /** Extra scope seeds applied at bootstrap (e.g. a host-provided `ISessionModelResolver`). */
   readonly seeds?: ScopeSeed;
   /**
@@ -351,7 +358,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     app.addHook('onSend', createSecurityHeadersHook({ tls: false }));
   }
 
+  let remoteControlService: IRemoteControlService | undefined;
   const close = async (): Promise<void> => {
+    await remoteControlService?.stop('local_server_stopped');
     await app.close();
     configWarningSubscription.dispose();
     authFailureLimiter?.dispose();
@@ -635,6 +644,25 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   // registry finds the real listener.
   await registration.update({ port: boundPort });
 
+  if (opts.remoteControl !== undefined) {
+    remoteControlService = core.accessor.get(IRemoteControlService);
+    try {
+      await remoteControlService.start({
+        relayBaseUrl: opts.remoteControl.relayBaseUrl,
+        alias: opts.remoteControl.alias ?? hostname(),
+        localBaseUrl: `http://${remoteControlLoopbackHost(host)}:${String(boundPort)}`,
+        getLocalToken: () => authTokenService.getToken(),
+      });
+    } catch (error) {
+      try {
+        await close();
+      } catch {
+        // best-effort cleanup; the Remote Control start error is what matters
+      }
+      throw error;
+    }
+  }
+
   void modelCatalogRefreshScheduler.start().catch((error) => {
     logger.warn(
       { err: error instanceof Error ? error.message : String(error) },
@@ -643,6 +671,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   });
 
   return { app, core, connectionRegistry, authTokenService, host, port: boundPort, close };
+}
+
+function remoteControlLoopbackHost(boundHost: string): string {
+  if (boundHost === '0.0.0.0') return '127.0.0.1';
+  if (boundHost === '::' || boundHost === '0:0:0:0:0:0:0:0') return '[::1]';
+  return boundHost.includes(':') && !boundHost.startsWith('[') ? `[${boundHost}]` : boundHost;
 }
 
 /**

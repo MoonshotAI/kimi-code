@@ -9,20 +9,23 @@ import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { pino } from 'pino';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-
 import {
   IBootstrapService,
   IFileSystemStorageService,
   IHostRequestHeaders,
   InMemoryStorageService,
   IOAuthToolkit,
+  IRemoteControlService,
   ITelemetryService,
   noopTelemetryService,
+  type RemoteControlStartOptions,
+  type ServiceIdentifier,
 } from '@moonshot-ai/agent-core-v2';
+import { pino } from 'pino';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { listLiveServerInstances } from '../src/instanceRegistry';
+import type { IAuthTokenService } from '../src/services/auth/authTokenService';
 import { listenWithPortRetry, type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authedFetch } from './helpers/auth';
@@ -246,6 +249,64 @@ describe('server-v2 boot', () => {
 
     expect(() => core.accessor.get(IBootstrapService)).toThrow();
     expect(await listLiveServerInstances(home)).toEqual([]);
+  });
+
+  it('starts Remote Control after listen with the bound port and stops it before Fastify', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-remote-control-'));
+    const events: string[] = [];
+    let startOptions: RemoteControlStartOptions | undefined;
+    const remoteControl: IRemoteControlService = {
+      _serviceBrand: undefined,
+      state: 'offline',
+      onDidChangeState: () => ({ dispose: () => {} }),
+      start: (options) => {
+        startOptions = options;
+        events.push('remote-start');
+        return Promise.resolve();
+      },
+      stop: (reason) => {
+        events.push(`remote-stop:${reason}`);
+        return Promise.resolve();
+      },
+    };
+    const authTokenService: IAuthTokenService = {
+      _serviceBrand: undefined,
+      getToken: () => 'local-token',
+      isValid: (candidate) => Promise.resolve(candidate === 'local-token'),
+    };
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '0.0.0.0',
+      port: 0,
+      homeDir: home,
+      insecureNoTls: true,
+      logLevel: 'silent',
+      authTokenService,
+      remoteControl: { relayBaseUrl: 'https://relay.example.test', alias: 'test-device' },
+      seeds: [[IRemoteControlService as ServiceIdentifier<unknown>, remoteControl]],
+    });
+    const closeFastify = server.app.close.bind(server.app);
+    const appClose = server.app as unknown as { close(): Promise<void> };
+    appClose.close = async () => {
+      events.push('fastify-close');
+      await closeFastify();
+    };
+
+    expect(startOptions).toMatchObject({
+      relayBaseUrl: 'https://relay.example.test',
+      alias: 'test-device',
+      localBaseUrl: `http://127.0.0.1:${String(server.port)}`,
+    });
+    expect(startOptions?.getLocalToken()).toBe('local-token');
+    expect(events).toEqual(['remote-start']);
+
+    await server.close();
+    server = undefined;
+    expect(events).toEqual([
+      'remote-start',
+      'remote-stop:local_server_stopped',
+      'fastify-close',
+    ]);
   });
 });
 
