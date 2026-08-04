@@ -233,7 +233,6 @@ describe('useKimiWebClient session work reconnect baseline', () => {
           id: 'workspace-1',
           root: '/workspace',
           name: 'Workspace',
-          isGitRepo: false,
           sessionCount: initial.length,
         },
       ]),

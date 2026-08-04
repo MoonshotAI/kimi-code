@@ -8,7 +8,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { FsBrowseEntry, FsBrowseResult } from '../../api/types';
-import { Badge, Button, Dialog, Field, Icon, IconButton, Input, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
+import { Button, Dialog, Field, Icon, IconButton, Input, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -46,7 +46,7 @@ const entries = ref<FsBrowseEntry[]>([]);
 // dialog never resizes while searching.
 const filter = ref('');
 const searching = ref(false);
-interface SearchHit { path: string; name: string; rel: string; isGitRepo?: boolean; branch?: string }
+interface SearchHit { path: string; name: string; rel: string }
 const searchResults = ref<SearchHit[]>([]);
 const isSearching = computed(() => filter.value.trim().length > 0);
 let searchToken = 0;
@@ -95,7 +95,7 @@ async function runSearch(query: string): Promise<void> {
       if (!e.isDir) continue;
       const rel = e.path.startsWith(root) ? e.path.slice(root.length).replace(/^\/+/, '') : e.path;
       if (fuzzyMatch(q, rel || e.name)) {
-        hits.push({ path: e.path, name: e.name, rel: rel || e.name, isGitRepo: e.isGitRepo, branch: e.branch });
+        hits.push({ path: e.path, name: e.name, rel: rel || e.name });
         if (hits.length >= SEARCH_MAX_RESULTS) break;
       }
       if (node.depth + 1 < SEARCH_MAX_DEPTH) queue.push({ path: e.path, depth: node.depth + 1 });
@@ -270,9 +270,6 @@ onUnmounted(() => {
             >
               <Icon class="dir-icon" name="folder-closed" size="sm" />
               <span class="folder-name search-rel">{{ hit.rel }}</span>
-              <Badge v-if="hit.isGitRepo" variant="info" size="sm">
-                {{ t('workspace.gitTag') }}<span v-if="hit.branch" class="git-branch"> {{ hit.branch }}</span>
-              </Badge>
             </button>
             <div v-if="!searching && searchResults.length === 0" class="fl-empty">{{ t('workspace.noFilterMatch', { q: filter.trim() }) }}</div>
             <div v-else-if="searching && searchResults.length === 0" class="fl-loading">{{ t('workspace.searching') }}</div>
@@ -288,9 +285,6 @@ onUnmounted(() => {
             >
               <Icon class="dir-icon" name="folder-closed" size="sm" />
               <span class="folder-name">{{ entry.name }}</span>
-              <Badge v-if="entry.isGitRepo" variant="info" size="sm">
-                {{ t('workspace.gitTag') }}<span v-if="entry.branch" class="git-branch"> {{ entry.branch }}</span>
-              </Badge>
             </button>
             <div v-if="entries.length === 0" class="fl-empty">{{ t('workspace.noSubfolders') }}</div>
           </template>
@@ -452,7 +446,6 @@ onUnmounted(() => {
   white-space: nowrap;
   color: var(--color-text);
 }
-.git-branch { color: var(--color-text-muted); }
 
 /* Paste-path escape hatch */
 .paste-section {

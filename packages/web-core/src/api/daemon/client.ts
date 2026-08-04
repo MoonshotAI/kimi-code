@@ -1302,8 +1302,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
           name: e.name,
           path: e.path,
           isDir: e.is_dir,
-          isGitRepo: e.is_git_repo,
-          branch: e.branch,
         })),
       };
     } catch {

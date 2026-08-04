@@ -115,7 +115,7 @@ describe('useKimiWebClient (applyEvent slice isolation)', () => {
       listModels: vi.fn(async () => []),
       listProviders: vi.fn(async () => []),
       listWorkspaces: vi.fn(async () => [
-        { id: 'workspace-1', root: '/workspace', name: 'Workspace', isGitRepo: false, sessionCount: 1 },
+        { id: 'workspace-1', root: '/workspace', name: 'Workspace',sessionCount: 1 },
       ]),
       getFsHome: vi.fn(async () => ({ home: '/home/test', recentRoots: [] })),
       listSessions: vi.fn(async () => ({ items: [session], hasMore: false })),

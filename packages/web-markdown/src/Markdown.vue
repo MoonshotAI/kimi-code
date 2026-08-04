@@ -16,7 +16,7 @@ import type { ResolveImage } from '@moonshot-ai/web-core/contracts';
 import { collectFilePathAliases, findFilePathLinks } from './lib/filePathLinks';
 import { configureInlineMath } from './lib/inlineMath';
 import { markdownRenderPlan } from './lib/markdownPerformance';
-import { copyTextToClipboard } from './lib/clipboard';
+import { copyCodeBlockFallback, copyTextToClipboard } from './lib/clipboard';
 import {
   ensureTableWideToggle,
   updateTableWideToggle,
@@ -399,15 +399,6 @@ const codeBlockProps = {
     padding: { top: 12, bottom: 12 },
   },
 };
-
-function copyCodeBlockFallback(code: string): void {
-  // markstream emits `copy` even when it skipped the write because the
-  // Clipboard API is unavailable. Reuse our plain-HTTP fallback in that case,
-  // while avoiding a duplicate write after markstream succeeds on HTTPS.
-  const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
-  if (clipboard && typeof clipboard.writeText === 'function') return;
-  void copyTextToClipboard(code);
-}
 
 // Root cause for the "large session turns into code skeletons" failure:
 // markstream mounts every code block in the loaded transcript, then the

@@ -44,7 +44,6 @@ export default {
   pasteToggle: 'Enter an absolute path',
   noFilterMatch: 'No subfolders match “{q}”',
   noSubfolders: 'No subfolders here',
-  gitTag: 'git',
   browseHint: 'Click a folder to enter it, then "Open this folder" to add it as a workspace.',
   // Attention marker
   attentionTitle: '{count} item needs your attention | {count} items need your attention',

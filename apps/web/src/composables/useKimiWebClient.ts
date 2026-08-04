@@ -13,6 +13,7 @@ import {
 } from '../lib/workspaceOrder';
 import { logError, logWarn } from '../lib/log';
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
+import { workspaceRootKey } from '../lib/rootKey';
 import { mergeSnapshotMessages } from '../lib/snapshotMessages';
 import { mergeSnapshotSubagents } from '../lib/taskMerge';
 import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
@@ -2761,18 +2762,21 @@ const changesByPath = computed<Record<string, string>>(() => {
 const workspaceIdByRoot = computed(() => {
   const map = new Map<string, string>();
   for (const w of rawState.workspaces) {
-    if (!map.has(w.root)) map.set(w.root, w.id);
+    const key = workspaceRootKey(w.root);
+    if (!map.has(key)) map.set(key, w.id);
   }
   return map;
 });
 
 /**
- * The workspace id a session belongs to: prefer the daemon-provided
- * session.workspaceId; otherwise map by cwd (in derived/fallback mode the
- * workspace id IS the cwd).
+ * The workspace id a session belongs to: the first registered workspace whose
+ * root identity-matches the session cwd (folds Windows case/slash variants —
+ * keeps grouping consistent with `mergeWorkspaces` so a session never falls
+ * out of the group the merge rendered); otherwise the daemon-provided
+ * session.workspaceId; otherwise the cwd itself (derived/fallback mode).
  */
 function workspaceIdForSession(s: { workspaceId?: string; cwd: string }): string {
-  return workspaceIdByRoot.value.get(s.cwd) ?? s.workspaceId ?? s.cwd;
+  return workspaceIdByRoot.value.get(workspaceRootKey(s.cwd)) ?? s.workspaceId ?? s.cwd;
 }
 
 /**
@@ -2786,8 +2790,6 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() =>
     workspaces: rawState.workspaces,
     sessions: rawState.sessions,
     hiddenWorkspaceRoots: rawState.hiddenWorkspaceRoots,
-    activeRoot: rawState.sessions.find((s) => s.id === rawState.activeSessionId)?.cwd,
-    activeBranch: gitInfo.value?.branch ?? null,
     sessionsHasMoreByWorkspace: rawState.sessionsHasMoreByWorkspace,
   }),
 );
@@ -2898,7 +2900,6 @@ const workspacesView = computed<WorkspaceView[]>(() => {
     name: w.name,
     root: w.root,
     shortPath: shortenHome(w.root, rawState.fsHome),
-    branch: w.branch,
     sessionCount: w.sessionCount,
   }));
   return sortByWorkspaceOrder(views, workspaceOrder.value);
