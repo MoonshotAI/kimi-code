@@ -49,6 +49,7 @@ import {
   type BuiltinSlashCommandName,
 } from './registry';
 import { handleReloadCommand, handleReloadTuiCommand } from './reload';
+import type { SkillListSession } from './skills';
 import {
   resolveSlashCommandInput,
   slashBusyMessage,
@@ -133,6 +134,11 @@ export interface SlashCommandHost {
    * mutations apply before the first session exists.
    */
   refreshPluginCommands(session?: Session): Promise<void>;
+  /**
+   * Rebuild the skill slash-command list. With no session (v2 session-less
+   * startup) this reads the workspace skills instead.
+   */
+  refreshSkillCommands(session?: SkillListSession): Promise<void>;
   /**
    * Seed appState with the config defaults the v2 engine would apply at
    * createSession time (model, permission, plan mode, thinking effort,

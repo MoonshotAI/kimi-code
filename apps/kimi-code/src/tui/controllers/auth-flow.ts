@@ -155,6 +155,11 @@ export class AuthFlowController {
     const selected = defaultModel !== undefined ? availableModels[defaultModel] : undefined;
 
     if (defaultModel === undefined || selected === undefined) {
+      if (host.session === undefined && host.engineV2) {
+        // Session-less v2: hydrate permission/plan defaults even without a
+        // default model.
+        await host.hydrateLazyConfigDefaults();
+      }
       host.setAppState({ availableModels, availableProviders });
       return;
     }
