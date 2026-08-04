@@ -1,4 +1,11 @@
 
+> **✅ 2026-08-03 ⑱ ACP session/set_mode + set_model（spec 方法补齐，已提交）**：
+> - **`session/set_mode`**：ACP 4-mode 映射（对齐 TS `acpModeToToggles`）——default/plan→permission manual、auto→auto、yolo→yolo；仅 plan 开 plan_mode；未知 modeId → -32602 invalid_params。**注意**：permission 门是进程级（引擎单门无 session 作用域），permission 半边落全局——与引擎设计一致，已注释。
+> - **`session/set_model`**：SESSION_SET_MODEL → result({sessionId})。
+> - **get_config 修正**：model 改从 session status 读（per-session 模型优先，缺省回退 config defaultModel——原实现只读全局默认，set_model 后不可见）；mode 反映 auto/yolo（原只区分 plan/default）。
+> - **set_config_option mode**：扩为 4 值统一处理（plan 开关 + permission 门），与 set_mode 同映射。
+> - **验证**：kimi-acp 测试 5 → 6（session_set_mode_and_model_round_trip：plan→auto 切换 + get_config 反映 + 未知 mode -32602 + set_model 后 get_config model 正确）；clippy kimi-acp 0 警告；workspace check 干净。
+
 > **✅ 2026-08-03 ⑰ TUI 审批详情（rule + args 预览，已提交）**：
 > - **扩充**：`PendingApproval{id, tool, rule, args}`——`approval_rule` 标签 + `args_preview`（参数 JSON 单行预览，≤80 字符、char 安全截断 + `…`）。
 > - **请求行**：`approval requested: <tool> (<rule>) <args> — press y/n`（对齐 TS 审批卡的信息量）；/approvals 命令不变。

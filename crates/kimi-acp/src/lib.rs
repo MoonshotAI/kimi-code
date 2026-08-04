@@ -153,11 +153,20 @@ async fn handle(
                 return error(-32603, e["message"].as_str().unwrap_or("status failed"));
             }
             let config = client.config_get().await;
-            let model = config["result"]["defaultModel"].as_str().unwrap_or("");
-            let mode = if status["result"]["plan_mode"].as_bool().unwrap_or(false) {
-                "plan"
-            } else {
-                "default"
+            // The per-session model (status) wins; fall back to the config
+            // default only when the session has none set.
+            let model = status["result"]["model"]
+                .as_str()
+                .filter(|m| !m.is_empty())
+                .or_else(|| config["result"]["defaultModel"].as_str())
+                .unwrap_or("");
+            let mode = match status["result"]["plan_mode"].as_bool().unwrap_or(false) {
+                true => "plan",
+                false => match status["result"]["permission"].as_str().unwrap_or("") {
+                    "auto" => "auto",
+                    "yolo" => "yolo",
+                    _ => "default",
+                },
             };
             let thinking = status["result"]["thinking_effort"].as_str().unwrap_or("");
             result(serde_json::json!({
@@ -186,18 +195,30 @@ async fn handle(
                         )
                         .await
                 }
-                ("mode", Some("plan")) => client
-                    .call(
-                        kimi_protocol::methods::SESSION_SET_PLAN_MODE,
-                        serde_json::json!({ "session_id": session_id, "enabled": true }),
-                    )
-                    .await,
-                ("mode", Some("default")) => client
-                    .call(
-                        kimi_protocol::methods::SESSION_SET_PLAN_MODE,
-                        serde_json::json!({ "session_id": session_id, "enabled": false }),
-                    )
-                    .await,
+                ("mode", Some(mode)) if matches!(mode, "plan" | "default" | "auto" | "yolo") => {
+                    // ACP 4-mode taxonomy -> plan toggle + permission mode.
+                    let plan = mode == "plan";
+                    let permission = match mode {
+                        "auto" => "auto",
+                        "yolo" => "yolo",
+                        _ => "manual",
+                    };
+                    let first = client
+                        .call(
+                            kimi_protocol::methods::SESSION_SET_PLAN_MODE,
+                            serde_json::json!({ "session_id": session_id, "enabled": plan }),
+                        )
+                        .await;
+                    if let Some(e) = first.get("error") {
+                        return error(-32603, e["message"].as_str().unwrap_or("set plan mode failed"));
+                    }
+                    client
+                        .call(
+                            kimi_protocol::methods::PERMISSION_SET_MODE,
+                            serde_json::json!({ "mode": permission }),
+                        )
+                        .await
+                }
                 ("thinking", Some(effort)) if !effort.is_empty() => client
                     .call(
                         kimi_protocol::methods::SESSION_SET_THINKING,
@@ -242,6 +263,63 @@ async fn handle(
                 let _ = harness.client().await.session_cancel(session_id).await;
             }
             None
+        }
+        "session/set_mode" => {
+            let session_id = params.get("sessionId").and_then(|v| v.as_str()).unwrap_or("");
+            let mode_id = params.get("modeId").and_then(|v| v.as_str()).unwrap_or("");
+            if session_id.is_empty() || mode_id.is_empty() {
+                return error(-32602, "session/set_mode requires sessionId and modeId");
+            }
+            // ACP 4-mode taxonomy (parity with the TS adapter's
+            // `acpModeToToggles`): default/plan -> manual permission,
+            // auto/yolo -> matching gate mode; only `plan` enables plan mode.
+            let (plan, permission) = match mode_id {
+                "default" => (false, "manual"),
+                "plan" => (true, "manual"),
+                "auto" => (false, "auto"),
+                "yolo" => (false, "yolo"),
+                _ => return error(-32602, &format!("Unknown modeId: {mode_id}")),
+            };
+            let mut client = harness.client().await;
+            let plan_body = client
+                .call(
+                    kimi_protocol::methods::SESSION_SET_PLAN_MODE,
+                    serde_json::json!({ "session_id": session_id, "enabled": plan }),
+                )
+                .await;
+            if let Some(e) = plan_body.get("error") {
+                return error(-32603, e["message"].as_str().unwrap_or("set plan mode failed"));
+            }
+            // The permission gate is process-wide (the engine has a single
+            // gate, no session scope) — matches the engine's design.
+            let perm_body = client
+                .call(
+                    kimi_protocol::methods::PERMISSION_SET_MODE,
+                    serde_json::json!({ "mode": permission }),
+                )
+                .await;
+            if let Some(e) = perm_body.get("error") {
+                return error(-32603, e["message"].as_str().unwrap_or("set mode failed"));
+            }
+            result(serde_json::json!({ "sessionId": session_id }))
+        }
+        "session/set_model" => {
+            let session_id = params.get("sessionId").and_then(|v| v.as_str()).unwrap_or("");
+            let model_id = params.get("modelId").and_then(|v| v.as_str()).unwrap_or("");
+            if session_id.is_empty() || model_id.is_empty() {
+                return error(-32602, "session/set_model requires sessionId and modelId");
+            }
+            let mut client = harness.client().await;
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_SET_MODEL,
+                    serde_json::json!({ "session_id": session_id, "model": model_id }),
+                )
+                .await;
+            if let Some(e) = body.get("error") {
+                return error(-32603, e["message"].as_str().unwrap_or("set model failed"));
+            }
+            result(serde_json::json!({ "sessionId": session_id }))
         }
         _ => error(-32601, &format!("Method not found: {method}")),
     }
@@ -458,5 +536,69 @@ mod tests {
         assert!(body.get("error").is_none(), "get_config: {body}");
         assert_eq!(body["result"]["config"]["mode"], "plan", "config: {body}");
         assert!(body["result"]["config"]["model"].is_string());
+    }
+
+    #[tokio::test]
+    async fn session_set_mode_and_model_round_trip() {
+        let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = std::env::temp_dir().join(format!("kimi-acp-mode-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("mkdir");
+        std::env::set_var("KIMI_AGENT_HOME", &home);
+
+        let harness = Harness::embedded().expect("embedded");
+        let body = round_trip(
+            harness.clone(),
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"session/new\",\"params\":{\"sessionId\":\"acp-mode\"}}\n",
+        )
+        .await;
+        assert!(body.get("error").is_none(), "session/new: {body}");
+
+        // `plan` -> plan mode on, manual permission.
+        let body = round_trip(
+            harness.clone(),
+            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"session/set_mode\",\"params\":{\"sessionId\":\"acp-mode\",\"modeId\":\"plan\"}}\n",
+        )
+        .await;
+        assert!(body.get("error").is_none(), "set_mode plan: {body}");
+
+        // `auto` -> plan off, auto permission; get_config reflects it.
+        let body = round_trip(
+            harness.clone(),
+            "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"session/set_mode\",\"params\":{\"sessionId\":\"acp-mode\",\"modeId\":\"auto\"}}\n",
+        )
+        .await;
+        assert!(body.get("error").is_none(), "set_mode auto: {body}");
+        let body = round_trip(
+            harness.clone(),
+            "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"session/get_config\",\"params\":{\"sessionId\":\"acp-mode\"}}\n",
+        )
+        .await;
+        assert!(body.get("error").is_none(), "get_config: {body}");
+        assert_eq!(body["result"]["config"]["mode"], "auto", "config: {body}");
+
+        // An unknown modeId is a structured invalid_params rejection.
+        let body = round_trip(
+            harness.clone(),
+            "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"session/set_mode\",\"params\":{\"sessionId\":\"acp-mode\",\"modeId\":\"bogus\"}}\n",
+        )
+        .await;
+        assert_eq!(body["error"]["code"], -32602, "unknown mode: {body}");
+
+        // session/set_model lands on the session and get_config reports it
+        // (per-session model beats the global config default).
+        let body = round_trip(
+            harness.clone(),
+            "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"session/set_model\",\"params\":{\"sessionId\":\"acp-mode\",\"modelId\":\"acp-test-model\"}}\n",
+        )
+        .await;
+        assert!(body.get("error").is_none(), "set_model: {body}");
+        let body = round_trip(
+            harness,
+            "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"session/get_config\",\"params\":{\"sessionId\":\"acp-mode\"}}\n",
+        )
+        .await;
+        assert!(body.get("error").is_none(), "get_config: {body}");
+        assert_eq!(body["result"]["config"]["model"], "acp-test-model", "config: {body}");
     }
 }
