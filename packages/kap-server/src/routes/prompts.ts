@@ -26,6 +26,7 @@ import {
   buildDaemonFileUrl,
   buildKimiFileUrl,
   buildMediaPathTag,
+  foldMediaPathTagRefs,
   parseDaemonFileUrl,
   parseKimiFileUrl,
   promptMetadataTextFromContentParts,
@@ -420,11 +421,18 @@ function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][number]) {
   const status = prompt.state === 'running' || prompt.state === 'steered'
     ? 'running'
     : prompt.state === 'blocked' ? 'blocked' : 'queued';
+  // User prompts fold the upload pair (`<media path>` tag + daemon-ref media
+  // part) into the single media part, mirroring the message projection: the
+  // tag is machine markup and would otherwise leak the materialization path
+  // to REST callers while rendering the same upload twice.
+  const content = prompt.message.role === 'user'
+    ? foldMediaPathTagRefs(prompt.message.content).parts
+    : prompt.message.content;
   return {
     prompt_id: prompt.id,
     user_message_id: prompt.userMessageId,
     status,
-    content: corePartsToProtocol(prompt.message.content),
+    content: corePartsToProtocol(content),
     created_at: prompt.createdAt,
   };
 }

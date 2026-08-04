@@ -321,9 +321,10 @@ describe('server-v2 /api/v1 prompts', () => {
     });
     expect(submitted.body.code).toBe(0);
 
-    // [compression caption, <image path> tag, projected file reference].
+    // [compression caption, projected file reference]: the `<image path>` tag
+    // folded into the media part instead of reaching the wire.
     const content = submitted.body.data.content as Array<Record<string, unknown>>;
-    expect(content).toHaveLength(3);
+    expect(content).toHaveLength(2);
     const caption = content[0] as { type: string; text: string };
     expect(caption.type).toBe('text');
     expect(caption.text).toContain('Image compressed');
@@ -336,17 +337,18 @@ describe('server-v2 /api/v1 prompts', () => {
     // Compression swapped the referenced upload: the reference addresses a NEW
     // daemon upload holding the final bytes, so its id differs from the
     // client's original upload id.
-    const image = content[2] as { type: string; source: { kind: string; file_id: string } };
+    const image = content[1] as { type: string; source: { kind: string; file_id: string } };
     expect(image.type).toBe('image');
     expect(image.source.kind).toBe('file');
     const finalFileId = image.source.file_id;
     expect(finalFileId).not.toBe(uploaded.data.id);
 
-    // The <image path> tag names the materialized cache copy of the FINAL
-    // (compressed) bytes, named by the final upload id.
+    // The folded-away <image path> tag named the materialized cache copy of
+    // the FINAL (compressed) bytes, named by the final upload id — the copy
+    // still lands on disk for the engine, but its path never reaches the wire.
     const cachePath = join(home as string, 'cache', `${finalFileId}.png`);
-    expect(content[1]).toEqual({ type: 'text', text: `<image path="${cachePath}"></image>` });
     expect(pngDimensions(await readFile(cachePath))).toEqual({ width: 2000, height: 1000 });
+    expect(JSON.stringify(content)).not.toContain(cachePath);
 
     // The original client upload stays untouched.
     const original = await server!.core.accessor.get(IFileService).get(uploaded.data.id);
@@ -397,13 +399,15 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.code).toBe(0);
 
     // No compression caption when the bytes pass through unchanged, and the
-    // reference addresses the client's original upload — no new upload.
+    // reference addresses the client's original upload — no new upload. The
+    // `<image path>` tag folded into the media part instead of reaching the
+    // wire, so the cache path never leaks to the client.
     const content = submitted.body.data.content as Array<Record<string, unknown>>;
     const cachePath = join(home as string, 'cache', `${uploaded.data.id}.png`);
     expect(content).toEqual([
-      { type: 'text', text: `<image path="${cachePath}"></image>` },
       { type: 'image', source: { kind: 'file', file_id: uploaded.data.id } },
     ]);
+    expect(JSON.stringify(content)).not.toContain(cachePath);
 
     // The cache copy holds the original bytes, named by the original upload id.
     expect(await readFile(cachePath)).toEqual(smallPng);
