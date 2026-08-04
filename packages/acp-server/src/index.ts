@@ -1,7 +1,12 @@
 export type { Implementation } from '@agentclientprotocol/sdk';
 
 export { AcpServer, createAcpAgentApp } from './server';
-export type { AcpServerOptions, SetSessionModelParams } from './server';
+export type {
+  AcpServerOptions,
+  SetSessionModelParams,
+  SlashCommandsResolver,
+  SlashCommandsSnapshot,
+} from './server';
 export { acpClientFromContext } from './acp-client';
 export type { AcpClient } from './acp-client';
 export { AcpSession } from './session';
@@ -75,8 +80,10 @@ export {
   REJECT_OPTION_ID,
 } from './approval';
 export {
+  elicitationResponseToQuestionAnswers,
   outcomeToQuestionAnswer,
   questionItemToPermissionOptions,
+  questionRequestToElicitationParams,
 } from './question';
 export { projectHistoryToSessionUpdates } from './replay';
 export { AcpProcessRunner } from './acp-terminal';

@@ -6,7 +6,11 @@ import type { McpServer } from '@agentclientprotocol/sdk';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { acpMcpServersToConfigRecord, compressPromptImageParts } from '../src/convert';
+import {
+  acpBlocksToContentParts,
+  acpMcpServersToConfigRecord,
+  compressPromptImageParts,
+} from '../src/convert';
 import { solidPng, solidPngBase64 } from './_helpers/png';
 
 describe('acpMcpServersToConfigRecord', () => {
@@ -60,6 +64,28 @@ describe('acpMcpServersToConfigRecord', () => {
   it('drops the unstable acp transport and returns undefined when nothing survives', () => {
     const servers = [{ type: 'acp', name: 'nested', serverId: 'srv-1' } as unknown as McpServer];
     expect(acpMcpServersToConfigRecord(servers)).toBeUndefined();
+  });
+});
+
+describe('acpBlocksToContentParts', () => {
+  it('projects file links and embedded text resources with provenance', () => {
+    const parts = acpBlocksToContentParts([
+      { type: 'resource_link', uri: 'file:///tmp/example.ts#L2-L4', name: 'example.ts' },
+      { type: 'resource_link', uri: 'https://example.test/doc', name: 'remote doc' },
+      {
+        type: 'resource',
+        resource: { uri: 'memory://note/1', text: 'remember this' },
+      },
+    ] as never);
+
+    expect(parts).toEqual([
+      { type: 'text', text: '/tmp/example.ts:2-4' },
+      {
+        type: 'text',
+        text: '<resource_link uri="https://example.test/doc" name="remote doc" />',
+      },
+      { type: 'text', text: '<resource uri="memory://note/1">remember this</resource>' },
+    ]);
   });
 });
 

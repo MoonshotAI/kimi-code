@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { AcpSession } from '../src/session';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
 import { FAKE_MODEL_ALT_ID, writeFakeModelConfig } from './_helpers/fakeModelConfig';
 
@@ -122,6 +123,31 @@ describe('acp-server config surface', () => {
         configNotification.params as { update?: { configOptions?: readonly ConfigOption[] } }
       ).update;
       expect(configUpdate?.configOptions?.find((o) => o.id === 'mode')?.currentValue).toBe('yolo');
+    },
+    30_000,
+  );
+
+  it(
+    'session/set_mode propagates plan errors without reporting a new mode',
+    async () => {
+      const session = Object.create(AcpSession.prototype) as AcpSession;
+      const updates: unknown[] = [];
+      const agent = {
+        enterPlan: async () => {
+          throw new Error('plan toggle failed');
+        },
+        setPermission: async () => {},
+      };
+      Object.assign(session as unknown as Record<string, unknown>, {
+        agent,
+        conn: { sessionUpdate: async (update: unknown) => updates.push(update) },
+        sessionId: 'session-test',
+        currentModeId: 'default',
+      });
+
+      await expect(session.setMode('plan')).rejects.toThrow('plan toggle failed');
+      expect((session as unknown as { currentModeId: string }).currentModeId).toBe('default');
+      expect(updates).toEqual([]);
     },
     30_000,
   );

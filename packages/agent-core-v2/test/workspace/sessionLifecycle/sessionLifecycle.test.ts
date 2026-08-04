@@ -1271,6 +1271,40 @@ describe('SessionLifecycleService', () => {
     expect(svc.get('s1')).toBeUndefined();
   });
 
+  it('shuts the session MCP overlay down when the service is disposed with the session still live', async () => {
+    const { sessionOverlay, shutdown } = overlayStub();
+    const svc = await build([
+      stubPair(IWorkspaceMcpService, { ...workspaceMcpServiceStub(), sessionOverlay }),
+    ]);
+    await svc.create({
+      sessionId: 's1',
+      workDir: '/tmp/proj',
+      mcpServers: { eph: { transport: 'stdio' as const, command: 'node' } },
+    });
+
+    // No close: app/workspace teardown disposes the service directly, and the
+    // DI container disposes session scopes without going through the
+    // overlay-aware handle wrapper.
+    (svc as unknown as { dispose(): void }).dispose();
+    expect(shutdown).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not double-shutdown the overlay when close and service disposal both run', async () => {
+    const { sessionOverlay, shutdown } = overlayStub();
+    const svc = await build([
+      stubPair(IWorkspaceMcpService, { ...workspaceMcpServiceStub(), sessionOverlay }),
+    ]);
+    await svc.create({
+      sessionId: 's1',
+      workDir: '/tmp/proj',
+      mcpServers: { eph: { transport: 'stdio' as const, command: 'node' } },
+    });
+
+    await svc.close('s1');
+    (svc as unknown as { dispose(): void }).dispose();
+    expect(shutdown).toHaveBeenCalledTimes(1);
+  });
+
   it('create without mcpServers keeps the shared workspace handle and builds no overlay', async () => {
     const sessionOverlay = vi.fn(
       (..._args: Parameters<IWorkspaceMcpService['sessionOverlay']>): ISessionMcpOverlay => {

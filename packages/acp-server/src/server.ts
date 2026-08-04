@@ -23,6 +23,7 @@ import {
   type AgentApp,
   type AgentCapabilities,
   type AuthenticateRequest,
+  type AvailableCommand,
   type AuthenticateResponse,
   type CancelNotification,
   type ClientCapabilities,
@@ -58,6 +59,7 @@ import {
 import type {
   AgentHandle,
   Klient,
+  SessionHandle,
   SessionRestoreOptions,
   SessionSummary,
 } from '@moonshot-ai/klient';
@@ -77,6 +79,22 @@ import { negotiateVersion } from './version';
  * branch key across the wire, mirrored from the klient facade's `NOT_FOUND`.
  */
 const SESSION_NOT_FOUND_CODE = 40404;
+
+/** Host-provided slash commands plus optional aliases that activate engine skills. */
+export interface SlashCommandsSnapshot {
+  readonly commands: ReadonlyArray<AvailableCommand>;
+  readonly skillCommandMap?: ReadonlyMap<string, string>;
+}
+
+export type SlashCommandsResolver =
+  | ReadonlyArray<AvailableCommand>
+  | SlashCommandsSnapshot
+  | ((
+      session: SessionHandle,
+    ) =>
+      | Promise<ReadonlyArray<AvailableCommand> | SlashCommandsSnapshot>
+      | ReadonlyArray<AvailableCommand>
+      | SlashCommandsSnapshot);
 
 export interface AcpServerOptions {
   /** Agent identity advertised in `initialize.agentInfo`. */
@@ -109,6 +127,8 @@ export interface AcpServerOptions {
    * scope. Absent → `persistOriginalImage`'s shared temp-dir fallback.
    */
   readonly resolveOriginalsDir?: (sessionId: string) => string | undefined;
+  /** Static or per-session host command palette, compatible with acp-adapter. */
+  readonly slashCommands?: SlashCommandsResolver;
 }
 
 export class AcpServer {
@@ -118,6 +138,9 @@ export class AcpServer {
   private readonly terminalAuthEnv: Readonly<Record<string, string>> | undefined;
   private readonly terminalAuthLegacyCommand: string | undefined;
   private readonly resolveOriginalsDir: ((sessionId: string) => string | undefined) | undefined;
+  private readonly resolveSlashCommands: (
+    session: SessionHandle,
+  ) => Promise<ReadonlyArray<AvailableCommand> | SlashCommandsSnapshot>;
   private readonly sessions = new Map<string, AcpSession>();
 
   constructor(
@@ -136,6 +159,11 @@ export class AcpServer {
     this.terminalAuthEnv = opts.terminalAuthEnv;
     this.terminalAuthLegacyCommand = opts.terminalAuthLegacyCommand;
     this.resolveOriginalsDir = opts.resolveOriginalsDir;
+    const slashCommands = opts.slashCommands;
+    this.resolveSlashCommands =
+      typeof slashCommands === 'function'
+        ? async (session) => slashCommands(session)
+        : async () => slashCommands ?? [];
   }
 
   /** Returns the client capabilities advertised during `initialize`, if any. */
@@ -256,7 +284,7 @@ export class AcpServer {
     // before the load response lands. This is the one differentiator vs.
     // `resumeSession`, which deliberately skips replay per the ACP spec.
     await acpSession.replayHistory();
-    void acpSession.emitAvailableCommandsUpdate();
+    this.scheduleAvailableCommandsUpdate(acpSession);
     return { configOptions: await acpSession.configOptions(), modes: acpSession.modeState() };
   }
 
@@ -267,7 +295,7 @@ export class AcpServer {
       params.sessionId,
       acpMcpServersToConfigRecord(params.mcpServers),
     );
-    void acpSession.emitAvailableCommandsUpdate();
+    this.scheduleAvailableCommandsUpdate(acpSession);
     return { configOptions: await acpSession.configOptions(), modes: acpSession.modeState() };
   }
 
@@ -509,13 +537,17 @@ export class AcpServer {
    * `set_config_option`), then subscribe its event stream.
    */
   private async wireSession(sessionId: string): Promise<AcpSession> {
-    await this.bindDefaultModel(this.klient.session(sessionId).agent('main'));
+    const session = this.klient.session(sessionId);
+    await this.bindDefaultModel(session.agent('main'));
+    const hostCommands = await this.resolveSlashCommands(session);
     const acpSession = new AcpSession(
       this.conn,
       this.klient,
       sessionId,
       this.acpConnection,
+      Boolean(this.clientCapabilities?.elicitation?.form),
       this.resolveOriginalsDir,
+      hostCommands,
     );
     await acpSession.init();
     return acpSession;
@@ -532,8 +564,22 @@ export class AcpServer {
   }> {
     const acpSession = await this.wireSession(sessionId);
     this.sessions.set(sessionId, acpSession);
-    void acpSession.emitAvailableCommandsUpdate();
+    this.scheduleAvailableCommandsUpdate(acpSession);
     return { configOptions: await acpSession.configOptions(), modes: acpSession.modeState() };
+  }
+
+  /**
+   * Push the `available_commands_update` AFTER the triggering lifecycle
+   * response (`session/new` / `/fork` / `/load` / `/resume`) has settled.
+   * Clients register the session when the response lands and silently drop
+   * `session/update` notifications that arrive earlier (Zed), so an eager
+   * push leaves the client's slash-command palette empty. Mirrors the legacy
+   * adapter's `scheduleAvailableCommandsUpdate` (`acp-adapter/src/server.ts`).
+   */
+  private scheduleAvailableCommandsUpdate(acpSession: AcpSession): void {
+    setTimeout(() => {
+      void acpSession.emitAvailableCommandsUpdate();
+    }, 0);
   }
 
   private async bindDefaultModel(agent: AgentHandle): Promise<void> {

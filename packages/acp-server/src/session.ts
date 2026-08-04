@@ -53,6 +53,7 @@ import type {
 import type { AcpClient } from './acp-client';
 import type { AcpTerminalCreatedEvent, IAcpConnection } from './acp-fs';
 import {
+  ACP_BUILTIN_SLASH_COMMAND_NAMES,
   ACP_BUILTIN_SLASH_COMMANDS,
   type AcpBuiltinSlashCommandName,
   runBuiltinSlashCommand,
@@ -136,6 +137,16 @@ export function mapPromptLaunchError(error: unknown, sessionId: string): Request
 }
 
 /** Per-turn settlement state for one in-flight `session/prompt`. */
+interface HostSlashCommandsSnapshot {
+  readonly commands: ReadonlyArray<AvailableCommand>;
+  readonly skillCommandMap?: ReadonlyMap<string, string>;
+}
+
+interface ResolvedCommands {
+  readonly commands: AvailableCommand[];
+  readonly skillCommandMap: ReadonlyMap<string, string>;
+}
+
 interface TurnDriver {
   resolve(response: PromptResponse): void;
   reject(error: unknown): void;
@@ -148,6 +159,12 @@ interface TurnDriver {
    */
   turnId?: number;
   settled: boolean;
+  /**
+   * Set when `cancel()` arrives while {@link turnId} is still unknown: the
+   * launch handler re-issues a precisely-addressed cancel once the id lands,
+   * and a no-launch outcome settles `cancelled` instead of `end_turn`.
+   */
+  cancelRequested?: boolean;
   /**
    * Turn-scoped events that arrived while `turnId` was still unknown. Once
    * the launch resolves, the entries matching the driver's turn are replayed
@@ -228,19 +245,27 @@ export class AcpSession {
     readonly sessionId: string,
     private readonly acpConnection: IAcpConnection,
     /**
+     * Whether the client advertised `elicitation.form` at `initialize` —
+     * forwarded to the interaction bridge's ask-user routing.
+     */
+    elicitationForm: boolean,
+    /**
      * Resolve the session's media-originals dir for prompt-image compression
      * (`sessionMediaOriginalsDir(sessionDir)` when the live session scope is
      * reachable). Undefined / returning undefined → `persistOriginalImage`'s
      * shared temp-dir fallback applies.
      */
     private readonly resolveOriginalsDir?: (sessionId: string) => string | undefined,
+    private readonly hostCommands:
+      | ReadonlyArray<AvailableCommand>
+      | HostSlashCommandsSnapshot = [],
   ) {
     this.klient = klient;
     this.session = klient.session(sessionId);
     // `main` is auto-materialized by the transport's scope resolution on the
     // first call — no explicit agent bootstrap is needed here.
     this.agent = this.session.agent('main');
-    this.interactionBridge = new AcpInteractionBridge(conn, this.session, sessionId);
+    this.interactionBridge = new AcpInteractionBridge(conn, this.session, sessionId, elicitationForm);
   }
 
   /**
@@ -405,22 +430,46 @@ export class AcpSession {
   }
 
   /**
-   * Build the `available_commands_update` payload: the ACP builtin slash
-   * commands (executed locally — see `prompt`) first, then the session's
-   * user-activatable skills (activated through the engine — see
-   * `driveSkillActivation`), named the way the TUI names them
-   * (`buildAcpSkillSlashCommands`).
+   * Resolve the current command catalog. Builtins always win, followed by
+   * engine skills and then host-provided commands; duplicate names are dropped.
+   * Host aliases only participate in skill activation when that alias is also
+   * present in the advertised command list.
    */
+  private resolveCommands(): ResolvedCommands {
+    const skillSnapshot = buildAcpSkillSlashCommands(this.skills);
+    const hostSnapshot = Array.isArray(this.hostCommands)
+      ? { commands: this.hostCommands, skillCommandMap: new Map<string, string>() }
+      : (this.hostCommands as HostSlashCommandsSnapshot);
+    const commands: AvailableCommand[] = [];
+    const names = new Set<string>();
+    for (const command of [
+      ...ACP_BUILTIN_SLASH_COMMANDS,
+      ...skillSnapshot.commands,
+      ...hostSnapshot.commands,
+    ]) {
+      if (names.has(command.name)) continue;
+      names.add(command.name);
+      commands.push(command);
+    }
+    const commandMap = new Map(skillSnapshot.commandMap);
+    for (const [alias, skillName] of hostSnapshot.skillCommandMap ?? []) {
+      if (ACP_BUILTIN_SLASH_COMMAND_NAMES.has(alias)) continue;
+      if (!names.has(alias) || commandMap.has(alias)) continue;
+      commandMap.set(alias, skillName);
+    }
+    return { commands, skillCommandMap: commandMap };
+  }
+
+  /** Return the same merged command palette that is advertised to the client. */
   availableCommands(): AvailableCommand[] {
-    return [...ACP_BUILTIN_SLASH_COMMANDS, ...buildAcpSkillSlashCommands(this.skills).commands];
+    return this.resolveCommands().commands;
   }
 
   /** Push the current `available_commands_update` to the client. */
   async emitAvailableCommandsUpdate(): Promise<void> {
     try {
-      await this.conn.sessionUpdate(
-        availableCommandsUpdateNotification(this.sessionId, this.availableCommands()),
-      );
+      const { commands } = this.resolveCommands();
+      await this.conn.sessionUpdate(availableCommandsUpdateNotification(this.sessionId, commands));
     } catch (error) {
       log.warn('acp: failed to push available_commands_update', {
         sessionId: this.sessionId,
@@ -437,9 +486,10 @@ export class AcpSession {
     // goes to the model as-is.
     const text = leadingText(blocks);
     if (text !== undefined) {
-      const intent = detectSlashIntent(text, this.skillCommandMap());
+      const commands = this.resolveCommands();
+      const intent = detectSlashIntent(text, commands.skillCommandMap);
       if (intent.kind === 'builtin') {
-        return this.driveBuiltinCommand(intent.name, intent.args);
+        return this.driveBuiltinCommand(intent.name, intent.args, commands.commands);
       }
       if (intent.kind === 'skill') {
         return this.driveSkillActivation(intent.skillName, intent.args);
@@ -524,6 +574,7 @@ export class AcpSession {
   private async driveBuiltinCommand(
     name: AcpBuiltinSlashCommandName,
     args: string,
+    availableCommands: readonly AvailableCommand[],
   ): Promise<PromptResponse> {
     let text: string;
     try {
@@ -537,6 +588,7 @@ export class AcpSession {
           modelId: this.currentModelId,
           thinkingEnabled: this.currentThinkingLevel !== 'off',
           modeId: this.currentModeId,
+          availableCommands,
         },
         args,
       );
@@ -617,11 +669,22 @@ export class AcpSession {
             // hook-blocked case; the wire carries no blocking message to
             // surface, matching the old `PromptHandle`-based behavior.
             this.settleDriver(driver, () => {
-              resolve({ stopReason: 'end_turn' });
+              resolve({ stopReason: driver.cancelRequested === true ? 'cancelled' : 'end_turn' });
             });
             return;
           }
           driver.turnId = launched.turn_id;
+          if (driver.cancelRequested === true) {
+            // A cancel arrived before the id was known (see `cancel()`): the
+            // unaddressed cancel may have predated the turn's activation, so
+            // re-issue it now precisely addressed. Idempotent.
+            void this.agent.cancel({ turnId: launched.turn_id }).catch((error) => {
+              log.warn('acp: deferred cancel failed', {
+                sessionId: this.sessionId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            });
+          }
           // Replay the events the turn emitted before its id arrived (a fast
           // turn can outrun the launch round-trip — `activateSkill` returns
           // only after the prompt-metadata update).
@@ -918,8 +981,26 @@ export class AcpSession {
     for (const pending of this.pendingPromptAborts) {
       pending.aborted = true;
     }
-    const turnId = this.driver?.turnId;
-    if (turnId === undefined) return;
+    const driver = this.driver;
+    if (driver === undefined || driver.settled) return;
+    const turnId = driver.turnId;
+    if (turnId === undefined) {
+      // The launch round-trip has not returned the turn id yet. The engine's
+      // cancel payload makes turnId optional — an empty call cancels whatever
+      // turn is active (the same contract kap-server's cancel route relies
+      // on) — and concurrent prompts are rejected, so the active turn can only
+      // be this driver's. Flag the driver too: when the id lands, the launch
+      // handler re-issues a precisely-addressed cancel, and a no-launch
+      // outcome settles `cancelled` instead of `end_turn`.
+      driver.cancelRequested = true;
+      void this.agent.cancel().catch((error) => {
+        log.warn('acp: cancel (unaddressed) failed', {
+          sessionId: this.sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+      return;
+    }
     void this.agent.cancel({ turnId }).catch((error) => {
       log.warn('acp: cancel failed', {
         sessionId: this.sessionId,
@@ -1021,24 +1102,16 @@ export class AcpSession {
   /** Switch the ACP mode (plan mode + permission mode). */
   async setMode(id: AcpModeId): Promise<void> {
     const { plan, permission } = acpModeToToggles(id);
-    await this.agent.setPermission(permission);
-    try {
-      if (plan) {
-        await this.agent.enterPlan();
-      } else {
-        // KLIENT-GAP(plan): `exitPlan` (`planService.exit()`) is not on the
-        // klient surface; `cancelPlan` (`planModeCancel`) has the identical
-        // state effect (see `agent/plan/planOps.ts`) — only the persisted op
-        // name differs.
-        await this.agent.cancelPlan();
-      }
-    } catch (error) {
-      log.warn('acp: plan mode toggle failed', {
-        sessionId: this.sessionId,
-        mode: id,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    if (plan) {
+      await this.agent.enterPlan();
+    } else {
+      // KLIENT-GAP(plan): `exitPlan` (`planService.exit()`) is not on the
+      // klient surface; `cancelPlan` (`planModeCancel`) has the identical
+      // state effect (see `agent/plan/planOps.ts`) — only the persisted op
+      // name differs.
+      await this.agent.cancelPlan();
     }
+    await this.agent.setPermission(permission);
     this.currentModeId = id;
     // Both notifications fire: `current_mode_update` serves clients reading
     // the first-class `modes` state, `config_option_update` serves clients

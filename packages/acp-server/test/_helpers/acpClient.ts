@@ -45,6 +45,7 @@ export async function createTestClient(opts: {
   homeDir: string;
   disableAuth?: boolean;
   extraSeeds?: RunAcpServerOptions['extraSeeds'];
+  slashCommands?: RunAcpServerOptions['slashCommands'];
 }): Promise<TestClient> {
   const toAgent = new PassThrough();
   const toClient = new PassThrough();
@@ -53,6 +54,7 @@ export async function createTestClient(opts: {
     homeDir: opts.homeDir,
     disableAuth: opts.disableAuth ?? true,
     extraSeeds: opts.extraSeeds,
+    slashCommands: opts.slashCommands,
   });
 
   let nextId = 1;

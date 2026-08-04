@@ -48,8 +48,9 @@
  * The handler's shared MCP manager is awaited before create/resume returns;
  * a session created with ephemeral `mcpServers` additionally gets a session
  * overlay from `workspaceMcp` (session-owned connections, seeded as a merged
- * view, shut down when the session handle disposes), whose initial connect
- * is awaited here too.
+ * view, shut down when the session handle disposes — with a backstop in the
+ * service's own dispose for teardown paths that bypass the handle wrapper),
+ * whose initial connect is awaited here too.
  * The session-level services whose subscriptions
  * must exist before the first agent / turn (external hooks, cron, the
  * secondary-model startup warning) opt into `OnScopeCreated` activation.
@@ -129,7 +130,10 @@ import {
 } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
-import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
+import {
+  IWorkspaceMcpService,
+  type ISessionMcpOverlay,
+} from '#/workspace/workspaceMcp/workspaceMcp';
 import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
 import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceToolPolicy';
 
@@ -163,6 +167,14 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private readonly _onDidForkSession = this._register(new Emitter<SessionForkedEvent>());
   readonly onDidForkSession: Event<SessionForkedEvent> = this._onDidForkSession.event;
   private readonly resuming = new Map<string, Promise<ISessionScopeHandle | undefined>>();
+  /**
+   * Live per-session MCP overlays keyed by session id. The session handle's
+   * dispose removes its overlay here before shutting it down, so whatever
+   * remains at service teardown (the DI container disposes session scopes
+   * directly, bypassing the handle wrapper) is shut down from the
+   * service's own dispose instead — no overlay outlives the lifecycle.
+   */
+  private readonly liveOverlays = new Map<string, ISessionMcpOverlay>();
 
   constructor(
     @IInstantiationService private readonly instantiation: IInstantiationService,
@@ -195,6 +207,16 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
   ) {
     super();
+    this._register({
+      dispose: () => {
+        // Service teardown (e.g. workspace/root scope disposal) bypasses the
+        // per-session handle wrappers — shut down every overlay still live.
+        for (const overlay of this.liveOverlays.values()) {
+          void overlay.shutdown();
+        }
+        this.liveOverlays.clear();
+      },
+    });
   }
 
   private get workspaceId(): string {
@@ -259,6 +281,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       opts.mcpServers !== undefined && Object.keys(opts.mcpServers).length > 0
         ? this.mcp.sessionOverlay(opts.mcpServers, { stdioCwd: opts.workDir })
         : undefined;
+    if (mcpOverlay !== undefined) {
+      this.liveOverlays.set(opts.sessionId, mcpOverlay);
+    }
     const scopeHandle = createScopedChildHandle(
       this.instantiation,
       LifecycleScope.Session,
@@ -287,7 +312,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         : {
             ...scopeHandle,
             dispose: () => {
-              void mcpOverlay.shutdown();
+              // Delete-then-shutdown is atomic (single-threaded): the service
+              // teardown path only shuts down overlays still in the map, so a
+              // handle dispose and a service dispose can never double-shutdown.
+              if (this.liveOverlays.delete(opts.sessionId)) {
+                void mcpOverlay.shutdown();
+              }
               scopeHandle.dispose();
             },
           };
