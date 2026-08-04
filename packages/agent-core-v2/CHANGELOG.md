@@ -1,5 +1,11 @@
 # @moonshot-ai/agent-core-v2
 
+## 0.3.1
+
+### Patch Changes
+
+- [#2562](https://github.com/MoonshotAI/kimi-code/pull/2562) [`071b6a5`](https://github.com/MoonshotAI/kimi-code/commit/071b6a50d9c2ce9c4b45dc4d58dac1101b8c4f52) Thanks [@sailist](https://github.com/sailist)! - Serve v1 message history from the server layer and drop the engine-side legacy message adapter; the /api/v1 message contract is unchanged.
+
 ## 0.3.0
 
 ### Minor Changes

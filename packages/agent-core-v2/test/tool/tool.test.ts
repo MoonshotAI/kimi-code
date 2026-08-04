@@ -746,6 +746,31 @@ describe('Agent tool description', () => {
     expect(description).toContain('- primary: mock-model');
   });
 
+  it('advertises the resolved capability flags for each selectable model', () => {
+    ctx = createTestAgent(secondaryModelFlags(), {
+      initialConfig: {
+        secondaryModel: { model: 'secondary-model' },
+        models: {
+          'secondary-model': {
+            provider: 'test-provider',
+            model: 'secondary-model',
+            maxContextSize: 262_144,
+            capabilities: ['image_in', 'thinking'],
+          },
+        },
+      },
+    });
+
+    const description = agentDescription();
+
+    expect(description).toContain(
+      '- secondary: secondary-model (default) — the configured secondary model; prefer it for routine subagent tasks; capabilities: image_in, thinking',
+    );
+    expect(description).toContain(
+      '- primary: mock-model — the main model you are running on; use it for hard, quality-sensitive subagent tasks; capabilities: none',
+    );
+  });
+
   it('omits the models section when configured but the experiment is disabled', () => {
     ctx = createTestAgent(secondaryModelFlags(false), {
       initialConfig: { secondaryModel: { model: 'provider/secondary' } },
