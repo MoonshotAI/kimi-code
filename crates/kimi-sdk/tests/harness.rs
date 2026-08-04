@@ -129,6 +129,11 @@ async fn harness_exposes_engine_events() {
         "imported text present: {context}"
     );
     assert!(session.clear_context().await.expect("clear"));
+
+    // Side (btw) agent lifecycle.
+    let btw_id = session.start_btw().await.expect("start_btw");
+    assert!(btw_id.starts_with("btw-"), "btw id: {btw_id}");
+    session.end_btw().await.expect("end_btw");
 }
 
 #[tokio::test]

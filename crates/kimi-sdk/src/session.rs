@@ -308,6 +308,40 @@ impl Session {
         Ok(body["result"]["cleared"].as_bool().unwrap_or(false))
     }
 
+    /// Spawn the side (btw) agent; returns its id (`btw-<session_id>`).
+    pub async fn start_btw(&mut self) -> anyhow::Result<String> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                kimi_protocol::methods::SESSION_START_BTW,
+                serde_json::json!({ "session_id": self.id }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("start_btw: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"]["btw_id"].as_str().unwrap_or("").to_string())
+    }
+
+    /// Tear down the side (btw) agent.
+    pub async fn end_btw(&mut self) -> anyhow::Result<()> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                kimi_protocol::methods::SESSION_END_BTW,
+                serde_json::json!({ "session_id": self.id }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("end_btw: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(())
+    }
+
     async fn simple_call(&mut self, method: &str) -> anyhow::Result<serde_json::Value> {
         let body = self
             .client
