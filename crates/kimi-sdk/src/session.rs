@@ -437,6 +437,23 @@ impl Session {
         Ok(body["result"].clone())
     }
 
+    /// Persist a new session title (`session/rename` parity).
+    pub async fn rename(&mut self, title: &str) -> anyhow::Result<serde_json::Value> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                kimi_protocol::methods::SESSION_RENAME,
+                serde_json::json!({ "session_id": self.id, "title": title }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("rename: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"].clone())
+    }
+
     /// Clear the active plan.
     pub async fn clear_plan(&mut self) -> anyhow::Result<serde_json::Value> {
         self.simple_call(kimi_protocol::methods::SESSION_CLEAR_PLAN).await

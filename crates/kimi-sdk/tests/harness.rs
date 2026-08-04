@@ -194,6 +194,17 @@ async fn session_extended_surfaces_offline() {
     let cancel = session.cancel_shell_command("nope").await.expect("cancel_shell");
     assert_eq!(cancel["cancelled"], false, "unknown shell id: {cancel}");
 
+    // Rename persists the title into the session list.
+    let renamed = session.rename("my new title").await.expect("rename");
+    assert_eq!(renamed["title"], "my new title", "rename: {renamed}");
+    let sessions = harness.list_sessions(50).await.expect("list");
+    assert!(
+        sessions.iter().any(|s| s["id"] == "s-ext" && s["title"] == "my new title"),
+        "renamed title listed: {sessions:?}"
+    );
+    // Blank titles are rejected by the engine.
+    assert!(session.rename("   ").await.is_err(), "blank title rejected");
+
     // destroy releases engine-side state (RPC round-trips cleanly).
     session.destroy().await.expect("destroy");
 }

@@ -371,6 +371,13 @@ pub struct SessionUpdateMetadataParams {
     pub metadata: serde_json::Value,
 }
 
+/// Input for session/rename (persisted session title).
+#[derive(Debug, Deserialize)]
+pub struct SessionRenameParams {
+    pub session_id: String,
+    pub title: String,
+}
+
 /// Input for session/list.
 #[derive(Debug, Default, Deserialize)]
 pub struct SessionListParams {

@@ -172,6 +172,23 @@ impl SessionManager {
         }
     }
 
+    /// Rename a session: update the persisted title (SDK `renameSession`
+    /// parity). Returns the updated record, or `None` when the session is
+    /// not in the live cache (must be created/loaded first).
+    pub fn rename_session(&mut self, id: &str, title: &str) -> anyhow::Result<Option<SessionRecord>> {
+        if title.trim().is_empty() {
+            anyhow::bail!("title must not be empty");
+        }
+        let Some(record) = self.sessions.get_mut(id) else {
+            return Ok(None);
+        };
+        record.title = title.to_string();
+        record.updated_at = Self::iso_now();
+        let updated = record.clone();
+        self.save_to_store(&updated)?;
+        Ok(Some(updated))
+    }
+
     // ── Session activation / switching ────────────────────────────────────
 
     /// Activate a session by id.  Loads from persistence if not in cache.

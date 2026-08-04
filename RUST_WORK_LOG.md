@@ -5,6 +5,12 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㉖ session/rename RPC（引擎缺口，已提交）**：
+> - **发现**：TS `renameSession`（{sessionId, title}）在 Rust 引擎无对应 RPC——title 只在 fork/create 时设置，改名前落空（no-op/错误）。
+> - **实现**：`SESSION_RENAME` 常量 + `SessionRenameParams{session_id, title}` + manager `rename_session`（镜像 set_work_dir：改 record.title + updated_at + save_to_store 持久化；空标题 bail）+ server 处理器（缓存无该 session → 错误）+ SDK `Session::rename(title)`。
+> - **验证**：kimi-sdk 集成测试（rename 后 list_sessions 显示新标题 + 空标题拒绝）；kimi-server 52 全绿；clippy 新增代码 0 警告（9 条均为既有）。
+> - **意义**：TS renameSession 的 Rust 路径从落空变可用；SDK 方法面 45/45。
+
 > **✅ 2026-08-03 ㉕ Harness::set_config（config 写路径，已提交）**：
 > - **缺口**：TS KimiHarness 有 setConfig，Rust Harness 只有 config() 读——host 编程式写配置需走 CLI 或裸 call。
 > - **实现**：`Harness::set_config(patch)` → CONFIG_SET（嵌套对象、null 删键），返回 `{ok, path}`；合并结果经 config() 回读。

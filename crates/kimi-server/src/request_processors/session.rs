@@ -1286,6 +1286,27 @@ impl Processor for SessionProcessor {
             },
         );
 
+        // `session/rename` — persist a new session title (SDK `renameSession`
+        // parity). The session must exist in the live cache.
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_RENAME, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionRenameParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                match manager.rename_session(&input.session_id, &input.title) {
+                    Ok(Some(record)) => Ok(serde_json::json!({ "ok": true, "title": record.title })),
+                    Ok(None) => Err(JsonRpcError::internal_error(format!(
+                        "no session: {}",
+                        input.session_id
+                    ))),
+                    Err(e) => Err(JsonRpcError::internal_error(e.to_string())),
+                }
+            })
+        });
+
         // `session/destroy` — runtime teardown (SDK close parity): SessionEnd
         // hooks fire first (fire-and-forget), then the in-memory agent + side
         // agent are dropped. The persisted record is intentionally left for

@@ -32,6 +32,8 @@
     pub const SESSION_ADD_DIR: &str = "session/add_additional_dir";
     pub const SESSION_REMOVE_DIR: &str = "session/remove_additional_dir";
     pub const SESSION_UPDATE_METADATA: &str = "session/update_metadata";
+    /// Rename a session (persisted title; SDK `renameSession` parity).
+    pub const SESSION_RENAME: &str = "session/rename";
 
     /// Goal lifecycle (deterministic user/host control surface). Terminal
     /// statuses stay model-owned (UpdateGoal tool / goal driver) — there is
