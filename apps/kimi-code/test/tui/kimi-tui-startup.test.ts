@@ -309,6 +309,19 @@ describe('KimiTUI startup', () => {
     });
   });
 
+  it('shows a session-less notice on v2 startup', async () => {
+    const harness = makeHarness(makeSession());
+    const driver = makeDriver(harness, { ...makeStartupInput(), engineV2: true });
+
+    await expect(driver.init()).resolves.toBe(false);
+    await (
+      driver as unknown as { finishStartup(shouldReplayHistory: boolean): Promise<void> }
+    ).finishStartup(false);
+
+    const transcript = driver.state.transcriptContainer.render(160).join('\n');
+    expect(transcript).toContain('No session yet — one will be created on your first message.');
+  });
+
   it('shows config defaults in appState before the lazy session exists (v2)', async () => {
     const harness = makeHarness(makeSession(), {
       getConfig: vi.fn(async () => ({

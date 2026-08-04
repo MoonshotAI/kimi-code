@@ -103,6 +103,7 @@ import {
   MAIN_AGENT_ID,
   NO_ACTIVE_SESSION_MESSAGE,
   PRODUCT_NAME,
+  SESSIONLESS_STARTUP_NOTICE,
 } from './constant/kimi-tui';
 import { CHROME_GUTTER } from './constant/rendering';
 import { MAX_TERMINAL_TITLE_LENGTH } from './constant/terminal';
@@ -494,9 +495,8 @@ export class KimiTUI {
   async refreshSkillCommands(session?: SkillListSession): Promise<void> {
     if (session === undefined) {
       // v2 engine: skills live on the workspace handler, not the session, so
-      // they are available before the first (lazy) session is created. The
-      // workspace-level list lacks plugin skills; the session list fills that
-      // in once a session exists.
+      // they are available before the first (lazy) session is created — the
+      // workspace catalog is the same merged view a session would serve.
       if (this.engineV2) {
         try {
           const skills = await this.harness.listWorkspaceSkills(this.state.appState.workDir);
@@ -869,6 +869,7 @@ export class KimiTUI {
         // shows the config defaults the engine would apply at createSession
         // time (model, permission, plan mode, thinking effort, context cap).
         await this.hydrateLazyConfigDefaults();
+        this.appendStartupNotice(SESSIONLESS_STARTUP_NOTICE);
       } else {
         session = await this.harness.createSession(createSessionOptions);
       }
