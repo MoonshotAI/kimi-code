@@ -573,6 +573,39 @@ fn config_delete_removes_section_entry() {
 }
 
 #[test]
+fn chat_undo_and_fork_offline() {
+    // /undo (empty history errors cleanly) + /fork (creates a new session)
+    // are pure state ops — no LLM needed.
+    let home = temp_dir("chat-undo-fork");
+    let cwd = temp_dir("chat-undo-fork-cwd");
+    let mut child = Command::new(binary())
+        .args(["chat", "-s", "s-undo-fork"])
+        .current_dir(&cwd)
+        .env("KIMI_AGENT_HOME", &home)
+        .env("HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn kimi chat");
+    {
+        use std::io::Write;
+        let stdin = child.stdin.as_mut().expect("stdin");
+        stdin
+            .write_all(b"/undo\n/fork s-undo-fork-2\n/quit\n")
+            .expect("write");
+    }
+    let output = child.wait_with_output().expect("wait");
+    assert!(output.status.success(), "chat exits 0: {}", output.status);
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(out.contains("forked to s-undo-fork-2"), "fork line: {out}");
+
+    // The fork is a persisted session.
+    let list = run(&home, &["sessions", "--json"]);
+    assert!(stdout(&list).contains("s-undo-fork-2"), "fork listed: {}", stdout(&list));
+}
+
+#[test]
 fn chat_approval_commands_offline_safe() {
     // /approvals + /approve|/deny are pure state ops (no LLM): an empty store
     // lists nothing and unknown ids resolve to "not found" without erroring.

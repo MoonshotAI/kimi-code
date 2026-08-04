@@ -462,6 +462,8 @@ async fn handle_chat_command(
             println!("/compact     compact the session context");
             println!("/export      export the session as <session_id>.zip");
             println!("/sessions    list persisted sessions");
+            println!("/undo        undo the last turn");
+            println!("/fork <id>   fork this session under a new id");
             println!("/approvals   list pending tool approvals");
             println!("/approve <id> allow a pending approval");
             println!("/deny <id>   deny a pending approval");
@@ -632,6 +634,38 @@ async fn handle_chat_command(
                 let title = if title.is_empty() { "(untitled)" } else { title };
                 println!("{id}  {title}");
             }
+            ChatCommand::Handled
+        }
+        "/undo" => {
+            // Undo the last turn (pure state op; errors cleanly when there is
+            // nothing to undo).
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_UNDO_HISTORY,
+                    serde_json::json!({ "session_id": *session_id }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            println!("{}", serde_json::to_string_pretty(&body["result"]).unwrap_or_default());
+            ChatCommand::Handled
+        }
+        "/fork" => {
+            // Fork the current session under a new id (pure state op).
+            if rest.is_empty() {
+                return ChatCommand::Error("usage: /fork <new-session-id>".into());
+            }
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_FORK,
+                    serde_json::json!({ "session_id": *session_id, "fork_id": rest }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            println!("forked to {rest}");
             ChatCommand::Handled
         }
         "/approvals" => {

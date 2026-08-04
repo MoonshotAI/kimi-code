@@ -23,6 +23,7 @@ const SLASH_COMMANDS: &[&str] = &[
     "/deny",
     "/exit",
     "/export",
+    "/fork",
     "/goal",
     "/goal-cancel",
     "/goal-pause",
@@ -36,8 +37,10 @@ const SLASH_COMMANDS: &[&str] = &[
     "/resume",
     "/sessions",
     "/status",
+    "/steer",
     "/swarm",
     "/thinking",
+    "/undo",
     "/usage",
 ];
 
@@ -480,6 +483,34 @@ impl App {
                         "usage: {}",
                         serde_json::to_string(&usage).unwrap_or_default()
                     )));
+                }
+                "/undo" => {
+                    let undone = self.session.as_mut().expect("session").undo_history().await?;
+                    self.transcript.push(TranscriptLine::status(format!(
+                        "undo: {}",
+                        serde_json::to_string(&undone).unwrap_or_default()
+                    )));
+                }
+                "/fork" => {
+                    if rest.is_empty() {
+                        self.transcript.push(TranscriptLine::status("usage: /fork <new-session-id>"));
+                    } else {
+                        self.session.as_mut().expect("session").fork(rest, None).await?;
+                        self.transcript.push(TranscriptLine::status(format!("forked to {rest}")));
+                    }
+                }
+                "/steer" => {
+                    if rest.is_empty() {
+                        self.transcript.push(TranscriptLine::status("usage: /steer <text>"));
+                    } else {
+                        let queued = self
+                            .session
+                            .as_mut()
+                            .expect("session")
+                            .steer(serde_json::json!([{ "type": "text", "text": rest }]))
+                            .await?;
+                        self.transcript.push(TranscriptLine::status(format!("steer queued: {queued}")));
+                    }
                 }
                 "/goal-status" => {
                     let goal = self.session.as_mut().expect("session").goal().await?;

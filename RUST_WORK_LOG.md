@@ -5,6 +5,11 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㊱ TUI/REPL 命令面补全（/undo /fork /steer，已提交）**：
+> - **缺口**：SDK Session 有 undo_history/fork/steer，TUI 与 chat REPL 均未暴露。
+> - **实现**：TUI 加 `/undo`（undo_history）、`/fork <new-id>`（fork）、`/steer <text>`（运行中 steer）；chat REPL 加 `/undo`、`/fork`；SLASH_COMMANDS 23 → 26（/help 与 Tab 补全自动同步）；REPL /help 列表同步。
+> - **验证**：kimi-tui 13 测试绿 + kimi-cli 单元绿；CLI 集成测试 32 → 33（chat_undo_and_fork_offline：空历史 undo 干净报错 + fork 持久化列出）；clippy 0 警告。
+
 > **✅ 2026-08-03 ㉟ `kimi print` resume 提示 + 会话读取修正（已提交）**：
 > - **缺口**：TS print 结束发 `To resume this session: kimi -r <id>`（stderr，始终）；Rust print 无提示。
 > - **实现**：print 成功路径 stderr 发 `To resume this session: kimi resume {session_id}`（Rust 命令形状）；**顺带修**：get_context 仍用硬编码 "kimi-exec"，--continue 时应读实际会话 → 改 `session_get_context(&session_id)`。
