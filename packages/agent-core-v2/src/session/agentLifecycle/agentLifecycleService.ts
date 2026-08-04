@@ -10,7 +10,10 @@
  * envelope while non-empty unversioned logs are rejected. Removal awaits the
  * agent task manager's graceful exit policy before draining turns and full
  * compaction, then disposing the child scope. Fans session-level
- * permission-mode switches out to every live agent. Bound at Session scope.
+ * permission-mode switches out to every live agent — except
+ * `tower-worker`-profile agents, which TowerSpawn pins to `auto` (they run
+ * detached and unattended); the broadcast leaves them on `auto`. Bound at
+ * Session scope.
  *
  * No agent id is special here: the main agent is simply the agent created
  * with the conventional `MAIN_AGENT_ID`, and `fork` requires its source to
@@ -37,6 +40,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
 import { PermissionModeConfiguredModel } from '#/agent/permissionMode/permissionModeOps';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import { ProfileModel } from '#/agent/profile/profileOps';
+import { TOWER_WORKER_PROFILE } from '#/agent/tower/tower';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -247,6 +252,15 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
 
   broadcastPermissionMode(mode: PermissionMode): void {
     for (const handle of this.handles.values()) {
+      // Tower workers/reviewers stay pinned to auto (see the file header) —
+      // the profile name is read off the wire model, not the profile service,
+      // so the broadcast never has to materialize one.
+      if (
+        handle.accessor.get(IWireService).getModel(ProfileModel).profileName ===
+        TOWER_WORKER_PROFILE
+      ) {
+        continue;
+      }
       handle.accessor.get(IAgentPermissionModeService).setMode(mode);
     }
   }

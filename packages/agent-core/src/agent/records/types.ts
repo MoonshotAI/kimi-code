@@ -102,6 +102,9 @@ export interface AgentRecordEvents {
   };
   'swarm_mode.exit': {};
 
+  'tower_mode.enter': {};
+  'tower_mode.exit': {};
+
   'tools.register_user_tool': UserToolRegistration;
   'tools.unregister_user_tool': {
     name: string;

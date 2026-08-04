@@ -270,10 +270,11 @@ export class EditorKeyboardController {
       const text = editor.getText().trim();
       const editorIsBash = editor.inputMode === 'bash';
 
-      // Bash commands (`! …`) are not steerable: keep them queued so they run
-      // after the current task instead of being injected into the turn as text.
+      // Bash commands (`! …`) and slash-skill activations are not steerable:
+      // keep them queued so they run/activate after the current task instead
+      // of being injected into the turn as plain text.
       const queued = host.state.queuedMessages;
-      const steerable = queued.filter((m) => m.mode !== 'bash');
+      const steerable = queued.filter((m) => m.mode !== 'bash' && m.mode !== 'skill');
 
       const items: SteerInputItem[] = [];
       for (const m of steerable) {
@@ -314,7 +315,7 @@ export class EditorKeyboardController {
         ) {
           return;
         }
-        host.state.queuedMessages = queued.filter((m) => m.mode === 'bash');
+        host.state.queuedMessages = queued.filter((m) => m.mode === 'bash' || m.mode === 'skill');
         if (!editorIsBash) editor.setText('');
         const session = host.session;
         if (host.state.appState.model.trim().length === 0 || session === undefined) {
@@ -354,7 +355,9 @@ export class EditorKeyboardController {
         editor.setText(recalled.text);
         // Restore the queued item's mode so a recalled `!` command runs as a
         // shell command again instead of being submitted as a normal prompt.
-        const mode = recalled.mode ?? 'prompt';
+        // Skill activations recall as prompt mode: their text is the original
+        // `/name args` slash command, which re-parses on submit.
+        const mode = recalled.mode === 'bash' ? 'bash' : 'prompt';
         if (editor.inputMode !== mode) {
           editor.inputMode = mode;
           editor.onInputModeChange?.(mode);

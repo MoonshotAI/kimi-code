@@ -258,8 +258,14 @@ export interface QueuedMessage {
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
   /** `bash` for a `!` shell command queued while another command is running;
+   *  `skill` for a slash-skill activation queued while the session is busy;
    *  undefined (=`prompt`) for a normal message. */
-  readonly mode?: 'prompt' | 'bash';
+  readonly mode?: 'prompt' | 'bash' | 'skill';
+  /** Set when mode === 'skill': the skill to activate when the item drains.
+   *  `text` then holds the display/recall string (`/name args`). */
+  readonly skillName?: string;
+  /** Set when mode === 'skill': the raw (media-rewritten) args to activate with. */
+  readonly skillArgs?: string;
 }
 
 /**

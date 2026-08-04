@@ -306,6 +306,7 @@ export interface SkillSummary {
   readonly source: 'builtin' | 'user' | 'extra' | 'project';
   readonly type?: string | undefined;
   readonly disableModelInvocation?: boolean | undefined;
+  readonly allowActivationWhileBusy?: boolean | undefined;
   readonly isSubSkill?: boolean | undefined;
 }
 

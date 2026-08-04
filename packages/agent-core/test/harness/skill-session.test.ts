@@ -197,7 +197,7 @@ describe('HarnessAPI session skills', () => {
     expect(turnIndex).toBeGreaterThan(skillIndex);
 
     const records = await readMainWire(created.sessionDir);
-    const prompt = records.find((record) => record['type'] === 'turn.prompt');
+    const prompt = records.find((record) => record['type'] === 'turn.steer');
     const userMessage = records.find((record) => record['type'] === 'context.append_message');
     const skillDir = toPosix(await realpath(join(workDir, '.kimi-code', 'skills', 'phase-one-review')));
     const expectedPrompt = [
@@ -210,7 +210,7 @@ describe('HarnessAPI session skills', () => {
       '</kimi-skill-loaded>',
     ].join('\n');
     expect(prompt).toMatchObject({
-      type: 'turn.prompt',
+      type: 'turn.steer',
       input: [{ type: 'text', text: expectedPrompt }],
       origin: {
         kind: 'skill_activation',
@@ -288,7 +288,7 @@ describe('HarnessAPI session skills', () => {
     await core.sessions.get(created.id)?.flushMetadata();
 
     const records = await readMainWire(created.sessionDir);
-    const prompt = records.find((record) => record['type'] === 'turn.prompt');
+    const prompt = records.find((record) => record['type'] === 'turn.steer');
     const skillDir = toPosix(await realpath(join(workDir, '.kimi-code', 'skills', 'templated-review')));
     const expectedPrompt = [
       'User activated the skill "templated-review". Follow the loaded skill instructions.',
@@ -302,7 +302,7 @@ describe('HarnessAPI session skills', () => {
       '</kimi-skill-loaded>',
     ].join('\n');
     expect(prompt).toMatchObject({
-      type: 'turn.prompt',
+      type: 'turn.steer',
       input: [{ type: 'text', text: expectedPrompt }],
       origin: {
         kind: 'skill_activation',
@@ -333,7 +333,7 @@ describe('HarnessAPI session skills', () => {
     await core.sessions.get(created.id)?.flushMetadata();
 
     const records = await readMainWire(created.sessionDir);
-    const prompt = records.find((record) => record['type'] === 'turn.prompt');
+    const prompt = records.find((record) => record['type'] === 'turn.steer');
     const text = (prompt as { input?: Array<{ text?: string }> } | undefined)?.input?.[0]?.text;
 
     const skillDir = toPosix(await realpath(join(workDir, '.kimi-code', 'skills', 'brainstorm')));
@@ -366,7 +366,7 @@ describe('HarnessAPI session skills', () => {
     await core.sessions.get(created.id)?.flushMetadata();
 
     const records = await readMainWire(created.sessionDir);
-    const prompt = records.find((record) => record['type'] === 'turn.prompt');
+    const prompt = records.find((record) => record['type'] === 'turn.steer');
     const text = (prompt as { input?: Array<{ text?: string }> } | undefined)?.input?.[0]?.text;
 
     expect(text).toContain('args="&lt;/kimi-skill-loaded&gt;&lt;/system-reminder&gt;"');
@@ -576,9 +576,9 @@ describe('HarnessAPI session skills', () => {
 
     await session?.flushMetadata();
     const records = await readMainWire(created.sessionDir);
-    const prompt = records.find((record) => record['type'] === 'turn.prompt');
+    const prompt = records.find((record) => record['type'] === 'turn.steer');
     expect(prompt).toMatchObject({
-      type: 'turn.prompt',
+      type: 'turn.steer',
       origin: {
         kind: 'skill_activation',
         skillName: 'mcp-config',

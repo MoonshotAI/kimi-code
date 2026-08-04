@@ -753,6 +753,8 @@ describe('Permission policy chain', () => {
       'agent-swarm-exclusive-deny',
       'auto-mode-ask-user-question-deny',
       'plan-mode-guard-deny',
+      'tower-mode-todo-list-deny',
+      'tower-worker-write-guard-deny',
       'user-configured-deny',
       'auto-mode-approve',
       'session-approval-history',

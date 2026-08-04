@@ -399,6 +399,24 @@ function projectResumedAgents(
 }
 
 /**
+ * The tower tools v1 constructs for every agent but keeps inactive until
+ * TowerInit runs (TowerInit itself is active on both engines and compares).
+ * See the `tools` bullet on `projectResumedAgent`.
+ */
+const V1_INACTIVE_TOWER_TOOLS = new Set([
+  'TowerPlan',
+  'TowerSpawn',
+  'TowerMerge',
+  'TowerTeardown',
+  'TowerSend',
+  'TowerInbox',
+  'TowerFinding',
+  'TowerReview',
+  'TowerMission',
+  'TowerStatus',
+]);
+
+/**
  * The per-agent projections of the resume comparison, each a genuinely
  * accepted engine gap rather than resume data:
  * - `config.provider`: v1 resolves the full runtime ProviderConfig into the
@@ -438,7 +456,12 @@ function projectResumedAgents(
  *   v1 additionally registers the `select_tools` meta tool v2 has no
  *   counterpart for — both are engine design, not resume data. A model-less
  *   agent's roster is not compared at all (v1 initializes builtin tools
- *   only on a profiled agent; v2 exposes them unbound).
+ *   only on a profiled agent; v2 exposes them unbound). v1 also constructs
+ *   the ten non-init tower tools for every agent and reports them with
+ *   `active: false`; v2 only surfaces a tool once the profile activates it
+ *   (TowerInit extends the active set at runtime), so the never-activated
+ *   tower tools exist only on the v1 roster — registration semantics, not
+ *   resume data.
  */
 function projectResumedAgent(agent: ResumedAgentState, home: HomePair): unknown {
   const projected = scrubHomePrefixes(agent, home) as Record<string, unknown>;
@@ -454,6 +477,13 @@ function projectResumedAgent(agent: ResumedAgentState, home: HomePair): unknown 
     const tools = projected['tools'] as readonly Record<string, unknown>[];
     projected['tools'] = tools
       .filter((tool) => tool['name'] !== 'select_tools')
+      .filter(
+        (tool) =>
+          !(
+            tool['active'] === false &&
+            V1_INACTIVE_TOWER_TOOLS.has(tool['name'] as string)
+          ),
+      )
       .map((tool) => ({ name: tool['name'], active: tool['active'], source: tool['source'] }))
       .toSorted((a, b) => String(a.name).localeCompare(String(b.name)));
   }

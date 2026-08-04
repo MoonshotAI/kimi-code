@@ -22,6 +22,7 @@ import {
   SUB_SKILL_PARENT,
   SUB_SKILL_REVIEW,
 } from './sub-skill';
+import { TOWER_SKILL } from './tower';
 import { UPDATE_CONFIG_SKILL } from './update-config';
 import { WRITE_GOAL_SKILL } from './write-goal';
 
@@ -35,6 +36,7 @@ export const BUILTIN_SKILLS: readonly SkillDefinition[] = [
   SUB_SKILL_PARENT,
   SUB_SKILL_REVIEW,
   SUB_SKILL_CONSOLIDATE,
+  TOWER_SKILL,
 ];
 
 export function visibleBuiltinSkills(productSkillsEnabled: boolean): readonly SkillDefinition[] {
@@ -50,6 +52,7 @@ export {
   SUB_SKILL_CONSOLIDATE,
   SUB_SKILL_PARENT,
   SUB_SKILL_REVIEW,
+  TOWER_SKILL,
   UPDATE_CONFIG_SKILL,
   WRITE_GOAL_SKILL,
 };

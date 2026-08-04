@@ -336,6 +336,8 @@ export class KimiTUI {
   private readonly reverseRpcDisposers: Array<() => void> = [];
   private skillCommands: readonly KimiSlashCommand[] = [];
   readonly skillCommandMap = new Map<string, string>();
+  /** Skills whose frontmatter opts into steering a slash activation into a running turn. */
+  private readonly skillsActivatableWhileBusy = new Set<string>();
   private pluginCommands: readonly KimiSlashCommand[] = [];
   readonly pluginCommandMap = new Map<string, string>();
   private readonly imageStore = new ImageAttachmentStore();
@@ -531,6 +533,7 @@ export class KimiTUI {
       }
       this.skillCommands = [];
       this.skillCommandMap.clear();
+      this.skillsActivatableWhileBusy.clear();
       this.setupAutocomplete();
       return;
     }
@@ -550,6 +553,12 @@ export class KimiTUI {
     this.skillCommandMap.clear();
     for (const [commandName, skillName] of skillCommands.commandMap) {
       this.skillCommandMap.set(commandName, skillName);
+    }
+    this.skillsActivatableWhileBusy.clear();
+    for (const skill of skills) {
+      if (skill.allowActivationWhileBusy === true) {
+        this.skillsActivatableWhileBusy.add(skill.name);
+      }
     }
     this.setupAutocomplete();
   }
@@ -1481,6 +1490,12 @@ export class KimiTUI {
       void this.runShellCommandFromInput(item.text);
       return;
     }
+    if (item.mode === 'skill' && item.skillName !== undefined) {
+      // sendSkillActivation re-checks the busy state, so a premature drain
+      // re-queues at the tail instead of racing the running turn.
+      this.sendSkillActivation(session, item.skillName, item.skillArgs ?? '');
+      return;
+    }
     this.harness.withInteractiveAgent(item.agentId ?? MAIN_AGENT_ID, () => {
       this.sendMessageInternal(session, item.text, {
         parts: item.parts,
@@ -1547,6 +1562,44 @@ export class KimiTUI {
       return;
     }
     if (!this.validateMediaCapabilities(rewrite)) return;
+    // Compacting (or deferred input): queue behind it — visible and recallable.
+    // Slash-skill items are not Ctrl-S steerable (steering would inject the
+    // literal text, not an activation) — see editor-keyboard.ts.
+    // A running turn queues the activation too, unless the skill declared
+    // `allow-activation-while-busy` in its frontmatter: a plain skill steered
+    // into an in-flight turn would hijack the task at the next step boundary,
+    // so only coordination-style skills (e.g. /tower) may interrupt.
+    const turnRunning = this.state.appState.streamingPhase !== 'idle';
+    if (
+      this.deferUserMessages ||
+      this.state.appState.isCompacting ||
+      (turnRunning && !this.skillsActivatableWhileBusy.has(skillName))
+    ) {
+      const args = rewrite.text.trim();
+      this.state.queuedMessages.push({
+        text: `/${skillName}${args.length > 0 ? ` ${args}` : ''}`,
+        agentId: this.harness.interactiveAgentId,
+        mode: 'skill',
+        skillName,
+        skillArgs: rewrite.text,
+      });
+      this.track('input_queue');
+      this.updateQueueDisplay();
+      this.state.ui.requestRender();
+      return;
+    }
+    if (turnRunning) {
+      // The skill opted into busy activation: fire immediately. The engine
+      // steers the activation into the running turn (see
+      // SkillManager.recordActivation), so the command takes effect at the
+      // next step boundary instead of waiting for the turn to end. No
+      // beginSessionRequest — the live pane belongs to the running turn.
+      void session.activateSkill(skillName, rewrite.text).catch((error: unknown) => {
+        const message = formatErrorMessage(error);
+        this.showError(`Skill "${skillName}" failed: ${message}`);
+      });
+      return;
+    }
     this.beginSessionRequest();
     void session.activateSkill(skillName, rewrite.text).catch((error: unknown) => {
       const message = formatErrorMessage(error);

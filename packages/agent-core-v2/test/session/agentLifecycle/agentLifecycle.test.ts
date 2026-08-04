@@ -17,6 +17,8 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import '#/agent/profile/profileService';
+import { profileBind } from '#/agent/profile/profileOps';
+import { TOWER_WORKER_PROFILE } from '#/agent/tower/tower';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
@@ -36,6 +38,7 @@ import { createMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import '#/agent/mcp/mcpService';
+import { IWireService } from '#/wire/wire';
 import '#/wire/wireService';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
@@ -622,6 +625,24 @@ describe('AgentLifecycleService', () => {
     svc.broadcastPermissionMode('auto');
 
     expect(permissionModeSetMode.mock.calls).toEqual([['auto']]);
+  });
+
+  it('broadcastPermissionMode leaves tower-worker agents pinned to their spawned mode', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    const worker = await svc.create({ agentId: 'worker-1' });
+    worker.accessor.get(IWireService).dispatch(
+      profileBind({
+        profileName: TOWER_WORKER_PROFILE,
+        thinkingEffort: 'off',
+        systemPrompt: '',
+        disallowedTools: [],
+      }),
+    );
+
+    svc.broadcastPermissionMode('manual');
+
+    expect(permissionModeSetMode.mock.calls).toEqual([['manual']]);
   });
 
   it('wires MCP OAuth credentials through the session atomic document store', async () => {
