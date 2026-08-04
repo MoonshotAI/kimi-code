@@ -554,6 +554,25 @@ fn logout_removes_kimi_provider() {
 }
 
 #[test]
+fn config_delete_removes_section_entry() {
+    // `--set providers.acme.apiKey=…` then `--delete providers.acme` round
+    // trips through the engine's section-scoped null delete.
+    let home = temp_dir("config-del");
+    let out = run(&home, &["config", "--set", "providers.acme.apiKey=sk-test"]);
+    assert!(out.status.success(), "set: {}", out.status);
+    let out = run(&home, &["config", "--delete", "providers.acme"]);
+    assert!(out.status.success(), "delete: {}", out.status);
+    assert!(stdout(&out).contains("\"ok\": true"), "delete result: {}", stdout(&out));
+    let out = run(&home, &["config"]);
+    let config: serde_json::Value = serde_json::from_str(stdout(&out).trim()).expect("config JSON");
+    assert!(
+        config["providers"].get("acme").is_none(),
+        "provider removed: {}",
+        config["providers"]
+    );
+}
+
+#[test]
 fn chat_approval_commands_offline_safe() {
     // /approvals + /approve|/deny are pure state ops (no LLM): an empty store
     // lists nothing and unknown ids resolve to "not found" without erroring.

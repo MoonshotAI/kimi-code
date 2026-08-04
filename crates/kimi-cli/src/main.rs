@@ -181,6 +181,12 @@ enum Commands {
         /// or `--set providers.anthropic.apiKey=sk-…`. Values are strings.
         #[arg(long = "set", value_name = "KEY=VALUE")]
         set: Vec<String>,
+        /// Delete a config section entry (repeatable), e.g.
+        /// `--delete providers.kimi` or `--delete models.kimi-k2`. Only
+        /// section-level entries (`providers.<id>`, `models.<alias>`) can be
+        /// removed — the engine's null-delete path is section-scoped.
+        #[arg(long = "delete", value_name = "SECTION.KEY")]
+        delete: Vec<String>,
     },
     /// Environment + config diagnostics.
     Doctor {
@@ -1008,8 +1014,35 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Commands::Config { set } => {
+        Commands::Config { set, delete } => {
             let mut client = connect(&server)?;
+            if !delete.is_empty() {
+                // `kimi config --delete providers.<id>`: build a section-level
+                // null patch (the engine's null-delete path is section-scoped
+                // — providers.<id> / models.<alias>).
+                let mut patch = serde_json::json!({});
+                for key in &delete {
+                    let (section, id) = key.split_once('.').ok_or_else(|| {
+                        anyhow::anyhow!("--delete expects SECTION.KEY, got: {key}")
+                    })?;
+                    if section.is_empty() || id.is_empty() {
+                        anyhow::bail!("invalid config key: {key}");
+                    }
+                    patch[section][id] = serde_json::Value::Null;
+                }
+                let body = client
+                    .call(kimi_protocol::methods::CONFIG_SET, serde_json::json!({ "patch": patch }))
+                    .await;
+                if let Some(error) = body.get("error") {
+                    eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
+                    std::process::exit(1);
+                }
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&body["result"]).unwrap_or_default()
+                );
+                return Ok(());
+            }
             if !set.is_empty() {
                 // `kimi config --set key=value`: build a nested patch from
                 // dot-paths ("providers.x.apiKey") and hand it to config/set,
