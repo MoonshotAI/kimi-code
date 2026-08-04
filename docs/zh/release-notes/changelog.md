@@ -14,8 +14,8 @@ outline: 2
 
 ### 优化
 
-- `[loop_control]` 两个配置键改名：`max_retries_per_step` → `max_attempts_per_step`、`max_steps_per_run` → `max_steps_per_turn`；旧键失效，启动时警告提示改名，详见 [`loop_control`](../configuration/config-files.md#loop-control)。
-- 新增 `[token_counting]` 配置节，上下文大小显示可选实测、估算或两者兼有，适用于不上报用量的供应商，详见 [`token_counting`](../configuration/config-files.md#token-counting)。
+- `[loop_control]` 两个配置键改名：`max_retries_per_step` → `max_attempts_per_step`、`max_steps_per_run` → `max_steps_per_turn`；旧键不再生效（启动时会有改名警告），详见 `[loop_control](../configuration/config-files.md#loop-control)`。
+- 新增 `[token_counting]` 配置节：供应商不上报 token 用量时，可将上下文大小显示切换为本地估算，详见 `[token_counting](../configuration/config-files.md#token-counting)`。
 
 ### 修复
 

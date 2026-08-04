@@ -14,8 +14,8 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Polish
 
-- Rename two `[loop_control]` keys: `max_retries_per_step` → `max_attempts_per_step` and `max_steps_per_run` → `max_steps_per_turn`; the old keys stop working with a startup warning — see [`loop_control`](../configuration/config-files.md#loop-control).
-- Add a `[token_counting]` config section so the context-size display can use measured usage, estimates, or both — mainly for providers that don't report token usage; see [`token_counting`](../configuration/config-files.md#token-counting).
+- Rename two `[loop_control]` keys: `max_retries_per_step` → `max_attempts_per_step` and `max_steps_per_run` → `max_steps_per_turn`; the old keys stop working — see [`loop_control`](../configuration/config-files.md#loop-control).
+- Add a `[token_counting]` config section: when a provider doesn't report token usage, switch the context-size display to local estimates — see [`token_counting`](../configuration/config-files.md#token-counting).
 
 ### Bug Fixes
 
