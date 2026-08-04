@@ -545,7 +545,7 @@ export class AcpServer {
       this.klient,
       sessionId,
       this.acpConnection,
-      this.clientCapabilities?.elicitation?.form != null,
+      Boolean(this.clientCapabilities?.elicitation?.form),
       this.resolveOriginalsDir,
       hostCommands,
     );

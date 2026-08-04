@@ -306,7 +306,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     // Fire the cancel immediately: the driver's turn id is very likely still
     // unknown at this point, which used to drop the cancel on the floor and
     // let the turn run to completion.
-    await c.notify('session/cancel', { sessionId: created.sessionId });
+    c.notify('session/cancel', { sessionId: created.sessionId });
 
     const result = (await promptPromise) as { stopReason: string };
     expect(result.stopReason).toBe('cancelled');
