@@ -525,8 +525,7 @@ describe('SessionEventBroadcaster', () => {
       total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
     };
     main.set(IAgentTokenCountingService, {
-      get: () => ({ size: contextSize }),
-      latestMeasured: () => 8,
+      statusSize: () => contextSize,
     });
     main.set(IAgentProfileService, {
       getModel: () => 'example-model',
@@ -570,7 +569,7 @@ describe('SessionEventBroadcaster', () => {
     const usage = {
       total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
     };
-    sub.set(IAgentTokenCountingService, { get: () => ({ size: 10 }), latestMeasured: () => 8 });
+    sub.set(IAgentTokenCountingService, { statusSize: () => 10 });
     sub.set(IAgentProfileService, {
       getModel: () => 'sub-model',
       getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
@@ -601,7 +600,7 @@ describe('SessionEventBroadcaster', () => {
   it('resolves the secondary derived model id to a display string in status events', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
-    main.set(IAgentTokenCountingService, { get: () => ({ size: 10 }), latestMeasured: () => 8 });
+    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
     main.set(IAgentProfileService, {
       getModel: () => SECONDARY_DERIVED_MODEL_ID,
       getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
@@ -650,7 +649,7 @@ describe('SessionEventBroadcaster', () => {
       },
       total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
     };
-    main.set(IAgentTokenCountingService, { get: () => ({ size: 10 }), latestMeasured: () => 8 });
+    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
     main.set(IAgentProfileService, {
       getModel: () => 'example-model',
       getModelCapabilities: () => ({ max_context_tokens: 128_000, max_input_tokens: 64_000 }),
@@ -672,7 +671,7 @@ describe('SessionEventBroadcaster', () => {
   it('omits maxContextTokens instead of pushing 0 when the context limit is unknown', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
-    main.set(IAgentTokenCountingService, { get: () => ({ size: 10 }), latestMeasured: () => 8 });
+    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
     // A bound alias whose model entry no longer resolves surfaces as the
     // UNKNOWN_CAPABILITY marker (max_context_tokens: 0) — 0 means "unknown",
     // not a real limit, so the wire event must drop the field entirely.
@@ -698,7 +697,7 @@ describe('SessionEventBroadcaster', () => {
   it('falls back to the default model limit when no model is bound', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
-    main.set(IAgentTokenCountingService, { get: () => ({ size: 10 }), latestMeasured: () => 8 });
+    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
     // Draft-session shape: no model bound, so the capabilities are unknown;
     // the push mirrors the REST status rollup and reads the default model.
     main.set(IAgentProfileService, {
@@ -728,7 +727,7 @@ describe('SessionEventBroadcaster', () => {
   it('omits maxContextTokens when no model is bound and no default model resolves', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
-    main.set(IAgentTokenCountingService, { get: () => ({ size: 10 }), latestMeasured: () => 8 });
+    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
     main.set(IAgentProfileService, {
       getModel: () => '',
       getModelCapabilities: () => ({ max_context_tokens: 0 }),

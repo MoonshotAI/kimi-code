@@ -254,11 +254,11 @@ Retries only apply to transient failures — connection errors, timeouts, HTTP 4
 
 ## `token_counting`
 
-`token_counting` selects where context token counts come from — the values behind the context-size display and automatic compaction.
+`token_counting` selects which context token count is reported externally — the value behind the context-size display. Internal logic (automatic compaction triggers, budgets, and overflow backoff) always uses both provider-reported usage and estimates, regardless of this setting.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `strategy` | `"measured+estimated" \| "measured" \| "estimated"` | `"measured+estimated"` | `measured+estimated` uses the provider-reported usage of each exchange and estimates only the not-yet-measured tail; `measured` relies on provider usage alone (estimates read as zero, so compaction triggers later or only on context overflow); `estimated` ignores provider usage and estimates everything — the fallback for providers that do not report usage |
+| `strategy` | `"measured+estimated" \| "measured" \| "estimated"` | `"measured+estimated"` | `measured+estimated` reports the live size — the provider-reported usage of each exchange plus an estimate of the not-yet-measured tail — floored by the last measured total; `measured` reports provider usage alone, so the display only moves when an exchange completes; `estimated` reports a pure estimate with provider usage ignored — the fallback for providers that do not report usage or report it unreliably |
 
 `strategy` can be overridden by the `KIMI_TOKEN_COUNTING_STRATEGY` environment variable, which takes higher priority than `config.toml`.
 

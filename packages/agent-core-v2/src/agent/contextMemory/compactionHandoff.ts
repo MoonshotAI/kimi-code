@@ -3,11 +3,12 @@
  * handoff shape for live rewrites, wire replay, and snapshot reducers.
  *
  * Token budgeting runs through an injectable {@link TokenEstimate}: the live
- * path (`AgentContextMemoryService.applyCompaction`) passes the config-gated
- * estimator from `IAgentTokenCountingService` (all-zero under the `measured`
- * strategy); the pure wire-replay / reducer paths cannot read config and keep
- * the real heuristics — their estimate fallback only fires when a record
- * lacks `tokensAfter`, so the measured chain is unaffected.
+ * path (`AgentContextMemoryService.applyCompaction`) passes the estimator
+ * from `IAgentTokenCountingService` (the raw heuristics — the
+ * `[token_counting]` strategy never gates internal estimates); the pure
+ * wire-replay / reducer paths keep the same heuristics — their estimate
+ * fallback only fires when a record lacks `tokensAfter`, so the measured
+ * chain is unaffected.
  */
 
 import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/kosong/contract/tokens';

@@ -254,11 +254,11 @@ max_output_size = 8192
 
 ## `token_counting`
 
-`token_counting` 决定上下文 token 计数的来源——上下文大小显示和自动压缩都基于这个值。
+`token_counting` 决定对外上报的上下文 token 计数——即上下文大小显示所基于的值。内部逻辑（自动压缩触发、预算、超限退避）始终同时使用供应商实测与估算，不受本配置影响。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `strategy` | `"measured+estimated" \| "measured" \| "estimated"` | `"measured+estimated"` | `measured+estimated` 使用每次请求的供应商实测用量，仅对未实测的尾部做估算；`measured` 只依赖供应商实测（估算按 0 处理，压缩触发更晚，或仅靠上下文溢出恢复）；`estimated` 忽略供应商实测、全部使用估算——适用于不上报用量的供应商 |
+| `strategy` | `"measured+estimated" \| "measured" \| "estimated"` | `"measured+estimated"` | `measured+estimated` 上报实时大小——每次请求的供应商实测用量加上未实测尾部的估算——并以最近一次实测总量兜底；`measured` 只上报供应商实测，显示仅在每次请求完成后变化；`estimated` 忽略供应商实测、上报纯估算——适用于不上报用量或用量不可信的供应商 |
 
 `strategy` 可被环境变量 `KIMI_TOKEN_COUNTING_STRATEGY` 覆盖，优先级高于 `config.toml`。
 

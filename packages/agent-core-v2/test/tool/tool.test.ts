@@ -1195,6 +1195,7 @@ describe('Agent tool execution contract', () => {
             _serviceBrand: undefined,
             get: () => ({ size: 321, measured: 300, estimated: 21 }),
             measured: () => {},
+            statusSize: () => 321,
           },
         ],
       ]),

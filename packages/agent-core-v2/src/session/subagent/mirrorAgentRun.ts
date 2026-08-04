@@ -190,5 +190,5 @@ function childContextTokens(
   agentId: string,
 ): number | undefined {
   const child = agentLifecycle.get(agentId);
-  return child?.accessor.get(IAgentTokenCountingService)?.get().size;
+  return child?.accessor.get(IAgentTokenCountingService)?.statusSize();
 }

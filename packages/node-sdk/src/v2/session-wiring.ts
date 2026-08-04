@@ -279,7 +279,9 @@ function withStatusSnapshot(agent: IAgentScopeHandle, event: DomainEvent): Domai
   if (profile === undefined || usageService === undefined || tokenCounting === undefined) {
     return event;
   }
-  const contextTokens = Math.max(tokenCounting.get().size, tokenCounting.latestMeasured());
+  // Externally reported context size, resolved by the `[token_counting]`
+  // strategy inside the service (`IAgentTokenCountingService.statusSize`).
+  const contextTokens = tokenCounting.statusSize();
   const capabilities = profile.getModelCapabilities();
   const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
   return {

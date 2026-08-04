@@ -158,24 +158,30 @@ describe('Agent token counting', () => {
     ]);
   });
 
-  it('reports measured-only sizes under the measured strategy', () => {
+  it('keeps estimates and anchors live for internal reads under the measured strategy', () => {
     const measured = createTestAgent({ initialConfig: { tokenCounting: { strategy: 'measured' } } });
     try {
       const counting = measured.get(IAgentTokenCountingService);
       expect(counting.strategy).toBe('measured');
-      expect(counting.estimateText('abcd')).toBe(0);
+      // Internal estimates are never gated: triggers, budgets, and overflow
+      // backoff always see the raw heuristics.
+      expect(counting.estimateText('abcd')).toBeGreaterThan(0);
 
       measured.appendUserMessage([{ type: 'text', text: 'hello world, not measured yet' }]);
-      expect(counting.get()).toEqual({ size: 0, measured: 0, estimated: 0 });
+      const tailEstimate = estimateTokensForMessages(
+        measured.get(IAgentContextMemoryService).get(),
+      );
+      expect(tailEstimate).toBeGreaterThan(0);
+      expect(counting.get()).toEqual({ size: tailEstimate, measured: 0, estimated: tailEstimate });
 
       measured.appendTurnExchange('u1', 'a1', 1_000);
-      expect(counting.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
+      expect(counting.get().measured).toBe(1_000);
     } finally {
       void measured.dispose();
     }
   });
 
-  it('ignores anchors and estimates everything under the estimated strategy', () => {
+  it('keeps anchors in internal reads under the estimated strategy', () => {
     const estimated = createTestAgent({
       initialConfig: { tokenCounting: { strategy: 'estimated' } },
     });
@@ -184,11 +190,47 @@ describe('Agent token counting', () => {
       expect(counting.strategy).toBe('estimated');
 
       estimated.appendTurnExchange('u1', 'a1', 1_000);
-      const context = estimated.get(IAgentContextMemoryService).get();
-      const estimate = estimateTokensForMessages(context);
-      expect(counting.get()).toEqual({ size: estimate, measured: 0, estimated: estimate });
+      // Internal reads always trust the measured anchor; only the externally
+      // reported `statusSize` ignores it.
+      expect(counting.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
     } finally {
       void estimated.dispose();
     }
+  });
+
+  it('statusSize reports the strategy-selected reading', () => {
+    // `measured`: only the provider-reported anchor is reported, even with an
+    // unmeasured tail.
+    const measured = createTestAgent({ initialConfig: { tokenCounting: { strategy: 'measured' } } });
+    try {
+      const counting = measured.get(IAgentTokenCountingService);
+      expect(counting.statusSize()).toBe(0);
+
+      measured.appendTurnExchange('u1', 'a1', 1_000);
+      measured.appendUserMessage([{ type: 'text', text: 'not measured yet' }]);
+      expect(counting.statusSize()).toBe(1_000);
+    } finally {
+      void measured.dispose();
+    }
+
+    // `estimated`: a bogus inflated anchor never leaks into the reported size.
+    const estimated = createTestAgent({
+      initialConfig: { tokenCounting: { strategy: 'estimated' } },
+    });
+    try {
+      const counting = estimated.get(IAgentTokenCountingService);
+      estimated.appendTurnExchange('u1', 'a1', 1_000_000);
+      const estimate = estimateTokensForMessages(estimated.get(IAgentContextMemoryService).get());
+      expect(counting.latestMeasured()).toBe(1_000_000);
+      expect(counting.statusSize()).toBe(estimate);
+    } finally {
+      void estimated.dispose();
+    }
+
+    // Default: the live size floored by the last measured total.
+    ctx.appendTurnExchange('u1', 'a1', 1_000);
+    expect(tokenCounting.statusSize()).toBe(
+      Math.max(tokenCounting.get().size, tokenCounting.latestMeasured()),
+    );
   });
 });

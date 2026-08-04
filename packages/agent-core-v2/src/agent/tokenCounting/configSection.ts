@@ -1,12 +1,14 @@
 /**
  * `tokenCounting` domain — `tokenCounting` config-section schema and env binding.
  *
- * Owns the `[token_counting]` section: the `strategy` switch deciding where
- * context/request token counts come from — `measured+estimated` (default;
- * real exchange anchors plus estimates for the unmeasured tail), `measured`
- * (estimates read as 0; sizing, triggers, and budgets rely on measured usage
- * alone), or `estimated` (anchors ignored; everything is estimated — the
- * escape hatch for providers with absent or unreliable usage reporting).
+ * Owns the `[token_counting]` section: the `strategy` switch selecting which
+ * context token count is EXTERNALLY reported (status events, REST status,
+ * RPC reads) — `measured+estimated` (default; the live size floored by the
+ * last measured total), `measured` (the latest measured anchor alone), or
+ * `estimated` (a pure estimate with anchors ignored — the escape hatch for
+ * providers with absent or unreliable usage reporting). Both tracks are
+ * always recorded and always feed internal logic (triggers, budgets,
+ * overflow backoff); the strategy never gates them.
  * Persisted user preference with an operational env override
  * (`KIMI_TOKEN_COUNTING_STRATEGY`); `config` resolves it as
  * `env > config.toml > default` on every read.

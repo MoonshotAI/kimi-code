@@ -119,15 +119,11 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
     return undefined;
   }
   const usage = usageService.status();
-  // Live (measured + estimated) context size — mirrors the REST status rollup
-  // (`ISessionLegacyService.status`) and v1's `context.tokenCount`, which
-  // reflect the context even before the first measured exchange completes.
-  // `size` alone can transiently dip below the last measured total while a
-  // post-step fold/rewrite leaves the context shorter than the measured
-  // prefix (the estimate then excludes the system prompt); the measured total
-  // is the better reading there. Every REAL shrink (undo / clear / compaction)
-  // rebases the measured model first, so the max only wins in that window.
-  const contextTokens = Math.max(tokenCounting.get().size, tokenCounting.latestMeasured());
+  // Externally reported context size, resolved by the `[token_counting]`
+  // strategy inside the service (`IAgentTokenCountingService.statusSize`) —
+  // mirrors the REST status rollup (`ISessionLegacyService.status`) and v1's
+  // `context.tokenCount`.
+  const contextTokens = tokenCounting.statusSize();
   const capabilities = profile.getModelCapabilities();
   let maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
   if (maxContextTokens === 0 && profile.getModel() === '') {

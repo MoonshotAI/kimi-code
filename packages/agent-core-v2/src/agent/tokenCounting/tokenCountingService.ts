@@ -7,8 +7,11 @@
  * rewrite that did not cascade — and skipped) supplies the REAL prefix
  * count, and the not-yet-anchored tail is estimated per message; sub-ranges
  * of the anchored prefix fall back to per-message estimates (the exact
- * aggregate is only known at anchor boundaries). Strategy gating:
- * `measured` zeroes every estimate, `estimated` ignores anchors entirely.
+ * aggregate is only known at anchor boundaries). Both tracks always feed
+ * internal logic; the `[token_counting]` strategy only selects the externally
+ * reported reading (`statusSize`) — `measured` reports anchors alone,
+ * `estimated` reports a pure estimate, the default floors the live size by
+ * the last measured total.
  * `measured(input, output, usage)` writes the exchange anchor through
  * `wire.dispatch(tokenCountingMeasured(...))` after each measured LLM
  * exchange. The context is read from the wire `ContextModel` directly (not
@@ -66,10 +69,6 @@ export class AgentTokenCountingService extends Disposable implements IAgentToken
     const context = this.context();
     const from = normalizeSliceIndex(start ?? 0, context.length);
     const to = normalizeSliceIndex(end ?? context.length, context.length);
-    if (this.strategy === 'estimated') {
-      const estimated = this.estimateMessages(context.slice(from, to));
-      return { size: estimated, measured: 0, estimated };
-    }
     const anchor = this.latestAnchor(context.length);
     const measuredEnd = Math.min(to, anchor.length);
     const estimatedStart = Math.max(from, anchor.length);
@@ -97,8 +96,19 @@ export class AgentTokenCountingService extends Disposable implements IAgentToken
     return 0;
   }
 
-  requestSize(request: TokenCountingRequest): number {
+  statusSize(): number {
     if (this.strategy === 'measured') return this.latestMeasured();
+    if (this.strategy === 'estimated') return this.estimateMessages(this.context());
+    // The live size can transiently dip below the last measured total while a
+    // post-step fold/rewrite leaves the context shorter than the measured
+    // prefix (the estimate then excludes the system prompt); the measured
+    // total is the better reading there. Every REAL shrink (undo / clear /
+    // compaction) rebases the measured model first, so the max only wins in
+    // that window.
+    return Math.max(this.get().size, this.latestMeasured());
+  }
+
+  requestSize(request: TokenCountingRequest): number {
     return (
       this.estimateText(request.systemPrompt) +
       this.estimateTools(request.tools) +
@@ -107,19 +117,19 @@ export class AgentTokenCountingService extends Disposable implements IAgentToken
   }
 
   estimateText(text: string): number {
-    return this.strategy === 'measured' ? 0 : estimateTokens(text);
+    return estimateTokens(text);
   }
 
   estimateMessage(message: Message): number {
-    return this.strategy === 'measured' ? 0 : estimateTokensForMessage(message);
+    return estimateTokensForMessage(message);
   }
 
   estimateMessages(messages: readonly Message[]): number {
-    return this.strategy === 'measured' ? 0 : estimateTokensForMessages(messages);
+    return estimateTokensForMessages(messages);
   }
 
   estimateTools(tools: readonly Tool[]): number {
-    return this.strategy === 'measured' ? 0 : estimateTokensForTools(tools);
+    return estimateTokensForTools(tools);
   }
 
   private context(): readonly ContextMessage[] {

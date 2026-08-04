@@ -218,10 +218,10 @@ export class AgentRPCService implements IAgentRPCService {
   getContext(_payload: EmptyPayload) {
     return {
       history: this.context.get(),
-      // The strategy-resolved total (measured + estimated tail), matching the
-      // v1 `context.tokenCount` semantics — under the `estimated` strategy
-      // `measured` alone would read 0.
-      tokenCount: this.tokenCounting.get().size,
+      // The externally reported context size, resolved by the
+      // `[token_counting]` strategy inside the service — matching the v1
+      // `context.tokenCount` semantics.
+      tokenCount: this.tokenCounting.statusSize(),
     };
   }
 

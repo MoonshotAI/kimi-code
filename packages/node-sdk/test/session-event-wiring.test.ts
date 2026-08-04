@@ -104,7 +104,7 @@ const USAGE = {
 };
 
 function bindStatusServices(agent: FakeAgentHandle, model: string): void {
-  agent.set(IAgentTokenCountingService, { get: () => ({ size: 10 }), latestMeasured: () => 8 });
+  agent.set(IAgentTokenCountingService, { statusSize: () => 10 });
   agent.set(IAgentProfileService, {
     getModel: () => model,
     getModelCapabilities: () => ({ max_context_tokens: 128_000 }),

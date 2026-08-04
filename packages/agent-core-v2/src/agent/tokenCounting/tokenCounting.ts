@@ -4,14 +4,16 @@
  * The single owner of every token count the agent reasons about: the context
  * size (measured anchors + estimated tail), the full request size (system
  * prompt + tools + messages) used by overflow heuristics, and the raw
- * character-based estimate primitives consumed by compaction budgets. The
- * `[token_counting]` strategy is resolved HERE and nowhere else:
- *   - `measured+estimated` (default): real exchange anchors plus estimates
- *     for the not-yet-measured tail;
- *   - `measured`: estimates read as 0 — sizing and triggers rely on measured
- *     usage alone;
- *   - `estimated`: anchors are ignored — everything is estimated (the escape
- *     hatch for providers whose usage reporting is absent or unreliable).
+ * character-based estimate primitives consumed by compaction budgets. Both
+ * tracks — measured anchors and heuristic estimates — are ALWAYS recorded and
+ * always feed internal logic (triggers, budgets, overflow backoff); the
+ * `[token_counting]` strategy is resolved HERE and nowhere else, and selects
+ * only the externally reported reading (`statusSize`):
+ *   - `measured+estimated` (default): the live size, floored by the last
+ *     measured total;
+ *   - `measured`: the latest measured anchor alone — estimates never reported;
+ *   - `estimated`: a pure estimate with anchors ignored (the escape hatch for
+ *     providers whose usage reporting is absent or unreliable).
  */
 
 import { createDecorator } from '#/_base/di/instantiation';
@@ -43,6 +45,13 @@ export interface IAgentTokenCountingService {
   /** Tokens of the most recent measured anchor (0 when none) — a real reading
    *  that stays valid across transient uncascaded context rewrites. */
   latestMeasured(): number;
+  /** The externally reported context size — the ONLY reading the
+   *  `[token_counting]` strategy selects: `measured` reports the latest
+   *  measured anchor alone, `estimated` reports a pure estimate with anchors
+   *  ignored, and the default reports the live size floored by the last
+   *  measured total. Internal logic (triggers, budgets, overflow backoff)
+   *  must use `get()` / the estimate primitives, never this method. */
+  statusSize(): number;
   requestSize(request: TokenCountingRequest): number;
 
   estimateText(text: string): number;
