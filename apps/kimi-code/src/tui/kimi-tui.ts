@@ -2,7 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
-import { log } from '@moonshot-ai/kimi-code-sdk';
+import { effectiveModelAlias, log } from '@moonshot-ai/kimi-code-sdk';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -65,6 +65,7 @@ import {
 } from './components/dialogs/approval-preview';
 import { CompactionComponent } from './components/dialogs/compaction';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
+import { defaultThinkingEffortFor } from './components/dialogs/model-selector';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
 import { TrustPromptComponent, type TrustPromptChoice } from './components/dialogs/trust-prompt';
@@ -1679,6 +1680,20 @@ export class KimiTUI {
     const effort = thinkingEffortFromConfig(config.thinking);
     if (effort !== undefined) {
       patch.thinkingEffort = effort;
+    } else if (startupModel !== undefined) {
+      // Not disabled and no concrete effort configured (including no
+      // [thinking] section at all): the engine resolves this to the selected
+      // model's default effort at createSession time — mirror it here.
+      // Leaving the initial 'off' would mislabel thinking in the footer and
+      // the /model picker, where a bare Enter would then persist
+      // thinking.enabled=false over the user's config.
+      const raw = config.models?.[startupModel];
+      if (raw !== undefined) {
+        const providerType = config.providers?.[raw.provider]?.type;
+        patch.thinkingEffort = defaultThinkingEffortFor(
+          effectiveModelAlias(raw, providerType ?? raw.protocol),
+        );
+      }
     }
     if (startup.agentProfile !== undefined || startup.agentFiles !== undefined) {
       patch.agentProfile = startup.agentProfile;
