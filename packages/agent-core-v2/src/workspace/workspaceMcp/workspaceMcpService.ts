@@ -20,7 +20,11 @@
  *
  * Resolves the client name announced to MCP servers — on initialize and on
  * OAuth dynamic registration — through `agentIdentity`, per connection rather
- * than once at construction.
+ * than once at construction. Every manager it builds, the shared one and each
+ * session overlay, connects only after the config domain is ready: the name is
+ * read as a connection is made, and the OAuth provider a remote server
+ * materializes is cached on the shared service, so connecting early would pin
+ * the built-in name well beyond the connection that raced.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -112,9 +116,11 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       resolveDefaultTimeouts: () => this.mcpConfig.tunables(),
       resolveClientName: this.resolveClientName,
     });
-    const connect = sessionManager.connectAll({ ...servers }).catch((error: unknown) => {
-      this.log.error('session mcp overlay initial load failed', { error });
-    });
+    const connect = this.mcpConfig.ready
+      .then(() => sessionManager.connectAll({ ...servers }))
+      .catch((error: unknown) => {
+        this.log.error('session mcp overlay initial load failed', { error });
+      });
     const view = new MergedMcpConnectionView(
       this.manager,
       sessionManager,
