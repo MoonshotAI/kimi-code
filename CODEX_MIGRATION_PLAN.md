@@ -360,6 +360,6 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - chat/print goal 模式需先建 session 再 goal_create
 - （附）测试基建：并行测试 KIMI_AGENT_HOME 环境变量竞争 → STORE_LOCK 串行化模式
 
-**离线边界（需联网推进）**：阶段 D TUI（ratatui/crossterm）、阶段 E auth（OAuth device flow）与 catalog（models.dev 拉取）、ts-rs 绑定生成。
+**离线边界（需联网推进）**：阶段 D TUI（ratatui/crossterm）、阶段 E auth（OAuth device flow）与 catalog（models.dev 拉取）、ts-rs 绑定生成、shell 补全（clap_complete 不在 lock）。
 
 **下一步建议**：联网后先引 ratatui 建 kimi-tui 骨架（复用 kimi-ui 原语 + EventSource + Harness）；离线侧可继续 session 剩余方法（activate_skill/list_skills 注册表注入测试）与 `kimi-sdk` 的 skill/plan 面。
