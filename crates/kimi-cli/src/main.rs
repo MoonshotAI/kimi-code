@@ -858,7 +858,8 @@ async fn main() -> anyhow::Result<()> {
                 let title = session["title"].as_str().unwrap_or("");
                 let title = if title.is_empty() { "(untitled)" } else { title };
                 let work_dir = session["work_dir"].as_str().unwrap_or("");
-                println!("{id}  {title}  {work_dir}");
+                let updated = session["updated_at"].as_str().unwrap_or("");
+                println!("{id}  {title}  {work_dir}  {updated}");
             }
         }
         Commands::Resume { session_id, prompt, verbose, json, goal, model, plan } => {
