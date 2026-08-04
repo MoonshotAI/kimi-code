@@ -133,11 +133,11 @@ export {
   buildMediaPathTag,
   isDaemonFileUrl,
   parseDaemonFileUrl,
-} from '@moonshot-ai/agent-core-v2/kosong/contract/mediaRef';
+} from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
 export type {
   DaemonFileRef,
   MediaKind,
-} from '@moonshot-ai/agent-core-v2/kosong/contract/mediaRef';
+} from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
 
 export type {
   KimiAuthCompleteFeedbackUploadInput,

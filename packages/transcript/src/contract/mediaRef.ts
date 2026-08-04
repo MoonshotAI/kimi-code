@@ -2,7 +2,7 @@
  * `contract` — media path tag + kimi-file ref recognition for read models.
  *
  * Browser-pure mirror of the engine grammar
- * (`packages/agent-core-v2/src/kosong/contract/mediaRef.ts`), duplicated
+ * (`packages/agent-core-v2/src/agent/media/mediaRef.ts`), duplicated
  * because this package must not import the engine — keep the two in sync.
  * An upload edge persists a medium as the pair `<media path> tag text part +
  * `kimi-file://` media part; read models fold the pair into a single

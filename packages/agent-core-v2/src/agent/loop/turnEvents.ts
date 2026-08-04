@@ -19,7 +19,7 @@ import type { KimiErrorPayload } from '#/_base/errors/serialize';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { FinishReason } from '#/kosong/contract/provider';
 import type { ContentPart, TextPart } from '#/kosong/contract/message';
-import { foldMediaPathTagRefs } from '#/kosong/contract/mediaRef';
+import { foldMediaPathTagRefs } from '#/agent/media/mediaRef';
 import type { TokenUsage } from '#/kosong/contract/usage';
 
 export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';

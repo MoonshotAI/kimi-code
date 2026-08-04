@@ -9,7 +9,7 @@
  */
 
 import type { ContentPart } from '#/kosong/contract/message';
-import { foldMediaPathTagRefs } from '#/kosong/contract/mediaRef';
+import { foldMediaPathTagRefs } from '#/agent/media/mediaRef';
 import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
 
 const MAX_TITLE_LENGTH = 200;

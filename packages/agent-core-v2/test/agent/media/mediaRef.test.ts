@@ -28,7 +28,7 @@ import {
   mediaKindOfPart,
   pairMediaPathTagRefs,
   parseDaemonFileUrl,
-} from '#/kosong/contract/mediaRef';
+} from '#/agent/media/mediaRef';
 
 describe('media kind classification', () => {
   it('classifies paths by suffix, case-insensitively', () => {

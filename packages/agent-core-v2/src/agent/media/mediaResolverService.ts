@@ -55,17 +55,17 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IFileService } from '#/app/file/fileService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ContentPart, Message } from '#/kosong/contract/message';
-import {
-  buildMediaPathTag,
-  type DaemonFileRef,
-  daemonFileRefFromPart,
-  pairMediaPathTagRefs,
-} from '#/kosong/contract/mediaRef';
 import type { ModelRequester } from '#/kosong/model/modelRequester';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 
 import { detectFileType, MEDIA_SNIFF_BYTES } from './file-type';
 import { isModelAcceptedImageMime, normalizeImageMime } from './image-format-policy';
+import {
+  buildMediaPathTag,
+  type DaemonFileRef,
+  daemonFileRefFromPart,
+  pairMediaPathTagRefs,
+} from './mediaRef';
 import { IAgentMediaResolverService } from './mediaResolver';
 import { createVideoUploader } from './registerMediaTools';
 import {

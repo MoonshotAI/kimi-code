@@ -1,5 +1,5 @@
 /**
- * `kosong/contract` domain — media classification and daemon file references.
+ * `media` domain — media classification and daemon file references.
  *
  * "Media kind" is the classification every upload edge, resolver, and
  * projection agrees on: `image`, `video`, and `audio` (the media content-part
@@ -25,10 +25,11 @@
  * parsing unescapes it and tolerates extra attributes and a missing closing
  * tag.
  *
- * Pure types and pure functions only — no other domain, no I/O, no SDKs.
+ * Pure types and pure functions only — no I/O, no SDKs; depends only on the
+ * `ContentPart` envelope type from `kosong/contract`.
  */
 
-import type { ContentPart } from './message';
+import type { ContentPart } from '#/kosong/contract/message';
 
 /** Media category shared by upload edges, resolvers, and projections. */
 export type MediaKind = 'image' | 'video' | 'audio' | 'file';

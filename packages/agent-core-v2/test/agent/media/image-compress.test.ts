@@ -59,7 +59,7 @@ import {
   normalizeImageMime,
   unsupportedImageMimeFromUrl,
 } from '#/agent/media/image-format-policy';
-import { buildDaemonFileUrl } from '#/kosong/contract/mediaRef';
+import { buildDaemonFileUrl } from '#/agent/media/mediaRef';
 
 
 async function solidPng(width: number, height: number, color = 0x3366ccff): Promise<Uint8Array> {
