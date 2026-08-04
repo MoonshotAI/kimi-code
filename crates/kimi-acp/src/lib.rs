@@ -28,29 +28,130 @@ where
         if line.is_empty() {
             continue;
         }
-        let response = match serde_json::from_str::<kimi_protocol::rpc::JsonRpcRequest>(line) {
-            Ok(request) => handle(&harness, &request).await,
-            Err(_) => Some(serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": null,
-                "error": { "code": -32700, "message": "Parse error" },
-            })),
-        };
+        let (method, session_id, response) =
+            match serde_json::from_str::<kimi_protocol::rpc::JsonRpcRequest>(line) {
+                Ok(request) => {
+                    let method = request.method.clone();
+                    let session_id = request
+                        .params
+                        .get("sessionId")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let response = handle(&harness, &request).await.map(|v| vec![v]);
+                    (method, session_id, response)
+                }
+                Err(_) => (
+                    String::new(),
+                    String::new(),
+                    Some(vec![serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": null,
+                        "error": { "code": -32700, "message": "Parse error" },
+                    })]),
+                ),
+            };
         // Notifications (no response body) are processed and answered with
         // silence — the ACP/JSON-RPC convention.
         let Some(response) = response else {
             continue;
         };
-        if writer
-            .write_all(format!("{response}\n").as_bytes())
-            .await
-            .is_err()
-        {
-            return;
+        // ACP ordering: session/update notifications precede their response.
+        let mut preamble: Vec<serde_json::Value> = Vec::new();
+        match method.as_str() {
+            "session/load" => {
+                preamble = replay_updates(&harness, &session_id).await;
+            }
+            "session/prompt" => {
+                if let Some(text) = prompt_assistant_text(&response[0]) {
+                    preamble.push(session_update(&session_id, "agent_message_chunk", text));
+                }
+            }
+            _ => {}
         }
-        if writer.flush().await.is_err() {
-            return;
+        let mut out: Vec<serde_json::Value> = preamble;
+        out.extend(response);
+        for value in out {
+            if writer
+                .write_all(format!("{value}\n").as_bytes())
+                .await
+                .is_err()
+            {
+                return;
+            }
+            if writer.flush().await.is_err() {
+                return;
+            }
         }
+    }
+}
+
+/// An ACP `session/update` notification (the client's live-transcript wire).
+fn session_update(session_id: &str, kind: &str, text: String) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+            "sessionId": session_id,
+            "update": {
+                "sessionUpdate": kind,
+                "content": { "type": "text", "text": text },
+            },
+        },
+    })
+}
+
+/// Replay the persisted context as `session/update` notifications —
+/// `user_message_chunk` / `agent_message_chunk` / `agent_thought_chunk` —
+/// mirroring the TS adapter's `session/load` replay. Empty history yields
+/// no notifications.
+async fn replay_updates(harness: &Harness, session_id: &str) -> Vec<serde_json::Value> {
+    let body = harness.client().await.session_get_context(session_id).await;
+    let Some(history) = body["result"]["history"].as_array() else {
+        return Vec::new();
+    };
+    let mut updates = Vec::new();
+    for message in history {
+        let role = message["role"].as_str().unwrap_or("");
+        let Some(parts) = message["content"].as_array() else {
+            continue;
+        };
+        for part in parts {
+            let chunk = match (role, part.get("type").and_then(|t| t.as_str())) {
+                ("user", Some("text")) => {
+                    Some(("user_message_chunk", part["text"].as_str().unwrap_or("")))
+                }
+                ("assistant", Some("text")) => {
+                    Some(("agent_message_chunk", part["text"].as_str().unwrap_or("")))
+                }
+                ("assistant", Some("think")) => {
+                    Some(("agent_thought_chunk", part["think"].as_str().unwrap_or("")))
+                }
+                _ => None,
+            };
+            if let Some((kind, text)) = chunk {
+                if !text.is_empty() {
+                    updates.push(session_update(session_id, kind, text.to_string()));
+                }
+            }
+        }
+    }
+    updates
+}
+
+/// The assistant text embedded in a `session/prompt` response, if any.
+fn prompt_assistant_text(response: &serde_json::Value) -> Option<String> {
+    let text: String = response["result"]["messages"]
+        .as_array()?
+        .iter()
+        .filter(|m| m["role"] == "assistant")
+        .flat_map(|m| m["content"].as_array().into_iter().flatten())
+        .filter_map(|p| p["text"].as_str())
+        .collect();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
     }
 }
 
@@ -107,9 +208,21 @@ async fn handle(
                 return error(-32602, "session/load requires sessionId");
             }
             // ACP `session/load` replays an on-disk session: create is
-            // idempotent here (the runtime agent is (re)built from the record).
+            // idempotent here (the runtime agent is (re)built from the
+            // record), then load restores the persisted context into the
+            // agent so the serve-loop replay reflects the on-disk history.
             match harness.create_session(session_id).await {
-                Ok(_) => result(serde_json::json!({ "sessionId": session_id })),
+                Ok(_) => {
+                    let _ = harness
+                        .client()
+                        .await
+                        .call(
+                            kimi_protocol::methods::SESSION_LOAD,
+                            serde_json::json!({ "session_id": session_id }),
+                        )
+                        .await;
+                    result(serde_json::json!({ "sessionId": session_id }))
+                }
                 Err(e) => error(-32603, &format!("session/load failed: {e}")),
             }
         }
@@ -382,6 +495,44 @@ mod tests {
             .expect("a response")
     }
 
+    /// Drive one request and read exactly `n` newline-terminated JSON lines
+    /// (notifications precede the response for load/prompt).
+    async fn round_trip_n(harness: Harness, request: &str, n: usize) -> Vec<serde_json::Value> {
+        let (server_side, mut client_side) = duplex(4096);
+        let (reader, mut writer) = tokio::io::split(server_side);
+        let server = tokio::spawn(async move {
+            serve(harness, reader, &mut writer).await;
+        });
+        client_side.write_all(request.as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        let mut values = Vec::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while values.len() < n && std::time::Instant::now() < deadline {
+            let mut byte = [0u8; 1];
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                client_side.read(&mut byte),
+            )
+            .await
+            {
+                Ok(Ok(0)) | Ok(Err(_)) => break,
+                Ok(Ok(_)) => {
+                    buf.push(byte[0]);
+                    if byte[0] == b'\n' {
+                        if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&buf) {
+                            values.push(value);
+                        }
+                        buf.clear();
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+        drop(client_side);
+        let _ = server.await;
+        values
+    }
+
     #[tokio::test]
     async fn initialize_negotiates_protocol() {
         let harness = Harness::embedded().expect("embedded");
@@ -536,6 +687,59 @@ mod tests {
         assert!(body.get("error").is_none(), "get_config: {body}");
         assert_eq!(body["result"]["config"]["mode"], "plan", "config: {body}");
         assert!(body["result"]["config"]["model"].is_string());
+    }
+
+    #[tokio::test]
+    async fn session_load_replays_updates() {
+        let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = std::env::temp_dir().join(format!("kimi-acp-replay-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("mkdir");
+        std::env::set_var("KIMI_AGENT_HOME", &home);
+
+        let harness = Harness::embedded().expect("embedded");
+        // Seed a session with context (a user message) and persist it.
+        let mut session = harness
+            .clone()
+            .create_session("acp-replay")
+            .await
+            .expect("create");
+        session
+            .import_context("hello from import", "test")
+            .await
+            .expect("import");
+        session.save().await.expect("save");
+
+        // session/load replays the history as user_message_chunk
+        // notifications BEFORE the response (ACP ordering). The imported
+        // message carries two text parts (the wrapper + the content), so
+        // two notifications precede the response.
+        let lines = round_trip_n(
+            harness,
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"session/load\",\"params\":{\"sessionId\":\"acp-replay\"}}\n",
+            3,
+        )
+        .await;
+        assert_eq!(lines.len(), 3, "2 notifications + response: {lines:?}");
+        for line in &lines[..2] {
+            assert_eq!(line["method"], "session/update", "line: {line:?}");
+            assert_eq!(line["params"]["sessionId"], "acp-replay");
+            assert_eq!(
+                line["params"]["update"]["sessionUpdate"],
+                "user_message_chunk",
+                "update: {line:?}"
+            );
+        }
+        let texts: Vec<&str> = lines[..2]
+            .iter()
+            .filter_map(|l| l["params"]["update"]["content"]["text"].as_str())
+            .collect();
+        assert!(
+            texts.iter().any(|t| t.contains("hello from import")),
+            "imported content replayed: {texts:?}"
+        );
+        assert!(lines[2].get("id").is_some(), "line 2 is the response: {lines:?}");
+        assert_eq!(lines[2]["result"]["sessionId"], "acp-replay");
     }
 
     #[tokio::test]
