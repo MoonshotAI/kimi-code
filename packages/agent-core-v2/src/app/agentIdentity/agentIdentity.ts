@@ -26,11 +26,16 @@
  * punctuation-only, blank) yields `DEFAULT_IDENTITY_SLUG` instead of an empty
  * token.
  *
- * `identityUserAgent` projects the identity onto a host User-Agent for the
- * app-scope callers that issue their own outbound requests: no identity, or no
- * host header to rewrite, leaves the value untouched. `kosong`'s model catalog
- * cannot use it — a foundational layer must not import an app domain — so it
- * carries the same two guards inline against its header map.
+ * Two projections onto an outbound `User-Agent`, for callers with different
+ * obligations. `identityUserAgent` rewrites only what the host already sends,
+ * so a host that states no header keeps stating none — the shape a provider
+ * request needs, where the host's silence is its own choice.
+ * `identityUserAgentOrDefault` always yields a value, preferring the rewritten
+ * header, then the configured slug alone, then a neutral token; that is the
+ * shape for directories this process chooses to call, where dropping the
+ * header serves no one and a configured identity must still come through.
+ * `kosong`'s model catalog cannot use either — a foundational layer must not
+ * import an app domain — so it carries the first form's guards inline.
  */
 
 import { replaceUserAgentProduct } from '@moonshot-ai/kimi-code-oauth';
@@ -42,16 +47,7 @@ export const DEFAULT_IDENTITY_SLUG = 'agent';
 export interface IAgentIdentity {
   readonly _serviceBrand: undefined;
 
-  /**
-   * Display name for the system prompt, or `undefined` when neither the user
-   * nor the host declared one (the caller then applies its own default).
-   */
   readonly displayName: string | undefined;
-  /**
-   * Protocol identifier, or `undefined` when no custom identity is configured
-   * — in which case callers must not rewrite anything. Always a non-empty
-   * ASCII token when defined.
-   */
   readonly slug: string | undefined;
 }
 
@@ -72,4 +68,11 @@ export function identityUserAgent(
 ): string | undefined {
   if (hostUserAgent === undefined || slug === undefined) return hostUserAgent;
   return replaceUserAgentProduct(hostUserAgent, slug);
+}
+
+export function identityUserAgentOrDefault(
+  hostUserAgent: string | undefined,
+  slug: string | undefined,
+): string {
+  return identityUserAgent(hostUserAgent, slug) ?? slug ?? DEFAULT_IDENTITY_SLUG;
 }

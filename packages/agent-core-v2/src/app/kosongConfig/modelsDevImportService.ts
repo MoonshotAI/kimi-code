@@ -46,9 +46,8 @@ import {
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 import {
-  DEFAULT_IDENTITY_SLUG,
   IAgentIdentity,
-  identityUserAgent,
+  identityUserAgentOrDefault,
 } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -95,11 +94,9 @@ export class ModelsDevImportService implements IModelsDevImportService {
 
   private async outboundUserAgent(): Promise<string> {
     await this.config.ready;
-    const slug = this.identity.slug;
-    return (
-      identityUserAgent(this.bootstrap.args.requestHeaders['User-Agent'], slug) ??
-      slug ??
-      DEFAULT_IDENTITY_SLUG
+    return identityUserAgentOrDefault(
+      this.bootstrap.args.requestHeaders['User-Agent'],
+      this.identity.slug,
     );
   }
 

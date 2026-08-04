@@ -51,7 +51,10 @@ import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/
 import { Error2 } from '#/_base/errors/errors';
 import { IOAuthService } from '#/app/auth/auth';
 import { AuthErrors } from '#/app/auth/errors';
-import { IAgentIdentity, identityUserAgent } from '#/app/agentIdentity/agentIdentity';
+import {
+  IAgentIdentity,
+  identityUserAgentOrDefault,
+} from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
@@ -188,7 +191,7 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
       removeProvider: (providerId) => this.shapeWithoutProvider(providerId),
       setConfig: (patch) => this.applyRefreshPatch(patch, exclusion),
       resolveOAuthToken: (providerName, oauthRef) => this.resolveOAuthToken(providerName, oauthRef),
-      userAgent: identityUserAgent(
+      userAgent: identityUserAgentOrDefault(
         this.bootstrap.args.requestHeaders['User-Agent'],
         this.identity.slug,
       ),
