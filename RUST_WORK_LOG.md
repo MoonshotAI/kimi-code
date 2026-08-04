@@ -9,6 +9,7 @@
 > - **缺口**：--set 只能写不能删；删键此前只能靠 logout 的 null patch 内部路径（providers.kimi）。
 > - **实现**：`--delete providers.<id>` / `--delete models.<alias>` 构建 section 级 null patch（引擎 null 删键为 section 作用域，strip_null_deletes 语义）。
 > - **验证**：CLI 集成测试 31 → 32（config_delete_removes_section_entry：set providers.acme.apiKey → delete providers.acme → config 回读无 acme）；clippy 0 警告。
+> - **附（全 workspace 门禁）**：`cargo test --workspace` 前台首次后台跑曾报 `E0463 can't find crate for kimi_sdk`——单跑 `cargo test -p kimi-agent` 2027+52 全绿、复跑 workspace 未复现，判定为后台并行构建竞态（交接笔记已知的后台 cargo 不可靠现象）；前台重跑确认中。
 
 > **✅ 2026-08-03 ㉝ npm 薄壳活体验证（阶段 F item 0，无代码改动）**：
 > - **验证**：`KIMI_RUST_BIN=<target/debug/kimi.exe> node packages/kimi-code-rust-bin/bin/kimi.js health` → `ok` exit 0（spawn 路径 + 真实二进制全通）；无二进制 → 清晰构建提示 exit 1。
