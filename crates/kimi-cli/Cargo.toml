@@ -15,6 +15,7 @@ base64 = "0.22"
 clap = { workspace = true }
 kimi-agent = { path = "../../packages/kimi-agent" }
 kimi-exec = { path = "../kimi-exec" }
+kimi-oauth = { path = "../kimi-oauth" }
 kimi-protocol = { path = "../kimi-protocol" }
 kimi-server = { path = "../kimi-server" }
 kimi-server-client = { path = "../kimi-server-client" }

@@ -129,6 +129,15 @@ enum Commands {
         #[command(subcommand)]
         cmd: ProviderCmd,
     },
+    /// Log in via the kimi OAuth device flow.
+    Login {
+        /// Override the OAuth host (defaults to the kimi production server).
+        #[arg(long)]
+        oauth_host: Option<String>,
+        /// Max poll attempts (default 60, ~5s apart).
+        #[arg(long, default_value_t = 60)]
+        max_polls: u32,
+    },
 }
 
 /// Sub-commands of `kimi provider`.
@@ -927,6 +936,46 @@ async fn main() -> anyhow::Result<()> {
             use clap::CommandFactory;
             let mut cmd = Cli::command();
             clap_complete::generate(shell, &mut cmd, "kimi", &mut std::io::stdout());
+        }
+        Commands::Login { oauth_host, max_polls } => {
+            let mut config = kimi_oauth::OAuthFlowConfig::kimi();
+            if let Some(host) = oauth_host {
+                config.oauth_host = host;
+            }
+            // Request a device authorization and show the user how to approve.
+            let auth = kimi_oauth::request_device_authorization(&config).await.map_err(|e| {
+                anyhow::anyhow!("device authorization failed: {e}")
+            })?;
+            println!("Open: {}", auth.verification_uri);
+            println!("Enter code: {}", auth.user_code);
+            if let Some(complete) = auth.verification_uri_complete {
+                println!("(or open: {complete})");
+            }
+            // Poll until the user approves (or the code expires/denies).
+            let interval = auth.interval.unwrap_or(5).max(1);
+            for _ in 0..max_polls {
+                tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+                match kimi_oauth::poll_device_token(&config, &auth.device_code).await.map_err(|e| {
+                    anyhow::anyhow!("token poll failed: {e}")
+                })? {
+                    kimi_oauth::DevicePollResult::Success { access_token, refresh_token, .. } => {
+                        println!("logged in (access token stored below — wire into config next)");
+                        println!("{access_token}");
+                        if let Some(rt) = refresh_token {
+                            eprintln!("refresh token: {rt}");
+                        }
+                        return Ok(());
+                    }
+                    kimi_oauth::DevicePollResult::Pending => {}
+                    kimi_oauth::DevicePollResult::Expired => {
+                        anyhow::bail!("device code expired — run `kimi login` again");
+                    }
+                    kimi_oauth::DevicePollResult::Denied => {
+                        anyhow::bail!("login denied");
+                    }
+                }
+            }
+            anyhow::bail!("timed out waiting for approval");
         }
         Commands::Provider { cmd } => {
             match cmd {
