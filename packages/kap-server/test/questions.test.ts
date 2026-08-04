@@ -370,6 +370,24 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
     expect(body.code).toBe(40001);
   });
 
+  it('returns 40902 on a duplicate resolve of a colon-id question', async () => {
+    const sid = await createSession();
+    questionService(sid).enqueue({
+      toolCallId: 'AskUserQuestion:1',
+      questions: [{ question: 'Pick one', options: [{ label: 'Yes' }] }],
+    });
+    const url = `/api/v1/sessions/${sid}/questions/AskUserQuestion%3A1`;
+    await postJson<ResolveWire>(url, {
+      answers: { q_0: { kind: 'single', option_id: 'opt_0_0' } },
+    });
+
+    const dup = await postJson<{ resolved: false }>(url, {
+      answers: { q_0: { kind: 'single', option_id: 'opt_0_0' } },
+    });
+    expect(dup.body.code).toBe(40902);
+    expect(dup.body.data).toEqual({ resolved: false });
+  });
+
   it('returns 40401 for an unknown session', async () => {
     const { body } = await getJson<null>('/api/v1/sessions/nope/questions?status=pending');
     expect(body.code).toBe(40401);

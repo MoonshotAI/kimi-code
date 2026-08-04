@@ -190,8 +190,12 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         // Compat fallback: some providers emit tool_call ids CONTAINING a
         // colon (e.g. `AskUserQuestion:0`), which the action-suffix parse
         // rejects as an unknown action. Treat the full tail as the question
-        // id when it matches a pending question; otherwise keep the 40001.
-        if (interaction.listPending('question').some((i) => i.id === tail)) {
+        // id when it matches a pending (or recently-resolved, so duplicate
+        // resolves keep the 40902 semantics) question; otherwise keep 40001.
+        if (
+          interaction.listPending('question').some((i) => i.id === tail) ||
+          interaction.isRecentlyResolved(tail)
+        ) {
           questionId = tail;
           action = 'resolve';
         } else {
