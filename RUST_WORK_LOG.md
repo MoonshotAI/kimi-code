@@ -5,6 +5,13 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㉓ WS 客户端 + e2e（传输闭环，已提交）**：
+> - **kimi-server-client 新增 `ws_client.rs`**：`WsClient::connect(addr)`（ws:// + 握手）+ `call`（text 帧请求/响应、id 递增、ping→pong、close 报错）；`AppServerClient::RemoteWs(Box<WsClient>)` 变体 + call 分发。
+> - **e2e（kimi-server-transport/tests/ws_e2e.rs）**：完整 Server::build → websocket::serve → `AppServerClient::RemoteWs` 驱动 health + session_create + session_list——证明 frame 传输与 stdio/in-process 同 envelope。
+> - **依赖**：client 加 tokio-tungstenite 0.24、futures-util、tokio net、anyhow。
+> - **验证**：transport e2e 1 passed；client 4 + transport 4 全绿；clippy client/transport 0 警告（含修 useless_conversion）；workspace check 干净。
+> - **意义**：传输闭环（stdio in/out、WS serve + client）；web 宿主可经 `kimi-server-serve --ws` + 任一 WS 客户端接入。
+
 > **✅ 2026-08-03 ㉒ LLM 步进书挡渲染（llm.step.begin/end，已提交）**：
 > - **盘点**：引擎共 19 种 wire 事件，`render_event` 此前覆盖 13 种，缺 6 种 llm.*（delta 已在上切片接线）。
 > - **render_event 新增**：`llm.step.begin`（model）→ `llm: {model} started`（无 model → `llm step started`）；`llm.step.end`（usage.total_tokens + tool_calls 数 + finish_reason）→ `llm: {t} tokens, {n} tool calls ({reason})`。CLI `--verbose` 自动获得（同渲染器）。

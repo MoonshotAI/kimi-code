@@ -7,8 +7,9 @@
 use kimi_server::in_process::InProcessClient;
 
 pub mod stdio_client;
+pub mod ws_client;
 
-/// The client-facing door: in-process or remote stdio.
+/// The client-facing door: in-process or remote (stdio / websocket).
 pub enum AppServerClient {
     /// In-process: a channel into a `MessageProcessor` running here.
     InProcess(InProcessClient),
@@ -16,6 +17,8 @@ pub enum AppServerClient {
     /// Boxed: `StdioClient` is large (spawn state + pipes); the enum is
     /// matched by value in hot paths (clippy::large_enum_variant).
     Remote(Box<stdio_client::StdioClient>),
+    /// Remote: a WebSocket connection to a `kimi-server-serve --ws` process.
+    RemoteWs(Box<ws_client::WsClient>),
 }
 
 impl AppServerClient {
@@ -24,6 +27,7 @@ impl AppServerClient {
         match self {
             Self::InProcess(client) => client.call(method, params).await,
             Self::Remote(client) => client.call(method, params).await,
+            Self::RemoteWs(client) => client.call(method, params).await,
         }
     }
 
