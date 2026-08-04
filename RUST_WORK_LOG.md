@@ -5,6 +5,11 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ⑳ `kimi doctor tui`（TS parity，已提交）**：
+> - **新增 `doctor tui [path]`**：tui.toml 存在性 + TOML 语法校验（`toml::Value` parse），OK/ERROR 输出、错误 exit 1——对齐 TS doctor 的 tui 目标；全量 doctor 里 tui.toml 检查仍为存在性（SKIP/OK），`tui_config_path()` 抽为共享助手（KIMI_CODE_HOME → ~/.kimi-code，Windows USERPROFILE）。
+> - **依赖**：kimi-cli 加 toml 0.8。
+> - **验证**：CLI 集成测试 29 → 30（doctor_tui_validates_specific_file：合法 TOML→OK、坏 TOML→ERROR+1、缺失→ERROR+1）；clippy kimi-cli 0 警告。
+
 > **✅ 2026-08-03 ⑲ WebSocket 传输（kimi-server-transport，已提交）**：
 > - **新增 `src/websocket.rs`**：`serve(listener)` 接受循环 + 每连接 `serve_connection`（WS 握手 → 逐帧 JSON-RPC：text 请求进、text 响应出；ping→pong；close 收尾）——与 stdio 同 processor、同 envelope，纯帧层 shim（目标架构层 3 的 web 宿主线，替代 TS kap-server WS 投影）。
 > - **依赖**：tokio-tungstenite 0.24 + futures-util（StreamExt/SinkExt）；tokio 补 net feature。

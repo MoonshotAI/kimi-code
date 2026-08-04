@@ -512,6 +512,28 @@ fn print_continue_empty_home_falls_back_to_default_session() {
 }
 
 #[test]
+fn doctor_tui_validates_specific_file() {
+    // `doctor tui <path>` (TS parity): valid TOML -> OK; invalid -> ERROR + 1.
+    let home = temp_dir("doctor-tui");
+    let valid = home.join("tui-valid.toml");
+    std::fs::write(&valid, "[theme]\naccent = \"#ff0000\"\n").expect("write valid");
+    let out = run(&home, &["doctor", "tui", valid.to_str().expect("path")]);
+    assert!(out.status.success(), "valid tui exits 0: {}", out.status);
+    assert!(stdout(&out).contains("tui file: OK"), "stdout: {}", stdout(&out));
+
+    let invalid = home.join("tui-invalid.toml");
+    std::fs::write(&invalid, "theme = { accent = }\n").expect("write invalid");
+    let out = run(&home, &["doctor", "tui", invalid.to_str().expect("path")]);
+    assert!(!out.status.success(), "invalid tui exits 1");
+    assert!(stdout(&out).contains("tui file: ERROR"), "stdout: {}", stdout(&out));
+
+    let missing = home.join("tui-missing.toml");
+    let out = run(&home, &["doctor", "tui", missing.to_str().expect("path")]);
+    assert!(!out.status.success(), "missing tui exits 1");
+    assert!(stdout(&out).contains("tui file: ERROR"), "stdout: {}", stdout(&out));
+}
+
+#[test]
 fn chat_approval_commands_offline_safe() {
     // /approvals + /approve|/deny are pure state ops (no LLM): an empty store
     // lists nothing and unknown ids resolve to "not found" without erroring.

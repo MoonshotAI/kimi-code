@@ -207,6 +207,24 @@ enum DoctorTarget {
         #[arg(value_name = "path")]
         path: Option<String>,
     },
+    /// Validate a specific tui.toml file (syntax only — TS `doctor tui`
+    /// parity; the engine has no theme engine yet).
+    Tui {
+        /// Path to the tui.toml file (defaults to the first found).
+        #[arg(value_name = "path")]
+        path: Option<String>,
+    },
+}
+
+/// The well-known `tui.toml` path: `$KIMI_CODE_HOME/tui.toml`, otherwise
+/// `~/.kimi-code/tui.toml` (Windows: `%USERPROFILE%\.kimi-code\tui.toml`).
+fn tui_config_path() -> Option<std::path::PathBuf> {
+    match std::env::var("KIMI_CODE_HOME") {
+        Ok(dir) => Some(std::path::PathBuf::from(dir).join("tui.toml")),
+        Err(_) => std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+            .ok()
+            .map(|home| std::path::PathBuf::from(home).join(".kimi-code").join("tui.toml")),
+    }
 }
 
 /// Connect the protocol client and — when `capture` is set — start the event
@@ -873,6 +891,29 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", serde_json::to_string_pretty(&config["result"]).unwrap_or_default());
         }
         Commands::Doctor { target } => {
+            // `kimi doctor tui [path]` — validate one specific tui.toml file
+            // (TS `doctor tui` parity): existence, then TOML parse.
+            if let Some(DoctorTarget::Tui { path }) = target {
+                let resolved = match path {
+                    Some(p) => std::path::PathBuf::from(p),
+                    None => tui_config_path().unwrap_or_else(|| std::path::PathBuf::from("tui.toml")),
+                };
+                let text = match std::fs::read_to_string(&resolved) {
+                    Ok(text) => text,
+                    Err(e) => {
+                        println!("tui file: ERROR (not found) {} — {e}", resolved.display());
+                        std::process::exit(1);
+                    }
+                };
+                match text.parse::<toml::Value>() {
+                    Ok(_) => println!("tui file: OK {}", resolved.display()),
+                    Err(e) => {
+                        println!("tui file: ERROR {} — {e}", resolved.display());
+                        std::process::exit(1);
+                    }
+                }
+                return Ok(());
+            }
             // `kimi doctor config [path]` — validate one specific config file
             // (TS `doctor config` parity): existence, then parse + validate.
             if let Some(DoctorTarget::Config { path }) = target {
@@ -936,16 +977,8 @@ async fn main() -> anyhow::Result<()> {
             }
 
             // tui.toml (TS parity, existence only — the engine has no TUI
-            // config parser yet). `KIMI_CODE_HOME` is itself the data dir, so
-            // tui.toml is `$KIMI_CODE_HOME/tui.toml`; otherwise
-            // `~/.kimi-code/tui.toml`.
-            let tui_path = match std::env::var("KIMI_CODE_HOME") {
-                Ok(dir) => Some(std::path::PathBuf::from(dir).join("tui.toml")),
-                Err(_) => std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-                    .ok()
-                    .map(|home| std::path::PathBuf::from(home).join(".kimi-code").join("tui.toml")),
-            };
-            if let Some(p) = tui_path {
+            // config parser yet; `doctor tui` validates syntax explicitly).
+            if let Some(p) = tui_config_path() {
                 if p.exists() {
                     println!("tui file: OK   {}", p.display());
                 } else {
