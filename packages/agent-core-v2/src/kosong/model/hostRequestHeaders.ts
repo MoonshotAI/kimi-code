@@ -10,22 +10,19 @@
  * layer. `ModelCatalog` merges them per vendor — the full set for vendors
  * whose definition declares `hostHeaders: 'full'`, only the `User-Agent` for
  * everyone else (so device identity never leaks to third-party endpoints).
+ *
+ * `identitySlug` carries the configured custom identity's protocol token, or
+ * `undefined` when none is configured — in which case `headers` must reach
+ * providers untouched. It travels with the headers because it is the same
+ * concern: what this host calls itself on the wire. `ModelCatalog` applies it
+ * to the `User-Agent` on the third-party path; vendors receiving the full host
+ * header set keep the host's own product token, which that set is built around.
  */
 
 import { createDecorator } from '#/_base/di/instantiation';
 
 export interface IHostRequestHeaders {
   readonly headers: Readonly<Record<string, string>>;
-  /**
-   * Protocol token of the configured custom identity, or `undefined` when none
-   * is configured — in which case `headers` must reach providers untouched.
-   *
-   * It travels with the headers because it is the same concern: what this host
-   * calls itself on the wire. `ModelCatalog` applies it to the `User-Agent` on
-   * the third-party path; vendors that receive the full host header set
-   * (`hostHeaders: 'full'`) keep the host's own product token, which that
-   * header set is built around.
-   */
   readonly identitySlug?: string;
 }
 

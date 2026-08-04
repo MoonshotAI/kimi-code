@@ -7,6 +7,11 @@
  * provider when tokens are present, flips failing servers into `needs-auth`
  * on 401, and reconnects after authentication. Applies per-server settings
  * over the configured defaults and emits status changes to subscribers.
+ *
+ * `resolveClientName` supplies the name announced to servers during initialize
+ * (and the OAuth dynamic-registration label), consulted per connection so an
+ * identity configured after construction still applies; omitted, or resolving
+ * to `undefined`, keeps the built-in name.
  */
 
 import { ErrorCodes, Error2 } from '#/errors';
@@ -97,12 +102,6 @@ export interface McpConnectionManagerOptions {
   readonly oauthService?: McpOAuthService;
   readonly log?: Logger;
   readonly resolveDefaultTimeouts?: () => McpDefaultTimeouts;
-  /**
-   * Client name announced to MCP servers during initialize (and used for the
-   * OAuth dynamic-registration label). Resolved per connection so a custom
-   * identity configured after construction still applies; omitted / resolving
-   * to `undefined` keeps the built-in name.
-   */
   readonly resolveClientName?: () => string | undefined;
 }
 

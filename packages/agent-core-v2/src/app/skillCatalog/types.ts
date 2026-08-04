@@ -1,3 +1,13 @@
+/**
+ * `skillCatalog` domain — skill data types.
+ *
+ * The shapes every skill source produces and the catalog stores. A definition
+ * marked `productSpecific` documents this CLI itself — its configuration,
+ * themes, MCP setup — rather than a capability the agent applies to the user's
+ * work, which is what the `builtin_product_skills` switch excludes; those
+ * names and descriptions otherwise sit in the system prompt every turn.
+ */
+
 export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
 
 export interface SkillMetadata {
@@ -23,13 +33,6 @@ export interface SkillDefinition {
   readonly plugin?: SkillPluginContext;
   readonly mermaid?: string | undefined;
   readonly d2?: string;
-  /**
-   * Marks a builtin skill that documents this CLI itself — its configuration,
-   * themes, MCP setup. These describe the product rather than a capability the
-   * agent applies to the user's work, so the builtin source drops them
-   * wholesale when product skills are turned off. Their name and description
-   * otherwise sit in the system prompt on every turn.
-   */
   readonly productSpecific?: boolean;
 }
 

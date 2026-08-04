@@ -13,6 +13,10 @@
  * blocking, while the data methods `await ready` before reading or writing.
  * The provider does not open browsers or run servers — it is the
  * persistence + flow-state shim.
+ *
+ * `clientName` is the product token for the default label
+ * (`<clientName> (<serverName>)`), carrying the configured custom identity; it
+ * is ignored when `clientLabel` states the whole label explicitly.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -43,11 +47,6 @@ export interface McpOAuthProviderOptions {
   readonly serverUrl: string | URL;
   readonly store: McpOAuthStore;
   readonly clientLabel?: string;
-  /**
-   * Product token for the default label (`<clientName> (<serverName>)`).
-   * Carries the configured custom identity; ignored when `clientLabel` states
-   * the whole label explicitly.
-   */
   readonly clientName?: string;
 }
 
