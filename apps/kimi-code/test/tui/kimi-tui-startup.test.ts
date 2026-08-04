@@ -381,6 +381,53 @@ describe('KimiTUI startup', () => {
     expect(driver.state.appState.thinkingEffort).toBe('medium');
   });
 
+  it('hydrates permission/plan defaults after a session-less v2 login', async () => {
+    let loggedIn = false;
+    const harness = makeHarness(makeSession(), {
+      getConfig: vi.fn(async () =>
+        loggedIn
+          ? {
+              models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+              defaultModel: 'k2',
+              defaultPermissionMode: 'auto',
+              defaultPlanMode: true,
+            }
+          : { models: {} },
+      ),
+      auth: {
+        status: vi.fn(async () => ({ providers: [] })),
+        login: vi.fn(async () => {
+          loggedIn = true;
+        }),
+        logout: vi.fn(),
+        getManagedUsage: vi.fn(),
+      },
+    });
+    const driver = makeDriver(harness, { ...makeStartupInput(), engineV2: true });
+
+    await expect(driver.init()).resolves.toBe(false);
+    expect(driver.state.appState).toMatchObject({
+      sessionId: '',
+      model: '',
+      permissionMode: 'manual',
+      planMode: false,
+    });
+
+    vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
+    await handleLoginCommand(driver as any);
+
+    // Login must not create a session on v2, but the refreshed config
+    // defaults must reach the first lazy-created session.
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(driver.state.appState).toMatchObject({
+      sessionId: '',
+      model: 'k2',
+      permissionMode: 'auto',
+      planMode: true,
+      configDefaultPlanMode: true,
+    });
+  });
+
   it('carries the --agent/--agent-file binding for the lazy-created first session (v2)', async () => {
     const harness = makeHarness(makeSession());
     const driver = makeDriver(

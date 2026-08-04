@@ -42,6 +42,7 @@ export interface AuthFlowHost {
   syncRuntimeState(session?: Session): Promise<void>;
   closeSession(reason: string): Promise<void>;
   appendStartupNotice(extra: string): void;
+  hydrateLazyConfigDefaults(): Promise<void>;
   readonly sessionEventHandler: SessionEventHandler;
   fetchSessions(): Promise<void>;
   updateTerminalTitle(): void;
@@ -159,6 +160,13 @@ export class AuthFlowController {
     }
 
     await this.activateModelAfterLogin(defaultModel, thinkingEffortFromConfig(config.thinking));
+    if (host.session === undefined && host.engineV2) {
+      // Session-less v2: also hydrate permission/plan defaults from the
+      // refreshed config, same as startup.
+      await host.hydrateLazyConfigDefaults();
+      host.setAppState({ availableModels, availableProviders });
+      return;
+    }
     const appStatePatch: Partial<AppState> = {
       availableModels,
       availableProviders,

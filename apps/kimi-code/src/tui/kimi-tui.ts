@@ -1770,6 +1770,11 @@ export class KimiTUI {
     return this.ensureSessionPromise;
   }
 
+  /** Await the in-flight lazy session creation, if any (v2); no-op otherwise. */
+  async waitForLazyCreation(): Promise<void> {
+    await this.ensureSessionPromise;
+  }
+
   private async lazyCreateSession(): Promise<Session | undefined> {
     let session: Session;
     try {

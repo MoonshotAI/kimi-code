@@ -149,6 +149,8 @@ export interface SlashCommandHost {
    * fails.
    */
   ensureSession(): Promise<Session | undefined>;
+  /** Await the in-flight lazy session creation, if any (v2); no-op otherwise. */
+  waitForLazyCreation(): Promise<void>;
   switchToSession(session: Session, message: string): Promise<void>;
   reloadCurrentSessionView(session: Session, message: string): Promise<void>;
   beginSessionRequest(): void;
@@ -372,6 +374,9 @@ async function handleBuiltInSlashCommand(
       host.showStatus(`Kimi Code v${host.state.appState.version}`);
       return;
     case 'new':
+      // A first-use lazy creation may still be in flight: wait it out so /new
+      // never races a second createSession against the pending prompt.
+      await host.waitForLazyCreation();
       await host.createNewSession();
       host.state.ui.requestRender();
       return;

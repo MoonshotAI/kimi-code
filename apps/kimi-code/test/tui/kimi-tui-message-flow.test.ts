@@ -580,6 +580,45 @@ describe('KimiTUI message flow', () => {
     expect(driver.getCurrentSessionId()).toBe('ses-lazy');
   });
 
+  it('waits out the in-flight lazy creation before /new (v2 engine)', async () => {
+    const lazySession = makeSession({ id: 'ses-lazy' });
+    const newSession = makeSession({ id: 'ses-new' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(lazySession, {}, startupInput);
+
+    // Hold the lazy createSession open so the first prompt is still pending
+    // when /new arrives.
+    let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
+    harness.createSession
+      .mockImplementationOnce(
+        () => new Promise((resolve) => { resolveCreate = resolve; }),
+      )
+      .mockResolvedValueOnce(newSession);
+
+    driver.handleUserInput('hello');
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledTimes(1);
+    });
+
+    driver.handleUserInput('/new');
+    // /new must not race a second createSession while the lazy one is held.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(harness.createSession).toHaveBeenCalledTimes(1);
+
+    resolveCreate(lazySession);
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledTimes(2);
+    });
+    await vi.waitFor(() => {
+      expect(lazySession.prompt).toHaveBeenCalledWith('hello');
+      expect(driver.getCurrentSessionId()).toBe('ses-new');
+    });
+  });
+
   it('carries a session-only thinking choice into the lazy-created session (v2 engine)', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
