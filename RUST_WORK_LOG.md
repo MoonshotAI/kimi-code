@@ -5,6 +5,11 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㊵ resume 顺序 + print --continue 加载修复（同类 create/load 顺序问题，已提交）**：
+> - **① `kimi resume` 顺序 bug**：create → goal → **load** → prompt——load 的 durable-state restore 覆盖刚建的 goal（与 ㊴ 同类的恢复覆盖问题）。修复：load 移到 goal 之前。
+> - **② `print --continue` 从不加载**：续跑会话的上下文/目标根本没恢复（create 重建全新 agent，不读 store）——--continue 语义失效。修复：`PromptSetup.resume`，run_prompt_with_setup 在 create 后、setup/prompt 前 SESSION_LOAD。
+> - **验证**：kimi-exec 测试 3 → 4（run_prompt_resume_restores_persisted_goal：seed goal+save → resume → prompt 失败后 goal_get 恢复持久化 goal）；print_continue 2 + chat_goal_lifecycle 集成绿；clippy 0；workspace check 干净。
+
 > **✅ 2026-08-03 ㊴ 引擎 bug：run_turn 失败时 goal 孤儿 + 跨进程持久化链路（已提交）**：
 > - **发现（print --goal 集成测试驱动）**：`kimi print --goal` 后 goal 消失——三个叠加问题：
 >   ① **run_turn 失败孤儿 goal**：`let goal_temp = self.goal.take()` 移入 GoalToolInterceptor，turn 结果 `?` 在恢复 `self.goal = goal_interceptor.take_goal()` **之前**——turn 失败时 goal 永不恢复（self.goal 变 None），宿主看到 null、pause_goal 空转。修复：恢复移到 unwrap 之前（书签操作仅成功路径）。

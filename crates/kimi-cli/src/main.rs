@@ -911,8 +911,9 @@ async fn main() -> anyhow::Result<()> {
             // Goal mode is applied inside run_prompt_with_setup, AFTER the
             // (idempotent) create — creating the goal first and then letting
             // run_prompt re-create the session would rebuild the agent and
-            // wipe it (create_agent replaces the live agent).
-            let setup = kimi_exec::PromptSetup { model, plan, goal };
+            // wipe it (create_agent replaces the live agent). `--continue`
+            // also loads the persisted session state.
+            let setup = kimi_exec::PromptSetup { model, plan, goal, resume: continue_ };
             let result = kimi_exec::run_prompt_with_setup(
                 &mut client,
                 &session_id,
@@ -1013,7 +1014,13 @@ async fn main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
             }
-            // Goal mode: create the goal on the (now existing) session so the
+            // Resume: restore the persisted context + goal BEFORE creating a
+            // new goal — the load's durable-state restore would otherwise
+            // overwrite the freshly created goal.
+            client
+                .call(kimi_protocol::methods::SESSION_LOAD, serde_json::json!({ "session_id": session_id }))
+                .await;
+            // Goal mode: create the goal on the (now restored) session so the
             // engine drives continuation turns toward the objective.
             if let Some(objective) = goal {
                 let goal_created = client
@@ -1030,9 +1037,6 @@ async fn main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
             }
-            client
-                .call(kimi_protocol::methods::SESSION_LOAD, serde_json::json!({ "session_id": session_id }))
-                .await;
             let result = client
                 .session_prompt(&session_id, &prompt)
                 .await;

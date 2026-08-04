@@ -13,9 +13,12 @@ pub struct PromptSetup {
     /// Enable plan mode before prompting (`session/set_plan_mode`).
     pub plan: bool,
     /// Create a goal on the session before prompting (goal mode). Created
-    /// AFTER the session create so the (idempotent) create does not rebuild
-    /// the agent and wipe it.
+    /// AFTER the session create (and any resume load) so neither rebuilds
+    /// the agent over it.
     pub goal: Option<String>,
+    /// Resume a persisted session: `session/load` after create so the
+    /// on-disk context + goal are restored before the setup/prompt.
+    pub resume: bool,
 }
 
 /// Run one prompt: create a session, prompt it, return the wire result.
@@ -47,6 +50,18 @@ pub async fn run_prompt_with_setup(
     let created = client.call(kimi_protocol::methods::SESSION_CREATE, create_params).await;
     if created.get("error").is_some() {
         return created;
+    }
+    if setup.resume {
+        // Restore the persisted context + goal before any setup overrides.
+        let body = client
+            .call(
+                kimi_protocol::methods::SESSION_LOAD,
+                serde_json::json!({ "session_id": session_id }),
+            )
+            .await;
+        if body.get("error").is_some() {
+            return body;
+        }
     }
     if let Some(model) = &setup.model {
         let body = client
@@ -138,6 +153,7 @@ mod tests {
             model: Some("setup-test-model".into()),
             plan: true,
             goal: Some("setup goal".into()),
+            resume: false,
         };
         let result =
             run_prompt_with_setup(&mut client, "s-setup", "hello", native_llm_from_config(), &setup).await;
@@ -162,5 +178,44 @@ mod tests {
             )
             .await;
         assert_eq!(goal["result"]["goal"]["objective"], "setup goal", "goal set: {goal}");
+    }
+
+    #[tokio::test]
+    async fn run_prompt_resume_restores_persisted_goal() {
+        let server = kimi_server::Server::build().expect("server");
+        let mut client = AppServerClient::InProcess(kimi_server::in_process::spawn(server.processor));
+        // Seed a persisted session with a goal.
+        let created = client.session_create("s-resume").await;
+        assert!(created.get("error").is_none(), "create: {created}");
+        let goal = client
+            .call(
+                kimi_protocol::methods::SESSION_GOAL_CREATE,
+                serde_json::json!({ "session_id": "s-resume", "objective": "persisted goal" }),
+            )
+            .await;
+        assert!(goal.get("error").is_none(), "goal: {goal}");
+        client
+            .call(
+                kimi_protocol::methods::SESSION_SAVE,
+                serde_json::json!({ "session_id": "s-resume" }),
+            )
+            .await;
+
+        // A resume (create -> load -> prompt) must restore the persisted goal
+        // even though the prompt itself fails without an LLM.
+        let setup = PromptSetup { resume: true, ..Default::default() };
+        let result =
+            run_prompt_with_setup(&mut client, "s-resume", "hi", native_llm_from_config(), &setup).await;
+        assert!(result.get("error").is_some(), "no LLM -> prompt errors: {result}");
+        let goal = client
+            .call(
+                kimi_protocol::methods::SESSION_GOAL_GET,
+                serde_json::json!({ "session_id": "s-resume" }),
+            )
+            .await;
+        assert_eq!(
+            goal["result"]["goal"]["objective"], "persisted goal",
+            "resume restores the persisted goal: {goal}"
+        );
     }
 }
