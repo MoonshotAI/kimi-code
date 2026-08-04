@@ -1,4 +1,12 @@
 
+> **✅ 2026-08-03 ⑪ TUI 审批交互接线（reverse_rpc 前身，已提交）**：
+> - **事件→交互**：`pump_one_event` 检测 `session.approval.requested` → `harness.approvals()` 拉取 → `queue_new_approvals` 去重入队（纯函数可测）→ 转录提示「approval requested: <tool> — press y/n」。
+> - **y/n 键轮询**：prompt 循环每次迭代非阻塞 poll 键盘（pending 非空时），`y`→`resolve_approval(id, allow)`、`n`→deny("denied by user")；解析后出队并回显「<tool> allowed/denied/no longer pending」。
+> - **命令面**：新增 `/approvals`（列出 pending id/tool/rule）、`/approve <id>`、`/deny <id>`（非交互兜底）；SLASH_COMMANDS 22 命令，/help 自动同步。
+> - **借用修复**：pump 内 guard（harness 事件锁）须先 drop 再调 `&mut self` 方法——事件读取收进内部块。
+> - **验证**：kimi-tui 测试 4 → 5（新增 queues_approvals_with_dedup）；clippy kimi-tui 0 警告；workspace check 干净。
+> - **遗留**：审批问题在 prompt 内阻塞式等待 y/n 单键，无详情面板/超时；TS 的 reverse_rpc 审批卡等交互细化留待后续切片。
+
 > **✅ 2026-08-03 ⑩ TUI chatwidget 细化（角色化转录 + 全命令 Tab 补全，已提交）**：
 > - **结构化转录**：`transcript: Vec<String>` → `Vec<TranscriptLine{kind, text}>`（`TranscriptKind`：User/Assistant/Tool/Status/Error）；所有 push 点按角色归类（`> prompt`→User 加粗、引擎 tool 事件→Tool 蓝+⚙、其余事件/命令回显→Status 灰、错误→Error 红、转写→Assistant）。
 > - **Tab 补全泛化**（原仅 /model）：纯函数 `complete_line`——命令名前缀补全（SLASH_COMMANDS 20 命令循环）；参数补全 `/plan|/swarm → on|off`、`/thinking → low|medium|high`、`/model → 实时别名列表`；`TabState{base,idx}` 记录循环起点（修掉旧实现「完成即断链」——首 Tab 后输入被替换导致无法继续循环）。

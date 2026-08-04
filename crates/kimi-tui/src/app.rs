@@ -16,8 +16,11 @@ use kimi_sdk::Harness;
 
 /// All slash commands the chat surface understands (shared with `/help`).
 const SLASH_COMMANDS: &[&str] = &[
+    "/approvals",
+    "/approve",
     "/clear",
     "/compact",
+    "/deny",
     "/exit",
     "/export",
     "/goal",
@@ -91,6 +94,31 @@ struct TabState {
     idx: usize,
 }
 
+/// A pending tool approval awaiting an interactive y/n decision.
+#[derive(Debug, Clone, PartialEq)]
+struct PendingApproval {
+    id: String,
+    tool: String,
+}
+
+/// Merge newly fetched approval items into the pending queue (dedup by id).
+/// Returns how many new approvals were queued.
+fn queue_new_approvals(queue: &mut Vec<PendingApproval>, items: &[serde_json::Value]) -> usize {
+    let mut added = 0;
+    for item in items {
+        let id = item["id"].as_str().unwrap_or("").to_string();
+        if id.is_empty() {
+            continue;
+        }
+        let tool = item["tool_name"].as_str().unwrap_or("?").to_string();
+        if !queue.iter().any(|p| p.id == id) {
+            queue.push(PendingApproval { id, tool });
+            added += 1;
+        }
+    }
+    added
+}
+
 /// The interactive chat application.
 pub struct App {
     harness: Harness,
@@ -107,6 +135,8 @@ pub struct App {
     model_aliases: Vec<String>,
     /// Active Tab completion cycle, if any.
     tab: Option<TabState>,
+    /// Pending tool approvals queued for interactive y/n resolution.
+    pending_approvals: Vec<PendingApproval>,
     /// Transcript scroll offset (lines from the bottom).
     scroll: u16,
     /// Session status summary for the footer (plan/swarm).
@@ -126,6 +156,7 @@ impl App {
             session: None,
             model_aliases: Vec::new(),
             tab: None,
+            pending_approvals: Vec::new(),
             scroll: 0,
             status: String::new(),
         }
@@ -216,6 +247,42 @@ impl App {
                 "/help" => {
                     self.transcript
                         .push(TranscriptLine::status(format!("commands: {}", SLASH_COMMANDS.join(" "))));
+                }
+                "/approvals" => {
+                    let items = self.harness.approvals(Some(&self.session_id)).await?;
+                    if items.is_empty() {
+                        self.transcript.push(TranscriptLine::status("no pending approvals"));
+                    }
+                    for item in items.iter().take(10) {
+                        let id = item["id"].as_str().unwrap_or("?");
+                        let tool = item["tool_name"].as_str().unwrap_or("?");
+                        let rule = item["approval_rule"].as_str().unwrap_or("?");
+                        self.transcript.push(TranscriptLine::status(format!("{id}  {tool}  ({rule})")));
+                    }
+                }
+                "/approve" => {
+                    if rest.is_empty() {
+                        self.transcript.push(TranscriptLine::status("usage: /approve <approval-id>"));
+                    } else {
+                        let resolved = self.harness.resolve_approval(rest, true, None).await?;
+                        self.transcript.push(TranscriptLine::status(if resolved {
+                            "approval allowed"
+                        } else {
+                            "approval not found"
+                        }));
+                    }
+                }
+                "/deny" => {
+                    if rest.is_empty() {
+                        self.transcript.push(TranscriptLine::status("usage: /deny <approval-id>"));
+                    } else {
+                        let resolved = self.harness.resolve_approval(rest, false, Some("denied by user")).await?;
+                        self.transcript.push(TranscriptLine::status(if resolved {
+                            "approval denied"
+                        } else {
+                            "approval not found"
+                        }));
+                    }
                 }
                 "/status" => {
                     let status = self.session.as_mut().expect("session").get_status().await;
@@ -370,6 +437,9 @@ impl App {
             let prompt_fut = session.prompt(line);
             tokio::pin!(prompt_fut);
             loop {
+                if !self.pending_approvals.is_empty() {
+                    self.poll_approval_keys().await?;
+                }
                 tokio::select! {
                     r = &mut prompt_fut => break Some(r.clone()),
                     _ = self.pump_one_event() => {}
@@ -405,24 +475,93 @@ impl App {
     /// Render one engine event into the panel (with a short poll timeout so
     /// the select loop keeps yielding to the running prompt).
     async fn pump_one_event(&mut self) {
-        let mut guard = self.harness.events().await;
-        if let Some(source) = guard.as_mut() {
-            if let Ok(Some(event)) =
-                tokio::time::timeout(std::time::Duration::from_millis(50), source.next()).await
-            {
-                let line = kimi_ui::render_event(&event).unwrap_or_else(|| event.to_string());
-                // Tool progress reads differently from transcript/status.
-                let is_tool = event
-                    .get("type")
-                    .and_then(|t| t.as_str())
-                    .is_some_and(|t| t.starts_with("session.tool."));
-                self.transcript.push(if is_tool {
-                    TranscriptLine::tool(line)
-                } else {
-                    TranscriptLine::status(line)
-                });
+        let event = {
+            let mut guard = self.harness.events().await;
+            match guard.as_mut() {
+                Some(source) => tokio::time::timeout(std::time::Duration::from_millis(50), source.next())
+                    .await
+                    .ok()
+                    .flatten(),
+                None => None,
+            }
+        };
+        let Some(event) = event else { return };
+        let r#type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if r#type == "session.approval.requested" {
+            self.request_approval().await;
+            return;
+        }
+        let line = kimi_ui::render_event(&event).unwrap_or_else(|| event.to_string());
+        // Tool progress reads differently from transcript/status.
+        let is_tool = r#type.starts_with("session.tool.");
+        self.transcript.push(if is_tool {
+            TranscriptLine::tool(line)
+        } else {
+            TranscriptLine::status(line)
+        });
+    }
+
+    /// Fetch pending approvals after an `approval.requested` event and queue
+    /// them for interactive y/n resolution.
+    async fn request_approval(&mut self) {
+        let session_id = self.session_id.clone();
+        match self.harness.approvals(Some(&session_id)).await {
+            Ok(items) if !items.is_empty() => {
+                let added = queue_new_approvals(&mut self.pending_approvals, &items);
+                if added > 0 {
+                    if let Some(head) = self.pending_approvals.last() {
+                        self.transcript.push(TranscriptLine::status(format!(
+                            "approval requested: {} — press y/n",
+                            head.tool
+                        )));
+                    }
+                }
+            }
+            _ => {
+                self.transcript
+                    .push(TranscriptLine::status("approval requested — run /approvals to inspect"));
             }
         }
+    }
+
+    /// Non-blocking poll for y/n while an approval is pending, resolving the
+    /// front of the queue on a keypress.
+    async fn poll_approval_keys(&mut self) -> anyhow::Result<()> {
+        if event::poll(std::time::Duration::from_millis(0))? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    match key.code {
+                        KeyCode::Char('y') => self.answer_approval(true).await?,
+                        KeyCode::Char('n') => self.answer_approval(false).await?,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolve the front of the pending approval queue (`allow`, or `deny`
+    /// with a user reason).
+    async fn answer_approval(&mut self, allow: bool) -> anyhow::Result<()> {
+        let Some(pending) = self.pending_approvals.first().cloned() else {
+            return Ok(());
+        };
+        let reason = if allow { None } else { Some("denied by user") };
+        let resolved = self
+            .harness
+            .resolve_approval(&pending.id, allow, reason)
+            .await
+            .unwrap_or(false);
+        self.pending_approvals.remove(0);
+        if resolved {
+            let action = if allow { "allowed" } else { "denied" };
+            self.transcript.push(TranscriptLine::status(format!("{} {}", pending.tool, action)));
+        } else {
+            self.transcript
+                .push(TranscriptLine::status(format!("{} no longer pending", pending.tool)));
+        }
+        Ok(())
     }
 
     /// Complete the current input on Tab: cycle the command name or an
@@ -568,8 +707,8 @@ mod tests {
 
     #[test]
     fn completes_command_names_and_cycles() {
-        assert_eq!(complete_line("/", &[], None), ("/clear".to_string(), Some(0)));
-        assert_eq!(complete_line("/", &[], Some(0)), ("/compact".to_string(), Some(1)));
+        assert_eq!(complete_line("/", &[], None), ("/approvals".to_string(), Some(0)));
+        assert_eq!(complete_line("/", &[], Some(0)), ("/approve".to_string(), Some(1)));
         assert_eq!(complete_line("/go", &[], None), ("/goal".to_string(), Some(0)));
         assert_eq!(complete_line("/mod", &[], None), ("/model".to_string(), Some(0)));
         assert_eq!(complete_line("/zzz", &[], None), ("/zzz".to_string(), None));
@@ -597,6 +736,33 @@ mod tests {
         assert_eq!(complete_line("/model nope", &aliases, None), ("/model nope".to_string(), None));
         // No aliases configured → untouched.
         assert_eq!(complete_line("/model ", &[], None), ("/model ".to_string(), None));
+    }
+
+    #[test]
+    fn queues_approvals_with_dedup() {
+        let mut queue = Vec::new();
+        // New items are queued in order.
+        let items = vec![
+            serde_json::json!({ "id": "a1", "tool_name": "Bash" }),
+            serde_json::json!({ "id": "a2", "tool_name": "Read" }),
+        ];
+        assert_eq!(queue_new_approvals(&mut queue, &items), 2);
+        assert_eq!(
+            queue,
+            vec![
+                PendingApproval { id: "a1".into(), tool: "Bash".into() },
+                PendingApproval { id: "a2".into(), tool: "Read".into() },
+            ]
+        );
+        // Re-fetching the same ids adds nothing.
+        assert_eq!(queue_new_approvals(&mut queue, &items), 0);
+        // A fresh id appended; items without an id are skipped.
+        let more = vec![
+            serde_json::json!({ "id": "a3", "tool_name": "Edit" }),
+            serde_json::json!({ "tool_name": "no-id" }),
+        ];
+        assert_eq!(queue_new_approvals(&mut queue, &more), 1);
+        assert_eq!(queue[2], PendingApproval { id: "a3".into(), tool: "Edit".into() });
     }
 
     #[test]
