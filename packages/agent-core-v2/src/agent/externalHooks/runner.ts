@@ -1,3 +1,17 @@
+/**
+ * `externalHooks` domain — runs one configured hook command.
+ *
+ * Spawns the command through the `hostProcess` OS service with `shell: true`,
+ * pipes the hook input JSON to stdin, and maps the exit code plus any JSON
+ * stdout onto a `HookResult`. A word-leading `~` in the command is expanded
+ * to the home directory first, because the Windows shell (cmd.exe) has no
+ * tilde concept and would resolve the literal `~` against the working
+ * directory — and a hook that fails to start blocks the PreToolUse call it
+ * guards. Expansion happens at word boundaries only, so a `~` inside an
+ * argument keeps its literal meaning, and the expanded home is double-quoted
+ * when it contains shell-significant characters so the substituted path stays
+ * a single word in both cmd.exe and POSIX sh.
+ */
 import { type SpawnOptionsWithoutStdio } from 'node:child_process';
 import { homedir } from 'node:os';
 
@@ -7,23 +21,15 @@ import { type IHostProcess, IHostProcessService } from '#/os/interface/hostProce
 
 import type { HookResult } from './types';
 
-/**
- * Expand a word-leading `~` to the home directory.
- *
- * Hook commands are spawned with `shell: true`. On POSIX that shell performs
- * tilde expansion, so `python3 ~/hooks/x.py` finds the script. On Windows the
- * shell is cmd.exe, which has no such concept: the literal `~` reaches the
- * interpreter, which resolves it against the WORKING DIRECTORY. A hook
- * configured with a `~` path therefore fails with ENOENT at
- * `<cwd>/~/hooks/x.py` — and because a failed PreToolUse hook blocks the call,
- * that silently breaks EVERY tool use in the session rather than just the hook.
- *
- * Expansion is applied at word boundaries only, which is where a POSIX shell
- * does it, so a `~` inside an argument keeps its literal meaning.
- */
-export function expandLeadingTilde(command: string): string {
-  const home = homedir();
-  return command.replaceAll(/(^|\s)~(?=[/\\]|\s|$)/g, (_match, prefix: string) => `${prefix}${home}`);
+export function expandLeadingTilde(command: string, home: string = homedir()): string {
+  const replacement = quoteHomeForShell(home);
+  return command.replaceAll(/(^|\s)~(?=[/\\]|\s|$)/g, (_match, prefix: string) => `${prefix}${replacement}`);
+}
+
+const SHELL_SAFE_HOME = /^[\w./:\\-]+$/;
+
+function quoteHomeForShell(home: string): string {
+  return SHELL_SAFE_HOME.test(home) ? home : `"${home}"`;
 }
 
 export interface RunHookOptions {

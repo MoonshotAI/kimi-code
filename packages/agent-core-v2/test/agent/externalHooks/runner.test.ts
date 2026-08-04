@@ -153,45 +153,77 @@ describe('buildHookSpawnOptions (Windows console-window regression)', () => {
 // cannot be found blocks the call it guards, a single mistyped path disables
 // the whole session rather than just that hook.
 describe('expandLeadingTilde', () => {
-  const home = homedir();
+  // A fixed, space-free home keeps these assertions hermetic: the expansion
+  // quotes the home when it contains shell-significant characters, so the
+  // expected output depends on the home's content.
+  const home = '/home/user';
 
   it('expands a command-leading ~/', () => {
-    expect(expandLeadingTilde('~/hooks/x.py')).toBe(`${home}/hooks/x.py`);
+    expect(expandLeadingTilde('~/hooks/x.py', home)).toBe(`${home}/hooks/x.py`);
   });
 
   it('expands a ~ that starts an argument', () => {
-    expect(expandLeadingTilde('python3 ~/hooks/x.py')).toBe(`python3 ${home}/hooks/x.py`);
+    expect(expandLeadingTilde('python3 ~/hooks/x.py', home)).toBe(`python3 ${home}/hooks/x.py`);
   });
 
   it('expands the backslash separator form, since the target shell is cmd.exe', () => {
-    expect(expandLeadingTilde('python3 ~\\hooks\\x.py')).toBe(`python3 ${home}\\hooks\\x.py`);
+    expect(expandLeadingTilde('python3 ~\\hooks\\x.py', home)).toBe(`python3 ${home}\\hooks\\x.py`);
   });
 
   it('expands a bare ~ word', () => {
-    expect(expandLeadingTilde('cd ~')).toBe(`cd ${home}`);
-    expect(expandLeadingTilde('cd ~ && ls')).toBe(`cd ${home} && ls`);
+    expect(expandLeadingTilde('cd ~', home)).toBe(`cd ${home}`);
+    expect(expandLeadingTilde('cd ~ && ls', home)).toBe(`cd ${home} && ls`);
   });
 
   it('expands every word-leading occurrence, not just the first', () => {
-    expect(expandLeadingTilde('cp ~/a ~/b')).toBe(`cp ${home}/a ${home}/b`);
+    expect(expandLeadingTilde('cp ~/a ~/b', home)).toBe(`cp ${home}/a ${home}/b`);
   });
 
   it('leaves a ~ inside a word alone', () => {
-    expect(expandLeadingTilde('script --flag=a~/b')).toBe('script --flag=a~/b');
-    expect(expandLeadingTilde('cp file~/old dest')).toBe('cp file~/old dest');
+    expect(expandLeadingTilde('script --flag=a~/b', home)).toBe('script --flag=a~/b');
+    expect(expandLeadingTilde('cp file~/old dest', home)).toBe('cp file~/old dest');
   });
 
   it('leaves a quoted ~ alone, matching a POSIX shell', () => {
-    expect(expandLeadingTilde('python3 "~/hooks/x.py"')).toBe('python3 "~/hooks/x.py"');
-    expect(expandLeadingTilde("python3 '~/hooks/x.py'")).toBe("python3 '~/hooks/x.py'");
+    expect(expandLeadingTilde('python3 "~/hooks/x.py"', home)).toBe('python3 "~/hooks/x.py"');
+    expect(expandLeadingTilde("python3 '~/hooks/x.py'", home)).toBe("python3 '~/hooks/x.py'");
   });
 
   it('does not attempt ~user expansion', () => {
-    expect(expandLeadingTilde('cat ~other/file')).toBe('cat ~other/file');
+    expect(expandLeadingTilde('cat ~other/file', home)).toBe('cat ~other/file');
   });
 
   it('leaves a command with no tilde untouched', () => {
-    expect(expandLeadingTilde('python3 hooks/x.py')).toBe('python3 hooks/x.py');
-    expect(expandLeadingTilde('')).toBe('');
+    expect(expandLeadingTilde('python3 hooks/x.py', home)).toBe('python3 hooks/x.py');
+    expect(expandLeadingTilde('', home)).toBe('');
+  });
+
+  it('uses the real home directory when none is given', () => {
+    expect(expandLeadingTilde('~/x')).toBe(expandLeadingTilde('~/x', homedir()));
+  });
+
+  // The expansion is spliced into a `shell:true` command string, so a home
+  // path containing whitespace would be word-split by the shell (`C:\Users\Jane
+  // Doe` → two words). A POSIX shell's own tilde expansion never splits; the
+  // textual replacement must not reintroduce the hazard, so the home is
+  // double-quoted — quoting works in both cmd.exe and POSIX sh, and a quoted
+  // segment concatenated with the unquoted remainder (`"…"/hooks/x.py`) still
+  // parses as one word in both.
+  it('double-quotes the expanded home when it contains a space', () => {
+    const spacedHome = 'C:\\Users\\Jane Doe';
+    expect(expandLeadingTilde('python3 ~/hooks/check.py', spacedHome)).toBe(
+      `python3 "${spacedHome}"/hooks/check.py`,
+    );
+    expect(expandLeadingTilde('~/hooks/x.py', spacedHome)).toBe(`"${spacedHome}"/hooks/x.py`);
+    expect(expandLeadingTilde('cd ~', spacedHome)).toBe(`cd "${spacedHome}"`);
+  });
+
+  it('double-quotes the expanded home when it contains a shell metacharacter', () => {
+    expect(expandLeadingTilde('~/x', '/home/a&b')).toBe('"/home/a&b"/x');
+    expect(expandLeadingTilde('~/x', '/home/a(b)')).toBe('"/home/a(b)"/x');
+  });
+
+  it('leaves a home without shell-significant characters unquoted', () => {
+    expect(expandLeadingTilde('~/x', 'C:\\Users\\jane')).toBe('C:\\Users\\jane/x');
   });
 });

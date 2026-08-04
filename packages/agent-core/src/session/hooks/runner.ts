@@ -18,10 +18,28 @@ import type { HookResult } from './types';
  *
  * Expansion is applied at word boundaries only, which is where a POSIX shell
  * does it, so a `~` inside an argument keeps its literal meaning.
+ *
+ * The expanded home is spliced into a command string the shell re-parses, so
+ * when it contains whitespace or shell metacharacters (e.g. `C:\Users\Jane
+ * Doe`) it is wrapped in double quotes to keep it a single word — a POSIX
+ * shell's own tilde expansion never word-splits, and this textual replacement
+ * must not reintroduce that hazard. Double quotes keep the path one word in
+ * both cmd.exe and POSIX sh, including the concatenated form
+ * `"<home>"/hooks/x.py`.
  */
-export function expandLeadingTilde(command: string): string {
-  const home = homedir();
-  return command.replaceAll(/(^|\s)~(?=[/\\]|\s|$)/g, (_match, prefix: string) => `${prefix}${home}`);
+export function expandLeadingTilde(command: string, home: string = homedir()): string {
+  const replacement = quoteHomeForShell(home);
+  return command.replaceAll(/(^|\s)~(?=[/\\]|\s|$)/g, (_match, prefix: string) => `${prefix}${replacement}`);
+}
+
+// Characters that a shell treats as ordinary word content: alphanumerics,
+// `_`, and the path punctuation `- . / : \`. Anything else (whitespace,
+// `& | ; < > ( ) % ^ " '`, …) would split or reinterpret the substituted
+// path, so such a home is double-quoted.
+const SHELL_SAFE_HOME = /^[\w./:\\-]+$/;
+
+function quoteHomeForShell(home: string): string {
+  return SHELL_SAFE_HOME.test(home) ? home : `"${home}"`;
 }
 
 export interface RunHookOptions {
