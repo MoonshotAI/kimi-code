@@ -432,6 +432,37 @@ fn chat_goal_lifecycle() {
 }
 
 #[test]
+fn chat_approval_commands_offline_safe() {
+    // /approvals + /approve|/deny are pure state ops (no LLM): an empty store
+    // lists nothing and unknown ids resolve to "not found" without erroring.
+    let home = temp_dir("chat-approvals");
+    let cwd = temp_dir("chat-approvals-cwd");
+    let mut child = Command::new(binary())
+        .args(["chat", "-s", "s-chat-approvals"])
+        .current_dir(&cwd)
+        .env("KIMI_AGENT_HOME", &home)
+        .env("HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn kimi chat");
+    {
+        use std::io::Write;
+        let stdin = child.stdin.as_mut().expect("stdin");
+        stdin
+            .write_all(b"/help\n/approvals\n/approve nope\n/deny nope\n/quit\n")
+            .expect("write");
+    }
+    let output = child.wait_with_output().expect("wait");
+    assert!(output.status.success(), "chat exits 0: {}", output.status);
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(out.contains("no pending approvals"), "approvals list: {out}");
+    assert!(out.contains("approval not found"), "unknown id resolve: {out}");
+    assert!(out.contains("/approvals") && out.contains("/approve"), "help lists commands: {out}");
+}
+
+#[test]
 fn chat_plan_mode_toggle() {
     // `/plan on` is a pure state op: no LLM, exit 0.
     let home = temp_dir("chat-plan");

@@ -1,4 +1,10 @@
 
+> **✅ 2026-08-03 ⑭ chat REPL 审批命令面（已提交）**：
+> - **事件提示**：事件渲染器遇 `session.approval.requested` 输出 `⚠ approval requested — /approvals, /approve <id>`（此前 REPL 对审批静默）。
+> - **命令面**：`/approvals`（pending id/tool/rule）、`/approve <id>`、`/deny <id>`（`approval_resolve` allow/deny，未知 id → resolved:false 不报错）；/help 同步。
+> - **验证**：kimi-cli 集成测试 24 → 25（`chat_approval_commands_offline_safe`：空 store 列表 + 未知 id resolve not found + help 含新命令）；clippy kimi-cli 0 警告。
+> - **遗留**：REPL 在 prompt 内仍阻塞等待响应（无 y/n 实时交互——文本模式 stdin 与运行中 turn 竞争）；审批命中需 turn 结束或引擎续跑后 `/approve` 再 prompt，TS 行为对齐留待引擎侧续跑语义确认。
+
 > **✅ 2026-08-03 ⑬ TUI turn 取消（Esc/Ctrl-C，已提交）**：
 > - **合并按键轮询**：原 `poll_approval_keys` 与新增取消轮询若并存会互吞键（都调 `event::poll/read`）→ 合并为 `poll_prompt_keys` 单次读取：Esc/Ctrl-C → `Session::cancel`（session_id 走 server 端 cancel 标志，turn 在下一 LLM 调用前以 Aborted 收束，见 turn_loop/run_turn.rs:98）+ 转录「turn cancelled」；pending 审批时 y/n 仍解析队首。
 > - **纯函数**：`interrupt_action(KeyCode, KeyModifiers) -> Option<InterruptAction>`（Esc / Ctrl-C → CancelTurn），可测。

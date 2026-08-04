@@ -216,7 +216,11 @@ fn connect_with_renderer(
         let mut printed = 0usize;
         while let Some(event) = source.next().await {
             if let Some(line) = kimi_ui::render_event(&event) {
-                eprintln!("{line}");
+                if event.get("type").and_then(|t| t.as_str()) == Some("session.approval.requested") {
+                    eprintln!("⚠ {line} — /approvals, /approve <id>");
+                } else {
+                    eprintln!("{line}");
+                }
                 printed += 1;
                 if printed > 64 {
                     break; // bound verbose output
@@ -261,6 +265,9 @@ async fn handle_chat_command(
             println!("/compact     compact the session context");
             println!("/export      export the session as <session_id>.zip");
             println!("/sessions    list persisted sessions");
+            println!("/approvals   list pending tool approvals");
+            println!("/approve <id> allow a pending approval");
+            println!("/deny <id>   deny a pending approval");
             println!("/goal <obj>  create a goal on the session");
             println!("/goal-status show the active goal");
             println!("/goal-pause  pause the active goal");
@@ -427,6 +434,53 @@ async fn handle_chat_command(
                 let title = session["title"].as_str().unwrap_or("");
                 let title = if title.is_empty() { "(untitled)" } else { title };
                 println!("{id}  {title}");
+            }
+            ChatCommand::Handled
+        }
+        "/approvals" => {
+            let body = client.approval_list(Some(session_id.as_str())).await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            let pending = body["result"]["pending"].as_array().cloned().unwrap_or_default();
+            if pending.is_empty() {
+                println!("no pending approvals");
+            }
+            for item in pending.iter().take(10) {
+                let id = item["id"].as_str().unwrap_or("?");
+                let tool = item["tool_name"].as_str().unwrap_or("?");
+                let rule = item["approval_rule"].as_str().unwrap_or("?");
+                println!("{id}  {tool}  ({rule})");
+            }
+            ChatCommand::Handled
+        }
+        "/approve" => {
+            if rest.is_empty() {
+                return ChatCommand::Error("usage: /approve <approval-id>".into());
+            }
+            let body = client.approval_resolve(rest, true, None).await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            if body["result"]["resolved"].as_bool().unwrap_or(false) {
+                println!("approval allowed");
+            } else {
+                println!("approval not found");
+            }
+            ChatCommand::Handled
+        }
+        "/deny" => {
+            if rest.is_empty() {
+                return ChatCommand::Error("usage: /deny <approval-id>".into());
+            }
+            let body = client.approval_resolve(rest, false, Some("denied by user")).await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            if body["result"]["resolved"].as_bool().unwrap_or(false) {
+                println!("approval denied");
+            } else {
+                println!("approval not found");
             }
             ChatCommand::Handled
         }
