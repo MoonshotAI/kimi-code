@@ -5,6 +5,12 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㊶ TUI/SDK 会话创建补 load（create/load 类修复收尾，已提交）**：
+> - **同类缺口**：TUI run() 启动与 `/resume` 的 create_session 从不 load（续开会话上下文/目标丢失）；SDK `Harness::run_prompt` 一次性 create+prompt 对既有会话同样不加载。
+> - **实现**：TUI run() 与 /resume 在 create_session 后 `session.load()`（新建会话 no-op）；SDK run_prompt 同样补 load。
+> - **验证**：kimi-tui 13 + kimi-sdk 7 全绿；clippy 0；workspace check 干净。
+> - **至此 create/load 顺序类修复闭环**：chat/ACP/print-resume/TUI/SDK 全部按「create → (load) → setup → prompt」执行。
+
 > **✅ 2026-08-03 ㊵ resume 顺序 + print --continue 加载修复（同类 create/load 顺序问题，已提交）**：
 > - **① `kimi resume` 顺序 bug**：create → goal → **load** → prompt——load 的 durable-state restore 覆盖刚建的 goal（与 ㊴ 同类的恢复覆盖问题）。修复：load 移到 goal 之前。
 > - **② `print --continue` 从不加载**：续跑会话的上下文/目标根本没恢复（create 重建全新 agent，不读 store）——--continue 语义失效。修复：`PromptSetup.resume`，run_prompt_with_setup 在 create 后、setup/prompt 前 SESSION_LOAD。

@@ -264,6 +264,10 @@ impl App {
     pub async fn run(&mut self) -> anyhow::Result<()> {
         // Open the session up front.
         let mut session = self.harness.create_session(&self.session_id).await?;
+        // Resume semantics: create rebuilds a fresh agent, load re-applies
+        // the persisted context + goal for an existing session (no-op for a
+        // brand-new one).
+        let _ = session.load().await;
         // Seed the footer status (best-effort) before the session moves.
         let status = session.get_status().await;
         let plan = status["result"]["plan_mode"].as_bool().unwrap_or(false);
@@ -439,7 +443,9 @@ impl App {
                     if rest.is_empty() {
                         self.transcript.push(TranscriptLine::status("usage: /resume <session-id>"));
                     } else {
-                        let new_session = self.harness.create_session(rest).await?;
+                        let mut new_session = self.harness.create_session(rest).await?;
+                        // Restore the persisted state of the resumed session.
+                        let _ = new_session.load().await;
                         self.session = Some(new_session);
                         self.session_id = rest.to_string();
                         self.transcript.push(TranscriptLine::status(format!("switched to session {rest}")));

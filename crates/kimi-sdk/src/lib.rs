@@ -198,6 +198,9 @@ impl Harness {
     /// reachable LLM (engine-side config).
     pub async fn run_prompt(&self, session_id: &str, text: &str) -> anyhow::Result<String> {
         let mut session = self.create_session(session_id).await?;
+        // Resume an existing session: create rebuilds a fresh agent, load
+        // re-applies the persisted context + goal (no-op for new sessions).
+        let _ = session.load().await;
         let result = session.prompt(text).await;
         if let Some(error) = result.get("error") {
             anyhow::bail!("run_prompt: {}", error["message"].as_str().unwrap_or("unknown"));
