@@ -144,6 +144,42 @@ async fn harness_exposes_engine_events() {
 }
 
 #[tokio::test]
+async fn session_extended_surfaces_offline() {
+    let home = std::env::temp_dir().join(format!("kimi-sdk-ext-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).expect("mkdir");
+    std::env::set_var("KIMI_AGENT_HOME", &home);
+
+    let mut harness = Harness::embedded().expect("embedded");
+    let mut session = harness.create_session("s-ext").await.expect("create");
+
+    // Read surfaces on a bare server (empty/neutral results, no error).
+    assert!(session.list_mcp_servers().await.expect("mcp").is_object());
+    session.get_mcp_startup_metrics().await.expect("metrics");
+    session.get_warnings().await.expect("warnings");
+    let tools = session.list_tools().await.expect("tools");
+    assert!(tools.is_object(), "tools: {tools}");
+
+    // Directory sandbox ops with a real temp dir.
+    let extra = std::env::temp_dir().join(format!("kimi-sdk-extra-{}", std::process::id()));
+    std::fs::create_dir_all(&extra).expect("mkdir");
+    let added = session.add_additional_dir(extra.to_str().expect("path")).await.expect("add");
+    assert_eq!(added["success"], true, "add: {added}");
+    let removed = session.remove_additional_dir(extra.to_str().expect("path")).await.expect("remove");
+    assert_eq!(removed["success"], true, "remove: {removed}");
+
+    // Metadata merge + plan clear + shell cancel are state ops.
+    let meta = session.update_metadata(serde_json::json!({ "k": "v" })).await.expect("metadata");
+    assert_eq!(meta["metadata"]["k"], "v", "meta: {meta}");
+    session.clear_plan().await.expect("clear_plan");
+    let cancel = session.cancel_shell_command("nope").await.expect("cancel_shell");
+    assert_eq!(cancel["cancelled"], false, "unknown shell id: {cancel}");
+
+    // destroy releases engine-side state (RPC round-trips cleanly).
+    session.destroy().await.expect("destroy");
+}
+
+#[tokio::test]
 async fn remote_harness_over_stdio() {
     // The built serve binary lives in target/debug (one level above deps/).
     let serve = std::env::current_exe()

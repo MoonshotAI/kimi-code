@@ -5,6 +5,12 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㉔ SDK Session 方法面补全（12 缺口，已提交）**：
+> - **审计**：server 44 个 session 方法 vs SDK 暴露面——12 个缺口（mcp list/reconnect/startup_metrics、warnings、list_tools、add/remove_additional_dir、update_metadata、clear_plan、destroy、init、cancel_shell_command）。
+> - **新增 Session 方法**：`list_mcp_servers`/`get_mcp_startup_metrics`/`reconnect_mcp_server(name)`/`get_warnings`/`list_tools`/`add_additional_dir(path)`/`remove_additional_dir(path)`/`update_metadata(Value)`/`clear_plan`/`destroy`/`init`/`cancel_shell_command(command_id)`（simple_call / json! params，错误 bail 契约同既有方法）。
+> - **验证**：kimi-sdk 集成测试 3 → 4（session_extended_surfaces_offline：读面 + dir 沙箱增删 + metadata 合并 + clear_plan + cancel_shell 未知 id false + destroy）；clippy kimi-sdk 0 警告；workspace check 干净。
+> - **意义**：宿主接口层可触及 server 全部 44 个 session 方法（44/44）。
+
 > **✅ 2026-08-03 ㉓ WS 客户端 + e2e（传输闭环，已提交）**：
 > - **kimi-server-client 新增 `ws_client.rs`**：`WsClient::connect(addr)`（ws:// + 握手）+ `call`（text 帧请求/响应、id 递增、ping→pong、close 报错）；`AppServerClient::RemoteWs(Box<WsClient>)` 变体 + call 分发。
 > - **e2e（kimi-server-transport/tests/ws_e2e.rs）**：完整 Server::build → websocket::serve → `AppServerClient::RemoteWs` 驱动 health + session_create + session_list——证明 frame 传输与 stdio/in-process 同 envelope。

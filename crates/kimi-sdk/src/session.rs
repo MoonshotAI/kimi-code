@@ -360,6 +360,124 @@ impl Session {
         Ok(body["result"].clone())
     }
 
+    /// Registered MCP servers for the session.
+    pub async fn list_mcp_servers(&mut self) -> anyhow::Result<serde_json::Value> {
+        self.simple_call(kimi_protocol::methods::SESSION_LIST_MCP_SERVERS).await
+    }
+
+    /// MCP startup metrics (warn/error counts) for the session.
+    pub async fn get_mcp_startup_metrics(&mut self) -> anyhow::Result<serde_json::Value> {
+        self.simple_call(kimi_protocol::methods::SESSION_GET_MCP_STARTUP_METRICS).await
+    }
+
+    /// Reconnect a named MCP server (re-runs its startup).
+    pub async fn reconnect_mcp_server(&mut self, name: &str) -> anyhow::Result<serde_json::Value> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                kimi_protocol::methods::SESSION_RECONNECT_MCP_SERVER,
+                serde_json::json!({ "session_id": self.id, "name": name }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("reconnect_mcp_server: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"].clone())
+    }
+
+    /// Session warnings (e.g. failed MCP servers).
+    pub async fn get_warnings(&mut self) -> anyhow::Result<serde_json::Value> {
+        self.simple_call(kimi_protocol::methods::SESSION_GET_WARNINGS).await
+    }
+
+    /// Tools available to the session.
+    pub async fn list_tools(&mut self) -> anyhow::Result<serde_json::Value> {
+        self.simple_call(kimi_protocol::methods::SESSION_LIST_TOOLS).await
+    }
+
+    /// Add an additional workspace directory to the session sandbox.
+    pub async fn add_additional_dir(&mut self, path: &str) -> anyhow::Result<serde_json::Value> {
+        self.dir_change(kimi_protocol::methods::SESSION_ADD_DIR, path).await
+    }
+
+    /// Remove an additional workspace directory from the session sandbox.
+    pub async fn remove_additional_dir(&mut self, path: &str) -> anyhow::Result<serde_json::Value> {
+        self.dir_change(kimi_protocol::methods::SESSION_REMOVE_DIR, path).await
+    }
+
+    async fn dir_change(&mut self, method: &str, path: &str) -> anyhow::Result<serde_json::Value> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(method, serde_json::json!({ "session_id": self.id, "path": path }))
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("{method}: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"].clone())
+    }
+
+    /// Shallow-merge custom metadata into the session's persisted record.
+    pub async fn update_metadata(&mut self, metadata: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                kimi_protocol::methods::SESSION_UPDATE_METADATA,
+                serde_json::json!({ "session_id": self.id, "metadata": metadata }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("update_metadata: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"].clone())
+    }
+
+    /// Clear the active plan.
+    pub async fn clear_plan(&mut self) -> anyhow::Result<serde_json::Value> {
+        self.simple_call(kimi_protocol::methods::SESSION_CLEAR_PLAN).await
+    }
+
+    /// Tear the session down (releases engine-side state).
+    pub async fn destroy(&mut self) -> anyhow::Result<serde_json::Value> {
+        self.simple_call(kimi_protocol::methods::SESSION_DESTROY).await
+    }
+
+    /// Run the engine's AGENTS.md initialization for the session workspace.
+    pub async fn init(&mut self) -> anyhow::Result<()> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(kimi_protocol::methods::SESSION_INIT, serde_json::json!({ "session_id": self.id }))
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("init: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(())
+    }
+
+    /// Cancel a running shell command by its id.
+    pub async fn cancel_shell_command(&mut self, command_id: &str) -> anyhow::Result<serde_json::Value> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                kimi_protocol::methods::SESSION_CANCEL_SHELL_COMMAND,
+                serde_json::json!({ "session_id": self.id, "command_id": command_id }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("cancel_shell_command: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"].clone())
+    }
+
     async fn simple_call(&mut self, method: &str) -> anyhow::Result<serde_json::Value> {
         let body = self
             .client
