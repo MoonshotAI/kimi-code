@@ -11,6 +11,7 @@ coverage/
 .vitest-results/
 .vite/
 .DS_Store
+.idea/
 .playwright-mcp/
 .claude
 .conductor
