@@ -6,7 +6,8 @@
  * legacy loop-event observations. Also persists the terminal `turn.ended`
  * record (reason / error / durationMs) so downstream history rebuilds can
  * recover how a turn ended; the record carries no engine-restorable state, so
- * its `apply` is a no-op.
+ * its `apply` is a no-op. Consumed by the Agent-scope `loopService`; the
+ * `interruptionReminder` domain projects `turn.cancel` into its own model.
  */
 
 import { z } from 'zod';
@@ -68,9 +69,11 @@ export const cancelTurn = TurnModel.defineOp('turn.cancel', {
   schema: z.object({
     turnId: z.number().optional(),
     target: z.enum(['active', 'queued']).optional(),
+    reason: z.enum(['user_cancelled', 'aborted']).optional(),
   }),
   apply: (s, { turnId, target }) => {
-    if (target === undefined || turnId === undefined || turnId < s.nextTurnId) return s;
+    if (target === undefined || turnId === undefined) return s;
+    if (turnId < s.nextTurnId) return s;
     return advanceTurnClock(s, s.nextTurnId, [...s.cancelledTurnIds, turnId]);
   },
 });

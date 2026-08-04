@@ -8,7 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (22 sections · 3 overlay(s))
+# Index (23 sections · 3 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   cron                     src/app/cron/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
@@ -30,6 +30,7 @@
 #   subagent                 src/session/subagent/configSection.ts
 #   task                     src/agent/task/configSection.ts
 #   thinking                 src/app/kosongConfig/configSection.ts
+#   tokenCounting            src/agent/tokenCounting/configSection.ts
 #   tools                    src/agent/toolPolicy/configSection.ts
 #   (overlay) servicesCredentialEnvOverlay  src/app/auth/configSection.ts
 #   (overlay) kimiModelEnvOverlay  src/app/kosongConfig/envOverlay.ts
@@ -129,7 +130,7 @@ extra_skill_dirs = []
 
 # one [[hooks]] table per entry:
 # [[hooks]]
-  # event: "PreToolUse" | "PostToolUse" | "PostToolUseFailure" | "PermissionRequest" | "PermissionResult" | "UserPromptSubmit" | "Stop" | "StopFailure" | "Interrupt" | "SessionStart" | "SessionEnd" | "SubagentStart" | "SubagentStop" | "PreCompact" | "PostCompact" | "Notification"
+  # event: "PreToolUse" | "PostToolUse" | "PostToolUseFailure" | "PermissionRequest" | "PermissionResult" | "UserPromptSubmit" | "UserPromptQueued" | "TurnStarted" | "Stop" | "StopFailure" | "Interrupt" | "SessionStart" | "SessionEnd" | "SessionHeartbeat" | "SubagentStart" | "SubagentStop" | "TaskStarted" | "PreCompact" | "PostCompact" | "Notification"
   # matcher: string
   # command: string
   # timeout: integer
@@ -152,15 +153,18 @@ extra_skill_dirs = []
 # loopControl (config.toml: loop_control)
 #   owner: src/agent/loop/configSection.ts
 #   scope: core
-#   hooks: custom fromToml · custom toToml · stripEnv
+#   hooks: custom toToml · stripEnv
+#   deprecations (old key is ignored + warns; rename manually):
+#     max_retries_per_step -> max_attempts_per_step
+#     max_steps_per_run -> max_steps_per_turn
 #   env:
 #     max_steps_per_turn <- KIMI_LOOP_MAX_STEPS_PER_TURN (custom parse)
-#     max_retries_per_step <- KIMI_LOOP_MAX_RETRIES_PER_STEP (custom parse)
+#     max_attempts_per_step <- KIMI_LOOP_MAX_ATTEMPTS_PER_STEP (custom parse; deprecated fallback KIMI_LOOP_MAX_RETRIES_PER_STEP)
 # ##########################################################################
 
 [loop_control]
 # max_steps_per_turn: integer
-# max_retries_per_step: integer
+# max_attempts_per_step: integer
 # max_ralph_iterations: integer
 # reserved_context_size: integer
 # compaction_trigger_ratio: number
@@ -386,6 +390,18 @@ timeout_ms = 7200000
 # effort: string
 # forced_effort: string
 # keep: string
+
+# ##########################################################################
+# tokenCounting (config.toml: token_counting)
+#   owner: src/agent/tokenCounting/configSection.ts
+#   scope: core
+#   hooks: stripEnv
+#   env:
+#     strategy <- KIMI_TOKEN_COUNTING_STRATEGY (custom parse)
+# ##########################################################################
+
+[token_counting]
+strategy = "measured+estimated"
 
 # ##########################################################################
 # tools

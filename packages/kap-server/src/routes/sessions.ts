@@ -100,13 +100,13 @@ import {
   resumeSessionById,
   isError2,
   Error2,
-  toProtocolMessage,
   type ContextMessage,
   type IAgentScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../protocol/error-codes';
 import { pageResponseSchema } from '../protocol/pagination';
+import { toProtocolMessage } from '../services/messages/messageProjection';
 import {
   archiveSessionResponseSchema,
   compactSessionRequestSchema,

@@ -750,6 +750,36 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(cleared.meta.goal).toBeUndefined();
   });
 
+  it('marks user-cancelled turns with interruption markers, skipping unattributable cancels', () => {
+    const base = baseWithMarker();
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.cancel', turnId: 0, target: 'active', reason: 'user_cancelled', time: 1000 },
+        { type: 'turn.cancel', turnId: 0, target: 'active', reason: 'user_cancelled', time: 1500 },
+        // A queued cancel left no visible residue — no marker.
+        { type: 'turn.cancel', turnId: 1, target: 'queued', reason: 'user_cancelled', time: 2000 },
+        // Programmatic aborts surface through their own outlets — no marker.
+        { type: 'turn.cancel', turnId: 2, target: 'active', reason: 'aborted', time: 3000 },
+        { type: 'turn.cancel', turnId: 4, target: 'active', reason: 'aborted', time: 3500 },
+        { type: 'turn.cancel', turnId: 4, target: 'active', reason: 'user_cancelled', time: 3600 },
+        // Records written before the reason field existed cannot be attributed.
+        { type: 'turn.cancel', turnId: 3, target: 'active', time: 4000 },
+      ],
+      base,
+    );
+    expect(
+      folded.items.filter((item) => item.kind === 'marker' && item.marker === 'interruption'),
+    ).toEqual([
+      {
+        kind: 'marker',
+        markerId: 'm2',
+        marker: 'interruption',
+        payload: { turnId: 0, target: 'active', reason: 'user_cancelled' },
+        at: new Date(1000).toISOString(),
+      },
+    ]);
+  });
+
   it('folds plan/swarm mode records into meta.modes with enter/exit markers', () => {
     const base = baseWithMarker();
     const folded = foldWireRecordFacts(

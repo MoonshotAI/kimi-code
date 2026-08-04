@@ -9,7 +9,7 @@ import { createDecorator } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
 
 import type { SkillContribution } from '#/app/skillCatalog/skillSource';
-import type { SkillCatalog } from '#/app/skillCatalog/types';
+import type { SkillCatalog, SkillSummary } from '#/app/skillCatalog/types';
 
 export interface ISessionSkillCatalog {
   readonly _serviceBrand: undefined;
@@ -19,6 +19,13 @@ export interface ISessionSkillCatalog {
   readonly onDidChange: Event<string>;
   load(): Promise<void>;
   reload(): Promise<void>;
+  /**
+   * Wire-friendly snapshot of the merged catalog: every skill as a
+   * `SkillSummary`, resolved after `ready`. Unlike the `catalog` property
+   * (a live object whose methods do not cross a wire), the result is plain
+   * serializable data.
+   */
+  list(): Promise<readonly SkillSummary[]>;
 }
 
 export interface ISkillCatalogSink {

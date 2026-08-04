@@ -469,7 +469,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
   flex: none;
   font-family: var(--font-mono);
   font-size: max(9px, calc(var(--ui-font-size) - 4px));
-  color: var(--color-text-on-accent);
+  color: var(--surface-light);
   background: var(--color-warning);
   border-radius: var(--radius-full);
   padding: 1px 7px;

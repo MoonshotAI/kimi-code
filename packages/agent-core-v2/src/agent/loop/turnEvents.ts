@@ -20,6 +20,14 @@ import type { TokenUsage } from '#/kosong/contract/usage';
 
 export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
 
+export type TurnInterruptReason =
+  | 'user_cancelled'
+  | 'aborted'
+  | 'max_steps'
+  | 'error'
+  | 'filtered'
+  | 'blocked';
+
 export interface TurnStartedEvent {
   readonly type: 'turn.started';
   readonly turnId: number;
@@ -49,6 +57,7 @@ export interface TurnEndedEvent {
   readonly reason: TurnEndReason;
   readonly error?: KimiErrorPayload;
   readonly durationMs?: number;
+  readonly interruptReason?: TurnInterruptReason;
 }
 
 export interface TurnStepStartedEvent {

@@ -10,6 +10,8 @@ import { Readable } from 'node:stream';
 import { finished } from 'node:stream/promises';
 import { resolve } from 'pathe';
 
+import { Error2, ErrorCodes } from '#/errors';
+
 export interface ZipSource {
   readonly stream: Readable;
   readonly size: number;
@@ -31,9 +33,17 @@ export async function openZipSource(source: string, signal?: AbortSignal): Promi
   try {
     signal?.throwIfAborted();
     const file = await handle.stat({ bigint: true });
-    if (!file.isFile()) throw new Error(`not a file: ${source}`);
+    if (!file.isFile()) {
+      throw new Error2(ErrorCodes.FS_IS_DIRECTORY, `not a file: ${source}`, {
+        details: { path: source },
+      });
+    }
     const size = Number(file.size);
-    if (!Number.isSafeInteger(size)) throw new Error(`file is too large to export: ${source}`);
+    if (!Number.isSafeInteger(size)) {
+      throw new Error2(ErrorCodes.SESSION_EXPORT_TOO_LARGE, `file is too large to export: ${source}`, {
+        details: { path: source },
+      });
+    }
     signal?.throwIfAborted();
     stream =
       size === 0

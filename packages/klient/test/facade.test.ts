@@ -14,8 +14,11 @@ const tick = (ms = 0): Promise<void> => new Promise((resolve) => setTimeout(reso
 /** Records calls, replays scripted results, and captures listen subscriptions. */
 class FakeChannel implements KlientChannel {
   readonly calls: Array<{ scope: ScopeRef; service: string; method: string; args: unknown[] }> = [];
-  readonly subscriptions: Array<{ source: EventSourceRef; dispose: ReturnType<typeof vi.fn> }> =
-    [];
+  readonly subscriptions: Array<{
+    scope: ScopeRef;
+    source: EventSourceRef;
+    dispose: ReturnType<typeof vi.fn>;
+  }> = [];
   result: unknown;
   /** Keyed `${service}.${method}` result overrides. */
   readonly results = new Map<string, unknown>();
@@ -33,14 +36,14 @@ class FakeChannel implements KlientChannel {
     // stub — streaming is not exercised in facade tests
   }
 
-  listen(_scope: ScopeRef, source: EventSourceRef, handler: (data: unknown) => void): IDisposable {
+  listen(scope: ScopeRef, source: EventSourceRef, handler: (data: unknown) => void): IDisposable {
     const id = this.nextSub;
     this.nextSub += 1;
     this.handlers.set(id, handler);
     const dispose = vi.fn(() => {
       this.handlers.delete(id);
     });
-    this.subscriptions.push({ source, dispose });
+    this.subscriptions.push({ scope, source, dispose });
     return { dispose };
   }
 
@@ -124,6 +127,222 @@ describe('facade routing', () => {
     const again = await klient.global.env();
     expect(again.platform).toBe('v');
     expect(channel.calls).toHaveLength(12);
+  });
+});
+
+describe('agent profile routing', () => {
+  it('thinking calls route to agentProfileService with the agent scope', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+
+    channel.result = undefined; // void output
+    await agent.setThinking('on');
+    expect(channel.calls[0]).toEqual({
+      scope: { sessionId: 's1', agentId: 'main' },
+      service: 'agentProfileService',
+      method: 'setThinking',
+      args: ['on'],
+    });
+
+    channel.result = 'high';
+    await expect(agent.getThinking()).resolves.toBe('high');
+    expect(channel.calls[1]).toEqual({
+      scope: { sessionId: 's1', agentId: 'main' },
+      service: 'agentProfileService',
+      method: 'getEffectiveThinkingLevel',
+      args: [],
+    });
+  });
+});
+
+describe('session skills routing', () => {
+  it('skills.list routes to sessionSkillCatalog.list with the session scope', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+
+    const summaries = [
+      {
+        name: 'review',
+        description: 'review changes',
+        path: '/skills/review/SKILL.md',
+        source: 'project',
+      },
+    ];
+    channel.result = summaries;
+    await expect(klient.session('s1').skills.list()).resolves.toEqual(summaries);
+    expect(channel.calls[0]).toEqual({
+      scope: { sessionId: 's1' },
+      service: 'sessionSkillCatalog',
+      method: 'list',
+      args: [],
+    });
+  });
+
+  it('skills.changed maps to the sessionSkillCatalog emitter', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const seen: unknown[] = [];
+
+    klient.session('s1').events.on('skills.changed', (event) => seen.push(event));
+    expect(channel.subscriptions[0]?.source).toEqual({
+      kind: 'emitter',
+      service: 'sessionSkillCatalog',
+      event: 'onDidChange',
+    });
+
+    channel.emit(0, 'workspace');
+    await tick();
+    expect(seen).toEqual(['workspace']);
+  });
+
+  it('activateSkill routes to agentRPCService with the agent scope', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+
+    channel.result = { turn_id: 3 };
+    await expect(agent.activateSkill({ name: 'review', args: 'src/app.ts' })).resolves.toEqual({
+      turn_id: 3,
+    });
+    expect(channel.calls[0]).toEqual({
+      scope: { sessionId: 's1', agentId: 'main' },
+      service: 'agentRPCService',
+      method: 'activateSkill',
+      args: [{ name: 'review', args: 'src/app.ts' }],
+    });
+  });
+});
+
+describe('agent mcp / compaction routing', () => {  it('getMcpServers routes to agentMcpService.list with the agent scope', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+
+    const entries = [
+      { name: 'mock', transport: 'stdio', status: 'connected', toolCount: 2 },
+    ];
+    channel.result = entries;
+    await expect(agent.getMcpServers()).resolves.toEqual(entries);
+    expect(channel.calls[0]).toEqual({
+      scope: { sessionId: 's1', agentId: 'main' },
+      service: 'agentMcpService',
+      method: 'list',
+      args: [],
+    });
+  });
+
+  it('compact issues a manual begin with the optional instruction', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+
+    channel.result = true;
+    await expect(agent.compact()).resolves.toBe(true);
+    expect(channel.calls[0]).toEqual({
+      scope: { sessionId: 's1', agentId: 'main' },
+      service: 'agentFullCompactionService',
+      method: 'begin',
+      args: [{ source: 'manual', instruction: undefined }],
+    });
+
+    channel.result = false;
+    await expect(agent.compact({ instruction: 'keep the plan' })).resolves.toBe(false);
+    expect(channel.calls[1]).toEqual({
+      scope: { sessionId: 's1', agentId: 'main' },
+      service: 'agentFullCompactionService',
+      method: 'begin',
+      args: [{ source: 'manual', instruction: 'keep the plan' }],
+    });
+  });
+});
+
+describe('session lifecycle routing', () => {
+  it('delete resolves the workspace handler and calls the lifecycle delete', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    channel.results.set('sessionIndex.get', SUMMARY);
+    channel.results.set('sessionLifecycleService.delete', undefined);
+
+    await klient.session('s1').delete();
+
+    expect(channel.calls).toEqual([
+      { scope: {}, service: 'sessionIndex', method: 'get', args: ['s1'] },
+      {
+        scope: { workspaceId: 'w1' },
+        service: 'sessionLifecycleService',
+        method: 'delete',
+        args: ['s1'],
+      },
+    ]);
+  });
+
+  it('delete throws a not-found RPCError when the session is not in the index', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    channel.results.set('sessionIndex.get', undefined);
+
+    await expect(klient.session('gone').delete()).rejects.toMatchObject({
+      name: 'RPCError',
+      code: 40404,
+    });
+    expect(channel.calls).toHaveLength(1);
+  });
+
+  it('restore forwards resume options to the lifecycle restore', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    channel.results.set('sessionIndex.get', SUMMARY);
+    channel.results.set('sessionLifecycleService.restore', { id: 's1', kind: 2 });
+
+    const opts = {
+      mcpServers: { example: { transport: 'stdio' as const, command: 'node' } },
+    };
+    await expect(klient.session('s1').restore(opts)).resolves.toBe(true);
+
+    expect(channel.calls[1]).toEqual({
+      scope: { workspaceId: 'w1' },
+      service: 'sessionLifecycleService',
+      method: 'restore',
+      args: ['s1', opts],
+    });
+  });
+
+  it('sessions.create forwards mcpServers to the engine', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    channel.results.set('workspaceLifecycleService.handlerFor', { id: 'w1', kind: 1 });
+    channel.results.set('sessionLifecycleService.create', { id: 's1', kind: 2 });
+    channel.results.set('sessionMetadata.read', {
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 2,
+      archived: false,
+    });
+
+    const mcpServers = {
+      example: { transport: 'stdio' as const, command: 'node', args: ['server.mjs'] },
+    };
+    await klient.global.sessions.create({ workDir: '/x', mcpServers });
+
+    expect(channel.calls[1]).toMatchObject({
+      scope: { workspaceId: 'w1' },
+      service: 'sessionLifecycleService',
+      method: 'create',
+      args: [{ workDir: '/x', mcpServers }],
+    });
+  });
+
+  it('sessions.create rejects malformed mcpServers before the call leaves the client', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    await expect(
+      klient.global.sessions.create({
+        workDir: '/x',
+        mcpServers: { bad: { transport: 'http', url: 'not-a-url' } },
+      }),
+    ).rejects.toBeInstanceOf(KlientValidationError);
+    expect(channel.calls.some((call) => call.method === 'create')).toBe(false);
   });
 });
 
@@ -220,5 +439,69 @@ describe('event hub', () => {
     expect(channel.subscriptions[0]?.dispose).not.toHaveBeenCalled();
     b.dispose();
     expect(channel.subscriptions[0]?.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards the newly registered agent stream events and validates payloads', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+    const seen = {
+      delta: [] as unknown[],
+      progress: [] as unknown[],
+      started: [] as unknown[],
+      blocked: [] as unknown[],
+      cancelled: [] as unknown[],
+      completed: [] as unknown[],
+    };
+    const errors: Error[] = [];
+    agent.events.onError((error) => {
+      errors.push(error);
+    });
+
+    agent.events.on('tool.call.delta', (event) => seen.delta.push(event));
+    agent.events.on('tool.progress', (event) => seen.progress.push(event));
+    agent.events.on('compaction.started', (event) => seen.started.push(event));
+    agent.events.on('compaction.blocked', (event) => seen.blocked.push(event));
+    agent.events.on('compaction.cancelled', (event) => seen.cancelled.push(event));
+    agent.events.on('compaction.completed', (event) => seen.completed.push(event));
+
+    // All six registrations share one `events` stream subscription bound to
+    // the agent scope.
+    expect(channel.subscriptions).toHaveLength(1);
+    expect(channel.subscriptions[0]?.scope).toEqual({ sessionId: 's1', agentId: 'main' });
+    expect(channel.subscriptions[0]?.source).toEqual({ kind: 'stream', name: 'events' });
+
+    const delta = { type: 'tool.call.delta', turnId: 1, toolCallId: 'tc1', name: 'Bash', argumentsPart: '{"command":' };
+    const progress = {
+      type: 'tool.progress',
+      turnId: 1,
+      toolCallId: 'tc1',
+      update: { kind: 'stdout', text: 'chunk' },
+    };
+    const started = { type: 'compaction.started', trigger: 'auto' };
+    const blocked = { type: 'compaction.blocked', turnId: 2 };
+    const cancelled = { type: 'compaction.cancelled' };
+    const completed = {
+      type: 'compaction.completed',
+      result: { summary: 's', compactedCount: 3, tokensBefore: 100, tokensAfter: 40 },
+    };
+    channel.emit(0, delta);
+    channel.emit(0, progress);
+    channel.emit(0, started);
+    channel.emit(0, blocked);
+    channel.emit(0, cancelled);
+    channel.emit(0, completed);
+    channel.emit(0, { type: 'tool.progress', turnId: 1, toolCallId: 'tc1' }); // missing update
+    channel.emit(0, { type: 'unregistered.type', turnId: 1 });
+    await tick();
+
+    expect(seen.delta).toEqual([delta]);
+    expect(seen.progress).toEqual([progress]);
+    expect(seen.started).toEqual([started]);
+    expect(seen.blocked).toEqual([blocked]);
+    expect(seen.cancelled).toEqual([cancelled]);
+    expect(seen.completed).toEqual([completed]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(KlientValidationError);
   });
 });

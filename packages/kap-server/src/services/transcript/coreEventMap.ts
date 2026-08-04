@@ -323,6 +323,7 @@ export class AgentTranscriptProjector {
     reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
     error?: { message: string };
     durationMs?: number;
+    interruptReason?: string;
   }): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
     this.flushOpenFrames(ops);
@@ -351,6 +352,15 @@ export class AgentTranscriptProjector {
     };
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
     this.currentStep = undefined;
+    // The user-facing counterpart of the (hidden) context reminder: a
+    // deliberate user interrupt gets a timeline marker, mirroring the cold
+    // fold's `turn.cancel` handling. Programmatic aborts already surface
+    // through the turn's error field or goal/task state.
+    if (event.reason === 'cancelled' && event.interruptReason === 'user_cancelled') {
+      ops.push(
+        this.markerOp('interruption', { turnId: event.turnId, reason: event.interruptReason }),
+      );
+    }
     return ops;
   }
 

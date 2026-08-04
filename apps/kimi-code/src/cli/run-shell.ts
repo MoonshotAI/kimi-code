@@ -26,7 +26,6 @@ import { loadTuiConfig, TuiConfigParseError } from '#/tui/config';
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
 import { KimiTUI } from '#/tui/index';
 import { currentTheme, getColorPalette } from '#/tui/theme';
-import { combineStartupNotice } from '#/tui/utils/startup';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
 
@@ -108,9 +107,9 @@ export async function runShell(
     return;
   }
   const config = await harness.getConfig();
-  for (const warning of (await harness.getConfigDiagnostics()).warnings) {
-    configWarning = combineStartupNotice(configWarning, warning);
-  }
+  // Config diagnostics (deprecated keys, invalid sections, ...) are surfaced
+  // by the TUI itself at `finishStartup` via `showConfigWarningsIfAny` —
+  // folded into the dim startup notice they were too easy to miss.
   const configMs = Date.now() - configStartedAt;
   // Resolve --agent/--agent-file once for the startup session; validateOptions
   // has already rejected them alongside --session/--continue.

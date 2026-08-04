@@ -6,6 +6,8 @@
  * service.
  */
 
+import { BugIndicatingError } from '#/errors';
+
 import type { ExecutableToolErrorResult, ExecutableToolSuccessResult } from './toolContract';
 
 const DEFAULT_MAX_CHARS = 50_000;
@@ -41,7 +43,7 @@ export class ToolResultBuilder {
       options.maxLineLength === undefined ? DEFAULT_MAX_LINE_LENGTH : options.maxLineLength;
 
     if (this.maxLineLength !== null && this.maxLineLength <= TRUNCATION_MARKER.length) {
-      throw new Error('maxLineLength must be greater than the truncation marker length.');
+      throw new BugIndicatingError('maxLineLength must be greater than the truncation marker length.');
     }
   }
 

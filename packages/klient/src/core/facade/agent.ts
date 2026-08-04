@@ -8,6 +8,7 @@
  */
 
 import type { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
+import type { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
 import type { IAgentPlanService } from '@moonshot-ai/agent-core-v2/agent/plan/plan';
 import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
@@ -24,10 +25,12 @@ import type { ScopedCaller } from './session.js';
 export type PromptLaunchResult = Awaited<ReturnType<IAgentRPCService['prompt']>>;
 export type ShellCommandResult = Awaited<ReturnType<IAgentShellCommandService['run']>>;
 export type SetModelResult = Awaited<ReturnType<IAgentProfileService['setModel']>>;
+export type ThinkingLevel = ReturnType<IAgentProfileService['getEffectiveThinkingLevel']>;
 export type UsageStatus = Awaited<ReturnType<IAgentUsageService['status']>>;
 export type AgentContextData = Awaited<ReturnType<IAgentRPCService['getContext']>>;
 export type PlanData = Awaited<ReturnType<IAgentPlanService['status']>>;
 export type AgentTaskInfo = Awaited<ReturnType<IAgentTaskService['list']>>[number];
+export type McpServerEntry = ReturnType<IAgentMcpService['list']>[number];
 
 export interface AgentFacade {
   prompt(input: {
@@ -35,11 +38,20 @@ export interface AgentFacade {
     disabledTools?: readonly string[];
   }): Promise<PromptLaunchResult>;
   steer(input: { input: readonly ContentPart[] }): Promise<PromptLaunchResult>;
+  /**
+   * Activate a skill as a user-slash activation: the engine renders the skill
+   * prompt and drives it as a normal turn (same settlement/event flow as
+   * `prompt`). Resolves with the launched turn id; rejects when the skill is
+   * unknown or the agent is busy.
+   */
+  activateSkill(input: { name: string; args?: string }): Promise<PromptLaunchResult>;
   cancel(input?: { turnId?: number }): Promise<void>;
   runShellCommand(input: { command: string; commandId?: string }): Promise<ShellCommandResult>;
   cancelShellCommand(input: { commandId: string }): Promise<void>;
   getModel(): Promise<string>;
   setModel(model: string): Promise<SetModelResult>;
+  getThinking(): Promise<ThinkingLevel>;
+  setThinking(level: string): Promise<void>;
   setPermission(mode: PermissionMode): Promise<void>;
   getUsage(): Promise<UsageStatus>;
   getContext(): Promise<AgentContextData>;
@@ -50,6 +62,14 @@ export interface AgentFacade {
   getTasks(input?: { activeOnly?: boolean; limit?: number }): Promise<readonly AgentTaskInfo[]>;
   stopTask(input: { taskId: string; reason?: string }): Promise<void>;
   getTaskOutput(input: { taskId: string; tail?: number }): Promise<string>;
+  /** Session-merged MCP server entries (workspace set + ephemeral session overlay). */
+  getMcpServers(): Promise<readonly McpServerEntry[]>;
+  /**
+   * Trigger a manual full compaction. Async: `true` means the compaction was
+   * started (it runs in the background); `false` means one is already running.
+   * Throws when there is nothing to compact or a turn is active.
+   */
+  compact(input?: { instruction?: string }): Promise<boolean>;
 }
 
 export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFacade {
@@ -59,6 +79,7 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
   return {
     prompt: (input) => rpc('prompt', input) as Promise<PromptLaunchResult>,
     steer: (input) => rpc('steer', input) as Promise<PromptLaunchResult>,
+    activateSkill: (input) => rpc('activateSkill', input) as Promise<PromptLaunchResult>,
     cancel: (input) => rpc('cancel', input ?? {}) as Promise<void>,
     runShellCommand: (input) =>
       call(scope, 'agentShellCommandService', 'run', [input]) as Promise<ShellCommandResult>,
@@ -67,6 +88,10 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
     getModel: () => call(scope, 'agentProfileService', 'getModel', []) as Promise<string>,
     setModel: (model) =>
       call(scope, 'agentProfileService', 'setModel', [model]) as Promise<SetModelResult>,
+    getThinking: () =>
+      call(scope, 'agentProfileService', 'getEffectiveThinkingLevel', []) as Promise<ThinkingLevel>,
+    setThinking: (level) =>
+      call(scope, 'agentProfileService', 'setThinking', [level]) as Promise<void>,
     setPermission: (mode) => rpc('setPermission', { mode }) as Promise<void>,
     getUsage: () => call(scope, 'agentUsageService', 'status', []) as Promise<UsageStatus>,
     getContext: () => rpc('getContext', {}) as Promise<AgentContextData>,
@@ -89,5 +114,11 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
     },
     getTaskOutput: (input) =>
       call(scope, 'agentTaskService', 'readOutput', [input.taskId, input.tail]) as Promise<string>,
+    getMcpServers: () =>
+      call(scope, 'agentMcpService', 'list', []) as Promise<readonly McpServerEntry[]>,
+    compact: (input) =>
+      call(scope, 'agentFullCompactionService', 'begin', [
+        { source: 'manual', instruction: input?.instruction },
+      ]) as Promise<boolean>,
   };
 }

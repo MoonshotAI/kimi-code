@@ -2,12 +2,15 @@ import { type ToolCall } from '#/kosong/contract/message';
 import { emptyUsage } from '#/kosong/contract/usage';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import type { IDisposable } from '#/_base/di/lifecycle';
 import { IAgentProfileService } from '#/index';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import type { ModelRequestTiming } from '#/kosong/model/modelRequester';
+import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import { ContinuationStepRequest, MessageStepRequest } from '#/agent/loop/stepRequest';
+import { RetryStepRequest } from '#/agent/prompt/promptStepRequests';
 import type { ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentUsageService } from '#/agent/usage/usage';
@@ -130,7 +133,7 @@ describe('Agent loop', () => {
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "blocked" } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "finishReason": "filtered", "usage": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-1", "providerFinishReason": "filtered", "rawFinishReason": "filtered" }, "time": "<time>" }
       [wire] turn.ended                  { "turnId": 0, "reason": "failed", "error": { "code": "provider.filtered", "message": "Provider safety policy blocked the response.", "name": "ProviderFilteredError", "details": { "finishReason": "filtered" }, "retryable": false }, "time": "<time>" }
-      [emit] turn.ended                  { "turnId": 0, "reason": "failed", "error": { "code": "provider.filtered", "message": "Provider safety policy blocked the response.", "name": "ProviderFilteredError", "details": { "finishReason": "filtered" }, "retryable": false } }
+      [emit] turn.ended                  { "turnId": 0, "reason": "failed", "error": { "code": "provider.filtered", "message": "Provider safety policy blocked the response.", "name": "ProviderFilteredError", "details": { "finishReason": "filtered" }, "retryable": false }, "interruptReason": "filtered" }
     `);
 
     const stepCompleted = ctx.allEvents.find(
@@ -951,6 +954,318 @@ describe('turn telemetry', () => {
       }
     },
   );
+});
+
+describe('interruption reminder', () => {
+  let ctx: TestAgentContext;
+  let loop: IAgentLoopService;
+
+  beforeEach(() => {
+    ctx = createTestAgent();
+    loop = ctx.get(IAgentLoopService);
+  });
+
+  afterEach(async () => {
+    try {
+      await ctx.expectResumeMatches();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  function cancelOnFirstDelta(): IDisposable {
+    return ctx.get(IEventBus).subscribe('assistant.delta', () => {
+      loop.cancel();
+    });
+  }
+
+  function remindersIn(target: TestAgentContext): ContextMessage[] {
+    return target.contextData().history.filter(
+      (message) =>
+        message.origin?.kind === 'injection' && message.origin.variant === 'interruption',
+    );
+  }
+
+  function interruptionReminders(): ContextMessage[] {
+    return remindersIn(ctx);
+  }
+
+  function contentPartRecordsIn(target: TestAgentContext): number {
+    return target.allEvents.filter(
+      (entry) =>
+        entry.type === '[wire]' &&
+        entry.event === 'context.append_loop_event' &&
+        (entry.args as { event?: { type?: string } }).event?.type === 'content.part',
+    ).length;
+  }
+
+  it('preserves the partial stream and appends one reminder on user cancel', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'partial answer' }, { type: 'text', text: ' more' });
+    const subscription = cancelOnFirstDelta();
+    const turn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
+    await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
+    subscription.dispose();
+
+    expect(ctx.contextData().history).toEqual([
+      expect.objectContaining({ role: 'user', content: [{ type: 'text', text: 'Hello' }] }),
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'partial answer' }],
+        toolCalls: [],
+        partial: true,
+      },
+      expect.objectContaining({
+        role: 'user',
+        origin: { kind: 'injection', variant: 'interruption' },
+      }),
+    ]);
+    expect(interruptionReminders()).toHaveLength(1);
+    expect(interruptionReminders()[0]!.content).toEqual([
+      {
+        type: 'text',
+        text: '<system-reminder>\nThe previous turn was interrupted by the user before completion; any partial output shown above is incomplete. The user\'s next message continues the conversation.\n</system-reminder>',
+      },
+    ]);
+
+    const cancelRecord = ctx.allEvents.find(
+      (entry) => entry.type === '[wire]' && entry.event === 'turn.cancel',
+    );
+    expect(cancelRecord?.args).toMatchObject({
+      turnId: 0,
+      target: 'active',
+      reason: 'user_cancelled',
+    });
+    const turnEnded = ctx.allEvents.find(
+      (entry) => entry.type === '[rpc]' && entry.event === 'turn.ended',
+    );
+    expect(turnEnded?.args).toMatchObject({
+      reason: 'cancelled',
+      interruptReason: 'user_cancelled',
+    });
+    expect(contentPartRecordsIn(ctx)).toBe(1);
+  });
+
+  it('writes one active cancellation when cancel repeats before the turn settles', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'partial answer' }, { type: 'text', text: ' more' });
+    const results: boolean[] = [];
+    let cancelled = false;
+    const subscription = ctx.get(IEventBus).subscribe('assistant.delta', () => {
+      if (cancelled) return;
+      cancelled = true;
+      results.push(loop.cancel(), loop.cancel());
+    });
+    const turn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
+    await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
+    subscription.dispose();
+    await ctx.wire.flush();
+
+    expect(results).toEqual([true, true]);
+    expect(
+      ctx.allEvents.filter(
+        (entry) => entry.type === '[wire]' && entry.event === 'turn.cancel',
+      ),
+    ).toHaveLength(1);
+    expect(interruptionReminders()).toHaveLength(1);
+    expect(
+      ctx.allEvents.filter(
+        (entry) => entry.type === '[wire]' && entry.event === 'interruptionReminder.recorded',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('preserves the partial stream but appends no reminder on programmatic abort', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'partial answer' }, { type: 'text', text: ' more' });
+    const subscription = ctx.get(IEventBus).subscribe('assistant.delta', () => {
+      loop.cancel(undefined, new Error('stop'));
+    });
+    const turn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
+    await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
+    subscription.dispose();
+
+    expect(ctx.contextData().history).toContainEqual({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'partial answer' }],
+      toolCalls: [],
+      partial: true,
+    });
+    expect(interruptionReminders()).toHaveLength(0);
+
+    const cancelRecord = ctx.allEvents.find(
+      (entry) => entry.type === '[wire]' && entry.event === 'turn.cancel',
+    );
+    expect(cancelRecord?.args).toMatchObject({ target: 'active', reason: 'aborted' });
+    const turnEnded = ctx.allEvents.find(
+      (entry) => entry.type === '[rpc]' && entry.event === 'turn.ended',
+    );
+    expect(turnEnded?.args).toMatchObject({ reason: 'cancelled', interruptReason: 'aborted' });
+  });
+
+  it('does not stack a second reminder without an intervening message', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'partial answer' });
+    const subscription = cancelOnFirstDelta();
+    const turn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
+    await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
+    subscription.dispose();
+    expect(interruptionReminders()).toHaveLength(1);
+
+    ctx.get(IEventBus).publish({
+      type: 'turn.ended',
+      turnId: 99,
+      reason: 'cancelled',
+      interruptReason: 'user_cancelled',
+    });
+
+    expect(interruptionReminders()).toHaveLength(1);
+  });
+
+  it('appends no reminder when a queued turn is user-cancelled before starting', async () => {
+    let release!: () => void;
+    loop.hooks.onWillBeginStep.register('test-hang-queued-cancel', async (hookCtx, next) => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await next();
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'unreached' });
+
+    const active = (await loop.enqueue(nextTurnMessage('active')).assigned).turn;
+    const queued = (await loop.enqueue(nextTurnMessage('queued')).assigned).turn;
+    expect(loop.cancel(queued.id)).toBe(true);
+    await expect(queued.result).resolves.toMatchObject({ type: 'cancelled', steps: 0 });
+    release();
+    loop.cancel(active.id);
+    await expect(active.result).resolves.toMatchObject({ type: 'cancelled' });
+
+    expect(interruptionReminders()).toHaveLength(1);
+    const queuedCancel = ctx.allEvents.find(
+      (entry) =>
+        entry.type === '[wire]' &&
+        entry.event === 'turn.cancel' &&
+        (entry.args as { target?: string }).target === 'queued',
+    );
+    expect(queuedCancel?.args).toMatchObject({ target: 'queued', reason: 'user_cancelled' });
+  });
+
+  it('sends the partial output and reminder ahead of the next user message', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'partial answer' }, { type: 'text', text: ' more' });
+    const subscription = cancelOnFirstDelta();
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+    await ctx.untilTurnEnd();
+    subscription.dispose();
+    ctx.llmInputs(); // drain the interrupted turn's request
+
+    ctx.mockNextResponse({ type: 'text', text: 'second answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Next' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
+      messages:
+        <last>
+        assistant: text "partial answer"
+        user: text "<system-reminder>\\nThe previous turn was interrupted by the user before completion; any partial output shown above is incomplete. The user's next message continues the conversation.\\n</system-reminder>"
+        user: text "Next"
+    `);
+  });
+
+  it('removes the reminder together with the undone turn', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'partial answer' });
+    const subscription = cancelOnFirstDelta();
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+    await ctx.untilTurnEnd();
+    subscription.dispose();
+    expect(interruptionReminders()).toHaveLength(1);
+
+    await ctx.undoHistory(1);
+
+    expect(ctx.contextData().history).toEqual([]);
+  });
+
+  it('preserves partial thinking on user cancel', async () => {
+    ctx.mockNextResponse({ type: 'think', think: 'pondering' }, { type: 'text', text: 'answer' });
+    const subscription = ctx.get(IEventBus).subscribe('thinking.delta', () => {
+      loop.cancel();
+    });
+    const turn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
+    await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
+    subscription.dispose();
+
+    expect(ctx.contextData().history).toContainEqual({
+      role: 'assistant',
+      content: [{ type: 'think', think: 'pondering' }],
+      toolCalls: [],
+      partial: true,
+    });
+    expect(interruptionReminders()).toHaveLength(1);
+  });
+
+  it('records no partial content when the stream only produced whitespace', async () => {
+    ctx.mockNextResponse({ type: 'text', text: '  ' }, { type: 'text', text: 'answer' });
+    const subscription = cancelOnFirstDelta();
+    const turn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
+    await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
+    subscription.dispose();
+
+    expect(contentPartRecordsIn(ctx)).toBe(0);
+    expect(ctx.contextData().history).toEqual([
+      expect.objectContaining({ role: 'user' }),
+      { role: 'assistant', content: [], toolCalls: [], partial: true },
+      expect.objectContaining({ origin: { kind: 'injection', variant: 'interruption' } }),
+    ]);
+  });
+
+  it('does not stack a second reminder around a vacuous retry turn', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'partial answer' });
+    const first = cancelOnFirstDelta();
+    const firstTurn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
+    await expect(firstTurn.result).resolves.toMatchObject({ type: 'cancelled' });
+    first.dispose();
+    expect(interruptionReminders()).toHaveLength(1);
+
+    ctx.mockNextResponse({ type: 'text', text: 'retried answer' });
+    const onStepStarted = ctx.get(IEventBus).subscribe('turn.step.started', () => {
+      loop.cancel();
+    });
+    const retryTurn = (await loop.enqueue(new RetryStepRequest()).assigned).turn;
+    await expect(retryTurn.result).resolves.toMatchObject({ type: 'cancelled' });
+    onStepStarted.dispose();
+    expect(interruptionReminders()).toHaveLength(1);
+
+    ctx.mockNextResponse({ type: 'text', text: 'third answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Next' }] });
+    await ctx.untilTurnEnd();
+    expect(interruptionReminders()).toHaveLength(1);
+  });
+
+  it('does not duplicate recorded content when cancelled during tool execution', async () => {
+    const local = createTestAgent(permissionModeServices('yolo'));
+    try {
+      const slowToolStarted = registerAbortableWorkTool(local);
+      const localLoop = local.get(IAgentLoopService);
+      local.mockNextResponse(
+        { type: 'text', text: 'working' },
+        { type: 'function', id: 'call-work-1', name: 'Work', arguments: '{}' },
+      );
+      local.mockNextResponse(
+        { type: 'text', text: 'still working' },
+        { type: 'function', id: 'call-work-2', name: 'Work', arguments: '{}' },
+      );
+      const turn = (await localLoop.enqueue(nextTurnMessage('do work')).assigned).turn;
+      await slowToolStarted.promise;
+      localLoop.cancel(turn.id);
+      await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
+
+      expect(contentPartRecordsIn(local)).toBe(2);
+
+      const history = local.contextData().history;
+      expect(remindersIn(local)).toHaveLength(1);
+      expect(history.at(-1)?.origin).toEqual({ kind: 'injection', variant: 'interruption' });
+      expect(history.at(-2)?.role).toBe('tool');
+
+      await local.expectResumeMatches();
+    } finally {
+      await local.dispose();
+    }
+  });
 });
 
 describe('step timing split propagation', () => {

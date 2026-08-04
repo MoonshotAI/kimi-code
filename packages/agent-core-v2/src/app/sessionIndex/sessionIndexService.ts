@@ -30,7 +30,9 @@
  * summary is resolved through the read model — falling back to a disk read +
  * backfill on a cold miss. Writes (create / archive / metadata update) keep the
  * read model warm via `SessionMetadata`; new sessions that have not been
- * mirrored yet are simply a cold miss and backfilled on first read. The legacy
+ * mirrored yet are simply a cold miss and backfilled on first read, and a
+ * deleted session's cached summary is evicted through `remove` so `get` stops
+ * answering for the id. The legacy
  * N+1 path remains as the flag-off fallback — and as the runtime fallback if
  * the query store ever reports `storage.locked`: the first lock warns once and
  * disables the read model for the rest of the process lifetime. (The minidb
@@ -143,6 +145,19 @@ export class FileSessionIndex implements ISessionIndex {
       () => this.countActiveFromReadModel(workspaceIds),
       () => this.countActiveLegacy(workspaceIds),
     );
+  }
+
+  async remove(id: string): Promise<void> {
+    if (!this.readModelEnabled() || this.readModelDisabled) return;
+    try {
+      await this.queryStore.delete(SESSION_COLLECTION, id);
+    } catch (error) {
+      if (!isStorageError(error, StorageErrors.codes.STORAGE_LOCKED)) throw error;
+      this.readModelDisabled = true;
+      this.log.warn('query-store locked by another process; disabling read model', {
+        error: String(error),
+      });
+    }
   }
 
   private async withReadModelFallback<T>(op: () => Promise<T>, legacy: () => Promise<T>): Promise<T> {
