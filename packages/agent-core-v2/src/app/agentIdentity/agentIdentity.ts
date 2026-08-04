@@ -27,7 +27,8 @@
  * `outboundUserAgent` always yields one, for directories this process chooses
  * to call. `requestHeaders` is the host's full header set with the
  * `User-Agent` product token rewritten, for self-configured service
- * endpoints.
+ * endpoints. The `User-Agent` key is located case-insensitively — HTTP header
+ * names are — and a rewrite keeps the host's own spelling.
  */
 
 import { replaceUserAgentProduct } from '@moonshot-ai/kimi-code-oauth';
@@ -73,20 +74,28 @@ export function buildAgentIdentitySnapshot(input: AgentIdentityInput): AgentIden
   const name = declared(input.name);
   const rawSlug = declared(input.slug) ?? name;
   const slug = rawSlug === undefined ? undefined : normalizeIdentitySlug(rawSlug);
-  const hostUserAgent = input.hostRequestHeaders['User-Agent'];
+  const userAgentKeys = Object.keys(input.hostRequestHeaders).filter(
+    (key) => key.toLowerCase() === 'user-agent',
+  );
+  const hostUserAgent =
+    userAgentKeys[0] === undefined ? undefined : input.hostRequestHeaders[userAgentKeys[0]];
   const thirdPartyUserAgent =
     hostUserAgent === undefined || slug === undefined
       ? hostUserAgent
       : replaceUserAgentProduct(hostUserAgent, slug);
+  const requestHeaders: Record<string, string> = { ...input.hostRequestHeaders };
+  if (slug !== undefined) {
+    for (const key of userAgentKeys) {
+      const value = requestHeaders[key];
+      if (value !== undefined) requestHeaders[key] = replaceUserAgentProduct(value, slug);
+    }
+  }
   return {
     displayName: name ?? declared(input.hostDisplayName),
     slug,
     outboundUserAgent: thirdPartyUserAgent ?? slug ?? DEFAULT_IDENTITY_SLUG,
     thirdPartyUserAgent,
-    requestHeaders:
-      thirdPartyUserAgent === undefined
-        ? { ...input.hostRequestHeaders }
-        : { ...input.hostRequestHeaders, 'User-Agent': thirdPartyUserAgent },
+    requestHeaders,
   };
 }
 

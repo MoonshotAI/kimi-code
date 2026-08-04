@@ -9,16 +9,16 @@
  * state after a successful Kimi login), whose bearer token comes from
  * `IOAuthService.resolveTokenProvider(...)` and whose base URL is derived from
  * the provider's `baseUrl`. The explicit config wins over the managed
- * derivation. Both use the host's Kimi identity headers
- * (`IBootstrapService.args.requestHeaders`) as default headers. When neither
- * source is configured it yields `undefined`.
+ * derivation. When neither source is configured it yields `undefined`.
  * Tests and hosts that need a custom backend bind `IWebSearchProviderService`
  * directly. Bound at App scope.
  *
- * A `[services]` entry names its own endpoint, so that path sends the
- * identity snapshot's rewritten host headers; the managed OAuth path keeps
- * the host headers verbatim, being the endpoint the session authenticated
- * against.
+ * Default headers split by who chose the endpoint: a `[services]` entry names
+ * its own, so that path sends `agentIdentity`'s frozen `requestHeaders` — the
+ * host header set with the `User-Agent` product token rewritten to the
+ * configured identity — while the managed OAuth path sends the host's own
+ * headers (`IBootstrapService.args.requestHeaders`) verbatim, being the
+ * endpoint the session authenticated against.
  */
 
 import {

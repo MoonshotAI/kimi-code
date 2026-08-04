@@ -256,4 +256,31 @@ describe('buildAgentIdentitySnapshot products', () => {
     expect(snapshot.thirdPartyUserAgent).toBeUndefined();
     expect(snapshot.requestHeaders).toEqual({});
   });
+
+  // HTTP header names are case-insensitive; a host that spells the header
+  // `user-agent` (e.g. a WHATWG Headers object flattened with
+  // Object.fromEntries) must get the same rewrite, under its own spelling.
+  it.each(['user-agent', 'USER-AGENT'])(
+    'locates the %j spelling and rewrites it in place',
+    (key) => {
+      const snapshot = buildAgentIdentitySnapshot({
+        slug: 'acme',
+        hostRequestHeaders: { [key]: 'kimi-code-cli/1.2.3', 'X-Msh-Device-Id': 'device-1' },
+      });
+      expect(snapshot.thirdPartyUserAgent).toBe('acme/1.2.3');
+      expect(snapshot.outboundUserAgent).toBe('acme/1.2.3');
+      expect(snapshot.requestHeaders).toEqual({
+        [key]: 'acme/1.2.3',
+        'X-Msh-Device-Id': 'device-1',
+      });
+    },
+  );
+
+  it('passes a lowercase spelling through untouched when no identity is claimed', () => {
+    const snapshot = buildAgentIdentitySnapshot({
+      hostRequestHeaders: { 'user-agent': 'kimi-code-cli/1.2.3' },
+    });
+    expect(snapshot.thirdPartyUserAgent).toBe('kimi-code-cli/1.2.3');
+    expect(snapshot.requestHeaders).toEqual({ 'user-agent': 'kimi-code-cli/1.2.3' });
+  });
 });
