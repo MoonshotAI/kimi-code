@@ -134,6 +134,13 @@ async fn harness_exposes_engine_events() {
     let btw_id = session.start_btw().await.expect("start_btw");
     assert!(btw_id.starts_with("btw-"), "btw id: {btw_id}");
     session.end_btw().await.expect("end_btw");
+
+    // Unknown skill errors before any LLM turn.
+    let skill = session.activate_skill("nonexistent-skill", serde_json::Value::Null).await;
+    assert!(
+        skill.is_err() && skill.unwrap_err().to_string().contains("was not found"),
+        "unknown skill errors fast"
+    );
 }
 
 #[tokio::test]

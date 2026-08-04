@@ -342,6 +342,24 @@ impl Session {
         Ok(())
     }
 
+    /// Activate a skill (renders the skill prompt + runs a turn — requires a
+    /// reachable LLM). Unknown skills error before any turn.
+    pub async fn activate_skill(&mut self, name: &str, args: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(
+                kimi_protocol::methods::SESSION_ACTIVATE_SKILL,
+                serde_json::json!({ "session_id": self.id, "name": name, "args": args }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("activate_skill: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"].clone())
+    }
+
     async fn simple_call(&mut self, method: &str) -> anyhow::Result<serde_json::Value> {
         let body = self
             .client
