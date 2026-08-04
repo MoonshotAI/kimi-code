@@ -3,32 +3,21 @@
  *
  * The identity the agent uses for itself, resolved from the `[identity]`
  * config section over the host's declared display name and frozen for the
- * life of the process: the identity is announced outward — MCP initialize,
- * OAuth client registration, provider request logs — and none of those can be
- * re-announced, so a mid-process change could only ever apply partially.
- * Freezing makes the one coherent semantic ("restart to change") the actual
- * contract, and lets consumers bake the snapshot into caches, prompts, and
- * connections without any invalidation obligations. Bound at App scope.
+ * life of the process: the identity is announced outward (MCP initialize,
+ * OAuth registration, provider request logs) and cannot be re-announced, so
+ * restart-to-change is the one coherent semantic — and consumers may bake the
+ * snapshot into caches, prompts, and connections with no invalidation
+ * obligations. `resolved()` awaits the freeze; `current()` throws before it,
+ * so an early materialization fails loudly instead of caching a pre-config
+ * value. Bound at App scope.
  *
- * Access is the enforcement point: `resolved()` waits for the config-derived
- * freeze, so a consumer cannot read a pre-config value by being early;
- * `current()` serves the frozen snapshot synchronously and throws before the
- * freeze, so a path that materializes identity too early fails loudly instead
- * of caching the wrong name.
- *
- * The snapshot carries finished products, not raw material — call sites must
- * not compose host headers with the slug themselves. `displayName` fills the
- * prompt's `${product_name}` slot (`undefined`: the template default applies).
- * `slug` is the protocol token for MCP client naming (`undefined`: no custom
- * identity, peers get the built-in name); when defined it is always a
- * non-empty ASCII token, safe to place in a header. `thirdPartyUserAgent`
- * rewrites only a `User-Agent` the host already sends — for provider
- * requests, where the host's silence is its own choice — while
- * `outboundUserAgent` always yields one, for directories this process chooses
- * to call. `requestHeaders` is the host's full header set with the
- * `User-Agent` product token rewritten, for self-configured service
- * endpoints. The `User-Agent` key is located case-insensitively — HTTP header
- * names are — and a rewrite keeps the host's own spelling.
+ * The snapshot carries finished products, never raw material for call sites
+ * to compose: the prompt display name, the protocol slug (`undefined` on
+ * either means no custom identity — consumers keep their built-in behavior),
+ * and the outbound `User-Agent` projections, which rewrite only the product
+ * token of what the host already sends (the key located case-insensitively,
+ * the host's spelling kept) — except toward directories this process chooses
+ * to call, where a header is always presented.
  */
 
 import { replaceUserAgentProduct } from '@moonshot-ai/kimi-code-oauth';

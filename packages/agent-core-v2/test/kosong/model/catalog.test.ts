@@ -274,6 +274,26 @@ describe('Model assembly (pure data)', () => {
         host.dispose();
       }
     });
+
+    // Inspection must attribute what the runtime actually sent — including a
+    // host that spells the header `user-agent`, which the finished layer
+    // canonicalizes.
+    it('attributes the User-Agent provenance for a lowercase host spelling', () => {
+      const { host, catalog } = createHost(THIRD_PARTY, stubModelOAuthTokens(), {
+        headers: { 'user-agent': 'kimi-test/1.0' },
+        identitySlug: 'acme-dev',
+      });
+      try {
+        expect(catalog.get('gpt').headers).toEqual({ 'User-Agent': 'acme-dev/1.0' });
+        const view = catalog.inspect('gpt');
+        expect(view.sources['resolved.headers.User-Agent']).toMatchObject({
+          kind: 'builtin',
+          detail: 'host User-Agent, product token from [identity] (acme-dev)',
+        });
+      } finally {
+        host.dispose();
+      }
+    });
   });
 
   it('keeps an explicit foreign protocol for a kimi model (the dialect path)', () => {

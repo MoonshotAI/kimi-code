@@ -397,6 +397,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     const declared = new Set((model.capabilities ?? []).map((c) => c.trim().toLowerCase()));
 
     trace.capture(TRACE.hostHeaders, this.hostRequestHeaders.headers);
+    trace.capture(TRACE.thirdPartyHeaders, this.hostRequestHeaders.thirdPartyHeaders);
     trace.capture(TRACE.identitySlug, this.hostRequestHeaders.identitySlug);
     return {
       id,

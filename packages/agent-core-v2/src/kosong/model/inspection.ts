@@ -95,6 +95,7 @@ export const TRACE = {
   detectedCapability: 'detectedCapability',
   capabilitySource: 'capabilitySource',
   hostHeaders: 'hostHeaders',
+  thirdPartyHeaders: 'thirdPartyHeaders',
   identitySlug: 'identitySlug',
 } as const;
 
@@ -494,9 +495,7 @@ function attributeHeaders(
     getProviderDefinition(providerConfig.type)?.hostHeaders === 'full';
   const hostLayer: Readonly<Record<string, string>> = forwardsAll
     ? rawHost
-    : rawHost['User-Agent'] === undefined
-      ? {}
-      : { 'User-Agent': rawHost['User-Agent'] };
+    : trace.captured<Readonly<Record<string, string>>>(TRACE.thirdPartyHeaders) ?? {};
   const customLayer = providerConfig?.customHeaders ?? {};
   for (const key of Object.keys(model.headers)) {
     const path = `resolved.headers.${key}`;
