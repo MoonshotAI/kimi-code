@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ToolCall } from '#/kosong/contract/message';
 
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { type AgentGoalService } from '#/agent/goal/goalService';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import {
@@ -14,13 +14,13 @@ import {
   wireRecordPersistenceServices,
   type TestAgentContext,
 } from '../../../harness';
+import { runWillBeginStepHooks } from '../../loop/stubs';
 import { stubAgentSwarm } from '../stubs';
 
 type GoalServiceTestManager = IAgentGoalService & AgentGoalService;
-type InjectableContextInjector = IAgentContextInjectorService & { inject(): Promise<void> };
 
-async function injectDynamic(injector: InjectableContextInjector): Promise<void> {
-  await injector.inject();
+async function injectDynamic(loop: IAgentLoopService): Promise<void> {
+  await runWillBeginStepHooks(loop);
 }
 
 async function registerLookupTool(
@@ -55,13 +55,13 @@ describe('GoalInjection content', () => {
   let ctx: TestAgentContext;
   let goals: GoalServiceTestManager;
   let context: IAgentContextMemoryService;
-  let injector: InjectableContextInjector;
+  let loop: IAgentLoopService;
 
   beforeEach(() => {
     ctx = createTestAgent(agentService(IAgentSwarmService, stubAgentSwarm()));
     goals = ctx.get(IAgentGoalService) as GoalServiceTestManager;
     context = ctx.get(IAgentContextMemoryService);
-    injector = ctx.get(IAgentContextInjectorService) as InjectableContextInjector;
+    loop = ctx.get(IAgentLoopService);
   });
 
   afterEach(async () => {
@@ -76,7 +76,7 @@ describe('GoalInjection content', () => {
     configure: (goals: GoalServiceTestManager) => Promise<void>,
   ): Promise<string | undefined> {
     await configure(goals);
-    await injectDynamic(injector);
+    await injectDynamic(loop);
     return lastGoalReminder(context);
   }
 
@@ -267,7 +267,7 @@ describe('GoalInjection integration', () => {
     let ctx: TestAgentContext;
     let goals: GoalServiceTestManager;
     let profile: IAgentProfileService;
-    let injector: InjectableContextInjector;
+    let loop: IAgentLoopService;
     let persistence: InMemoryWireRecordPersistence;
 
     beforeEach(() => {
@@ -278,7 +278,7 @@ describe('GoalInjection integration', () => {
       );
       goals = ctx.get(IAgentGoalService) as GoalServiceTestManager;
       profile = ctx.get(IAgentProfileService);
-      injector = ctx.get(IAgentContextInjectorService) as InjectableContextInjector;
+      loop = ctx.get(IAgentLoopService);
     });
 
     afterEach(async () => {
@@ -292,7 +292,7 @@ describe('GoalInjection integration', () => {
     it('main-agent dynamic injection writes a context.append_message with origin.variant goal', async () => {
       await goals.createGoal({ objective: 'Ship feature X' });
 
-      await injectDynamic(injector);
+      await injectDynamic(loop);
 
       const goalRecords = await flushedGoalReminderRecords(ctx, persistence);
       expect(goalRecords).toHaveLength(1);
@@ -303,8 +303,8 @@ describe('GoalInjection integration', () => {
     it('dynamic injection writes at most once for one turn boundary', async () => {
       await goals.createGoal({ objective: 'Ship feature X' });
 
-      await injectDynamic(injector);
-      await injectDynamic(injector);
+      await injectDynamic(loop);
+      await injectDynamic(loop);
 
       await expect(flushedGoalReminderRecords(ctx, persistence)).resolves.toHaveLength(1);
     });
@@ -370,7 +370,7 @@ describe('GoalInjection integration', () => {
     });
 
     it('writes no goal record when there is no active goal', async () => {
-      await injectDynamic(injector);
+      await injectDynamic(loop);
 
       await expect(flushedGoalReminderRecords(ctx, persistence)).resolves.toHaveLength(0);
     });

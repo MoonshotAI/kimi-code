@@ -22,28 +22,68 @@ export interface SkillRootsOptions {
   readonly mergeAllAvailableSkills?: boolean;
 }
 
+export interface SkillRootResolution {
+  readonly candidates: readonly string[];
+  readonly roots: readonly SkillRoot[];
+}
+
+export async function resolveUserSkillRoots(
+  homeDir: string,
+  osHomeDir: string,
+  options: SkillRootsOptions = {},
+): Promise<SkillRootResolution> {
+  const candidates = userRootCandidates(homeDir, osHomeDir);
+  const roots: SkillRoot[] = [];
+  const mergeAllAvailableSkills = options.mergeAllAvailableSkills ?? true;
+  await pushBrandGroup(roots, USER_BRAND_DIRS, homeDir, 'user', mergeAllAvailableSkills);
+  await pushFirstExisting(roots, USER_GENERIC_DIRS, osHomeDir, 'user');
+  return { candidates, roots };
+}
+
 export async function userRoots(
   homeDir: string,
   osHomeDir: string,
   options: SkillRootsOptions = {},
 ): Promise<readonly SkillRoot[]> {
+  return (await resolveUserSkillRoots(homeDir, osHomeDir, options)).roots;
+}
+
+export async function resolveProjectSkillRoots(
+  workDir: string,
+  options: SkillRootsOptions = {},
+): Promise<SkillRootResolution> {
+  const projectRoot = await findProjectRoot(workDir);
+  const candidates = [
+    ...PROJECT_BRAND_DIRS.map((dir) => path.join(projectRoot, dir)),
+    ...PROJECT_GENERIC_DIRS.map((dir) => path.join(projectRoot, dir)),
+  ];
   const roots: SkillRoot[] = [];
   const mergeAllAvailableSkills = options.mergeAllAvailableSkills ?? true;
-  await pushBrandGroup(roots, USER_BRAND_DIRS, homeDir, 'user', mergeAllAvailableSkills);
-  await pushFirstExisting(roots, USER_GENERIC_DIRS, osHomeDir, 'user');
-  return roots;
+  await pushBrandGroup(roots, PROJECT_BRAND_DIRS, projectRoot, 'project', mergeAllAvailableSkills);
+  await pushFirstExisting(roots, PROJECT_GENERIC_DIRS, projectRoot, 'project');
+  return { candidates, roots };
 }
 
 export async function projectRoots(
   workDir: string,
   options: SkillRootsOptions = {},
 ): Promise<readonly SkillRoot[]> {
+  return (await resolveProjectSkillRoots(workDir, options)).roots;
+}
+
+export async function resolveConfiguredSkillRoots(
+  dirs: readonly string[],
+  workDir: string,
+  osHomeDir: string,
+  source: SkillSource,
+): Promise<SkillRootResolution> {
   const projectRoot = await findProjectRoot(workDir);
+  const candidates = dirs.map((dir) => resolveConfiguredDir(dir, projectRoot, osHomeDir));
   const roots: SkillRoot[] = [];
-  const mergeAllAvailableSkills = options.mergeAllAvailableSkills ?? true;
-  await pushBrandGroup(roots, PROJECT_BRAND_DIRS, projectRoot, 'project', mergeAllAvailableSkills);
-  await pushFirstExisting(roots, PROJECT_GENERIC_DIRS, projectRoot, 'project');
-  return roots;
+  for (const candidate of candidates) {
+    await pushExistingRoot(roots, candidate, source);
+  }
+  return { candidates, roots };
 }
 
 export interface ProjectSkillRootCandidates {
@@ -69,12 +109,31 @@ export async function configuredRoots(
   osHomeDir: string,
   source: SkillSource,
 ): Promise<readonly SkillRoot[]> {
+  return (await resolveConfiguredSkillRoots(dirs, workDir, osHomeDir, source)).roots;
+}
+
+export function userRootCandidates(homeDir: string, osHomeDir: string): readonly string[] {
+  return [
+    ...USER_BRAND_DIRS.map((dir) => path.join(homeDir, dir)),
+    ...USER_GENERIC_DIRS.map((dir) => path.join(osHomeDir, dir)),
+  ];
+}
+
+export async function projectRootCandidates(workDir: string): Promise<readonly string[]> {
   const projectRoot = await findProjectRoot(workDir);
-  const roots: SkillRoot[] = [];
-  for (const dir of dirs) {
-    await pushExistingRoot(roots, resolveConfiguredDir(dir, projectRoot, osHomeDir), source);
-  }
-  return roots;
+  return [
+    ...PROJECT_BRAND_DIRS.map((dir) => path.join(projectRoot, dir)),
+    ...PROJECT_GENERIC_DIRS.map((dir) => path.join(projectRoot, dir)),
+  ];
+}
+
+export async function configuredRootCandidates(
+  dirs: readonly string[],
+  workDir: string,
+  osHomeDir: string,
+): Promise<readonly string[]> {
+  const projectRoot = await findProjectRoot(workDir);
+  return dirs.map((dir) => resolveConfiguredDir(dir, projectRoot, osHomeDir));
 }
 
 async function findProjectRoot(workDir: string): Promise<string> {

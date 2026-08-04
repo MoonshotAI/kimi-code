@@ -9,18 +9,14 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import type { LogContext, LogPayload } from '#/_base/log/log';
 import type { EnabledPluginSessionStart } from '#/app/plugin/types';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import type { SkillDefinition } from '#/app/skillCatalog/types';
-import { testAgent } from '../../harness';
+import { agentService, testAgent } from '../../harness';
 import { stubSkill } from './stubs';
-
-type InjectableDynamicInjector = {
-  inject(): Promise<void>;
-};
 
 interface CapturedWarn {
   readonly message: string;
@@ -76,11 +72,14 @@ function sessionStartRuntime(input: {
   for (const skill of input.skills) {
     skills.register(skill);
   }
-  const ctx = testAgent({
-    skills,
-    pluginSessionStarts: input.sessionStarts,
-    log: recordingLogger(warnings),
-  });
+  const ctx = testAgent(
+    {
+      skills,
+      pluginSessionStarts: input.sessionStarts,
+      log: recordingLogger(warnings),
+    },
+    agentService(IAgentPluginService, { _serviceBrand: undefined }),
+  );
   ctx.configure();
   if (input.history !== undefined) {
     ctx.context.append(...input.history);
@@ -88,8 +87,10 @@ function sessionStartRuntime(input: {
   return { ctx, warnings };
 }
 
-async function injectDynamic(ctx: ReturnType<typeof testAgent>): Promise<void> {
-  await (ctx.get(IAgentContextInjectorService) as unknown as InjectableDynamicInjector).inject();
+async function runTurn(ctx: ReturnType<typeof testAgent>): Promise<void> {
+  ctx.mockNextResponse({ type: 'text', text: 'done' });
+  await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+  await ctx.untilTurnEnd();
 }
 
 function lastReminder(ctx: ReturnType<typeof testAgent>): string {
@@ -116,7 +117,7 @@ describe('plugin session-start dynamic injection', () => {
       ],
     });
 
-    await injectDynamic(ctx);
+    await runTurn(ctx);
 
     const text = lastReminder(ctx);
     expect(text).toContain('<plugin_session_start plugin="superpowers" skill="using-superpowers">');
@@ -125,7 +126,7 @@ describe('plugin session-start dynamic injection', () => {
     expect(text).toContain('TodoList');
     expect(text).toContain('body of skill');
     expect(text).toContain('</plugin_session_start>');
-    expect(ctx.context.get().at(-1)?.origin).toEqual({
+    expect(pluginSessionStartMessages(ctx).at(-1)?.origin).toEqual({
       kind: 'injection',
       variant: 'plugin_session_start',
     });
@@ -137,7 +138,7 @@ describe('plugin session-start dynamic injection', () => {
       skills: [skill('using-superpowers', 'body', { id: 'superpowers' })],
     });
 
-    await injectDynamic(ctx);
+    await runTurn(ctx);
 
     const text = lastReminder(ctx);
     expect(text).toContain('<plugin_session_start plugin="superpowers" skill="using-superpowers">');
@@ -152,8 +153,8 @@ describe('plugin session-start dynamic injection', () => {
       skills: [skill('using-superpowers', 'body', { id: 'superpowers' })],
     });
 
-    await injectDynamic(ctx);
-    await injectDynamic(ctx);
+    await runTurn(ctx);
+    await runTurn(ctx);
 
     expect(pluginSessionStartMessages(ctx)).toHaveLength(1);
   });
@@ -172,7 +173,7 @@ describe('plugin session-start dynamic injection', () => {
       ],
     });
 
-    await injectDynamic(ctx);
+    await runTurn(ctx);
 
     expect(pluginSessionStartMessages(ctx)).toHaveLength(1);
   });
@@ -194,7 +195,7 @@ describe('plugin session-start dynamic injection', () => {
       },
     }]);
 
-    await injectDynamic(ctx);
+    await runTurn(ctx);
 
     expect(pluginSessionStartMessages(ctx)).toHaveLength(1);
   });
@@ -208,7 +209,7 @@ describe('plugin session-start dynamic injection', () => {
       skills: [skill('using-superpowers', 'body', { id: 'superpowers' })],
     });
 
-    await injectDynamic(ctx);
+    await runTurn(ctx);
 
     const text = lastReminder(ctx);
     expect(text).not.toContain('plugin="demo"');
@@ -224,9 +225,9 @@ describe('plugin session-start dynamic injection', () => {
   it('emits nothing when no sessionStart declarations are present', async () => {
     const { ctx } = sessionStartRuntime({ sessionStarts: [], skills: [] });
 
-    await injectDynamic(ctx);
+    await runTurn(ctx);
 
-    expect(ctx.context.get()).toEqual([]);
+    expect(pluginSessionStartMessages(ctx)).toHaveLength(0);
   });
 
   it('resolves sessionStart skills by plugin identity when names collide', async () => {
@@ -238,7 +239,7 @@ describe('plugin session-start dynamic injection', () => {
       ],
     });
 
-    await injectDynamic(ctx);
+    await runTurn(ctx);
 
     const text = lastReminder(ctx);
     expect(text).toContain('plugin body');

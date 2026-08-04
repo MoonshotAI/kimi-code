@@ -7,8 +7,12 @@ import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { AgentProfileService } from '#/agent/profile/profileService';
 import { ActiveToolsModel, ProfileModel } from '#/agent/profile/profileOps';
+import { IAgentSkillDisclosureService } from '#/agent/skillDisclosure/skillDisclosure';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
-import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import {
+  DEFAULT_AGENT_PROFILE_NAME,
+  type EnvironmentDisclosureSnapshot,
+} from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -216,10 +220,28 @@ function buildHost(key: string): {
   host.stub(IBootstrapService, stubUnused());
   host.stub(ISessionContext, createSessionContextStub());
   host.stub(ISessionWorkspaceContext, stubUnused());
-  host.stub(ISessionAgentProfileCatalog, stubUnused());
+  host.stub(ISessionAgentProfileCatalog, {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    get: () => undefined,
+    getDefault: () => {
+      throw new Error('catalog resolution is not exercised');
+    },
+    list: () => [],
+    load: async () => {},
+    reload: async () => {},
+    onDidChange: () => ({ dispose: () => {} }),
+  });
   host.stub(ISessionSkillCatalog, {
     _serviceBrand: undefined,
     onDidChange: () => ({ dispose: () => {} }),
+  });
+  host.stub(IAgentSkillDisclosureService, {
+    _serviceBrand: undefined,
+    resolve: async () => ({ names: [], listing: '' }),
+    disclosedNames: () => undefined,
+    disclosedFloor: () => undefined,
+    markDisclosed: () => {},
   });
   host.stub(ISessionInstructionsProvider, {
     _serviceBrand: undefined,
@@ -337,6 +359,51 @@ describe('AgentProfileService (wire-backed config.update)', () => {
       await readRecords(),
     );
     expect(activeToolsOf(replay.wire)).toBeUndefined();
+    replay.ix.dispose();
+  });
+
+  it('persists the rendered prompt and disclosure snapshot in one bind record', async () => {
+    const environment: EnvironmentDisclosureSnapshot = {
+      cwd: '/work',
+      date: {
+        disclosed: true,
+        value: { localDate: '2026-07-29', timeZone: 'Asia/Shanghai' },
+      },
+    };
+    svc.applyBindingSnapshot({
+      modelAlias: 'kimi-code',
+      profileName: 'agent',
+      thinkingLevel: 'off',
+      systemPrompt: 'rendered prompt',
+      environmentDisclosure: environment,
+      renderGeneration: 7,
+      activeToolNames: undefined,
+      disallowedTools: [],
+    });
+
+    const records = await readRecords();
+    expect(records.filter((record) => record.type === 'profile.bind')).toEqual([
+      expect.objectContaining({
+        type: 'profile.bind',
+        systemPrompt: 'rendered prompt',
+        environmentDisclosure: environment,
+        renderGeneration: 7,
+      }),
+    ]);
+    expect(records.filter((record) => record.type === 'config.update')).toHaveLength(0);
+
+    const replay = buildHost('profile-replay-disclosure');
+    await restoreTestAgentWire(
+      replay.wire,
+      replay.log,
+      testWireScope(SCOPE, 'profile-replay-disclosure'),
+      records,
+    );
+    expect(modelOf(replay.wire)).toMatchObject({
+      systemPrompt: 'rendered prompt',
+      environmentDisclosure: environment,
+      renderGeneration: 7,
+    });
     replay.ix.dispose();
   });
 

@@ -13,26 +13,30 @@ import { ILogService, type LogPayload } from '#/_base/log/log';
 
 import { SkillParseError, UnsupportedSkillTypeError, parseSkillText } from './parser';
 import type { SkillDiscoveryResult, ISkillDiscovery } from './skillDiscovery';
+import { isSkillLoadAborted } from './skillSource';
+import { isSkillTraversalDirectory, SKILL_SCAN_MAX_DEPTH } from './skillTraversal';
 import type { SkillDefinition, SkillRoot, SkippedSkill } from './types';
 import { normalizeSkillName } from './types';
-
-const MAX_SKILL_SCAN_DEPTH = 8;
 
 export class FileSkillDiscovery implements ISkillDiscovery {
   declare readonly _serviceBrand: undefined;
 
   constructor(@ILogService private readonly log: ILogService) {}
 
-  async discover(roots: readonly SkillRoot[]): Promise<SkillDiscoveryResult> {
+  async discover(
+    roots: readonly SkillRoot[],
+    signal?: AbortSignal,
+  ): Promise<SkillDiscoveryResult> {
     return discoverFileSkills(roots, (message, payload) => {
       this.log.warn(message, payload);
-    });
+    }, signal);
   }
 }
 
 export async function discoverFileSkills(
   roots: readonly SkillRoot[],
   warn?: (message: string, payload?: LogPayload) => void,
+  signal?: AbortSignal,
 ): Promise<SkillDiscoveryResult> {
   const byDiscoveryKey = new Map<string, SkillDefinition>();
   const skipped: SkippedSkill[] = [];
@@ -44,7 +48,7 @@ export async function discoverFileSkills(
     depth: number,
     subSkillParentName?: string,
   ): Promise<void> {
-    if (depth > MAX_SKILL_SCAN_DEPTH) return;
+    if (isSkillLoadAborted(signal) || depth > SKILL_SCAN_MAX_DEPTH) return;
 
     let entries: readonly string[];
     try {
@@ -56,16 +60,18 @@ export async function discoverFileSkills(
     const directorySkills = new Set<string>();
     const subdirs: string[] = [];
     for (const entry of entries) {
+      if (isSkillLoadAborted(signal)) return;
+      if (!isSkillTraversalDirectory(entry)) continue;
       const entryPath = path.join(dirPath, entry);
       if (await isFile(path.join(entryPath, 'SKILL.md'))) {
         directorySkills.add(entry);
       }
-      if (entry === 'node_modules' || entry.startsWith('.')) continue;
       if (await isDir(entryPath)) subdirs.push(entry);
     }
 
     const allowedSubSkillBundles = new Map<string, string>();
     for (const entry of directorySkills) {
+      if (isSkillLoadAborted(signal)) return;
       const skill = await parseAndRegister({
         byDiscoveryKey,
         skipped,
@@ -96,6 +102,7 @@ export async function discoverFileSkills(
       }
 
       for (const entry of entries) {
+        if (isSkillLoadAborted(signal)) return;
         if (!entry.endsWith('.md')) continue;
         if (entry === 'SKILL.md') continue;
         const skillName = entry.slice(0, -'.md'.length);
@@ -114,6 +121,7 @@ export async function discoverFileSkills(
     }
 
     for (const entry of subdirs) {
+      if (isSkillLoadAborted(signal)) return;
       if (directorySkills.has(entry) && !allowedSubSkillBundles.has(entry)) continue;
       const allowedSubSkillParentName = allowedSubSkillBundles.get(entry);
       await walkSkillDir(
@@ -127,6 +135,7 @@ export async function discoverFileSkills(
   }
 
   for (const root of roots) {
+    if (isSkillLoadAborted(signal)) break;
     await walkSkillDir(root.path, root, true, 0);
   }
 

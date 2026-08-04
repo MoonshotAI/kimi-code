@@ -52,7 +52,7 @@ describe('stepRetry plugin', () => {
         settled = true;
       },
     );
-    for (let i = 0; i < 100; i += 1) {
+    for (let i = 0; i < 1_000; i += 1) {
       if (settled) break;
       await vi.runAllTimersAsync();
       if (!settled) {

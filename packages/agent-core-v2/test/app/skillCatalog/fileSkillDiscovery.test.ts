@@ -7,7 +7,7 @@
  * test/app/skillCatalog/fileSkillDiscovery.test.ts`.
  */
 
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { dirname, join } from 'pathe';
@@ -91,6 +91,16 @@ describe('FileSkillDiscovery', () => {
 
     expect(result.skills.map((s) => s.name)).toEqual(['commit']);
     expect(result.skills[0]?.source).toBe('project');
+  });
+
+  it('discovers a skill bundle reached through a directory symlink', async () => {
+    await writeSkill('targets/linked/SKILL.md', 'name: linked\ndescription: linked skill');
+    await mkdir(join(root, 'skills'), { recursive: true });
+    await symlink(join(root, 'targets', 'linked'), join(root, 'skills', 'linked'), 'dir');
+
+    const result = await discover([skillRoot('skills')]);
+
+    expect(result.skills.map((skill) => skill.name)).toEqual(['linked']);
   });
 
   it('returns an empty result when given no roots', async () => {

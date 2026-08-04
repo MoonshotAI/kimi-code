@@ -26,6 +26,7 @@ import { IPluginService } from '#/app/plugin/plugin';
 import { PluginService } from '#/app/plugin/pluginService';
 import type { ReloadSummary } from '#/app/plugin/types';
 import { IProviderService } from '#/kosong/provider/provider';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostFsWatchService, type HostFsChange, type IHostFsWatchHandle } from '#/os/interface/hostFsWatch';
 import { IAppStateService } from '#/app/state/appState';
 import { AppStateService } from '#/app/state/appStateService';
@@ -55,14 +56,22 @@ import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import { FileSkillDiscovery } from '#/app/skillCatalog/fileSkillDiscovery';
 import type { SkillRoot } from '#/app/skillCatalog/types';
 import { ILogService } from '#/_base/log/log';
-import { HostFsWatchService } from '#/os/backends/node-local/hostFsWatchService';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { stubSkill } from '../../app/skillCatalog/stubs';
 import { stubProviderService } from '../../app/provider/stubs';
 import { stubLog } from '../../_base/log/stubs';
+import { stubHostFsWatch } from '../../os/stubs';
+import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
 
 const bootstrapStub = stubBootstrap('/home');
+
+function watchHostFs(): IHostFileSystem {
+  return createFakeHostFs({
+    stat: async () => ({ isFile: false, isDirectory: true, size: 0 }),
+    realpath: async (path) => path,
+  });
+}
 
 function configStub(): IConfigService & {
   setExtraSkillDirs(dirs: readonly string[]): void;
@@ -167,15 +176,17 @@ function makeHost(
   pluginReloadEmitter?: Emitter<ReloadSummary>,
 ) {
   const config = configStub();
+  const watch = stubHostFsWatch();
   const host = createScopedTestHost([
     stubPair(ISkillDiscovery, store),
     stubPair(IBootstrapService, stubBootstrap('/home', {}, { skillDirs: explicitDirs })),
     stubPair(IConfigService, config),
     stubPair(IPluginService, pluginStub(pluginRoots, pluginReloadEmitter)),
-    stubPair(IHostFsWatchService, fsWatchStub()),
+    stubPair(IHostFileSystem, watchHostFs()),
+    stubPair(IHostFsWatchService, watch),
   ]);
   const workspace = host.child(LifecycleScope.Workspace, 'w1', [stubPair(IWorkspaceContext, ws)]);
-  return { host, workspace, config };
+  return { host, workspace, config, watch };
 }
 
 function waitForEvents(event: Event<unknown>, count: number): Promise<void> {
@@ -383,6 +394,7 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, config),
       stubPair(IPluginService, pluginStub()),
+      stubPair(IHostFileSystem, watchHostFs()),
       stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
     const workspace = host.child(LifecycleScope.Workspace, 'w1', [stubPair(IWorkspaceContext, ws)]);
@@ -419,6 +431,7 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, config),
       stubPair(IPluginService, pluginStub()),
+      stubPair(IHostFileSystem, watchHostFs()),
       stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
     const workspace = host.child(LifecycleScope.Workspace, 'w1', [stubPair(IWorkspaceContext, ws)]);
@@ -633,6 +646,7 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
       stubPair(IPluginService, pluginStub()),
+      stubPair(IHostFileSystem, watchHostFs()),
       stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
     const workspace = host.child(LifecycleScope.Workspace, 'w1', [
@@ -690,6 +704,7 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
       stubPair(IPluginService, pluginService),
+      stubPair(IHostFileSystem, watchHostFs()),
       stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
     const workspace = host.child(LifecycleScope.Workspace, 'w1', [
@@ -746,6 +761,7 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IConfigService, configStub()),
       stubPair(IProviderService, stubProviderService()),
+      stubPair(IHostFileSystem, watchHostFs()),
       stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
     const ws = workspaceContextStub('/work');
@@ -793,15 +809,17 @@ describe('WorkspaceSkillCatalogService', () => {
       await rm(homeDir, { recursive: true, force: true });
     }
   });
-  it('rescans the workspace-root source when a project skill file changes on disk', async () => {
+  it('rescans the workspace-root source when its fs-watch boundary reports a project skill file change', async () => {
     const workDir = await mkdtemp(join(tmpdir(), 'skill-watch-'));
+    const watch = stubHostFsWatch();
     const host = createScopedTestHost([
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
       stubPair(IPluginService, pluginStub()),
       stubPair(ILogService, stubLog()),
       stubPair(ISkillDiscovery, new FileSkillDiscovery(stubLog())),
-      stubPair(IHostFsWatchService, new HostFsWatchService()),
+      stubPair(IHostFileSystem, watchHostFs()),
+      stubPair(IHostFsWatchService, watch),
     ]);
     const workspace = host.child(LifecycleScope.Workspace, 'w1', [
       stubPair(IWorkspaceContext, workspaceContextStub(workDir)),
@@ -814,25 +832,196 @@ describe('WorkspaceSkillCatalogService', () => {
 
       const refreshed = new Promise<string>((resolvePromise) => {
         const d = catalog.onDidChange((sourceId) => {
+          if (sourceId !== 'workspace') return;
           d.dispose();
           resolvePromise(sourceId);
         });
       });
-      const timedOut = new Promise<never>((_resolve, reject) => {
-        setTimeout(() => reject(new Error('watch-driven refresh timed out')), 10000);
-      });
+      const skillFile = join(workDir, '.agents', 'skills', 'watched-skill', 'SKILL.md');
       await mkdir(join(workDir, '.agents', 'skills', 'watched-skill'), { recursive: true });
       await writeFile(
-        join(workDir, '.agents', 'skills', 'watched-skill', 'SKILL.md'),
+        skillFile,
         '---\nname: watched-skill\ndescription: from watch\n---\nbody',
         'utf8',
       );
+      watch.fire(skillFile, { action: 'created' });
 
-      await expect(Promise.race([refreshed, timedOut])).resolves.toBe('workspace');
+      await expect(refreshed).resolves.toBe('workspace');
       expect(catalog.catalog.getSkill('watched-skill')?.description).toBe('from watch');
     } finally {
       host.dispose();
       await rm(workDir, { recursive: true, force: true });
     }
   }, 15000);
+
+  it('does not arm a file source after disposal releases its pending config wait', async () => {
+    const configReady = deferred<void>();
+    const readyRequested = deferred<void>();
+    const baseConfig = configStub();
+    baseConfig.setExtraSkillDirs(['/late-skills']);
+    const config = {
+      ...baseConfig,
+      get ready() {
+        readyRequested.resolve(undefined);
+        return configReady.promise;
+      },
+    } as unknown as IConfigService;
+    const watch = stubHostFsWatch();
+    const ws = workspaceContextStub('/work');
+    const host = createScopedTestHost([
+      stubPair(ISkillDiscovery, new InMemorySkillDiscovery()),
+      stubPair(IBootstrapService, bootstrapStub),
+      stubPair(IConfigService, config),
+      stubPair(IPluginService, pluginStub()),
+      stubPair(IHostFileSystem, watchHostFs()),
+      stubPair(IHostFsWatchService, watch),
+    ]);
+    const workspace = host.child(LifecycleScope.Workspace, 'w1', [
+      stubPair(IWorkspaceContext, ws),
+    ]);
+    const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+    const loading = catalog.load();
+
+    await readyRequested.promise;
+    workspace.dispose();
+    configReady.resolve(undefined);
+    await loading;
+
+    expect(watch.watchedPaths()).toEqual([]);
+    host.dispose();
+  });
+
+  it('does not commit a source contribution that finishes after workspace disposal', async () => {
+    const started = deferred<void>();
+    const result = deferred<SkillContribution>();
+    let loadSignal: AbortSignal | undefined;
+    const pluginSource: IPluginSkillSource = {
+      _serviceBrand: undefined,
+      id: 'plugin',
+      priority: 5,
+      load: (signal) => {
+        loadSignal = signal;
+        started.resolve(undefined);
+        return result.promise;
+      },
+    };
+    const ws = workspaceContextStub('/work');
+    const host = createScopedTestHost([
+      stubPair(ISkillDiscovery, new InMemorySkillDiscovery()),
+      stubPair(IBootstrapService, bootstrapStub),
+      stubPair(IConfigService, configStub()),
+      stubPair(IPluginService, pluginStub()),
+      stubPair(IHostFileSystem, watchHostFs()),
+      stubPair(IHostFsWatchService, stubHostFsWatch()),
+    ]);
+    const workspace = host.child(LifecycleScope.Workspace, 'w1', [
+      stubPair(IWorkspaceContext, ws),
+      stubPair(IPluginSkillSource, pluginSource),
+    ]);
+    const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+    const loading = catalog.load();
+
+    await started.promise;
+    workspace.dispose();
+    expect(loadSignal?.aborted).toBe(true);
+    result.resolve({ skills: [stubSkill('late-skill')] });
+    await loading;
+
+    expect(catalog.catalog.getSkill('late-skill')).toBeUndefined();
+    host.dispose();
+  });
+
+  it('reloads the user source after a debounced fs event under a watched root', async () => {
+    const store = new InMemorySkillDiscovery();
+    store.setUserSkills([stubSkill('initial')]);
+    const ws = workspaceContextStub('/work');
+    const { host, workspace, watch } = makeHost(store, ws);
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      await catalog.load();
+      expect(catalog.catalog.getSkill('initial')).toBeDefined();
+      expect(watch.watchedPaths()).toContain('/home/skills');
+      expect(watch.watchedPaths()).toContain('/home/test/.agents/skills');
+
+      store.setUserSkills([stubSkill('initial'), stubSkill('added')]);
+      const refreshed = new Promise<string>((resolve) => {
+        const subscription = catalog.onDidChange((sourceId) => {
+          subscription.dispose();
+          resolve(sourceId);
+        });
+      });
+      watch.fire('/home/test/.agents/skills/added/SKILL.md', { action: 'created' });
+      const sourceId = await refreshed;
+
+      expect(sourceId).toBe('user');
+      expect(catalog.catalog.getSkill('added')).toBeDefined();
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('reloads the explicit source after an fs event under an explicit root', async () => {
+    const store = new InMemorySkillDiscovery();
+    store.setUserSkills([stubSkill('initial')]);
+    const ws = workspaceContextStub('/work');
+    const root = tmpdir();
+    const { host, workspace, watch } = makeHost(store, ws, [], [root]);
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      await catalog.load();
+      expect(catalog.catalog.getSkill('initial')).toBeDefined();
+      expect(watch.watchedPaths()).toContain(root);
+
+      store.setUserSkills([stubSkill('initial'), stubSkill('explicit-added')]);
+      const refreshed = new Promise<string>((resolve) => {
+        const subscription = catalog.onDidChange((sourceId) => {
+          if (sourceId !== 'explicit') return;
+          subscription.dispose();
+          resolve(sourceId);
+        });
+      });
+      watch.fire(join(root, 'explicit-added', 'SKILL.md'), { action: 'created' });
+
+      await expect(refreshed).resolves.toBe('explicit');
+      expect(catalog.catalog.getSkill('explicit-added')).toBeDefined();
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('reloads the extra source after an fs event under an extra root', async () => {
+    const store = new InMemorySkillDiscovery();
+    store.setExtraSkills([stubSkill('initial-extra', { source: 'extra' })]);
+    const ws = workspaceContextStub('/work');
+    const { host, workspace, config, watch } = makeHost(store, ws);
+    const root = tmpdir();
+    config.setExtraSkillDirs([root]);
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      await catalog.load();
+      expect(catalog.catalog.getSkill('initial-extra')).toBeDefined();
+      expect(watch.watchedPaths()).toContain(root);
+
+      store.setExtraSkills([
+        stubSkill('initial-extra', { source: 'extra' }),
+        stubSkill('extra-added', { source: 'extra' }),
+      ]);
+      const refreshed = new Promise<string>((resolve) => {
+        const subscription = catalog.onDidChange((sourceId) => {
+          if (sourceId !== 'extra') return;
+          subscription.dispose();
+          resolve(sourceId);
+        });
+      });
+      watch.fire(join(root, 'extra-added', 'SKILL.md'), { action: 'created' });
+
+      await expect(refreshed).resolves.toBe('extra');
+      expect(catalog.catalog.getSkill('extra-added')).toBeDefined();
+    } finally {
+      host.dispose();
+    }
+  });
 });

@@ -37,5 +37,9 @@ export interface ISkillSource {
   readonly id: string;
   readonly priority: number;
   readonly onDidChange?: Event<void>;
-  load(): Promise<SkillContribution>;
+  load(signal?: AbortSignal): Promise<SkillContribution>;
+}
+
+export function isSkillLoadAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted ?? false;
 }

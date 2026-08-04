@@ -12,8 +12,8 @@ import type { ToolCall } from '#/kosong/contract/message';
 import { dirname, join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPlanService, type PlanData } from '#/agent/plan/plan';
 import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -29,6 +29,7 @@ import {
   execEnvServices,
   type TestAgentContext,
 } from '../../harness';
+import { runWillBeginStepHooks } from '../loop/stubs';
 
 interface PlanFakes {
   readonly fs: IHostFileSystem;
@@ -77,15 +78,11 @@ function createPlanFileFakes(
   };
 }
 
-type InjectableDynamicInjector = {
-  inject(): Promise<void>;
-};
-
 describe('Plan service', () => {
   let activeFakes: PlanFakes;
   let context: IAgentContextMemoryService;
   let ctx: TestAgentContext;
-  let injector: InjectableDynamicInjector;
+  let loop: IAgentLoopService;
   let permissionRules: IAgentPermissionRulesService;
   let plan: IAgentPlanService;
   let profile: IAgentProfileService;
@@ -101,7 +98,7 @@ describe('Plan service', () => {
       }),
     );
     context = ctx.get(IAgentContextMemoryService);
-    injector = ctx.get(IAgentContextInjectorService) as unknown as InjectableDynamicInjector;
+    loop = ctx.get(IAgentLoopService);
     permissionRules = ctx.get(IAgentPermissionRulesService);
     plan = ctx.get(IAgentPlanService);
     profile = ctx.get(IAgentProfileService);
@@ -919,7 +916,7 @@ describe('Plan service', () => {
   }
 
   async function injectDynamic(): Promise<void> {
-    await injector.inject();
+    await runWillBeginStepHooks(loop);
   }
 });
 

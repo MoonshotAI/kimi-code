@@ -1,19 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createFakeHostFs } from '../../../tools/fixtures/fake-exec';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import {
   createTestAgent,
   execEnvServices,
   type TestAgentContext,
 } from '../../../harness';
-
-type InjectableDynamicInjector = {
-  inject(): Promise<void>;
-};
+import { runWillBeginStepHooks } from '../../loop/stubs';
 
 async function enterPlan(
   plan: IAgentPlanService,
@@ -27,8 +24,8 @@ async function enterPlan(
   return status.path;
 }
 
-async function injectDynamic(injector: InjectableDynamicInjector): Promise<void> {
-  await injector.inject();
+async function injectDynamic(loop: IAgentLoopService): Promise<void> {
+  await runWillBeginStepHooks(loop);
 }
 
 function appendAssistantTurn(
@@ -56,7 +53,7 @@ function lastPlanReminder(context: IAgentContextMemoryService): string {
 describe('PlanModeService dynamic injection content', () => {
   let ctx: TestAgentContext;
   let context: IAgentContextMemoryService;
-  let injector: InjectableDynamicInjector;
+  let loop: IAgentLoopService;
   let plan: IAgentPlanService;
   let readText: (path: string) => Promise<string>;
 
@@ -70,7 +67,7 @@ describe('PlanModeService dynamic injection content', () => {
       }),
     }));
     context = ctx.get(IAgentContextMemoryService);
-    injector = ctx.get(IAgentContextInjectorService) as unknown as InjectableDynamicInjector;
+    loop = ctx.get(IAgentLoopService);
     plan = ctx.get(IAgentPlanService);
   });
 
@@ -85,7 +82,7 @@ describe('PlanModeService dynamic injection content', () => {
   it('injects the full reminder with the current plan file footer', async () => {
     const planFilePath = await enterPlan(plan);
 
-    await injectDynamic(injector);
+    await injectDynamic(loop);
     const text = lastPlanReminder(context);
 
     expect(text).toContain('Plan mode is active');
@@ -99,7 +96,7 @@ describe('PlanModeService dynamic injection content', () => {
   it('derives a plan file path before injecting the full reminder', async () => {
     const planFilePath = await enterPlan(plan, 'derived-plan');
 
-    await injectDynamic(injector);
+    await injectDynamic(loop);
 
     expect(planFilePath).toContain('derived-plan.md');
     expect(lastPlanReminder(context)).toContain(`Plan file: ${planFilePath}`);
@@ -109,15 +106,15 @@ describe('PlanModeService dynamic injection content', () => {
   it('injects the exit reminder when plan mode turns off after being active', async () => {
     await enterPlan(plan);
 
-    await injectDynamic(injector);
+    await injectDynamic(loop);
     plan.exit();
-    await injectDynamic(injector);
+    await injectDynamic(loop);
 
     expect(lastPlanReminder(context)).toContain('Plan mode is no longer active');
   });
 
   it('does not inject anything when plan mode is inactive from the start', async () => {
-    await injectDynamic(injector);
+    await injectDynamic(loop);
 
     expect(planReminderMessages(context)).toHaveLength(0);
     expect(context.get()).toHaveLength(0);
@@ -130,7 +127,7 @@ describe('PlanModeService dynamic injection content', () => {
       id: 'restored-plan',
     });
 
-    await injectDynamic(injector);
+    await injectDynamic(loop);
 
     expect(lastPlanReminder(context)).toContain('Re-entering Plan Mode');
     expect(lastPlanReminder(context)).toContain('Read the existing plan file');
@@ -140,7 +137,7 @@ describe('PlanModeService dynamic injection content', () => {
 describe('PlanModeService dynamic injection cadence', () => {
   let ctx: TestAgentContext;
   let context: IAgentContextMemoryService;
-  let injector: InjectableDynamicInjector;
+  let loop: IAgentLoopService;
   let plan: IAgentPlanService;
 
   beforeEach(() => {
@@ -152,7 +149,7 @@ describe('PlanModeService dynamic injection cadence', () => {
       }),
     }));
     context = ctx.get(IAgentContextMemoryService);
-    injector = ctx.get(IAgentContextInjectorService) as unknown as InjectableDynamicInjector;
+    loop = ctx.get(IAgentLoopService);
     plan = ctx.get(IAgentPlanService);
   });
 
@@ -167,9 +164,9 @@ describe('PlanModeService dynamic injection cadence', () => {
   it('skips reinjection before the assistant-turn threshold', async () => {
     await enterPlan(plan);
 
-    await injectDynamic(injector);
+    await injectDynamic(loop);
     appendAssistantTurn(ctx, context, 'assistant one');
-    await injectDynamic(injector);
+    await injectDynamic(loop);
 
     expect(planReminderMessages(context)).toHaveLength(1);
   });
@@ -177,10 +174,10 @@ describe('PlanModeService dynamic injection cadence', () => {
   it('injects the sparse reminder after the short assistant-turn threshold', async () => {
     const planFilePath = await enterPlan(plan);
 
-    await injectDynamic(injector);
+    await injectDynamic(loop);
     appendAssistantTurn(ctx, context, 'assistant one');
     appendAssistantTurn(ctx, context, 'assistant two');
-    await injectDynamic(injector);
+    await injectDynamic(loop);
 
     const text = lastPlanReminder(context);
     expect(text).toContain('Plan mode still active');
@@ -191,11 +188,11 @@ describe('PlanModeService dynamic injection cadence', () => {
   it('refreshes the full reminder after the long assistant-turn threshold', async () => {
     await enterPlan(plan);
 
-    await injectDynamic(injector);
+    await injectDynamic(loop);
     for (let i = 0; i < 5; i += 1) {
       appendAssistantTurn(ctx, context, `assistant ${String(i)}`);
     }
-    await injectDynamic(injector);
+    await injectDynamic(loop);
 
     const text = lastPlanReminder(context);
     expect(text).toContain('Plan mode is active');
@@ -205,9 +202,9 @@ describe('PlanModeService dynamic injection cadence', () => {
   it('refreshes the full reminder if a user message appears after the last injection', async () => {
     await enterPlan(plan);
 
-    await injectDynamic(injector);
+    await injectDynamic(loop);
     ctx.appendUserMessage([{ type: 'text', text: 'next task' }]);
-    await injectDynamic(injector);
+    await injectDynamic(loop);
 
     const text = lastPlanReminder(context);
     expect(text).toContain('Plan mode is active');

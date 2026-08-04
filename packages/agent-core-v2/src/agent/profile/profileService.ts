@@ -85,7 +85,10 @@ import {
   type ThinkingConfig,
 } from '#/kosong/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
-import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import {
+  DEFAULT_AGENT_PROFILE_NAME,
+  renderAgentProfile,
+} from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { ErrorCodes, Error2 } from "#/errors";
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -103,6 +106,7 @@ import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalo
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { IPluginService } from '#/app/plugin/plugin';
+import { IAgentSkillDisclosureService } from '#/agent/skillDisclosure/skillDisclosure';
 import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
@@ -197,6 +201,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   declare readonly _serviceBrand: undefined;
 
   private optionsValue: ProfileServiceOptions = {};
+  private systemPromptRevision = 0;
 
   private get activeToolNames(): ActiveToolsState {
     return (
@@ -222,6 +227,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
+    @IAgentSkillDisclosureService private readonly skillDisclosure: IAgentSkillDisclosureService,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
     @ISessionToolPolicy private readonly sessionToolPolicy: ISessionToolPolicy,
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
@@ -301,11 +307,14 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   update(changed: ProfileUpdateData): void {
     const { activeToolNames, ...configChanged } = changed;
-    if (
+    const profileChanged =
       changed.profileName !== undefined &&
-      this.activeProfile?.name !== changed.profileName
-    ) {
+      this.activeProfile?.name !== changed.profileName;
+    if (profileChanged) {
       this.activeProfile = undefined;
+    }
+    if (profileChanged || changed.systemPrompt !== undefined) {
+      this.systemPromptRevision += 1;
     }
     if (Object.keys(configChanged).length > 0) {
       this.wire.dispatch(configUpdate(this.resolveConfigPayload(configChanged)));
@@ -317,6 +326,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   applyBindingSnapshot(snapshot: ProfileBindingSnapshot): void {
+    this.systemPromptRevision += 1;
     this.activeProfile = undefined;
     this.activeToolNamesOverlay = undefined;
     const agentsMdPaths =
@@ -327,17 +337,27 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         profileName: snapshot.profileName,
         thinkingEffort: snapshot.thinkingLevel,
         systemPrompt: snapshot.systemPrompt,
+        environmentDisclosure: snapshot.environmentDisclosure,
+        renderGeneration: snapshot.renderGeneration,
         agentsMdPaths,
         activeToolNames: snapshot.activeToolNames,
         disallowedTools: snapshot.disallowedTools ?? [],
         subagents: snapshot.subagents,
       }),
     );
+    if (snapshot.disclosedSkillNames !== undefined) {
+      this.skillDisclosure.markDisclosed(
+        snapshot.disclosedSkillNames,
+        this.profileState.renderGeneration,
+      );
+    }
     this.afterConfigDispatch({
       modelAlias: snapshot.modelAlias,
       profileName: snapshot.profileName,
       thinkingLevel: snapshot.thinkingLevel,
       systemPrompt: snapshot.systemPrompt,
+      environmentDisclosure: snapshot.environmentDisclosure,
+      renderGeneration: snapshot.renderGeneration,
       agentsMdPaths,
       disallowedTools: snapshot.disallowedTools ?? [],
     });
@@ -376,7 +396,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const context = await this.buildSystemPromptContext(profile);
     this.assertBindable(profile.name);
     const currentProfileName = this.profileName;
-    const systemPrompt = profile.systemPrompt(context);
+    const rendered = renderAgentProfile(profile, context);
+    this.systemPromptRevision += 1;
     this.activeProfile = profile;
     this.cacheAgentsMdWarning(context);
 
@@ -390,7 +411,9 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       modelAlias: alias,
       profileName: profile.name,
       thinkingEffort: thinkingLevel,
-      systemPrompt,
+      systemPrompt: rendered.text,
+      environmentDisclosure: rendered.environment,
+      renderGeneration: this.profileState.renderGeneration + 1,
       agentsMdPaths: context.agentsMdPaths ?? [],
       activeToolNames: profile.tools,
       disallowedTools: profile.disallowedTools ?? [],
@@ -400,9 +423,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       modelAlias: alias,
       profileName: profile.name,
       thinkingLevel,
-      systemPrompt,
+      systemPrompt: rendered.text,
       disallowedTools: profile.disallowedTools ?? [],
     });
+    this.recordSkillDisclosure(context);
     this.seedAgentsMdReminder(context);
 
     this.publishAgentsMdWarning();
@@ -460,12 +484,15 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void {
     this.activeProfile = profile;
+    const rendered = renderAgentProfile(profile, context);
     this.update({
       profileName: profile.name,
-      systemPrompt: profile.systemPrompt(context),
+      systemPrompt: rendered.text,
+      environmentDisclosure: rendered.environment,
       agentsMdPaths: context.agentsMdPaths ?? [],
       disallowedTools: profile.disallowedTools ?? [],
     });
+    this.recordSkillDisclosure(context);
     this.setActiveTools(profile.tools);
   }
 
@@ -479,6 +506,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   async refreshSystemPrompt(): Promise<void> {
+    const revision = ++this.systemPromptRevision;
     const profile = this.resolveActiveProfile();
     if (profile === undefined) return;
 
@@ -486,6 +514,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     try {
       context = await this.buildSystemPromptContext(profile);
     } catch (error) {
+      if (revision !== this.systemPromptRevision) return;
       this.eventBus.publish({
         type: 'warning',
         message: `System prompt refresh skipped: ${error instanceof Error ? error.message : String(error)}`,
@@ -493,12 +522,16 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       });
       return;
     }
+    if (revision !== this.systemPromptRevision) return;
     this.activeProfile = profile;
+    const rendered = renderAgentProfile(profile, context);
     this.update({
       profileName: profile.name,
-      systemPrompt: profile.systemPrompt(context),
+      systemPrompt: rendered.text,
+      environmentDisclosure: rendered.environment,
       agentsMdPaths: context.agentsMdPaths ?? [],
     });
+    this.recordSkillDisclosure(context);
     this.seedAgentsMdReminder(context);
     this.cacheAgentsMdWarning(context);
     this.publishAgentsMdWarning();
@@ -526,8 +559,11 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       agentsMdPaths: this.profileState.agentsMdPaths,
       activeToolNames: this.activeToolNames === undefined ? undefined : [...this.activeToolNames],
       disallowedTools: [...(this.profileState.disallowedTools ?? [])],
+      disclosedSkillNames: this.skillDisclosure.disclosedNames(),
       subagents:
         this.profileState.subagents === undefined ? undefined : [...this.profileState.subagents],
+      environmentDisclosure: this.profileState.environmentDisclosure,
+      renderGeneration: this.profileState.renderGeneration,
     };
   }
 
@@ -626,7 +662,14 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         changed.thinkingLevel ?? (this.modelAlias === undefined ? undefined : this.thinkingLevel);
       payload.thinkingEffort = this.resolveThinkingEffort(requested, model);
     }
-    if (changed.systemPrompt !== undefined) payload.systemPrompt = changed.systemPrompt;
+    if (changed.systemPrompt !== undefined) {
+      payload.systemPrompt = changed.systemPrompt;
+      if (changed.environmentDisclosure !== undefined) {
+        payload.environmentDisclosure = changed.environmentDisclosure;
+        payload.renderGeneration =
+          changed.renderGeneration ?? this.profileState.renderGeneration + 1;
+      }
+    }
     if (changed.agentsMdPaths !== undefined) {
       payload.agentsMdPaths = [...changed.agentsMdPaths];
     }
@@ -893,7 +936,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         preloadedAgentsMd,
       },
     );
-    const skills = await this.resolveSkillListing();
+    const skillActive = this.isToolActiveForProfile(profile, 'Skill');
+    const skillDisclosure = await this.skillDisclosure.resolve(skillActive);
     const pluginSections = await this.resolvePluginSections();
     return {
       ...base,
@@ -902,9 +946,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       shellName: this.env.shellName,
       shellPath: this.env.shellPath,
       now: new Date().toISOString(),
-      skills,
+      skills: skillDisclosure.listing,
+      skillActive,
+      disclosedSkillNames: skillDisclosure.names,
       pluginSections,
-      skillActive: this.isToolActiveForProfile(profile, 'Skill'),
       productName: this.bootstrap.args.displayName,
       replyStyleGuide: this.bootstrap.args.replyStyleGuide,
     };
@@ -936,12 +981,12 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     );
   }
 
-  private async resolveSkillListing(): Promise<string> {
-    try {
-      await this.skillCatalog.ready;
-      return this.skillCatalog.catalog.getModelSkillListing();
-    } catch {
-      return '';
+  private recordSkillDisclosure(context: SystemPromptContext): void {
+    if (context.disclosedSkillNames !== undefined) {
+      this.skillDisclosure.markDisclosed(
+        context.disclosedSkillNames,
+        this.profileState.renderGeneration,
+      );
     }
   }
 

@@ -315,7 +315,9 @@ async function readAgentFile(
     warn(`Instruction file at ${path} could not be read; skipping.`);
     return undefined;
   }
-  if (content.length === 0) return undefined;
+  if (content.length === 0) {
+    return undefined;
+  }
   return { path, content };
 }
 

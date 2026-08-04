@@ -23,7 +23,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 69 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 70 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -62,6 +62,7 @@
 //     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     contextInjector.isNewTurn                       src/agent/contextInjector/contextInjectorService.ts
 //     contextProjector.lastRepairSignature            src/agent/contextProjector/contextProjectorService.ts
+//     dateChange.seed                                 src/agent/dateChange/dateChangeService.ts
 //     externalHooks.stopHookContinuationUsed          src/agent/externalHooks/externalHooksService.ts
 //     fullCompaction.activeTurnId                     src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.compactionCountInTurn            src/agent/fullCompaction/fullCompactionService.ts
@@ -370,6 +371,10 @@ export interface WorkspaceStateSnapshot {
     }[];
     getKimiSkillsDescription: () => string;
     getModelSkillListing: () => string;
+    getModelSkillDisclosure: () => /* ModelSkillDisclosure — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+      readonly names: readonly string[];
+      readonly listing: string;
+    };
   };
   // src/workspace/workspaceTrust/workspaceTrustService.ts
   'workspaceTrust.trusted': boolean;
@@ -688,6 +693,10 @@ export interface SessionStateSnapshot {
     }[];
     getKimiSkillsDescription: () => string;
     getModelSkillListing: () => string;
+    getModelSkillDisclosure: () => /* ModelSkillDisclosure — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+      readonly names: readonly string[];
+      readonly listing: string;
+    };
   };
   // src/session/sessionToolPolicy/sessionToolPolicyService.ts
   'sessionToolPolicy.state': /* SessionToolPolicyState — packages/agent-core-v2/src/session/sessionToolPolicy/sessionToolPolicyService.ts */ {
@@ -734,6 +743,16 @@ export interface AgentStateSnapshot {
         readonly kind: 'injection';
         readonly variant: string;
         readonly ownerPromptId?: string;
+        readonly disclosure?: {
+          readonly kind: 'date';
+          readonly renderGeneration: number;
+          readonly localDate: string;
+          readonly timeZone: string;
+        } | {
+          readonly kind: 'skills';
+          readonly renderGeneration: number;
+          readonly names: readonly string[];
+        };
       } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
         readonly kind: 'shell_command';
         readonly phase: 'input' | 'output';
@@ -858,6 +877,16 @@ export interface AgentStateSnapshot {
       readonly kind: 'injection';
       readonly variant: string;
       readonly ownerPromptId?: string;
+      readonly disclosure?: {
+        readonly kind: 'date';
+        readonly renderGeneration: number;
+        readonly localDate: string;
+        readonly timeZone: string;
+      } | {
+        readonly kind: 'skills';
+        readonly renderGeneration: number;
+        readonly names: readonly string[];
+      };
     } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'shell_command';
       readonly phase: 'input' | 'output';
@@ -914,6 +943,16 @@ export interface AgentStateSnapshot {
         readonly kind: 'injection';
         readonly variant: string;
         readonly ownerPromptId?: string;
+        readonly disclosure?: {
+          readonly kind: 'date';
+          readonly renderGeneration: number;
+          readonly localDate: string;
+          readonly timeZone: string;
+        } | {
+          readonly kind: 'skills';
+          readonly renderGeneration: number;
+          readonly names: readonly string[];
+        };
       } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
         readonly kind: 'shell_command';
         readonly phase: 'input' | 'output';
@@ -980,6 +1019,12 @@ export interface AgentStateSnapshot {
   'contextInjector.isNewTurn': boolean;
   // src/agent/contextProjector/contextProjectorService.ts
   'contextProjector.lastRepairSignature': string | null;
+  // src/agent/dateChange/dateChangeService.ts
+  'dateChange.seed': /* DateDisclosure — packages/agent-core-v2/src/agent/dateChange/dateChangeService.ts */ {
+    readonly localDate: string;
+    readonly timeZone: string;
+    readonly renderGeneration: number;
+  } | undefined;
   // src/agent/externalHooks/externalHooksService.ts
   'externalHooks.stopHookContinuationUsed': boolean;
   // src/agent/fullCompaction/fullCompactionService.ts

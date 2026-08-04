@@ -1,9 +1,10 @@
 /**
  * `workspaceFs` fs-watch — verifies the shared os watcher fan-out:
  * confinement to each subscription's declared subtree, workspace-relative
- * path mapping, per-subscription debounce coalescing and window truncation,
- * `.gitignore` filtering, and the handle lifecycle (one os watch per handler
- * no matter how many subscriptions), using a fake os watcher.
+ * path mapping (including events reported against the canonical target of a
+ * symlinked handler root), per-subscription debounce coalescing and window
+ * truncation, `.gitignore` filtering, and the handle lifecycle (one os watch
+ * per handler no matter how many subscriptions), using a fake os watcher.
  */
 
 import { join } from 'node:path';
@@ -59,7 +60,12 @@ function stubWorkspaceDirs(): IWorkspaceDirs {
 interface FakeWatch {
   readonly service: IHostFsWatchService;
   readonly watchCalls: string[];
-  fire: (rel: string, action: HostFsChange['action'], kind?: HostFsChange['kind']) => void;
+  fire: (
+    rel: string,
+    action: HostFsChange['action'],
+    kind?: HostFsChange['kind'],
+    root?: string,
+  ) => void;
   readonly disposedCount: () => number;
 }
 
@@ -87,15 +93,17 @@ function fakeHostFsWatch(): FakeWatch {
   return {
     service,
     watchCalls,
-    fire: (rel, action, kind = 'file') =>
-      listener?.({ path: join(WORK_DIR, rel), action, kind }),
+    fire: (rel, action, kind = 'file', root = WORK_DIR) =>
+      listener?.({ path: join(root, rel), action, kind }),
     disposedCount: () => disposedCount,
   };
 }
 
-function fakeHostFs(gitignore?: string): IHostFileSystem {
+function fakeHostFs(gitignore?: string, canonicalRoot?: string): IHostFileSystem {
   return {
     _serviceBrand: undefined,
+    realpath: async (p: string) =>
+      canonicalRoot !== undefined && p === WORK_DIR ? canonicalRoot : p,
     readText: async (p: string) => {
       if (gitignore !== undefined && p === join(WORK_DIR, '.gitignore')) return gitignore;
       const err = new Error(`ENOENT: ${p}`) as NodeJS.ErrnoException;
@@ -110,14 +118,14 @@ interface Harness {
   readonly watch: FakeWatch;
 }
 
-function makeWorkspace(gitignore?: string): Harness {
+function makeWorkspace(gitignore?: string, canonicalRoot?: string): Harness {
   const watch = fakeHostFsWatch();
   const host = createScopedTestHost();
   const workspace = host.child(LifecycleScope.Workspace, 'w1', [
     stubPair(IWorkspaceContext, stubWorkspaceContext()),
     stubPair(IWorkspaceDirs, stubWorkspaceDirs()),
     stubPair(IHostFsWatchService, watch.service),
-    stubPair(IHostFileSystem, fakeHostFs(gitignore)),
+    stubPair(IHostFileSystem, fakeHostFs(gitignore, canonicalRoot)),
   ]);
   const svc = workspace.accessor.get(IWorkspaceFsWatchService);
   disposers.push(() => host.dispose());
@@ -157,6 +165,21 @@ describe('WorkspaceFsWatchService', () => {
 
     watch.fire('src/a.ts', 'created');
     watch.fire('lib/b.ts', 'created');
+    vi.advanceTimersByTime(200);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.changes).toEqual([{ path: 'src/a.ts', change: 'created', kind: 'file' }]);
+  });
+
+  it('maps events reported against the canonical root of a symlinked handler root', async () => {
+    const { svc, watch } = makeWorkspace(undefined, '/private/repo');
+    const sub = svc.subscribe();
+    sub.setWatchedPaths(['src']);
+    const events = collect(sub);
+    // Let the constructor's realpath probe settle so the canonical root is known.
+    await vi.advanceTimersByTimeAsync(0);
+
+    watch.fire('src/a.ts', 'created', 'file', '/private/repo');
     vi.advanceTimersByTime(200);
 
     expect(events).toHaveLength(1);

@@ -52,6 +52,11 @@ export interface SkippedSkill {
   readonly reason: string;
 }
 
+export interface ModelSkillDisclosure {
+  readonly names: readonly string[];
+  readonly listing: string;
+}
+
 export interface SkillCatalog {
   getSkill(name: string): SkillDefinition | undefined;
   getPluginSkill(pluginId: string, name: string): SkillDefinition | undefined;
@@ -64,6 +69,7 @@ export interface SkillCatalog {
   listInvocableSkills(): readonly SkillDefinition[];
   getSkillRoots(): readonly string[];
   getSkippedByPolicy(): readonly SkippedSkill[];
+  getModelSkillDisclosure(): ModelSkillDisclosure;
   getModelSkillListing(): string;
 }
 

@@ -21,7 +21,7 @@
 // owning model offloads inline media to blob storage), cross-reducers
 // (foreign models that also reduce this record on dispatch and replay).
 
-// Index (48 record types)
+// Index (50 record types)
 //   config.update                      profile               persisted  src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory         persisted  src/agent/contextMemory/contextOps.ts
 //   context.append_message             contextMemory         persisted  src/agent/contextMemory/contextOps.ts
@@ -51,8 +51,10 @@
 //   plan_mode.enter                    plan                  persisted  src/agent/plan/planOps.ts
 //   plan_mode.exit                     plan                  persisted  src/agent/plan/planOps.ts
 //   plan.revision                      plan                  persisted  src/agent/plan/planOps.ts
+//   plugin.session_start.set_baseline  agentPlugin           persisted  src/agent/plugin/agentPluginOps.ts
 //   profile.bind                       profile               persisted  src/agent/profile/profileOps.ts
 //   skill.activate                     skill                 transient  src/agent/skill/skillOps.ts
+//   skill.disclosure.set               skillDisclosure       persisted  src/agent/skillDisclosure/skillDisclosureOps.ts
 //   swarm_mode.enter                   swarm                 persisted  src/agent/swarm/swarmOps.ts
 //   swarm_mode.exit                    swarm                 persisted  src/agent/swarm/swarmOps.ts
 //   task.started                       task                  persisted  src/agent/task/taskOps.ts
@@ -84,6 +86,12 @@ interface ConfigUpdatePayload {
   /** ThinkingEffort */
   thinkingLevel?: 'off' | 'on' | (string & {});
   systemPrompt?: string;
+  /** EnvironmentDisclosureSnapshot */
+  environmentDisclosure?: {
+    cwd: string;
+    date: { disclosed: true, value: { localDate: string, timeZone: string } } | { disclosed: false };
+  };
+  renderGeneration?: number;
   agentsMdPaths?: string[];
   disallowedTools?: string[];
 }
@@ -99,7 +107,7 @@ interface ContextAppendLoopEventPayload {
 }
 
 /**
- * model: contextMemory · persisted · blobs · cross-reducers: plan, goalForkNotice, task.notificationDelivery, todo
+ * model: contextMemory · persisted · blobs · cross-reducers: plan, goalForkNotice, task.notificationDelivery, agentPlugin, todo
  * owner: src/agent/contextMemory/contextOps.ts
  */
 interface ContextAppendMessagePayload {
@@ -134,14 +142,14 @@ interface ContextAppendMessagePayload {
 }
 
 /**
- * model: contextMemory · persisted · blobs · cross-reducers: plan, task.notificationDelivery, todo
+ * model: contextMemory · persisted · blobs · cross-reducers: plan, task.notificationDelivery, agentPlugin, todo
  * owner: src/agent/contextMemory/contextOps.ts
  * shared base: ...contextCompactionBaseShape
  */
 type ContextApplyCompactionPayload = { _name: 'context.apply_compaction'; } & ({ summary: string, compactedCount: number, contextSummary?: string } | { contextSummary: string, compactedCount: number, summary?: string } | { summary: ContextMessage, count: number, compactedCount?: number });
 
 /**
- * model: contextMemory · persisted · blobs · cross-reducers: plan, task.notificationDelivery, todo
+ * model: contextMemory · persisted · blobs · cross-reducers: plan, task.notificationDelivery, agentPlugin, todo
  * owner: src/agent/contextMemory/contextOps.ts
  */
 interface ContextClearPayload {
@@ -149,7 +157,7 @@ interface ContextClearPayload {
 }
 
 /**
- * model: contextMemory · persisted · blobs · cross-reducers: plan, task.notificationDelivery, todo
+ * model: contextMemory · persisted · blobs · cross-reducers: plan, task.notificationDelivery, agentPlugin, todo
  * owner: src/agent/contextMemory/contextOps.ts
  */
 interface ContextUndoPayload {
@@ -443,6 +451,16 @@ interface PlanRevisionPayload {
 }
 
 /**
+ * model: agentPlugin · persisted
+ * owner: src/agent/plugin/agentPluginOps.ts
+ */
+interface PluginSessionStartSetBaselinePayload {
+  _name: 'plugin.session_start.set_baseline';
+  fingerprint: string;
+  active: boolean;
+}
+
+/**
  * model: profile · persisted · cross-reducers: profile.activeTools
  * owner: src/agent/profile/profileOps.ts
  */
@@ -453,6 +471,12 @@ interface ProfileBindPayload {
   /** ThinkingEffort */
   thinkingEffort: 'off' | 'on' | (string & {});
   systemPrompt: string;
+  /** EnvironmentDisclosureSnapshot */
+  environmentDisclosure?: {
+    cwd: string;
+    date: { disclosed: true, value: { localDate: string, timeZone: string } } | { disclosed: false };
+  };
+  renderGeneration?: number;
   agentsMdPaths?: string[];
   activeToolNames?: string[];
   disallowedTools: string[];
@@ -476,6 +500,16 @@ interface SkillActivatePayload {
     skillPath?: string | undefined;
     skillSource?: 'project' | 'user' | 'extra' | 'builtin' | undefined;
   };
+}
+
+/**
+ * model: skillDisclosure · persisted
+ * owner: src/agent/skillDisclosure/skillDisclosureOps.ts
+ */
+interface SkillDisclosureSetPayload {
+  _name: 'skill.disclosure.set';
+  names: string[];
+  renderGeneration?: number;
 }
 
 /**
@@ -734,8 +768,10 @@ interface WirePayloadMap {
   "plan_mode.enter": PlanModeEnterPayload;
   "plan_mode.exit": PlanModeExitPayload;
   "plan.revision": PlanRevisionPayload;
+  "plugin.session_start.set_baseline": PluginSessionStartSetBaselinePayload;
   "profile.bind": ProfileBindPayload;
   "skill.activate": SkillActivatePayload;
+  "skill.disclosure.set": SkillDisclosureSetPayload;
   "swarm_mode.enter": SwarmModeEnterPayload;
   "swarm_mode.exit": SwarmModeExitPayload;
   "task.started": TaskStartedPayload;

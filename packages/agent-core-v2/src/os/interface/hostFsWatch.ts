@@ -2,8 +2,9 @@
  * `hostFsWatch` domain — local real-filesystem change notifications.
  *
  * Defines the `IHostFsWatchService`, a thin primitive over the host OS file
- * watcher. It reports raw create/modify/delete events under an absolute path
- * and knows nothing about sessions, connections, workspaces or wire frames.
+ * watcher. It reports raw create/modify/delete events under an absolute path;
+ * callers choose recursion depth, symlink traversal, and ignored paths. It
+ * knows nothing about sessions, connections, workspaces or wire frames.
  * App-scoped — one shared instance.
  */
 
@@ -22,6 +23,8 @@ export interface HostFsChange {
 
 export interface HostFsWatchOptions {
   readonly recursive?: boolean;
+  readonly followSymlinks?: boolean;
+  readonly depth?: number;
   readonly ignored?: (path: string) => boolean;
 }
 

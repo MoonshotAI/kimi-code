@@ -170,6 +170,10 @@ describe('ToolManager SkillTool registration with a structural catalog', () => {
       listInvocableSkills: () => [skill],
       getSkillRoots: () => ['/skills/review'],
       getSkippedByPolicy: () => [],
+      getModelSkillDisclosure: () => ({
+        names: ['review'],
+        listing: '- review: desc for review',
+      }),
       getModelSkillListing: () => '- review: desc for review',
     };
     ctx = createTestAgent(skillServices(skills));

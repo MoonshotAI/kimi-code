@@ -15,7 +15,11 @@
  * an agent after its initial model binding.
  */
 
-import type { AgentProfile, AgentProfileContext } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import type {
+  AgentProfile,
+  AgentProfileContext,
+  EnvironmentDisclosureSnapshot,
+} from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ThinkingEffort } from '#/kosong/contract/provider';
 import type { ModelRequestParams } from '#/kosong/model/modelRequester';
@@ -54,6 +58,7 @@ export type AgentConfigUpdateData = Partial<{
 
 export interface SystemPromptContext extends AgentProfileContext {
   readonly agentsMdWarning?: string;
+  readonly disclosedSkillNames?: readonly string[];
   readonly agentsMdPaths?: readonly string[];
 }
 
@@ -63,7 +68,10 @@ export interface ProfileData extends AgentConfigData {
   readonly agentsMdPaths?: readonly string[];
   readonly activeToolNames?: readonly string[];
   readonly disallowedTools?: readonly string[];
+  readonly disclosedSkillNames?: readonly string[];
   readonly subagents?: readonly string[];
+  readonly environmentDisclosure?: EnvironmentDisclosureSnapshot;
+  readonly renderGeneration?: number;
 }
 
 export type ProfileUpdateData = Partial<{
@@ -71,6 +79,8 @@ export type ProfileUpdateData = Partial<{
   profileName: string;
   thinkingLevel: string;
   systemPrompt: string;
+  environmentDisclosure?: EnvironmentDisclosureSnapshot;
+  renderGeneration?: number;
   agentsMdPaths: readonly string[];
   disallowedTools: readonly string[];
   activeToolNames: readonly string[];
@@ -81,9 +91,12 @@ export interface ProfileBindingSnapshot {
   readonly profileName?: string;
   readonly thinkingLevel: string;
   readonly systemPrompt: string;
+  readonly environmentDisclosure?: EnvironmentDisclosureSnapshot;
+  readonly renderGeneration?: number;
   readonly agentsMdPaths?: readonly string[];
   readonly activeToolNames?: readonly string[];
   readonly disallowedTools?: readonly string[];
+  readonly disclosedSkillNames?: readonly string[];
   readonly subagents?: readonly string[];
 }
 

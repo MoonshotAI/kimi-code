@@ -8,7 +8,10 @@
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
-import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import {
+  renderAgentProfile,
+  type AgentProfile,
+} from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { parseAgentFileText } from '#/workspace/workspaceAgentProfileLoader/internal/agentFile';
 import { AgentProfileLoaderBase } from '#/workspace/workspaceAgentProfileLoader/internal/agentProfileLoader';
@@ -60,7 +63,7 @@ export class ExplicitAgentProfileLoaderService
       profiles.push(
         agentProfileFromFile(
           parseAgentFileText({ path: filePath, source: 'explicit', text }),
-          (context) => this.user.getDefaultProfile().systemPrompt(context),
+          (context) => renderAgentProfile(this.user.getDefaultProfile(), context),
         ),
       );
     }

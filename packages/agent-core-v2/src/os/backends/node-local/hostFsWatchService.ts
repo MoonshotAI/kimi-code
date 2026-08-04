@@ -2,8 +2,9 @@
  * `hostFsWatch` domain — `IHostFsWatchService` implementation.
  *
  * Wraps `chokidar` to report raw create/modify/delete events under an absolute
- * path. Each `watch()` call owns an independent `FSWatcher`; disposing the
- * handle closes it. Bound at App scope.
+ * path, applying each caller's recursion depth, symlink traversal, and ignored
+ * path policy. Each `watch()` call owns an independent `FSWatcher`; disposing
+ * the handle closes it. Bound at App scope.
  */
 
 import { FSWatcher } from 'chokidar';
@@ -36,8 +37,8 @@ class HostFsWatchHandle implements IHostFsWatchHandle {
     this.watcher = new FSWatcher({
       ignoreInitial: true,
       persistent: false,
-      followSymlinks: false,
-      depth: options?.recursive === false ? 0 : undefined,
+      followSymlinks: options?.followSymlinks ?? false,
+      depth: options?.depth ?? (options?.recursive === false ? 0 : undefined),
       ignored: options?.ignored ?? DEFAULT_IGNORED,
     });
     this.watcher.on('all', (eventName: string, absPath: string) => {

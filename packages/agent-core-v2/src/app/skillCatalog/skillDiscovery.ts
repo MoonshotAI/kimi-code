@@ -23,7 +23,7 @@ export interface SkillDiscoveryResult {
 
 export interface ISkillDiscovery {
   readonly _serviceBrand: undefined;
-  discover(roots: readonly SkillRoot[]): Promise<SkillDiscoveryResult>;
+  discover(roots: readonly SkillRoot[], signal?: AbortSignal): Promise<SkillDiscoveryResult>;
 }
 
 export const ISkillDiscovery = createDecorator<ISkillDiscovery>('skillDiscovery');

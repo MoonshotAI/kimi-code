@@ -15,6 +15,7 @@ import {
   AGENT_PROFILE_SOURCE_PRIORITY,
   type AgentProfileContribution,
 } from '#/app/agentProfileCatalog/agentProfileContribution';
+import { renderAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { profilesFromDiscovery } from './internal/agentProfileFromFile';
 import { configuredAgentRoots } from '#/workspace/workspaceAgentProfileLoader/internal/agentRoots';
 import {
@@ -83,7 +84,7 @@ export class ExtraAgentProfileLoaderService
         ),
         (message) => this.log.warn(message),
       ),
-      (context) => this.user.getDefaultProfile().systemPrompt(context),
+      (context) => renderAgentProfile(this.user.getDefaultProfile(), context),
     );
   }
 }

@@ -159,6 +159,7 @@ function workspaceSkillCatalogStub(): IWorkspaceSkillCatalog {
     listInvocableSkills: () => [],
     getSkillRoots: () => [],
     getSkippedByPolicy: () => [],
+    getModelSkillDisclosure: () => ({ names: [], listing: '' }),
     getModelSkillListing: () => '',
   };
   return {

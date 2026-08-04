@@ -27,7 +27,7 @@ import {
 const profile: ResolvedAgentProfile = {
   name: 'agents-profile',
   systemPrompt: (context) =>
-    typeof context['agentsMd'] === 'string' ? (context['agentsMd'] as string) : '',
+    typeof context['agentsMd'] === 'string' ? context['agentsMd'] : '',
   tools: [],
 };
 
@@ -51,6 +51,14 @@ const exactProfile: ResolvedAgentProfile = {
     ].join('\n'),
   tools: ['Read', 'Write'],
 };
+
+function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 describe('AgentProfileService.applyProfile', () => {
   let ctx: TestAgentContext;
@@ -112,6 +120,38 @@ describe('AgentProfileService.applyProfile', () => {
 
     expect(svc.data().systemPrompt).toBe(exactSystemPrompt(workDir, 'new instructions'));
     expect(svc.getActiveToolNames()).toEqual(['Read']);
+  });
+
+  it('does not let an older refresh overwrite a newer prompt update', async () => {
+    const fs = new HostFileSystem();
+    ctx = createTestAgent(
+      execEnvServices({ hostFs: fs }),
+      hostEnvironmentServices(homeDir),
+      { cwd: workDir },
+    );
+    const svc = ctx.get(IAgentProfileService);
+    await svc.applyProfile(exactProfile);
+
+    const firstReadStarted = deferred();
+    const releaseFirstRead = deferred();
+    const readdir = fs.readdir.bind(fs);
+    let blocking = true;
+    vi.spyOn(fs, 'readdir').mockImplementation(async (path) => {
+      if (blocking) {
+        blocking = false;
+        firstReadStarted.resolve();
+        await releaseFirstRead.promise;
+      }
+      return readdir(path);
+    });
+
+    const pending = svc.refreshSystemPrompt();
+    await firstReadStarted.promise;
+    svc.update({ systemPrompt: 'newer prompt' });
+    releaseFirstRead.resolve();
+    await pending;
+
+    expect(svc.getSystemPrompt()).toBe('newer prompt');
   });
 
   it('caches an agents-md warning when the content exceeds the 32 KB soft budget', async () => {

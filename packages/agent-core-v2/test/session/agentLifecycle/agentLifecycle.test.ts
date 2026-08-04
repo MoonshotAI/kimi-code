@@ -16,6 +16,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import '#/agent/profile/profileService';
+import '#/agent/skillDisclosure/skillDisclosureService';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
@@ -318,7 +319,9 @@ describe('AgentLifecycleService', () => {
     } as unknown as ISessionAgentProfileCatalog);
     ix.stub(ISessionSkillCatalog, {
       _serviceBrand: undefined,
-      catalog: { skills: [] },
+      catalog: {
+        getModelSkillDisclosure: () => ({ names: [], listing: '' }),
+      },
       ready: Promise.resolve(),
       onDidChange: Event.None,
       load: () => Promise.resolve(),
@@ -748,6 +751,7 @@ describe('AgentLifecycleService', () => {
       systemPrompt: 'original prompt',
       activeToolNames: ['Read'],
       disallowedTools: ['Bash'],
+      disclosedSkillNames: ['review'],
       subagents: ['explore'],
     });
 
@@ -759,6 +763,7 @@ describe('AgentLifecycleService', () => {
       systemPrompt: 'original prompt',
       activeToolNames: ['Read'],
       disallowedTools: ['Bash'],
+      disclosedSkillNames: ['review'],
       subagents: ['explore'],
     });
   });

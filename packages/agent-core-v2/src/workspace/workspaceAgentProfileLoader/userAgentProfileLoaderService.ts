@@ -13,7 +13,10 @@
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
-import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import {
+  renderAgentProfile,
+  type AgentProfile,
+} from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -80,7 +83,7 @@ export class UserAgentProfileLoaderService
     this.defaultProfile = systemMd ?? this.builtin.getDefault();
     const contribution = profilesFromDiscovery(
       await discoverAgentFiles(this.fs, roots, (message) => this.log.warn(message)),
-      (context) => this.defaultProfile.systemPrompt(context),
+      (context) => renderAgentProfile(this.defaultProfile, context),
     );
     if (systemMd === undefined) return contribution;
     return { ...contribution, profiles: [...contribution.profiles, systemMd] };

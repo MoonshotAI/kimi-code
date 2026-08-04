@@ -4,7 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { configuredRoots, projectRoots, userRoots } from '#/app/skillCatalog/skillRoots';
+import {
+  configuredRootCandidates,
+  configuredRoots,
+  projectRootCandidates,
+  projectRoots,
+  userRootCandidates,
+  userRoots,
+} from '#/app/skillCatalog/skillRoots';
 
 describe('skillRoots', () => {
   let root: string;
@@ -111,6 +118,49 @@ describe('skillRoots', () => {
       expect(paths).toContain(await realpath(join(homeDir, 'notes')));
       expect(paths).toContain(await realpath(absDir));
       expect(paths).toContain(await realpath(join(root, 'relative')));
+    });
+  });
+
+  describe('watch candidates', () => {
+    it('lists user candidate paths without existence filtering', () => {
+      const homeDir = join(root, 'brand-home');
+      const osHomeDir = join(root, 'os-home');
+
+      const candidates = userRootCandidates(homeDir, osHomeDir);
+
+      expect(candidates).toEqual([
+        join(homeDir, 'skills'),
+        join(osHomeDir, '.agents/skills'),
+      ]);
+    });
+
+    it('lists project candidate paths at the .git root without existence filtering', async () => {
+      await markGitRoot();
+      const child = join(root, 'src/pkg');
+      await mkdir(child, { recursive: true });
+
+      const candidates = await projectRootCandidates(child);
+
+      expect(candidates).toEqual([
+        join(root, '.kimi-code/skills'),
+        join(root, '.agents/skills'),
+      ]);
+    });
+
+    it('lists configured candidate paths without existence filtering', async () => {
+      await markGitRoot();
+      const homeDir = join(root, 'home');
+
+      const candidates = await configuredRootCandidates(
+        ['~/notes', 'missing-relative'],
+        root,
+        homeDir,
+      );
+
+      expect(candidates).toEqual([
+        join(homeDir, 'notes'),
+        join(root, 'missing-relative'),
+      ]);
     });
   });
 });

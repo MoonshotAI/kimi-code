@@ -21,6 +21,7 @@ import {
   AGENT_PROFILE_SOURCE_PRIORITY,
   type AgentProfileContribution,
 } from '#/app/agentProfileCatalog/agentProfileContribution';
+import { renderAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { profilesFromDiscovery } from './internal/agentProfileFromFile';
 import { projectAgentRootCandidates, projectAgentRoots } from '#/workspace/workspaceAgentProfileLoader/internal/agentRoots';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
@@ -69,7 +70,7 @@ export class WorkspaceAgentProfileLoaderService
     });
     return profilesFromDiscovery(
       await discoverAgentFiles(this.fs, roots, (message) => this.log.warn(message)),
-      (context) => this.user.getDefaultProfile().systemPrompt(context),
+      (context) => renderAgentProfile(this.user.getDefaultProfile(), context),
     );
   }
 
