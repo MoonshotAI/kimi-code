@@ -176,4 +176,58 @@ describe('detectInstallSource', () => {
       }),
     ).resolves.toBe('unsupported');
   });
+
+  it('returns npm-global via path fallback when npm prefix throws but path matches', async () => {
+    await expect(
+      detectInstallSource({
+        getPackageRoot: () => '/usr/local/lib/node_modules/@moonshot-ai/kimi-code',
+        getGlobalPrefix: async () => {
+          throw new Error('prefix failed');
+        },
+        detectNative: () => false,
+        platform: 'darwin',
+      }),
+    ).resolves.toBe('npm-global');
+  });
+
+  it('returns unsupported when npm prefix throws and path does not match', async () => {
+    await expect(
+      detectInstallSource({
+        getPackageRoot: () => '/Users/me/dev/@moonshot-ai/kimi-code',
+        getGlobalPrefix: async () => {
+          throw new Error('prefix failed');
+        },
+        detectNative: () => false,
+        platform: 'win32',
+      }),
+    ).resolves.toBe('unsupported');
+  });
+
+  it('returns unsupported for a project-local node_modules path when npm prefix throws', async () => {
+    await expect(
+      detectInstallSource({
+        getPackageRoot: () =>
+          '/Users/me/dev/my-project/node_modules/@moonshot-ai/kimi-code',
+        getGlobalPrefix: async () => {
+          throw new Error('prefix failed');
+        },
+        detectNative: () => false,
+        platform: 'darwin',
+      }),
+    ).resolves.toBe('unsupported');
+  });
+
+  it('returns npm-global via path fallback when npm prefix throws on Windows with backslashes', async () => {
+    await expect(
+      detectInstallSource({
+        getPackageRoot: () =>
+          'C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@moonshot-ai/kimi-code',
+        getGlobalPrefix: async () => {
+          throw new Error('prefix failed');
+        },
+        detectNative: () => false,
+        platform: 'win32',
+      }),
+    ).resolves.toBe('npm-global');
+  });
 });
