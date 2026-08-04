@@ -264,6 +264,21 @@ describe('renderSystemPromptResult', () => {
     );
   });
 
+  it('keeps a static time reminder without a per-session timestamp', () => {
+    const nowA = '2026-08-02T10:00:00.000Z';
+    const nowB = '2026-08-03T10:00:00.000Z';
+    const promptA = renderSystemPrompt('', { now: nowA }, { skillActive: true });
+    const promptB = renderSystemPrompt('', { now: nowB }, { skillActive: true });
+
+    // Byte-identical across sessions — the property the prefix cache depends on.
+    expect(promptA).toBe(promptB);
+    // The dynamic value must not leak into the rendered prompt...
+    expect(promptA).not.toContain(nowA);
+    // ...but the static time-lookup guidance stays.
+    expect(promptA).toContain('## Date and Time');
+    expect(promptA).toContain('get it fresh from the environment');
+  });
+
   it('renders the builtin template with no leftover placeholders', () => {
     // Every placeholder in the builtin template must be bound in the variable
     // table — an unbound one would stay verbatim in the output.
