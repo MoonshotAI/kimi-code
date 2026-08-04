@@ -2133,6 +2133,30 @@ describe('bindSessionTranscript', () => {
     expect(frames).toContainEqual(expect.objectContaining({ frameId: 't0.1.call_3', output: 'y' }));
   });
 
+  it('heal keeps the live attachment ids over the snapshot cold ids', () => {
+    const makeTurn = (attachmentIds: string[] | undefined): TranscriptTurn => ({
+      kind: 'turn',
+      turnId: 't0',
+      ordinal: 0,
+      state: 'completed',
+      origin: { kind: 'user' },
+      attachmentIds,
+      steps: [],
+    });
+    // Live turn opened by the projector with its own `{turnId}.att<N>` ids:
+    // the merged header must keep them, not churn to the cold `att_<n>` form.
+    const header = healTurnOps(makeTurn(['att_1']), makeTurn(['t0.att1'])).find(
+      (op) => op.op === 'turn.upsert',
+    );
+    expect(header).toMatchObject({ turn: { attachmentIds: ['t0.att1'] } });
+    // A mid-turn-attached projector never saw turn.started: the live header
+    // has no ids and the heal falls back to the persisted cold ones.
+    const fallback = healTurnOps(makeTurn(['att_1']), makeTurn(undefined)).find(
+      (op) => op.op === 'turn.upsert',
+    );
+    expect(fallback).toMatchObject({ turn: { attachmentIds: ['att_1'] } });
+  });
+
   it('seeds pending interactions per agent, not before that agent is backfilled', () => {
     const interactions = new SessionInteractionService(new TestSessionStateService());
     interactions.enqueue({ id: 'q-main', kind: 'question', payload: { toolCallId: 'call_main' }, origin: { agentId: 'main', turnId: 0 } });
@@ -2229,6 +2253,47 @@ describe('bindSessionTranscript', () => {
     ];
     await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
     return home;
+  }
+
+  /** Wire seed whose opening user message carries an upload — the cold fold yields `att_1`. */
+  async function seedWireHomeWithAttachment(): Promise<string> {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-heal-attachment-'));
+    const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+    await mkdir(wireDir, { recursive: true });
+    const records = [
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'what is this?' },
+            { type: 'file', file_id: 'file_1', media_type: 'image/png', name: 'shot.png' },
+          ],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+        time: new Date().toISOString(),
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'a screenshot' }],
+          toolCalls: [],
+        },
+        time: new Date().toISOString(),
+      },
+    ];
+    await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+    return home;
+  }
+
+  async function waitFor(condition: () => boolean, timeoutMs = 2000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (!condition()) {
+      if (Date.now() > deadline) throw new Error('waitFor timed out');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
   }
 
   it('subscribes the bus for an agent whose projector was seeded before its handle existed', () => {
@@ -2342,6 +2407,106 @@ describe('bindSessionTranscript', () => {
         state: 'running',
         prompt: 'live hi',
       });
+      service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('backfill + overlay keep the live attachment ids and drop the cold counterpart entity', async () => {
+    const home = await seedWireHomeWithAttachment();
+    try {
+      const agents = new FakeAgents();
+      agents.add('main', { loopStatus: { state: 'running', activeTurnId: 0 } });
+      const service = new TranscriptService({
+        homeDir: home,
+        core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
+      });
+      const store = service.forSessionLive('s1');
+      // The live turn.started (with its own `t0.att1` attachment) lands while
+      // the backfill is still reading the persisted `att_1` form from disk.
+      agents.get('main')!.bus.emit(
+        ev({
+          type: 'turn.started',
+          turnId: 0,
+          origin: { kind: 'user' },
+          prompt: 'live prompt',
+          promptAttachments: [{ kind: 'image', fileId: 'file_1', name: 'shot.png' }],
+        }),
+      );
+      await service.whenReady('s1');
+
+      const agent = store?.getAgent('main');
+      // Neither the live-first merge nor the running-overlay may churn or
+      // clear the live ids.
+      expect(agent?.getTurn('t0')).toMatchObject({
+        state: 'running',
+        prompt: 'live prompt',
+        attachmentIds: ['t0.att1'],
+      });
+      // The snapshot's cold counterpart must not land as an orphan entity.
+      expect(agent?.getAttachment('t0.att1')).toBeDefined();
+      expect(agent?.getAttachment('att_1')).toBeUndefined();
+      service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('post-turn heal keeps the live attachment ids and never upserts the cold counterparts', async () => {
+    const home = await seedWireHomeWithAttachment();
+    try {
+      const agents = new FakeAgents();
+      agents.add('main', { loopStatus: { state: 'idle' } });
+      const service = new TranscriptService({
+        homeDir: home,
+        core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
+      });
+      const store = service.forSessionLive('s1');
+      const batches: TranscriptOperation[][] = [];
+      service.onSessionOps('s1', (event) => {
+        if (event.agentId === 'main') batches.push([...event.ops]);
+      });
+      const bus = agents.get('main')!.bus;
+      bus.emit(
+        ev({
+          type: 'turn.started',
+          turnId: 0,
+          origin: { kind: 'user' },
+          prompt: 'live prompt',
+          promptAttachments: [{ kind: 'image', fileId: 'file_1', name: 'shot.png' }],
+        }),
+      );
+      await service.whenReady('s1');
+
+      bus.emit(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+      // The debounced heal re-reads the persisted snapshot and merges it back;
+      // its batch is the one carrying the (live-missed) wholesale step.
+      await waitFor(() =>
+        batches.some((batch) => batch.some((op) => op.op === 'step.upsert' && op.turnId === 't0')),
+      );
+      const healBatch = batches.find((batch) =>
+        batch.some((op) => op.op === 'step.upsert' && op.turnId === 't0'),
+      )!;
+      // No id churn on the wire: the healed header keeps the live ids, and no
+      // batch ever upserts the cold `att_1` entity.
+      expect(healBatch.find((op) => op.op === 'turn.upsert')).toMatchObject({
+        turn: { attachmentIds: ['t0.att1'] },
+      });
+      const attachmentUpserts = batches.flatMap((batch) =>
+        batch.filter((op) => op.op === 'attachment.upsert'),
+      );
+      expect(attachmentUpserts).toEqual([
+        { op: 'attachment.upsert', attachment: expect.objectContaining({ attachmentId: 't0.att1' }) },
+      ]);
+
+      const agent = store?.getAgent('main');
+      expect(agent?.getTurn('t0')).toMatchObject({
+        state: 'completed',
+        attachmentIds: ['t0.att1'],
+      });
+      expect(agent?.getAttachment('t0.att1')).toBeDefined();
+      expect(agent?.getAttachment('att_1')).toBeUndefined();
       service.dropSession('s1');
     } finally {
       await rm(home, { recursive: true, force: true });

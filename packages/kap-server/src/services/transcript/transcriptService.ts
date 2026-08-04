@@ -278,8 +278,14 @@ export class TranscriptService {
       // while the records were being read (a tool frame's display/approvalId,
       // a longer text frame) must not be replaced by the staler persisted
       // version.
+      const superseded = supersededColdAttachmentIds(snapshot, transcript);
       const ops = snapshotToOps(snapshot, (turn) =>
         healTurnOps(turn, transcript.getTurn(turn.turnId)),
+      ).filter(
+        // The merge keeps a live-opened turn's own attachment ids, so the
+        // snapshot's cold `att_<n>` counterparts would land unreferenced —
+        // drop them instead of orphaning duplicate entities.
+        (op) => op.op !== 'attachment.upsert' || !superseded.has(op.attachment.attachmentId),
       );
       const overlay = this.liveTurnOverlay(sessionId, agentId, transcript, snapshot);
       if (overlay !== undefined) ops.push(overlay);
@@ -472,6 +478,10 @@ export class TranscriptService {
         state: 'running',
         origin: existing?.origin ?? snapshotTurn?.origin ?? { kind: 'other' },
         prompt: existing?.prompt ?? snapshotTurn?.prompt,
+        // `turn.upsert` replaces the whole header, so the live attachment ids
+        // must ride along — omitting them would clear the references and
+        // orphan the live `{turnId}.att<N>` entities.
+        attachmentIds: existing?.attachmentIds ?? snapshotTurn?.attachmentIds,
         startedAt: existing?.startedAt ?? snapshotTurn?.startedAt,
       },
     };
@@ -514,11 +524,17 @@ export class TranscriptService {
     if (turnOps.length === 0) return;
     // Attachment entities are global (not turn-scoped): upsert the snapshot's
     // set alongside the healed turns so their `attachmentIds` never dangle.
+    // Cold counterparts of turns the live projector already opened with its
+    // own attachment ids are skipped — the heal keeps the live ids, so those
+    // `att_<n>` entities would be orphaned duplicates.
+    const superseded = supersededColdAttachmentIds(snapshot, transcript);
     const ops: TranscriptOperation[] = [
-      ...snapshot.attachments.map((attachment) => ({
-        op: 'attachment.upsert' as const,
-        attachment,
-      })),
+      ...snapshot.attachments
+        .filter((attachment) => !superseded.has(attachment.attachmentId))
+        .map((attachment) => ({
+          op: 'attachment.upsert' as const,
+          attachment,
+        })),
       ...turnOps,
     ];
     transcript.apply(ops);
@@ -693,12 +709,38 @@ const TERMINAL_TURN_STATES: ReadonlySet<TranscriptTurn['state']> = new Set([
 ]);
 
 /**
+ * Cold attachment ids superseded by live ones. A turn the live projector
+ * already opened carries its own `{turnId}.att<N>` attachment ids, and the
+ * live-first merges (heal / overlay) keep them; the snapshot's cold `att_<n>`
+ * counterparts of THAT turn must not be upserted alongside — nothing would
+ * reference them (orphan duplicate entities). Cold ids are unique per
+ * snapshot (`att_${attachments.length + 1}` counts across the whole rebuild),
+ * so each id belongs to exactly one turn.
+ */
+function supersededColdAttachmentIds(
+  snapshot: AgentTranscriptSnapshot,
+  transcript: AgentTranscript,
+): ReadonlySet<string> {
+  const superseded = new Set<string>();
+  for (const item of snapshot.items) {
+    if (item.kind !== 'turn' || item.attachmentIds === undefined) continue;
+    const live = transcript.getTurn(item.turnId);
+    if (live?.attachmentIds === undefined || live.attachmentIds.length === 0) continue;
+    for (const id of item.attachmentIds) superseded.add(id);
+  }
+  return superseded;
+}
+
+/**
  * Merge one persisted (snapshot) turn back into the live store after the turn
  * ended — the post-turn heal for mid-turn attaches:
  *   - turn the live store never saw: taken wholesale;
  *   - header: the snapshot is authoritative for origin/prompt (it reads the
  *     persisted user message, which a mid-turn-attached projector missed);
- *     the live header wins on state and timestamps;
+ *     the live header wins on state, timestamps, and attachment ids (its
+ *     `{turnId}.att<N>` entities are already projected — swapping in the
+ *     snapshot's cold `att_<n>` ids would churn the references and orphan
+ *     the live entities);
  *   - steps the live turn never saw: taken wholesale from the snapshot;
  *   - existing steps: text/thinking frames are re-emitted only when the
  *     persisted text is longer and the kind matches (a fresh live frame may
@@ -734,6 +776,7 @@ export function healTurnOps(
       ...header,
       state: liveTurn.state,
       prompt: liveTurn.prompt ?? header.prompt,
+      attachmentIds: liveTurn.attachmentIds ?? header.attachmentIds,
       startedAt: liveTurn.startedAt ?? header.startedAt,
       endedAt: liveTurn.endedAt ?? header.endedAt,
     },
