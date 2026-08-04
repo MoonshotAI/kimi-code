@@ -261,23 +261,87 @@ fn connect_with_renderer(
         }
     };
     let renderer = tokio::spawn(async move {
+        use std::io::Write;
         let mut source = source.expect("capture path attaches a source");
         let mut printed = 0usize;
+        // Live assistant text rolls on a TTY (codex-style streaming); piped
+        // stderr stays clean (the final transcript still lands on stdout).
+        let tty = std::io::stderr().is_terminal();
         while let Some(event) = source.next().await {
-            if let Some(line) = kimi_ui::render_event(&event) {
-                if event.get("type").and_then(|t| t.as_str()) == Some("session.approval.requested") {
-                    eprintln!("⚠ {line} — /approvals, /approve <id>");
-                } else {
-                    eprintln!("{line}");
+            match cli_render(&event) {
+                CliRender::Stream(delta) => {
+                    if tty {
+                        eprint!("{delta}");
+                        let _ = std::io::stderr().flush();
+                    }
                 }
-                printed += 1;
-                if printed > 64 {
-                    break; // bound verbose output
+                CliRender::Line(line) => {
+                    if event.get("type").and_then(|t| t.as_str())
+                        == Some("session.approval.requested")
+                    {
+                        eprintln!("⚠ {line} — /approvals, /approve <id>");
+                    } else if tty {
+                        // Close any mid-line streaming text first.
+                        eprintln!("\r{line}");
+                    } else {
+                        eprintln!("{line}");
+                    }
+                    printed += 1;
+                    if printed > 64 {
+                        break; // bound verbose output
+                    }
                 }
+                CliRender::Skip => {}
             }
         }
     });
     Ok((client, Some(renderer)))
+}
+
+/// The CLI's per-event render decision: live text deltas stream on a TTY,
+/// known event types render as progress lines, everything else stays silent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CliRender {
+    /// Live assistant text delta (llm.delta text parts).
+    Stream(String),
+    /// One progress line.
+    Line(String),
+    /// Not rendered.
+    Skip,
+}
+
+fn cli_render(event: &serde_json::Value) -> CliRender {
+    if event.get("type").and_then(|t| t.as_str()) == Some("llm.delta") {
+        return match kimi_ui::stream_delta(event) {
+            Some(delta) => CliRender::Stream(delta.to_string()),
+            None => CliRender::Skip,
+        };
+    }
+    match kimi_ui::render_event(event) {
+        Some(line) => CliRender::Line(line),
+        None => CliRender::Skip,
+    }
+}
+
+#[cfg(test)]
+mod cli_render_tests {
+    use super::{cli_render, CliRender};
+
+    #[test]
+    fn delta_streams_and_lines_render() {
+        let delta = serde_json::json!({ "type": "llm.delta", "part": { "type": "text", "text": "hi" } });
+        assert_eq!(cli_render(&delta), CliRender::Stream("hi".to_string()));
+        // Thinking deltas and unknown events stay silent.
+        let think = serde_json::json!({ "type": "llm.delta", "part": { "type": "think", "think": "hmm" } });
+        assert_eq!(cli_render(&think), CliRender::Skip);
+        assert_eq!(cli_render(&serde_json::json!({ "type": "mystery.thing" })), CliRender::Skip);
+        // Known progress types render as lines.
+        let turn = serde_json::json!({ "type": "session.turn.started", "session_id": "s", "turn_id": 1 });
+        assert_eq!(
+            cli_render(&turn),
+            CliRender::Line("turn 1 started (session s)".to_string())
+        );
+    }
 }
 
 /// Outcome of a chat slash command.
