@@ -137,9 +137,6 @@ export function buildSubagentModelDescriptions(
   const secondary = resolveSecondaryModel(config, flags);
   const secondaryModel = secondary?.model;
   if (secondaryModel === undefined || callerModelAlias === undefined) return undefined;
-  // The advertised name stays the raw recipe pointer, but the capability
-  // lookup follows the spawn binding: a patched recipe materializes the
-  // derived entry and the subagent runs on it.
   const boundSecondary =
     secondaryModelPatch(secondary) === undefined ? secondaryModel : SECONDARY_DERIVED_MODEL_ID;
   return [
@@ -149,11 +146,6 @@ export function buildSubagentModelDescriptions(
   ].join('\n');
 }
 
-/**
- * Capability flags surfaced in the model lines, in `ModelCapability` field
- * order. Numeric limits (`max_context_tokens` and friends) are deliberately
- * excluded — only the boolean ability array is advertised.
- */
 const ADVERTISED_CAPABILITY_FLAGS = [
   'image_in',
   'video_in',
@@ -169,11 +161,6 @@ function capabilitiesSuffix(capability: ModelCapability | undefined): string {
   return `; capabilities: ${names.length === 0 ? 'none' : names.join(', ')}`;
 }
 
-/**
- * Fail-soft capability lookup for description building: a model id that does
- * not materialize (dangling recipe pointer, unconfigured entry) drops the
- * suffix instead of breaking the tool schema; spawn surfaces the real error.
- */
 function resolvedCapabilities(
   modelCatalog: IModelCatalog,
   model: string,
