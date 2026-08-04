@@ -145,6 +145,14 @@ enum ProviderCmd {
         /// Keyword to match against provider and model names.
         query: String,
     },
+    /// Add a provider from the catalog to the engine config.
+    Add {
+        /// Catalog provider id (e.g. `openai`, `anthropic`).
+        id: String,
+        /// API key (falls back to the provider's env var when absent).
+        #[arg(long)]
+        api_key: Option<String>,
+    },
 }
 
 /// Sub-targets of `kimi doctor`.
@@ -986,6 +994,72 @@ async fn main() -> anyhow::Result<()> {
                             std::process::exit(1);
                         }
                     }
+                }
+                ProviderCmd::Add { id, api_key } => {
+                    let catalog =
+                        match kimi_sdk::catalog::fetch_catalog(kimi_sdk::catalog::DEFAULT_CATALOG_URL).await {
+                            Ok(c) => c,
+                            Err(e) => {
+                                eprintln!("error: catalog fetch failed — {e}");
+                                std::process::exit(1);
+                            }
+                        };
+                    let Some(provider) = catalog.get(&id) else {
+                        eprintln!("error: provider \"{id}\" not in the catalog");
+                        std::process::exit(1);
+                    };
+                    // Resolve the API key: explicit flag, the provider's env
+                    // var, or none (the provider stays key-less for now).
+                    let resolved_key = api_key.or_else(|| {
+                        provider
+                            .env
+                            .first()
+                            .and_then(|env| std::env::var(env).ok())
+                    });
+                    let base_url = provider.api.clone().unwrap_or_default();
+                    // models.dev omits `api` for hosted providers; fall back
+                    // to well-known endpoints for the majors.
+                    let base_url = if base_url.is_empty() {
+                        match id.as_str() {
+                            "openai" => "https://api.openai.com/v1".to_string(),
+                            "anthropic" => "https://api.anthropic.com".to_string(),
+                            "google-genai" => {
+                                "https://generativelanguage.googleapis.com".to_string()
+                            }
+                            _ => String::new(),
+                        }
+                    } else {
+                        base_url
+                    };
+                    if base_url.is_empty() {
+                        eprintln!("error: provider \"{id}\" has no api endpoint in the catalog");
+                        std::process::exit(1);
+                    }
+                    let provider_type = if id == "anthropic" { "anthropic" } else { "openai" };
+                    // Write providers.<id> via config/set (merge + persist).
+                    let mut patch = serde_json::json!({
+                        "providers": {
+                            id.clone(): {
+                                "type": provider_type,
+                                "baseUrl": base_url,
+                            }
+                        }
+                    });
+                    if let Some(key) = resolved_key {
+                        patch["providers"][&id]["apiKey"] = serde_json::json!(key);
+                    }
+                    let mut client = connect(&server)?;
+                    let body = client
+                        .call(
+                            kimi_protocol::methods::CONFIG_SET,
+                            serde_json::json!({ "patch": patch }),
+                        )
+                        .await;
+                    if let Some(error) = body.get("error") {
+                        eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
+                        std::process::exit(1);
+                    }
+                    println!("provider {id} added (baseUrl {base_url})");
                 }
             }
         }
