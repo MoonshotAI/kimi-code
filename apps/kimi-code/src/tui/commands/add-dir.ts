@@ -1,6 +1,7 @@
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
 import type { SlashCommandHost } from './dispatch';
+import { slashBusyMessage, slashCommandBusyReason } from './resolve';
 
 type AddDirChoice = 'session' | 'remember' | 'cancel';
 
@@ -30,6 +31,16 @@ export async function handleAddDirCommand(host: SlashCommandHost, args: string):
     // (the read-only `list`/bare forms above tolerate a missing session).
     session = await host.ensureSession();
     if (session === undefined) return;
+    // A first prompt may have started a turn during the await; /add-dir is
+    // idle-only, so re-check the busy gate resolved before it.
+    const busyReason = slashCommandBusyReason({
+      isStreaming: host.state.appState.streamingPhase !== 'idle',
+      isCompacting: host.state.appState.isCompacting,
+    });
+    if (busyReason !== undefined) {
+      host.showError(slashBusyMessage('add-dir', busyReason));
+      return;
+    }
   }
 
   host.mountEditorReplacement(
