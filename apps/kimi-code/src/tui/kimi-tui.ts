@@ -1311,9 +1311,25 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  sendInlineSkillUserInput(session: Session, text: string, activations: InlineSkillActivation[]): void {
+  async sendInlineSkillUserInput(
+    session: Session | undefined,
+    text: string,
+    activations: InlineSkillActivation[],
+  ): Promise<void> {
     const extraction = this.prepareUserInput(text);
     if (extraction === undefined) return;
+
+    let targetSession = session;
+    if (targetSession === undefined) {
+      // The v2 engine starts session-less: create the session on demand,
+      // mirroring sendNormalUserInput. On v1 a missing session stays an error.
+      if (!this.engineV2) {
+        this.showError(NO_ACTIVE_SESSION_MESSAGE);
+        return;
+      }
+      targetSession = await this.ensureSession();
+      if (targetSession === undefined) return;
+    }
 
     const options = extraction.hasMedia
       ? {
@@ -1331,7 +1347,7 @@ export class KimiTUI {
     }
 
     this.beginSessionRequest();
-    void this.runInlineSkillActivations(session, text, activations, extraction).catch((error: unknown) => {
+    void this.runInlineSkillActivations(targetSession, text, activations, extraction).catch((error: unknown) => {
       const message = formatErrorMessage(error);
       this.failSessionRequest(`Inline skill activation failed: ${message}`);
     });

@@ -119,7 +119,11 @@ interface MessageDriver {
   handleUserInput(text: string): void;
   persistInputHistory(text: string): Promise<void>;
   sendQueuedMessage(session: unknown, item: QueuedMessage): void;
-  sendInlineSkillUserInput(session: Session, text: string, activations: { skillName: string }[]): void;
+  sendInlineSkillUserInput(
+    session: Session | undefined,
+    text: string,
+    activations: { skillName: string }[],
+  ): Promise<void>;
   deferUserMessages: boolean;
   getCurrentSessionId(): string;
 }

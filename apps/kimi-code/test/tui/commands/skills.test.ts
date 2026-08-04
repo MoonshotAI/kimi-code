@@ -5,7 +5,7 @@ import {
   type InlineSkillActivation,
   type SlashCommandHost,
 } from '#/tui/commands/dispatch';
-import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '#/tui/constant/kimi-tui';
+import { LLM_NOT_SET_MESSAGE } from '#/tui/constant/kimi-tui';
 import type { SkillSummary } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -381,13 +381,15 @@ describe('dispatchInput inline skill activation', () => {
     expect(host.sendInlineSkillUserInput).not.toHaveBeenCalled();
   });
 
-  it('shows the no-session error when there is no active session', async () => {
+  it('hands inline skill activation to the host when there is no active session (v2 lazy-creates it)', async () => {
     const { host } = makeHost({ hasSession: false });
 
     await dispatchInput(host, 'use /skill:review on this');
 
-    expect(host.showError).toHaveBeenCalledWith(NO_ACTIVE_SESSION_MESSAGE);
-    expect(host.sendInlineSkillUserInput).not.toHaveBeenCalled();
+    expect(host.showError).not.toHaveBeenCalled();
+    expect(host.sendInlineSkillUserInput).toHaveBeenCalledWith(undefined, 'use /skill:review on this', [
+      { skillName: 'review' },
+    ]);
   });
 
   it('shows the no-model error when the model is unset', async () => {

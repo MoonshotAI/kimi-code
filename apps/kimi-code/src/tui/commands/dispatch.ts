@@ -4,7 +4,7 @@ import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
 import type { ColorToken, ThemeName } from '#/tui/theme';
 
-import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
 import type { AuthFlowController } from '../controllers/auth-flow';
 import type { BtwPanelController } from '../controllers/btw-panel';
 import type { StreamingUIController } from '../controllers/streaming-ui';
@@ -189,7 +189,7 @@ export interface SlashCommandHost {
   createNewSession(): Promise<void>;
   showSessionPicker(): Promise<void>;
   sendNormalUserInput(text: string): void;
-  sendInlineSkillUserInput(session: Session, text: string, activations: InlineSkillActivation[]): void;
+  sendInlineSkillUserInput(session: Session | undefined, text: string, activations: InlineSkillActivation[]): Promise<void>;
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void;
   activatePluginCommand(
     session: Session,
@@ -244,12 +244,10 @@ export async function dispatchInput(host: SlashCommandHost, text: string): Promi
           host.showError(LLM_NOT_SET_MESSAGE);
           return;
         }
-        if (session === undefined) {
-          host.showError(NO_ACTIVE_SESSION_MESSAGE);
-          return;
-        }
 
-        host.sendInlineSkillUserInput(session, text, allActivations);
+        // A session-less host is the v2 lazy-session case: the receiver
+        // creates the session on demand, like sendNormalUserInput does.
+        await host.sendInlineSkillUserInput(session, text, allActivations);
         return;
       }
     }
@@ -274,12 +272,10 @@ export async function dispatchInput(host: SlashCommandHost, text: string): Promi
       host.showError(LLM_NOT_SET_MESSAGE);
       return;
     }
-    if (session === undefined) {
-      host.showError(NO_ACTIVE_SESSION_MESSAGE);
-      return;
-    }
 
-    host.sendInlineSkillUserInput(session, text, inlineActivations);
+    // A session-less host is the v2 lazy-session case: the receiver
+    // creates the session on demand, like sendNormalUserInput does.
+    await host.sendInlineSkillUserInput(session, text, inlineActivations);
     return;
   }
 
