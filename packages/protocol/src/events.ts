@@ -430,6 +430,12 @@ export const MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE = 'mcp.oauth.authorization_
 export interface McpOAuthAuthorizationUrlUpdateData {
   readonly serverName: string;
   readonly authorizationUrl: string;
+  /**
+   * Epoch-ms instant when the engine stops waiting for the OAuth callback.
+   * Hosts derive countdowns and expiry states from this value instead of
+   * mirroring the engine-side timeout constant.
+   */
+  readonly expiresAt?: number;
 }
 
 export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
