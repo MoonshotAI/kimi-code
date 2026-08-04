@@ -146,6 +146,35 @@ export async function mcpResultToExecutableOutput(
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
+  // Structured payloads (structuredContent per MCP spec, plus server metadata
+  // in _meta) carry machine-readable contracts such as browser-handoff URLs.
+  // Appended AFTER the media wrap so a media-only result keeps its
+  // <mcp_tool_result> attribution, and BEFORE the text budget so oversized
+  // payloads stay bounded. Literal closing tags inside the serialized
+  // payload are stripped so server data cannot fake an early end of the
+  // block.
+  const structuredExtras: Record<string, unknown> = {};
+  if (result.structuredContent !== undefined) {
+    structuredExtras['structuredContent'] = result.structuredContent;
+  }
+  if (result._meta !== undefined) {
+    structuredExtras['_meta'] = result._meta;
+  }
+  if (Object.keys(structuredExtras).length > 0) {
+    try {
+      const serialized = JSON.stringify(structuredExtras).replaceAll(
+        '</mcp-structured-result>',
+        '',
+      );
+      wrapped.push({
+        type: 'text',
+        text: `\n<mcp-structured-result>\n${serialized}\n</mcp-structured-result>`,
+      });
+    } catch {
+      // Non-serialisable payloads are dropped rather than failing the call.
+    }
+  }
+
   const budgeted = applyTextBudget(wrapped);
   const compressed = await compressImageContentParts(budgeted.parts, {
     telemetry:
