@@ -55,6 +55,69 @@ async fn latest_session_id(client: &mut kimi_server_client::AppServerClient) -> 
         .map(str::to_string)
 }
 
+/// Run the kimi OAuth device-code login flow and persist the granted token
+/// as `providers.kimi.apiKey` (shared by `kimi login` and `kimi acp --login`).
+async fn run_kimi_login(
+    server: &Option<String>,
+    oauth_host: Option<String>,
+    max_polls: u32,
+) -> anyhow::Result<()> {
+    let mut config = kimi_oauth::OAuthFlowConfig::kimi();
+    if let Some(host) = oauth_host {
+        config.oauth_host = host;
+    }
+    // Request a device authorization and show the user how to approve.
+    let auth = kimi_oauth::request_device_authorization(&config).await.map_err(|e| {
+        anyhow::anyhow!("device authorization failed: {e}")
+    })?;
+    println!("Open: {}", auth.verification_uri);
+    println!("Enter code: {}", auth.user_code);
+    if let Some(complete) = auth.verification_uri_complete {
+        println!("(or open: {complete})");
+    }
+    // Poll until the user approves (or the code expires/denies).
+    let interval = auth.interval.unwrap_or(5).max(1);
+    for _ in 0..max_polls {
+        tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+        match kimi_oauth::poll_device_token(&config, &auth.device_code).await.map_err(|e| {
+            anyhow::anyhow!("token poll failed: {e}")
+        })? {
+            kimi_oauth::DevicePollResult::Success { access_token, refresh_token, .. } => {
+                println!("logged in — storing kimi provider key into config");
+                // Persist the token so the native engine path can use it
+                // (config `providers.kimi.apiKey`).
+                let mut client = connect(server)?;
+                let body = client
+                    .call(
+                        kimi_protocol::methods::CONFIG_SET,
+                        serde_json::json!({
+                            "patch": { "providers": { "kimi": { "apiKey": access_token } } }
+                        }),
+                    )
+                    .await;
+                if let Some(error) = body.get("error") {
+                    eprintln!(
+                        "warning: token granted but config write failed: {}",
+                        error["message"].as_str().unwrap_or("unknown")
+                    );
+                }
+                if let Some(rt) = refresh_token {
+                    eprintln!("refresh token: {rt}");
+                }
+                return Ok(());
+            }
+            kimi_oauth::DevicePollResult::Pending => {}
+            kimi_oauth::DevicePollResult::Expired => {
+                anyhow::bail!("device code expired — run `kimi login` again");
+            }
+            kimi_oauth::DevicePollResult::Denied => {
+                anyhow::bail!("login denied");
+            }
+        }
+    }
+    anyhow::bail!("timed out waiting for approval");
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Run one prompt non-interactively.
@@ -152,7 +215,11 @@ enum Commands {
         model: Option<String>,
     },
     /// Serve the Agent Client Protocol (ACP) over stdio.
-    Acp,
+    Acp {
+        /// Run the kimi OAuth login flow instead of serving (TS parity).
+        #[arg(long)]
+        login: bool,
+    },
     /// Generate a shell completion script.
     Completions {
         /// Target shell.
@@ -1182,7 +1249,12 @@ async fn main() -> anyhow::Result<()> {
                 renderer.abort();
             }
         }
-        Commands::Acp => {
+        Commands::Acp { login } => {
+            if login {
+                // `kimi acp --login` runs the OAuth flow and exits (TS parity).
+                run_kimi_login(&server, None, 60).await?;
+                return Ok(());
+            }
             // ACP stdio server (stage E): initialize + session lifecycle,
             // driving the engine through the SDK harness.
             let harness = connect_harness(&server)?;
@@ -1196,60 +1268,7 @@ async fn main() -> anyhow::Result<()> {
             clap_complete::generate(shell, &mut cmd, "kimi", &mut std::io::stdout());
         }
         Commands::Login { oauth_host, max_polls } => {
-            let mut config = kimi_oauth::OAuthFlowConfig::kimi();
-            if let Some(host) = oauth_host {
-                config.oauth_host = host;
-            }
-            // Request a device authorization and show the user how to approve.
-            let auth = kimi_oauth::request_device_authorization(&config).await.map_err(|e| {
-                anyhow::anyhow!("device authorization failed: {e}")
-            })?;
-            println!("Open: {}", auth.verification_uri);
-            println!("Enter code: {}", auth.user_code);
-            if let Some(complete) = auth.verification_uri_complete {
-                println!("(or open: {complete})");
-            }
-            // Poll until the user approves (or the code expires/denies).
-            let interval = auth.interval.unwrap_or(5).max(1);
-            for _ in 0..max_polls {
-                tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
-                match kimi_oauth::poll_device_token(&config, &auth.device_code).await.map_err(|e| {
-                    anyhow::anyhow!("token poll failed: {e}")
-                })? {
-                    kimi_oauth::DevicePollResult::Success { access_token, refresh_token, .. } => {
-                        println!("logged in — storing kimi provider key into config");
-                        // Persist the token so the native engine path can use
-                        // it (config `providers.kimi.apiKey`).
-                        let mut client = connect(&server)?;
-                        let body = client
-                            .call(
-                                kimi_protocol::methods::CONFIG_SET,
-                                serde_json::json!({
-                                    "patch": { "providers": { "kimi": { "apiKey": access_token } } }
-                                }),
-                            )
-                            .await;
-                        if let Some(error) = body.get("error") {
-                            eprintln!(
-                                "warning: token granted but config write failed: {}",
-                                error["message"].as_str().unwrap_or("unknown")
-                            );
-                        }
-                        if let Some(rt) = refresh_token {
-                            eprintln!("refresh token: {rt}");
-                        }
-                        return Ok(());
-                    }
-                    kimi_oauth::DevicePollResult::Pending => {}
-                    kimi_oauth::DevicePollResult::Expired => {
-                        anyhow::bail!("device code expired — run `kimi login` again");
-                    }
-                    kimi_oauth::DevicePollResult::Denied => {
-                        anyhow::bail!("login denied");
-                    }
-                }
-            }
-            anyhow::bail!("timed out waiting for approval");
+            run_kimi_login(&server, oauth_host, max_polls).await?;
         }
         Commands::Logout => {
             // Remove the kimi provider from the engine config (null patch

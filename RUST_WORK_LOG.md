@@ -5,6 +5,12 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㉛ `kimi acp --login` + login flow 抽取（TS parity，已提交）**：
+> - **缺口**：TS `kimi acp --login`（跑 OAuth flow 后退出）无对应。
+> - **实现**：`run_kimi_login(server, oauth_host, max_polls)` 共享函数（device flow + `providers.kimi.apiKey` 持久化），`kimi login` 与 `kimi acp --login` 复用；Acp 命令加 `--login` 旗标（默认 false，serve 路径不变）。
+> - **验证**：acp_initialize_handshake 集成测试仍绿（serve 路径未破坏）；clippy kimi-cli 0 警告。
+> - **注意**：`--login` 路径需网络（device auth），未加集成测试。
+
 > **✅ 2026-08-03 ㉚ TUI thinking 流式（llm.delta think 部分，已提交）**：
 > - **缺口**：引擎发 `llm.delta part.type=think`（模型推理），宿主全跳过——kimi-k2 等思考模型推理过程不可见。
 > - **kimi-ui**：`stream_thinking(&Value) -> Option<&str>`（think 部分；text/非流式 → None）+ 测试（7 → 8）。
