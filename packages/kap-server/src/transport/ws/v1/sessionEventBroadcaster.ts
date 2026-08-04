@@ -1086,7 +1086,19 @@ export class SessionEventBroadcaster {
     // ported from the former `record.signal(agentEvent)` call sites); the declared
     // `DomainEventMap` payload types are deliberately wider than the protocol
     // contract, hence the assertion via `unknown`.
-    const wireEvent = { ...event, agentId, sessionId } as unknown as Event;
+    let wireEvent: Event;
+    if (event.type === 'turn.started') {
+      // `promptAttachments` is an internal transcript-projection input, not part
+      // of the v1 wire contract (`turnStartedEventSchema` stops at
+      // {type, turnId, origin, prompt?}). Strip it at the edge so the payload —
+      // video-prompt turns included — keeps exactly the pre-attachment field
+      // set. The journal records this same stripped envelope, so the one strip
+      // covers live fan-out and every replay path (memory tail + cursor read).
+      const { promptAttachments: _internal, ...wireFields } = event;
+      wireEvent = { ...wireFields, agentId, sessionId } as unknown as Event;
+    } else {
+      wireEvent = { ...event, agentId, sessionId } as unknown as Event;
+    }
     const volatile = isVolatileSignal(event.type);
     state.queue = state.queue
       .then(() => this.dispatch(state, wireEvent, volatile))

@@ -824,6 +824,96 @@ describe('SessionEventBroadcaster', () => {
     expect(result.currentSeq).toBe(6);
   });
 
+  // The v1 wire contract for `turn.started` is exactly
+  // {type, turnId, origin, prompt?, agentId, sessionId} — the engine-internal
+  // `promptAttachments` projection input must never reach the payload, and a
+  // video prompt's frame stays field-identical to the pre-attachment shape.
+  const TURN_STARTED_WIRE_KEYS = ['agentId', 'origin', 'prompt', 'sessionId', 'turnId', 'type'];
+
+  it('strips the internal promptAttachments from an image-prompt turn.started (live + tail replay)', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(
+      agentEvent('turn.started', {
+        turnId: 1,
+        origin: { kind: 'user' },
+        prompt: 'what is in this picture?',
+        promptAttachments: [{ kind: 'image', fileId: 'file_img_1', name: 'photo.png' }],
+      }),
+    );
+    await bc.getCursor('s1'); // drain
+
+    const live = envelopes.find((e) => e.type === 'turn.started');
+    expect(live).toBeDefined();
+    expect(live!.payload).not.toHaveProperty('promptAttachments');
+    expect(Object.keys(live!.payload as Record<string, unknown>).sort()).toEqual(
+      TURN_STARTED_WIRE_KEYS,
+    );
+
+    // Cursor replay within the in-memory tail serves the same stripped envelope.
+    const replay = await bc.getBufferedSince('s1', { seq: 0 });
+    const replayed = replay.events.find((e) => e.envelope.type === 'turn.started');
+    expect(replayed).toBeDefined();
+    expect(replayed!.envelope.payload).not.toHaveProperty('promptAttachments');
+    expect(Object.keys(replayed!.envelope.payload as Record<string, unknown>).sort()).toEqual(
+      TURN_STARTED_WIRE_KEYS,
+    );
+  });
+
+  it('keeps a video-prompt turn.started wire payload at the pre-attachment field set (live + disk-journal replay)', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(
+      agentEvent('turn.started', {
+        turnId: 1,
+        origin: { kind: 'user' },
+        prompt: 'summarize this clip',
+        promptAttachments: [{ kind: 'video', fileId: 'file_vid_1', name: 'clip.mp4' }],
+      }),
+    );
+    await bc.getCursor('s1'); // drain between the turn boundaries (see note above)
+
+    const live = envelopes.find(
+      (e) => e.type === 'turn.started' && (e.payload as { turnId?: number }).turnId === 1,
+    );
+    expect(live).toBeDefined();
+    expect(live!.payload).not.toHaveProperty('promptAttachments');
+    expect(Object.keys(live!.payload as Record<string, unknown>).sort()).toEqual(
+      TURN_STARTED_WIRE_KEYS,
+    );
+
+    // The journal persists the same stripped envelope: reopen the session
+    // against the same eventsDir (a fresh instance has an empty in-memory
+    // tail, so the cursor replay is served by the on-disk journal) and the
+    // video turn.started still carries exactly the pre-attachment field set.
+    await bc.close(); // flushes the journal write-behind buffer
+    bc = new SessionEventBroadcaster({
+      eventsDir: dir,
+      core: makeCore(sessions, eventBus),
+      maxBufferSize: 20,
+    });
+    const replay = await bc.getBufferedSince('s1', { seq: 0 });
+    expect(replay.resyncRequired).toBe(false);
+    const replayed = replay.events.find(
+      (e) =>
+        e.envelope.type === 'turn.started' &&
+        (e.envelope.payload as { turnId?: number }).turnId === 1,
+    );
+    expect(replayed).toBeDefined();
+    expect(replayed!.envelope.payload).not.toHaveProperty('promptAttachments');
+    expect(Object.keys(replayed!.envelope.payload as Record<string, unknown>).sort()).toEqual(
+      TURN_STARTED_WIRE_KEYS,
+    );
+  });
+
   it('returns epoch_changed for a mismatched epoch', async () => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');
