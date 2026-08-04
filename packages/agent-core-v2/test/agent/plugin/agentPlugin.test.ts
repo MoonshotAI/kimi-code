@@ -19,6 +19,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSessionStart, ReloadSummary } from '#/app/plugin/types';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
+import { summarizeSkill } from '#/app/skillCatalog/types';
 import type { SkillDefinition } from '#/app/skillCatalog/types';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 
@@ -198,6 +199,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
       onDidChange: sinkChange.event,
       load: async () => {},
       reload: async () => {},
+      list: async () => catalog.listSkills().map(summarizeSkill),
     };
 
     ctx = createTestAgent(
@@ -244,6 +246,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
       onDidChange: sinkChange.event,
       load: async () => {},
       reload: async () => {},
+      list: async () => catalog.listSkills().map(summarizeSkill),
     };
 
     ctx = createTestAgent(

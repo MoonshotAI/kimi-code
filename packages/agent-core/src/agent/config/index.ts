@@ -45,6 +45,20 @@ export class ConfigState {
   }
 
   update(changed: AgentConfigUpdateData): void {
+    this.applyUpdate(changed, true);
+  }
+
+  /**
+   * Restore config state without synthesizing a v1 replay record. This is
+   * used when a v2-only wire record is projected onto v1 state: the state
+   * should be available to the resumed agent, but the v2 record must not
+   * appear as a `config_updated` event in the replay surface.
+   */
+  restore(changed: AgentConfigUpdateData): void {
+    this.applyUpdate(changed, false);
+  }
+
+  private applyUpdate(changed: AgentConfigUpdateData, emitReplayRecord: boolean): void {
     if (Object.keys(changed).length === 0) return;
 
     const targetAlias = changed.modelAlias ?? this._modelAlias;
@@ -86,10 +100,12 @@ export class ConfigState {
       type: 'config.update',
       ...effectiveChanged,
     });
-    this.agent.replayBuilder.push({
-      type: 'config_updated',
-      config: effectiveChanged,
-    });
+    if (emitReplayRecord) {
+      this.agent.replayBuilder.push({
+        type: 'config_updated',
+        config: effectiveChanged,
+      });
+    }
     if (changed.cwd) {
       this._cwd = changed.cwd;
       this.agent.setKaos(this.agent.kaos.withCwd(changed.cwd));

@@ -24,7 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { makeHookRunner } from '../agent/externalHooks/runner-stub';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -746,6 +746,31 @@ describe('Agent tool description', () => {
     expect(description).toContain('- primary: mock-model');
   });
 
+  it('advertises the resolved capability flags for each selectable model', () => {
+    ctx = createTestAgent(secondaryModelFlags(), {
+      initialConfig: {
+        secondaryModel: { model: 'secondary-model' },
+        models: {
+          'secondary-model': {
+            provider: 'test-provider',
+            model: 'secondary-model',
+            maxContextSize: 262_144,
+            capabilities: ['image_in', 'thinking'],
+          },
+        },
+      },
+    });
+
+    const description = agentDescription();
+
+    expect(description).toContain(
+      '- secondary: secondary-model (default) — the configured secondary model; prefer it for routine subagent tasks; capabilities: image_in, thinking',
+    );
+    expect(description).toContain(
+      '- primary: mock-model — the main model you are running on; use it for hard, quality-sensitive subagent tasks; capabilities: none',
+    );
+  });
+
   it('omits the models section when configured but the experiment is disabled', () => {
     ctx = createTestAgent(secondaryModelFlags(false), {
       initialConfig: { secondaryModel: { model: 'provider/secondary' } },
@@ -1190,11 +1215,12 @@ describe('Agent tool execution contract', () => {
       'explore',
       new Map([
         [
-          IAgentContextSizeService,
+          IAgentTokenCountingService,
           {
             _serviceBrand: undefined,
             get: () => ({ size: 321, measured: 300, estimated: 21 }),
             measured: () => {},
+            statusSize: () => 321,
           },
         ],
       ]),

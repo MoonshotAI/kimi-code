@@ -8,6 +8,7 @@ import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentSkillService } from '#/agent/skill/skill';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
+import { summarizeSkill } from '#/app/skillCatalog/types';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { AgentSkillService } from '#/agent/skill/skillService';
@@ -89,6 +90,7 @@ describe('AgentSkillService', () => {
       onDidChange: () => ({ dispose: () => {} }),
       load: async () => {},
       reload: async () => {},
+      list: async () => skills.listSkills().map(summarizeSkill),
     };
     ix.set(ISessionSkillCatalog, skillCatalog);
     ix.set(IAgentSkillService, new SyncDescriptor(AgentSkillService));
@@ -127,6 +129,7 @@ describe('AgentSkillService', () => {
       onDidChange: () => ({ dispose: () => {} }),
       load: async () => {},
       reload: async () => {},
+      list: async () => skills.listSkills().map(summarizeSkill),
     } satisfies ISessionSkillCatalog);
     ix.set(IAgentSkillService, new SyncDescriptor(AgentSkillService));
 
@@ -181,6 +184,7 @@ describe('SkillTool', () => {
       onDidChange: () => ({ dispose: () => {} }),
       load: async () => {},
       reload: async () => {},
+      list: async () => skills.listSkills().map(summarizeSkill),
     } satisfies ISessionSkillCatalog);
     ix.set(IAgentSkillService, new SyncDescriptor(AgentSkillService));
   });

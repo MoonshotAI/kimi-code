@@ -75,7 +75,7 @@ import { OP_REGISTRY } from '#/wire/op';
 import { IProtocolAdapterRegistry, type ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
 import { hasProviderDefinition } from '#/kosong/provider/providerDefinition';
-import type { SkillCatalog } from '#/app/skillCatalog/types';
+import { summarizeSkill, type SkillCatalog } from '#/app/skillCatalog/types';
 import { type ModelCapability } from '#/kosong/contract/capability';
 import { isToolCall, isToolCallPart, type ContentPart, type Message as KosongMessage, type StreamedMessagePart } from '#/kosong/contract/message';
 import { type ThinkingEffort } from '#/kosong/contract/provider';
@@ -105,7 +105,6 @@ import {
   IConfigService,
   IAgentContextMemoryService,
   IAgentContextProjectorService,
-  IAgentContextSizeService,
   IAgentExternalHooksService,
   IExternalHooksRunnerService,
   IAgentFullCompactionService,
@@ -124,6 +123,7 @@ import {
   IAgentLoopContinuationService,
   IAgentSwarmService,
   AgentSwarmService,
+  IAgentTokenCountingService,
   IAppStateService,
   ITelemetryService,
   IHostTerminalService,
@@ -659,18 +659,24 @@ function resolveExternalHooksRunner(
 function isRunnerLike(
   value: Pick<IExternalHooksRunnerService, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'>,
 ): value is IExternalHooksRunnerService {
+  const candidate = value as IExternalHooksRunnerService;
   return (
-    typeof value.trigger === 'function' &&
-    typeof value.triggerBlock === 'function' &&
-    typeof value.fireAndForgetTrigger === 'function'
+    typeof candidate.trigger === 'function' &&
+    typeof candidate.triggerBlock === 'function' &&
+    typeof candidate.fireAndForgetTrigger === 'function' &&
+    typeof candidate.hasHooksFor === 'function' &&
+    candidate.ready instanceof Promise
   );
 }
 
 const noopHookRunner: IExternalHooksRunnerService = {
   _serviceBrand: undefined,
+  ready: Promise.resolve(),
+  onDidReload: Event.None as Event<void>,
   trigger: async () => [],
   triggerBlock: async () => undefined,
   fireAndForgetTrigger: async () => [],
+  hasHooksFor: () => false,
 };
 
 export function permissionModeServices(mode: PermissionMode): TestAgentServiceOverride {
@@ -727,6 +733,7 @@ function createSessionSkillCatalog(catalog: SkillCatalog): ISessionSkillCatalog 
     onDidChange: Event.None as Event<string>,
     load: async () => { },
     reload: async () => { },
+    list: async () => catalog.listSkills().map(summarizeSkill),
   };
 }
 
@@ -1342,8 +1349,8 @@ export class AgentTestContext {
     return this.get(IAgentContextMemoryService);
   }
 
-  get contextSize(): IAgentContextSizeService {
-    return this.get(IAgentContextSizeService);
+  get tokenCounting(): IAgentTokenCountingService {
+    return this.get(IAgentTokenCountingService);
   }
 
   get wire(): IWireService {
@@ -1382,7 +1389,7 @@ export class AgentTestContext {
 
   private initializeRestorableServices(): void {
     const context = this.get(IAgentContextMemoryService);
-    const contextSize = this.get(IAgentContextSizeService);
+    const tokenCounting = this.get(IAgentTokenCountingService);
     const usage = this.get(IAgentUsageService);
     const permissionMode = this.get(IAgentPermissionModeService);
     const permissionRules = this.get(IAgentPermissionRulesService);
@@ -1403,7 +1410,7 @@ export class AgentTestContext {
 
     context.get();
     void swarm.isActive;
-    contextSize.get();
+    tokenCounting.get();
     usage.status();
     tasks.list(false);
     permission.data();
@@ -1481,10 +1488,10 @@ export class AgentTestContext {
 
   contextData(): { readonly history: readonly ContextMessage[]; readonly tokenCount: number } {
     const context = this.get(IAgentContextMemoryService);
-    const contextSize = this.get(IAgentContextSizeService);
+    const tokenCounting = this.get(IAgentTokenCountingService);
     return {
       history: context.get(),
-      tokenCount: contextSize.get().measured,
+      tokenCount: tokenCounting.get().measured,
     };
   }
 
@@ -1918,7 +1925,7 @@ export class AgentTestContext {
     const env = this.root.accessor.get(IHostEnvironment);
     const bootstrapService = this.root.accessor.get(IBootstrapService);
     const cwd = this.cwd;
-    let current: LoadedAgentsMd = { content: '', warning: undefined };
+    let current: LoadedAgentsMd = { content: '', warning: undefined, paths: [] };
     return {
       _serviceBrand: undefined,
       get ready(): Promise<void> {
@@ -1933,6 +1940,9 @@ export class AgentTestContext {
       },
       get agentsMdWarning() {
         return current.warning;
+      },
+      get agentsMdPaths() {
+        return current.paths;
       },
       onDidChange: Event.None as Event<void>,
     };
@@ -2175,8 +2185,8 @@ export class AgentTestContext {
       inputCacheCreation: 0,
     };
     const context = this.get(IAgentContextMemoryService);
-    const contextSize = this.get(IAgentContextSizeService);
-    contextSize.measured(context.get(), [], usage);
+    const tokenCounting = this.get(IAgentTokenCountingService);
+    tokenCounting.measured(context.get(), [], usage);
     const profile = this.get(IAgentProfileService);
     const usageService = this.get(IAgentUsageService);
     usageService.record(profile.data().modelAlias ?? 'mock-model', usage, {

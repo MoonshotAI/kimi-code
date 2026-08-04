@@ -6,6 +6,26 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.32.0 (2026-08-04)
+
+### Features
+
+- Add four hook events: `TurnStarted`, `UserPromptQueued`, `TaskStarted`, and `SessionHeartbeat`. Configure them under `[[hooks]]` in `config.toml` — see [Hooks](https://moonshotai.github.io/kimi-code/en/customization/hooks.html) for details.
+
+### Polish
+
+- Rename two `[loop_control]` keys: `max_retries_per_step` → `max_attempts_per_step` and `max_steps_per_run` → `max_steps_per_turn`; the old keys stop working with a rename warning at startup — see [loop_control](https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#loop-control).
+- Add a `[token_counting]` config section: when a provider doesn't report token usage, switch the context-size display to local estimates — see [token_counting](https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#token-counting).
+
+### Bug Fixes
+
+- Fix answers to interactive question prompts being rejected when the model provider returns tool call IDs containing colons (some OpenAI-compatible gateways).
+- Fix automatic context compaction getting stuck retrying an oversized request until it fails.
+- Fall back to the built-in models.dev catalog snapshot when the public catalog is unreachable, so importing a known provider still works offline or in blocked networks.
+- Fix the context window limit showing as 0 when no model is configured; it now falls back to the default model.
+- web: Fix dark-mode monochrome controls and align the chat composer corner radius with the design system.
+- Fix the `/login` already-logged-in confirmation being hard to read; it now uses the success color.
+
 ## 0.31.1 (2026-07-31)
 
 ### Polish

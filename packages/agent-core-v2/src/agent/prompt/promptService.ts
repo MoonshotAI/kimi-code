@@ -51,6 +51,7 @@ declare module '#/app/event/eventBus' {
     'prompt.completed': { type: 'prompt.completed'; promptId: string; finishedAt: string; reason: 'completed' | 'failed' | 'blocked' };
     'prompt.aborted': { type: 'prompt.aborted'; promptId: string; abortedAt: string };
     'prompt.steered': { type: 'prompt.steered'; activePromptId: string; promptIds: string[]; content: ContentPart[]; steeredAt: string };
+    'prompt.queued': { type: 'prompt.queued'; promptId: string; content: ContentPart[]; queueLength: number };
   }
 }
 
@@ -116,10 +117,13 @@ export class AgentPromptService implements IAgentPromptService {
     this.pending.push(record);
     if (this.active === undefined && !this.launching) {
       if (this.fullCompaction.compacting !== null && this.loop.status().state !== 'running') {
+        this.publishQueued(record);
         return record.handle;
       }
       void this.startNext();
       await Promise.race([record.launchedDeferred.promise, record.completionDeferred.promise]);
+    } else {
+      this.publishQueued(record);
     }
     return record.handle;
   }
@@ -254,6 +258,10 @@ export class AgentPromptService implements IAgentPromptService {
     if (delivery.kind === 'steer') await this.inject(delivery.message as ContextMessage);
   }
   private publishCompleted(promptId: string, reason: 'completed' | 'failed' | 'blocked'): void { this.eventBus.publish({ type: 'prompt.completed', promptId, finishedAt: new Date().toISOString(), reason }); }
+  private publishQueued(record: Record): void {
+    if ((record.message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return;
+    this.eventBus.publish({ type: 'prompt.queued', promptId: record.id, content: record.message.content, queueLength: this.pending.length });
+  }
   private publishAborted(promptId: string): void { this.eventBus.publish({ type: 'prompt.aborted', promptId, abortedAt: new Date().toISOString() }); }
 }
 

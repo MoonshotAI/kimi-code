@@ -841,7 +841,7 @@ describe('video blocks', () => {
     // "Unsupported media type for base64 video" does NOT match the
     // image-format non-retryable patterns, so stepRetry claims it. Cap the
     // retries at 2 attempts (1 re-run, ~500ms backoff) for the suite's sake.
-    await klient.global.config.set({ domain: 'loopControl', patch: { maxRetriesPerStep: 2 } });
+    await klient.global.config.set({ domain: 'loopControl', patch: { maxAttemptsPerStep: 2 } });
     try {
       const ctx = await newCase(M_ANTHROPIC, 'anthropic-video-mime');
       resetMock(queueScript(OK_ANTHROPIC));
@@ -871,7 +871,7 @@ describe('video blocks', () => {
       expect(ctx.eventNames()).toEqual(['turn.started', 'turn.ended', 'error', 'prompt.completed']);
       expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('failed');
     } finally {
-      await klient.global.config.set({ domain: 'loopControl', patch: { maxRetriesPerStep: 10 } });
+      await klient.global.config.set({ domain: 'loopControl', patch: { maxAttemptsPerStep: 10 } });
     }
   }, 30_000);
 });

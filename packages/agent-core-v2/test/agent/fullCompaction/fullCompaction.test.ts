@@ -50,7 +50,7 @@ import {
   type ToolExecution,
 } from '#/index';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
@@ -1614,7 +1614,10 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         source: 'auto',
         tokens_before: 46,
-        tokens_after: 166,
+        // 9 measured summary output tokens (scripted compaction exchange) +
+        // 21 estimated tokens for the kept user messages — the summary
+        // component is the REAL provider count, not a text estimate.
+        tokens_after: 30,
         compacted_count: 7,
         retry_count: 0,
       }),
@@ -2150,6 +2153,71 @@ describe('FullCompaction', () => {
         ],
       ]
     `);
+    await ctx.expectResumeMatches();
+  });
+
+  it('recovers from compaction-request overflow under the measured token-counting strategy', async () => {
+    let callCount = 0;
+    const compactionInputLengths: number[] = [];
+    const generate: GenerateFn = async (_provider, _system, _tools, history, callbacks) => {
+      callCount += 1;
+      if (callCount === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-measured-overflow');
+      }
+      if (callCount === 2) {
+        // The compaction request itself overflows once; the backoff must
+        // shrink the history for the retry. A strategy-gated (all-zero)
+        // estimator would retry the SAME messages until the attempt limit and
+        // fail the turn.
+        compactionInputLengths.push(history.length);
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-measured-shrink');
+      }
+      if (callCount === 3) {
+        compactionInputLengths.push(history.length);
+        return textResult('Measured-strategy compacted summary.');
+      }
+      if (callCount === 4) {
+        await callbacks?.onMessagePart?.({ type: 'text', text: 'Recovered under measured.' });
+        return textResult('Recovered under measured.');
+      }
+      throw new Error(`Unexpected generate call ${String(callCount)}`);
+    };
+    const ctx = testAgent({
+      generate,
+      initialConfig: {
+        providers: {},
+        tokenCounting: { strategy: 'measured' },
+      },
+    });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.newEvents();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Retry after measured overflow' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(callCount).toBe(4);
+    expect(compactionInputLengths).toHaveLength(2);
+    expect(compactionInputLengths[1]!).toBeLessThan(compactionInputLengths[0]!);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'compaction.completed',
+        args: expect.objectContaining({
+          result: expect.objectContaining({
+            summary: 'Measured-strategy compacted summary.',
+          }),
+        }),
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: { turnId: 0, reason: 'completed' },
+      }),
+    );
     await ctx.expectResumeMatches();
   });
 
@@ -3286,7 +3354,7 @@ describe('goal reminder re-injection after full compaction', () => {
         lastCompactedTokenCount: number | null;
       }
     ).lastCompactedTokenCount;
-    expect(floor).toBe(ctx.get(IAgentContextSizeService).get().size);
+    expect(floor).toBe(ctx.get(IAgentTokenCountingService).get().size);
     expect(floor!).toBeGreaterThan(tokensAfter as number);
 
     ctx.mockNextResponse({ type: 'text', text: 'Reply after compaction.' });

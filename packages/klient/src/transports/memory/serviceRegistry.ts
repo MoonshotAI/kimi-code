@@ -29,6 +29,7 @@ import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMeta
 import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
 import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
 import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
+import { ISessionSkillCatalog } from '@moonshot-ai/agent-core-v2/session/sessionSkillCatalog/skillCatalog';
 import { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
 import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/agent/plan/plan';
@@ -36,6 +37,8 @@ import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/p
 import { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
 import { IAgentUsageService } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
+import { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
+import { IAgentFullCompactionService } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/fullCompaction';
 
 /** Wire service name (decorator id string) → token. */
 export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>> = {
@@ -59,6 +62,7 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   sessionInteractionService: ISessionInteractionService,
   sessionApprovalService: ISessionApprovalService,
   sessionQuestionService: ISessionQuestionService,
+  sessionSkillCatalog: ISessionSkillCatalog,
   agentRPCService: IAgentRPCService,
   agentActivityView: IAgentActivityView,
   agentShellCommandService: IAgentShellCommandService,
@@ -66,6 +70,8 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   agentUsageService: IAgentUsageService,
   agentPlanService: IAgentPlanService,
   agentTaskService: IAgentTaskService,
+  agentMcpService: IAgentMcpService,
+  agentFullCompactionService: IAgentFullCompactionService,
 };
 
 export { IEventService };

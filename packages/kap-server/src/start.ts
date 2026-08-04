@@ -10,12 +10,14 @@
 import {
   bootstrap,
   IConfigService,
+  IEventService,
   IProviderDiscoveryService,
   IWorkspaceService,
   logSeed,
   resolveConfigPath,
   resolveKimiHome,
   resolveLoggingConfig,
+  type ConfigDiagnostic,
   type Scope,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
@@ -49,6 +51,7 @@ import {
 } from './transport/ws/connectionRegistry';
 import { extractWsBearerToken } from './transport/ws/bearerProtocol';
 import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcaster';
+import type { ConfigWarningItem } from './transport/ws/v1/events';
 import { FsWatchBridge } from './transport/ws/v1/fsWatchBridge';
 import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
 import { getServerVersion } from './version';
@@ -62,7 +65,6 @@ import { createOriginHook, isOriginAllowed, parseCorsOrigins } from './middlewar
 import { createSecurityHeadersHook } from './middleware/securityHeaders';
 import { createAuthHook } from './middleware/auth';
 import { GuiStoreService } from './services/guiStore/guiStoreService';
-import { loadSnapshotConfig, SnapshotReader } from './services/snapshot';
 import {
   initializeServerTelemetry,
   type ServerTelemetry,
@@ -351,6 +353,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
   const close = async (): Promise<void> => {
     await app.close();
+    configWarningSubscription.dispose();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
     // Telemetry is best-effort and must never prevent core or instance cleanup.
@@ -387,13 +390,36 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   });
   const fsWatchBridge = new FsWatchBridge({ core, logger });
 
-  const snapshotReader = new SnapshotReader({
-    homeDir,
-    core,
-    broadcaster,
-    logger,
-    config: loadSnapshotConfig(),
-  });
+  // Push config warnings (deprecated keys / env vars in use, invalid sections)
+  // to every WS connection as `event.config.warning` whenever the config
+  // service's warning set changes. The broadcaster fans the DomainEvent out
+  // globally (see `onCoreEvent`); delivery is live-only, so the current set is
+  // also published once config is ready for already-connected clients (an
+  // empty initial set publishes nothing — silence already means no warnings).
+  const configService = core.accessor.get(IConfigService);
+  const publishConfigWarnings = (diagnostics: readonly ConfigDiagnostic[]): void => {
+    const warnings: ConfigWarningItem[] = diagnostics
+      .filter((diagnostic) => diagnostic.severity === 'warning')
+      .map((diagnostic) =>
+        diagnostic.domain === undefined
+          ? { message: diagnostic.message }
+          : { domain: diagnostic.domain, message: diagnostic.message },
+      );
+    core.accessor.get(IEventService).publish({
+      type: 'event.config.warning',
+      payload: { warnings },
+    });
+  };
+  const configWarningSubscription = configService.onDidChangeDiagnostics(publishConfigWarnings);
+  void configService.ready
+    .then(() => {
+      if (configService.diagnostics().some((diagnostic) => diagnostic.severity === 'warning')) {
+        publishConfigWarnings(configService.diagnostics());
+      }
+    })
+    .catch(() => {
+      /* config readiness is best-effort; warnings are advisory */
+    });
 
   async function registerOpenApi(): Promise<void> {
     const { default: swagger } = await import('@fastify/swagger');
@@ -450,7 +476,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     },
     connectionRegistry,
     broadcaster,
-    snapshotReader,
     transcriptService,
     dangerousBypassAuth: opts.disableAuth === true,
   });

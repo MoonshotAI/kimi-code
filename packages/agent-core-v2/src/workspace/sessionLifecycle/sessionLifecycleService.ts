@@ -8,7 +8,12 @@
  * slots instance it runs around create/close,
  * tearing sessions down on close/archive — archiving flags the session's
  * metadata, removes its agents, restoring clears
- * the archived flag, and broadcasts the transition; session start and
+ * the archived flag, and broadcasts the transition; deleting closes a live
+ * session through the same flow, then removes the session directory
+ * (metadata, agent wire records, plans, logs), evicts the index read-model
+ * entry, and appends a `deleted` tombstone to the shared
+ * `session_index.jsonl`, raising `session.not_found` for ids this handler
+ * never persisted. Session start and
  * resume failures are reported through telemetry. Each Session scope
  * receives a telemetry view bound to its session id, while failures before
  * a scope is available use an ephemeral context view. Closing a session
@@ -40,9 +45,16 @@
  * with a fire-and-forget `reload()` so a fixed agent file unblocks later
  * creates
  * (the workspace skill catalog, by contrast, is kicked fire-and-forget).
- * The handler's shared MCP manager (file + plugin servers only — sessions
- * cannot contribute servers) is awaited before create/resume returns. The
- * session-level services whose subscriptions
+ * The handler's shared MCP manager is NOT awaited before create/resume
+ * returns — it connects fire-and-forget at Workspace scope, and the seeded
+ * handle's `ready` promise lets the agent's LLM steps wait on it instead
+ * (see `AgentMcpService`). A session created with ephemeral `mcpServers`
+ * additionally gets a session overlay from `workspaceMcp` (session-owned
+ * connections, seeded as a merged view, shut down when the session handle
+ * disposes — with a backstop in the service's own dispose for teardown
+ * paths that bypass the handle wrapper), likewise connected in the
+ * background.
+ * The session-level services whose subscriptions
  * must exist before the first agent / turn (external hooks, cron, the
  * secondary-model startup warning) opt into `OnScopeCreated` activation.
  */
@@ -121,7 +133,10 @@ import {
 } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
-import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
+import {
+  IWorkspaceMcpService,
+  type ISessionMcpOverlay,
+} from '#/workspace/workspaceMcp/workspaceMcp';
 import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
 import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceToolPolicy';
 
@@ -155,6 +170,14 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private readonly _onDidForkSession = this._register(new Emitter<SessionForkedEvent>());
   readonly onDidForkSession: Event<SessionForkedEvent> = this._onDidForkSession.event;
   private readonly resuming = new Map<string, Promise<ISessionScopeHandle | undefined>>();
+  /**
+   * Live per-session MCP overlays keyed by session id. The session handle's
+   * dispose removes its overlay here before shutting it down, so whatever
+   * remains at service teardown (the DI container disposes session scopes
+   * directly, bypassing the handle wrapper) is shut down from the
+   * service's own dispose instead — no overlay outlives the lifecycle.
+   */
+  private readonly liveOverlays = new Map<string, ISessionMcpOverlay>();
 
   constructor(
     @IInstantiationService private readonly instantiation: IInstantiationService,
@@ -187,6 +210,16 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
   ) {
     super();
+    this._register({
+      dispose: () => {
+        // Service teardown (e.g. workspace/root scope disposal) bypasses the
+        // per-session handle wrappers — shut down every overlay still live.
+        for (const overlay of this.liveOverlays.values()) {
+          void overlay.shutdown();
+        }
+        this.liveOverlays.clear();
+      },
+    });
   }
 
   private get workspaceId(): string {
@@ -247,7 +280,14 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       'onWillCloseSession',
     ]);
     await this.hostEnv.ready;
-    const handle = createScopedChildHandle(
+    const mcpOverlay =
+      opts.mcpServers !== undefined && Object.keys(opts.mcpServers).length > 0
+        ? this.mcp.sessionOverlay(opts.mcpServers, { stdioCwd: opts.workDir })
+        : undefined;
+    if (mcpOverlay !== undefined) {
+      this.liveOverlays.set(opts.sessionId, mcpOverlay);
+    }
+    const scopeHandle = createScopedChildHandle(
       this.instantiation,
       LifecycleScope.Session,
       opts.sessionId,
@@ -262,13 +302,28 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             workspaceKey: workspaceId,
           }),
           ...sessionInstructionsProviderSeed(this.instructions.sessionProvider()),
-          ...sessionMcpHandleSeed(this.mcp.sessionHandle()),
+          ...sessionMcpHandleSeed(mcpOverlay?.handle ?? this.mcp.sessionHandle()),
           ...sessionWorkspaceInfoSeed(this.workspaceDirs.sessionInfo()),
           ...sessionToolPolicyGateSeed(this.toolPolicy.sessionGate()),
           [ISessionProcessRunner, this.processRunner],
         ],
       },
     ) as ISessionScopeHandle;
+    const handle: ISessionScopeHandle =
+      mcpOverlay === undefined
+        ? scopeHandle
+        : {
+            ...scopeHandle,
+            dispose: () => {
+              // Delete-then-shutdown is atomic (single-threaded): the service
+              // teardown path only shuts down overlays still in the map, so a
+              // handle dispose and a service dispose can never double-shutdown.
+              if (this.liveOverlays.delete(opts.sessionId)) {
+                void mcpOverlay.shutdown();
+              }
+              scopeHandle.dispose();
+            },
+          };
     try {
       await handle.accessor.get(ISessionMetadata).ready;
       await handle.accessor.get(ISessionToolPolicy).ready;
@@ -280,7 +335,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         this.userAgentProfileLoader.ready,
         this.pluginAgentProfileLoader.ready,
       ]);
-      await this.mcp.ready;
     } catch (error) {
       handle.dispose();
       void this.explicitAgentProfileLoader.reload().catch(() => undefined);
@@ -349,6 +403,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       sessionId,
       workDir,
       additionalDirs: opts?.additionalDirs,
+      mcpServers: opts?.mcpServers,
     });
     const agents = handle.accessor.get(IAgentLifecycleService);
     if (agents.get(MAIN_AGENT_ID) === undefined) {
@@ -386,17 +441,40 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       type: 'event.session.archived',
       payload: { sessionId },
     });
-    await this.announceWillClose({ sessionId, handle, reason: 'exit' });
+    await this.announceWillClose({ sessionId, handle, reason: 'archive' });
     this.sessions.delete(sessionId);
     handle.dispose();
     this._onDidArchiveSession.fire({ sessionId });
   }
 
-  async restore(sessionId: string): Promise<ISessionScopeHandle | undefined> {
-    const handle = await this.resume(sessionId);
+  async restore(
+    sessionId: string,
+    opts?: ResumeSessionOptions,
+  ): Promise<ISessionScopeHandle | undefined> {
+    const handle = await this.resume(sessionId, opts);
     if (handle === undefined) return undefined;
     await handle.accessor.get(ISessionMetadata).setArchived(false);
     return handle;
+  }
+
+  async delete(sessionId: string): Promise<void> {
+    const inflight = this.resuming.get(sessionId);
+    if (inflight !== undefined) {
+      await inflight.catch(() => undefined);
+    }
+    const handle = this.sessions.get(sessionId);
+    const summary = await this.index.get(sessionId);
+    const persistedHere = summary !== undefined && summary.workspaceId === this.workspaceId;
+    if (handle === undefined && !persistedHere) {
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
+    }
+    if (handle !== undefined) {
+      await this.close(sessionId);
+    }
+    await this.hostFs.remove(sessionDirOf(this.bootstrap.homeDir, this.handlerScope, sessionId));
+    await this.index.remove(sessionId);
+    this.appendLogStore.append('', 'session_index.jsonl', { sessionId, deleted: true });
+    await this.appendLogStore.flush();
   }
 
   private async announceWillClose(event: SessionWillCloseEvent): Promise<void> {

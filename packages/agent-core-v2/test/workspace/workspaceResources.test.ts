@@ -410,6 +410,9 @@ describe('workspace resource sharing (handler chain)', () => {
     const m2 = s2.accessor.get(ISessionMcpHandle);
     expect(m1.connectionManager).toBe(m2.connectionManager);
     expect(connectAll).toHaveBeenCalledTimes(1);
+    // Session creation no longer waits for the initial connect; the seeded
+    // handle's readiness promise is the wait point.
+    await m1.ready;
     expect(m1.connectionManager.get('alpha')?.status).toBe('connected');
   }, 20000);
 

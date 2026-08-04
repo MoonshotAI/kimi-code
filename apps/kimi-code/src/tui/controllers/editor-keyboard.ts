@@ -23,6 +23,7 @@ import type { BtwPanelController } from './btw-panel';
 export interface EditorKeyboardHost {
   state: TUIState;
   session: Session | undefined;
+  readonly engineV2: boolean;
   cancelInFlight: (() => void) | undefined;
   /**
    * The host's harness (KimiTUI always has one). Its `imageLimits` drives
@@ -51,6 +52,7 @@ export interface EditorKeyboardHost {
   hideSessionPicker(): void;
   openUndoSelector(): void;
   stop(exitCode?: number): Promise<void>;
+  ensureSession(): Promise<Session | undefined>;
   handlePlanToggle(next: boolean): void;
   handleInputModeChange(mode: 'prompt' | 'bash'): void;
   clearQueuedMessages(): void;
@@ -212,14 +214,25 @@ export class EditorKeyboardController {
     };
 
     editor.onShiftTab = () => {
+      const togglePlan = (): void => {
+        const next = !host.state.appState.planMode;
+        host.track('shortcut_plan_toggle', { enabled: next });
+        host.track('shortcut_mode_switch', { to_mode: next ? 'plan' : 'agent' });
+        host.handlePlanToggle(next);
+      };
       if (host.session === undefined) {
-        host.showError(NO_ACTIVE_SESSION_MESSAGE);
+        if (!host.engineV2) {
+          host.showError(NO_ACTIVE_SESSION_MESSAGE);
+          return;
+        }
+        // v2 session-less: lazy-create the session, then toggle — the same
+        // path /plan takes.
+        void host.ensureSession().then((session) => {
+          if (session !== undefined) togglePlan();
+        });
         return;
       }
-      const next = !host.state.appState.planMode;
-      host.track('shortcut_plan_toggle', { enabled: next });
-      host.track('shortcut_mode_switch', { to_mode: next ? 'plan' : 'agent' });
-      host.handlePlanToggle(next);
+      togglePlan();
     };
 
     editor.onInputModeChange = (mode) => {

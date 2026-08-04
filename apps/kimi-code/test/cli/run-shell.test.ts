@@ -595,7 +595,7 @@ describe('runShell', () => {
     });
   });
 
-  it('forwards config.toml diagnostics as startup notices', async () => {
+  it('leaves config.toml diagnostics to the TUI instead of the startup notice', async () => {
     mocks.loadTuiConfig.mockResolvedValue({
       theme: 'dark',
       editorCommand: null,
@@ -623,9 +623,12 @@ describe('runShell', () => {
       '1.2.3-test',
     );
 
+    // Diagnostics render in warning yellow via `showConfigWarningsIfAny` at
+    // `finishStartup`; the (dim) startup notice stays reserved for things like
+    // tui.toml parse errors, so the same warning is not shown twice.
     const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
     expect(startupInput).toMatchObject({
-      startupNotice: 'Ignored invalid config in config.toml: loop_control.',
+      startupNotice: undefined,
     });
   });
 
