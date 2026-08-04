@@ -1,4 +1,11 @@
 
+> **✅ 2026-08-03 ⑯ print/chat TS 旗标对齐（--model/--plan/--continue，已提交）**：
+> - **kimi-exec**：新增 `PromptSetup{model, plan}` + `run_prompt_with_setup`（create → set_model → set_plan_mode → prompt，setup 失败同 create 契约返回 error body）；`run_prompt` 保留为默认 setup 的薄包装（向后兼容）。
+> - **CLI**：`kimi print --model <id> --plan --continue`（--continue 经 `latest_session_id` = session/list `updated_at DESC` 首条，复用最近会话而非固定 kimi-exec）；`kimi chat --continue` 同；goal 块改用解析后的 session_id。
+> - **测试**：kimi-exec 单元（setup 落位：status.plan_mode=true + status.model 断言）；CLI 集成 26 → 28（print flags 管道 + print --continue 复用会话不新建 kimi-exec）。
+> - **顺带修**：① clippy「struct update 无效果」（PromptSetup 两字段全指定，删 `..Default::default()`）；② 测试基建竞态——`run()` 共用 `temp_dir("cwd")`（同 pid），两长跑 print 并行时互相删 cwd 导致偶发失败 → 每次调用唯一 cwd（原子计数器）。
+> - **注意**：print 全管道集成测试每例 ~60s（空 home 无 KIMI_MODEL 时引擎仍尝试默认端点、超时报错——本机 `kimi print` 既有行为，非本改动引入）；28 例全量 ~2.4min。
+
 > **✅ 2026-08-03 ⑮ Rust CLI 命令面收口（upgrade/web/vis 识别，已提交）**：
 > - **背景**：TS CLI 顶层有 upgrade/web/vis/migrate，Rust CLI 此前缺失 → clap 报 unknown subcommand；阶段 C「待」项。
 > - **实现**：`kimi upgrade` → 提示自更新由分发方管理（npm i -g kimi-code / kimi-code-rust-bin），exit 0；`kimi web`/`kimi vis` → 前端归属 TS 分发，Rust 构建不捆绑，stderr 提示 + exit 1（不假装启动）。

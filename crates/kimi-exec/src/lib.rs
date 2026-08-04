@@ -5,6 +5,15 @@
 
 use kimi_server_client::AppServerClient;
 
+/// Optional pre-prompt setup applied to the session between create and prompt.
+#[derive(Debug, Default, Clone)]
+pub struct PromptSetup {
+    /// Model alias/id to set on the session (`session/set_model`).
+    pub model: Option<String>,
+    /// Enable plan mode before prompting (`session/set_plan_mode`).
+    pub plan: bool,
+}
+
 /// Run one prompt: create a session, prompt it, return the wire result.
 /// When no native_llm is supplied, the engine config (`KIMI_MODEL_*` env /
 /// config.toml) is self-read so the standalone binary needs no host LLM.
@@ -14,6 +23,19 @@ pub async fn run_prompt(
     prompt: &str,
     native_llm: Option<kimi_protocol::wire_types::NativeLlmConfig>,
 ) -> serde_json::Value {
+    run_prompt_with_setup(client, session_id, prompt, native_llm, &PromptSetup::default()).await
+}
+
+/// `run_prompt` with a setup step (model / plan mode) applied right after
+/// the (idempotent) create, before the prompt. Setup failures surface in the
+/// returned body like create failures do.
+pub async fn run_prompt_with_setup(
+    client: &mut AppServerClient,
+    session_id: &str,
+    prompt: &str,
+    native_llm: Option<kimi_protocol::wire_types::NativeLlmConfig>,
+    setup: &PromptSetup,
+) -> serde_json::Value {
     let mut create_params = serde_json::json!({ "session_id": session_id });
     if let Some(nllm) = native_llm {
         create_params["native_llm"] = serde_json::to_value(&nllm).unwrap_or_default();
@@ -21,6 +43,28 @@ pub async fn run_prompt(
     let created = client.call(kimi_protocol::methods::SESSION_CREATE, create_params).await;
     if created.get("error").is_some() {
         return created;
+    }
+    if let Some(model) = &setup.model {
+        let body = client
+            .call(
+                kimi_protocol::methods::SESSION_SET_MODEL,
+                serde_json::json!({ "session_id": session_id, "model": model }),
+            )
+            .await;
+        if body.get("error").is_some() {
+            return body;
+        }
+    }
+    if setup.plan {
+        let body = client
+            .call(
+                kimi_protocol::methods::SESSION_SET_PLAN_MODE,
+                serde_json::json!({ "session_id": session_id, "enabled": true }),
+            )
+            .await;
+        if body.get("error").is_some() {
+            return body;
+        }
     }
     client
         .call(
@@ -69,5 +113,25 @@ mod tests {
     async fn run_prompt_in_process_builds_server() {
         let result = run_prompt_in_process("hi").await.expect("run");
         assert!(result.get("error").is_some(), "no LLM -> engine error expected");
+    }
+
+    #[tokio::test]
+    async fn run_prompt_with_setup_applies_model_and_plan() {
+        let server = kimi_server::Server::build().expect("server");
+        let mut client = AppServerClient::InProcess(kimi_server::in_process::spawn(server.processor));
+        let setup = PromptSetup { model: Some("setup-test-model".into()), plan: true };
+        let result =
+            run_prompt_with_setup(&mut client, "s-setup", "hello", native_llm_from_config(), &setup).await;
+        // The pipeline runs create -> set_model -> set_plan_mode -> prompt;
+        // the prompt itself fails (no reachable LLM) but setup landed first.
+        assert!(result.get("error").is_some(), "no LLM -> prompt errors: {result}");
+        let status = client
+            .call(
+                kimi_protocol::methods::SESSION_GET_STATUS,
+                serde_json::json!({ "session_id": "s-setup" }),
+            )
+            .await;
+        assert_eq!(status["result"]["plan_mode"], true, "plan mode set: {status}");
+        assert_eq!(status["result"]["model"], "setup-test-model", "model set: {status}");
     }
 }

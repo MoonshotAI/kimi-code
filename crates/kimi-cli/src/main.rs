@@ -42,6 +42,19 @@ fn connect_harness(server: &Option<String>) -> anyhow::Result<kimi_sdk::Harness>
     }
 }
 
+/// The most recently updated persisted session id (session list is ordered
+/// by `updated_at DESC`), if any.
+async fn latest_session_id(client: &mut kimi_server_client::AppServerClient) -> Option<String> {
+    let body = client
+        .call(kimi_protocol::methods::SESSION_LIST, serde_json::json!({ "limit": 1 }))
+        .await;
+    body["result"]["sessions"]
+        .as_array()
+        .and_then(|sessions| sessions.first())
+        .and_then(|session| session["id"].as_str())
+        .map(str::to_string)
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Run one prompt non-interactively.
@@ -58,6 +71,15 @@ enum Commands {
         /// Create a goal on the session before prompting (goal mode).
         #[arg(long)]
         goal: Option<String>,
+        /// Set the session model before prompting.
+        #[arg(long)]
+        model: Option<String>,
+        /// Enable plan mode before prompting.
+        #[arg(long)]
+        plan: bool,
+        /// Resume the most recently updated session instead of a fresh one.
+        #[arg(long = "continue")]
+        continue_: bool,
     },
     /// List persisted sessions.
     Sessions {
@@ -116,6 +138,9 @@ enum Commands {
         /// Session id to reuse (defaults to a fresh `chat-<pid>` one).
         #[arg(short, long)]
         session: Option<String>,
+        /// Resume the most recently updated session instead of a fresh one.
+        #[arg(long = "continue")]
+        continue_: bool,
     },
     /// Serve the Agent Client Protocol (ACP) over stdio.
     Acp,
@@ -650,12 +675,21 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     };
     match command {
-        Commands::Print { prompt, verbose, json, goal } => {
+        Commands::Print { prompt, verbose, json, goal, model, plan, continue_ } => {
             // Progress on stderr: always with `--verbose`, and by default when
             // stderr is a terminal (script pipes stay clean — stdout keeps the
             // result contract either way).
             let capture = verbose || std::io::stderr().is_terminal();
             let (mut client, renderer) = connect_with_renderer(&server, capture)?;
+            // `--continue` resumes the most recently updated session (session
+            // list is ordered by updated_at DESC); otherwise a fresh id.
+            let session_id = if continue_ {
+                latest_session_id(&mut client)
+                    .await
+                    .unwrap_or_else(|| "kimi-exec".to_string())
+            } else {
+                "kimi-exec".to_string()
+            };
             // Goal mode: create the session + goal before prompting (pure
             // state ops) so the engine drives continuation turns toward the
             // objective; run_prompt's own create is idempotent.
@@ -663,7 +697,7 @@ async fn main() -> anyhow::Result<()> {
                 let created = client
                     .call(
                         kimi_protocol::methods::SESSION_CREATE,
-                        serde_json::json!({ "session_id": "kimi-exec" }),
+                        serde_json::json!({ "session_id": session_id }),
                     )
                     .await;
                 if let Some(error) = created.get("error") {
@@ -674,7 +708,7 @@ async fn main() -> anyhow::Result<()> {
                     .call(
                         kimi_protocol::methods::SESSION_GOAL_CREATE,
                         serde_json::json!({
-                            "session_id": "kimi-exec",
+                            "session_id": session_id,
                             "objective": objective,
                         }),
                     )
@@ -684,7 +718,15 @@ async fn main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
             }
-            let result = kimi_exec::run_prompt(&mut client, "kimi-exec", &prompt, kimi_exec::native_llm_from_config()).await;
+            let setup = kimi_exec::PromptSetup { model, plan };
+            let result = kimi_exec::run_prompt_with_setup(
+                &mut client,
+                &session_id,
+                &prompt,
+                kimi_exec::native_llm_from_config(),
+                &setup,
+            )
+            .await;
             if let Some(renderer) = renderer {
                 renderer.abort();
             }
@@ -916,13 +958,19 @@ async fn main() -> anyhow::Result<()> {
             let body = client.health().await;
             println!("{}", body["result"]["status"].as_str().unwrap_or("?"));
         }
-        Commands::Chat { session } => {
+        Commands::Chat { session, continue_ } => {
             // Stage-D prototype: a plain-text REPL over the same event
             // rendering as `print --verbose`. Progress goes to stderr when it
             // is a TTY; the assistant transcript goes to stdout per turn.
             let capture = std::io::stderr().is_terminal();
             let (mut client, renderer) = connect_with_renderer(&server, capture)?;
-            let session_id = session.unwrap_or_else(|| format!("chat-{}", std::process::id()));
+            let session_id = if continue_ {
+                latest_session_id(&mut client)
+                    .await
+                    .unwrap_or_else(|| format!("chat-{}", std::process::id()))
+            } else {
+                session.unwrap_or_else(|| format!("chat-{}", std::process::id()))
+            };
             let created = client
                 .call(
                     kimi_protocol::methods::SESSION_CREATE,

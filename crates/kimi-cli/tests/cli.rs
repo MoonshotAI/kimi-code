@@ -18,8 +18,13 @@ fn temp_dir(tag: &str) -> std::path::PathBuf {
     dir
 }
 
+/// Unique cwd per `run` invocation — tests share one process id, and two
+/// tests running `run()` in parallel must not delete each other's cwd.
+static CWD_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 fn run(home: &Path, args: &[&str]) -> Output {
-    let cwd = temp_dir("cwd");
+    let n = CWD_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let cwd = temp_dir(&format!("cwd{n}"));
     Command::new(binary())
         .args(args)
         .current_dir(&cwd)
@@ -446,6 +451,49 @@ fn upgrade_and_frontend_commands_are_recognized() {
         let err = stderr(&out);
         assert!(err.contains("TS distribution"), "{cmd}: {err}");
     }
+}
+
+#[test]
+fn print_accepts_model_and_plan_flags() {
+    // --model/--plan are accepted and run the create->setup->prompt pipeline
+    // (setup semantics are asserted in kimi-exec's unit test); with no LLM
+    // configured the prompt itself errors fast.
+    let home = temp_dir("print-flags");
+    let out = run(&home, &["print", "--plan", "--model", "flag-test-model", "hi"]);
+    assert!(!out.status.success(), "no LLM -> print errors: {}", out.status);
+    let err = stderr(&out);
+    assert!(err.contains("error"), "stderr: {err}");
+}
+
+#[test]
+fn print_continue_resumes_latest_session() {
+    // `print --continue` reuses the most recently updated session instead of
+    // creating the default kimi-exec session.
+    let home = temp_dir("print-continue");
+    let cwd = temp_dir("print-continue-cwd");
+    let mut child = Command::new(binary())
+        .args(["chat", "-s", "continue-me"])
+        .current_dir(&cwd)
+        .env("KIMI_AGENT_HOME", &home)
+        .env("HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn kimi chat");
+    {
+        use std::io::Write;
+        child.stdin.as_mut().expect("stdin").write_all(b"/quit\n").expect("write");
+    }
+    let out = child.wait_with_output().expect("wait");
+    assert!(out.status.success(), "chat exits 0: {}", out.status);
+
+    let out = run(&home, &["print", "--continue", "hi"]);
+    assert!(!out.status.success(), "no LLM -> print errors: {}", out.status);
+    let list = run(&home, &["sessions", "--json"]);
+    let text = stdout(&list);
+    assert!(text.contains("continue-me"), "resumed session listed: {text}");
+    assert!(!text.contains("kimi-exec"), "no fresh session created: {text}");
 }
 
 #[test]
