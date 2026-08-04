@@ -23,7 +23,7 @@ import type { HookResult } from './types';
  */
 export function expandLeadingTilde(command: string): string {
   const home = homedir();
-  return command.replace(/(^|\s)~(?=[/\\]|\s|$)/g, (_match, prefix: string) => `${prefix}${home}`);
+  return command.replaceAll(/(^|\s)~(?=[/\\]|\s|$)/g, (_match, prefix: string) => `${prefix}${home}`);
 }
 
 export interface RunHookOptions {
