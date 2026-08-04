@@ -2,8 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { __pluginsCommandInternals } from '#/tui/commands/plugins';
 
-const { isCapabilityEntry, installCapabilityFromPanel, pollCapabilityInstall, removePlugin } =
-  __pluginsCommandInternals;
+const {
+  isCapabilityEntry,
+  installCapabilityFromPanel,
+  isDefaultMarketplaceCatalog,
+  pollCapabilityInstall,
+  removePlugin,
+} = __pluginsCommandInternals;
 
 function fakeHost(overrides: {
   engineV2?: boolean;
@@ -118,6 +123,24 @@ describe('plugins command capability surface', () => {
     expect(statuses.some((s) => s.includes('Removed kimi-cu'))).toBe(true);
     expect(statuses.some((s) => s.includes('runtime binaries were left untouched'))).toBe(true);
     expect(statuses.some((s) => s.includes('plugin wiring is disabled for new sessions'))).toBe(true);
+  });
+
+  it('treats only the default catalog (and the dev server) as injectable', () => {
+    expect(isDefaultMarketplaceCatalog(undefined, {})).toBe(true);
+    // The dev marketplace server started by scripts/dev.mjs serves this
+    // repo's own catalog — it counts as default, not as a user override.
+    expect(
+      isDefaultMarketplaceCatalog(undefined, {
+        KIMI_CODE_PLUGIN_MARKETPLACE_URL: 'http://127.0.0.1:60056/marketplace.json',
+        KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER: '1',
+      }),
+    ).toBe(true);
+    expect(
+      isDefaultMarketplaceCatalog(undefined, {
+        KIMI_CODE_PLUGIN_MARKETPLACE_URL: 'https://example.test/marketplace.json',
+      }),
+    ).toBe(false);
+    expect(isDefaultMarketplaceCatalog('https://example.test/marketplace.json', {})).toBe(false);
   });
 
   it('removePlugin stays quiet for non-capability plugins', async () => {

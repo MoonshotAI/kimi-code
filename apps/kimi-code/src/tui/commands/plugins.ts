@@ -240,9 +240,7 @@ async function showPluginsPicker(
     installed: plugins,
     installedIds: new Set(plugins.map((plugin) => plugin.id)),
     capabilities,
-    catalogIsDefault:
-      options?.marketplaceSource === undefined &&
-      process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV] === undefined,
+    catalogIsDefault: isDefaultMarketplaceCatalog(options?.marketplaceSource),
     initialTab: options?.initialTab,
     selectedId: options?.selectedId,
     pluginHint: options?.pluginHint,
@@ -295,6 +293,21 @@ function capabilityMarketplaceEntry(capability: CapabilityStatus): PluginMarketp
   };
 }
 
+/**
+ * Injection is part of the DEFAULT catalog experience only: any explicit
+ * replacement (the slash-command source or a user-set env override) opts out
+ * wholesale. The dev marketplace server started by scripts/dev.mjs serves
+ * this repo's own catalog and marks itself, so it still counts as default.
+ */
+function isDefaultMarketplaceCatalog(
+  source: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (source !== undefined) return false;
+  if (env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV] === undefined) return true;
+  return env['KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER'] === '1';
+}
+
 async function loadMarketplaceCatalog(
   host: SlashCommandHost,
   panel: PluginsPanelComponent,
@@ -302,16 +315,11 @@ async function loadMarketplaceCatalog(
   capabilities: readonly CapabilityStatus[],
 ): Promise<void> {
   try {
-    // Injection is part of the DEFAULT catalog experience only: any explicit
-    // replacement (the slash-command source or the env override) opts out
-    // wholesale — its same-id rows are never masked and its failures surface.
-    const isDefaultCatalog =
-      source === undefined && process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV] === undefined;
     const marketplace = await loadPluginMarketplace({
       workDir: host.state.appState.workDir,
       source,
       builtInEntries:
-        host.engineV2 && isDefaultCatalog
+        host.engineV2 && isDefaultMarketplaceCatalog(source)
           ? capabilities.map(capabilityMarketplaceEntry)
           : undefined,
     });
@@ -448,6 +456,7 @@ async function pollCapabilityInstall(
 export const __pluginsCommandInternals = {
   isCapabilityEntry,
   installCapabilityFromPanel,
+  isDefaultMarketplaceCatalog,
   pollCapabilityInstall,
   removePlugin,
 };
