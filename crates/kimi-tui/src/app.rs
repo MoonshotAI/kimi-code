@@ -572,9 +572,12 @@ impl App {
             return;
         }
         if r#type.starts_with("llm.") {
-            // llm.step.begin / llm.step.end carry no transcript text; the
-            // delta stream above already renders the assistant output.
-            return;
+            // llm.delta is streamed above; the step bookends render as
+            // progress; the telemetry types (request/config/divergence/
+            // tools_snapshot) stay silent — they exist for recorders.
+            if !matches!(r#type, "llm.step.begin" | "llm.step.end") {
+                return;
+            }
         }
         let line = kimi_ui::render_event(&event).unwrap_or_else(|| event.to_string());
         // Tool progress reads differently from transcript/status.

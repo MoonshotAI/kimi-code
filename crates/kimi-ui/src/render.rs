@@ -23,6 +23,31 @@ pub fn render_event(event: &serde_json::Value) -> Option<String> {
         "session.turn.ended" => {
             Some(format!("turn {} ended (session {})", field("turn_id"), field("session_id")))
         }
+        "llm.step.begin" => {
+            let model = field("model");
+            if model.is_empty() {
+                Some("llm step started".to_string())
+            } else {
+                Some(format!("llm: {model} started"))
+            }
+        }
+        "llm.step.end" => {
+            let total = event
+                .get("usage")
+                .and_then(|u| u.get("total_tokens"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let tool_calls = event
+                .get("tool_calls")
+                .and_then(|v| v.as_array())
+                .map_or(0, |a| a.len());
+            let reason = event.get("finish_reason").and_then(|v| v.as_str()).unwrap_or("");
+            if reason.is_empty() {
+                Some(format!("llm: {total} tokens, {tool_calls} tool calls"))
+            } else {
+                Some(format!("llm: {total} tokens, {tool_calls} tool calls ({reason})"))
+            }
+        }
         "session.tool.started" => Some(format!("tool {} started", field("tool_name"))),
         "session.tool.settled" => {
             let ok = !event.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -115,6 +140,24 @@ mod tests {
             (
                 serde_json::json!({ "type": "session.compaction.started" }),
                 "context compaction started",
+            ),
+            (
+                serde_json::json!({ "type": "llm.step.begin", "model": "kimi-k2" }),
+                "llm: kimi-k2 started",
+            ),
+            (
+                serde_json::json!({
+                    "type": "llm.step.end",
+                    "content": [],
+                    "tool_calls": [1, 2],
+                    "finish_reason": "tool_use",
+                    "usage": { "input_tokens": 10, "output_tokens": 20, "total_tokens": 30 },
+                }),
+                "llm: 30 tokens, 2 tool calls (tool_use)",
+            ),
+            (
+                serde_json::json!({ "type": "llm.step.begin" }),
+                "llm step started",
             ),
         ];
         for (event, expected) in cases {
