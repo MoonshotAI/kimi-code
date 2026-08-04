@@ -16,6 +16,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import '#/agent/profile/profileService';
+import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -347,8 +348,13 @@ describe('AgentLifecycleService', () => {
       ready: Promise.resolve(),
       agentsMd: undefined,
       agentsMdWarning: undefined,
+      agentsMdPaths: undefined,
       onDidChange: Event.None as Event<void>,
     } satisfies ISessionInstructionsProvider);
+    ix.stub(IAgentAgentsMdReminderService, {
+      _serviceBrand: undefined,
+      seedInjected: () => {},
+    });
     // The session's MCP readiness arrives through the seeded
     // `ISessionMcpHandle`; the default handle carries an OAuth-wired manager
     // over the test atomic document store so the agent mirror's OAuth

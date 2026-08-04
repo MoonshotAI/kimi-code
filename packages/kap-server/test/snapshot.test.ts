@@ -9,16 +9,19 @@ import { join } from 'node:path';
 
 import {
   type DomainEvent,
+  IAgentBlobService,
   IAgentContextMemoryService,
+  IAgentScopeContext,
+  IAppendLogStore,
   IEventBus,
   IAgentLifecycleService,
   IAgentPromptService,
-  ILogService,
   ISessionInteractionService,
   ISessionContext,
   ISessionIndex,
   ISessionMetadata,
   ISessionLifecycleService,
+  IWireService,
   IWorkspaceLifecycleService,
   IWorkspaceService,
   getLiveSessionById,
@@ -28,7 +31,6 @@ import { sessionSnapshotResponseSchema } from '../src/protocol/rest-snapshot';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { registerSnapshotRoutes } from '../src/routes/snapshot';
-import { SnapshotNotFoundError } from '../src/services/snapshot';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
@@ -58,6 +60,9 @@ describe('server-v2 snapshot route enrichment', () => {
           IAgentPromptService,
           { list: () => ({ active: { id: promptId }, pending: [] }) },
         ],
+        [IWireService, { flush: async () => {} }],
+        [IAgentScopeContext, { scope: () => 'scope/sess_snapshot' }],
+        [IAgentBlobService, { loadParts: async (parts: unknown) => parts }],
       ]),
     };
     const session = {
@@ -75,7 +80,7 @@ describe('server-v2 snapshot route enrichment', () => {
             }),
           },
         ],
-        [IAgentLifecycleService, { get: () => main }],
+        [IAgentLifecycleService, { get: () => main, create: async () => main }],
         [ISessionInteractionService, { listPending: () => [] }],
       ]),
     };
@@ -107,6 +112,13 @@ describe('server-v2 snapshot route enrichment', () => {
           { handlerFor: async () => handler, handlers: { list: () => [] } },
         ],
         [IWorkspaceService, { get: async () => ({ root: '/workspace' }) }],
+        [
+          IAppendLogStore,
+          {
+            // No persisted records in this fake — the transcript is empty.
+            read: async function* () {},
+          },
+        ],
       ]),
     };
     const broadcaster = {
@@ -142,28 +154,17 @@ describe('server-v2 snapshot route enrichment', () => {
           reply: { send(payload: unknown): unknown },
         ) => Promise<void> | void)
       | undefined;
-    // Exercise the legacy (resume + live assembly) path — the fakes model the
-    // live scope, not the on-disk reader.
-    const previousReaderMode = process.env['KIMI_SNAPSHOT_READER'];
-    process.env['KIMI_SNAPSHOT_READER'] = 'legacy';
-    const unusedReader = { read: async () => ({}) as never };
-    try {
-      registerSnapshotRoutes(
-        {
-          get: (_path, _options, handler) => {
-            routeHandler = handler;
-          },
+    registerSnapshotRoutes(
+      {
+        get: (_path, _options, handler) => {
+          routeHandler = handler;
         },
-        {
-          core: core as never,
-          broadcaster: broadcaster as never,
-          reader: unusedReader as never,
-        },
-      );
-    } finally {
-      if (previousReaderMode === undefined) delete process.env['KIMI_SNAPSHOT_READER'];
-      else process.env['KIMI_SNAPSHOT_READER'] = previousReaderMode;
-    }
+      },
+      {
+        core: core as never,
+        broadcaster: broadcaster as never,
+      },
+    );
 
     let payload: unknown;
     await routeHandler?.(
@@ -193,83 +194,6 @@ describe('server-v2 snapshot route enrichment', () => {
         run_in_background: false,
       }),
     ]);
-  });
-});
-
-describe('server-v2 snapshot route error mapping', () => {
-  function captureHandler(
-    deps: { core: unknown; broadcaster: unknown; reader: unknown },
-    env?: Record<string, string>,
-  ) {
-    const previous = new Map<string, string | undefined>();
-    for (const [k, v] of Object.entries(env ?? {})) {
-      previous.set(k, process.env[k]);
-      process.env[k] = v;
-    }
-    let handler:
-      | ((
-          req: { id: string; params: { session_id: string } },
-          reply: { send(payload: unknown): unknown },
-        ) => Promise<void> | void)
-      | undefined;
-    try {
-      registerSnapshotRoutes(
-        {
-          get: (_path, _options, h) => {
-            handler = h;
-          },
-        },
-        deps as never,
-      );
-    } finally {
-      for (const [k, v] of previous) {
-        if (v === undefined) delete process.env[k];
-        else process.env[k] = v;
-      }
-    }
-    return handler!;
-  }
-
-  it('maps SnapshotNotFoundError to 40401', async () => {
-    const warns: unknown[] = [];
-    const core = {
-      accessor: fakeAccessor([[ILogService, { warn: (...a: unknown[]) => warns.push(a) }]]),
-    };
-    const reader = {
-      read: async () => {
-        throw new SnapshotNotFoundError('sess_missing');
-      },
-    };
-    const handler = captureHandler({ core, broadcaster: {}, reader });
-    let payload: unknown;
-    await handler(
-      { id: 'req_404', params: { session_id: 'sess_missing' } },
-      { send: (v) => (payload = v) },
-    );
-    expect((payload as { code: number }).code).toBe(40401);
-    expect(warns).toHaveLength(0);
-  });
-
-  it('maps SnapshotTimeoutError to 50001 and logs snapshot.timeout', async () => {
-    const warns: unknown[] = [];
-    const core = {
-      accessor: fakeAccessor([[ILogService, { warn: (...a: unknown[]) => warns.push(a) }]]),
-    };
-    const reader = {
-      read: () => new Promise<never>(() => {}), // hangs → triggers the timeout race
-    };
-    const handler = captureHandler(
-      { core, broadcaster: {}, reader },
-      { KIMI_SNAPSHOT_TIMEOUT_MS: '150' },
-    );
-    let payload: unknown;
-    await handler(
-      { id: 'req_to', params: { session_id: 'sess_slow' } },
-      { send: (v) => (payload = v) },
-    );
-    expect((payload as { code: number }).code).toBe(50001);
-    expect(warns).toHaveLength(1);
-    expect((warns[0] as unknown[])[0]).toBe('snapshot.timeout');
   });
 });
 
@@ -369,9 +293,9 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
 
   // Regression for the cold-session 404: a session that exists on disk but is
   // not live in this process (e.g. carried over from a prior process, or
-  // created by v1) must load from disk instead of returning 40401. We restart
+  // created by v1) must resume and load instead of returning 40401. We restart
   // the whole server on the same homeDir so the session is genuinely cold.
-  it('loads a cold (not live) session from disk instead of 404', async () => {
+  it('loads a cold (not live) session instead of 404', async () => {
     const sid = await createSession();
 
     await server!.close();
@@ -386,11 +310,11 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
     expect(snap.session.id).toBe(sid);
   });
 
-  // The auto reader must source messages from `agents/main/wire.jsonl` on disk
-  // — not from a live (resumed) context. We seed a wire log, restart so the
-  // session is genuinely cold, then assert the snapshot returns the on-disk
-  // transcript while the scope stays un-materialized.
-  it('auto reader returns messages read directly from wire.jsonl for a cold session', async () => {
+  // A cold session's history comes through the engine path: the request
+  // resumes the session, replays the persisted journal, and serves the
+  // messages. We seed a wire log, restart so the session is genuinely cold,
+  // then assert the snapshot returns the persisted transcript.
+  it('returns the persisted transcript for a cold session', async () => {
     const sid = await createSession();
     const live = getLiveSessionById(server!.core.accessor, sid);
     if (live === undefined) throw new Error(`session ${sid} not found`);
@@ -424,7 +348,7 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
     server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     base = `http://127.0.0.1:${server.port}`;
 
-    // Guard: still cold — the auto reader must serve from disk, not resume.
+    // Guard: still cold before the request — the snapshot itself resumes it.
     expect(getLiveSessionById(server!.core.accessor, sid)).toBeUndefined();
 
     const snap = await snapshot(sid);

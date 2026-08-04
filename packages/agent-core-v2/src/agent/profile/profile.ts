@@ -58,11 +58,13 @@ export type AgentConfigUpdateData = Partial<{
 
 export interface SystemPromptContext extends AgentProfileContext {
   readonly agentsMdWarning?: string;
+  readonly agentsMdPaths?: readonly string[];
 }
 
 export type ResolvedAgentProfile = AgentProfile;
 
 export interface ProfileData extends AgentConfigData {
+  readonly agentsMdPaths?: readonly string[];
   readonly activeToolNames?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];
@@ -77,6 +79,7 @@ export type ProfileUpdateData = Partial<{
   systemPrompt: string;
   environmentDisclosure?: EnvironmentDisclosureSnapshot;
   renderGeneration?: number;
+  agentsMdPaths: readonly string[];
   disallowedTools: readonly string[];
   activeToolNames: readonly string[];
 }>;
@@ -88,6 +91,7 @@ export interface ProfileBindingSnapshot {
   readonly systemPrompt: string;
   readonly environmentDisclosure?: EnvironmentDisclosureSnapshot;
   readonly renderGeneration?: number;
+  readonly agentsMdPaths?: readonly string[];
   readonly activeToolNames?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];

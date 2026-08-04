@@ -3,10 +3,11 @@
  *
  * When the master switch `KIMI_CODE_EXPERIMENTAL_FLAG` is truthy, `kimi -p`
  * (print mode) routes to the native agent-core-v2 runner (see
- * `run-prompt.ts`) and the interactive TUI builds its harness through the
- * SDK's v2-backed client (see `run-shell.ts`), both instead of the default
- * v1 engine. The master switch also enables every experimental feature flag
- * in the engine. Read directly from the env (matching
+ * `run-prompt.ts`), the interactive TUI builds its harness through the
+ * SDK's v2-backed client (see `run-shell.ts`), and `kimi doctor` validates
+ * config.toml against the v2 section registry (see `sub/doctor.ts` /
+ * `v2/validate-config.ts`), all instead of the default v1 engine. The
+ * master switch also enables every experimental feature flag in the engine. Read directly from the env (matching
  * `cli/update/rollout.ts`) because the CLI must not depend on the core flag
  * registry. Unset / any non-truthy value keeps the v1 path.
  *
@@ -15,6 +16,7 @@
  */
 
 export const KIMI_V2_ENV = 'KIMI_CODE_EXPERIMENTAL_FLAG';
+export const KIMI_ACP_V2_ENV = 'KIMI_CODE_EXPERIMENTAL_ACP_V2';
 
 const TRUTHY_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
@@ -29,4 +31,10 @@ export function isKimiV2Enabled(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): boolean {
   return isTruthyEnv(KIMI_V2_ENV, env);
+}
+
+export function isAcpV2Enabled(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return isTruthyEnv(KIMI_ACP_V2_ENV, env) || isKimiV2Enabled(env);
 }

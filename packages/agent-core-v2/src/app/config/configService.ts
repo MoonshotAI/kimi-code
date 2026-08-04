@@ -19,7 +19,13 @@
  * `bootstrap`, persists the TOML document through the `storage` TOML
  * atomic-document store (reloading when the document changes on disk), and logs
  * through `log`. Late section / overlay registration re-validates the
- * already-loaded raw value and re-runs overlays. Bound at App scope.
+ * already-loaded raw value and re-runs overlays. Section-declared key
+ * `deprecations` are detected from the on-disk document on every load and
+ * reported as warning diagnostics (the deprecated value is NOT applied, and
+ * the file is never rewritten); env-var renames declared via a binding's
+ * `deprecatedEnv` still resolve as a fallback, likewise with a warning.
+ * Diagnostics changes are published through `onDidChangeDiagnostics`. Bound
+ * at App scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -57,6 +63,7 @@ import {
 import { deepEqual, deepMerge, describeUnknownError, isPlainObject } from './configPure';
 import { getConfigSectionContributions } from './configSectionContributions';
 import { getConfigOverlayContributions } from './configOverlayContributions';
+import { collectKeyDeprecations } from './deprecations';
 import { migrateThinkingEffortMaxToHigh } from './migrations';
 import {
   applySectionToToml,
@@ -71,15 +78,42 @@ const CONFIG_SCOPE = '';
 
 type GetEnv = (name: string) => string | undefined;
 
+/** Reports a deprecated env var actually supplying a value: (oldName, newName). */
+type OnDeprecatedEnv = (oldName: string, newName: string) => void;
+
 function isEnvBinding(value: unknown): value is EnvBinding {
   return typeof value === 'string' || (isPlainObject(value) && 'env' in value);
 }
 
-function resolveBinding(binding: EnvBinding, getEnv: GetEnv, existing: unknown): unknown {
-  const envName = typeof binding === 'string' ? binding : binding.env;
-  const raw = getEnv(envName);
-  if (raw !== undefined) {
-    return typeof binding === 'string' ? raw : binding.parse ? binding.parse(raw) : raw;
+function parseBoundRaw(binding: EnvBinding, raw: string): unknown {
+  return typeof binding === 'string' ? raw : binding.parse ? binding.parse(raw) : raw;
+}
+
+function resolveBinding(
+  binding: EnvBinding,
+  getEnv: GetEnv,
+  existing: unknown,
+  onDeprecatedEnv?: OnDeprecatedEnv,
+): unknown {
+  if (typeof binding !== 'string') {
+    const raw = getEnv(binding.env);
+    if (raw !== undefined) {
+      const parsed = parseBoundRaw(binding, raw);
+      if (parsed !== undefined) return parsed;
+    }
+    if (binding.deprecatedEnv !== undefined) {
+      const deprecatedRaw = getEnv(binding.deprecatedEnv);
+      if (deprecatedRaw !== undefined) {
+        const parsed = parseBoundRaw(binding, deprecatedRaw);
+        if (parsed !== undefined) {
+          onDeprecatedEnv?.(binding.deprecatedEnv, binding.env);
+          return parsed;
+        }
+      }
+    }
+  } else {
+    const raw = getEnv(binding);
+    if (raw !== undefined) return raw;
   }
   if (typeof binding === 'object' && binding.default !== undefined && existing === undefined) {
     return binding.default;
@@ -91,17 +125,18 @@ function applyEnvBindings(
   target: Record<string, unknown>,
   bindings: AnyEnvBindings,
   getEnv: GetEnv,
+  onDeprecatedEnv?: OnDeprecatedEnv,
 ): void {
   for (const [key, binding] of Object.entries(bindings)) {
     if (isEnvBinding(binding)) {
-      const resolved = resolveBinding(binding, getEnv, target[key]);
+      const resolved = resolveBinding(binding, getEnv, target[key], onDeprecatedEnv);
       if (resolved !== undefined) target[key] = resolved;
     } else if (binding !== undefined) {
       const child: Record<string, unknown> = isPlainObject(target[key])
         ? { ...target[key] }
         : {};
       target[key] = child;
-      applyEnvBindings(child, binding as AnyEnvBindings, getEnv);
+      applyEnvBindings(child, binding as AnyEnvBindings, getEnv, onDeprecatedEnv);
       if (Object.keys(child).length === 0) {
         delete target[key];
       }
@@ -109,12 +144,17 @@ function applyEnvBindings(
   }
 }
 
-function applySectionEnv(base: unknown, env: AnyEnvBindings, getEnv: GetEnv): unknown {
+function applySectionEnv(
+  base: unknown,
+  env: AnyEnvBindings,
+  getEnv: GetEnv,
+  onDeprecatedEnv?: OnDeprecatedEnv,
+): unknown {
   if (isEnvBinding(env)) {
-    return resolveBinding(env, getEnv, base);
+    return resolveBinding(env, getEnv, base, onDeprecatedEnv);
   }
   const target: Record<string, unknown> = isPlainObject(base) ? { ...base } : {};
-  applyEnvBindings(target, env, getEnv);
+  applyEnvBindings(target, env, getEnv, onDeprecatedEnv);
   return target;
 }
 
@@ -131,7 +171,8 @@ function isSameSection(
     existing.stripEnv === (options.stripEnv as ConfigSection['stripEnv']) &&
     existing.fromToml === options.fromToml &&
     existing.toToml === options.toToml &&
-    deepEqual(existing.defaultValue, options.defaultValue)
+    deepEqual(existing.defaultValue, options.defaultValue) &&
+    deepEqual(existing.deprecations, options.deprecations)
   );
 }
 
@@ -183,6 +224,7 @@ export class ConfigRegistry implements IConfigRegistry {
       stripEnv: options.stripEnv as ConfigSection['stripEnv'],
       fromToml: options.fromToml,
       toToml: options.toToml,
+      deprecations: options.deprecations,
     });
     this._onDidRegisterSection.fire({ domain });
   }
@@ -225,6 +267,11 @@ export class ConfigService extends Disposable implements IConfigService {
   readonly onDidChangeConfiguration: Event<ConfigChangedEvent> = this._onDidChangeConfiguration.event;
   private readonly _onDidSectionChange = this._register(new Emitter<ConfigSectionChangedEvent>());
   readonly onDidSectionChange: Event<ConfigSectionChangedEvent> = this._onDidSectionChange.event;
+  private readonly _onDidChangeDiagnostics = this._register(
+    new Emitter<readonly ConfigDiagnostic[]>(),
+  );
+  readonly onDidChangeDiagnostics: Event<readonly ConfigDiagnostic[]> =
+    this._onDidChangeDiagnostics.event;
   readonly ready: Promise<void>;
 
   private stateChain: Promise<unknown> = Promise.resolve();
@@ -236,6 +283,7 @@ export class ConfigService extends Disposable implements IConfigService {
   private memory: ResolvedConfig = {};
   private delivered: ResolvedConfig = {};
   private readonly diagnosticsList: ConfigDiagnostic[] = [];
+  private lastDiagnosticsSnapshot = '[]';
   private readonly configKey: string;
 
   constructor(
@@ -291,6 +339,24 @@ export class ConfigService extends Disposable implements IConfigService {
 
   diagnostics(): readonly ConfigDiagnostic[] {
     return [...this.diagnosticsList];
+  }
+
+  /** Append a diagnostic, skipping exact duplicates (rebuilds re-run the same checks). */
+  private pushDiagnostic(diagnostic: ConfigDiagnostic): void {
+    const duplicate = this.diagnosticsList.some(
+      (existing) =>
+        existing.domain === diagnostic.domain &&
+        existing.severity === diagnostic.severity &&
+        existing.message === diagnostic.message,
+    );
+    if (!duplicate) this.diagnosticsList.push(diagnostic);
+  }
+
+  private emitDiagnosticsIfChanged(): void {
+    const snapshot = JSON.stringify(this.diagnosticsList);
+    if (snapshot === this.lastDiagnosticsSnapshot) return;
+    this.lastDiagnosticsSnapshot = snapshot;
+    this._onDidChangeDiagnostics.fire(this.diagnostics());
   }
 
   async set(
@@ -436,11 +502,25 @@ export class ConfigService extends Disposable implements IConfigService {
         error instanceof TomlError
           ? `Failed to parse ${this.bootstrap.configPath}: ${describeTomlSyntaxError(error)}`
           : describeUnknownError(error);
-      this.diagnosticsList.push({ severity: 'error', message });
+      this.pushDiagnostic({ severity: 'error', message });
       this.log.warn('config load failed', { error: describeUnknownError(error) });
     }
     const nextRawSnake = cloneRecord(fileData);
+    // Key-deprecation warnings derive from the on-disk document, so collect
+    // them before the unchanged-file early return — the list was just cleared
+    // above and a no-op reload must not drop them.
+    for (const diagnostic of collectKeyDeprecations(nextRawSnake, this.registry.listSections())) {
+      this.pushDiagnostic(diagnostic);
+    }
     if (source !== 'load' && JSON.stringify(nextRawSnake) === JSON.stringify(this.rawSnake)) {
+      // The file is unchanged, so values and change events stay as they are —
+      // but env-derived diagnostics (deprecated env fallbacks, overlay
+      // failures) were cleared above and must be recollected over a scratch
+      // copy, or a no-op reload would silently drop them.
+      const scratch = { ...this.validated };
+      this.applySectionEnvBindings(scratch, true);
+      this.applyEnvOverlay(scratch);
+      this.emitDiagnosticsIfChanged();
       return;
     }
     this.rawSnake = nextRawSnake;
@@ -466,6 +546,7 @@ export class ConfigService extends Disposable implements IConfigService {
       if (!deepEqual(previous[domain], next[domain])) candidates.add(domain);
     }
     this.commit(source, [...candidates]);
+    this.emitDiagnosticsIfChanged();
   }
 
   private deliveredValue(domain: string): unknown {
@@ -492,7 +573,7 @@ export class ConfigService extends Disposable implements IConfigService {
       try {
         validated[domain] = this.registry.validate(domain, value);
       } catch (error) {
-        this.diagnosticsList.push({
+        this.pushDiagnostic({
           domain,
           severity: 'warning',
           message: `Ignored invalid config section '${domain}': ${describeUnknownError(error)}`,
@@ -513,11 +594,20 @@ export class ConfigService extends Disposable implements IConfigService {
       if (section.env === undefined) continue;
       try {
         const base = effective[section.domain];
-        const next = applySectionEnv(base, section.env, getEnv);
+        const onDeprecatedEnv: OnDeprecatedEnv | undefined = reportErrors
+          ? (oldName, newName) => {
+              this.pushDiagnostic({
+                domain: section.domain,
+                severity: 'warning',
+                message: `Environment variable ${oldName} is deprecated; use ${newName} instead.`,
+              });
+            }
+          : undefined;
+        const next = applySectionEnv(base, section.env, getEnv, onDeprecatedEnv);
         effective[section.domain] = this.registry.validate(section.domain, next);
       } catch (error) {
         if (reportErrors) {
-          this.diagnosticsList.push({
+          this.pushDiagnostic({
             domain: section.domain,
             severity: 'warning',
             message: `Ignoring env overlay for '${section.domain}': ${describeUnknownError(error)}`,
@@ -536,7 +626,7 @@ export class ConfigService extends Disposable implements IConfigService {
         overlay.apply(effective, getEnv, validate);
       } catch (error) {
         if (reportErrors) {
-          this.diagnosticsList.push({
+          this.pushDiagnostic({
             severity: 'warning',
             message: `Ignoring config environment overlay: ${describeUnknownError(error)}`,
           });
@@ -553,6 +643,7 @@ export class ConfigService extends Disposable implements IConfigService {
     this.applyEnvOverlay(next);
     this.effective = next;
     this.commit('reload', [...new Set([...Object.keys(before), ...Object.keys(next)])]);
+    this.emitDiagnosticsIfChanged();
   }
 
   private revalidateDomain(domain: string): void {
@@ -585,10 +676,17 @@ export class ConfigService extends Disposable implements IConfigService {
     if (section.env !== undefined) {
       const getEnv = (name: string): string | undefined => this.bootstrap.getEnv(name);
       try {
-        const next = applySectionEnv(this.effective[domain], section.env, getEnv);
+        const onDeprecatedEnv: OnDeprecatedEnv = (oldName, newName) => {
+          this.pushDiagnostic({
+            domain,
+            severity: 'warning',
+            message: `Environment variable ${oldName} is deprecated; use ${newName} instead.`,
+          });
+        };
+        const next = applySectionEnv(this.effective[domain], section.env, getEnv, onDeprecatedEnv);
         this.effective[domain] = this.registry.validate(domain, next);
       } catch (error) {
-        this.diagnosticsList.push({
+        this.pushDiagnostic({
           domain,
           severity: 'warning',
           message: `Ignoring env overlay for '${domain}': ${describeUnknownError(error)}`,
@@ -596,6 +694,7 @@ export class ConfigService extends Disposable implements IConfigService {
       }
     }
     this.commit('reload', [domain]);
+    this.emitDiagnosticsIfChanged();
   }
 
   private async persist(domain: string): Promise<void> {

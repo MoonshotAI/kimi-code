@@ -12,6 +12,7 @@ import {
   type EnvironmentDisclosureSnapshot,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IAgentProfileRenderer } from '#/app/agentProfileCatalog/agentProfileRenderer';
+import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -241,8 +242,13 @@ function buildHost(key: string): {
     ready: Promise.resolve(),
     agentsMd: undefined,
     agentsMdWarning: undefined,
+    agentsMdPaths: undefined,
     onDidChange: Event.None as Event<void>,
   } satisfies ISessionInstructionsProvider);
+  host.stub(IAgentAgentsMdReminderService, {
+    _serviceBrand: undefined,
+    seedInjected: () => {},
+  });
   host.stub(ISessionToolPolicy, {
     _serviceBrand: undefined,
     ready: Promise.resolve(),

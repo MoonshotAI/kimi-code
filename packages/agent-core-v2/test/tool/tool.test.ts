@@ -24,7 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { makeHookRunner } from '../agent/externalHooks/runner-stub';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -1190,11 +1190,12 @@ describe('Agent tool execution contract', () => {
       'explore',
       new Map([
         [
-          IAgentContextSizeService,
+          IAgentTokenCountingService,
           {
             _serviceBrand: undefined,
             get: () => ({ size: 321, measured: 300, estimated: 21 }),
             measured: () => {},
+            statusSize: () => 321,
           },
         ],
       ]),

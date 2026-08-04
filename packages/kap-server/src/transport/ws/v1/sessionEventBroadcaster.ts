@@ -73,7 +73,12 @@ import {
   MAIN_AGENT_ID,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
-import type { SessionCreatedEvent, SessionMetaUpdatedEvent, Event } from './events';
+import type {
+  ConfigWarningItem,
+  SessionCreatedEvent,
+  SessionMetaUpdatedEvent,
+  Event,
+} from './events';
 import { isVolatileEventType } from './events';
 import type { SessionCursor } from '../../../protocol/ws-control';
 import type { InFlightTurn, SnapshotSubagent } from '../../../protocol/rest-snapshot';
@@ -874,6 +879,23 @@ export class SessionEventBroadcaster {
       } as Event).catch((error: unknown) =>
         this.logDispatchError(sessionId, 'session.meta.updated', error),
       );
+      return;
+    }
+    if (event.type === 'event.config.warning') {
+      const payload = configWarningPayload(event.payload);
+      if (payload === undefined) return;
+      // Global fan-out: every established connection learns the current config
+      // warning set (deprecated keys/env vars in use, invalid sections) without
+      // subscribing to anything. Delivery is live-only — late joiners pull the
+      // diagnostics RPC surface instead.
+      void this.dispatchGlobal({
+        type: 'event.config.warning',
+        warnings: payload.warnings,
+        agentId: 'main',
+        sessionId: GLOBAL_SESSION_ID,
+      } as Event).catch((error: unknown) =>
+        this.logDispatchError(GLOBAL_SESSION_ID, 'event.config.warning', error),
+      );
     }
   }
 
@@ -1583,4 +1605,26 @@ function sessionCreatedPayload(
       : undefined;
   if (sessionId === undefined || session === undefined) return undefined;
   return { sessionId, session };
+}
+
+/**
+ * Validate the `event.config.warning` payload published on the core
+ * `IEventService` (`{ warnings: [{ domain?, message }] }`). Any malformed
+ * entry rejects the whole batch — the publisher always sends the full current
+ * warning set, so a partial frame would be a lie by omission.
+ */
+function configWarningPayload(payload: unknown): { warnings: ConfigWarningItem[] } | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const warnings = (payload as { warnings?: unknown }).warnings;
+  if (!Array.isArray(warnings)) return undefined;
+  const items: ConfigWarningItem[] = [];
+  for (const warning of warnings) {
+    if (typeof warning !== 'object' || warning === null) return undefined;
+    const message = (warning as { message?: unknown }).message;
+    if (typeof message !== 'string' || message.length === 0) return undefined;
+    const domain = (warning as { domain?: unknown }).domain;
+    if (domain !== undefined && typeof domain !== 'string') return undefined;
+    items.push(typeof domain === 'string' ? { domain, message } : { message });
+  }
+  return { warnings: items };
 }

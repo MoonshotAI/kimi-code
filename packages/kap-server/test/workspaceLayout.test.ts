@@ -10,7 +10,7 @@
  * `sessions/{wd_id}/{sid}/state.json`, and
  * `sessions/{wd_id}/{sid}/agents/main/wire.jsonl` (metadata envelope first,
  * `agents.main.homedir` written with the original value). Also proves the
- * disk-reading `ISnapshotReader` serves the layout end-to-end.
+ * snapshot route serves the layout end-to-end (cold resume from disk).
  * Wiring: real kap-server on a temp home.
  * Run: `pnpm --filter @moonshot-ai/kap-server exec vitest run test/workspaceLayout.test.ts`.
  */

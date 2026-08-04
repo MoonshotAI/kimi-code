@@ -3,11 +3,13 @@
  * Op (`configUpdate`) for the agent's persistent configuration slice.
  *
  * Declares the persistent profile config — `modelAlias`, `profileName`,
- * the resolved base thinking effort, `systemPrompt`, the profile
- * `disallowedTools` denylist and `subagents` delegation allowlist, and the
- * environment disclosure snapshot associated with the rendered prompt — as a
- * wire Model (initial `defaultProfileModel()`), plus the single Op whose `apply` is
- * a pure merge of an already-resolved payload. Live records carry
+ * Declares the persistent profile config — `modelAlias`, `profileName`,
+ * the resolved base thinking effort, `systemPrompt`, its injected AGENTS.md
+ * path provenance, the profile `disallowedTools` denylist and `subagents`
+ * delegation allowlist, and the environment disclosure snapshot associated
+ * with the rendered prompt — as a wire Model (initial `defaultProfileModel()`),
+ * plus the single Op whose `apply` is a pure merge of an already-resolved
+ * payload. Live records carry
  * `thinkingEffort` (matching the v1 wire field); legacy replay still accepts
  * `thinkingLevel`. The value is
  * resolved to a `ThinkingEffort` at the call site and carried in the
@@ -52,6 +54,7 @@ export interface ProfileModelState {
   readonly systemPrompt: string;
   readonly environmentDisclosure?: EnvironmentDisclosureSnapshot;
   readonly renderGeneration: number;
+  readonly agentsMdPaths?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];
 }
@@ -70,6 +73,7 @@ export const profileBind = ProfileModel.defineOp('profile.bind', {
     systemPrompt: z.string(),
     environmentDisclosure: z.custom<EnvironmentDisclosureSnapshot>().optional(),
     renderGeneration: z.number().optional(),
+    agentsMdPaths: z.array(z.string()).readonly().optional(),
     activeToolNames: z.array(z.string()).readonly().optional(),
     disallowedTools: z.array(z.string()).readonly(),
     subagents: z.array(z.string()).readonly().optional(),
@@ -81,6 +85,7 @@ export const profileBind = ProfileModel.defineOp('profile.bind', {
     systemPrompt: p.systemPrompt,
     environmentDisclosure: p.environmentDisclosure,
     renderGeneration: p.renderGeneration ?? s.renderGeneration + 1,
+    agentsMdPaths: p.agentsMdPaths ?? s.agentsMdPaths,
     disallowedTools: p.disallowedTools,
     subagents: p.subagents,
   }),
@@ -95,6 +100,7 @@ export const configUpdate = ProfileModel.defineOp('config.update', {
     systemPrompt: z.string().optional(),
     environmentDisclosure: z.custom<EnvironmentDisclosureSnapshot>().optional(),
     renderGeneration: z.number().optional(),
+    agentsMdPaths: z.array(z.string()).readonly().optional(),
     disallowedTools: z.array(z.string()).readonly().optional(),
   }),
   apply: (s, p) => {
@@ -121,6 +127,12 @@ export const configUpdate = ProfileModel.defineOp('config.update', {
         environmentDisclosure: p.environmentDisclosure,
         renderGeneration: p.renderGeneration ?? s.renderGeneration + 1,
       };
+    }
+    if (
+      p.agentsMdPaths !== undefined &&
+      !stringArrayEqual(p.agentsMdPaths, s.agentsMdPaths)
+    ) {
+      next = { ...(next ?? s), agentsMdPaths: p.agentsMdPaths };
     }
     if (
       p.disallowedTools !== undefined &&

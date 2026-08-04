@@ -9,9 +9,9 @@ import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IWireService } from '#/wire/wire';
 import { ErrorCodes, Error2 } from '#/errors';
@@ -31,6 +31,7 @@ describe('SessionInitService', () => {
   let ix: TestInstantiationService;
   let events: unknown[];
   let appendSystemReminder: ReturnType<typeof vi.fn>;
+  let seedInjected: ReturnType<typeof vi.fn>;
   let flush: ReturnType<typeof vi.fn>;
   let republishStatus: ReturnType<typeof vi.fn>;
   let create: ReturnType<typeof vi.fn>;
@@ -42,6 +43,7 @@ describe('SessionInitService', () => {
     ix = disposables.add(new TestInstantiationService());
     events = [];
     appendSystemReminder = vi.fn();
+    seedInjected = vi.fn();
     flush = vi.fn(async () => {});
     republishStatus = vi.fn(() => {
       events.push({ type: 'agent.status.updated', model: 'mock-model' });
@@ -82,6 +84,7 @@ describe('SessionInitService', () => {
           if (id === IAgentProfileService) return profile;
           if (id === IAgentPermissionModeService) return permissionMode;
           if (id === IAgentSystemReminderService) return { appendSystemReminder };
+          if (id === IAgentAgentsMdReminderService) return { seedInjected };
           if (id === IWireService) return { flush };
           if (id === IEventBus) return eventBus;
           if (id === ITelemetryService) return telemetry;
@@ -153,6 +156,8 @@ describe('SessionInitService', () => {
     expect(reminder).toContain('The user just ran `/init` slash command.');
     expect(reminder).toContain('Latest AGENTS.md file content:');
     expect(reminder).toContain(AGENTS_MD);
+
+    expect(seedInjected).toHaveBeenCalledWith([AGENTS_MD_PATH], WORK_DIR);
 
     expect(flush).toHaveBeenCalledTimes(1);
 

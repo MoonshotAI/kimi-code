@@ -17,7 +17,6 @@
  */
 
 import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
-import { IAgentContextSizeService } from '@moonshot-ai/agent-core-v2/agent/contextSize/contextSize';
 import { IAgentGoalService } from '@moonshot-ai/agent-core-v2/agent/goal/goal';
 import { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
 import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
@@ -27,6 +26,7 @@ import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/p
 import { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
 import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/agent/swarm/swarm';
 import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
+import { IAgentTokenCountingService } from '@moonshot-ai/agent-core-v2/agent/tokenCounting/tokenCounting';
 import { IAgentToolRegistryService } from '@moonshot-ai/agent-core-v2/agent/toolRegistry/toolRegistry';
 import { IAgentUsageService } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import { IAuthSummaryService } from '@moonshot-ai/agent-core-v2/app/auth/auth';
@@ -179,8 +179,8 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     fetch: (svc) => call(svc, 'status'),
   },
   {
-    id: String(IAgentContextSizeService),
-    label: 'AgentContextSizeService',
+    id: String(IAgentTokenCountingService),
+    label: 'AgentTokenCountingService',
     scope: 'agent',
     fetch: (svc) => call(svc, 'get'),
   },

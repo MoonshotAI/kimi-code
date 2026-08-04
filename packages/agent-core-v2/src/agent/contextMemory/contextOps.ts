@@ -163,6 +163,7 @@ export const contextClear = ContextModel.defineOp('context.clear', {
 const contextCompactionBaseShape = {
   tokensBefore: z.number().optional(),
   tokensAfter: z.number().optional(),
+  summaryOutputTokens: z.number().optional(),
   keptUserMessageCount: z.number().optional(),
   keptHeadUserMessageCount: z.number().optional(),
   droppedCount: z.number().optional(),
@@ -226,6 +227,7 @@ export function readContextCompactionShapeInput(
     compactedCount: readContextCompactedCount(fields),
     tokensBefore: readOptionalNumber(fields, 'tokensBefore') ?? 0,
     tokensAfter: readOptionalNumber(fields, 'tokensAfter'),
+    summaryOutputTokens: readOptionalNumber(fields, 'summaryOutputTokens'),
     keptUserMessageCount,
     keptHeadUserMessageCount: readOptionalNumber(fields, 'keptHeadUserMessageCount'),
     droppedCount: readOptionalNumber(fields, 'droppedCount'),
