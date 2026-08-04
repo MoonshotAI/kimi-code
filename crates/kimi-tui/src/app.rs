@@ -600,24 +600,50 @@ impl App {
     }
 
     fn draw(&mut self, frame: &mut ratatui::Frame<'_>) {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(3), Constraint::Length(3)])
-            .split(frame.area());
-        let viewport = chunks[0].height.saturating_sub(2) as usize;
-        let total = self.transcript.len();
-        let max_scroll = total.saturating_sub(viewport);
-        if self.scroll as usize > max_scroll {
-            self.scroll = max_scroll as u16;
+        // The chat pane is the area minus the fixed 3-line input pane.
+        let pane_height = frame.area().height.saturating_sub(3);
+        let max = max_scroll(self.transcript.len(), pane_height);
+        if self.scroll as usize > max {
+            self.scroll = max as u16;
         }
-        let chat = Paragraph::new(styled_lines(&self.transcript))
-            .block(Block::default().borders(Borders::ALL).title("chat"))
-            .scroll((self.scroll, 0));
-        let input = Paragraph::new(self.input.as_str())
-            .block(Block::default().borders(Borders::ALL).title(format!("input — {} | {}", self.session_id, self.status)));
-        frame.render_widget(chat, chunks[0]);
-        frame.render_widget(input, chunks[1]);
+        render_frame(
+            frame,
+            &self.transcript,
+            &self.input,
+            &self.session_id,
+            &self.status,
+            self.scroll,
+        );
     }
+}
+
+/// Render the two-pane chat layout into the frame. Pure over the app state
+/// so smoke tests can drive it with a `TestBackend`.
+fn render_frame(
+    frame: &mut ratatui::Frame<'_>,
+    transcript: &[TranscriptLine],
+    input: &str,
+    session_id: &str,
+    status: &str,
+    scroll: u16,
+) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(3)])
+        .split(frame.area());
+    let chat = Paragraph::new(styled_lines(transcript))
+        .block(Block::default().borders(Borders::ALL).title("chat"))
+        .scroll((scroll, 0));
+    let input = Paragraph::new(input)
+        .block(Block::default().borders(Borders::ALL).title(format!("input — {session_id} | {status}")));
+    frame.render_widget(chat, chunks[0]);
+    frame.render_widget(input, chunks[1]);
+}
+
+/// Largest scroll offset that still keeps the last transcript line visible
+/// in a `pane_height`-tall chat pane (minus its borders).
+fn max_scroll(total: usize, pane_height: u16) -> usize {
+    total.saturating_sub(pane_height.saturating_sub(2) as usize)
 }
 
 /// Map transcript entries to styled render lines (role → prefix + style).
@@ -705,6 +731,18 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> an
 mod tests {
     use super::*;
 
+    /// Reconstruct each buffer row as a string (for substring assertions).
+    fn buffer_text(buffer: &ratatui::buffer::Buffer) -> Vec<String> {
+        let (width, height) = (buffer.area.width, buffer.area.height);
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
     #[test]
     fn completes_command_names_and_cycles() {
         assert_eq!(complete_line("/", &[], None), ("/approvals".to_string(), Some(0)));
@@ -787,5 +825,51 @@ mod tests {
         // Status lines are dimmed, errors are red.
         assert_eq!(lines[3].spans[0].style.fg, Some(Color::DarkGray));
         assert_eq!(lines[4].spans[0].style.fg, Some(Color::Red));
+    }
+
+    #[test]
+    fn smoke_renders_two_panes() {
+        use ratatui::backend::TestBackend;
+
+        let transcript = vec![
+            TranscriptLine::user("hi"),
+            TranscriptLine::assistant("hello there"),
+            TranscriptLine::tool("Read started"),
+        ];
+        let mut terminal = Terminal::new(TestBackend::new(60, 12)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_frame(frame, &transcript, "/help", "sess-1", "plan=off swarm=off", 0);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let lines = buffer_text(&buffer);
+        // Both panes render with their block titles.
+        assert!(lines.iter().any(|l| l.contains("chat")), "chat pane title missing:\n{}", lines.join("\n"));
+        assert!(
+            lines.iter().any(|l| l.contains("input — sess-1 | plan=off swarm=off")),
+            "input pane title missing:\n{}",
+            lines.join("\n")
+        );
+        // Transcript roles render with their prefixes, in order.
+        let first_visible: String = lines.iter().filter(|l| !l.trim().is_empty()).cloned().collect();
+        let user_at = first_visible.find("▶ hi").expect("user line missing");
+        let tool_at = first_visible.find("⚙ Read started").expect("tool line missing");
+        let assistant_at = first_visible.find("hello there").expect("assistant line missing");
+        assert!(user_at < assistant_at && assistant_at < tool_at, "role order wrong");
+        // The ▶ glyph is bold; the gear glyph is blue.
+        let user_cell = buffer.content.iter().find(|c| c.symbol() == "▶").expect("▶ cell");
+        assert!(user_cell.style().add_modifier.contains(Modifier::BOLD));
+        let gear_cell = buffer.content.iter().find(|c| c.symbol() == "⚙").expect("⚙ cell");
+        assert_eq!(gear_cell.style().fg, Some(Color::Blue));
+    }
+
+    #[test]
+    fn max_scroll_matches_viewport() {
+        // A 12-row terminal: chat pane is 9 rows, minus borders = 7 visible.
+        assert_eq!(max_scroll(10, 9), 3);
+        assert_eq!(max_scroll(7, 9), 0);
+        // Empty transcript never underflows.
+        assert_eq!(max_scroll(0, 9), 0);
     }
 }

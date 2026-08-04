@@ -1,4 +1,10 @@
 
+> **✅ 2026-08-03 ⑫ TUI 冒烟（TestBackend 渲染测试，阶段 D 验证项 5，已提交）**：
+> - **draw 重构**：渲染逻辑提出 `render_frame(frame, transcript, input, session_id, status, scroll)` 纯函数（状态入参、无 App 借用）；`max_scroll(total, pane_height)` 提取滚动上限计算（原内联）。
+> - **冒烟测试**：`TestBackend(60x12)` + `Terminal::draw` 真实跑一遍渲染管线——断言双 pane 块标题（chat / `input — sess-1 | plan=off swarm=off`）、角色前缀顺序（▶ hi < hello there < ⚙ Read started）、样式落格（▶ 加粗、⚙ 蓝色）；`max_scroll` 边界（10→3、7→0、0→0）。
+> - **验证**：kimi-tui 测试 5 → 7；clippy kimi-tui 0 警告；workspace check 干净。
+> - **意义**：阶段 D 验证项 5（TUI 冒烟）落地；后续 chatwidget 细化可挂渲染断言。
+
 > **✅ 2026-08-03 ⑪ TUI 审批交互接线（reverse_rpc 前身，已提交）**：
 > - **事件→交互**：`pump_one_event` 检测 `session.approval.requested` → `harness.approvals()` 拉取 → `queue_new_approvals` 去重入队（纯函数可测）→ 转录提示「approval requested: <tool> — press y/n」。
 > - **y/n 键轮询**：prompt 循环每次迭代非阻塞 poll 键盘（pending 非空时），`y`→`resolve_approval(id, allow)`、`n`→deny("denied by user")；解析后出队并回显「<tool> allowed/denied/no longer pending」。

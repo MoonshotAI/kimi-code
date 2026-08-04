@@ -337,7 +337,7 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - [x] 阶段 A 框架落地（kimi-protocol + workspace + wire 类型下沉）✅
 - [x] 阶段 B 宿主协议层（kimi-server 52 测试 + transport/serve 二进制 + client InProcess/Remote 全链路）✅
 - [x] 阶段 C CLI + exec（21 集成测试 + typed client + 配置读写闭环 + chat REPL + acp 命令 + print/resume 目标模式）✅
-- [ ] 阶段 D TUI（kimi-ui 前置 ✅ + chat REPL ✅ + **kimi-tui 骨架 ✅**（ratatui 事件实时渲染/角色化转录/全命令 Tab 补全/审批 y-n 交互+approvals 命令/22 slash 全命令面/会话切换/目标生命周期，5 测试）；chatwidget 流式与审批详情面板待续）
+- [ ] 阶段 D TUI（kimi-ui 前置 ✅ + chat REPL ✅ + **kimi-tui 骨架 ✅**（ratatui 事件实时渲染/角色化转录/全命令 Tab 补全/审批 y-n 交互+approvals 命令/22 slash 全命令面/会话切换/目标生命周期，7 测试 + TestBackend 冒烟）；chatwidget 流式与审批详情面板待续）
 - [ ] 阶段 E SDK/ACP/OAuth/Config（kimi-sdk 🔶 + kimi-acp 🔶 + **kimi-oauth ✅**（device flow）+ **catalog ✅**（models.dev）+ provider/login/completions 命令 ✅）
 - [ ] 阶段 F 退役（**npm 分发薄壳 ✅**：kimi-code-rust-bin 包装 + pack.mjs CI 打包；TS 删除与入口切换待续）
 
