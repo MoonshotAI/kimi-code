@@ -21,7 +21,6 @@ import { IProviderService } from '#/kosong/provider/provider';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import type { HookDef } from '#/agent/externalHooks/types';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
-import type { PluginAgentRoot } from './types';
 import type { SkillRoot } from '#/app/skillCatalog/types';
 
 import { PluginManager } from './manager';
@@ -38,6 +37,7 @@ import type {
   EnabledPluginSystemPrompt,
   PluginCommandDef,
   PluginInfo,
+  PluginAgentRoot,
   PluginSummary,
   PluginUpdateStatus,
   ReloadSummary,

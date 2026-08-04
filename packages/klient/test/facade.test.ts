@@ -95,6 +95,32 @@ describe('facade routing', () => {
     });
   });
 
+  it('routes capability calls through the registered app service contract', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const status = {
+      id: 'kimi-cu',
+      displayName: 'Kimi Computer Use',
+      description: 'Background GUI automation',
+      supported: true,
+      state: 'partial',
+      steps: [{ id: 'permissions', state: 'missing' }],
+      install: { running: false },
+    };
+    channel.result = [status];
+
+    await expect(klient.global.capabilities.list()).resolves.toEqual([status]);
+    channel.result = status;
+    await expect(klient.global.capabilities.get('kimi-cu')).resolves.toEqual(status);
+    await expect(klient.global.capabilities.install('kimi-cu')).resolves.toEqual(status);
+
+    expect(channel.calls).toEqual([
+      { scope: {}, service: 'capabilityService', method: 'listCapabilities', args: [] },
+      { scope: {}, service: 'capabilityService', method: 'getCapability', args: ['kimi-cu'] },
+      { scope: {}, service: 'capabilityService', method: 'installCapability', args: ['kimi-cu'] },
+    ]);
+  });
+
   it('env() fans out property reads and merges them', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);

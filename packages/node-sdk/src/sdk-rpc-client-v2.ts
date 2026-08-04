@@ -253,6 +253,7 @@ import {
 import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
+  CapabilityStatus,
   BackgroundTaskInfo,
   CompactOptions,
   ConfigDiagnostics,
@@ -719,6 +720,24 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
             ) as NonNullable<PluginInfo['manifest']>['hooks'],
           };
     return { ...info, manifest };
+  }
+
+  /**
+   * Capability surface (v2-only): built-in product capabilities (kimi-cu,
+   * kimi-webbridge) with layered readiness and idempotent installs. v1 has
+   * no capability domain, so these stay off the shared base — callers
+   * feature-detect via `in` before use.
+   */
+  async listCapabilities(): Promise<readonly CapabilityStatus[]> {
+    return this.klient.global.capabilities.list();
+  }
+
+  async getCapability(id: string): Promise<CapabilityStatus> {
+    return this.klient.global.capabilities.get(id);
+  }
+
+  async installCapability(id: string): Promise<CapabilityStatus> {
+    return this.klient.global.capabilities.install(id);
   }
 
   /**
