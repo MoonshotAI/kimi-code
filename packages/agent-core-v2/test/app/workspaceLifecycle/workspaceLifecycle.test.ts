@@ -109,6 +109,7 @@ function sessionIndexStub(): ISessionIndex {
     list: () => Promise.resolve({ items: [], total: 0, hasMore: false }),
     get: () => Promise.resolve(undefined),
     countActive: () => Promise.resolve(0),
+    remove: () => Promise.resolve(),
   };
 }
 

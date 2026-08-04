@@ -21,9 +21,8 @@
 // owning model offloads inline media to blob storage), cross-reducers
 // (foreign models that also reduce this record on dispatch and replay).
 
-// Index (46 record types)
+// Index (48 record types)
 //   config.update                      profile               persisted  src/agent/profile/profileOps.ts
-//   context_size.measured              contextSize           transient  src/agent/contextSize/contextSizeOps.ts
 //   context.append_loop_event          contextMemory         persisted  src/agent/contextMemory/contextOps.ts
 //   context.append_message             contextMemory         persisted  src/agent/contextMemory/contextOps.ts
 //   context.apply_compaction           contextMemory         persisted  src/agent/contextMemory/contextOps.ts
@@ -58,6 +57,9 @@
 //   swarm_mode.exit                    swarm                 persisted  src/agent/swarm/swarmOps.ts
 //   task.started                       task                  persisted  src/agent/task/taskOps.ts
 //   task.terminated                    task                  persisted  src/agent/task/taskOps.ts
+//   token_counting.measured            tokenCounting         transient  src/agent/tokenCounting/tokenCountingOps.ts
+//   token_counting.rebased             tokenCounting         transient  src/agent/tokenCounting/tokenCountingOps.ts
+//   token_counting.truncated           tokenCounting         transient  src/agent/tokenCounting/tokenCountingOps.ts
 //   tools.register_user_tool           userTool              persisted  src/agent/userTool/userToolOps.ts
 //   tools.reset_active_tools           profile.activeTools   persisted  src/agent/profile/profileOps.ts
 //   tools.set_active_tools             profile.activeTools   persisted  src/agent/profile/profileOps.ts
@@ -84,16 +86,6 @@ interface ConfigUpdatePayload {
   systemPrompt?: string;
   agentsMdPaths?: string[];
   disallowedTools?: string[];
-}
-
-/**
- * model: contextSize · toEvent
- * owner: src/agent/contextSize/contextSizeOps.ts
- */
-interface ContextSizeMeasuredPayload {
-  _name: 'context_size.measured';
-  length: number;
-  tokens: number;
 }
 
 /**
@@ -526,6 +518,37 @@ interface TaskTerminatedPayload {
 }
 
 /**
+ * model: tokenCounting · toEvent
+ * owner: src/agent/tokenCounting/tokenCountingOps.ts
+ */
+interface TokenCountingMeasuredPayload {
+  _name: 'token_counting.measured';
+  length: number;
+  tokens: number;
+}
+
+/**
+ * model: tokenCounting · toEvent
+ * owner: src/agent/tokenCounting/tokenCountingOps.ts
+ */
+interface TokenCountingRebasedPayload {
+  _name: 'token_counting.rebased';
+  length: number;
+  tokens: number;
+  measured: boolean;
+}
+
+/**
+ * model: tokenCounting · toEvent
+ * owner: src/agent/tokenCounting/tokenCountingOps.ts
+ */
+interface TokenCountingTruncatedPayload {
+  _name: 'token_counting.truncated';
+  length: number;
+  tokens: number;
+}
+
+/**
  * model: userTool · persisted
  * owner: src/agent/userTool/userToolOps.ts
  * payload type: UserToolRegistration
@@ -683,7 +706,6 @@ interface UsageRecordPayload {
 /** Record type → payload sketch. */
 interface WirePayloadMap {
   "config.update": ConfigUpdatePayload;
-  "context_size.measured": ContextSizeMeasuredPayload;
   "context.append_loop_event": ContextAppendLoopEventPayload;
   "context.append_message": ContextAppendMessagePayload;
   "context.apply_compaction": ContextApplyCompactionPayload;
@@ -718,6 +740,9 @@ interface WirePayloadMap {
   "swarm_mode.exit": SwarmModeExitPayload;
   "task.started": TaskStartedPayload;
   "task.terminated": TaskTerminatedPayload;
+  "token_counting.measured": TokenCountingMeasuredPayload;
+  "token_counting.rebased": TokenCountingRebasedPayload;
+  "token_counting.truncated": TokenCountingTruncatedPayload;
   "tools.register_user_tool": ToolsRegisterUserToolPayload;
   "tools.reset_active_tools": ToolsResetActiveToolsPayload;
   "tools.set_active_tools": ToolsSetActiveToolsPayload;

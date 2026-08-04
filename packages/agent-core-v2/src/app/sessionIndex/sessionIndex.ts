@@ -6,7 +6,10 @@
  * enumerates sessions and derives session identity (`workspaceId`), returning
  * data (`SessionSummary`) or counts — never filesystem paths or live handles.
  * The index is a read model. Backends are deployment-specific (local
- * filesystem today; database / query store on a server).
+ * filesystem today; database / query store on a server). `remove` is the one
+ * write: it evicts a deleted session's derived/cached state so `get` stops
+ * answering for the id — the authoritative record (the session directory) is
+ * deleted by the caller (`sessionLifecycle.delete`).
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -45,6 +48,7 @@ export interface ISessionIndex {
   list(query: SessionListQuery): Promise<Page<SessionSummary>>;
   get(id: string): Promise<SessionSummary | undefined>;
   countActive(workspaceIds: readonly string[]): Promise<number>;
+  remove(id: string): Promise<void>;
 }
 
 export const ISessionIndex: ServiceIdentifier<ISessionIndex> =

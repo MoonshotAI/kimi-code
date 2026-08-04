@@ -374,7 +374,12 @@ export * from '#/session/sessionContext/sessionContext';
 
 import '#/session/approval/approval';
 import '#/session/approval/approvalService';
-export { ISessionApprovalService } from '#/session/approval/approval';
+export {
+  ISessionApprovalService,
+  type ApprovalDecision,
+  type ApprovalRequest as SessionApprovalRequest,
+  type ApprovalResponse as SessionApprovalResponse,
+} from '#/session/approval/approval';
 export * from '#/session/question/question';
 export * from '#/session/question/questionService';
 export * from '#/agent/tools/ask-user-question/ask-user-question';
@@ -501,9 +506,9 @@ export * from '#/agent/systemReminder/systemReminder';
 export * from '#/agent/systemReminder/systemReminderService';
 export * from '#/agent/contextProjector/contextProjector';
 export * from '#/agent/contextProjector/contextProjectorService';
-export * from '#/agent/contextSize/contextSize';
-export * from '#/agent/contextSize/contextSizeOps';
-export * from '#/agent/contextSize/contextSizeService';
+export * from '#/agent/tokenCounting/tokenCounting';
+export * from '#/agent/tokenCounting/tokenCountingOps';
+export * from '#/agent/tokenCounting/tokenCountingService';
 export * from '#/agent/contextInjector/contextInjector';
 export * from '#/agent/contextInjector/contextInjectorService';
 export * from '#/agent/plugin/agentPlugin';

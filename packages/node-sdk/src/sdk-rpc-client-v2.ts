@@ -163,7 +163,6 @@ import {
   visibleBuiltinSkills,
   IAgentActivityView,
   IAgentContextMemoryService,
-  IAgentContextSizeService,
   IAgentFullCompactionService,
   IAgentGoalService,
   IAgentLifecycleService,
@@ -176,6 +175,7 @@ import {
   IAgentSkillService,
   IAgentSwarmService,
   IAgentTaskService,
+  IAgentTokenCountingService,
   IBootstrapService,
   IConfigService,
   IEventService,
@@ -1555,7 +1555,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     }
     const message = buildImportContextMessage(input.content, input.source);
     const capability = agent.accessor.get(IAgentProfileService).data().modelCapabilities;
-    const currentTokenCount = agent.accessor.get(IAgentContextSizeService).get().size;
+    const currentTokenCount = agent.accessor.get(IAgentTokenCountingService).get().size;
     assertImportFits(
       message,
       currentTokenCount,
