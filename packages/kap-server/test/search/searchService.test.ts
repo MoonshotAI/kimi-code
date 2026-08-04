@@ -10,8 +10,9 @@ import type {
   ISessionIndex,
   SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
+import { MiniDb } from '@moonshot-ai/minidb';
 import { TranscriptStore, type TranscriptOperation } from '@moonshot-ai/transcript';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   GlobalSearchError,
@@ -159,6 +160,7 @@ interface ServiceInternals {
       value: Record<string, unknown>;
     }[];
     compact(): Promise<void>;
+    close(): Promise<void>;
   } | null;
   generation: number;
   syncPromise: Promise<void> | null;
@@ -171,6 +173,60 @@ interface ServiceInternals {
 
 function internals(service: GlobalSearchService): ServiceInternals {
   return service as unknown as ServiceInternals;
+}
+
+/**
+ * Let pending promise chains and fs I/O settle without awaiting anything
+ * specific — backs the "still not drained" assertions: a drain that failed
+ * to wait would have resolved within these rounds.
+ */
+async function flush(rounds = 20): Promise<void> {
+  for (let i = 0; i < rounds; i++) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
+/**
+ * Patch a private async method to signal its first entry and hold it until
+ * released — the deterministic "dispose lands mid-op" interleaving for the
+ * lifecycle tests. Later calls pass through to the original.
+ */
+function blockFirstCall(
+  service: GlobalSearchService,
+  method: 'deleteSessionDocs' | 'computeFingerprint',
+): { entered: Promise<void>; release: () => void } {
+  let enteredResolve!: () => void;
+  let releaseResolve!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enteredResolve = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    releaseResolve = resolve;
+  });
+  const host = service as unknown as Record<string, unknown>;
+  const orig = host[method] as (this: unknown, ...args: unknown[]) => Promise<unknown>;
+  let first = true;
+  host[method] = async function (this: unknown, ...args: unknown[]) {
+    if (first) {
+      first = false;
+      enteredResolve();
+      await gate;
+    }
+    return orig.apply(this, args);
+  };
+  return { entered, release: () => releaseResolve() };
+}
+
+/** An ILogService that records warn calls (message + serialized meta). */
+function recordingLog(): { log: ILogService; warnings: string[] } {
+  const warnings: string[] = [];
+  const log = {
+    error: () => {},
+    warn: (message: string, meta?: unknown) => warnings.push(`${message} ${JSON.stringify(meta)}`),
+    info: () => {},
+    debug: () => {},
+  } as unknown as ILogService;
+  return { log, warnings };
 }
 
 // ---------------------------------------------------------------------------
@@ -2137,6 +2193,184 @@ describe('GlobalSearchService', () => {
           score: h.score,
         }));
       expect(project(live)).toEqual(project(index));
+    });
+  });
+
+  describe('lifecycle drain correctness (plan 13)', () => {
+    it('closes the handle when post-open index setup fails, and the next open becomes the writer again (review #19)', async () => {
+      const s1 = summary('s1', 'open failure', T1);
+      await writeWire(home!, 's1', 'main', [userLine('苹果 recovery', T1)]);
+      const service = track(makeService(home!, staticIndex([s1])));
+
+      // Inject a failure into the writer-side text-index creation that runs
+      // after MiniDb.open has handed out the handle.
+      const spy = vi
+        .spyOn(MiniDb.prototype, 'createTextIndex')
+        .mockRejectedValueOnce(new Error('injected createTextIndex failure'));
+      await expect(service.reindex()).rejects.toThrow('injected createTextIndex failure');
+      spy.mockRestore();
+
+      // The failed open must not have published the handle, and the handle
+      // must be closed — otherwise the leaked writer keeps the lock for the
+      // rest of the process lifetime and every later open degrades to
+      // read-only (the review #19 self-lock).
+      expect(internals(service).db).toBeNull();
+
+      // The very next open takes the write lock again (same process).
+      await service.reindex();
+      const db = internals(service).db;
+      expect(db).not.toBeNull();
+      expect((db as unknown as { readOnly: boolean }).readOnly).toBe(false);
+      expect((await service.search({ query: '苹果' })).items.length).toBe(1);
+    });
+
+    it('dispose drains an in-flight sync before closing the db; the deleteSessionDocs/STATS_KEY windows are gated (review #20)', async () => {
+      const s1 = summary('s1', 'drain sync', T1);
+      await writeWire(home!, 's1', 'main', [userLine('苹果 drain', T1)]);
+      const { log, warnings } = recordingLog();
+      const sessions = [s1];
+      const service = new GlobalSearchService(
+        makeSessionIndex(async () => ({ items: sessions, nextCursor: undefined })),
+        makeBootstrap(home!),
+        log,
+      );
+      service.syncDebounceMs = 0;
+      track(service);
+      await service.reindex();
+      expect((await service.search({ query: '苹果' })).items.length).toBe(1);
+      // The search kicked a fire-and-forget pass: settle it, or the syncNow
+      // below would single-flight JOIN it instead of starting a gated pass.
+      await settleSync(service);
+
+      // Record trailing writes; the gated pass must skip its STATS_KEY write.
+      const db = internals(service).db!;
+      const setKeys: string[] = [];
+      const origSet = db.set.bind(db);
+      db.set = async (key: string, value: unknown) => {
+        setKeys.push(key);
+        return origSet(key, value);
+      };
+
+      // The next pass deletes the disappeared session; block it inside the
+      // deleteSessionDocs window, then dispose mid-pass.
+      sessions.length = 0;
+      const blocked = blockFirstCall(service, 'deleteSessionDocs');
+      const sync = syncNow(service);
+      await blocked.entered;
+      service.dispose();
+
+      let drained = false;
+      const drain = drainGlobalSearchDisposals().then(() => {
+        drained = true;
+      });
+      await flush();
+      expect(drained).toBe(false); // the drain waits for the in-flight pass
+
+      blocked.release();
+      await sync;
+      await drain;
+      expect(drained).toBe(true);
+      expect(internals(service).db).toBeNull();
+      // The gate closed before the trailing stats write: it was skipped, and
+      // no background write ever hit the closed handle.
+      expect(setKeys).not.toContain('\0meta\\stats');
+      expect(warnings.filter((w) => w.includes('closed'))).toEqual([]);
+    });
+
+    it('dispose drains an in-flight read-only refresh before closing the db (review #20)', async () => {
+      const s1 = summary('s1', 'drain refresh', T1);
+      await writeWire(home!, 's1', 'main', [userLine('苹果 refresh', T1)]);
+      const writer = track(makeService(home!, staticIndex([s1])));
+      await writer.reindex();
+
+      // A second instance on the same home opens read-only (the writer holds
+      // the lock) and catches up by refreshing from the writer's commits.
+      const { log, warnings } = recordingLog();
+      const reader = new GlobalSearchService(staticIndex([s1]), makeBootstrap(home!), log);
+      reader.syncDebounceMs = 0;
+      track(reader);
+      await syncNow(reader); // join the constructor-kicked pass: opens the read-only handle
+      expect((internals(reader).db as unknown as { readOnly: boolean } | null)?.readOnly).toBe(true);
+
+      // Block the next refresh inside its fingerprint probe, then dispose.
+      const blocked = blockFirstCall(reader, 'computeFingerprint');
+      const refresh = refreshNow(reader);
+      await blocked.entered;
+      reader.dispose();
+
+      let drained = false;
+      const drain = drainGlobalSearchDisposals().then(() => {
+        drained = true;
+      });
+      await flush();
+      expect(drained).toBe(false); // the drain waits for the in-flight refresh
+
+      blocked.release();
+      await refresh;
+      await drain;
+      expect(drained).toBe(true);
+      expect(internals(reader).db).toBeNull();
+      expect(warnings.filter((w) => w.includes('closed'))).toEqual([]);
+    });
+
+    it('drainGlobalSearchDisposals also waits for disposals registered while it was draining (review #21)', async () => {
+      // One service per home, each with an in-flight pass blocked inside the
+      // deleteSessionDocs window.
+      const setupBlockedService = async (root: string) => {
+        const s1 = summary('s1', 'drain fixpoint', T1);
+        await writeWire(root, 's1', 'main', [userLine('苹果 fixpoint', T1)]);
+        const sessions = [s1];
+        const service = new GlobalSearchService(
+          makeSessionIndex(async () => ({ items: sessions, nextCursor: undefined })),
+          makeBootstrap(root),
+          noopLog,
+        );
+        service.syncDebounceMs = 0;
+        track(service);
+        await service.reindex();
+        sessions.length = 0;
+        const blocked = blockFirstCall(service, 'deleteSessionDocs');
+        const sync = syncNow(service);
+        await blocked.entered;
+        return { service, blocked, sync };
+      };
+
+      const a = await setupBlockedService(home!);
+      a.service.dispose();
+
+      let drained = false;
+      const drain = drainGlobalSearchDisposals().then(() => {
+        drained = true;
+      });
+      await flush();
+      expect(drained).toBe(false);
+
+      // A second disposal registers WHILE the drain is awaiting the first.
+      const homeB = await mkdtemp(join(tmpdir(), 'kimi-kap-search-drain-'));
+      try {
+        const b = await setupBlockedService(homeB);
+        b.service.dispose();
+
+        // Let the first service finish: a snapshot-only drain (Promise.all
+        // over the set at call time) would return here, leaving b behind.
+        const aDb = internals(a.service).db!;
+        a.blocked.release();
+        await a.sync;
+        // Join A's in-pending close (close is idempotent and shared) so its
+        // disposal has fully settled — only promise microtasks remain below.
+        await aDb.close();
+        await flush();
+        expect(drained).toBe(false);
+
+        b.blocked.release();
+        await b.sync;
+        await drain;
+        expect(drained).toBe(true);
+        expect(internals(a.service).db).toBeNull();
+        expect(internals(b.service).db).toBeNull();
+      } finally {
+        await rm(homeB, { recursive: true, force: true });
+      }
     });
   });
 });

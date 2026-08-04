@@ -67,7 +67,7 @@ import {
   workspacePersistenceScope,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
-import { LockError, MiniDb, TextIndexBuildingError, normalizeLiteral, tokenize, type BatchInputOp } from '@moonshot-ai/minidb';
+import { LockError, MiniDb, OpTracker, TextIndexBuildingError, normalizeLiteral, tokenize, type BatchInputOp } from '@moonshot-ai/minidb';
 import type { TranscriptStore } from '@moonshot-ai/transcript';
 
 import type {
@@ -385,7 +385,14 @@ type SearchDoc = MessageDoc | TitleDoc | FileMetaDoc | SessionMetaDoc | StatsDoc
 const pendingDisposals = new Set<Promise<void>>();
 
 export async function drainGlobalSearchDisposals(): Promise<void> {
-  await Promise.all(pendingDisposals);
+  // Fixpoint loop (review #21): awaiting a batch of disposals can trigger
+  // further dispose() calls — an embedder tearing down scopes concurrently —
+  // which register NEW pending promises a one-shot Promise.all snapshot
+  // would not wait for. Keep draining until the set is still empty at the
+  // end of a wait.
+  while (pendingDisposals.size > 0) {
+    await Promise.all([...pendingDisposals]);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -787,6 +794,14 @@ export class GlobalSearchService implements IGlobalSearchService {
   private fingerprint = '';
   private summaries = new Map<string, SessionSummary>();
   private disposed = false;
+  /**
+   * Dispose drain gate (plan 12's OpTracker primitive, consumed per plan
+   * 13): every lifecycle-managed background op (sync pass, read-only
+   * refresh) enters it; dispose() closes the gate (new ops skip) and drains
+   * the in-flight ones BEFORE closing the db, so no background task ever
+   * touches a closed handle (review #20).
+   */
+  private readonly ops = new OpTracker();
   /** Set while `reindex()` swaps the db — syncs started meanwhile are no-ops. */
   private reindexing = false;
   /** Live-transcript source for the in-memory route; null until start.ts wires it. */
@@ -946,13 +961,16 @@ export class GlobalSearchService implements IGlobalSearchService {
       clearTimeout(this.syncTimer);
       this.syncTimer = null;
     }
-    // DI disposal is synchronous, but closing a MiniDb is not: wait for any
-    // in-flight open to settle, then close the handle. The promise is
-    // registered module-level so the server shutdown path
-    // (`drainGlobalSearchDisposals` in start.ts) can await it before the
-    // homeDir is torn down — otherwise teardown rm() races the close and
-    // fails with ENOTEMPTY.
+    // DI disposal is synchronous, but draining background work and closing a
+    // MiniDb are not: close the op gate SYNCHRONOUSLY (new syncs/refreshes
+    // skip at enter()), wait for every in-flight op and the in-flight open
+    // to settle, then release and close the handle — no background task can
+    // touch a closed db (review #20). The promise is registered module-level
+    // so the server shutdown path (`drainGlobalSearchDisposals` in start.ts)
+    // can await it before the homeDir is torn down — otherwise teardown rm()
+    // races the close and fails with ENOTEMPTY.
     const pending = (async () => {
+      await this.ops.close();
       await this.openPromise?.catch(() => {});
       const db = this.db;
       this.db = null;
@@ -960,6 +978,20 @@ export class GlobalSearchService implements IGlobalSearchService {
     })();
     pendingDisposals.add(pending);
     void pending.finally(() => pendingDisposals.delete(pending));
+  }
+
+  /**
+   * Run one lifecycle-managed background op under the dispose drain gate:
+   * skipped once dispose has started, and dispose waits for every op that
+   * already entered before it closes the db (review #20).
+   */
+  private async tracked(op: () => Promise<void>): Promise<void> {
+    if (!this.ops.enter()) return;
+    try {
+      await op();
+    } finally {
+      this.ops.leave();
+    }
   }
 
   // -- read-only freshness (fingerprint + WAL catch-up) -------------------------
@@ -986,7 +1018,7 @@ export class GlobalSearchService implements IGlobalSearchService {
    * the stale generation keeps serving (surfaced as `indexState.degraded`).
    */
   private refreshReadonly(): Promise<void> {
-    this.refreshPromise ??= this.doRefreshReadonly()
+    this.refreshPromise ??= this.tracked(() => this.doRefreshReadonly())
       .then(
         () => {
           this.lastRefreshError = null;
@@ -1087,7 +1119,7 @@ export class GlobalSearchService implements IGlobalSearchService {
   /** Single-flight: concurrent callers share the in-flight sync. */
   private ensureSyncStarted(): Promise<void> {
     if (this.syncPromise === null) {
-      const p = this.runSync().finally(() => {
+      const p = this.tracked(() => this.runSync()).finally(() => {
         if (this.syncPromise === p) this.syncPromise = null;
       });
       this.syncPromise = p;
@@ -1124,8 +1156,12 @@ export class GlobalSearchService implements IGlobalSearchService {
     this.summaries = new Map(sessions.map((s) => [s.id, s]));
     const currentIds = new Set(sessions.map((s) => s.id));
 
-    // Drop sessions whose directory disappeared since the last sync.
+    // Drop sessions whose directory disappeared since the last sync. The
+    // disposed gate covers this loop and the trailing stats write (review
+    // #20): once dispose starts, the pass skips them instead of writing into
+    // a db whose close is already draining.
     for (const row of db.query({ key: { prefix: SESSION_META_PREFIX }, project: [] })) {
+      if (this.disposed) return;
       const sessionId = row.key.slice(SESSION_META_PREFIX.length);
       if (!currentIds.has(sessionId)) await this.deleteSessionDocs(db, sessionId);
     }
@@ -1145,6 +1181,7 @@ export class GlobalSearchService implements IGlobalSearchService {
       }
     }
 
+    if (this.disposed) return; // dispose started mid-pass: skip the trailing write (review #20)
     const metaCount = db.query({ key: { prefix: '\0meta\\' }, project: [] }).length;
     const stats: StatsDoc = {
       kind: 'stats',
