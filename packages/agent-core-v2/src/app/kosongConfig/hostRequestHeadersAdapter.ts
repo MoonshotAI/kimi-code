@@ -1,16 +1,17 @@
 /**
  * `kosongConfig` domain — `IHostRequestHeaders` implementation.
  *
- * Bridges kosong's host-headers port to the host invocation args: the headers
- * are the ones the host stated in `BootstrapInput.args.requestHeaders`
- * (usually built through `createKimiDefaultHeaders`), exposed through
- * `IBootstrapService.args`. kosong's model catalog only sees the port. Bound
- * at App scope.
+ * Bridges kosong's host-headers port to the host invocation args: `headers`
+ * is what the host stated in `BootstrapInput.args.requestHeaders` (usually
+ * built through `createKimiDefaultHeaders`), verbatim; `thirdPartyHeaders` is
+ * the `User-Agent`-only layer with the product token taken from the frozen
+ * identity snapshot. kosong's model catalog only sees the port. Bound at App
+ * scope.
  *
- * The headers are a constructor snapshot (bootstrap args are frozen for the
- * process); the rewrite token comes from `agentIdentity` and is read lazily on
- * each access, because config loads asynchronously and a snapshot taken here
- * would freeze the pre-load value and silently drop a configured identity.
+ * The third-party layer reads `agentIdentity.current()`, which throws until
+ * config has first loaded — so a model materialized too early fails loudly
+ * instead of caching headers that misstate the configured identity. Vendors
+ * on the full-headers path never touch it.
  */
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -28,8 +29,13 @@ export class HostRequestHeadersAdapter implements IHostRequestHeaders {
     this.headers = bootstrap.args.requestHeaders;
   }
 
+  get thirdPartyHeaders(): Readonly<Record<string, string>> {
+    const userAgent = this.identity.current().thirdPartyUserAgent;
+    return userAgent === undefined ? {} : { 'User-Agent': userAgent };
+  }
+
   get identitySlug(): string | undefined {
-    return this.identity.slug;
+    return this.identity.current().slug;
   }
 }
 

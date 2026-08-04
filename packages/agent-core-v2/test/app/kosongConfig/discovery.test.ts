@@ -107,7 +107,10 @@ async function createHost(
       IBootstrapService,
       stubBootstrap('/tmp/kimi-home', {}, { requestHeaders: { 'User-Agent': 'kimi-test/1.0' } }),
     ],
-    [IAgentIdentity, stubAgentIdentity()],
+    [
+      IAgentIdentity,
+      stubAgentIdentity({ hostRequestHeaders: { 'User-Agent': 'kimi-test/1.0' } }),
+    ],
   ]);
   const providers = host.app.accessor.get(IProviderService);
   const models = host.app.accessor.get(IModelService);

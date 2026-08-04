@@ -7,22 +7,23 @@
  * `BootstrapInput.args.requestHeaders`; the app-side adapter
  * (`app/kosongConfig/hostRequestHeadersAdapter`) bridges
  * `IBootstrapService.args` to this port so kosong stays a pure abstraction
- * layer. `ModelCatalog` merges them per vendor — the full set for vendors
- * whose definition declares `hostHeaders: 'full'`, only the `User-Agent` for
- * everyone else (so device identity never leaks to third-party endpoints).
+ * layer. The port carries two finished layers and `ModelCatalog` picks one
+ * per vendor — `headers`, the full verbatim set, for vendors whose definition
+ * declares `hostHeaders: 'full'`; `thirdPartyHeaders`, at most the
+ * `User-Agent`, for everyone else (so device identity never leaks to
+ * third-party endpoints). Any custom-identity rewriting happens on the app
+ * side before the layers reach this port; kosong applies them as given.
  *
- * `identitySlug` carries the configured custom identity's protocol token, or
- * `undefined` when none is configured — in which case `headers` must reach
- * providers untouched. It travels with the headers because it is the same
- * concern: what this host calls itself on the wire. `ModelCatalog` applies it
- * to the `User-Agent` on the third-party path; vendors receiving the full host
- * header set keep the host's own product token, which that set is built around.
+ * `identitySlug` is provenance metadata only — the configured custom
+ * identity's token, surfaced by `inspect` to label where the third-party
+ * `User-Agent`'s product token came from. No resolution logic reads it.
  */
 
 import { createDecorator } from '#/_base/di/instantiation';
 
 export interface IHostRequestHeaders {
   readonly headers: Readonly<Record<string, string>>;
+  readonly thirdPartyHeaders: Readonly<Record<string, string>>;
   readonly identitySlug?: string;
 }
 

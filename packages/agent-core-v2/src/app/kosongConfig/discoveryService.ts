@@ -51,11 +51,7 @@ import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/
 import { Error2 } from '#/_base/errors/errors';
 import { IOAuthService } from '#/app/auth/auth';
 import { AuthErrors } from '#/app/auth/errors';
-import {
-  IAgentIdentity,
-  identityUserAgentOrDefault,
-} from '#/app/agentIdentity/agentIdentity';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
 import { ModelCatalogErrors } from '#/kosong/model/errors';
@@ -99,7 +95,6 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     @IConfigService private readonly config: IConfigService,
     @IOAuthService private readonly oauth: IOAuthService,
     @IEventService private readonly events: IEventService,
-    @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
   ) {}
 
@@ -132,7 +127,8 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     }
 
     const exclusion = this.computeStaticExclusion();
-    const result = await refreshProviderModels(this.buildRefreshHost(exclusion), {
+    const { outboundUserAgent } = await this.identity.resolved();
+    const result = await refreshProviderModels(this.buildRefreshHost(exclusion, outboundUserAgent), {
       scope: options.scope,
       providerId: options.providerId,
     });
@@ -185,16 +181,13 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     };
   }
 
-  private buildRefreshHost(exclusion: StaticExclusion): RefreshProviderHost {
+  private buildRefreshHost(exclusion: StaticExclusion, userAgent: string): RefreshProviderHost {
     return {
       getConfig: async () => this.readUserConfigShape(exclusion),
       removeProvider: (providerId) => this.shapeWithoutProvider(providerId),
       setConfig: (patch) => this.applyRefreshPatch(patch, exclusion),
       resolveOAuthToken: (providerName, oauthRef) => this.resolveOAuthToken(providerName, oauthRef),
-      userAgent: identityUserAgentOrDefault(
-        this.bootstrap.args.requestHeaders['User-Agent'],
-        this.identity.slug,
-      ),
+      userAgent,
     };
   }
 

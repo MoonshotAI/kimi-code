@@ -837,14 +837,16 @@ describe('WebSearchProviderService', () => {
           resolveTokenProvider:
             resolveTokenProvider as unknown as IOAuthService['resolveTokenProvider'],
         });
-        reg.defineInstance(IAgentIdentity, stubAgentIdentity());
+        const hostHeaders = {
+          'User-Agent': 'kimi-code-cli/test',
+          'X-Msh-Device-Id': 'device-test',
+        };
+        reg.defineInstance(
+          IAgentIdentity,
+          stubAgentIdentity({ hostRequestHeaders: hostHeaders }),
+        );
         reg.definePartialInstance(IBootstrapService, {
-          args: {
-            requestHeaders: {
-              'User-Agent': 'kimi-code-cli/test',
-              'X-Msh-Device-Id': 'device-test',
-            },
-          },
+          args: { requestHeaders: hostHeaders },
         });
         reg.definePartialInstance(IConfigService, {
           get: ((domain: string) =>

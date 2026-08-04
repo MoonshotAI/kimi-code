@@ -8,6 +8,10 @@
  * env override never persists back into the file. Leaving the section unset
  * means no custom identity, and every consumer keeps its current behavior.
  *
+ * Unlike most sections this one is read exactly once: `agentIdentity` freezes
+ * its snapshot when config first loads, so edits apply on the next start —
+ * see the domain contract for why mid-process changes cannot be honored.
+ *
  * Self-registered at module load via `registerConfigSection`.
  */
 

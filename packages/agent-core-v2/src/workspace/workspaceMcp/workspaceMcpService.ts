@@ -18,13 +18,13 @@
  * process — so a stateful stdio server is shared by concurrent sessions of
  * the workspace rather than owned by one session. Bound at Workspace scope.
  *
- * Resolves the client name announced to MCP servers — on initialize and on
- * OAuth dynamic registration — through `agentIdentity`, per connection rather
- * than once at construction. Every manager it builds, the shared one and each
- * session overlay, connects only after the config domain is ready: the name is
- * read as a connection is made, and the OAuth provider a remote server
- * materializes is cached on the shared service, so connecting early would pin
- * the built-in name well beyond the connection that raced.
+ * The client name announced to MCP servers — on initialize and on OAuth
+ * dynamic registration — is the identity snapshot's slug. Every manager it
+ * builds, the shared one and each session overlay, gates its connects on
+ * `identity.resolved()`, so the callback handed to the managers always reads
+ * the frozen snapshot: a connection (and the OAuth provider a remote server
+ * materializes, cached on the shared service) can never carry a pre-config
+ * name.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -59,7 +59,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
   private readonly stdioCwd: string;
   readonly ready: Promise<void>;
   private mutationTail: Promise<void> = Promise.resolve();
-  private readonly resolveClientName = (): string | undefined => this.identity.slug;
+  private readonly resolveClientName = (): string | undefined => this.identity.current().slug;
 
   constructor(
     @IWorkspaceContext workspace: IWorkspaceContext,
@@ -116,7 +116,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       resolveDefaultTimeouts: () => this.mcpConfig.tunables(),
       resolveClientName: this.resolveClientName,
     });
-    const connect = this.mcpConfig.ready
+    const connect = Promise.all([this.mcpConfig.ready, this.identity.resolved()])
       .then(() => sessionManager.connectAll({ ...servers }))
       .catch((error: unknown) => {
         this.log.error('session mcp overlay initial load failed', { error });
@@ -144,6 +144,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
 
   private async initialize(): Promise<void> {
     await this.mcpConfig.ready;
+    await this.identity.resolved();
     const servers = this.mcpConfig.servers();
     if (Object.keys(servers).length === 0) return;
     await this.manager.connectAll(servers);

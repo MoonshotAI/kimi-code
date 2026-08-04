@@ -27,11 +27,9 @@
  * invalidates the runtime model catalog.
  *
  * Both third-party fetches — the models.dev directory and the custom-registry
- * import — resolve their outbound User-Agent through `agentIdentity`, matching
- * what the scheduled refresh of the same registry sends. A host that states no
- * User-Agent still gets a header: the configured slug when there is one, and a
- * neutral token otherwise, since these are directories this service chooses to
- * call rather than requests carrying a host's own intent.
+ * import — send the identity snapshot's `outboundUserAgent`, matching what
+ * the scheduled refresh of the same registry sends: these are directories
+ * this service chooses to call, so a header is always sent.
  */
 
 import {
@@ -45,11 +43,7 @@ import {
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
-import {
-  IAgentIdentity,
-  identityUserAgentOrDefault,
-} from '#/app/agentIdentity/agentIdentity';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog } from '#/kosong/model/catalog';
 import { type ModelsSection } from '#/kosong/model/model';
@@ -88,16 +82,11 @@ export class ModelsDevImportService implements IModelsDevImportService {
     @IConfigService private readonly config: IConfigService,
     @IKosongConfigService private readonly kosongConfig: IKosongConfigService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
-    @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
   ) {}
 
   private async outboundUserAgent(): Promise<string> {
-    await this.config.ready;
-    return identityUserAgentOrDefault(
-      this.bootstrap.args.requestHeaders['User-Agent'],
-      this.identity.slug,
-    );
+    return (await this.identity.resolved()).outboundUserAgent;
   }
 
   async listModelsDevProviders(): Promise<ModelsDevProviderItem[]> {

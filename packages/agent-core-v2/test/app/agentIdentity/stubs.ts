@@ -5,25 +5,43 @@
  * naming, and the builtin skill catalog, so plenty of suites need it present
  * without caring what it says. The default states "no custom identity", which
  * is the shape every pre-existing test expects: consumers must behave exactly
- * as they did before the feature existed.
+ * as they did before the feature existed. Unlike the real resolution, the
+ * stub's `displayName` and `slug` are independent — naming a display name
+ * does not derive a slug, so a suite can exercise one face in isolation.
  */
 
 import type { ServiceRegistration } from '#/_base/di/test';
-import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
+import {
+  buildAgentIdentitySnapshot,
+  IAgentIdentity,
+  type AgentIdentitySnapshot,
+} from '#/app/agentIdentity/agentIdentity';
 
-export function stubAgentIdentity(
-  overrides: { readonly displayName?: string; readonly slug?: string } = {},
-): IAgentIdentity {
+export interface AgentIdentityStubOverrides {
+  readonly displayName?: string;
+  readonly slug?: string;
+  readonly hostRequestHeaders?: Readonly<Record<string, string>>;
+}
+
+export function stubAgentIdentity(overrides: AgentIdentityStubOverrides = {}): IAgentIdentity {
+  const products = buildAgentIdentitySnapshot({
+    slug: overrides.slug,
+    hostRequestHeaders: overrides.hostRequestHeaders ?? {},
+  });
+  const snapshot: AgentIdentitySnapshot = {
+    ...products,
+    displayName: overrides.displayName,
+  };
   return {
     _serviceBrand: undefined,
-    displayName: overrides.displayName,
-    slug: overrides.slug,
+    resolved: () => Promise.resolve(snapshot),
+    current: () => snapshot,
   };
 }
 
 export function registerAgentIdentityStub(
   reg: ServiceRegistration,
-  overrides?: { readonly displayName?: string; readonly slug?: string },
+  overrides?: AgentIdentityStubOverrides,
 ): void {
   reg.defineInstance(IAgentIdentity, stubAgentIdentity(overrides));
 }

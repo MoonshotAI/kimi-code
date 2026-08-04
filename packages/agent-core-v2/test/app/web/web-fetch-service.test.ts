@@ -12,7 +12,11 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IOAuthService } from '#/app/auth/auth';
 import { SERVICES_SECTION, type ServicesConfig } from '#/app/auth/configSection';
-import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
+import {
+  buildAgentIdentitySnapshot,
+  IAgentIdentity,
+  type AgentIdentitySnapshot,
+} from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
@@ -26,6 +30,10 @@ import { stubAgentIdentity } from '../agentIdentity/stubs';
 
 const OAUTH_PROVIDER = 'managed:kimi-code';
 const NON_OAUTH_PROVIDER = 'openai-main';
+const HOST_HEADERS = {
+  'User-Agent': 'kimi-code-cli/test',
+  'X-Msh-Device-Id': 'device-test',
+};
 
 describe('WebFetchService', () => {
   let disposables: DisposableStore;
@@ -52,20 +60,17 @@ describe('WebFetchService', () => {
           resolveTokenProvider:
             resolveTokenProvider as unknown as IOAuthService['resolveTokenProvider'],
         });
+        // Built per call so each test's `identitySlug` assignment lands in the
+        // snapshot the service reads.
+        const snapshot = (): AgentIdentitySnapshot =>
+          buildAgentIdentitySnapshot({ slug: identitySlug, hostRequestHeaders: HOST_HEADERS });
         reg.defineInstance(IAgentIdentity, {
           _serviceBrand: undefined,
-          displayName: undefined,
-          get slug(): string | undefined {
-            return identitySlug;
-          },
+          resolved: () => Promise.resolve(snapshot()),
+          current: snapshot,
         });
         reg.definePartialInstance(IBootstrapService, {
-          args: {
-            requestHeaders: {
-              'User-Agent': 'kimi-code-cli/test',
-              'X-Msh-Device-Id': 'device-test',
-            },
-          },
+          args: { requestHeaders: HOST_HEADERS },
         });
         reg.definePartialInstance(IConfigService, {
           get: ((domain: string) =>

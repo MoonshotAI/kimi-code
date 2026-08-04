@@ -2032,10 +2032,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /**
    * Configured custom identity announced to MCP servers, so these global flows
-   * match what the workspace-owned manager sends.
+   * match what the workspace-owned manager sends. Reads the frozen snapshot;
+   * every path that reaches it awaited `globalMcpOAuthService()` first.
    */
   private resolveMcpClientName(): string | undefined {
-    return this.engineAccessor.get(IAgentIdentity).slug;
+    return this.engineAccessor.get(IAgentIdentity).current().slug;
   }
 
   /**
@@ -2043,11 +2044,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    *
    * Async on purpose: the service caches providers by store key and stamps the
    * client name when it first builds one, so any path that can materialize a
-   * provider must not run before config has loaded. Guarding here rather than
-   * at each call site means a new entry point cannot forget to.
+   * provider must not run before the identity snapshot froze. Guarding here
+   * rather than at each call site means a new entry point cannot forget to.
    */
   private async globalMcpOAuthService(): Promise<McpOAuthService> {
-    await this.configReady;
+    await this.engineAccessor.get(IAgentIdentity).resolved();
     if (this.globalMcpOAuth === undefined) {
       this.globalMcpOAuth = new McpOAuthService({
         store: createMcpOAuthStore(this.engineAccessor.get(IAtomicDocumentStore)),

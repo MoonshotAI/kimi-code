@@ -162,7 +162,7 @@ function createHost(
     [IKosongConfigService, stubKosongConfig()],
     [IModelCatalog, stubModelCatalog()],
     [IBootstrapService, stubBootstrap('/home', {}, { requestHeaders: hostHeaders })],
-    [IAgentIdentity, stubAgentIdentity({ slug: identitySlug })],
+    [IAgentIdentity, stubAgentIdentity({ slug: identitySlug, hostRequestHeaders: hostHeaders })],
   ]);
   return { config, imports: host.app.accessor.get(IModelsDevImportService) };
 }

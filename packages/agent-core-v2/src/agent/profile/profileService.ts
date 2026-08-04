@@ -67,8 +67,9 @@
  * successful bind / apply / refresh (never before the new prompt commits,
  * so a failed build cannot poison the set), the injected AGENTS.md paths are
  * seeded into `agentsMdReminder`'s known-set with the effective cwd. Fills the
- * prompt's product-name slot from `agentIdentity`, leaving the template's own
- * default to apply when nothing is configured. Bound at Agent scope.
+ * prompt's product-name slot from the `agentIdentity` snapshot — frozen for
+ * the process, so no `[identity]` subscription belongs here; the template's
+ * own default applies when nothing is configured. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -916,7 +917,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       skills,
       pluginSections,
       skillActive: this.isToolActiveForProfile(profile, 'Skill'),
-      productName: this.identity.displayName,
+      productName: (await this.identity.resolved()).displayName,
       replyStyleGuide: this.bootstrap.args.replyStyleGuide,
     };
   }

@@ -57,9 +57,25 @@ import { IModelService, type ModelRecord, type ModelsSection } from '#/kosong/mo
 import '#/kosong/model/modelService';
 import { IModelOAuthTokens } from '#/kosong/model/modelOAuth';
 
+import { HostRequestHeadersAdapter } from '#/app/kosongConfig/hostRequestHeadersAdapter';
+
 import { StubConfigService, stubModelOAuthTokens, stubTokenProvider } from '../stubs';
+import { stubAgentIdentity } from '../../app/agentIdentity/stubs';
+import { stubBootstrap } from '../../app/bootstrap/stubs';
 
 const HOST_HEADERS = { 'User-Agent': 'kimi-test/1.0', 'X-Msh-Device-Id': 'device-1' };
+
+// The real adapter over the real snapshot builder, so these tests cover the
+// exact layers the port hands the catalog in production.
+function hostHeadersPort(spec: {
+  headers: Record<string, string>;
+  identitySlug?: string;
+}): IHostRequestHeaders {
+  return new HostRequestHeadersAdapter(
+    stubBootstrap('/home', {}, { requestHeaders: spec.headers }),
+    stubAgentIdentity({ slug: spec.identitySlug, hostRequestHeaders: spec.headers }),
+  );
+}
 
 function createHost(
   sections: Record<string, unknown> = {},
@@ -78,7 +94,7 @@ function createHost(
   const host = createScopedTestHost([
     [IConfigService, config],
     [IModelOAuthTokens, oauthTokens],
-    [IHostRequestHeaders, hostHeaders],
+    [IHostRequestHeaders, hostHeadersPort(hostHeaders)],
   ]);
   // Kosong's registries are pure in-memory stores now (persistence lives in
   // the app/kosongConfig bridge): seed them from the fixture sections.
@@ -883,7 +899,7 @@ describe('ModelCatalog ping', () => {
         models,
         stubModelOAuthTokens(),
         registry,
-        { headers: {} },
+        { headers: {}, thirdPartyHeaders: {} },
       );
       const result = await catalog.ping('k1');
       expect(result).toMatchObject({ ok: true, text: 'pong', finishReason: 'completed' });
