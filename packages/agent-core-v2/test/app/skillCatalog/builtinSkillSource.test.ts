@@ -81,6 +81,28 @@ describe('BuiltinSkillSource product-skill switch', () => {
     expect(visibleBuiltinSkills(false).map((s) => s.name)).toEqual(NEUTRAL_SKILLS);
   });
 
+  // The workspace catalog keeps this contribution for the life of the handler,
+  // while the session-less listings read the switch on every call — without a
+  // change event the two views would disagree after a toggle.
+  it('signals a change when the switch is toggled', async () => {
+    const config = new StubConfigService({ [BUILTIN_PRODUCT_SKILLS_SECTION]: true });
+    const ix = new TestInstantiationService();
+    ix.set(IConfigService, config);
+    const source = ix.createInstance(BuiltinSkillSource);
+
+    let fired = 0;
+    source.onDidChange?.(() => {
+      fired += 1;
+    });
+
+    await config.replace(BUILTIN_PRODUCT_SKILLS_SECTION, false);
+    expect(fired).toBe(1);
+    expect((await source.load()).skills.map((s) => s.name)).toEqual(NEUTRAL_SKILLS);
+
+    await config.replace('unrelatedSection', 'x');
+    expect(fired).toBe(1);
+  });
+
   // This is the lowest-priority source, so the workspace catalog loads it
   // first — before config has finished loading — and keeps the contribution
   // for the life of the handler with no reload path. Reading the switch
@@ -95,6 +117,7 @@ describe('BuiltinSkillSource product-skill switch', () => {
       _serviceBrand: undefined,
       ready,
       get: () => (loaded ? false : undefined),
+      onDidSectionChange: () => ({ dispose: () => {} }),
     } as unknown as IConfigService;
 
     const ix = new TestInstantiationService();
