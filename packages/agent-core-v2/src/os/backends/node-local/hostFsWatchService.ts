@@ -2,9 +2,17 @@
  * `hostFsWatch` domain — `IHostFsWatchService` implementation.
  *
  * Wraps `chokidar` to report raw create/modify/delete events under an absolute
- * path. Each `watch()` call owns an independent `FSWatcher`; disposing the
- * handle closes it. Bound at App scope.
+ * path. Each `watch()` call owns an independent watcher; disposing the handle
+ * closes it. A `signal`-mode recursive watch on darwin/win32 instead uses ONE
+ * native recursive `fs.watch` (FSEvents / ReadDirectoryChangesW), whose fd
+ * footprint stays constant in the subtree size — chokidar holds one
+ * `fs.watch` fd per file and per directory on macOS, so per-node watching of
+ * a fat subtree can exhaust the process fd budget and break every subsequent
+ * spawn. Bound at App scope.
  */
+
+import { watch as fsWatch, lstatSync, type FSWatcher as NodeFSWatcher } from 'node:fs';
+import { join } from 'node:path';
 
 import { FSWatcher } from 'chokidar';
 
@@ -58,11 +66,88 @@ class HostFsWatchHandle implements IHostFsWatchHandle {
   }
 }
 
+class NativeRecursiveWatchHandle implements IHostFsWatchHandle {
+  readonly onDidChange: Event<HostFsChange>;
+
+  private readonly emitter: Emitter<HostFsChange>;
+  private readonly watcher: NodeFSWatcher;
+  private readonly ignored: (path: string) => boolean;
+  private readonly knownKinds = new Map<string, HostFsChangeKind>();
+  private disposed = false;
+
+  constructor(path: string, options: HostFsWatchOptions | undefined) {
+    this.emitter = new Emitter<HostFsChange>();
+    this.onDidChange = this.emitter.event;
+    this.ignored = options?.ignored ?? DEFAULT_IGNORED;
+    this.watcher = fsWatch(path, { persistent: false, recursive: true }, (eventType, filename) => {
+      this.onNativeEvent(path, eventType, filename);
+    });
+    this.watcher.on('error', (error: unknown) => {
+      onUnexpectedError(error);
+    });
+  }
+
+  private onNativeEvent(root: string, eventType: string, filename: string | null): void {
+    if (this.disposed) return;
+    const absPath = filename === null || filename === '' ? root : join(root, filename);
+    if (absPath !== root && this.ignored(absPath)) return;
+    const mapped = this.mapNativeEvent(absPath, eventType);
+    if (mapped !== undefined) this.emitter.fire(mapped);
+  }
+
+  private mapNativeEvent(absPath: string, eventType: string): HostFsChange | undefined {
+    if (eventType === 'change') {
+      return { path: absPath, action: 'modified', kind: this.knownKinds.get(absPath) ?? 'file' };
+    }
+    if (eventType !== 'rename') return undefined;
+    try {
+      const kind: HostFsChangeKind = lstatSync(absPath).isDirectory() ? 'directory' : 'file';
+      const action: HostFsChangeAction = this.knownKinds.has(absPath) ? 'modified' : 'created';
+      this.knownKinds.set(absPath, kind);
+      return { path: absPath, action, kind };
+    } catch {
+      const kind: HostFsChangeKind = this.knownKinds.get(absPath) ?? 'file';
+      this.knownKinds.delete(absPath);
+      return { path: absPath, action: 'deleted', kind };
+    }
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.watcher.close();
+    this.emitter.dispose();
+  }
+}
+
 export class HostFsWatchService implements IHostFsWatchService {
   declare readonly _serviceBrand: undefined;
 
   watch(path: string, options?: HostFsWatchOptions): IHostFsWatchHandle {
+    if (useNativeRecursive(options)) {
+      const native = tryNativeRecursiveWatch(path, options);
+      if (native !== undefined) return native;
+    }
     return new HostFsWatchHandle(path, options);
+  }
+}
+
+function useNativeRecursive(options: HostFsWatchOptions | undefined): boolean {
+  return (
+    options?.signal === true &&
+    options.recursive !== false &&
+    (process.platform === 'darwin' || process.platform === 'win32')
+  );
+}
+
+function tryNativeRecursiveWatch(
+  path: string,
+  options: HostFsWatchOptions | undefined,
+): IHostFsWatchHandle | undefined {
+  try {
+    return new NativeRecursiveWatchHandle(path, options);
+  } catch {
+    return undefined;
   }
 }
 

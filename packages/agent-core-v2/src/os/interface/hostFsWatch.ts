@@ -4,7 +4,12 @@
  * Defines the `IHostFsWatchService`, a thin primitive over the host OS file
  * watcher. It reports raw create/modify/delete events under an absolute path
  * and knows nothing about sessions, connections, workspaces or wire frames.
- * App-scoped — one shared instance.
+ * `HostFsWatchOptions.signal` marks callers that consume events as a mere
+ * "something changed" signal (ignoring action/kind); the backend may then
+ * pick a cheaper implementation (one native recursive watch instead of
+ * per-node watchers), and action/kind may be coarse — a deleted entry whose
+ * kind was never observed is reported as 'file'. App-scoped — one shared
+ * instance.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -23,6 +28,7 @@ export interface HostFsChange {
 export interface HostFsWatchOptions {
   readonly recursive?: boolean;
   readonly ignored?: (path: string) => boolean;
+  readonly signal?: boolean;
 }
 
 export interface IHostFsWatchHandle extends IDisposable {

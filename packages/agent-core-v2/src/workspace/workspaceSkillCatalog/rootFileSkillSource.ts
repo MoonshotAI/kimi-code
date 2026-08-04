@@ -8,8 +8,12 @@
  * skill-root candidates (`.kimi-code/skills`, `.agents/skills` under the
  * project root, watched whether or not they exist yet) through
  * `hostFsWatch` and re-fires `onDidChange` debounced, so the catalog
- * re-scans THIS source only when project skill files change. Bound at
- * Workspace scope so every session of the handler shares one scan.
+ * re-scans THIS source only when project skill files change. The watch
+ * mirrors the scanner's own pruning — `node_modules` / dot entries, and the
+ * scan depth cap plus two segments (the skill directory and its SKILL.md)
+ * — and runs in `signal` mode, so a fat skill subtree (e.g. a skill
+ * bundling a runtime environment) does not cost one fs-watch fd per file.
+ * Bound at Workspace scope so every session of the handler shares one scan.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -24,6 +28,10 @@ import {
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   type MergeAllAvailableSkillsConfig,
 } from '#/app/skillCatalog/configSection';
+import {
+  MAX_SKILL_SCAN_DEPTH,
+  isSkillScanExcludedEntry,
+} from '#/app/skillCatalog/fileSkillDiscovery';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import { projectRoots, projectSkillRootCandidates } from '#/app/skillCatalog/skillRoots';
 import {
@@ -87,7 +95,11 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
   private async watchProjectSkillRoots(): Promise<void> {
     const { projectRoot, candidates } = await projectSkillRootCandidates(this.workspace.cwd);
     const handle = this.fsWatch.watch(projectRoot, {
-      ignored: subtreeWatchFilter(projectRoot, candidates),
+      ignored: subtreeWatchFilter(projectRoot, candidates, {
+        maxDepth: MAX_SKILL_SCAN_DEPTH + 2,
+        skipEntry: isSkillScanExcludedEntry,
+      }),
+      signal: true,
     });
     this._register(handle);
     this._register(

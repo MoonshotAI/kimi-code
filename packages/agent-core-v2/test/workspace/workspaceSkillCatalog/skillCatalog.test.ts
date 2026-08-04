@@ -3,7 +3,10 @@
  *
  * Exercises the real Workspace-scoped catalog and source services with
  * filesystem or in-memory discovery boundaries, including controlled
- * concurrent refreshes and the fs-watch-driven single-source rescan.
+ * concurrent refreshes and the fs-watch-driven single-source rescan. On
+ * darwin the skill-source watch runs in native `signal` mode, which may
+ * surface coalesced ancestor-directory events, so the pruned-write case
+ * asserts unchanged catalog content there and zero rescans elsewhere.
  * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
  * test/workspace/workspaceSkillCatalog/skillCatalog.test.ts`.
  */
@@ -830,6 +833,70 @@ describe('WorkspaceSkillCatalogService', () => {
 
       await expect(Promise.race([refreshed, timedOut])).resolves.toBe('workspace');
       expect(catalog.catalog.getSkill('watched-skill')?.description).toBe('from watch');
+    } finally {
+      host.dispose();
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it('ignores changes under scanner-pruned entries but still rescans on real skill changes', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'skill-watch-pruned-'));
+    await mkdir(join(workDir, '.agents', 'skills', 'demo'), { recursive: true });
+    await writeFile(
+      join(workDir, '.agents', 'skills', 'demo', 'SKILL.md'),
+      '---\nname: demo\ndescription: v1\n---\nbody',
+      'utf8',
+    );
+    const host = createScopedTestHost([
+      stubPair(IBootstrapService, bootstrapStub),
+      stubPair(IConfigService, configStub()),
+      stubPair(IPluginService, pluginStub()),
+      stubPair(ILogService, stubLog()),
+      stubPair(ISkillDiscovery, new FileSkillDiscovery(stubLog())),
+      stubPair(IHostFsWatchService, new HostFsWatchService()),
+    ]);
+    const workspace = host.child(LifecycleScope.Workspace, 'w1', [
+      stubPair(IWorkspaceContext, workspaceContextStub(workDir)),
+    ]);
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      await catalog.load();
+      expect(catalog.catalog.getSkill('demo')?.description).toBe('v1');
+
+      const sourceIds: string[] = [];
+      const subscription = catalog.onDidChange((sourceId) => sourceIds.push(sourceId));
+
+      await mkdir(join(workDir, '.agents', 'skills', 'demo', 'node_modules', 'pkg'), {
+        recursive: true,
+      });
+      await writeFile(
+        join(workDir, '.agents', 'skills', 'demo', 'node_modules', 'pkg', 'index.js'),
+        'x',
+        'utf8',
+      );
+      await mkdir(join(workDir, '.agents', 'skills', 'demo', '.hidden'), { recursive: true });
+      await writeFile(join(workDir, '.agents', 'skills', 'demo', '.hidden', 'notes.md'), 'x', 'utf8');
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      if (process.platform === 'darwin') {
+        expect(catalog.catalog.getSkill('demo')?.description).toBe('v1');
+        expect(catalog.catalog.getSkill('pkg')).toBeUndefined();
+      } else {
+        expect(sourceIds).toEqual([]);
+      }
+
+      const refreshed = waitForEvents(catalog.onDidChange, 1);
+      const timedOut = new Promise<never>((_resolve, reject) => {
+        setTimeout(() => reject(new Error('watch-driven refresh timed out')), 10000);
+      });
+      await writeFile(
+        join(workDir, '.agents', 'skills', 'demo', 'SKILL.md'),
+        '---\nname: demo\ndescription: v2\n---\nbody',
+        'utf8',
+      );
+      await Promise.race([refreshed, timedOut]);
+      expect(catalog.catalog.getSkill('demo')?.description).toBe('v2');
+      subscription.dispose();
     } finally {
       host.dispose();
       await rm(workDir, { recursive: true, force: true });

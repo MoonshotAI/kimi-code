@@ -1,8 +1,10 @@
 /**
- * `hostFsWatch` domain — integration test against the real `chokidar`
- * watcher on a temporary directory.
+ * `hostFsWatch` domain — integration tests against the real watcher
+ * backends (chokidar, plus the native recursive watch used by `signal`
+ * mode on darwin/win32) on a temporary directory.
  */
 
+import { readdirSync } from 'node:fs';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,6 +30,15 @@ describe('HostFsWatchService', () => {
     const events: HostFsChange[] = [];
     const svc = new HostFsWatchService();
     handle = svc.watch(root, { recursive });
+    handle.onDidChange((e) => events.push(e));
+    await wait(200);
+    return events;
+  }
+
+  async function startSignal(ignored?: (path: string) => boolean): Promise<HostFsChange[]> {
+    const events: HostFsChange[] = [];
+    const svc = new HostFsWatchService();
+    handle = svc.watch(root, { recursive: true, signal: true, ignored });
     handle.onDidChange((e) => events.push(e));
     await wait(200);
     return events;
@@ -86,4 +97,54 @@ describe('HostFsWatchService', () => {
 
     expect(events).toHaveLength(0);
   });
+
+  it('signal mode reports create / modify / delete for a file', async () => {
+    root = await mkdtemp(join(tmpdir(), 'hostfswatch-signal-'));
+    const events = await startSignal();
+
+    const file = join(root, 'a.txt');
+    await writeFile(file, 'v1');
+    await wait(500);
+    await writeFile(file, 'v2');
+    await wait(500);
+    await rm(file);
+    await wait(500);
+
+    const actions = events.filter((e) => e.path === file).map((e) => e.action);
+    expect(actions).toContain('created');
+    expect(actions).toContain('modified');
+    expect(actions).toContain('deleted');
+  });
+
+  it('signal mode honors the ignored predicate', async () => {
+    root = await mkdtemp(join(tmpdir(), 'hostfswatch-signal-'));
+    const events = await startSignal((p) => p.includes('node_modules'));
+
+    await mkdir(join(root, 'node_modules', 'pkg'), { recursive: true });
+    await writeFile(join(root, 'node_modules', 'pkg', 'index.js'), 'x');
+    await writeFile(join(root, 'visible.txt'), 'x');
+    await wait(500);
+
+    expect(events.some((e) => e.path.includes('node_modules'))).toBe(false);
+    expect(events.some((e) => e.path === join(root, 'visible.txt'))).toBe(true);
+  });
+
+  it.skipIf(process.platform !== 'darwin')(
+    'signal mode keeps the fd footprint bounded on a fat subtree',
+    async () => {
+      root = await mkdtemp(join(tmpdir(), 'hostfswatch-fat-'));
+      const fat = join(root, 'fat');
+      await mkdir(fat, { recursive: true });
+      for (let i = 0; i < 1200; i++) {
+        await writeFile(join(fat, `f${i}.txt`), 'x');
+      }
+
+      const fdsBefore = readdirSync('/dev/fd').length;
+      await startSignal();
+      const fdsAfter = readdirSync('/dev/fd').length;
+
+      expect(fdsAfter - fdsBefore).toBeLessThan(50);
+    },
+    30000,
+  );
 });
