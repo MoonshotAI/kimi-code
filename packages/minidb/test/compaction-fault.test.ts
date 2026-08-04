@@ -113,28 +113,23 @@ test('fsyncDir strict mode propagates a sync() failure and still closes the hand
   assert.equal(closed, true, 'close() is called even after sync() throws');
 });
 
-test('fsyncDir degrades an unsupported directory fsync explicitly: warn once, mark stats, continue', async () => {
-  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-  try {
-    mockFsPromises(async () => ({
-      sync: async () => {
-        throw Object.assign(new Error('invalid argument'), { code: 'EINVAL' });
-      },
-      close: async () => {},
-    }));
-    const { fsyncDir } = await import('../src/compaction.js');
-    const stats: { dirFsyncUnsupported?: boolean } = {};
-    // Even strict mode does NOT reject on EINVAL/ENOTSUP: the platform simply
-    // cannot fsync directories, so the downgrade is made observable instead.
-    await fsyncDir('/tmp/whatever', { strict: true, stats });
-    assert.equal(stats.dirFsyncUnsupported, true);
-    assert.equal(warn.mock.calls.length, 1);
-    // One-shot: the flag is already set, so later calls stay silent.
-    await fsyncDir('/tmp/whatever', { strict: true, stats });
-    assert.equal(warn.mock.calls.length, 1);
-  } finally {
-    warn.mockRestore();
-  }
+test('fsyncDir marks unsupported directory fsync and continues without logging', async () => {
+  mockFsPromises(async () => ({
+    sync: async () => {
+      throw Object.assign(new Error('invalid argument'), { code: 'EINVAL' });
+    },
+    close: async () => {},
+  }));
+  const { fsyncDir, isUnsupportedDirectoryFsyncError } = await import('../src/compaction.js');
+  assert.equal(isUnsupportedDirectoryFsyncError('EPERM', 'win32'), true);
+  assert.equal(isUnsupportedDirectoryFsyncError('EPERM', 'linux'), false);
+  const stats: { dirFsyncUnsupported?: boolean } = {};
+  // Even strict mode does NOT reject on unsupported directory fsync errors:
+  // POSIX commonly reports EINVAL/ENOTSUP, while Windows reports EPERM.
+  await fsyncDir('/tmp/whatever', { strict: true, stats });
+  assert.equal(stats.dirFsyncUnsupported, true);
+  await fsyncDir('/tmp/whatever', { strict: true, stats });
+  assert.equal(stats.dirFsyncUnsupported, true);
 });
 
 test('fsyncDir non-strict mode keeps swallowing ordinary failures (legacy callers)', async () => {

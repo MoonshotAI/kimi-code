@@ -132,6 +132,13 @@ const rotateReplace = (src: string, dst: string): Promise<void> => renameReplace
 const MAX_PRECOPY_PASSES = 5;
 const CONVERGE_RATIO = 0.7;
 
+export function isUnsupportedDirectoryFsyncError(
+  code: string | undefined,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return code === 'EINVAL' || code === 'ENOTSUP' || (platform === 'win32' && code === 'EPERM');
+}
+
 export async function fsyncDir(
   dir: string,
   opts: { strict?: boolean; stats?: { dirFsyncUnsupported?: boolean } } = {},
@@ -143,14 +150,10 @@ export async function fsyncDir(
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     // Some platforms cannot fsync a directory at all. That is a permanent
-    // environment property, not a rotation fault: degrade explicitly — warn
-    // once and mark stats.dirFsyncUnsupported — and continue without it, in
-    // BOTH modes.
-    if (code === 'EINVAL' || code === 'ENOTSUP') {
-      if (opts.stats && !opts.stats.dirFsyncUnsupported) {
-        opts.stats.dirFsyncUnsupported = true;
-        console.warn(`minidb: directory fsync unsupported on this platform (${code}); rotation durability is degraded`);
-      }
+    // environment property, not a rotation fault: mark the degraded durability
+    // state and continue without directory fsync in both modes.
+    if (isUnsupportedDirectoryFsyncError(code)) {
+      if (opts.stats) opts.stats.dirFsyncUnsupported = true;
       return;
     }
     // Strict mode (the rotation path): a failed directory fsync breaks the
