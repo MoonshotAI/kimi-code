@@ -13,7 +13,9 @@ pub enum AppServerClient {
     /// In-process: a channel into a `MessageProcessor` running here.
     InProcess(InProcessClient),
     /// Remote: a spawned server process speaking line JSON-RPC over stdio.
-    Remote(stdio_client::StdioClient),
+    /// Boxed: `StdioClient` is large (spawn state + pipes); the enum is
+    /// matched by value in hot paths (clippy::large_enum_variant).
+    Remote(Box<stdio_client::StdioClient>),
 }
 
 impl AppServerClient {

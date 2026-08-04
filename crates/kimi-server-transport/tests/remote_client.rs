@@ -10,10 +10,10 @@ fn serve_bin() -> &'static str {
 
 #[tokio::test]
 async fn remote_client_round_trip() {
-    let mut client = AppServerClient::Remote(
+    let mut client = AppServerClient::Remote(Box::new(
         kimi_server_client::stdio_client::StdioClient::spawn(serve_bin())
             .expect("spawn kimi-server-serve"),
-    );
+    ));
 
     let body = client.health().await;
     assert_eq!(body["result"]["status"], "ok", "health: {body}");

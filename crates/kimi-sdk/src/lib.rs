@@ -46,7 +46,7 @@ impl Harness {
             events: Arc::new(Mutex::new(Some(kimi_ui::EventSource::from_lines(
                 stderr,
             )))),
-            client: Arc::new(Mutex::new(AppServerClient::Remote(client))),
+            client: Arc::new(Mutex::new(AppServerClient::Remote(Box::new(client)))),
         })
     }
 

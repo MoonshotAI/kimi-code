@@ -22,9 +22,9 @@ struct Cli {
 /// spawned server process when `--server <bin>` is given.
 fn connect(server: &Option<String>) -> anyhow::Result<kimi_server_client::AppServerClient> {
     match server {
-        Some(bin) => Ok(kimi_server_client::AppServerClient::Remote(
+        Some(bin) => Ok(kimi_server_client::AppServerClient::Remote(Box::new(
             kimi_server_client::stdio_client::StdioClient::spawn(bin)?,
-        )),
+        ))),
         None => {
             let server = kimi_server::Server::build()?;
             Ok(kimi_server_client::AppServerClient::InProcess(
@@ -228,7 +228,7 @@ fn connect_with_renderer(
             let (client, stderr) =
                 kimi_server_client::stdio_client::StdioClient::spawn_captured(bin)?;
             (
-                kimi_server_client::AppServerClient::Remote(client),
+                kimi_server_client::AppServerClient::Remote(Box::new(client)),
                 Some(kimi_ui::EventSource::from_lines(stderr)),
             )
         }
