@@ -5,6 +5,11 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㊻ chat REPL /resume 补 load（create/load 类审计收尾，已提交）**：
+> - **审计**：全量 create_session 调用点核查——遗漏 REPL `/resume <id>`（create 后不 load，续跑会话上下文/目标丢失）；其余（chat 启动、print-resume、TUI run//resume、SDK run_prompt、ACP load）均已修。
+> - **实现**：REPL /resume create 后补 SESSION_LOAD。
+> - **验证**：编译 + clippy 0 警告。
+
 > **✅ 2026-08-03 ㊺ export 成功路径测试（已提交）**：
 > - **缺口**：CLI `kimi export <id>` 只测了错误分支（无 id/无会话），成功路径未测。
 > - **实现**：export_with_session_id_writes_zip——seed 会话 → `export export-me` → 成功 + stdout 打印 zip 路径。

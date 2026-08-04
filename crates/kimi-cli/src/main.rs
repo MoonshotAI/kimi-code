@@ -503,6 +503,14 @@ async fn handle_chat_command(
             if let Some(error) = body.get("error") {
                 return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
             }
+            // Restore the persisted state of the resumed session (create
+            // rebuilds a fresh agent; load re-applies context + goal).
+            let _ = client
+                .call(
+                    kimi_protocol::methods::SESSION_LOAD,
+                    serde_json::json!({ "session_id": rest }),
+                )
+                .await;
             *session_id = rest.to_string();
             println!("switched to session {session_id}");
             ChatCommand::Handled
