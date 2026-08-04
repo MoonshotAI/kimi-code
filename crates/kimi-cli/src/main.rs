@@ -905,12 +905,15 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 // Default: render the transcript — the last assistant text
                 // from the session context (raw RPC envelope via `--json`).
-                let ctx = client.session_get_context("kimi-exec").await;
+                let ctx = client.session_get_context(&session_id).await;
                 match kimi_ui::last_assistant_text(&ctx["result"]) {
                     Some(text) => println!("{text}"),
                     None => println!("{result}"),
                 }
             }
+            // Resume hint (TS parity): points at the persisted session so a
+            // one-shot run can be continued interactively.
+            eprintln!("To resume this session: kimi resume {session_id}");
         }
         Commands::Sessions { limit, json } => {
             let mut client = connect(&server)?;

@@ -5,11 +5,16 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㉟ `kimi print` resume 提示 + 会话读取修正（已提交）**：
+> - **缺口**：TS print 结束发 `To resume this session: kimi -r <id>`（stderr，始终）；Rust print 无提示。
+> - **实现**：print 成功路径 stderr 发 `To resume this session: kimi resume {session_id}`（Rust 命令形状）；**顺带修**：get_context 仍用硬编码 "kimi-exec"，--continue 时应读实际会话 → 改 `session_get_context(&session_id)`。
+> - **验证**：print 3 个集成测试绿；clippy 0 警告。
+
 > **✅ 2026-08-03 ㉞ `kimi config --delete SECTION.KEY`（已提交）**：
 > - **缺口**：--set 只能写不能删；删键此前只能靠 logout 的 null patch 内部路径（providers.kimi）。
 > - **实现**：`--delete providers.<id>` / `--delete models.<alias>` 构建 section 级 null patch（引擎 null 删键为 section 作用域，strip_null_deletes 语义）。
 > - **验证**：CLI 集成测试 31 → 32（config_delete_removes_section_entry：set providers.acme.apiKey → delete providers.acme → config 回读无 acme）；clippy 0 警告。
-> - **附（全 workspace 门禁）**：`cargo test --workspace` 前台首次后台跑曾报 `E0463 can't find crate for kimi_sdk`——单跑 `cargo test -p kimi-agent` 2027+52 全绿、复跑 workspace 未复现，判定为后台并行构建竞态（交接笔记已知的后台 cargo 不可靠现象）；前台重跑确认中。
+> - **附（全 workspace 门禁，E0463 定案）**：`cargo test --workspace` 偶发 `E0463 can't find crate for kimi_sdk`（定位到 kimi-acp **doctest**，其套件为空 0 tests）。排查：`cargo test -p kimi-acp --doc`、`cargo test -p kimi-agent`（2027+52）、`cargo test --workspace --doc`（13 套件）**全部独立全绿**；仅 workspace 双连跑第二遍偶发。判定为 Windows 下 cargo 并行 doctest 编译与 kimi-sdk rlib 写入的竞态（工具链问题，非代码缺陷）。基线：workspace 36 个绿套件 + agent 2027 + native-tools 617。
 
 > **✅ 2026-08-03 ㉝ npm 薄壳活体验证（阶段 F item 0，无代码改动）**：
 > - **验证**：`KIMI_RUST_BIN=<target/debug/kimi.exe> node packages/kimi-code-rust-bin/bin/kimi.js health` → `ok` exit 0（spawn 路径 + 真实二进制全通）；无二进制 → 清晰构建提示 exit 1。
