@@ -161,6 +161,9 @@ enum ProviderCmd {
         /// API key (falls back to the provider's env var when absent).
         #[arg(long)]
         api_key: Option<String>,
+        /// Set this model as the engine default (must be a configured alias).
+        #[arg(long)]
+        default_model: Option<String>,
     },
 }
 
@@ -1044,7 +1047,7 @@ async fn main() -> anyhow::Result<()> {
                         }
                     }
                 }
-                ProviderCmd::Add { id, api_key } => {
+                ProviderCmd::Add { id, api_key, default_model } => {
                     let catalog =
                         match kimi_sdk::catalog::fetch_catalog(kimi_sdk::catalog::DEFAULT_CATALOG_URL).await {
                             Ok(c) => c,
@@ -1096,6 +1099,9 @@ async fn main() -> anyhow::Result<()> {
                     });
                     if let Some(key) = resolved_key {
                         patch["providers"][&id]["apiKey"] = serde_json::json!(key);
+                    }
+                    if let Some(model) = default_model {
+                        patch["defaultModel"] = serde_json::json!(model);
                     }
                     let mut client = connect(&server)?;
                     let body = client
