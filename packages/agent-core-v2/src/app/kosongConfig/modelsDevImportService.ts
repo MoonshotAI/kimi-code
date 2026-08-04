@@ -27,10 +27,11 @@
  * invalidates the runtime model catalog.
  *
  * Both third-party fetches — the models.dev directory and the custom-registry
- * import — send the host User-Agent under the configured identity, matching
- * what the scheduled refresh of the same registry sends. Where the host states
- * no User-Agent at all, a neutral token stands in rather than dropping the
- * header, since these are directories this service chooses to call.
+ * import — resolve their outbound User-Agent through `agentIdentity`, matching
+ * what the scheduled refresh of the same registry sends. A host that states no
+ * User-Agent still gets a header: the configured slug when there is one, and a
+ * neutral token otherwise, since these are directories this service chooses to
+ * call rather than requests carrying a host's own intent.
  */
 
 import {
@@ -92,20 +93,23 @@ export class ModelsDevImportService implements IModelsDevImportService {
     @IAgentIdentity private readonly identity: IAgentIdentity,
   ) {}
 
-  private outboundUserAgent(): string {
+  private async outboundUserAgent(): Promise<string> {
+    await this.config.ready;
+    const slug = this.identity.slug;
     return (
-      identityUserAgent(this.bootstrap.args.requestHeaders['User-Agent'], this.identity.slug) ??
+      identityUserAgent(this.bootstrap.args.requestHeaders['User-Agent'], slug) ??
+      slug ??
       DEFAULT_IDENTITY_SLUG
     );
   }
 
   async listModelsDevProviders(): Promise<ModelsDevProviderItem[]> {
-    const catalog = await getModelsDevCatalog(this.outboundUserAgent());
+    const catalog = await getModelsDevCatalog(await this.outboundUserAgent());
     return Object.entries(catalog).map(([id, entry]) => toModelsDevProviderItem(id, entry));
   }
 
   async getModelsDevProvider(catalogId: string): Promise<ModelsDevProviderItem> {
-    const catalog = await getModelsDevCatalog(this.outboundUserAgent());
+    const catalog = await getModelsDevCatalog(await this.outboundUserAgent());
     const entry = modelsDevEntry(catalog, catalogId);
     if (entry === undefined) {
       throw new Error2(
@@ -147,7 +151,7 @@ export class ModelsDevImportService implements IModelsDevImportService {
     options: ImportModelsDevProviderOptions,
   ): Promise<ImportModelsDevProviderResult> {
     const { catalogId } = options;
-    const catalog = await getModelsDevCatalog(this.outboundUserAgent());
+    const catalog = await getModelsDevCatalog(await this.outboundUserAgent());
     const entry = modelsDevEntry(catalog, catalogId);
     if (entry === undefined) {
       throw new Error2(
@@ -237,7 +241,7 @@ export class ModelsDevImportService implements IModelsDevImportService {
     try {
       entries = await fetchCustomRegistry(source, {
         fetchImpl: upstreamFetch(),
-        userAgent: this.outboundUserAgent(),
+        userAgent: await this.outboundUserAgent(),
         signal: AbortSignal.timeout(UPSTREAM_FETCH_TIMEOUT_MS),
       });
     } catch (err) {
