@@ -474,6 +474,14 @@ async function performModelSwitch(
   effort: ThinkingEffort,
   persist: boolean,
 ): Promise<void> {
+  let session = host.session;
+  if (session === undefined && host.engineV2) {
+    // A first prompt may still be inside lazy creation: wait it out so the
+    // switch lands on the new session instead of being overwritten by its
+    // assembly.
+    await host.waitForLazyCreation();
+    session = host.session;
+  }
   if (host.state.appState.streamingPhase !== 'idle') {
     host.showError('Cannot switch models while streaming — press Esc or Ctrl-C first.');
     return;
@@ -487,7 +495,6 @@ async function performModelSwitch(
   let effectiveAlias = alias;
   let effectiveEffort = effort;
 
-  const session = host.session;
   try {
     if (session === undefined && runtimeChanged) {
       await host.authFlow.activateModelAfterLogin(alias, effort);

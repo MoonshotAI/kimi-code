@@ -651,6 +651,97 @@ describe('KimiTUI message flow', () => {
     expect(driver.getCurrentSessionId()).toBe('ses-lazy');
   });
 
+  const thinkingModelsConfig = () => ({
+    models: {
+      k2: {
+        provider: 'managed:kimi-code',
+        model: 'kimi-k2',
+        maxContextSize: 100,
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'high', 'max'],
+        defaultEffort: 'high',
+      },
+    },
+    defaultModel: 'k2',
+    thinking: { enabled: true },
+  });
+
+  it('blocks an effort switch once the waited-out first prompt starts a turn (v2 engine)', async () => {
+    const lazySession = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(
+      lazySession,
+      { getConfig: vi.fn(async () => thinkingModelsConfig()) },
+      startupInput,
+    );
+
+    // Hold the lazy createSession open so the first prompt is still pending
+    // when the effort switch arrives.
+    let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
+    harness.createSession.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCreate = resolve; }),
+    );
+
+    driver.handleUserInput('hello');
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledTimes(1);
+    });
+    driver.handleUserInput('/effort low');
+
+    resolveCreate(lazySession);
+    // The prompt starts its turn first; the switch must then be rejected
+    // instead of being silently overwritten by the session assembly.
+    await vi.waitFor(() => {
+      expect(lazySession.prompt).toHaveBeenCalledWith('hello');
+      expect(stripSgr(renderTranscript(driver))).toContain('Cannot switch models while streaming');
+    });
+    expect(lazySession.setThinking).not.toHaveBeenCalled();
+  });
+
+  it('applies an effort switch after waiting out an in-flight lazy creation (v2 engine)', async () => {
+    const lazySession = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(
+      lazySession,
+      {
+        getConfig: vi.fn(async () => thinkingModelsConfig()),
+        setConfig: vi.fn(async () => ({ providers: {} })),
+      },
+      startupInput,
+    );
+
+    // Trigger the lazy creation directly, without a prompt starting a turn.
+    let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
+    harness.createSession.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCreate = resolve; }),
+    );
+    const ensure = (driver as unknown as { ensureSession(): Promise<unknown> }).ensureSession;
+    const pending = ensure.call(driver);
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledTimes(1);
+    });
+
+    driver.handleUserInput('/effort low');
+    // While the creation is held the switch must wait, not write pending
+    // state that the assembly would overwrite.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(driver.state.appState.thinkingEffort).toBe('high');
+
+    resolveCreate(lazySession);
+    await pending;
+    await vi.waitFor(() => {
+      expect(lazySession.setThinking).toHaveBeenCalledWith('low');
+    });
+  });
+
   it('carries a session-only thinking choice into the lazy-created session (v2 engine)', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
