@@ -5,7 +5,7 @@
  * intent).
  * Pure-function level, no IO.
  * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/app/agentFileCatalog/agentFile.test.ts`.
+ * test/workspace/workspaceAgentProfileLoader/agentFile.test.ts`.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import { AgentFileParseError, parseAgentFileText } from '#/workspace/workspaceAgentProfileLoader/internal/agentFile';
 import { agentProfileFromFile } from '#/workspace/workspaceAgentProfileLoader/internal/agentProfileFromFile';
 import type { AgentFileDefinition } from '#/workspace/workspaceAgentProfileLoader/internal/types';
+import type { SystemPromptRenderResult } from '#/app/agentProfileCatalog/agentProfileCatalog';
 
 const FULL_FILE = `---
 name: code-reviewer
@@ -207,7 +208,13 @@ describe('agentProfileFromFile', () => {
     path: '/tmp/agents/reviewer.md',
     source: 'user',
   };
-  const basePrompt = () => 'BASE_PROMPT';
+  const basePrompt = (): SystemPromptRenderResult => ({
+    text: 'BASE_PROMPT',
+    environment: {
+      cwd: '',
+      date: { disclosed: false },
+    },
+  });
 
   it('returns a plain body verbatim and injects no unreferenced context', () => {
     const profile = agentProfileFromFile(base, basePrompt);
@@ -262,6 +269,32 @@ describe('agentProfileFromFile', () => {
     );
 
     expect(profile.systemPrompt({})).toBe('extra instructions\n\nBASE_PROMPT');
+  });
+
+  it('forwards the base prompt environment disclosure through renderSystemPrompt', () => {
+    const profile = agentProfileFromFile(
+      { ...base, prompt: 'extra instructions\n\n${base_prompt}' },
+      (): SystemPromptRenderResult => ({
+        text: 'BASE_PROMPT',
+        environment: {
+          cwd: '/work',
+          date: {
+            disclosed: true,
+            value: { localDate: '2026-07-29', timeZone: 'Asia/Shanghai' },
+          },
+        },
+      }),
+    );
+
+    const rendered = profile.renderSystemPrompt({ cwd: '/work' });
+    expect(rendered.text).toBe('extra instructions\n\nBASE_PROMPT');
+    expect(rendered.environment).toEqual({
+      cwd: '/work',
+      date: {
+        disclosed: true,
+        value: { localDate: '2026-07-29', timeZone: 'Asia/Shanghai' },
+      },
+    });
   });
 
   it('places plugin instructions where ${plugin_sections} is referenced', () => {

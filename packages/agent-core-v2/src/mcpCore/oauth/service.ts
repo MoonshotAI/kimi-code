@@ -20,6 +20,10 @@
  *  3. After `complete()` resolves successfully the provider has tokens on
  *     disk; the caller (the synthetic tool) drives a manager-level
  *     `reconnect` to swap the synthetic tool out for the real MCP tools.
+ *
+ * `resolveClientName` supplies the product token for provider default labels,
+ * consulted per provider so an identity configured after this service is
+ * constructed still applies.
  */
 
 import { auth, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
@@ -33,6 +37,7 @@ import { mcpOAuthStoreKey, type McpOAuthStore } from './store';
 export interface McpOAuthServiceOptions {
   readonly store: McpOAuthStore;
   readonly clientLabel?: string;
+  readonly resolveClientName?: () => string | undefined;
 }
 
 export interface BeginAuthorizationOptions {
@@ -48,11 +53,13 @@ export interface BeginAuthorizationResult {
 export class McpOAuthService {
   private readonly store: McpOAuthStore;
   private readonly clientLabel: string | undefined;
+  private readonly resolveClientName: (() => string | undefined) | undefined;
   private readonly providers = new Map<string, McpOAuthClientProvider>();
 
   constructor(options: McpOAuthServiceOptions) {
     this.store = options.store;
     this.clientLabel = options.clientLabel;
+    this.resolveClientName = options.resolveClientName;
   }
 
   getProvider(serverName: string, serverUrl: string | URL): McpOAuthClientProvider {
@@ -64,6 +71,7 @@ export class McpOAuthService {
         serverUrl,
         store: this.store,
         clientLabel: this.clientLabel,
+        clientName: this.resolveClientName?.(),
       });
       this.providers.set(provider.storeKey, provider);
     }
@@ -86,6 +94,7 @@ export class McpOAuthService {
           serverUrl,
           store: this.store,
           clientLabel: options.clientLabel,
+          clientName: this.resolveClientName?.(),
         });
     if (options.clientLabel !== undefined) {
       this.providers.set(provider.storeKey, provider);

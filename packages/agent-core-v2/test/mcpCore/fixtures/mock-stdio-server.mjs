@@ -45,4 +45,15 @@ server.registerTool(
   }),
 );
 
+server.registerTool(
+  'whoami',
+  {
+    description: 'Returns the client name announced during initialize',
+    inputSchema: {},
+  },
+  () => ({
+    content: [{ type: 'text', text: server.server.getClientVersion()?.name ?? '' }],
+  }),
+);
+
 await server.connect(new StdioServerTransport());

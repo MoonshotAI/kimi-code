@@ -15,10 +15,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { AgentProfileRegistryService } from '#/app/agentProfileCatalog/agentProfileRegistryService';
+import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { AgentProfileContribution } from '#/app/agentProfileCatalog/agentProfileContribution';
 
 function contribution(marker: string): AgentProfileContribution {
-  return { profiles: [{ name: marker, systemPrompt: () => marker }] };
+  return { profiles: [normalizeAgentProfile({ name: marker, systemPrompt: () => marker })] };
 }
 
 describe('AgentProfileRegistryService', () => {

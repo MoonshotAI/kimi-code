@@ -35,13 +35,14 @@ export function pluginTrustLabel(plugin: PluginSummary): PluginTrustLabel {
   }
   try {
     const url = new URL(plugin.originalSource);
-    if (url.protocol !== 'https:' || url.hostname !== 'code.kimi.com') {
-      return 'third-party';
-    }
-    if (url.pathname.startsWith('/kimi-code/plugins/official/')) {
+    if (isOfficialPluginUrl(url)) {
       return 'official';
     }
-    if (url.pathname.startsWith('/kimi-code/plugins/curated/')) {
+    if (
+      url.protocol === 'https:' &&
+      url.hostname === 'code.kimi.com' &&
+      url.pathname.startsWith('/kimi-code/plugins/curated/')
+    ) {
       return 'curated';
     }
     return 'third-party';
@@ -60,11 +61,7 @@ export function isOfficialPluginSource(source: string): boolean {
   const trimmed = source.trim();
   if (!trimmed.startsWith('https://')) return false;
   try {
-    const url = new URL(trimmed);
-    return (
-      url.hostname === 'code.kimi.com' &&
-      url.pathname.startsWith('/kimi-code/plugins/official/')
-    );
+    return isOfficialPluginUrl(new URL(trimmed));
   } catch {
     return false;
   }
@@ -81,6 +78,16 @@ export function isOfficialPluginInstall(plugin: PluginSummary): boolean {
     plugin.source === 'zip-url' &&
     plugin.originalSource !== undefined &&
     isOfficialPluginSource(plugin.originalSource)
+  );
+}
+
+function isOfficialPluginUrl(url: URL): boolean {
+  if (url.protocol !== 'https:') return false;
+  return (
+    (url.hostname === 'code.kimi.com' &&
+      url.pathname.startsWith('/kimi-code/plugins/official/')) ||
+    (url.hostname === 'cdn.kimi.com' &&
+      url.pathname.startsWith('/kimi-computer-use/'))
   );
 }
 

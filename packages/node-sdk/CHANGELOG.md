@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.15.1
+
+### Patch Changes
+
+- [#2567](https://github.com/MoonshotAI/kimi-code/pull/2567) [`98ef0f0`](https://github.com/MoonshotAI/kimi-code/commit/98ef0f0b2ffaef84903b9c116ada0eeb4c8e9a6c) Thanks [@7Sageer](https://github.com/7Sageer)! - Fix v1 replay ignoring v2 `profile.bind` records, which made sessions resumed from CLI-created wires lose their tool allowlist and send requests without `tools`.
+
 ## 0.15.0
 
 ### Minor Changes

@@ -43,9 +43,18 @@ import { handleAddDirCommand } from './add-dir';
 import { parseSlashInput } from './parse';
 import { handlePluginsCommand } from './plugins';
 import { handleProviderCommand } from './provider';
-import type { BuiltinSlashCommandName } from './registry';
+import {
+  findBuiltInSlashCommand,
+  resolveSlashCommandAvailability,
+  type BuiltinSlashCommandName,
+} from './registry';
 import { handleReloadCommand, handleReloadTuiCommand } from './reload';
-import { resolveSlashCommandInput, slashBusyMessage } from './resolve';
+import type { SkillListSession } from './skills';
+import {
+  resolveSlashCommandInput,
+  slashBusyMessage,
+  slashCommandBusyReason,
+} from './resolve';
 import {
   handleExportDebugZipCommand,
   handleExportMdCommand,
@@ -103,6 +112,8 @@ export interface SlashCommandHost {
   state: TUIState;
   session: Session | undefined;
   readonly harness: KimiHarness;
+  /** agent-core-v2 engine (KIMI_CODE_EXPERIMENTAL_FLAG); enables lazy session creation. */
+  readonly engineV2: boolean;
   cancelInFlight: (() => void) | undefined;
   deferUserMessages: boolean;
 
@@ -117,9 +128,35 @@ export interface SlashCommandHost {
   restoreEditor(): void;
   restoreInputText(text: string): void;
   refreshSlashCommandAutocomplete(): void;
+  /**
+   * Rebuild the plugin slash-command list. With no session (v2 session-less
+   * startup) this reads the app-global plugin commands instead, so `/plugins`
+   * mutations apply before the first session exists.
+   */
+  refreshPluginCommands(session?: Session): Promise<void>;
+  /**
+   * Rebuild the skill slash-command list. With no session (v2 session-less
+   * startup) this reads the workspace skills instead.
+   */
+  refreshSkillCommands(session?: SkillListSession): Promise<void>;
+  /**
+   * Seed appState with the config defaults the v2 engine would apply at
+   * createSession time (model, permission, plan mode, thinking effort,
+   * context cap). No-op semantics on a live session path: only /reload calls
+   * it while still session-less.
+   */
+  hydrateLazyConfigDefaults(): Promise<void>;
 
   // Session
   requireSession(): Session;
+  /**
+   * Lazy-create the session on first use (v2 engine). Returns the existing
+   * session, or undefined (with the error already surfaced) when creation
+   * fails.
+   */
+  ensureSession(): Promise<Session | undefined>;
+  /** Await the in-flight lazy session creation, if any (v2); no-op otherwise. */
+  waitForLazyCreation(): Promise<void>;
   switchToSession(session: Session, message: string): Promise<void>;
   reloadCurrentSessionView(session: Session, message: string): Promise<void>;
   beginSessionRequest(): void;
@@ -204,10 +241,25 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
       host.showError(`Invalid slash command: /${intent.commandName}`);
       return;
     case 'skill': {
-      const session = host.session;
-      if (host.state.appState.model.trim().length === 0 || session === undefined) {
+      if (host.state.appState.model.trim().length === 0) {
         host.showError(LLM_NOT_SET_MESSAGE);
         return;
+      }
+      let session = host.session;
+      if (session === undefined) {
+        session = await ensureSessionForCommand(host);
+        if (session === undefined) return;
+        // A first prompt may have started a turn while the session was being
+        // created; skill commands are always busy-gated, so re-check the gate
+        // resolved before the await.
+        const busyReason = slashCommandBusyReason({
+          isStreaming: host.state.appState.streamingPhase !== 'idle',
+          isCompacting: host.state.appState.isCompacting,
+        });
+        if (busyReason !== undefined) {
+          host.showError(slashBusyMessage(intent.commandName, busyReason));
+          return;
+        }
       }
       host.track('input_command', {
         command: intent.commandName,
@@ -221,10 +273,20 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
         host.showError(LLM_NOT_SET_MESSAGE);
         return;
       }
-      const session = host.session;
+      let session = host.session;
       if (session === undefined) {
-        host.showError(LLM_NOT_SET_MESSAGE);
-        return;
+        session = await ensureSessionForCommand(host);
+        if (session === undefined) return;
+        // Same busy re-check as the skill path: plugin commands are always
+        // busy-gated too.
+        const busyReason = slashCommandBusyReason({
+          isStreaming: host.state.appState.streamingPhase !== 'idle',
+          isCompacting: host.state.appState.isCompacting,
+        });
+        if (busyReason !== undefined) {
+          host.showError(slashBusyMessage(intent.commandName, busyReason));
+          return;
+        }
       }
       host.track('input_command', { command: `${intent.pluginId}:${intent.commandName}` });
       host.activatePluginCommand(session, intent.pluginId, intent.commandName, intent.args);
@@ -253,11 +315,60 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
   }
 }
 
+/**
+ * Lazy-create the session for a slash command that needs one (v2 engine).
+ * v1 keeps the historical "no active session" error; on v2 a missing session
+ * means the TUI started session-less, so commands create it on first use.
+ * Returns undefined (error already shown) when creation fails.
+ */
+async function ensureSessionForCommand(host: SlashCommandHost): Promise<Session | undefined> {
+  if (!host.engineV2) {
+    host.showError(LLM_NOT_SET_MESSAGE);
+    return undefined;
+  }
+  return host.ensureSession();
+}
+
+/** Builtin commands that need an active session; lazy-created on the v2 engine. */
+const SESSION_REQUIRING_COMMANDS: ReadonlySet<BuiltinSlashCommandName> = new Set([
+  'btw',
+  'compact',
+  'export-debug-zip',
+  'export-md',
+  'fork',
+  'goal',
+  'init',
+  'plan',
+  'swarm',
+  'undo',
+  'web',
+]);
+
 async function handleBuiltInSlashCommand(
   host: SlashCommandHost,
   name: BuiltinSlashCommandName,
   args: string,
 ): Promise<void> {
+  if (host.session === undefined && SESSION_REQUIRING_COMMANDS.has(name)) {
+    const session = await ensureSessionForCommand(host);
+    if (session === undefined) return;
+    // A first prompt may have started a turn while the session was being
+    // created; re-check the availability gate that was resolved before the
+    // await (idle-only commands are blocked while a turn is active).
+    const command = findBuiltInSlashCommand(name);
+    const busyReason = slashCommandBusyReason({
+      isStreaming: host.state.appState.streamingPhase !== 'idle',
+      isCompacting: host.state.appState.isCompacting,
+    });
+    if (
+      busyReason !== undefined &&
+      command !== undefined &&
+      resolveSlashCommandAvailability(command, args) === 'idle-only'
+    ) {
+      host.showError(slashBusyMessage(name, busyReason));
+      return;
+    }
+  }
   switch (name) {
     case 'exit':
       void host.stop();
@@ -268,10 +379,24 @@ async function handleBuiltInSlashCommand(
     case 'version':
       host.showStatus(`Kimi Code v${host.state.appState.version}`);
       return;
-    case 'new':
+    case 'new': {
+      // A first-use lazy creation may still be in flight: wait it out so /new
+      // never races a second createSession against the pending prompt.
+      await host.waitForLazyCreation();
+      // The waited-out prompt may have started a turn meanwhile; /new is
+      // idle-only, so re-run the busy gate resolved before the await.
+      const busyReason = slashCommandBusyReason({
+        isStreaming: host.state.appState.streamingPhase !== 'idle',
+        isCompacting: host.state.appState.isCompacting,
+      });
+      if (busyReason !== undefined) {
+        host.showError(slashBusyMessage(name, busyReason));
+        return;
+      }
       await host.createNewSession();
       host.state.ui.requestRender();
       return;
+    }
     case 'sessions':
       void host.showSessionPicker();
       return;
@@ -282,7 +407,14 @@ async function handleBuiltInSlashCommand(
       void showMcpServers(host);
       return;
     case 'plugins':
-      void handlePluginsCommand(host, args);
+      // `handlePluginsCommand` throws when no session is active (its own
+      // requireSession), so catch here instead of letting the `void` call
+      // reject unhandled.
+      try {
+        await handlePluginsCommand(host, args);
+      } catch (error) {
+        host.showError(formatErrorMessage(error));
+      }
       return;
     case 'add-dir':
       await handleAddDirCommand(host, args);

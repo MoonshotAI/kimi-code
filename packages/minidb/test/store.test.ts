@@ -168,3 +168,40 @@ test('active expiration drains a simultaneous-expiry storm within seconds', asyn
   assert.equal(s.map.size, 0);
   s.close();
 });
+
+test('reapExpiredDue drains only due entries via the TTL heap', () => {
+  const s = new Store({ activeExpireIntervalMs: 0 });
+  s.set('expired', B('1'), Date.now() - 1000);
+  s.set('future', B('2'), Date.now() + 3_600_000);
+  s.set('plain', B('3'));
+  assert.equal(s.reapExpiredDue(), 1, 'only the due record is reaped');
+  assert.ok(!s.has('expired'));
+  assert.ok(s.has('future'));
+  assert.ok(s.has('plain'));
+  // nothing due -> a no-op (and no full-store sweep needed)
+  assert.equal(s.reapExpiredDue(), 0);
+  assert.equal(s.map.size, 2);
+  s.close();
+});
+
+test('reapExpiredDue skips stale heap entries from overwritten TTLs', () => {
+  const s = new Store({ activeExpireIntervalMs: 0 });
+  const t1 = Date.now() - 1000; // already past
+  s.set('k', B('1'), t1);
+  s.set('k', B('2'), Date.now() + 3_600_000); // overwrite: the t1 heap entry is now stale
+  assert.equal(s.reapExpiredDue(), 0, 'the stale entry must not reap the live record');
+  assert.equal(s.get('k')?.toString(), '2');
+  s.close();
+});
+
+test('reapExpiredDue falls back to a full scan when the heap diverged from the map', () => {
+  const s = new Store({ activeExpireIntervalMs: 0 });
+  s.set('a', B('1'), Date.now() - 1000);
+  s.set('b', B('2'), Date.now() - 1000);
+  // Force the broken invariant (live TTL records, empty heap) the fallback
+  // guards against; no code path may produce this.
+  (s as unknown as { heap: { clear(): void } }).heap.clear();
+  assert.equal(s.reapExpiredDue(), 2, 'divergence detected -> full resync reap');
+  assert.equal(s.map.size, 0);
+  s.close();
+});

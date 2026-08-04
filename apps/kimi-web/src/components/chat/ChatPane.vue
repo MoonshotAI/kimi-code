@@ -1124,7 +1124,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   padding: 10px 0;
 }
 
-/* Skill activation card (replaces raw <kimi-skill-loaded> XML) */
+/* Skill activation card (replaces raw <skill-loaded> XML) */
 .skill-act {
   display: flex;
   flex-direction: column;

@@ -77,6 +77,9 @@ importers:
       '@moonshot-ai/acp-adapter':
         specifier: workspace:^
         version: link:../../packages/acp-adapter
+      '@moonshot-ai/acp-server':
+        specifier: workspace:^
+        version: link:../../packages/acp-server
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../../packages/agent-core-v2
@@ -98,6 +101,9 @@ importers:
       '@moonshot-ai/migration-legacy':
         specifier: workspace:^
         version: link:../../packages/migration-legacy
+      '@moonshot-ai/minidb':
+        specifier: workspace:^
+        version: link:../../packages/minidb
       '@moonshot-ai/pi-tui':
         specifier: workspace:^
         version: link:../../packages/pi-tui
@@ -544,6 +550,21 @@ importers:
       jimp:
         specifier: ^1.6.1
         version: 1.6.1
+
+  packages/acp-server:
+    dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: ^1.3.0
+        version: 1.3.0(zod@4.3.6)
+      '@moonshot-ai/agent-core-v2':
+        specifier: workspace:^
+        version: link:../agent-core-v2
+      '@moonshot-ai/klient':
+        specifier: workspace:^
+        version: link:../klient
+      '@moonshot-ai/protocol':
+        specifier: workspace:^
+        version: link:../protocol
 
   packages/agent-core:
     dependencies:
@@ -1052,6 +1073,11 @@ packages:
 
   '@agentclientprotocol/sdk@0.23.0':
     resolution: {integrity: sha512-wIGDQMSXwhoSPNCJflSQvf4WeSU2Jq1bbPRAwwb49euo9qMcND5Pb80hD7hVfuAwz9ZvvDuzVrNTOZrvKPR9Eg==}
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
+
+  '@agentclientprotocol/sdk@1.3.0':
+    resolution: {integrity: sha512-i3h/efaeuMUFAO1HSfo97QZQnnvMd7wWBYtBsdL6UMZg3a78sk3Ffya5Xu7C7tYsXomXoDXJBAzQF2PcFKAhIQ==}
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
@@ -10092,6 +10118,10 @@ packages:
 snapshots:
 
   '@agentclientprotocol/sdk@0.23.0(zod@4.3.6)':
+    dependencies:
+      zod: 4.3.6
+
+  '@agentclientprotocol/sdk@1.3.0(zod@4.3.6)':
     dependencies:
       zod: 4.3.6
 

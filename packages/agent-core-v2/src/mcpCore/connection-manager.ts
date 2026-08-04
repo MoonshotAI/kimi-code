@@ -7,6 +7,11 @@
  * provider when tokens are present, flips failing servers into `needs-auth`
  * on 401, and reconnects after authentication. Applies per-server settings
  * over the configured defaults and emits status changes to subscribers.
+ *
+ * `resolveClientName` supplies the name announced to servers during initialize
+ * (and the OAuth dynamic-registration label), consulted per connection so an
+ * identity configured after construction still applies; omitted, or resolving
+ * to `undefined`, keeps the built-in name.
  */
 
 import { ErrorCodes, Error2 } from '#/errors';
@@ -47,6 +52,34 @@ interface InternalEntry {
 
 export type McpStatusListener = (entry: McpServerEntry) => void;
 
+/**
+ * The consumer surface of a connection manager. `McpConnectionManager`
+ * implements it directly; the session domain's `MergedMcpConnectionView`
+ * implements it over a workspace manager plus a session overlay, so session
+ * and agent consumers never care which manager owns a server.
+ */
+export interface McpConnectionView {
+  readonly oauthService: McpOAuthService | undefined;
+  list(): readonly McpServerEntry[];
+  get(name: string): McpServerEntry | undefined;
+  resolved(
+    name: string,
+  ):
+    | {
+        client: MCPClient;
+        tools: readonly Tool[];
+        rawTools: readonly MCPToolDefinition[];
+        enabledNames: ReadonlySet<string>;
+      }
+    | undefined;
+  getRemoteServerUrl(name: string): string | undefined;
+  reconnect(name: string): Promise<void>;
+  reconnectAndJoin(name: string): Promise<void>;
+  waitForInitialLoad(signal?: AbortSignal): Promise<void>;
+  initialLoadDurationMs(): number;
+  onStatusChange(listener: McpStatusListener): () => void;
+}
+
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 
 type RuntimeMcpClient = StdioMcpClient | HttpMcpClient | SseMcpClient;
@@ -69,9 +102,10 @@ export interface McpConnectionManagerOptions {
   readonly oauthService?: McpOAuthService;
   readonly log?: Logger;
   readonly resolveDefaultTimeouts?: () => McpDefaultTimeouts;
+  readonly resolveClientName?: () => string | undefined;
 }
 
-export class McpConnectionManager {
+export class McpConnectionManager implements McpConnectionView {
   private readonly entries = new Map<string, InternalEntry>();
   private readonly listeners = new Set<McpStatusListener>();
   private readonly inFlightReconnects = new Map<string, Promise<void>>();
@@ -343,11 +377,13 @@ export class McpConnectionManager {
   ): Promise<RuntimeMcpClient> {
     const toolCallTimeoutMs =
       config.toolTimeoutMs ?? this.options.resolveDefaultTimeouts?.().toolTimeoutMs;
+    const clientName = this.options.resolveClientName?.();
     if (config.transport === 'stdio') {
       return new StdioMcpClient(config, {
         startupTimeoutMs,
         toolCallTimeoutMs,
         defaultCwd: this.options.stdioCwd,
+        clientName,
       });
     }
     if (config.transport === 'sse') {
@@ -356,6 +392,7 @@ export class McpConnectionManager {
         toolCallTimeoutMs,
         envLookup: this.options.envLookup,
         oauthProvider: await this.resolveOAuthProvider(config, name),
+        clientName,
       });
     }
     return new HttpMcpClient(config, {
@@ -363,6 +400,7 @@ export class McpConnectionManager {
       toolCallTimeoutMs,
       envLookup: this.options.envLookup,
       oauthProvider: await this.resolveOAuthProvider(config, name),
+      clientName,
     });
   }
 
@@ -382,7 +420,7 @@ export class McpConnectionManager {
     if (this.oauthService === undefined) return false;
     if (!isRemoteMcpConfig(entry.config)) return false;
     if (entry.config.bearerTokenEnvVar !== undefined) return false;
-    if (entry.config.headers !== undefined) return false;
+    if (entry.config.headers !== undefined && entry.config.auth !== 'oauth') return false;
     return isUnauthorizedLikeError(error);
   }
 

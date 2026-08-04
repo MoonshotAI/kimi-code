@@ -13,6 +13,7 @@ import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile'
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
+import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { APIProviderRateLimitError } from '#/kosong/contract/errors';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
@@ -866,9 +867,9 @@ describe('SessionSwarmService metadata compatibility', () => {
       ready: Promise.resolve(),
       get: (name: string) =>
         name === 'coder'
-          ? { name: 'coder', tools: [], systemPrompt: () => '' }
+          ? normalizeAgentProfile({ name: 'coder', tools: [], systemPrompt: () => '' })
           : undefined,
-      getDefault: () => ({ name: 'agent', tools: [], systemPrompt: () => '' }),
+      getDefault: () => normalizeAgentProfile({ name: 'agent', tools: [], systemPrompt: () => '' }),
       list: () => [],
     });
     ix.stub(

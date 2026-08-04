@@ -23,7 +23,7 @@ import {
   IInstantiationService,
   type ServicesAccessor,
 } from '#/_base/di/instantiation';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
@@ -171,7 +171,7 @@ export class SessionLegacyService implements ISessionLegacyService {
     agent: IAgentScopeHandle,
   ): Promise<SessionStatusResponse> {
     const profile = agent.accessor.get(IAgentProfileService);
-    const contextSize = agent.accessor.get(IAgentContextSizeService);
+    const tokenCounting = agent.accessor.get(IAgentTokenCountingService);
     const permission = agent.accessor.get(IAgentPermissionModeService);
     const plan = agent.accessor.get(IAgentPlanService);
     const swarm = agent.accessor.get(IAgentSwarmService);
@@ -185,7 +185,7 @@ export class SessionLegacyService implements ISessionLegacyService {
       model === ''
         ? resolveDefaultModelContextTokens(agent)
         : (caps.max_input_tokens ?? caps.max_context_tokens ?? 0);
-    const tokens = contextSize.get().size;
+    const tokens = tokenCounting.statusSize();
     const planData = await plan.status();
 
     return {

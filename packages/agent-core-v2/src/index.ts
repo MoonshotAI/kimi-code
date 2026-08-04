@@ -32,12 +32,14 @@ export * from '#/app/telemetry/consoleAppender';
 export * from '#/app/telemetry/cloudAppender';
 export * from '#/app/bootstrap/bootstrap';
 export * from '#/app/bootstrap/bootstrapService';
+export * from '#/os/interface/hostClock';
 export * from '#/os/interface/hostEnvironment';
 export * from '#/os/interface/hostFileSystem';
 export * from '#/os/interface/hostFsWatch';
 export * from '#/os/interface/hostProcess';
 export * from '#/os/interface/terminal';
 export * from '#/os/interface/terminalErrors';
+export * from '#/os/backends/node-local/hostClockService';
 export * from '#/os/backends/node-local/hostEnvironmentService';
 export * from '#/os/backends/node-local/hostFsService';
 export * from '#/os/backends/node-local/hostFsWatchService';
@@ -91,6 +93,7 @@ export type {
 
 export * from '#/app/sessionIndex/sessionIndex';
 export * from '#/app/sessionIndex/sessionIndexService';
+export * from '#/app/sessionIndex/sessionIndexMirrorService';
 export * from '#/session/sessionMetadata/sessionMetadata';
 export * from '#/session/sessionMetadata/sessionMetadataService';
 export * from '#/session/sessionActivity/sessionActivity';
@@ -105,6 +108,10 @@ export * from '#/kosong/provider/providerService';
 export * from '#/kosong/provider/providerDefinition';
 export * from '#/kosong/provider/protocolAdapterRegistry';
 import '#/app/skillCatalog/configSection';
+import '#/app/agentIdentity/configSection';
+export * from '#/app/agentIdentity/configSection';
+export * from '#/app/agentIdentity/agentIdentity';
+export * from '#/app/agentIdentity/agentIdentityService';
 import '#/kosong/protocol/errors';
 export * from '#/kosong/protocol/errors';
 export * from '#/kosong/protocol/protocol';
@@ -178,6 +185,10 @@ export * from '#/app/plugin/archive';
 export * from '#/app/plugin/manager';
 export * from '#/app/plugin/plugin';
 export * from '#/app/plugin/pluginService';
+export * from '#/app/capability/capability';
+export * from '#/app/capability/capabilityService';
+export * from '#/app/capability/errors';
+export * from '#/app/capability/types';
 export * from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
 export * from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoaderService';
 
@@ -370,7 +381,12 @@ export * from '#/session/sessionContext/sessionContext';
 
 import '#/session/approval/approval';
 import '#/session/approval/approvalService';
-export { ISessionApprovalService } from '#/session/approval/approval';
+export {
+  ISessionApprovalService,
+  type ApprovalDecision,
+  type ApprovalRequest as SessionApprovalRequest,
+  type ApprovalResponse as SessionApprovalResponse,
+} from '#/session/approval/approval';
 export * from '#/session/question/question';
 export * from '#/session/question/questionService';
 export * from '#/agent/tools/ask-user-question/ask-user-question';
@@ -495,11 +511,13 @@ export * from '#/agent/contextMemory/contextTranscript';
 export * from '#/agent/contextMemory/types';
 export * from '#/agent/systemReminder/systemReminder';
 export * from '#/agent/systemReminder/systemReminderService';
+export * from '#/agent/dateChange/dateChange';
+export * from '#/agent/dateChange/dateChangeService';
 export * from '#/agent/contextProjector/contextProjector';
 export * from '#/agent/contextProjector/contextProjectorService';
-export * from '#/agent/contextSize/contextSize';
-export * from '#/agent/contextSize/contextSizeOps';
-export * from '#/agent/contextSize/contextSizeService';
+export * from '#/agent/tokenCounting/tokenCounting';
+export * from '#/agent/tokenCounting/tokenCountingOps';
+export * from '#/agent/tokenCounting/tokenCountingService';
 export * from '#/agent/contextInjector/contextInjector';
 export * from '#/agent/contextInjector/contextInjectorService';
 export * from '#/agent/plugin/agentPlugin';

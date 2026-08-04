@@ -4,7 +4,7 @@ import {
   WIRE_PROTOCOL_VERSION,
   CHECKPOINTED_MODELS,
   IAgentContextMemoryService,
-  IAgentContextSizeService,
+  IAgentTokenCountingService,
   IAgentGoalService,
   type ContextMessage,
   type WireRecord,
@@ -207,7 +207,7 @@ describe('conversation-time checkpoint registration', () => {
 
 describe('AgentRecords persistence metadata', () => {
   let context: IAgentContextMemoryService;
-  let contextSize: IAgentContextSizeService;
+  let tokenCounting: IAgentTokenCountingService;
   let ctx: TestAgentContext;
   let expectResumeMatches: boolean;
   let persistence: RecordingInMemoryWireRecordPersistence;
@@ -217,7 +217,7 @@ describe('AgentRecords persistence metadata', () => {
     persistence = new RecordingInMemoryWireRecordPersistence();
     ctx = createTestAgent({ persistence, autoConfigure: false });
     context = ctx.get(IAgentContextMemoryService);
-    contextSize = ctx.get(IAgentContextSizeService);
+    tokenCounting = ctx.get(IAgentTokenCountingService);
   });
 
   afterEach(async () => {
@@ -458,7 +458,7 @@ describe('AgentRecords persistence metadata', () => {
         },
       },
       {
-        type: 'context_size.measured',
+        type: 'token_counting.measured',
         length: 1,
         tokens: 42,
       },
@@ -476,7 +476,7 @@ describe('AgentRecords persistence metadata', () => {
     ]);
 
     expect(context.get()).toHaveLength(1);
-    expect(contextSize.get()).toEqual({
+    expect(tokenCounting.get()).toEqual({
       size: 42,
       measured: 42,
       estimated: 0,

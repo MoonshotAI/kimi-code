@@ -33,7 +33,7 @@ function recordContainsSkillLoaded(record: unknown, skillName: string): boolean 
       return (
         part.type === 'text' &&
         typeof part.text === 'string' &&
-        part.text.includes(`<kimi-skill-loaded name="${skillName}"`)
+        part.text.includes(`<skill-loaded name="${skillName}"`)
       );
     }) ?? false
   );
@@ -246,9 +246,9 @@ describe('ToolManager SkillTool wire behavior', () => {
             text: [
               'Skill tool loaded instructions for this request. Follow them.',
               '',
-              '<kimi-skill-loaded name="review" trigger="model-tool" source="user" dir="/skills/review" args="">',
+              '<skill-loaded name="review" trigger="model-tool" source="user" dir="/skills/review" args="">',
               'body of review',
-              '</kimi-skill-loaded>',
+              '</skill-loaded>',
             ].join('\n'),
           },
         ],

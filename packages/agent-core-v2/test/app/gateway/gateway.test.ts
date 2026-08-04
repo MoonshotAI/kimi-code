@@ -101,6 +101,7 @@ describe('RestGateway', () => {
       close: () => Promise.resolve(),
       archive: () => Promise.resolve(),
       restore: () => Promise.resolve(sessionHandle),
+      delete: () => Promise.resolve(),
       fork: () => Promise.resolve(sessionHandle),
       createChild: () => Promise.resolve(sessionHandle),
     };

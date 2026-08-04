@@ -7,6 +7,10 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import type { Klient } from '../../src/index.js';
 
 export interface KlientConformanceTarget {
@@ -91,6 +95,30 @@ export function defineKlientConformance(
         });
       } finally {
         await target.klient.session(created.id).close();
+      }
+    });
+
+    it('session skills.list returns the workspace skills as summaries', async () => {
+      const workDir = await mkdtemp(join(tmpdir(), 'klient-conf-skills-'));
+      try {
+        await mkdir(join(workDir, '.kimi-code', 'skills', 'conf-skill'), { recursive: true });
+        await writeFile(
+          join(workDir, '.kimi-code', 'skills', 'conf-skill', 'SKILL.md'),
+          '---\nname: conf-skill\ndescription: conformance fixture skill\n---\n\n# Conf\n',
+        );
+        const created = await target.klient.global.sessions.create({ workDir });
+        try {
+          const skills = await target.klient.session(created.id).skills.list();
+          expect(skills.find((skill) => skill.name === 'conf-skill')).toMatchObject({
+            name: 'conf-skill',
+            description: 'conformance fixture skill',
+            source: 'project',
+          });
+        } finally {
+          await target.klient.session(created.id).close();
+        }
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
       }
     });
 

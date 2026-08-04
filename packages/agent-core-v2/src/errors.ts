@@ -10,6 +10,7 @@ import { AuthErrors } from '#/app/auth/errors';
 import { TaskErrors } from '#/agent/task/errors';
 import { ProtocolErrors } from '#/kosong/protocol/errors';
 import { ConfigErrors } from '#/app/config/errors';
+import { CapabilityErrors } from '#/app/capability/errors';
 import { CronErrors } from '#/app/cron/errors';
 import { FileErrors } from '#/app/file/fileService';
 import { FsErrors } from '#/workspace/workspaceFs/internal/errors';
@@ -44,6 +45,7 @@ export { AuthErrors } from '#/app/auth/errors';
 export { TaskErrors } from '#/agent/task/errors';
 export { ProtocolErrors } from '#/kosong/protocol/errors';
 export { ConfigErrors } from '#/app/config/errors';
+export { CapabilityErrors } from '#/app/capability/errors';
 export { CronErrors } from '#/app/cron/errors';
 export { FileErrors } from '#/app/file/fileService';
 export { FsErrors } from '#/workspace/workspaceFs/internal/errors';
@@ -75,6 +77,7 @@ export const ErrorCodes = {
   ...TaskErrors.codes,
   ...ProtocolErrors.codes,
   ...ConfigErrors.codes,
+  ...CapabilityErrors.codes,
   ...CronErrors.codes,
   ...FileErrors.codes,
   ...FsErrors.codes,

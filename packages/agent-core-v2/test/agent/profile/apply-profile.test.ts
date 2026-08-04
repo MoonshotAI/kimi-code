@@ -7,11 +7,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Emitter, Event } from '#/_base/event';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
+import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSystemPrompt } from '#/app/plugin/types';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
+import type { SkillCatalog } from '#/app/skillCatalog/types';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
-import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
+import {
+  BUILTIN_SKILL_SOURCE_ID,
+  PLUGIN_SKILL_SOURCE_ID,
+} from '#/app/skillCatalog/skillSource';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
+import { DEFAULT_PRODUCT_NAME } from '#/app/agentProfileCatalog/profile-shared';
+
+import { stubAgentIdentity } from '../../app/agentIdentity/stubs';
 
 import {
   appService,
@@ -24,21 +33,27 @@ import {
   type TestAgentServiceOverride,
 } from '../../harness';
 
-const profile: ResolvedAgentProfile = {
+const profile: ResolvedAgentProfile = normalizeAgentProfile({
   name: 'agents-profile',
   systemPrompt: (context) =>
     typeof context['agentsMd'] === 'string' ? (context['agentsMd'] as string) : '',
   tools: [],
-};
+});
 
-const pluginProfile: ResolvedAgentProfile = {
+const pluginProfile: ResolvedAgentProfile = normalizeAgentProfile({
   name: 'plugin-profile',
   systemPrompt: (context) =>
     typeof context['pluginSections'] === 'string' ? context['pluginSections'] : '',
   tools: [],
-};
+});
 
-const exactProfile: ResolvedAgentProfile = {
+const skillsProfile: ResolvedAgentProfile = normalizeAgentProfile({
+  name: 'skills-profile',
+  systemPrompt: (context) => `skills:${context.skills ?? ''}`,
+  tools: ['Skill'],
+});
+
+const exactProfile: ResolvedAgentProfile = normalizeAgentProfile({
   name: 'exact-profile',
   systemPrompt: (context) =>
     [
@@ -50,7 +65,7 @@ const exactProfile: ResolvedAgentProfile = {
       `extra:${context.additionalDirsInfo ?? ''}`,
     ].join('\n'),
   tools: ['Read', 'Write'],
-};
+});
 
 describe('AgentProfileService.applyProfile', () => {
   let ctx: TestAgentContext;
@@ -80,6 +95,35 @@ describe('AgentProfileService.applyProfile', () => {
     );
     return { ctx, profile: ctx.get(IAgentProfileService) };
   }
+
+  describe('custom identity', () => {
+    // The default builtin profile opens with `You are ${product_name}`.
+    const selfNaming: ResolvedAgentProfile = normalizeAgentProfile({
+      name: 'self-naming',
+      systemPrompt: (context) => `You are ${context.productName ?? DEFAULT_PRODUCT_NAME}`,
+      tools: [],
+    });
+
+    it('names the agent after the configured identity', async () => {
+      const { profile: svc } = buildContext(
+        appService(IAgentIdentity, stubAgentIdentity({ displayName: 'Acme Dev', slug: 'acme' })),
+      );
+
+      await svc.applyProfile(selfNaming);
+
+      expect(svc.data().systemPrompt).toBe('You are Acme Dev');
+    });
+
+    it('keeps the built-in product name when no identity is configured', async () => {
+      const { profile: svc } = buildContext(
+        appService(IAgentIdentity, stubAgentIdentity()),
+      );
+
+      await svc.applyProfile(selfNaming);
+
+      expect(svc.data().systemPrompt).toBe(`You are ${DEFAULT_PRODUCT_NAME}`);
+    });
+  });
 
   it('loads AGENTS.md into the rendered system prompt', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');
@@ -180,6 +224,29 @@ describe('AgentProfileService.applyProfile', () => {
     change.dispose();
   });
 
+  // The builtin source changes only when its config switch is toggled, so it
+  // shares the plugin source's refresh. Subscribing to the catalog rather than
+  // the config section is what makes the rebuilt prompt see the new listing:
+  // the catalog fires after the contribution is replaced.
+  it('refreshes the system prompt when the builtin skill source reloads', async () => {
+    const change = new Emitter<string>();
+    const listing = { value: 'before' };
+    const catalog = {
+      getModelSkillListing: () => listing.value,
+    } as unknown as SkillCatalog;
+    const { profile: svc } = buildContext(skillCatalogWithChange(change, catalog));
+    await svc.applyProfile(skillsProfile);
+    expect(svc.data().systemPrompt).toBe('skills:before');
+
+    listing.value = 'after';
+    change.fire(BUILTIN_SKILL_SOURCE_ID);
+
+    await vi.waitFor(() => {
+      expect(svc.data().systemPrompt).toBe('skills:after');
+    });
+    change.dispose();
+  });
+
   it('skips plugin sections beyond the aggregate byte budget and warns once', async () => {
     const large = 'x'.repeat(48 * 1024);
     const sections = {
@@ -218,14 +285,18 @@ describe('AgentProfileService.applyProfile', () => {
   });
 });
 
-function skillCatalogWithChange(change: Emitter<string>): TestAgentServiceOverride {
+function skillCatalogWithChange(
+  change: Emitter<string>,
+  catalog: SkillCatalog = new InMemorySkillCatalog(),
+): TestAgentServiceOverride {
   return sessionService(ISessionSkillCatalog, {
     _serviceBrand: undefined,
-    catalog: new InMemorySkillCatalog(),
+    catalog,
     ready: Promise.resolve(),
     onDidChange: change.event,
     load: async () => {},
     reload: async () => {},
+    list: async () => [],
   });
 }
 

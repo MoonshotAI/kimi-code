@@ -80,7 +80,7 @@ export class UserAgentProfileLoaderService
     this.defaultProfile = systemMd ?? this.builtin.getDefault();
     const contribution = profilesFromDiscovery(
       await discoverAgentFiles(this.fs, roots, (message) => this.log.warn(message)),
-      (context) => this.defaultProfile.systemPrompt(context),
+      (context) => this.defaultProfile.renderSystemPrompt(context),
     );
     if (systemMd === undefined) return contribution;
     return { ...contribution, profiles: [...contribution.profiles, systemMd] };

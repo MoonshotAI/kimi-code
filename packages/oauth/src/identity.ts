@@ -105,6 +105,26 @@ export function createKimiUserAgent(options: {
     : `${product}/${version} (${suffix})`;
 }
 
+/**
+ * Swap the product token of a User-Agent produced by
+ * {@link createKimiUserAgent}, keeping the version and optional suffix intact
+ * (`kimi-code-cli/1.2.3 (web)` → `acme/1.2.3 (web)`).
+ *
+ * Lives next to the builder on purpose: the format knowledge — product token,
+ * `/`, version, parenthesized suffix — must exist in exactly one place, so a
+ * change to the builder cannot silently desynchronize the rewriter. Callers
+ * pass an already-normalized ASCII token; a blank or non-ASCII product still
+ * throws rather than emitting an invalid header.
+ *
+ * A value that does not carry a `/` is treated as a bare product token and
+ * replaced wholesale.
+ */
+export function replaceUserAgentProduct(userAgent: string, product: string): string {
+  const cleaned = requiredAsciiHeader(product, 'Kimi identity product');
+  const separator = userAgent.indexOf('/');
+  return separator < 0 ? cleaned : `${cleaned}${userAgent.slice(separator)}`;
+}
+
 export function createKimiDefaultHeaders(options: KimiIdentityOptions): Record<string, string> {
   return {
     'User-Agent': createKimiUserAgent(options),

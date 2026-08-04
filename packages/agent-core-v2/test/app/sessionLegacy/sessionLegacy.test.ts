@@ -14,7 +14,7 @@ import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiati
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { type IAgentScopeHandle, type ISessionScopeHandle, LifecycleScope } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -117,7 +117,7 @@ describe('Session legacy status (best-effort runtime state)', () => {
       kind: LifecycleScope.Agent,
       accessor: accessor([
         [IAgentProfileService, profile],
-        [IAgentContextSizeService, { get: () => ({ size: 25, measured: 20, estimated: 5 }) }],
+        [IAgentTokenCountingService, { get: () => ({ size: 25, measured: 20, estimated: 5 }), statusSize: () => 25 }],
         [IAgentPermissionModeService, { mode: 'manual' }],
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
         [IAgentSwarmService, { isActive: false }],
@@ -181,7 +181,7 @@ describe('Session legacy status (best-effort runtime state)', () => {
       kind: LifecycleScope.Agent,
       accessor: accessor([
         [IAgentProfileService, profile],
-        [IAgentContextSizeService, { get: () => ({ size: 0, measured: 0, estimated: 0 }) }],
+        [IAgentTokenCountingService, { get: () => ({ size: 0, measured: 0, estimated: 0 }), statusSize: () => 0 }],
         [IAgentPermissionModeService, { mode: 'manual' }],
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
         [IAgentSwarmService, { isActive: false }],
@@ -258,7 +258,7 @@ describe('Session legacy status (best-effort runtime state)', () => {
       kind: LifecycleScope.Agent,
       accessor: accessor([
         [IAgentProfileService, profile],
-        [IAgentContextSizeService, { get: () => ({ size: 120_000, measured: 110_000, estimated: 10_000 }) }],
+        [IAgentTokenCountingService, { get: () => ({ size: 120_000, measured: 110_000, estimated: 10_000 }), statusSize: () => 120_000 }],
         [IAgentPermissionModeService, { mode: 'manual' }],
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
         [IAgentSwarmService, { isActive: false }],

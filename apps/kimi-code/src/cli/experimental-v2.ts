@@ -16,6 +16,7 @@
  */
 
 export const KIMI_V2_ENV = 'KIMI_CODE_EXPERIMENTAL_FLAG';
+export const KIMI_ACP_V2_ENV = 'KIMI_CODE_EXPERIMENTAL_ACP_V2';
 
 const TRUTHY_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
@@ -30,4 +31,10 @@ export function isKimiV2Enabled(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): boolean {
   return isTruthyEnv(KIMI_V2_ENV, env);
+}
+
+export function isAcpV2Enabled(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return isTruthyEnv(KIMI_ACP_V2_ENV, env) || isKimiV2Enabled(env);
 }

@@ -6,6 +6,26 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 0.32.0（2026-08-04）
+
+### 新功能
+
+- 新增四个 hook 事件：`TurnStarted`、`UserPromptQueued`、`TaskStarted` 和 `SessionHeartbeat`。在 `config.toml` 的 `[[hooks]]` 下配置，详见 [Hooks](https://moonshotai.github.io/kimi-code/zh/customization/hooks.html)。
+
+### 优化
+
+- `[loop_control]` 两个配置键改名：`max_retries_per_step` → `max_attempts_per_step`、`max_steps_per_run` → `max_steps_per_turn`；旧键不再生效，启动时会有改名警告，详见 [loop_control](https://moonshotai.github.io/kimi-code/zh/configuration/config-files.html#loop-control)。
+- 新增 `[token_counting]` 配置节：供应商不上报 token 用量时，可将上下文大小显示切换为本地估算，详见 [token_counting](https://moonshotai.github.io/kimi-code/zh/configuration/config-files.html#token-counting)。
+
+### 修复
+
+- 修复部分 OpenAI 兼容网关返回含冒号的工具调用 ID 时，交互式提问无法提交答案的问题。
+- 修复上下文自动压缩因请求过大反复重试直至失败的问题。
+- models.dev 目录不可达时回退到内置快照，离线或网络受限时也能导入已知第三方供应商。
+- 修复未配置模型时上下文窗口上限显示为 0 的问题，现回退到默认模型显示。
+- web: 修复深色模式下单色控件显示异常，聊天输入框圆角与设计系统对齐。
+- 修复 `/login` 已登录确认信息难以看清的问题，现以成功色显示。
+
 ## 0.31.1（2026-07-31）
 
 ### 优化

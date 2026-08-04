@@ -82,9 +82,9 @@ export class InMemorySkillCatalog implements SkillCatalog {
     const instructions = plugin.instructions;
     if (instructions === undefined || instructions.trim().length === 0) return content;
     return (
-      `<kimi-plugin-instructions plugin="${escapeXmlAttr(plugin.id)}">\n` +
+      `<plugin-instructions plugin="${escapeXmlAttr(plugin.id)}">\n` +
       `${instructions}\n` +
-      `</kimi-plugin-instructions>\n\n${content}`
+      `</plugin-instructions>\n\n${content}`
     );
   }
 

@@ -23,6 +23,12 @@ export interface PluginMarketplaceEntry {
   readonly description?: string;
   readonly homepage?: string;
   readonly keywords?: readonly string[];
+  /**
+   * Internal provenance flag for client-injected built-in rows. The catalog
+   * parser builds entries field-by-field and never sets it, so a custom
+   * catalog cannot forge it (unlike the `capability:<id>` source string).
+   */
+  readonly builtIn?: boolean;
 }
 
 export interface PluginMarketplace {
@@ -71,6 +77,12 @@ export interface LoadPluginMarketplaceOptions {
   readonly workDir: string;
   readonly source?: string;
   readonly fetchImpl?: typeof fetch;
+  /**
+   * Built-in capability rows to inject, supplied by the caller from the
+   * engine's capability registry (this util owns no product knowledge).
+   * Undefined means no injection.
+   */
+  readonly builtInEntries?: readonly PluginMarketplaceEntry[];
 }
 
 export async function loadPluginMarketplace(
@@ -88,11 +100,42 @@ export async function loadPluginMarketplace(
   } catch (error) {
     const fallback =
       configuredSource === undefined ? await getSourceCheckoutMarketplaceLocation() : undefined;
-    if (fallback === undefined) throw error;
+    if (fallback === undefined) {
+      if (options.builtInEntries !== undefined) {
+        // The built-in entries do not come from the catalog — keep them
+        // visible when the catalog itself is unreachable.
+        return withBuiltInEntries({ source: location.resolved, plugins: [] }, options.builtInEntries);
+      }
+      throw error;
+    }
     raw = await readMarketplaceText(fallback, fetchImpl);
-    return withLatestVersions(parsePluginMarketplace(raw, fallback), fetchImpl);
+    const marketplace = await withLatestVersions(parsePluginMarketplace(raw, fallback), fetchImpl);
+    return options.builtInEntries !== undefined
+      ? withBuiltInEntries(marketplace, options.builtInEntries)
+      : marketplace;
   }
-  return withLatestVersions(parsePluginMarketplace(raw, location), fetchImpl);
+  const marketplace = await withLatestVersions(parsePluginMarketplace(raw, location), fetchImpl);
+  return options.builtInEntries !== undefined
+    ? withBuiltInEntries(marketplace, options.builtInEntries)
+    : marketplace;
+}
+
+/**
+ * Built-in capability entries (kimi-cu, kimi-webbridge) are injected by the
+ * client instead of being served by the marketplace catalog, so their
+ * visibility is bound to the client version — older clients never see them.
+ * Same-id catalog rows are MASKED, not merged: what these ids mean stays
+ * decided by the client release, and a future official marketplace listing
+ * only reaches older clients (whose fix is to upgrade). No `version` is
+ * pinned: reinstalling uses the latest managed artifacts.
+ */
+function withBuiltInEntries(
+  marketplace: PluginMarketplace,
+  builtIns: readonly PluginMarketplaceEntry[],
+): PluginMarketplace {
+  const builtInIds = new Set(builtIns.map((entry) => entry.id));
+  const catalog = marketplace.plugins.filter((entry) => !builtInIds.has(entry.id));
+  return { ...marketplace, plugins: [...catalog, ...builtIns] };
 }
 
 async function withLatestVersions(

@@ -8,9 +8,13 @@
  * the same profile can be bound to any Model. Together with a bound Model, a
  * profile uniquely determines an Agent's behavior (`Profile + Model ⇒ Agent`).
  *
- * Every profile is self-contained: `systemPrompt(context)` returns the complete
- * prompt (base + role overlay are merged at definition time, not at spawn
- * time). Profiles stay independent of concrete model aliases, but may declare
+ * Every profile is self-contained: `renderSystemPrompt(context)` returns the
+ * complete prompt (base + role overlay are merged at definition time, not at
+ * spawn time) together with the environment facts disclosed by that render.
+ * `systemPrompt(context)` is the same render's text only — it is derived from
+ * `renderSystemPrompt` at registration, so the two can never drift apart.
+ * Profiles stay
+ * independent of concrete model aliases, but may declare
  * a symbolic primary/secondary preference used as the default when spawned as
  * a subagent. The builtin {@link DEFAULT_AGENT_PROFILE_NAME} (`agent`) is the
  * default profile used when an Agent is bound to a Model without naming a
@@ -61,12 +65,25 @@ export interface AgentProfileContext {
   readonly shellName?: string;
   readonly shellPath?: string;
   readonly now?: string;
+  readonly timeZone?: string;
   readonly skills?: string;
   readonly skillActive?: boolean;
   readonly pluginSections?: string;
   readonly productName?: string;
   readonly replyStyleGuide?: string;
   readonly [key: string]: unknown;
+}
+
+export interface EnvironmentDisclosureSnapshot {
+  readonly cwd: string;
+  readonly date:
+    | { readonly disclosed: true; readonly value: { readonly localDate: string; readonly timeZone: string } }
+    | { readonly disclosed: false };
+}
+
+export interface SystemPromptRenderResult {
+  readonly text: string;
+  readonly environment: EnvironmentDisclosureSnapshot;
 }
 
 export interface AgentProfile {
@@ -78,7 +95,61 @@ export interface AgentProfile {
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];
   readonly modelPreference?: AgentModelPreference;
-  systemPrompt(context: AgentProfileContext): string;
+  readonly systemPrompt: (context: AgentProfileContext) => string;
+  readonly renderSystemPrompt: (context: AgentProfileContext) => SystemPromptRenderResult;
   readonly promptPrefix?: (ctx: AgentProfilePromptPrefixContext) => Promise<string>;
   readonly summaryPolicy?: AgentProfileSummaryPolicy;
+}
+
+/**
+ * The profile shape accepted at registration ({@link registerAgentProfile},
+ * file-based profile factories): authors provide at least one render entry —
+ * the structured `renderSystemPrompt`, the legacy text-only `systemPrompt`,
+ * or both (the structured renderer is then authoritative). The union
+ * statically requires at least one entry; {@link normalizeAgentProfile} still
+ * throws on inputs that escaped the type check (plain JS, casts).
+ * {@link normalizeAgentProfile} derives the other method, so a registered
+ * {@link AgentProfile} always carries both and its `systemPrompt` text always
+ * comes from the same render as its disclosure metadata. A text-only input
+ * renders with no disclosed environment facts. Callbacks are bound to the
+ * input object at runtime, so method-style definitions relying on `this`
+ * keep working.
+ */
+export type AgentProfileInput = Omit<AgentProfile, 'systemPrompt' | 'renderSystemPrompt'> &
+  (
+    | {
+        readonly systemPrompt: (context: AgentProfileContext) => string;
+        readonly renderSystemPrompt?: (
+          context: AgentProfileContext,
+        ) => SystemPromptRenderResult;
+      }
+    | {
+        readonly systemPrompt?: (context: AgentProfileContext) => string;
+        readonly renderSystemPrompt: (context: AgentProfileContext) => SystemPromptRenderResult;
+      }
+  );
+
+export function normalizeAgentProfile(input: AgentProfileInput): AgentProfile {
+  if (input.renderSystemPrompt !== undefined) {
+    const render = input.renderSystemPrompt.bind(input);
+    return {
+      ...input,
+      renderSystemPrompt: render,
+      systemPrompt: (context) => render(context).text,
+    };
+  }
+  if (input.systemPrompt !== undefined) {
+    const systemPrompt = input.systemPrompt.bind(input);
+    return {
+      ...input,
+      systemPrompt,
+      renderSystemPrompt: (context) => ({
+        text: systemPrompt(context),
+        environment: { cwd: context.cwd ?? '', date: { disclosed: false } },
+      }),
+    };
+  }
+  throw new Error(
+    `Agent profile "${input.name}" must define systemPrompt or renderSystemPrompt.`,
+  );
 }

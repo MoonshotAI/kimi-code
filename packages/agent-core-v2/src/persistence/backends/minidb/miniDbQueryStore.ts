@@ -38,6 +38,16 @@
  * cluster-wide registry, and value indexes are created `sparse` so documents
  * from other collections (which lack the indexed field) are skipped.
  *
+ * Ordered columns map to the engine's `dt` channels: `put`/`batch` forward
+ * `columns` as `SetOptions.dt`, and `pageByColumn` issues a dt-bounded,
+ * dt-sorted, limited query — which the engine serves by walking its ordered
+ * column structure with early stop instead of materializing and sorting all
+ * candidates. `pageByColumn` deliberately sends no key prefix (a key range
+ * would disqualify that walk); callers keep column names collection-unique
+ * per the `IQueryStore` contract. `listKeys`/`dropCollection` are prefix
+ * scans (deletes applied in chunks); `getMany` is the cluster `mget` (one
+ * reader call per touched shard).
+ *
  * Bound at App scope as a peer of the other access-pattern stores.
  */
 
@@ -55,6 +65,8 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
   IQueryStore,
   type Checkpoint,
+  type ColumnBounds,
+  type ColumnPageQuery,
   type IndexDef,
   type IQuery,
   type Page,
@@ -68,6 +80,7 @@ const CHECKPOINT_COLLECTION = '__checkpoint__';
 const STORE_SUBDIR = 'query-store';
 const SHARD_COUNT = 16;
 const LOCK_ACQUIRE_TIMEOUT_MS = 1000;
+const DROP_BATCH_SIZE = 500;
 
 function physicalKey(collection: string, key: string): string {
   return `${collection}${SEP}${key}`;
@@ -79,6 +92,19 @@ function indexName(collection: string, name: string): string {
 
 function isRebuildable(error: unknown): boolean {
   return error instanceof SyntaxError || (error as { name?: string }).name === 'CorruptFrameError';
+}
+
+/**
+ * Fire-and-forget close promises produced by DI disposal (which is
+ * synchronous). The server shutdown path awaits these via
+ * `drainQueryStoreDisposals()` before the homeDir is released, so a teardown
+ * `rm()` never races an in-flight ClusterDb open/close (a late shard open
+ * would recreate db.wal and fail the rm with ENOTEMPTY).
+ */
+const pendingDisposals = new Set<Promise<void>>();
+
+export async function drainQueryStoreDisposals(): Promise<void> {
+  await Promise.all(pendingDisposals);
 }
 
 export class MiniDbQueryStore extends Disposable implements IQueryStore {
@@ -96,7 +122,12 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
     super();
     this.dir = join(this.bootstrap.cacheDir, STORE_SUBDIR);
     this._register(toDisposable(() => {
-      void this.close();
+      // DI disposal is synchronous, but closing a ClusterDb is not: track the
+      // close module-level so the shutdown path (`drainQueryStoreDisposals`)
+      // can await it before the homeDir is torn down.
+      const pending = this.close().catch(() => {});
+      pendingDisposals.add(pending);
+      void pending.finally(() => pendingDisposals.delete(pending));
     }));
   }
 
@@ -151,8 +182,15 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
     }
   }
 
-  async put<T>(collection: string, key: string, value: T): Promise<void> {
-    await this.withDb((db) => db.set(physicalKey(collection, key), value));
+  async put<T>(
+    collection: string,
+    key: string,
+    value: T,
+    options?: { columns?: Record<string, number> },
+  ): Promise<void> {
+    await this.withDb((db) =>
+      db.set(physicalKey(collection, key), value, { dt: options?.columns }),
+    );
   }
 
   async batch(ops: readonly WriteOp[]): Promise<void> {
@@ -161,7 +199,12 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
       db.batch(
         ops.map((op) =>
           op.kind === 'put'
-            ? { op: 'set' as const, key: physicalKey(op.collection, op.key), value: op.value }
+            ? {
+                op: 'set' as const,
+                key: physicalKey(op.collection, op.key),
+                value: op.value,
+                dt: op.columns,
+              }
             : { op: 'del' as const, key: physicalKey(op.collection, op.key) },
         ),
       ),
@@ -174,6 +217,52 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
 
   async get<T>(collection: string, key: string): Promise<T | undefined> {
     return this.withDb((db) => db.get(physicalKey(collection, key)) as Promise<T | undefined>);
+  }
+
+  async getMany<T>(collection: string, keys: readonly string[]): Promise<Map<string, T>> {
+    if (keys.length === 0) return new Map();
+    const values = await this.withDb((db) =>
+      db.mget(keys.map((key) => physicalKey(collection, key))),
+    );
+    const out = new Map<string, T>();
+    values.forEach((value, index) => {
+      if (value !== undefined) out.set(keys[index]!, value as T);
+    });
+    return out;
+  }
+
+  async pageByColumn<T>(collection: string, query: ColumnPageQuery): Promise<Page<T>> {
+    // No key prefix: a key-range disqualifies the engine's ordered-column
+    // walk, and the column is only ever declared by this collection's writes,
+    // so the walk visits no foreign rows. Cross-collection contamination is
+    // prevented by the contract (column names are store-wide).
+    const dir = query.dir ?? 'asc';
+    const rows = (await this.withDb((db) =>
+      db.query({
+        dt: { [query.column]: query.bounds ?? {} },
+        filter: query.filter as Record<string, unknown> | undefined,
+        sort: { [query.column]: dir === 'desc' ? -1 : 1 },
+        limit: query.limit,
+      }),
+    )) as ReadonlyArray<{ value: T }>;
+    return { items: rows.map((row) => row.value) };
+  }
+
+  async listKeys(collection: string): Promise<readonly string[]> {
+    const prefix = `${collection}${SEP}`;
+    const entries = await this.withDb((db) => db.scan({ prefix }));
+    return entries.map((entry) => entry.key.slice(prefix.length));
+  }
+
+  async dropCollection(collection: string): Promise<void> {
+    const prefix = `${collection}${SEP}`;
+    const entries = await this.withDb((db) => db.scan({ prefix }));
+    for (let start = 0; start < entries.length; start += DROP_BATCH_SIZE) {
+      const chunk = entries.slice(start, start + DROP_BATCH_SIZE);
+      await this.withDb((db) =>
+        db.batch(chunk.map((entry) => ({ op: 'del' as const, key: entry.key }))),
+      );
+    }
   }
 
   query<T>(collection: string): IQuery<T> {
@@ -216,6 +305,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
 
 class MiniDbQuery<T> implements IQuery<T> {
   private filter: QueryFilter = {};
+  private column?: { name: string; bounds: ColumnBounds };
   private sortField?: string;
   private sortDir: SortDir = 'asc';
   private lim?: number;
@@ -228,6 +318,11 @@ class MiniDbQuery<T> implements IQuery<T> {
 
   where(filter: QueryFilter): IQuery<T> {
     this.filter = { ...this.filter, ...filter };
+    return this;
+  }
+
+  whereColumn(column: string, bounds: ColumnBounds): IQuery<T> {
+    this.column = { name: column, bounds };
     return this;
   }
 
@@ -251,6 +346,7 @@ class MiniDbQuery<T> implements IQuery<T> {
     const prefix = `${this.collection}${SEP}`;
     const q: QueryOptions = { key: { prefix } };
     if (Object.keys(this.filter).length > 0) q.filter = this.filter as Record<string, unknown>;
+    if (this.column !== undefined) q.dt = { [this.column.name]: this.column.bounds };
     if (this.sortField !== undefined) {
       q.sort = { [this.sortField]: this.sortDir === 'desc' ? -1 : 1 };
     }

@@ -19,6 +19,15 @@
  * same path prefix. The POST body is therefore validated manually (the dismiss
  * path carries an empty body), not via the Zod preHandler.
  *
+ * **Colon-bearing question ids**: the question id is derived from the LLM
+ * tool_call id, and some providers emit ids containing a colon (e.g.
+ * `AskUserQuestion:0`), which the action-suffix parse rejects as an unknown
+ * action. The resolve handler therefore falls back to matching the FULL tail
+ * against the pending list before emitting 40001 — a hit resolves, a miss
+ * keeps the validation error. (Dismiss is unaffected: `id:0:dismiss` parses
+ * off the final colon.)
+
+ *
  * Error mapping (REST.md §3.6):
  *   - 40401 (session.not_found)        — no live session matches {sid}
  *   - 40405 (question.not_found)       — no pending question matches {qid}
@@ -164,12 +173,6 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         defaultAction: 'resolve',
         resourceLabel: 'question',
       });
-      if (parsed.kind === 'invalid') {
-        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, parsed.reason, req.id));
-        return;
-      }
-      const questionId = parsed.id;
-      const action: 'resolve' | 'dismiss' = parsed.kind === 'bare' ? 'resolve' : parsed.action;
 
       const handle = await resumeSessionById(core.accessor, session_id);
       if (handle === undefined) {
@@ -180,6 +183,30 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
       }
 
       const interaction = handle.accessor.get(ISessionInteractionService);
+
+      let questionId: string;
+      let action: 'resolve' | 'dismiss';
+      if (parsed.kind === 'invalid') {
+        // Compat fallback: some providers emit tool_call ids CONTAINING a
+        // colon (e.g. `AskUserQuestion:0`), which the action-suffix parse
+        // rejects as an unknown action. Treat the full tail as the question
+        // id when it matches a pending (or recently-resolved, so duplicate
+        // resolves keep the 40902 semantics) question; otherwise keep 40001.
+        if (
+          interaction.listPending('question').some((i) => i.id === tail) ||
+          interaction.isRecentlyResolved(tail)
+        ) {
+          questionId = tail;
+          action = 'resolve';
+        } else {
+          reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, parsed.reason, req.id));
+          return;
+        }
+      } else {
+        questionId = parsed.id;
+        action = parsed.kind === 'bare' ? 'resolve' : parsed.action;
+      }
+
       const pendingInteraction = interaction
         .listPending('question')
         .find((i) => i.id === questionId);

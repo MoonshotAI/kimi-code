@@ -34,6 +34,8 @@ export interface MCPContentBlock {
 export interface MCPToolResult {
   content: MCPContentBlock[];
   isError: boolean;
+  structuredContent?: unknown;
+  _meta?: Record<string, unknown>;
 }
 
 export interface MCPToolDefinition {

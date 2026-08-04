@@ -31,7 +31,9 @@
  * model/provider config-change events. Tests that mutate config
  * behind the services' backs (bypassing those events) must call
  * `notifyConfigChanged()` to drop the cache — otherwise `get` keeps serving
- * the previous generation's Model.
+ * the previous generation's Model. The host-header layers baked into an
+ * entry need no invalidation: both are frozen for the process (bootstrap
+ * args, and the identity snapshot behind the third-party layer).
  *
  * Inspection: every assembly also captures a `ResolutionTraceCollector`
  * (provenance records + intermediate artifacts, reference-only) alongside the
@@ -45,6 +47,14 @@
  * provider registry plus credential state. `setDefaultModel` writes the
  * global default-model pointer (through `IModelService`) after a
  * materialization gate — the catalog's only write.
+ *
+ * Outbound headers: vendors declaring `hostHeaders: 'full'` receive the host
+ * headers port's complete set and stay consistent with it — that set is the
+ * host's to define, and backends key on the product token it carries (log
+ * filtering, rollout gating). Everyone else receives the port's third-party
+ * layer, already finished on the app side (at most a `User-Agent`, product
+ * token per the configured identity) — this catalog picks a layer, it never
+ * edits one.
  */
 
 import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
@@ -390,6 +400,8 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     const declared = new Set((model.capabilities ?? []).map((c) => c.trim().toLowerCase()));
 
     trace.capture(TRACE.hostHeaders, this.hostRequestHeaders.headers);
+    trace.capture(TRACE.thirdPartyHeaders, this.hostRequestHeaders.thirdPartyHeaders);
+    trace.capture(TRACE.identitySlug, this.hostRequestHeaders.identitySlug);
     return {
       id,
       name: wireName,
@@ -399,7 +411,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       headers: resolveOutboundHeaders(
         providerConfig?.type,
         providerConfig?.customHeaders,
-        this.hostRequestHeaders.headers,
+        this.hostRequestHeaders,
         resolvedBaseUrl,
       ),
       capabilities,
@@ -562,20 +574,15 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
 export function resolveOutboundHeaders(
   providerType: string | undefined,
   customHeaders: Readonly<Record<string, string>> | undefined,
-  hostHeaders: Readonly<Record<string, string>>,
+  host: Pick<IHostRequestHeaders, 'headers' | 'thirdPartyHeaders'>,
   baseUrl: string | undefined,
 ): Readonly<Record<string, string>> {
   const forwardsAll =
     providerType !== undefined &&
     getProviderDefinition(providerType)?.hostHeaders === 'full' &&
     isFirstPartyBaseUrl(baseUrl);
-  const hostLayer = forwardsAll ? hostHeaders : userAgentOnly(hostHeaders);
+  const hostLayer = forwardsAll ? host.headers : host.thirdPartyHeaders;
   return { ...parseKimiCodeCustomHeaders(), ...hostLayer, ...customHeaders };
-}
-
-function userAgentOnly(headers: Readonly<Record<string, string>>): Record<string, string> {
-  const userAgent = headers['User-Agent'];
-  return userAgent === undefined ? {} : { 'User-Agent': userAgent };
 }
 
 function resolveModelCapabilities(

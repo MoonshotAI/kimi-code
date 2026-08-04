@@ -21,6 +21,7 @@ import { CHECKPOINTED_MODELS, type Checkpointed } from '#/agent/contextMemory/co
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { SessionCronServiceImpl } from '#/session/cron/sessionCronServiceImpl';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { CronTaskPersistenceService } from '#/app/cron/cronTaskPersistenceService';
 import { IAgentGoalService } from '#/agent/goal/goal';
@@ -75,7 +76,7 @@ import { OP_REGISTRY } from '#/wire/op';
 import { IProtocolAdapterRegistry, type ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
 import { hasProviderDefinition } from '#/kosong/provider/providerDefinition';
-import type { SkillCatalog } from '#/app/skillCatalog/types';
+import { summarizeSkill, type SkillCatalog } from '#/app/skillCatalog/types';
 import { type ModelCapability } from '#/kosong/contract/capability';
 import { isToolCall, isToolCallPart, type ContentPart, type Message as KosongMessage, type StreamedMessagePart } from '#/kosong/contract/message';
 import { type ThinkingEffort } from '#/kosong/contract/provider';
@@ -105,7 +106,6 @@ import {
   IConfigService,
   IAgentContextMemoryService,
   IAgentContextProjectorService,
-  IAgentContextSizeService,
   IAgentExternalHooksService,
   IExternalHooksRunnerService,
   IAgentFullCompactionService,
@@ -124,6 +124,7 @@ import {
   IAgentLoopContinuationService,
   IAgentSwarmService,
   AgentSwarmService,
+  IAgentTokenCountingService,
   IAppStateService,
   ITelemetryService,
   IHostTerminalService,
@@ -192,6 +193,7 @@ import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog
 import { ISessionSwarmService } from '#/session/swarm/sessionSwarm';
 import type { PathAccessOperation } from '#/session/workspaceContext/workspaceContext';
 
+import { stubAgentIdentity } from '../app/agentIdentity/stubs';
 import { stubClientIdentity } from '../app/bootstrap/stubs';
 import { recordAgentEvents, type RecordedEventEntry } from '../snapshot/events';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
@@ -733,6 +735,7 @@ function createSessionSkillCatalog(catalog: SkillCatalog): ISessionSkillCatalog 
     onDidChange: Event.None as Event<string>,
     load: async () => { },
     reload: async () => { },
+    list: async () => catalog.listSkills().map(summarizeSkill),
   };
 }
 
@@ -1066,6 +1069,11 @@ export class AgentTestContext {
             IConfigService,
             configService(() => this.kimiConfig),
           );
+          // The harness is a config-already-loaded world, so the identity is
+          // handed out pre-frozen (no custom identity, matching the empty
+          // bootstrap headers above); the freeze ordering itself is covered
+          // by the agentIdentity suite. Suites override via `appService`.
+          reg.defineInstance(IAgentIdentity, stubAgentIdentity());
           reg.defineInstance(
             IAppendLogStore,
             new PersistenceAppendLogStore(
@@ -1348,8 +1356,8 @@ export class AgentTestContext {
     return this.get(IAgentContextMemoryService);
   }
 
-  get contextSize(): IAgentContextSizeService {
-    return this.get(IAgentContextSizeService);
+  get tokenCounting(): IAgentTokenCountingService {
+    return this.get(IAgentTokenCountingService);
   }
 
   get wire(): IWireService {
@@ -1388,7 +1396,7 @@ export class AgentTestContext {
 
   private initializeRestorableServices(): void {
     const context = this.get(IAgentContextMemoryService);
-    const contextSize = this.get(IAgentContextSizeService);
+    const tokenCounting = this.get(IAgentTokenCountingService);
     const usage = this.get(IAgentUsageService);
     const permissionMode = this.get(IAgentPermissionModeService);
     const permissionRules = this.get(IAgentPermissionRulesService);
@@ -1409,7 +1417,7 @@ export class AgentTestContext {
 
     context.get();
     void swarm.isActive;
-    contextSize.get();
+    tokenCounting.get();
     usage.status();
     tasks.list(false);
     permission.data();
@@ -1487,10 +1495,10 @@ export class AgentTestContext {
 
   contextData(): { readonly history: readonly ContextMessage[]; readonly tokenCount: number } {
     const context = this.get(IAgentContextMemoryService);
-    const contextSize = this.get(IAgentContextSizeService);
+    const tokenCounting = this.get(IAgentTokenCountingService);
     return {
       history: context.get(),
-      tokenCount: contextSize.get().measured,
+      tokenCount: tokenCounting.get().measured,
     };
   }
 
@@ -2184,8 +2192,8 @@ export class AgentTestContext {
       inputCacheCreation: 0,
     };
     const context = this.get(IAgentContextMemoryService);
-    const contextSize = this.get(IAgentContextSizeService);
-    contextSize.measured(context.get(), [], usage);
+    const tokenCounting = this.get(IAgentTokenCountingService);
+    tokenCounting.measured(context.get(), [], usage);
     const profile = this.get(IAgentProfileService);
     const usageService = this.get(IAgentUsageService);
     usageService.record(profile.data().modelAlias ?? 'mock-model', usage, {

@@ -24,6 +24,7 @@ import {
 
 import { createProgram } from './cli/commands';
 import { finalizeHeadlessRun } from './cli/headless-exit';
+import { startupTrace } from './utils/startup-trace';
 import type { CLIOptions } from './cli/options';
 import { OptionConflictError, validateOptions } from './cli/options';
 import { runPrompt } from './cli/run-prompt';
@@ -36,6 +37,7 @@ import { runUpdatePreflight } from './cli/update/preflight';
 import { createKimiCodeHostIdentity, getVersion } from './cli/version';
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, PROCESS_NAME } from './constant/app';
 import { cleanupStaleNativeCacheForCurrent } from './native/native-assets';
+import { installMinidbTextBuildWorker } from './native/minidb-worker';
 import { installNativeModuleHook } from './native/module-hook';
 import { runNativeAssetSmokeIfRequested } from './native/smoke';
 
@@ -56,6 +58,7 @@ export async function handleMainCommand(
   version: string,
 ): Promise<MainCommandOutcome> {
   let validated: ReturnType<typeof validateOptions>;
+  startupTrace('main:enter');
   try {
     validated = validateOptions(opts);
   } catch (error) {
@@ -66,10 +69,12 @@ export async function handleMainCommand(
     throw error;
   }
 
+  startupTrace('preflight:begin');
   const preflightResult = await runUpdatePreflight(
     version,
     validated.uiMode === 'print' ? { track, isTTY: false } : { track },
   );
+  startupTrace('preflight:end');
   if (preflightResult === 'exit') {
     process.exit(0);
   }
@@ -79,6 +84,7 @@ export async function handleMainCommand(
     return { headlessCompleted: true };
   }
 
+  startupTrace('runShell:begin');
   await runShell(validated.options, version);
   return { headlessCompleted: false };
 }
@@ -142,6 +148,16 @@ export function main(): void {
   // invalid proxy URL is reported and ignored rather than aborting startup.
   installGlobalProxyDispatcher();
   installNativeModuleHook();
+  // Best-effort SEA worker installation. Diagnostics are trace-only and avoid
+  // exposing the user's cache path; failure keeps MiniDb's bounded inline mode.
+  const workerInstall = installMinidbTextBuildWorker();
+  startupTrace(
+    workerInstall.status === 'installed'
+      ? `minidb-worker:installed basename=${workerInstall.basename} sha256=${workerInstall.assetSha256}`
+      : workerInstall.status === 'failed'
+        ? `minidb-worker:failed code=${workerInstall.errorCode} sha256=${workerInstall.assetSha256 ?? 'unknown'}`
+        : `minidb-worker:${workerInstall.status}`,
+  );
   if (runNativeAssetSmokeIfRequested()) return;
 
   // Start the background cleanup of stale native cache. Fire-and-forget; must not block startup or throw.

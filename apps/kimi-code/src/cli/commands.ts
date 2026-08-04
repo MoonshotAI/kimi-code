@@ -2,8 +2,10 @@ import { CLI_COMMAND_NAME } from '#/constant/app';
 import { registerMigrateCommand } from '#/migration/index';
 import { Command, InvalidArgumentError, Option } from 'commander';
 
+import { isAcpV2Enabled } from './experimental-v2';
 import type { CLIOptions } from './options';
 import { registerAcpCommand } from './sub/acp';
+import { registerAcpV2Command } from './sub/acp-v2';
 import { registerDoctorCommand } from './sub/doctor';
 import { registerExportCommand } from './sub/export';
 import { registerLoginCommand } from './sub/login';
@@ -117,6 +119,9 @@ export function createProgram(
   registerProviderCommand(program);
   registerAcpCommand(program);
   registerWebCommand(program);
+  if (isAcpV2Enabled()) {
+    registerAcpV2Command(program);
+  }
   registerLoginCommand(program);
   registerDoctorCommand(program);
   registerVisCommand(program);

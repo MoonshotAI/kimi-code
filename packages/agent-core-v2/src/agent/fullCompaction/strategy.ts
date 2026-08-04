@@ -38,7 +38,10 @@ export interface CompactionStrategy {
 }
 
 export class RuntimeCompactionStrategy implements CompactionStrategy {
-  constructor(private readonly context: () => ProfileModelContext) { }
+  constructor(
+    private readonly context: () => ProfileModelContext,
+    private readonly estimateMessage: (message: Message) => number = estimateTokensForMessage,
+  ) { }
 
   shouldCompact(usedSize: number): boolean {
     return this.delegate().shouldCompact(usedSize);
@@ -73,6 +76,7 @@ export class RuntimeCompactionStrategy implements CompactionStrategy {
     return new DefaultCompactionStrategy(
       () => model.modelCapabilities.max_input_tokens ?? model.modelCapabilities.max_context_tokens,
       this.config(model),
+      this.estimateMessage,
     );
   }
 
@@ -80,6 +84,7 @@ export class RuntimeCompactionStrategy implements CompactionStrategy {
     return new DefaultCompactionStrategy(
       () => this.context().modelCapabilities.max_input_tokens ?? this.context().modelCapabilities.max_context_tokens,
       DEFAULT_COMPACTION_CONFIG,
+      this.estimateMessage,
     );
   }
 
@@ -100,7 +105,8 @@ export class RuntimeCompactionStrategy implements CompactionStrategy {
 export class DefaultCompactionStrategy implements CompactionStrategy {
   constructor(
     protected readonly maxSizeProvider: () => number,
-    protected readonly config: CompactionConfig = DEFAULT_COMPACTION_CONFIG
+    protected readonly config: CompactionConfig = DEFAULT_COMPACTION_CONFIG,
+    protected readonly estimateMessage: (message: Message) => number = estimateTokensForMessage,
   ) { }
 
   protected get maxSize(): number {
@@ -152,7 +158,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
       if (m2.role === 'user') {
         recentUserMessages++;
       }
-      recentSize += estimateTokensForMessage(m2);
+      recentSize += this.estimateMessage(m2);
 
       if (canSplitAfter(messages, splitIndex)) {
         bestN = splitIndex + 1;
@@ -178,7 +184,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
     let bestN: number | undefined;
 
     for (let i = messages.length - 2; i > 0; i--) {
-      reducedSize += estimateTokensForMessage(messages[i + 1]!);
+      reducedSize += this.estimateMessage(messages[i + 1]!);
       if (canSplitAfter(messages, i)) {
         bestN = i + 1;
         if (reducedSize >= minReducedSize) {
@@ -199,7 +205,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
 
     let compactedSize = 0;
     for (let i = 0; i < compactedCount; i++) {
-      compactedSize += estimateTokensForMessage(messages[i]!);
+      compactedSize += this.estimateMessage(messages[i]!);
     }
     if (compactedSize <= this.maxSize) {
       return compactedCount;
@@ -207,7 +213,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
 
     let bestN: number | undefined;
     for (let n = compactedCount - 1; n > 0; n--) {
-      compactedSize -= estimateTokensForMessage(messages[n]!);
+      compactedSize -= this.estimateMessage(messages[n]!);
       if (!canSplitAfter(messages, n - 1)) {
         continue;
       }
