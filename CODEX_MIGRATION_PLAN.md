@@ -336,8 +336,8 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - [x] 阶段 A 框架落地（kimi-protocol + workspace + wire 类型下沉）✅
 - [x] 阶段 B 宿主协议层（kimi-server 52 测试 + transport/serve 二进制 + client InProcess/Remote 全链路）✅
 - [x] 阶段 C CLI + exec（21 集成测试 + typed client + 配置读写闭环 + chat REPL + acp 命令 + print/resume 目标模式）✅
-- [ ] 阶段 D TUI（kimi-ui 前置完成 + chat 文本 REPL 原型；ratatui 离线待引入）
-- [ ] 阶段 E SDK/ACP/OAuth/Config（kimi-sdk 与 kimi-acp 起步 🔶；oauth/catalog 离线受限已调研）
+- [ ] 阶段 D TUI（kimi-ui 前置 ✅ + chat REPL ✅ + **kimi-tui 骨架 ✅**（ratatui 事件渲染/Tab 补全/15+ slash/会话切换）；chatwidget 细化待续）
+- [ ] 阶段 E SDK/ACP/OAuth/Config（kimi-sdk 🔶 + kimi-acp 🔶 + **kimi-oauth ✅**（device flow）+ **catalog ✅**（models.dev）+ provider/login/completions 命令 ✅）
 - [ ] 阶段 F 退役
 
 ## 9. 迁移推进会话快照（2026-08，分支 feat/rust-agent-engine-migration）
@@ -350,7 +350,7 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - `kimi-ui`：渲染原语（render_event/last_assistant_text）+ `EventSource` 统一事件源（内嵌/Remote），6 测试
 - `kimi-sdk`：Harness（内嵌/Remote + 事件流 + 审批 + 列表/配置/导出 + **list_models**）+ Session（34 方法：生命周期全 + goal + 模式控制 + steer/undo + fork/import/clear + btw/activate_skill + skill/plan/usage 读面），3 集成测试
 - `kimi-acp`：stdio 适配器 + `kimi acp` 命令（initialize 协商 + session 生命周期 + notification 语义），3 测试
-- 全 workspace 测试基线 **2839**（kimi-agent 2027 + native-tools 617 + 宿主 52 + CLI 22 集成 + SDK/ACP/UI 等 200+）；`kimi --server` Remote 模式全子命令端到端冒烟通过
+- 全 workspace 测试基线 **2839+**（kimi-agent 2027 + native-tools 617 + 宿主 52 + CLI 24 集成 + SDK/ACP/UI/OAuth 等 200+）；`kimi --server` Remote 模式全子命令端到端冒烟通过；网络恢复后离线边界项已落地（ratatui TUI/clap_complete/catalog/OAuth）
 
 **迁移测试驱动的宿主缺陷修复（6 个）**：
 - `session/export` 缺 base64 编码（zip 变数字数组）
@@ -360,6 +360,6 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - chat/print goal 模式需先建 session 再 goal_create
 - （附）测试基建：并行测试 KIMI_AGENT_HOME 环境变量竞争 → STORE_LOCK 串行化模式
 
-**离线边界（需联网推进）**：阶段 D TUI（ratatui/crossterm）、阶段 E auth（OAuth device flow）与 catalog（models.dev 拉取）、ts-rs 绑定生成、shell 补全（clap_complete 不在 lock）。
+**离线边界更新（网络已恢复，2026-08）**：ratatui TUI、clap_complete、catalog（models.dev）、OAuth（kimi-oauth device flow）已落地；剩余网络项：ts-rs 绑定生成（可选）。
 
 **下一步建议**：联网后先引 ratatui 建 kimi-tui 骨架（复用 kimi-ui 原语 + EventSource + Harness）；离线侧可继续 session 剩余方法（activate_skill/list_skills 注册表注入测试）与 `kimi-sdk` 的 skill/plan 面。
