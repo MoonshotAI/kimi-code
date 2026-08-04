@@ -391,7 +391,7 @@ export async function drainGlobalSearchDisposals(): Promise<void> {
   // would not wait for. Keep draining until the set is still empty at the
   // end of a wait.
   while (pendingDisposals.size > 0) {
-    await Promise.all([...pendingDisposals]);
+    await Promise.all(pendingDisposals);
   }
 }
 

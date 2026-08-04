@@ -267,7 +267,7 @@ async function throughputScenarios({ N, NSMALL, VALUE }) {
 
 /** Populate a db with `count` string keys via large batch frames (fast prep),
  *  close it, then measure a cold open and (for the largest size) a compaction. */
-async function coldOpenScenarios({ sizes, seed, VALUE }) {
+async function coldOpenScenarios({ sizes, VALUE }) {
   for (const count of sizes) {
     const dir = await tmpDir();
     await scenario(
@@ -359,7 +359,7 @@ async function searchScenarios({ sizes, seed }) {
     for (const [index, queries] of [
       ['word', WORD_QUERIES],
       ['ngram', NGRAM_QUERIES],
-    ]) {
+    ] as const) {
       await scenario(
         `search ${index} over ${fmt(count)} messages`,
         ({ lat }) => {
@@ -440,7 +440,7 @@ async function main() {
   );
 
   await throughputScenarios({ N, NSMALL, VALUE });
-  await coldOpenScenarios({ sizes: COLD_OPEN_SIZES, seed: SEED, VALUE });
+  await coldOpenScenarios({ sizes: COLD_OPEN_SIZES, VALUE });
   await searchScenarios({ sizes: SEARCH_SIZES, seed: SEED });
   await walIdleScenarios({ idleMs: IDLE_MS });
 

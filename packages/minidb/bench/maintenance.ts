@@ -309,7 +309,7 @@ async function rebuildUnderLoadScenario({ docs, quick, baselineMs }) {
   return row;
 }
 
-async function coldOpenScenario({ docs, seed }) {
+async function coldOpenScenario({ docs }) {
   const dir = await tmpDir();
   console.log(`\n[2] cold open / recovery (${fmt(docs.length)} messages)`);
   const db = await populate(dir, docs, { tail: 0 });
@@ -371,7 +371,7 @@ async function main() {
 
   const docs = makeMessages(N, SEED);
   await rebuildUnderLoadScenario({ docs, quick, baselineMs: quick ? 5_000 : 30_000 });
-  await coldOpenScenario({ docs: quick ? docs : docs.slice(0, 100_000), seed: SEED });
+  await coldOpenScenario({ docs: quick ? docs : docs.slice(0, 100_000) });
   await diskModeScenario({ count: NDISK, seed: SEED });
 
   const baseline = results.find((r) => r.name.startsWith('baseline load'));
