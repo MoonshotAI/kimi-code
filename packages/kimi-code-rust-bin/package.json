@@ -1,0 +1,16 @@
+{
+  "name": "@moonshot-ai/kimi-code-rust",
+  "version": "0.1.0",
+  "description": "Kimi Code Rust binary distribution shell — npm bin that spawns the platform Rust binary (stage F)",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "kimi": "bin/kimi.js"
+  },
+  "files": [
+    "bin/"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}
