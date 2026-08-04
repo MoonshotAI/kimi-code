@@ -5,21 +5,24 @@
  *   - suffix / MIME / content-part classification (`mediaKindFor*` /
  *     `mediaKindOfPart`)
  *   - `kimi-file://` daemon file URL build/parse round-trips
- *   - `<image|video|file path="…">` tag emission and matching, including the
- *     legacy no-closing-tag and extra-attribute shapes
+ *   - `<image|video|audio|file path="…">` tag emission and matching,
+ *     including the legacy no-closing-tag and extra-attribute shapes
  */
 
 import { describe, expect, it } from 'vitest';
 
 import type { ContentPart } from '#/kosong/contract/message';
 import {
+  AUDIO_MIME_BY_SUFFIX,
   IMAGE_MIME_BY_SUFFIX,
   VIDEO_MIME_BY_SUFFIX,
   buildDaemonFileUrl,
   buildMediaPathTag,
   daemonFileRefFromPart,
+  foldMediaPathTagRefs,
   isDaemonFileUrl,
   matchMediaPathTags,
+  matchSingleMediaPathTag,
   mediaKindForMime,
   mediaKindForPath,
   mediaKindOfPart,
@@ -30,6 +33,8 @@ describe('media kind classification', () => {
   it('classifies paths by suffix, case-insensitively', () => {
     expect(mediaKindForPath('/a/b/shot.PNG')).toBe('image');
     expect(mediaKindForPath('clip.mp4')).toBe('video');
+    expect(mediaKindForPath('song.MP3')).toBe('audio');
+    expect(mediaKindForPath('/a/b/track.weba')).toBe('audio');
     expect(mediaKindForPath('/a.b/clip')).toBeUndefined();
     expect(mediaKindForPath('/a/shot.')).toBeUndefined();
     expect(mediaKindForPath('notes.txt')).toBeUndefined();
@@ -39,6 +44,8 @@ describe('media kind classification', () => {
     expect(mediaKindForMime('image/png')).toBe('image');
     expect(mediaKindForMime(' Image/JPEG ')).toBe('image');
     expect(mediaKindForMime('video/mp4; codecs=avc1')).toBe('video');
+    expect(mediaKindForMime('audio/mpeg')).toBe('audio');
+    expect(mediaKindForMime(' Audio/OGG; codecs=opus ')).toBe('audio');
     expect(mediaKindForMime('application/pdf')).toBeUndefined();
     expect(mediaKindForMime('text/plain')).toBeUndefined();
   });
@@ -46,15 +53,19 @@ describe('media kind classification', () => {
   it('classifies content parts by their type', () => {
     const image: ContentPart = { type: 'image_url', imageUrl: { url: 'https://x/y.png' } };
     const video: ContentPart = { type: 'video_url', videoUrl: { url: 'https://x/y.mp4' } };
+    const audio: ContentPart = { type: 'audio_url', audioUrl: { url: 'https://x/y.mp3' } };
     const text: ContentPart = { type: 'text', text: 'hi' };
     expect(mediaKindOfPart(image)).toBe('image');
     expect(mediaKindOfPart(video)).toBe('video');
+    expect(mediaKindOfPart(audio)).toBe('audio');
     expect(mediaKindOfPart(text)).toBeUndefined();
   });
 
   it('keeps the suffix tables mapping to the expected MIME families', () => {
     expect(IMAGE_MIME_BY_SUFFIX['.png']).toBe('image/png');
     expect(VIDEO_MIME_BY_SUFFIX['.mkv']).toBe('video/x-matroska');
+    expect(AUDIO_MIME_BY_SUFFIX['.mp3']).toBe('audio/mpeg');
+    expect(AUDIO_MIME_BY_SUFFIX['.weba']).toBe('audio/webm');
   });
 });
 
@@ -135,14 +146,144 @@ describe('media path tags', () => {
 
   it('matches every tag in order across kinds', () => {
     const tags = matchMediaPathTags(
-      '<image path="/a.png"></image> text <video path="/b.mp4"></video> <file path="/c.pdf"></file>',
+      '<image path="/a.png"></image> text <video path="/b.mp4"></video> <audio path="/c.mp3"></audio> <file path="/d.pdf"></file>',
     );
-    expect(tags.map((t) => t.kind)).toEqual(['image', 'video', 'file']);
-    expect(tags.map((t) => t.path)).toEqual(['/a.png', '/b.mp4', '/c.pdf']);
+    expect(tags.map((t) => t.kind)).toEqual(['image', 'video', 'audio', 'file']);
+    expect(tags.map((t) => t.path)).toEqual(['/a.png', '/b.mp4', '/c.mp3', '/d.pdf']);
+  });
+
+  it('round-trips an audio tag through build and match', () => {
+    const tag = buildMediaPathTag('audio', '/cache/a b.mp3');
+    expect(tag).toBe('<audio path="/cache/a b.mp3"></audio>');
+    expect(matchMediaPathTags(tag)).toEqual([
+      { kind: 'audio', path: '/cache/a b.mp3', index: 0, text: tag },
+    ]);
   });
 
   it('ignores lookalikes without a path attribute', () => {
     expect(matchMediaPathTags('<image src="/a.png">')).toEqual([]);
     expect(matchMediaPathTags('path="/a.png"')).toEqual([]);
+  });
+});
+
+describe('matchSingleMediaPathTag', () => {
+  it('matches a text that is exactly one tag', () => {
+    expect(matchSingleMediaPathTag('<image path="/a.png"></image>')).toEqual({
+      kind: 'image',
+      path: '/a.png',
+      index: 0,
+      text: '<image path="/a.png"></image>',
+    });
+    expect(matchSingleMediaPathTag('  <video path="/b.mp4">\n')).toMatchObject({
+      kind: 'video',
+      path: '/b.mp4',
+    });
+    expect(matchSingleMediaPathTag('<image path="/a.png" content_type="image/png">')).toMatchObject(
+      { kind: 'image', path: '/a.png' },
+    );
+  });
+
+  it('rejects tags embedded in user text and multi-tag text', () => {
+    expect(matchSingleMediaPathTag('look <image path="/a.png"></image>')).toBeUndefined();
+    expect(matchSingleMediaPathTag('<image path="/a.png"></image> please')).toBeUndefined();
+    expect(
+      matchSingleMediaPathTag('<image path="/a.png"></image><image path="/b.png"></image>'),
+    ).toBeUndefined();
+    expect(matchSingleMediaPathTag('plain text')).toBeUndefined();
+  });
+});
+
+describe('foldMediaPathTagRefs', () => {
+  const daemonImage = (fileId: string, path?: string): ContentPart => ({
+    type: 'image_url',
+    imageUrl: { url: buildDaemonFileUrl(fileId, path) },
+  });
+
+  it('folds a tag-before-ref pair into one media entry carrying the tag path', () => {
+    const ref = daemonImage('file_1', '/cache/shot.png');
+    const fold = foldMediaPathTagRefs([
+      { type: 'text', text: 'what is this?' },
+      { type: 'text', text: '<image path="/cache/shot.png"></image>' },
+      ref,
+    ]);
+    expect(fold.parts).toEqual([{ type: 'text', text: 'what is this?' }, ref]);
+    expect(fold.media).toEqual([
+      { kind: 'image', ref: { fileId: 'file_1', path: '/cache/shot.png' }, path: '/cache/shot.png' },
+    ]);
+  });
+
+  it('folds a ref-before-tag pair the same way', () => {
+    const ref = daemonImage('file_1', '/cache/shot.png');
+    const fold = foldMediaPathTagRefs([
+      ref,
+      { type: 'text', text: '<image path="/cache/shot.png"></image>' },
+    ]);
+    expect(fold.parts).toEqual([ref]);
+    expect(fold.media).toEqual([
+      { kind: 'image', ref: { fileId: 'file_1', path: '/cache/shot.png' }, path: '/cache/shot.png' },
+    ]);
+  });
+
+  it('drops a bare tag without producing media', () => {
+    const fold = foldMediaPathTagRefs([
+      { type: 'text', text: '<image path="/cache/shot.png">' },
+      { type: 'text', text: 'kept' },
+    ]);
+    expect(fold.parts).toEqual([{ type: 'text', text: 'kept' }]);
+    expect(fold.media).toEqual([]);
+  });
+
+  it('keeps a bare ref as pathless media', () => {
+    const ref = daemonImage('file_1');
+    const fold = foldMediaPathTagRefs([ref]);
+    expect(fold.parts).toEqual([ref]);
+    expect(fold.media).toEqual([{ kind: 'image', ref: { fileId: 'file_1' }, path: undefined }]);
+  });
+
+  it('leaves non-daemon media parts untouched and out of the media list', () => {
+    const remote: ContentPart = { type: 'image_url', imageUrl: { url: 'https://example.com/a.png' } };
+    const fold = foldMediaPathTagRefs([remote]);
+    expect(fold.parts).toEqual([remote]);
+    expect(fold.media).toEqual([]);
+  });
+
+  it('does not pair a kind-mismatched tag, but still drops it as markup', () => {
+    const ref: ContentPart = {
+      type: 'video_url',
+      videoUrl: { url: buildDaemonFileUrl('file_1', '/cache/clip.mp4') },
+    };
+    const fold = foldMediaPathTagRefs([
+      { type: 'text', text: '<image path="/cache/shot.png"></image>' },
+      ref,
+    ]);
+    expect(fold.parts).toEqual([ref]);
+    expect(fold.media).toEqual([
+      { kind: 'video', ref: { fileId: 'file_1', path: '/cache/clip.mp4' }, path: undefined },
+    ]);
+  });
+
+  it('pairs a file-kind tag with either ref kind', () => {
+    const ref = daemonImage('file_1', '/cache/shot.png');
+    const fold = foldMediaPathTagRefs([{ type: 'text', text: '<file path="/cache/shot.png">' }, ref]);
+    expect(fold.media[0]?.path).toBe('/cache/shot.png');
+  });
+
+  it('claims a tag for at most one ref', () => {
+    const first = daemonImage('file_1', '/cache/a.png');
+    const second = daemonImage('file_2', '/cache/b.png');
+    const fold = foldMediaPathTagRefs([
+      first,
+      { type: 'text', text: '<image path="/cache/a.png"></image>' },
+      second,
+    ]);
+    expect(fold.parts).toEqual([first, second]);
+    expect(fold.media.map((m) => m.path)).toEqual(['/cache/a.png', undefined]);
+  });
+
+  it('keeps user text with an inline tag verbatim', () => {
+    const text: ContentPart = { type: 'text', text: 'open <image path="/a.png"></image> please' };
+    const fold = foldMediaPathTagRefs([text]);
+    expect(fold.parts).toEqual([text]);
+    expect(fold.media).toEqual([]);
   });
 });

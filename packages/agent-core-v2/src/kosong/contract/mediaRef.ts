@@ -2,12 +2,12 @@
  * `kosong/contract` domain — media classification and daemon file references.
  *
  * "Media kind" is the classification every upload edge, resolver, and
- * projection agrees on: `image` and `video` (the two content-part kinds a
- * model can consume) plus `file` (anything else, which always degrades to a
- * path reference). The helpers derive the kind from a content part, a MIME
- * type, or a path suffix, and the suffix tables are the single source of
- * truth for suffix ↔ MIME mapping — `agent/media/file-type` re-exports them
- * for its magic-byte detection.
+ * projection agrees on: `image`, `video`, and `audio` (the media content-part
+ * kinds a model can consume) plus `file` (anything else, which always
+ * degrades to a path reference). The helpers derive the kind from a content
+ * part, a MIME type, or a path suffix, and the suffix tables are the single
+ * source of truth for suffix ↔ MIME mapping — `agent/media/file-type`
+ * re-exports them for its magic-byte detection.
  *
  * A daemon file reference is the internal `kimi-file://<fileId>?path=<encoded
  * absolute path>` URL: `fileId` addresses the daemon upload the request-time
@@ -18,11 +18,12 @@
  * of a referenced file is carried by the enclosing content part (`image_url`
  * / `video_url`), never by the URL itself, so existing references stay valid.
  *
- * The `<image|video|file path="…">` tag is the model-facing degradation form:
- * the resolver (or an edge) swaps a media part for the tag when the bytes
- * cannot reach the provider, and clients parse it back to render or re-open
- * the file. Emission escapes the path as an XML attribute; parsing unescapes
- * it and tolerates extra attributes and a missing closing tag.
+ * The `<image|video|audio|file path="…">` tag is the model-facing
+ * degradation form: the resolver (or an edge) swaps a media part for the tag
+ * when the bytes cannot reach the provider, and clients parse it back to
+ * render or re-open the file. Emission escapes the path as an XML attribute;
+ * parsing unescapes it and tolerates extra attributes and a missing closing
+ * tag.
  *
  * Pure types and pure functions only — no other domain, no I/O, no SDKs.
  */
@@ -30,7 +31,7 @@
 import type { ContentPart } from './message';
 
 /** Media category shared by upload edges, resolvers, and projections. */
-export type MediaKind = 'image' | 'video' | 'file';
+export type MediaKind = 'image' | 'video' | 'audio' | 'file';
 
 // ---------------------------------------------------------------------------
 // Suffix ↔ MIME tables (single source of truth; `agent/media/file-type`
@@ -69,6 +70,19 @@ export const VIDEO_MIME_BY_SUFFIX: Readonly<Record<string, string>> = Object.fre
   '.3g2': 'video/3gpp2',
 });
 
+export const AUDIO_MIME_BY_SUFFIX: Readonly<Record<string, string>> = Object.freeze({
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.m4a': 'audio/mp4',
+  '.ogg': 'audio/ogg',
+  '.oga': 'audio/ogg',
+  '.flac': 'audio/flac',
+  '.aac': 'audio/aac',
+  '.opus': 'audio/opus',
+  '.weba': 'audio/webm',
+  '.wma': 'audio/x-ms-wma',
+});
+
 function mediaSuffix(path: string): string {
   const idx = path.lastIndexOf('.');
   if (idx === -1) return '';
@@ -77,27 +91,30 @@ function mediaSuffix(path: string): string {
   return path.slice(idx).toLowerCase();
 }
 
-/** Classify a file path as `image` / `video` from its suffix. */
-export function mediaKindForPath(path: string): 'image' | 'video' | undefined {
+/** Classify a file path as `image` / `video` / `audio` from its suffix. */
+export function mediaKindForPath(path: string): 'image' | 'video' | 'audio' | undefined {
   const suffix = mediaSuffix(path);
   if (suffix in IMAGE_MIME_BY_SUFFIX) return 'image';
   if (suffix in VIDEO_MIME_BY_SUFFIX) return 'video';
+  if (suffix in AUDIO_MIME_BY_SUFFIX) return 'audio';
   return undefined;
 }
 
-/** Classify a MIME type as `image` / `video`; anything else is `file`-grade. */
-export function mediaKindForMime(mimeType: string): 'image' | 'video' | undefined {
+/** Classify a MIME type as `image` / `video` / `audio`; anything else is `file`-grade. */
+export function mediaKindForMime(mimeType: string): 'image' | 'video' | 'audio' | undefined {
   const semi = mimeType.indexOf(';');
   const base = (semi === -1 ? mimeType : mimeType.slice(0, semi)).trim().toLowerCase();
   if (base.startsWith('image/')) return 'image';
   if (base.startsWith('video/')) return 'video';
+  if (base.startsWith('audio/')) return 'audio';
   return undefined;
 }
 
 /** Media kind implied by a content part's type, when it carries one. */
-export function mediaKindOfPart(part: ContentPart): 'image' | 'video' | undefined {
+export function mediaKindOfPart(part: ContentPart): 'image' | 'video' | 'audio' | undefined {
   if (part.type === 'image_url') return 'image';
   if (part.type === 'video_url') return 'video';
+  if (part.type === 'audio_url') return 'audio';
   return undefined;
 }
 
@@ -163,10 +180,10 @@ export function daemonFileRefFromPart(
 }
 
 // ---------------------------------------------------------------------------
-// `<image|video|file path="…">` tags — the model-facing degradation form.
+// `<image|video|audio|file path="…">` tags — the model-facing degradation form.
 // ---------------------------------------------------------------------------
 
-const MEDIA_PATH_TAG_RE = /<(image|video|file)\b[^>]*?\bpath="([^"]*)"[^>]*>(?:<\/\1>)?/g;
+const MEDIA_PATH_TAG_RE = /<(image|video|audio|file)\b[^>]*?\bpath="([^"]*)"[^>]*>(?:<\/\1>)?/g;
 
 export interface MediaPathTag {
   readonly kind: MediaKind;
@@ -213,4 +230,86 @@ export function matchMediaPathTags(text: string): MediaPathTag[] {
     });
   }
   return tags;
+}
+
+// ---------------------------------------------------------------------------
+// Tag + daemon-ref fold — the read-model normalization of the upload pair.
+// ---------------------------------------------------------------------------
+
+/**
+ * The whole (trimmed) text is exactly one media path tag — the shape upload
+ * edges emit as a standalone text part next to the daemon-ref media part.
+ * Tags embedded in larger user text are NOT matched: stripping there would
+ * eat user content.
+ */
+export function matchSingleMediaPathTag(text: string): MediaPathTag | undefined {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return undefined;
+  const tags = matchMediaPathTags(trimmed);
+  if (tags.length !== 1) return undefined;
+  const tag = tags[0]!;
+  return tag.index === 0 && tag.text.length === trimmed.length ? tag : undefined;
+}
+
+export interface FoldedMediaRef {
+  readonly kind: 'image' | 'video';
+  readonly ref: DaemonFileRef;
+  /** Model-facing path carried by the paired adjacent tag; absent for a bare ref. */
+  readonly path?: string;
+}
+
+export interface MediaPathTagFold {
+  /** Input parts minus every media-tag text part (paired or bare). */
+  readonly parts: ContentPart[];
+  /** One entry per daemon-ref media part, in input order. */
+  readonly media: FoldedMediaRef[];
+}
+
+/**
+ * Fold the upload pair `<media path> tag text part + daemon-ref media part`
+ * for read models: the tag text part disappears (it is machine markup), and
+ * each daemon-ref media part yields one {@link FoldedMediaRef} — carrying the
+ * adjacent tag's path when an unclaimed, kind-compatible tag sits immediately
+ * before or after it (edges emit tag-before-ref; persisted history also has
+ * ref-before-tag). Bare refs fold with no path; bare tags simply vanish from
+ * the parts. Non-daemon media parts and all other parts pass through.
+ */
+export function foldMediaPathTagRefs(parts: readonly ContentPart[]): MediaPathTagFold {
+  const tagByIndex = new Map<number, MediaPathTag>();
+  parts.forEach((part, index) => {
+    if (part.type !== 'text') return;
+    const tag = matchSingleMediaPathTag(part.text);
+    if (tag !== undefined) tagByIndex.set(index, tag);
+  });
+  const claimed = new Set<number>();
+  const kept: ContentPart[] = [];
+  const media: FoldedMediaRef[] = [];
+  parts.forEach((part, index) => {
+    if (tagByIndex.has(index)) return;
+    kept.push(part);
+    const ref = daemonFileRefFromPart(part);
+    if (ref === undefined) return;
+    media.push({
+      kind: ref.kind,
+      ref: ref.ref,
+      path: claimAdjacentTagPath(tagByIndex, claimed, index, ref.kind),
+    });
+  });
+  return { parts: kept, media };
+}
+
+function claimAdjacentTagPath(
+  tagByIndex: ReadonlyMap<number, MediaPathTag>,
+  claimed: Set<number>,
+  refIndex: number,
+  refKind: 'image' | 'video',
+): string | undefined {
+  for (const neighbor of [refIndex - 1, refIndex + 1]) {
+    const tag = tagByIndex.get(neighbor);
+    if (tag === undefined || claimed.has(neighbor)) continue;
+    if (tag.kind !== 'file' && tag.kind !== refKind) continue;
+    claimed.add(neighbor);
+    return tag.path;
+  }
+  return undefined;
 }

@@ -7,11 +7,12 @@
  */
 
 import {
+  AUDIO_MIME_BY_SUFFIX,
   IMAGE_MIME_BY_SUFFIX,
   VIDEO_MIME_BY_SUFFIX,
 } from '#/kosong/contract/mediaRef';
 
-export { IMAGE_MIME_BY_SUFFIX, VIDEO_MIME_BY_SUFFIX };
+export { AUDIO_MIME_BY_SUFFIX, IMAGE_MIME_BY_SUFFIX, VIDEO_MIME_BY_SUFFIX };
 
 export const MEDIA_SNIFF_BYTES = 512;
 
