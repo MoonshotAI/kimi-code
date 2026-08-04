@@ -6,3 +6,4 @@
 //! transport — `kimi_server::in_process` bridges the same envelope directly.
 
 pub mod stdio;
+pub mod websocket;

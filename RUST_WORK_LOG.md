@@ -5,6 +5,13 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ⑲ WebSocket 传输（kimi-server-transport，已提交）**：
+> - **新增 `src/websocket.rs`**：`serve(listener)` 接受循环 + 每连接 `serve_connection`（WS 握手 → 逐帧 JSON-RPC：text 请求进、text 响应出；ping→pong；close 收尾）——与 stdio 同 processor、同 envelope，纯帧层 shim（目标架构层 3 的 web 宿主线，替代 TS kap-server WS 投影）。
+> - **依赖**：tokio-tungstenite 0.24 + futures-util（StreamExt/SinkExt）；tokio 补 net feature。
+> - **`kimi-server-serve --ws <addr>`**：同 processor 改走 WS（web 宿主未来接入点）；stdio 默认路径不变。
+> - **验证**：transport 测试 2 → 4（WS round-trip：health 响应 + ping→pong + close 干净；parse error -32700），clippy transport 0 警告（含修 useless_conversion），workspace check 干净。
+> - **遗留**：unix-socket 传输未实现（无消费方）；WS 客户端（kimi-server-client::Remote 的 ws 变体）待 web 宿主接入时补。
+
 > **✅ 2026-08-03 ⑱ ACP session/set_mode + set_model（spec 方法补齐，已提交）**：
 > - **`session/set_mode`**：ACP 4-mode 映射（对齐 TS `acpModeToToggles`）——default/plan→permission manual、auto→auto、yolo→yolo；仅 plan 开 plan_mode；未知 modeId → -32602 invalid_params。**注意**：permission 门是进程级（引擎单门无 session 作用域），permission 半边落全局——与引擎设计一致，已注释。
 > - **`session/set_model`**：SESSION_SET_MODEL → result({sessionId})。

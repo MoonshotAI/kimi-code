@@ -17,6 +17,20 @@ async fn main() -> anyhow::Result<()> {
     let server = Server::build()?;
     let processor = Arc::new(server.processor);
 
+    // `kimi-server-serve --ws <addr>`: serve the same processor over
+    // WebSocket instead of stdio (the future web-host wire).
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(pos) = args.iter().position(|a| a == "--ws") {
+        let addr = args
+            .get(pos + 1)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("--ws requires an address, e.g. 127.0.0.1:8080"))?;
+        let listener = tokio::net::TcpListener::bind(&addr).await?;
+        eprintln!("kimi-server-serve: websocket on {addr}");
+        kimi_server_transport::websocket::serve(&processor, listener).await?;
+        return Ok(());
+    }
+
     // Fan engine events out to stderr (fire-and-forget; bounded so a chatty
     // turn cannot flood the host terminal). StdioClient spawns with stderr
     // inherited, so Remote hosts get the stream for free.
