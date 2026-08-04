@@ -14,8 +14,8 @@
  * Migrated so far:
  * - `getExperimentalFeatures` → `klient.global.flags.list()`
  * - `listWorkspaceSkills` → not covered by the klient facade, so it goes
- *   through the `engineAccessor` escape hatch (`ISkillDiscovery` + the v2
- *   skill-root helpers) instead.
+ *   through the `engineAccessor` escape hatch (the workspace handler's
+ *   `IWorkspaceSkillCatalog`) instead.
  * - `getConfig` / `setConfig` / `removeProvider` / `getConfigDiagnostics` →
  *   `klient.global.config.*`, with the v1 `KimiConfig` shape restored by the
  *   pure mapping layer in `src/v2/config-mapper.ts`.
@@ -154,7 +154,6 @@ import { loadMcpServers } from '@moonshot-ai/agent-core-v2/workspace/workspaceMc
 import {
   applyPromptMetadataUpdate,
   bootstrap,
-  BUILTIN_SKILLS,
   DEFAULT_AGENT_PROFILE_NAME,
   ensureKimiHome,
   ensureMainAgent,
@@ -168,7 +167,6 @@ import {
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
   IAgentProfileService,
-  configuredRoots,
   IAgentRPCService,
   IAgentSkillService,
   IAgentSwarmService,
@@ -192,13 +190,13 @@ import {
   ISessionSecondaryModelWarningService,
   ISessionSkillCatalog,
   ISessionWorkspaceContext,
-  ISkillDiscovery,
   ITelemetryService,
   IWorkspaceAliases,
   IWorkspaceDirs,
   IWorkspaceMcpService,
   ISessionLifecycleService,
   IWorkspaceLifecycleService,
+  IWorkspaceSkillCatalog,
   IWorkspaceTrust,
   closeSessionById,
   followWorkspaceHandlers,
@@ -214,7 +212,6 @@ import {
   PRINT_WAIT_CEILING_S_DEFAULT,
   ProfileError,
   ProfileErrors,
-  projectRoots,
   promptMetadataTextFromSkill,
   resolveAgentTaskConfig,
   resolveConfigPath,
@@ -222,7 +219,6 @@ import {
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
   summarizeSkill,
-  userRoots,
   type IAgentScopeHandle,
   type IDisposable,
   type ISessionScopeHandle,
@@ -535,40 +531,19 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * klient has no skills facade; composed directly from the engine's
-   * app-scope `ISkillDiscovery` plus the v2 root helpers (user + project
-   * roots) and the code-defined `BUILTIN_SKILLS` via {@link engineAccessor}.
-   * `skillDirs` (explicit dirs) replaces the default user / project roots,
-   * matching the engine's session skill catalog. Gap vs the v1
-   * implementation: plugin skills are not included.
+   * Through the workspace handler's `IWorkspaceSkillCatalog` — the engine's
+   * own merged view (builtin / user / explicit / extra / workspace-root /
+   * plugin), so the session-less list matches what a session would serve.
+   * `handlerFor` is create-or-get: session creation materializes the handler
+   * anyway.
    */
   override async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
-    const bootstrapService = this.engineAccessor.get(IBootstrapService);
-    const discovery = this.engineAccessor.get(ISkillDiscovery);
-    const explicitDirs = bootstrapService.args.skillDirs ?? [];
-    const roots =
-      explicitDirs.length > 0
-        ? await configuredRoots(explicitDirs, workDir, bootstrapService.osHomeDir, 'user')
-        : [
-            ...(await userRoots(bootstrapService.homeDir, bootstrapService.osHomeDir)),
-            ...(await projectRoots(workDir)),
-          ];
-    const { skills } = await discovery.discover(roots);
-    // Builtins are the lowest-priority contribution: a discovered skill with
-    // the same name shadows the builtin (v1 registry semantics).
-    const byName = new Map<string, SkillSummary>();
-    for (const skill of [...BUILTIN_SKILLS, ...skills]) {
-      byName.set(skill.name, {
-        name: skill.name,
-        description: skill.description,
-        path: skill.path,
-        source: skill.source,
-        type: skill.metadata.type,
-        disableModelInvocation: skill.metadata.disableModelInvocation,
-        isSubSkill: skill.metadata.isSubSkill,
-      });
-    }
-    return [...byName.values()];
+    const handler = await this.engineAccessor
+      .get(IWorkspaceLifecycleService)
+      .handlerFor({ root: normalizeRequiredWorkDir('listWorkspaceSkills', workDir) });
+    const catalog = handler.accessor.get(IWorkspaceSkillCatalog);
+    await catalog.ready;
+    return catalog.catalog.listSkills().map(summarizeSkill);
   }
 
   /**
