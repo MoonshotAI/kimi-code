@@ -1681,12 +1681,8 @@ export class KimiTUI {
     if (effort !== undefined) {
       patch.thinkingEffort = effort;
     } else if (startupModel !== undefined) {
-      // Not disabled and no concrete effort configured (including no
-      // [thinking] section at all): the engine resolves this to the selected
-      // model's default effort at createSession time — mirror it here.
-      // Leaving the initial 'off' would mislabel thinking in the footer and
-      // the /model picker, where a bare Enter would then persist
-      // thinking.enabled=false over the user's config.
+      // No concrete effort configured: mirror the engine, which resolves the
+      // model's default effort at createSession time.
       const raw = config.models?.[startupModel];
       if (raw !== undefined) {
         const providerType = config.providers?.[raw.provider]?.type;

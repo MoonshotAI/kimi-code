@@ -337,10 +337,6 @@ describe('KimiTUI startup', () => {
   });
 
   it('hydrates the model default effort when thinking is enabled without an effort (v2)', async () => {
-    // `[thinking] enabled = true` with no concrete effort resolves to the
-    // model's default effort at createSession time — the footer must show
-    // that instead of the initial 'off' (which a /model Enter would then
-    // persist as thinking.enabled=false).
     const harness = makeHarness(makeSession(), {
       getConfig: vi.fn(async () => ({
         models: {

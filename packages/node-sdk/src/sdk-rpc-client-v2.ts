@@ -2154,9 +2154,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /**
    * Workspace-level MCP view (the handler's one shared connection set), so
    * `/mcp` is inspectable on a v2 session-less startup before any session
-   * exists. Awaits the service's `ready` first, matching the session path's
-   * "initial connect settled before the list is read" semantics (a fresh
-   * handler is still loading config / connecting in the background).
+   * exists. Awaits `ready` so a fresh handler's initial connect settles
+   * before the list is read.
    * Same `McpServerEntry`-as-`McpServerInfo` cast as listMcpServers.
    */
   override async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]> {
