@@ -24,6 +24,9 @@ pub struct App {
     history_idx: Option<usize>,
     session_id: String,
     session: Option<kimi_sdk::Session>,
+    /// Model aliases for `/model` Tab completion.
+    model_aliases: Vec<String>,
+    tab_idx: Option<usize>,
 }
 
 impl App {
@@ -37,6 +40,8 @@ impl App {
             history_idx: None,
             session_id: session_id.to_string(),
             session: None,
+            model_aliases: Vec::new(),
+            tab_idx: None,
         }
     }
 
@@ -46,6 +51,10 @@ impl App {
         let mut session = self.harness.create_session(&self.session_id).await?;
         self.session = Some(session.clone());
         self.transcript.push(format!("session {} ready — type /help", self.session_id));
+        // Preload model aliases for `/model` Tab completion (best-effort).
+        if let Ok((aliases, _)) = self.harness.list_models().await {
+            self.model_aliases = aliases;
+        }
 
         let mut terminal = init_terminal()?;
         let result = self.event_loop(&mut terminal, &mut session).await;
@@ -83,6 +92,7 @@ impl App {
                         self.history.push(line);
                         self.history_idx = None;
                     }
+                    KeyCode::Tab => self.complete_model(),
                     KeyCode::Up => self.history_back(),
                     KeyCode::Down => self.history_forward(),
                     KeyCode::Esc => return Ok(()),
@@ -183,6 +193,28 @@ impl App {
                 self.input.clear();
             }
         }
+    }
+
+    /// Tab completion for `/model <prefix>`: cycle the model aliases.
+    fn complete_model(&mut self) {
+        let Some(prefix) = self.input.strip_prefix("/model ") else {
+            self.tab_idx = None;
+            return;
+        };
+        if self.model_aliases.is_empty() {
+            return;
+        }
+        let matches: Vec<&String> = self
+            .model_aliases
+            .iter()
+            .filter(|a| a.starts_with(prefix))
+            .collect();
+        if matches.is_empty() {
+            return;
+        }
+        let idx = self.tab_idx.map_or(0, |i| (i + 1) % matches.len());
+        self.tab_idx = Some(idx);
+        self.input = format!("/model {}", matches[idx]);
     }
 
     fn draw(&self, frame: &mut ratatui::Frame<'_>) {
