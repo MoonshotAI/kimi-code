@@ -176,6 +176,14 @@ impl App {
                     self.session.as_mut().expect("session").cancel_goal().await?;
                     self.transcript.push("goal cancelled".into());
                 }
+                "/goal-pause" => {
+                    self.session.as_mut().expect("session").pause_goal(Some(rest)).await?;
+                    self.transcript.push("goal paused".into());
+                }
+                "/goal-resume" => {
+                    self.session.as_mut().expect("session").resume_goal(Some(rest)).await?;
+                    self.transcript.push("goal resumed".into());
+                }
                 "/clear" => {
                     self.session.as_mut().expect("session").clear_context().await?;
                     self.transcript.push("context cleared".into());
