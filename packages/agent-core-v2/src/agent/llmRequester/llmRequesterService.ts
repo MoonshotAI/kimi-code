@@ -37,7 +37,7 @@ import {
   IAgentContextProjectorService,
   type MediaStripSnapshot,
 } from '#/agent/contextProjector/contextProjector';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -96,7 +96,7 @@ import {
   type LlmRequestToolSchema,
 } from './llmRequestOps';
 import { isAbortError } from '#/_base/utils/abort';
-import { unwrapErrorCause } from '#/errors';
+import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { retryErrorFields } from '#/_base/utils/retry';
 
 const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
@@ -167,7 +167,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentContextProjectorService private readonly projector: IAgentContextProjectorService,
-    @IAgentContextSizeService private readonly contextSize: IAgentContextSizeService,
+    @IAgentTokenCountingService private readonly tokenCounting: IAgentTokenCountingService,
     @IAgentToolRegistryService private readonly tools: IAgentToolRegistryService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
     @IAgentVideoResolverService private readonly videoResolver: IAgentVideoResolverService,
@@ -382,7 +382,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       this.recordRequest(logInput);
 
       let message: Message | undefined;
-      let usage = emptyUsage();
+      let usage: TokenUsage | undefined;
       let timing: ModelRequestTiming | undefined;
       let finish: Extract<ModelRequestEvent, { type: 'finish' }> | undefined;
 
@@ -416,16 +416,24 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       }
 
       if (message === undefined || finish === undefined) {
-        throw new Error('LLM request stream ended without a finish event.');
+        throw new Error2(
+          ErrorCodes.PROVIDER_API_ERROR,
+          'LLM request stream ended without a finish event.',
+        );
       }
 
-      this.usage.record(request.modelAlias, usage, request.source);
-      this.contextSize.measured(request.messages, [message], usage);
-      this.logResponse(request.logFields, usage, timing);
+      this.usage.record(request.modelAlias, usage ?? emptyUsage(), request.source);
+      // Only a stream that actually reported usage may write a measured
+      // anchor — recording emptyUsage() zeros would zero the context size and
+      // silence compaction for providers without usage reporting.
+      if (usage !== undefined) {
+        this.tokenCounting.measured(request.messages, [message], usage);
+      }
+      this.logResponse(request.logFields, usage ?? emptyUsage(), timing);
 
       return {
         message,
-        usage,
+        usage: usage ?? emptyUsage(),
         model: request.modelAlias,
         providerFinishReason: finish.providerFinishReason,
         rawFinishReason: finish.rawFinishReason,
@@ -582,7 +590,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       capability: resolved.modelCapabilities,
       usedContextTokens:
         overrides.messages === undefined
-          ? this.contextSize.get().measured
+          ? this.tokenCounting.get().measured
           : undefined,
     });
     const requester = this.modelCatalog.getRequester(resolved.modelAlias);

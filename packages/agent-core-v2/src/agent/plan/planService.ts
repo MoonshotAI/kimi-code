@@ -27,6 +27,7 @@ import { dirname, join } from 'pathe';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
+import { Error2, ErrorCodes } from '#/errors';
 import { generateHeroSlug } from '#/_base/utils/hero-slug';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
@@ -181,7 +182,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
 
   async enter(id = this.createPlanId(), createFile = false): Promise<void> {
     if (this.isActive) {
-      throw new Error('Already in plan mode');
+      throw new Error2(ErrorCodes.SESSION_PLAN_MODE_INVALID, 'Already in plan mode');
     }
 
     const planFilePath = this.planFilePathFor(id);

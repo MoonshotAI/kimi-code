@@ -24,3 +24,19 @@ export class CyclicDependencyError extends Error {
     this.name = 'CyclicDependencyError';
   }
 }
+
+/**
+ * Raised when a resolution hits a token inside an in-flight cascade
+ * transaction's contagion set. The async resolution path suspends instead
+ * (see `CascadeEngine.resolveWhenAvailable`); the sync path cannot suspend,
+ * so it fails fast with this error.
+ */
+export class CascadeConflictError extends Error {
+  constructor(
+    readonly token: string,
+    readonly detail: string,
+  ) {
+    super(`Cascade conflict resolving '${token}': ${detail}`);
+    this.name = 'CascadeConflictError';
+  }
+}

@@ -50,6 +50,7 @@ function stubSessionIndex(summaries: SessionSummary[]): ISessionIndex {
     list: async () => ({ items: summaries, nextCursor: undefined }),
     get: async () => undefined,
     countActive: async () => summaries.length,
+    remove: async () => {},
   };
 }
 

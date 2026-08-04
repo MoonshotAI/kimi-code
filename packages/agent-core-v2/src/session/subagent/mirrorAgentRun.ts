@@ -20,7 +20,7 @@
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { userCancellationReason } from '#/_base/utils/abort';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { isProviderRateLimitError } from '#/kosong/contract/errors';
 import { type TokenUsage } from '#/kosong/contract/usage';
@@ -190,5 +190,5 @@ function childContextTokens(
   agentId: string,
 ): number | undefined {
   const child = agentLifecycle.get(agentId);
-  return child?.accessor.get(IAgentContextSizeService)?.get().size;
+  return child?.accessor.get(IAgentTokenCountingService)?.statusSize();
 }

@@ -42,3 +42,5 @@ export const mcpServerConfigSchema = z.discriminatedUnion('transport', [
     ...mcpServerCommonFields,
   }),
 ]);
+
+export type McpServerConfig = z.infer<typeof mcpServerConfigSchema>;

@@ -267,6 +267,8 @@ export * from '#/agent/usage/usage';
 export * from '#/agent/usage/usageService';
 export * from '#/agent/toolDedupe/toolDedupe';
 export * from '#/agent/toolDedupe/toolDedupeService';
+export * from '#/agent/agentsMdReminder/agentsMdReminder';
+export * from '#/agent/agentsMdReminder/agentsMdReminderService';
 import '#/agent/toolSelect/flag';
 export * from '#/agent/tools/select-tools/select-tools';
 import '#/agent/tools/select-tools/selectToolsTool';
@@ -368,7 +370,12 @@ export * from '#/session/sessionContext/sessionContext';
 
 import '#/session/approval/approval';
 import '#/session/approval/approvalService';
-export { ISessionApprovalService } from '#/session/approval/approval';
+export {
+  ISessionApprovalService,
+  type ApprovalDecision,
+  type ApprovalRequest as SessionApprovalRequest,
+  type ApprovalResponse as SessionApprovalResponse,
+} from '#/session/approval/approval';
 export * from '#/session/question/question';
 export * from '#/session/question/questionService';
 export * from '#/agent/tools/ask-user-question/ask-user-question';
@@ -489,16 +496,15 @@ export * from '#/agent/contextMemory/conversationUndoParticipants';
 export * from '#/agent/contextMemory/conversationTime';
 export * from '#/agent/contextMemory/loopEventFold';
 export * from '#/agent/contextMemory/messageId';
-export * from '#/agent/contextMemory/messageProjection';
 export * from '#/agent/contextMemory/contextTranscript';
 export * from '#/agent/contextMemory/types';
 export * from '#/agent/systemReminder/systemReminder';
 export * from '#/agent/systemReminder/systemReminderService';
 export * from '#/agent/contextProjector/contextProjector';
 export * from '#/agent/contextProjector/contextProjectorService';
-export * from '#/agent/contextSize/contextSize';
-export * from '#/agent/contextSize/contextSizeOps';
-export * from '#/agent/contextSize/contextSizeService';
+export * from '#/agent/tokenCounting/tokenCounting';
+export * from '#/agent/tokenCounting/tokenCountingOps';
+export * from '#/agent/tokenCounting/tokenCountingService';
 export * from '#/agent/contextInjector/contextInjector';
 export * from '#/agent/contextInjector/contextInjectorService';
 export * from '#/agent/plugin/agentPlugin';
@@ -551,9 +557,6 @@ export * from '#/agent/profile/profileService';
 export * from '#/agent/profile/context';
 export * from '#/agent/prompt/prompt';
 export * from '#/agent/prompt/promptService';
-import '#/app/messageLegacy/errors';
-export * from '#/app/messageLegacy/messageLegacy';
-export * from '#/app/messageLegacy/messageLegacyService';
 export * from '#/agent/replayBuilder/types';
 export * from '#/agent/undo/undo';
 export * from '#/agent/undo/undoService';

@@ -38,14 +38,30 @@ describe('MCP timeout contract validation', () => {
     expect(parse(field, 2_147_483_648).success).toBe(false);
   });
 
-  it('session creation options carry no caller mcpServers channel', () => {
+  it('session creation options accept ephemeral mcpServers', () => {
     const parsed = createSessionOptionsSchema.safeParse({
       workDir: '/tmp/example',
       mcpServers: {
-        example: { transport: 'stdio', command: 'node' },
+        stdioExample: { transport: 'stdio', command: 'node', args: ['server.mjs'] },
+        httpExample: { transport: 'http', url: 'https://example.com/mcp', headers: { a: 'b' } },
+        sseExample: { transport: 'sse', url: 'https://example.com/sse' },
       },
     });
     expect(parsed.success).toBe(true);
-    expect(parsed.data).toEqual({ workDir: '/tmp/example' });
+    expect(parsed.data?.mcpServers?.['stdioExample']).toEqual({
+      transport: 'stdio',
+      command: 'node',
+      args: ['server.mjs'],
+    });
+  });
+
+  it('session creation options reject malformed mcpServers entries', () => {
+    const parsed = createSessionOptionsSchema.safeParse({
+      workDir: '/tmp/example',
+      mcpServers: {
+        example: { transport: 'http', url: 'not-a-url' },
+      },
+    });
+    expect(parsed.success).toBe(false);
   });
 });

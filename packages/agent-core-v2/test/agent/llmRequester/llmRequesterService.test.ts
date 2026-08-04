@@ -26,7 +26,7 @@ import {
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
 import { AgentLLMRequesterService } from '#/agent/llmRequester/llmRequesterService';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -42,7 +42,7 @@ import {
   APIRequestTooLargeError,
   APIStatusError,
 } from '#/kosong/contract/errors';
-import { emptyUsage } from '#/kosong/contract/usage';
+import { emptyUsage, type TokenUsage } from '#/kosong/contract/usage';
 import type { Message } from '#/kosong/contract/message';
 import type { ThinkingEffort } from '#/kosong/contract/provider';
 import type { ModelCapability } from '#/kosong/contract/capability';
@@ -165,9 +165,12 @@ function createService(
       systemPrompt: 'system',
     }),
   };
-  const contextSize = {
+  const measuredCalls: { readonly messages: number; readonly usage: TokenUsage }[] = [];
+  const tokenCounting = {
     get: () => ({ size: 0, measured: 0, estimated: 0 }),
-    measured: () => undefined,
+    measured: (input: readonly Message[], _output: readonly Message[], usage: TokenUsage) => {
+      measuredCalls.push({ messages: input.length, usage });
+    },
   };
   const usage = { record: () => undefined, status: () => ({}) };
   const context = { get: () => history };
@@ -207,7 +210,7 @@ function createService(
       ...projector,
     });
   }
-  ix.stub(IAgentContextSizeService, contextSize);
+  ix.stub(IAgentTokenCountingService, tokenCounting);
   ix.stub(IAgentToolRegistryService, tools);
   ix.stub(IAgentProfileService, profile);
   ix.stub(IAgentUsageService, usage);
@@ -237,8 +240,38 @@ function createService(
     records,
     events,
     telemetryRecords,
+    measuredCalls,
   };
 }
+
+describe('AgentLLMRequesterService measured anchors', () => {
+  it('skips the measured anchor when the stream reports no usage', async () => {
+    const { service, measuredCalls } = createService(createRequester({ value: 0 }), undefined);
+
+    await service.request();
+
+    expect(measuredCalls).toHaveLength(0);
+  });
+
+  it('writes the measured anchor from the reported usage', async () => {
+    const requester = createRequester({ value: 0 });
+    const base = requester.request.bind(requester);
+    requester.request = async function* (input, signal, options) {
+      yield {
+        type: 'usage',
+        usage: { inputOther: 40, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
+        model: 'wire-model',
+      };
+      yield* base(input, signal, options);
+    };
+    const { service, measuredCalls } = createService(requester, undefined);
+
+    await service.request();
+
+    expect(measuredCalls).toHaveLength(1);
+    expect(measuredCalls[0]?.usage.inputOther).toBe(40);
+  });
+});
 
 describe('AgentLLMRequesterService Anthropic effort diagnostics', () => {
   it('warns and sends when the effort is not listed by the model', async () => {
