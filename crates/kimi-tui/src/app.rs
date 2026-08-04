@@ -111,7 +111,7 @@ impl App {
             match cmd {
                 "/quit" | "/exit" => return Ok(true),
                 "/help" => {
-                    self.transcript.push("/quit /help /model <id> /plan on|off /status".into());
+                    self.transcript.push("/quit /help /model <id> /plan on|off /status /goal <obj> /goal-cancel /clear /usage".into());
                 }
                 "/status" => {
                     let status = session.get_status().await;
@@ -129,6 +129,26 @@ impl App {
                         session.set_model(rest).await?;
                         self.transcript.push(format!("model set to {rest}"));
                     }
+                }
+                "/goal" => {
+                    if rest.is_empty() {
+                        self.transcript.push("usage: /goal <objective>".into());
+                    } else {
+                        let snapshot = session.create_goal(rest).await?;
+                        self.transcript.push(format!("goal created: {}", snapshot["objective"]));
+                    }
+                }
+                "/goal-cancel" => {
+                    session.cancel_goal().await?;
+                    self.transcript.push("goal cancelled".into());
+                }
+                "/clear" => {
+                    session.clear_context().await?;
+                    self.transcript.push("context cleared".into());
+                }
+                "/usage" => {
+                    let usage = session.get_usage().await?;
+                    self.transcript.push(format!("usage: {}", serde_json::to_string(&usage).unwrap_or_default()));
                 }
                 other => self.transcript.push(format!("unknown command {other} — try /help")),
             }
