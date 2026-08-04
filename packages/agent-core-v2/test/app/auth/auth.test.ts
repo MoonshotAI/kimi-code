@@ -1030,6 +1030,51 @@ describe('WebSearchProviderService', () => {
     expect(createService().getWebSearchProvider()).toBeUndefined();
     expect(resolveTokenProvider).not.toHaveBeenCalled();
   });
+
+  // Tool activation gates on presence alone. An env-configured endpoint is
+  // visible before config finishes loading, so a fast bootstrap can evaluate
+  // the gate before the identity snapshot froze — presence must not read it.
+  it('answers presence without touching a not-yet-frozen identity', () => {
+    const notFrozen: IAgentIdentity = {
+      _serviceBrand: undefined,
+      resolved: () => new Promise(() => undefined),
+      current: () => {
+        throw new Error('identity read before freeze');
+      },
+    };
+    servicesConfig = {
+      moonshotSearch: { baseUrl: 'https://search.example.com/search', apiKey: 'k' },
+    };
+    const svc = new WebSearchProviderService(
+      { get: ((name: string) => providers[name]) as IProviderService['get'] } as IProviderService,
+      {
+        resolveTokenProvider:
+          resolveTokenProvider as unknown as IOAuthService['resolveTokenProvider'],
+      } as IOAuthService,
+      { args: { requestHeaders: {} } } as unknown as IBootstrapService,
+      {
+        get: ((domain: string) =>
+          domain === SERVICES_SECTION ? servicesConfig : undefined) as IConfigService['get'],
+      } as IConfigService,
+      notFrozen,
+    );
+
+    expect(svc.hasWebSearchProvider()).toBe(true);
+    expect(() => svc.getWebSearchProvider()).toThrow(/before freeze/);
+
+    servicesConfig = undefined;
+    providers = {};
+    expect(svc.hasWebSearchProvider()).toBe(false);
+
+    providers = {
+      [OAUTH_PROVIDER]: {
+        type: 'kimi',
+        baseUrl: 'https://api.example.com/v1',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      },
+    };
+    expect(svc.hasWebSearchProvider()).toBe(true);
+  });
 });
 
 describe('services config section', () => {

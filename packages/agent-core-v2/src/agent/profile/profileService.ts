@@ -69,7 +69,10 @@
  * seeded into `agentsMdReminder`'s known-set with the effective cwd. Fills the
  * prompt's product-name slot from the `agentIdentity` snapshot — frozen for
  * the process, so no `[identity]` subscription belongs here; the template's
- * own default applies when nothing is configured. Bound at Agent scope.
+ * own default applies when nothing is configured. `bind` gates on the freeze
+ * before materializing the model, whose resolution reads the identity through
+ * the host-headers port — a fast bootstrap must wait, not trip the pre-freeze
+ * guard. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -363,6 +366,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   async bind(input: BindAgentInput): Promise<void> {
     await this.catalog.ready;
+    await this.identity.resolved();
     this.assertBindable(input.profile);
     const profile = this.catalog.get(input.profile);
     if (profile === undefined) {

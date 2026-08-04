@@ -45,3 +45,32 @@ export function registerAgentIdentityStub(
 ): void {
   reg.defineInstance(IAgentIdentity, stubAgentIdentity(overrides));
 }
+
+export function deferredAgentIdentityStub(overrides: AgentIdentityStubOverrides = {}): {
+  identity: IAgentIdentity;
+  freeze: () => void;
+} {
+  let snapshot: AgentIdentitySnapshot | undefined;
+  let settle!: (frozen: AgentIdentitySnapshot) => void;
+  const frozen = new Promise<AgentIdentitySnapshot>((resolve) => {
+    settle = resolve;
+  });
+  return {
+    identity: {
+      _serviceBrand: undefined,
+      resolved: () => frozen,
+      current: () => {
+        if (snapshot === undefined) throw new Error('identity read before the test froze it');
+        return snapshot;
+      },
+    },
+    freeze: () => {
+      const products = buildAgentIdentitySnapshot({
+        slug: overrides.slug,
+        hostRequestHeaders: overrides.hostRequestHeaders ?? {},
+      });
+      snapshot = { ...products, displayName: overrides.displayName };
+      settle(snapshot);
+    },
+  };
+}
