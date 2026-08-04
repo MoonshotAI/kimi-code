@@ -21,8 +21,11 @@
  * referenced provider vendor's declared `baseProtocol`; endpoint and
  * credential env fallbacks resolve through `resolveProviderEndpoint` against
  * the config env bag; host-header forwarding follows the vendor definition's
- * `hostHeaders`; capability detection is `resolveCapability(protocol, name,
- * providerType)`.
+ * `hostHeaders`, scoped by `isFirstPartyBaseUrl` — a vendor's
+ * `hostHeaders: 'full'` contract covers its own endpoint only, so a provider
+ * that speaks the same protocol but points elsewhere receives just the
+ * `User-Agent`, never the device identity set; capability detection is
+ * `resolveCapability(protocol, name, providerType)`.
  *
  * Caching (load-bearing): assembled entries are invalidated ONLY by the
  * model/provider config-change events. Tests that mutate config
@@ -90,7 +93,7 @@ import {
   toProtocolProvider,
 } from './catalog';
 import { ModelCatalogErrors } from './errors';
-import { IHostRequestHeaders } from './hostRequestHeaders';
+import { IHostRequestHeaders, isFirstPartyBaseUrl } from './hostRequestHeaders';
 import {
   assembleModelInspection,
   attributeEffectiveFields,
@@ -562,28 +565,12 @@ export function resolveOutboundHeaders(
   hostHeaders: Readonly<Record<string, string>>,
   baseUrl: string | undefined,
 ): Readonly<Record<string, string>> {
-  // A vendor's `hostHeaders: 'full'` contract is meant for the vendor's own
-  // endpoint. A provider that speaks the same protocol but points elsewhere
-  // must not receive the host identity set (device id included).
   const forwardsAll =
     providerType !== undefined &&
     getProviderDefinition(providerType)?.hostHeaders === 'full' &&
     isFirstPartyBaseUrl(baseUrl);
   const hostLayer = forwardsAll ? hostHeaders : userAgentOnly(hostHeaders);
   return { ...parseKimiCodeCustomHeaders(), ...hostLayer, ...customHeaders };
-}
-
-const FIRST_PARTY_HOSTS = new Set(['api.moonshot.ai', 'api.moonshot.cn']);
-
-function isFirstPartyBaseUrl(baseUrl: string | undefined): boolean {
-  if (baseUrl === undefined) {
-    return true;
-  }
-  try {
-    return FIRST_PARTY_HOSTS.has(new URL(baseUrl).hostname);
-  } catch {
-    return false;
-  }
 }
 
 function userAgentOnly(headers: Readonly<Record<string, string>>): Record<string, string> {

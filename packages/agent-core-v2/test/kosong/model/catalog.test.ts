@@ -183,6 +183,19 @@ describe('Model assembly (pure data)', () => {
     }
   });
 
+  it('withholds the identity set from a first-party hostname over plain http', () => {
+    const { host, catalog } = createHost({
+      providers: { kimi: { type: 'kimi', apiKey: 'sk', baseUrl: 'http://api.moonshot.ai/v1' } },
+      models: { k2: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 200000 } },
+    });
+    try {
+      const model = catalog.get('k2');
+      expect(model.headers).toEqual({ 'User-Agent': 'kimi-test/1.0' });
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('forwards only the User-Agent to vendors without a full hostHeaders declaration', () => {
     const { host, catalog } = createHost({
       providers: {
