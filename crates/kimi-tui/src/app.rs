@@ -124,18 +124,45 @@ impl App {
             }
             return Ok(false);
         }
-        // A real prompt: run it and render the transcript.
+        // A real prompt: run it and render the transcript, pumping engine
+        // events into the panel while the turn runs. The prompt future lives
+        // in a block so its `&mut session` borrow ends before we read back.
         self.transcript.push(format!("> {line}"));
-        let result = session.prompt(line).await;
-        if let Some(error) = result.get("error") {
-            self.transcript.push(format!("error: {}", error["message"].as_str().unwrap_or("unknown")));
-            return Ok(false);
-        }
-        match session.transcript().await? {
-            Some(text) => self.transcript.push(text),
-            None => self.transcript.push(result.to_string()),
+        let prompt_result = {
+            let prompt_fut = session.prompt(line);
+            tokio::pin!(prompt_fut);
+            loop {
+                tokio::select! {
+                    r = &mut prompt_fut => break Some(r.clone()),
+                    _ = self.pump_one_event() => {}
+                }
+            }
+        };
+        if let Some(result) = prompt_result {
+            if let Some(error) = result.get("error") {
+                self.transcript.push(format!("error: {}", error["message"].as_str().unwrap_or("unknown")));
+            } else {
+                match session.transcript().await? {
+                    Some(text) => self.transcript.push(text),
+                    None => self.transcript.push(result.to_string()),
+                }
+            }
         }
         Ok(false)
+    }
+
+    /// Render one engine event into the panel (with a short poll timeout so
+    /// the select loop keeps yielding to the running prompt).
+    async fn pump_one_event(&mut self) {
+        let mut guard = self.harness.events().await;
+        if let Some(source) = guard.as_mut() {
+            if let Ok(Some(event)) =
+                tokio::time::timeout(std::time::Duration::from_millis(50), source.next()).await
+            {
+                let line = kimi_ui::render_event(&event).unwrap_or_else(|| event.to_string());
+                self.transcript.push(line);
+            }
+        }
     }
 
     fn history_back(&mut self) {
