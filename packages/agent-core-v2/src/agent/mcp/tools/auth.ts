@@ -40,6 +40,7 @@ export const MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE = 'mcp.oauth.authorization_
 export interface McpOAuthAuthorizationUrlUpdateData {
   readonly serverName: string;
   readonly authorizationUrl: string;
+  readonly expiresAt?: number;
 }
 
 const DEFAULT_AUTH_TIMEOUT_MS = 15 * 60 * 1000;
@@ -103,9 +104,11 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
     }
 
     const urlText = flow.authorizationUrl.toString();
+    const waitTimeoutMs = timeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS;
     const customData: McpOAuthAuthorizationUrlUpdateData = {
       serverName,
       authorizationUrl: urlText,
+      expiresAt: Date.now() + waitTimeoutMs,
     };
     onUpdate?.({
       kind: 'custom',
@@ -122,7 +125,7 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
     });
 
     try {
-      await flow.complete({ signal, timeoutMs: timeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS });
+      await flow.complete({ signal, timeoutMs: waitTimeoutMs });
     } catch (error) {
       return errorResult(serverName, error, urlText);
     }

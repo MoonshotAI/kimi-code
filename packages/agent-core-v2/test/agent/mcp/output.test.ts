@@ -317,6 +317,44 @@ describe('mcpResultToExecutableOutput', () => {
     expect(joined.split('</mcp-structured-result>')).toHaveLength(2);
   });
 
+  test('drops protocol-reserved _meta keys and keeps vendor namespaces', async () => {
+    const out = await mcpResultToExecutableOutput(
+      {
+        content: [{ type: 'text', text: 'ok' }],
+        isError: false,
+        _meta: {
+          'modelcontextprotocol.io/progress': 1,
+          'tools.mcp.com/trace': 'x',
+          'example.com/custom': 2,
+          // Reserved only when another label FOLLOWS mcp/modelcontextprotocol:
+          // a trailing reserved word is a legitimate vendor namespace.
+          'com.example.mcp/trace': 4,
+          vendorKey: 3,
+        },
+      },
+      'mcp__s__t',
+    );
+    const parts = out.output as ContentPart[];
+    const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
+    expect(joined).not.toContain('modelcontextprotocol.io/progress');
+    expect(joined).not.toContain('tools.mcp.com/trace');
+    expect(joined).toContain('"example.com/custom":2');
+    expect(joined).toContain('"com.example.mcp/trace":4');
+    expect(joined).toContain('"vendorKey":3');
+  });
+
+  test('omits the structured block when every _meta key is protocol-reserved', async () => {
+    const out = await mcpResultToExecutableOutput(
+      {
+        content: [{ type: 'text', text: 'ok' }],
+        isError: false,
+        _meta: { 'mcp.dev/internal': true },
+      },
+      'mcp__s__t',
+    );
+    expect(out).toEqual({ output: 'ok', isError: false });
+  });
+
   test('returns an empty output array when the content array is empty', async () => {
     const out = await mcpResultToExecutableOutput(result([]), 'mcp__s__t');
     expect(out).toEqual({ output: [], isError: false });

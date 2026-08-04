@@ -30,7 +30,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IConfigService } from '#/app/config/config';
-import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { normalizeAgentProfile, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
@@ -102,23 +102,23 @@ function stubConfig(section?: {
   } as unknown as IConfigService;
 }
 
-const DEFAULT_CALLER_PROFILE: AgentProfile = {
+const DEFAULT_CALLER_PROFILE: AgentProfile = normalizeAgentProfile({
   name: 'agent',
   description: 'test caller',
   systemPrompt: () => 'caller',
-};
+});
 
 const DEFAULT_SWARM_TARGET_PROFILES: readonly AgentProfile[] = [
-  {
+  normalizeAgentProfile({
     name: 'coder',
     description: 'test coder',
     systemPrompt: () => 'coder',
-  },
-  {
+  }),
+  normalizeAgentProfile({
     name: 'explore',
     description: 'test explorer',
     systemPrompt: () => 'explore',
-  },
+  }),
 ];
 
 function stubSwarmCatalog(
@@ -477,12 +477,12 @@ describe('AgentSwarmTool', () => {
 
   it('uses the persisted caller allowlist instead of the current catalog profile', async () => {
     const host = mockSwarmHost();
-    const caller: AgentProfile = {
+    const caller: AgentProfile = normalizeAgentProfile({
       name: 'orchestrator',
       description: 'Orchestrator',
       subagents: ['coder'],
       systemPrompt: () => 'orchestrator',
-    };
+    });
     const tool = new AgentSwarmTool(
       host.swarmService,
       makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }),
@@ -843,12 +843,12 @@ describe('AgentSwarmTool', () => {
 
   it('lets the tool call opt back into the primary model', async () => {
     const host = mockSwarmHost();
-    const secondaryCoder: AgentProfile = {
+    const secondaryCoder: AgentProfile = normalizeAgentProfile({
       name: 'coder',
       description: 'test coder',
       modelPreference: 'secondary',
       systemPrompt: () => 'coder',
-    };
+    });
     const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ model: 'provider/secondary', defaultEffort: 'low' }), stubFlag(true), stubSwarmCatalog(DEFAULT_CALLER_PROFILE, [secondaryCoder]), stubCallerProfile({ modelAlias: 'main-model', thinkingLevel: 'high' }), stubModelCatalog());
 
     await executeTool(
