@@ -328,7 +328,8 @@ export class KimiTUI {
   private backgroundRefreshPromise: Promise<void> | undefined;
   private readonly migrationPlan: MigrationPlan | null;
   private readonly migrateOnly: boolean;
-  private readonly engineV2: boolean;
+  /** agent-core-v2 engine flag (startup-selected); read by controllers via host interfaces. */
+  readonly engineV2: boolean;
   private startupNotice: string | undefined;
   private lastActivityMode: string | undefined;
   private currentLoadingTip: { kind: LoadingTipKind; tip: string | undefined } | undefined =

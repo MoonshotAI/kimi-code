@@ -40,6 +40,20 @@ describe('toProtocolMessage', () => {
     ]);
   });
 
+  it('projects a kimi-file image reference to a structured file source without leaking the path', () => {
+    const msg: ContextMessage = {
+      role: 'user',
+      content: [
+        { type: 'image_url', imageUrl: { url: 'kimi-file://file_9?path=%2Fcache%2Fpic.png' } },
+      ],
+      toolCalls: [],
+    };
+
+    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
+      { type: 'image', source: { kind: 'file', file_id: 'file_9' } },
+    ]);
+  });
+
   it('projects a kimi-file video reference to a structured file source without leaking the path', () => {
     const msg: ContextMessage = {
       role: 'user',

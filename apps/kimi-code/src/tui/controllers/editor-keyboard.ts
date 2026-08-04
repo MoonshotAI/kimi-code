@@ -15,7 +15,7 @@ import {
 } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { ImageAttachmentStore } from '../utils/image-attachment-store';
-import { extractMediaAttachments } from '../utils/image-placeholder';
+import { extractMediaAttachments, imageExtensionForMime } from '../utils/image-placeholder';
 import type { PendingExit, QueuedMessage, SteerInputItem } from '../types';
 import type { TUIState } from '../tui-state';
 import type { BtwPanelController } from './btw-panel';
@@ -30,6 +30,12 @@ export interface EditorKeyboardHost {
    * env/built-in default.
    */
   harness?: KimiHarness | undefined;
+  /**
+   * True when the TUI runs on the agent-core-v2 engine (startup-selected).
+   * Gates the paste-time upload to the daemon file store; the v1 engine has
+   * no file store and keeps the submit-time inline base64 form.
+   */
+  readonly engineV2?: boolean | undefined;
 
   handleUserInput(text: string): void;
   readonly btwPanelController: BtwPanelController;
@@ -468,6 +474,12 @@ export class EditorKeyboardController {
       },
     });
     const sessionDir = this.host.session?.summary?.sessionDir;
+    // v2 only: upload the final bytes to the daemon file store so submit-time
+    // expansion emits a `kimi-file://` reference instead of inline base64.
+    const fileId = await this.uploadImageToDaemonFileStore(
+      compressed.changed ? compressed.data : media.bytes,
+      compressed.changed ? compressed.mimeType : meta.mime,
+    );
     // Dimensions come from the compression result, not parseImageMeta: the
     // compressor reports display space (EXIF orientation applied) — the space
     // the sent image, the caption, and ReadMediaFile region readback share —
@@ -489,17 +501,44 @@ export class EditorKeyboardController {
             byteLength: media.bytes.length,
             mime: meta.mime,
           },
+          fileId,
         )
       : this.imageStore.addImage(
           media.bytes,
           meta.mime,
           compressed.width || meta.width,
           compressed.height || meta.height,
+          undefined,
+          fileId,
         );
     this.host.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
     this.host.state.ui.requestRender();
     this.host.track('shortcut_paste', { kind: 'image' });
     return true;
+  }
+
+  /**
+   * Paste-time upload of the final image bytes to the engine's daemon file
+   * store (agent-core-v2 only). Best effort: any failure returns undefined,
+   * so the attachment keeps no `fileId` and submit-time expansion falls back
+   * to the inline base64 form — the paste never blocks on the upload.
+   */
+  private async uploadImageToDaemonFileStore(
+    bytes: Uint8Array,
+    mime: string,
+  ): Promise<string | undefined> {
+    if (this.host.engineV2 !== true) return undefined;
+    const harness = this.host.harness;
+    if (harness === undefined) return undefined;
+    try {
+      const meta = await harness.uploadFile(bytes, {
+        name: `pasted-image.${imageExtensionForMime(mime)}`,
+        mimeType: mime,
+      });
+      return meta.id;
+    } catch {
+      return undefined;
+    }
   }
 
   private async openExternalEditor(): Promise<void> {

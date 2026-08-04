@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { mkdir, stat, writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
+import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import {
@@ -22,7 +23,10 @@ import {
   IEventService,
   IFileService,
   ISessionMetadata,
+  buildDaemonFileUrl,
   buildKimiFileUrl,
+  buildMediaPathTag,
+  parseDaemonFileUrl,
   parseKimiFileUrl,
   promptMetadataTextFromContentParts,
   ProfileError,
@@ -255,10 +259,10 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
 
         // Media resolution runs BEFORE any control mutation, so a failed
         // submission leaves the session's controls untouched. Prompt videos
-        // are materialized to a local copy and carried into context as an
-        // internal `kimi-file://` reference; the engine resolves them to a
-        // provider form (upload / inline / `<video path>` tag) at request
-        // time, so the edge no longer uploads.
+        // and uploaded images are materialized to a local copy and carried
+        // into context as an internal `kimi-file://` reference; the engine
+        // resolves them to a provider form (upload / inline / path tag) at
+        // request time, so the edge no longer uploads.
         const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
         const resolvedBody = await resolvePromptMediaFiles(
           req.body,
@@ -430,6 +434,15 @@ function corePartsToProtocol(content: readonly ContentPart[]): PromptSubmission[
   for (const part of content) {
     if (part.type === 'text') parts.push({ type: 'text', text: part.text });
     else if (part.type === 'image_url') {
+      // Same daemon-reference rule as `video_url` below: an internal
+      // `kimi-file://<id>?path=…` reference projects back to the daemon
+      // upload it came from — the materialization path never leaks to the
+      // client.
+      const kimiFile = parseDaemonFileUrl(part.imageUrl.url);
+      if (kimiFile !== undefined) {
+        parts.push({ type: 'image', source: { kind: 'file', file_id: kimiFile.fileId } });
+        continue;
+      }
       const match = /^data:([^;]+);base64,(.*)$/.exec(part.imageUrl.url);
       parts.push(match === null
         ? { type: 'image', source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id } }
@@ -625,7 +638,6 @@ async function resolvePromptMediaFiles(
     if (part.type === 'image') {
       const data = await readFileOrStream(file);
       let mediaType = file.meta.media_type;
-      let bytes: Uint8Array = data;
       // Same format gate as the inline path above, and again the bytes are
       // authoritative: an upload whose Content-Type lies (AVIF bytes sent
       // as image/png) is gated on the sniffed format. Like the inline path,
@@ -676,15 +688,26 @@ async function resolvePromptMediaFiles(
           }),
         });
       }
-      bytes = compressed.data;
-      mediaType = compressed.mimeType;
+      // Like an uploaded video, the image enters context as an internal
+      // `kimi-file://<id>?path=<materialized path>` reference the engine
+      // resolves at request time, preceded by the `<image path>` tag text so
+      // the model always has a path it can re-open. When compression changed
+      // the bytes, the reference addresses a NEW daemon upload holding the
+      // final bytes — the client's original upload stays untouched.
+      let finalFile = file;
+      if (compressed.changed) {
+        const saved = await store.save(
+          Readable.from(Buffer.from(compressed.data)),
+          compressedUploadName(file.meta.name, compressed.mimeType),
+          { mimeType: compressed.mimeType },
+        );
+        finalFile = await store.get(saved.id);
+      }
+      const cachePath = await materializeUploadToCache(finalFile, cacheDir);
+      content.push({ type: 'text', text: buildMediaPathTag('image', cachePath) });
       content.push({
         type: 'image',
-        source: {
-          kind: 'base64',
-          media_type: mediaType,
-          data: Buffer.from(bytes).toString('base64'),
-        },
+        source: { kind: 'url', url: buildDaemonFileUrl(finalFile.meta.id, cachePath) },
       });
       changed = true;
       continue;
@@ -695,7 +718,7 @@ async function resolvePromptMediaFiles(
     // `kimi-file://<id>?path=<materialized path>` reference. The engine
     // resolves it to a provider form (upload / inline / `<video path>` tag) at
     // request time, so the edge never uploads and never blocks on the provider.
-    const cachePath = await materializeVideoToCache(file, cacheDir);
+    const cachePath = await materializeUploadToCache(file, cacheDir);
     content.push({
       type: 'video',
       source: { kind: 'url', url: buildKimiFileUrl(file.meta.id, cachePath) },
@@ -705,15 +728,34 @@ async function resolvePromptMediaFiles(
   return changed ? { ...body, content } : body;
 }
 
-async function materializeVideoToCache(file: GetResult, cacheDir: string): Promise<string> {
+async function materializeUploadToCache(file: GetResult, cacheDir: string): Promise<string> {
   await mkdir(cacheDir, { recursive: true });
-  const ext = extname(file.meta.name) || (VIDEO_EXT_BY_MIME[file.meta.media_type.toLowerCase()] ?? '.bin');
+  const ext = extname(file.meta.name) || cacheExtensionForMime(file.meta.media_type);
   const target = join(cacheDir, `${file.meta.id}${ext}`);
   const info = await stat(target).catch(() => undefined);
   if (info?.size === file.meta.size) return target;
 
   await pipeline(file.stream(), createWriteStream(target));
   return target;
+}
+
+/** MIME → cache-file extension fallback for an upload whose name has none. */
+function cacheExtensionForMime(mediaType: string): string {
+  const mime = mediaType.toLowerCase();
+  const videoExt = VIDEO_EXT_BY_MIME[mime];
+  if (videoExt !== undefined) return videoExt;
+  if (mime.startsWith('image/')) return `.${imageExtensionForMime(mime)}`;
+  return '.bin';
+}
+
+/**
+ * Name for the daemon upload holding compressed image bytes: keep the
+ * original base name but take the extension from the final MIME, since the
+ * encoder may have switched formats (png ↔ jpeg).
+ */
+function compressedUploadName(originalName: string, mimeType: string): string {
+  const base = originalName.replace(/\.[^./\\]*$/, '');
+  return `${base.length > 0 ? base : 'image'}.${imageExtensionForMime(mimeType)}`;
 }
 
 const ATTACHMENT_NAME_MAX = 100;

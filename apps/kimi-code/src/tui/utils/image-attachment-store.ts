@@ -42,6 +42,13 @@ export interface ImageAttachment {
    * knows it received a downsampled copy. Absent for untouched pastes.
    */
   readonly original?: ImageAttachmentOriginal | undefined;
+  /**
+   * Daemon file-store id, set when the bytes were uploaded at paste time
+   * (v2 engine only). Submit-time expansion then emits a `kimi-file://`
+   * reference plus an `<image path>` tag instead of inline base64; absent
+   * means the inline form is used.
+   */
+  readonly fileId?: string;
   /** Rendered placeholder string, e.g. `[image #1 (640×480)]`. */
   readonly placeholder: string;
 }
@@ -69,6 +76,7 @@ export class ImageAttachmentStore {
     width: number,
     height: number,
     original?: ImageAttachmentOriginal,
+    fileId?: string,
   ): ImageAttachment {
     const id = this.nextId;
     this.nextId += 1;
@@ -80,6 +88,7 @@ export class ImageAttachmentStore {
       width,
       height,
       original,
+      fileId,
       placeholder: formatPlaceholder(id, width, height),
     };
     this.byId.set(id, attachment);

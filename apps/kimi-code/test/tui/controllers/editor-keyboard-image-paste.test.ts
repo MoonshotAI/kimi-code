@@ -10,6 +10,9 @@
  *     point the model at the full-fidelity bytes
  *   - a within-budget paste is stored byte-for-byte (fast path), with no
  *     original recorded
+ *   - on the v2 engine the final bytes are uploaded to the daemon file store
+ *     and the attachment carries the returned `fileId`; an upload failure
+ *     leaves the paste on the inline base64 fallback
  */
 
 import { mkdtemp, readFile, rm, unlink } from 'node:fs/promises';
@@ -42,7 +45,17 @@ interface PasteHarness {
   pasteImage(): Promise<void>;
 }
 
-function createPasteHarness(options: { sessionDir?: string; imageLimits?: ImageLimits } = {}): PasteHarness {
+function createPasteHarness(
+  options: {
+    sessionDir?: string;
+    imageLimits?: ImageLimits;
+    engineV2?: boolean;
+    uploadFile?: (
+      data: Uint8Array,
+      opts: { name: string; mimeType?: string },
+    ) => Promise<{ id: string }>;
+  } = {},
+): PasteHarness {
   const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {
     setHistoryFilter: vi.fn() as unknown as (...args: never[]) => unknown,
   };
@@ -61,14 +74,16 @@ function createPasteHarness(options: { sessionDir?: string; imageLimits?: ImageL
         ? undefined
         : { summary: { sessionDir: options.sessionDir } },
     btwPanelController: { closeOrCancel: vi.fn(() => false) },
+    engineV2: options.engineV2,
     track,
     showError: vi.fn(),
     openUndoSelector: vi.fn(),
     cancelRunningShellCommand: vi.fn(),
   } as unknown as EditorKeyboardHost;
-  if (options.imageLimits !== undefined) {
+  if (options.imageLimits !== undefined || options.uploadFile !== undefined) {
     (host as unknown as { harness: KimiHarness }).harness = {
       imageLimits: options.imageLimits,
+      uploadFile: options.uploadFile,
     } as unknown as KimiHarness;
   }
 
@@ -96,6 +111,11 @@ async function solidJpeg(width: number, height: number): Promise<Uint8Array> {
   return new Uint8Array(
     await new Jimp({ width, height, color: 0x3366ccff }).getBuffer('image/jpeg', { quality: 90 }),
   );
+}
+
+/** Typed `uploadFile` stub so `mock.calls` keeps the (data, options) tuple. */
+function uploadFileMock(id: string) {
+  return vi.fn(async (_data: Uint8Array, _opts: { name: string; mimeType?: string }) => ({ id }));
 }
 
 /**
@@ -295,5 +315,76 @@ describe('clipboard image paste compression', () => {
     const props = compressCalls[0]![1] as Record<string, unknown>;
     expect(props['source']).toBe('tui_paste');
     expect(props['outcome']).toBe('compressed');
+  });
+
+  it('uploads the final bytes to the daemon file store on the v2 engine', async () => {
+    const small = await solidPng(80, 80);
+    readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: small, mimeType: 'image/png' });
+    const uploadFile = uploadFileMock('file-1');
+
+    const { store, pasteImage } = createPasteHarness({ engineV2: true, uploadFile });
+    await pasteImage();
+
+    const att = store.get(1);
+    if (att?.kind !== 'image') throw new Error('expected image attachment');
+    expect(att.fileId).toBe('file-1');
+    expect(uploadFile).toHaveBeenCalledTimes(1);
+    const [data, opts] = uploadFile.mock.calls[0]!;
+    expect(new Uint8Array(data)).toEqual(small);
+    expect(opts).toEqual({ name: 'pasted-image.png', mimeType: 'image/png' });
+    // The bytes stay on the attachment for the inline fallback / cache copy.
+    expect(att.bytes).toBe(small);
+  });
+
+  it('uploads the compressed bytes when paste-time compression changed them (v2)', async () => {
+    const big = await solidPng(3600, 1800);
+    readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: big, mimeType: 'image/png' });
+    const uploadFile = uploadFileMock('file-9');
+
+    const { store, pasteImage } = createPasteHarness({ engineV2: true, uploadFile });
+    await pasteImage();
+
+    const att = store.get(1);
+    if (att?.kind !== 'image') throw new Error('expected image attachment');
+    expect(att.fileId).toBe('file-9');
+    // The upload carries exactly what the attachment stores — the compressed
+    // bytes, not the clipboard original.
+    const [data] = uploadFile.mock.calls[0]!;
+    expect(data).toBe(att.bytes);
+    expect(att.bytes).not.toBe(big);
+    await unlink(att.original!.path!).catch(() => undefined);
+  });
+
+  it('keeps the paste on the inline fallback when the daemon upload fails (v2)', async () => {
+    const small = await solidPng(80, 80);
+    readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: small, mimeType: 'image/png' });
+    const uploadFile = vi.fn(
+      async (_data: Uint8Array, _opts: { name: string; mimeType?: string }): Promise<{ id: string }> => {
+        throw new Error('daemon down');
+      },
+    );
+
+    const { store, pasteImage } = createPasteHarness({ engineV2: true, uploadFile });
+    await pasteImage(); // must not throw
+
+    const att = store.get(1);
+    if (att?.kind !== 'image') throw new Error('expected image attachment');
+    expect(att.fileId).toBeUndefined();
+    expect(att.bytes).toBe(small);
+  });
+
+  it('never uploads on the v1 engine', async () => {
+    const small = await solidPng(80, 80);
+    readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: small, mimeType: 'image/png' });
+    const uploadFile = uploadFileMock('file-1');
+
+    // engineV2 unset — the v1 host shape.
+    const { store, pasteImage } = createPasteHarness({ uploadFile });
+    await pasteImage();
+
+    expect(uploadFile).not.toHaveBeenCalled();
+    const att = store.get(1);
+    if (att?.kind !== 'image') throw new Error('expected image attachment');
+    expect(att.fileId).toBeUndefined();
   });
 });

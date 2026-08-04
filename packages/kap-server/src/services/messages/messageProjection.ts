@@ -12,15 +12,15 @@
  * array through, the same shape the live `tool.result` event stream carries,
  * so REST consumers can still render the media after reload/resume.
  *
- * A user `video_url` part projects to a structured `video` content part so
- * REST consumers can render it: an internal `kimi-file://<id>?path=…`
- * reference becomes `{ kind: 'file', file_id }` (the materialization path is
- * stripped, never leaked to clients); any other url becomes `{ kind: 'url' }`
- * carrying the provider id. An `audio_url` part still flattens to a text
- * marker.
+ * A user `image_url` / `video_url` part projects to a structured `image` /
+ * `video` content part so REST consumers can render it: an internal
+ * `kimi-file://<id>?path=…` reference becomes `{ kind: 'file', file_id }`
+ * (the materialization path is stripped, never leaked to clients); any other
+ * url becomes `{ kind: 'url' }` carrying the provider id. An `audio_url`
+ * part still flattens to a text marker.
  */
 
-import { parseKimiFileUrl, type ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { parseDaemonFileUrl, parseKimiFileUrl, type ContextMessage } from '@moonshot-ai/agent-core-v2';
 
 import type { Message, MessageContent, MessageRole, ToolUseContent } from '../../protocol/message';
 
@@ -43,11 +43,14 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
         ? { type: 'thinking', thinking: part.think, signature: sig }
         : { type: 'thinking', thinking: part.think };
     }
-    case 'image_url':
-      return {
-        type: 'image',
-        source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id },
-      };
+    case 'image_url': {
+      // Same daemon-reference rule as `video_url`: an internal
+      // `kimi-file://<id>?path=…` reference becomes the upload it came from.
+      const ref = parseDaemonFileUrl(part.imageUrl.url);
+      return ref !== undefined
+        ? { type: 'image', source: { kind: 'file', file_id: ref.fileId } }
+        : { type: 'image', source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id } };
+    }
     case 'audio_url':
       return { type: 'text', text: `[audio:${part.audioUrl.url}]` };
     case 'video_url': {

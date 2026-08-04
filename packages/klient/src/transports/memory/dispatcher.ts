@@ -20,6 +20,13 @@ import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agent
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
 import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
 import { IEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
+import type {
+  FileMeta,
+  GetResult,
+  SaveOptions,
+} from '@moonshot-ai/agent-core-v2/app/file/fileService';
+
+import { Readable } from 'node:stream';
 
 import type { EventSourceRef, IDisposable, ScopeRef } from '../../core/channel.js';
 import { RPCError } from '../../core/errors.js';
@@ -58,6 +65,12 @@ interface ResolvedScope {
   readonly kind: ScopeKind;
   readonly like: ScopeLike;
 }
+
+/** Structural view of the engine's `IFileService` used by the wire adaptation. */
+type FileServiceWireTarget = {
+  save(source: Readable, filename: string, options?: SaveOptions): Promise<FileMeta>;
+  get(fileId: string): Promise<GetResult>;
+};
 
 export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
   /** Mirrors kap-server's `resolveScope`, incl. main-agent materialization. */
@@ -153,6 +166,30 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     async call(scope, service, method, args) {
       const resolved = await resolveScope(scope);
       const instance = resolveService(resolved, service);
+      // `fileService` adapts bytes ⇄ streams: the JSON wire cannot carry
+      // `save`'s Readable source or `get`'s result stream, so both cross as
+      // base64 strings (the same kind of wire adaptation as
+      // `modelResolver.generate` in `stream`).
+      if (service === 'fileService' && method === 'save') {
+        const [data, filename, options] = args as [string, string, SaveOptions | undefined];
+        const files = instance as FileServiceWireTarget;
+        const meta = await files.save(
+          Readable.from(Buffer.from(data, 'base64')),
+          filename,
+          options,
+        );
+        return wireClone(meta);
+      }
+      if (service === 'fileService' && method === 'get') {
+        const [fileId] = args as [string];
+        const files = instance as FileServiceWireTarget;
+        const { meta, stream } = await files.get(fileId);
+        const chunks: Buffer[] = [];
+        for await (const chunk of stream()) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+        }
+        return { meta: wireClone(meta), data: Buffer.concat(chunks).toString('base64') };
+      }
       const member = instance[method];
       if (member === undefined) {
         throw new RPCError(REQUEST_INVALID, `method not found: ${service}.${method}`);

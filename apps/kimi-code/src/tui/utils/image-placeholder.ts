@@ -5,7 +5,14 @@
  * `extractMediaAttachments` (sync) is the single expansion path for prompts:
  *   - image placeholders expand to inline image content parts (preceded by a
  *     compression caption when paste-time compression shrank the bytes — see
- *     `ImageAttachment.original`);
+ *     `ImageAttachment.original`). When the paste was uploaded to the daemon
+ *     file store (`ImageAttachment.fileId`, v2 engine only), the placeholder
+ *     instead expands — mirroring the kap-server REST edge — to the
+ *     `<image path>` tag text (pointing at a cache copy of the bytes, so the
+ *     model always has a path it can re-open) plus a
+ *     `kimi-file://<id>?path=…` image part the engine resolves at request
+ *     time; without a `fileId` the inline base64 form is emitted unchanged
+ *     (the only form the v1 engine accepts);
  *   - video placeholders are copied into the shared cache (`getCacheDir()`)
  *     and expand to a `video_url` part pointing at the cache copy with a
  *     `file://` url. The v1 engine resolves that local reference inside the
@@ -34,7 +41,11 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import type { PromptPart } from '@moonshot-ai/kimi-code-sdk';
-import { buildImageCompressionCaption } from '@moonshot-ai/kimi-code-sdk';
+import {
+  buildDaemonFileUrl,
+  buildImageCompressionCaption,
+  buildMediaPathTag,
+} from '@moonshot-ai/kimi-code-sdk';
 
 import { getCacheDir } from '#/utils/paths';
 
@@ -94,7 +105,21 @@ export function extractMediaAttachments(
       if (attachment.original !== undefined) {
         pushText(parts, captionForCompressedImage(attachment));
       }
-      parts.push(imagePartForAttachment(attachment));
+      if (attachment.fileId !== undefined) {
+        // The bytes were uploaded to the daemon file store at paste time
+        // (v2): reference them by a `kimi-file://` url the engine resolves
+        // at request time, preceded by the `<image path>` tag text so the
+        // model always has a path it can re-open. The tag's path is a cache
+        // copy of the same (already-compressed) bytes.
+        const cachePath = materializeImageToCache(attachment);
+        parts.push({ type: 'text', text: buildMediaPathTag('image', cachePath) });
+        parts.push({
+          type: 'image_url',
+          imageUrl: { url: buildDaemonFileUrl(attachment.fileId, cachePath) },
+        });
+      } else {
+        parts.push(imagePartForAttachment(attachment));
+      }
       imageAttachmentIds.push(id);
     }
     hasMedia = true;
@@ -242,13 +267,21 @@ const IMAGE_MIME_EXTENSION: Readonly<Record<string, string>> = {
   'image/tiff': 'tif',
 };
 
+/**
+ * File-extension hint for an image MIME (`image/png` → `png`). The real
+ * format is always sniffed from the bytes, so this only names files (cache
+ * copies, daemon upload labels).
+ */
+export function imageExtensionForMime(mime: string): string {
+  return IMAGE_MIME_EXTENSION[mime.trim().toLowerCase()] ?? 'img';
+}
+
 function materializeImageToCache(att: ImageAttachment): string {
   const cacheDir = getCacheDir();
   mkdirSync(cacheDir, { recursive: true });
   // ReadMediaFile sniffs the real format from the bytes, so the extension
   // only needs to be a reasonable hint.
-  const ext = IMAGE_MIME_EXTENSION[att.mime.trim().toLowerCase()] ?? 'img';
-  const target = join(cacheDir, `${randomUUID()}.${ext}`);
+  const target = join(cacheDir, `${randomUUID()}.${imageExtensionForMime(att.mime)}`);
   writeFileSync(target, att.bytes);
   return target;
 }

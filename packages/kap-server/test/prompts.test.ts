@@ -8,6 +8,7 @@ import {
   IAgentLifecycleService,
   IAgentProfileService,
   IAgentToolPolicyService,
+  IFileService,
   closeSessionById,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
@@ -300,7 +301,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(await readFile(materialized)).toEqual(videoBytes);
   });
 
-  it('compresses uploaded image prompts into base64 image parts with a readback caption', async () => {
+  it('carries a compressed uploaded image into the prompt as an internal kimi-file reference', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
     const bigPng = solidPng(3600, 1800);
@@ -320,10 +321,11 @@ describe('server-v2 /api/v1 prompts', () => {
     });
     expect(submitted.body.code).toBe(0);
 
-    const content = submitted.body.data.content as PromptContentPart[];
-    expect(content).toHaveLength(2);
-    const caption = content[0];
-    if (caption?.type !== 'text') throw new Error('expected compression caption');
+    // [compression caption, <image path> tag, projected file reference].
+    const content = submitted.body.data.content as Array<Record<string, unknown>>;
+    expect(content).toHaveLength(3);
+    const caption = content[0] as { type: string; text: string };
+    expect(caption.type).toBe('text');
     expect(caption.text).toContain('Image compressed');
     expect(caption.text).toContain('3600x1800');
     const pathMatch = /saved at "([^"]+)"/.exec(caption.text);
@@ -331,15 +333,98 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(pathMatch![1]!).toContain('/media-originals/');
     expect(await readFile(pathMatch![1]!)).toEqual(bigPng);
 
-    const image = content[1];
-    if (image?.type !== 'image' || image.source.kind !== 'base64') {
-      throw new Error('expected resolved base64 image');
-    }
-    expect(image.source.media_type).toBe('image/png');
-    expect(pngDimensions(Buffer.from(image.source.data, 'base64'))).toEqual({
-      width: 2000,
-      height: 1000,
+    // Compression swapped the referenced upload: the reference addresses a NEW
+    // daemon upload holding the final bytes, so its id differs from the
+    // client's original upload id.
+    const image = content[2] as { type: string; source: { kind: string; file_id: string } };
+    expect(image.type).toBe('image');
+    expect(image.source.kind).toBe('file');
+    const finalFileId = image.source.file_id;
+    expect(finalFileId).not.toBe(uploaded.data.id);
+
+    // The <image path> tag names the materialized cache copy of the FINAL
+    // (compressed) bytes, named by the final upload id.
+    const cachePath = join(home as string, 'cache', `${finalFileId}.png`);
+    expect(content[1]).toEqual({ type: 'text', text: `<image path="${cachePath}"></image>` });
+    expect(pngDimensions(await readFile(cachePath))).toEqual({ width: 2000, height: 1000 });
+
+    // The original client upload stays untouched.
+    const original = await server!.core.accessor.get(IFileService).get(uploaded.data.id);
+    expect(original.meta.size).toBe(bigPng.length);
+
+    // The internal reference never leaks to the wire.
+    expect(JSON.stringify(content)).not.toContain('kimi-file://');
+
+    // Context memory carries the raw daemon reference: the tag text part and
+    // an `image_url` part whose url is the `kimi-file://` reference. The
+    // prompt service extracts the compression caption into its own
+    // system-reminder message on enqueue.
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const main = session!.accessor.get(IAgentLifecycleService).get('main')!;
+    const memory = main.accessor.get(IAgentContextMemoryService).get();
+    const userMessage = memory.find((m) => m.role === 'user' && m.origin?.kind === 'user');
+    expect(userMessage?.content).toEqual([
+      { type: 'text', text: `<image path="${cachePath}"></image>` },
+      {
+        type: 'image_url',
+        imageUrl: { url: `kimi-file://${finalFileId}?path=${encodeURIComponent(cachePath)}` },
+      },
+    ]);
+    const reminder = memory.find((m) => m.origin?.kind === 'injection');
+    const reminderText = reminder?.content[0];
+    expect(reminderText?.type).toBe('text');
+    expect((reminderText as { type: 'text'; text: string }).text).toContain('<system-reminder>');
+    expect((reminderText as { type: 'text'; text: string }).text).toContain('Image compressed');
+  });
+
+  it('carries an uncompressed uploaded image into the prompt as an internal kimi-file reference', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const smallPng = solidPng(10, 10);
+    const form = new FormData();
+    form.set('file', new Blob([smallPng], { type: 'image/png' }), 'small.png');
+    const uploadRes = await fetch(`${base}/api/v1/files`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer),
+      body: form,
+    } as never);
+    const uploaded = (await uploadRes.json()) as Envelope<{ id: string; size: number }>;
+    expect(uploaded.code).toBe(0);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.data.id } }],
     });
+    expect(submitted.body.code).toBe(0);
+
+    // No compression caption when the bytes pass through unchanged, and the
+    // reference addresses the client's original upload — no new upload.
+    const content = submitted.body.data.content as Array<Record<string, unknown>>;
+    const cachePath = join(home as string, 'cache', `${uploaded.data.id}.png`);
+    expect(content).toEqual([
+      { type: 'text', text: `<image path="${cachePath}"></image>` },
+      { type: 'image', source: { kind: 'file', file_id: uploaded.data.id } },
+    ]);
+
+    // The cache copy holds the original bytes, named by the original upload id.
+    expect(await readFile(cachePath)).toEqual(smallPng);
+
+    // The internal reference never leaks to the wire.
+    expect(JSON.stringify(content)).not.toContain('kimi-file://');
+
+    // Context memory carries the raw daemon reference.
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const main = session!.accessor.get(IAgentLifecycleService).get('main')!;
+    const userMessage = main.accessor
+      .get(IAgentContextMemoryService)
+      .get()
+      .find((m) => m.role === 'user' && m.origin?.kind === 'user');
+    expect(userMessage?.content).toEqual([
+      { type: 'text', text: `<image path="${cachePath}"></image>` },
+      {
+        type: 'image_url',
+        imageUrl: { url: `kimi-file://${uploaded.data.id}?path=${encodeURIComponent(cachePath)}` },
+      },
+    ]);
   });
 
   it('compresses inline base64 image prompts into session media-originals', async () => {

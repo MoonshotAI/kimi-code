@@ -78,6 +78,7 @@ export * from '#/kosong/contract/capability';
 export * from '#/kosong/contract/errors';
 export * from '#/kosong/contract/message';
 export * from '#/kosong/contract/messageHelpers';
+export * from '#/kosong/contract/mediaRef';
 export * from '#/kosong/contract/tool';
 export * from '#/kosong/contract/usage';
 export * from '#/kosong/contract/provider';
@@ -538,6 +539,9 @@ export * from '#/agent/media/mediaToolsRegistrar';
 export * from '#/agent/media/registerMediaTools';
 export * from '#/agent/media/kimiFileUrl';
 export * from '#/agent/media/videoUpload';
+export * from '#/agent/media/mediaResolver';
+export * from '#/agent/media/mediaResolverService';
+// Deprecated aliases kept so existing consumers compile unchanged.
 export * from '#/agent/media/videoResolver';
 export * from '#/agent/media/videoResolverService';
 import '#/agent/media/configSection';

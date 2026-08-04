@@ -32,6 +32,7 @@ import type {
   ExportSessionInput,
   ExportSessionResult,
   CreateGoalInput,
+  FileMeta,
   ForkSessionInput,
   GetConfigOptions,
   McpServerConfig,
@@ -60,6 +61,7 @@ import type {
   SkillSummary,
   PluginCommandDef,
   Unsubscribe,
+  UploadFileOptions,
   WorkspaceTrustInfo,
 } from '#/types';
 
@@ -301,6 +303,19 @@ export abstract class SDKRpcClientBase {
     throw new KimiError(
       ErrorCodes.NOT_IMPLEMENTED,
       'This SDK client does not support atomic config section replacement.',
+    );
+  }
+
+  /**
+   * Upload media bytes to the engine's daemon file store; pair the returned
+   * meta with `buildDaemonFileUrl` to reference the file from a prompt. Only
+   * the v2 client wires this (through the klient files facade) — the v1
+   * client has no file service and throws `not_implemented`.
+   */
+  uploadFile(_data: Uint8Array, _options: UploadFileOptions): Promise<FileMeta> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support file upload.',
     );
   }
 

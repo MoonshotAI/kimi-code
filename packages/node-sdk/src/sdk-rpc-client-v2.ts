@@ -263,6 +263,7 @@ import type {
   CreateSessionOptions,
   ExportSessionInput,
   ExportSessionResult,
+  FileMeta,
   ForkSessionInput,
   GetConfigOptions,
   GetCronTasksResult,
@@ -293,6 +294,7 @@ import type {
   SessionUsage,
   SkillSummary,
   TelemetryClient,
+  UploadFileOptions,
   WorkspaceTrustInfo,
 } from '#/types';
 import {
@@ -532,6 +534,19 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   override async getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]> {
     return this.klient.global.flags.list();
+  }
+
+  /**
+   * `uploadFile` → `klient.global.files.save` (the app-scope `IFileService`).
+   * The SDK's single `name` doubles as the engine's `filename`; the engine's
+   * `SaveOptions.name` (display name) defaults to it.
+   */
+  override async uploadFile(data: Uint8Array, options: UploadFileOptions): Promise<FileMeta> {
+    return this.klient.global.files.save({
+      data,
+      filename: options.name,
+      mimeType: options.mimeType,
+    });
   }
 
   /**
@@ -2151,9 +2166,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /**
    * Through the session scope (the seeded `ISessionMcpHandle.connectionManager`
-   * — the workspace handler's one shared manager). Both engines settle the
-   * initial connect before create/resume returns, so the entry list is final
-   * here; the v2 `McpServerEntry` is field-identical with v1's
+   * — the workspace handler's one shared manager). This is a live snapshot:
+   * create/resume no longer waits for MCP startup, so entries may still be
+   * pending. The v2 `McpServerEntry` is field-identical with v1's
    * `McpServerInfo` (the cast bridges the two packages' type declarations).
    */
   override async listMcpServers(input: SessionIdRpcInput): Promise<readonly McpServerInfo[]> {
@@ -2163,7 +2178,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   override async getMcpStartupMetrics(input: SessionIdRpcInput): Promise<McpStartupMetrics> {
     const mcp = this.requireLiveSession(input.sessionId).accessor.get(ISessionMcpHandle);
-    await mcp.connectionManager.waitForInitialLoad();
+    await mcp.ready;
     return { durationMs: mcp.connectionManager.initialLoadDurationMs() };
   }
 

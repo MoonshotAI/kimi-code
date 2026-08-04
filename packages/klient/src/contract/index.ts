@@ -23,6 +23,7 @@ import { catalogContract } from './global/catalog.js';
 import { providerDiscoveryContract } from './global/providerDiscovery.js';
 import { configContract } from './global/config.js';
 import { envContract } from './global/env.js';
+import { filesContract } from './global/files.js';
 import { flagsContract } from './global/flags.js';
 import { hostFsContract } from './global/hostFs.js';
 import { modelsContract } from './global/models.js';
@@ -55,6 +56,7 @@ export const globalContract: KlientContract = {
   pluginService: pluginsContract,
   hostFolderBrowser: hostFsContract,
   bootstrapService: envContract,
+  fileService: filesContract,
   // workspace scope (+ the app-registered handler registry)
   workspaceLifecycleService: workspaceLifecycleContract,
   sessionLifecycleService: sessionLifecycleContract,

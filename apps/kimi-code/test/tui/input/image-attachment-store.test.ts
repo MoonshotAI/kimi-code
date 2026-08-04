@@ -49,6 +49,18 @@ describe('ImageAttachmentStore', () => {
     expect(att.mime).toBe('image/jpeg');
   });
 
+  it('records the daemon file-store id when the paste was uploaded (v2)', () => {
+    const s = new ImageAttachmentStore();
+    const att = s.addImage(new Uint8Array([1]), 'image/png', 10, 20, undefined, 'file-abc');
+    expect(att.fileId).toBe('file-abc');
+  });
+
+  it('leaves fileId undefined for attachments that were not uploaded', () => {
+    const s = new ImageAttachmentStore();
+    const att = s.addImage(new Uint8Array([1]), 'image/png', 10, 20);
+    expect(att.fileId).toBeUndefined();
+  });
+
   it('clear() resets ids and empties storage', () => {
     const s = new ImageAttachmentStore();
     s.addImage(new Uint8Array(), 'image/png', 10, 10);

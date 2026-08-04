@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, it, expect } from 'vitest';
 
+import { parseDaemonFileUrl } from '@moonshot-ai/kimi-code-sdk';
+
 import { KIMI_CODE_HOME_ENV } from '#/constant/app';
 import { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 import {
@@ -228,6 +230,76 @@ describe('extractMediaAttachments', () => {
     const r = extractMediaAttachments(placeholder, store);
     expect(r.parts).toHaveLength(1);
     expect(r.parts[0]?.type).toBe('image_url');
+  });
+
+  it('expands an uploaded (fileId) image into an <image path> tag plus a kimi-file reference', () => {
+    const { cleanup } = setupTempCache();
+    try {
+      const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+      const store = new ImageAttachmentStore();
+      const att = store.addImage(bytes, 'image/png', 640, 480, undefined, 'file-1');
+      const r = extractMediaAttachments(`describe ${att.placeholder} please`, store);
+      expect(r.hasMedia).toBe(true);
+      expect(r.imageAttachmentIds).toEqual([1]);
+      expect(r.parts).toHaveLength(4);
+      expect(r.parts[0]).toEqual({ type: 'text', text: 'describe ' });
+      const tag = r.parts[1];
+      if (tag?.type !== 'text') throw new Error('expected <image path> text part');
+      const m = /^<image path="([^"]+)"><\/image>$/.exec(tag.text);
+      if (!m) throw new Error(`no image tag found in: ${tag.text}`);
+      const cachePath = m[1]!;
+      expect(cachePath.startsWith(getCacheDir())).toBe(true);
+      expect(cachePath.endsWith('.png')).toBe(true);
+      // The cache copy carries the attachment bytes the reference resolves to.
+      expect(new Uint8Array(readFileSync(cachePath))).toEqual(bytes);
+      const image = r.parts[2];
+      if (image?.type !== 'image_url') throw new Error('expected image_url part');
+      // The `?path=` query is the URL-encoded cache path.
+      expect(image.imageUrl.url).toBe(
+        `kimi-file://file-1?path=${encodeURIComponent(cachePath)}`,
+      );
+      expect(parseDaemonFileUrl(image.imageUrl.url)).toEqual({
+        fileId: 'file-1',
+        path: cachePath,
+      });
+      expect(r.parts[3]).toEqual({ type: 'text', text: ' please' });
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('emits the compression caption before the tag and kimi-file reference', () => {
+    const { cleanup } = setupTempCache();
+    try {
+      const store = new ImageAttachmentStore();
+      const att = store.addImage(
+        new Uint8Array([1, 2, 3]),
+        'image/png',
+        2000,
+        2000,
+        {
+          path: '/tmp/kimi-code-original-images/abc.png',
+          width: 2600,
+          height: 2600,
+          byteLength: 123456,
+          mime: 'image/png',
+        },
+        'file-2',
+      );
+      const r = extractMediaAttachments(att.placeholder, store);
+      expect(r.parts).toHaveLength(3);
+      const caption = r.parts[0];
+      if (caption?.type !== 'text') throw new Error('expected leading text part');
+      expect(caption.text).toContain('Image compressed');
+      const tag = r.parts[1];
+      if (tag?.type !== 'text') throw new Error('expected <image path> text part');
+      expect(tag.text).toMatch(/^<image path="[^"]+"><\/image>$/);
+      const image = r.parts[2];
+      if (image?.type !== 'image_url') throw new Error('expected image_url part');
+      expect(image.imageUrl.url.startsWith('kimi-file://file-2?path=')).toBe(true);
+    } finally {
+      cleanup();
+    }
   });
 });
 

@@ -32,7 +32,7 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { IAgentVideoResolverService } from '#/agent/media/videoResolver';
+import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
@@ -196,7 +196,7 @@ function createService(
 
   ix.stub(IAgentContextMemoryService, context);
   ix.stub(IAgentToolSelectService, toolSelect);
-  ix.stub(IAgentVideoResolverService, { resolve: async (messages) => messages });
+  ix.stub(IAgentMediaResolverService, { resolve: async (messages) => messages });
   if (projector === undefined) {
     ix.set(
       IAgentContextProjectorService,

@@ -14,10 +14,14 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  buildDaemonFileUrl,
+  buildMediaPathTag,
   createKimiHarnessV2,
   ErrorCodes,
+  isDaemonFileUrl,
   KimiError,
   KimiHarness,
+  parseDaemonFileUrl,
   removeProviderFromConfig,
   SDKRpcClientV2,
   type KimiConfig,
@@ -73,6 +77,29 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
         expect(typeof feature.enabled).toBe('boolean');
         expect(typeof feature.defaultEnabled).toBe('boolean');
       }
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('uploadFile stores bytes through the klient files facade', async () => {
+    const { harness } = await makeHarness();
+    try {
+      const bytes = new Uint8Array([137, 80, 78, 71]);
+      const meta = await harness.uploadFile(bytes, { name: 'pixel.png', mimeType: 'image/png' });
+      expect(meta.id.startsWith('f_')).toBe(true);
+      expect(meta.name).toBe('pixel.png');
+      expect(meta.media_type).toBe('image/png');
+      expect(meta.size).toBe(bytes.length);
+      expect(typeof meta.created_at).toBe('string');
+
+      // The re-exported daemon-file helpers round-trip the returned meta.
+      const url = buildDaemonFileUrl(meta.id, '/tmp/pixel.png');
+      expect(isDaemonFileUrl(url)).toBe(true);
+      expect(parseDaemonFileUrl(url)).toEqual({ fileId: meta.id, path: '/tmp/pixel.png' });
+      expect(buildMediaPathTag('image', '/tmp/pixel.png')).toBe(
+        '<image path="/tmp/pixel.png"></image>',
+      );
     } finally {
       await harness.close();
     }
