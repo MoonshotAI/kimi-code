@@ -133,11 +133,13 @@ impl App {
                     let enabled = rest == "on" || rest.is_empty();
                     self.session.as_mut().expect("session").set_plan_mode(enabled).await?;
                     self.transcript.push(format!("plan mode {}", if enabled { "on" } else { "off" }));
+                    self.refresh_status().await;
                 }
                 "/swarm" => {
                     let enabled = rest == "on" || rest.is_empty();
                     self.session.as_mut().expect("session").set_swarm_mode(enabled).await?;
                     self.transcript.push(format!("swarm mode {}", if enabled { "on" } else { "off" }));
+                    self.refresh_status().await;
                 }
                 "/thinking" => {
                     if rest.is_empty() {
@@ -270,6 +272,16 @@ impl App {
             }
         }
         Ok(false)
+    }
+
+    /// Refresh the footer status bar from the current session snapshot.
+    async fn refresh_status(&mut self) {
+        if let Some(session) = self.session.as_mut() {
+            let status = session.get_status().await;
+            let plan = status["result"]["plan_mode"].as_bool().unwrap_or(false);
+            let swarm = status["result"]["swarm_mode"].as_bool().unwrap_or(false);
+            self.status = format!("plan={} swarm={}", if plan { "on" } else { "off" }, if swarm { "on" } else { "off" });
+        }
     }
 
     /// Render one engine event into the panel (with a short poll timeout so
