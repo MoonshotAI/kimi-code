@@ -151,7 +151,8 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
   }
 
   waitForInitialLoad(signal?: AbortSignal): Promise<void> {
-    return this.mcpHandle.connectionManager.waitForInitialLoad(signal);
+    const ready = this.mcpHandle.ready;
+    return signal === undefined ? ready : abortable(ready, signal);
   }
 
   initialLoadDurationMs(): number {

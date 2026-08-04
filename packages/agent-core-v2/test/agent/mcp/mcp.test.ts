@@ -219,16 +219,18 @@ describe('AgentMcpService', () => {
     disposables.dispose();
   });
 
-  function createService(manager: FakeMcpManager): AgentMcpService {
+  function createService(
+    manager: FakeMcpManager,
+    ready: Promise<void> = Promise.resolve(),
+  ): IAgentMcpService {
     ix.stub(ISessionMcpHandle, {
       _serviceBrand: undefined,
-      ready: Promise.resolve(),
+      ready,
       connectionManager: manager as unknown as McpConnectionManager,
     } satisfies ISessionMcpHandle);
     ix.stub(ISessionContext, { sessionDir: '/tmp/kimi-code-mcp-test' });
-    const svc = ix.createInstance(AgentMcpService);
-    disposables.add(svc);
-    return svc;
+    ix.set(IAgentMcpService, new SyncDescriptor(AgentMcpService));
+    return ix.get(IAgentMcpService);
   }
 
   it('delegates list / status events to the connection manager', async () => {
@@ -249,14 +251,13 @@ describe('AgentMcpService', () => {
     expect(statuses).toEqual(['s1:connected', 's2:connected', 's1:disabled']);
   });
 
-  it('holds the LLM step until the initial MCP load settles', async () => {
+  it('holds the LLM step until the session MCP handle is ready', async () => {
     const manager = new FakeMcpManager();
-    let releaseLoad!: () => void;
-    manager.waitForInitialLoad = () =>
-      new Promise<void>((resolve) => {
-        releaseLoad = resolve;
-      });
-    createService(manager);
+    let releaseReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      releaseReady = resolve;
+    });
+    createService(manager, ready);
 
     const loop = ix.get(IAgentLoopService);
     let settled = false;
@@ -269,14 +270,13 @@ describe('AgentMcpService', () => {
     await Promise.resolve();
     expect(settled).toBe(false);
 
-    releaseLoad();
+    releaseReady();
     await step;
     expect(settled).toBe(true);
   });
 
   it('resolves through the IAgentMcpService binding with no manager', () => {
     const created = createService(new FakeMcpManager());
-    ix.set(IAgentMcpService, created);
     const svc = ix.get(IAgentMcpService);
     expect(svc).toBe(created);
     expect(svc.list()).toEqual([]);
