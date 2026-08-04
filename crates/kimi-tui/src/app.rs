@@ -111,7 +111,7 @@ impl App {
             match cmd {
                 "/quit" | "/exit" => return Ok(true),
                 "/help" => {
-                    self.transcript.push("/quit /help /model <id> /plan on|off /status /goal <obj> /goal-cancel /clear /usage".into());
+                    self.transcript.push("/quit /help /model <id> /plan on|off /status /goal <obj> /goal-status /goal-cancel /clear /usage /sessions /export".into());
                 }
                 "/status" => {
                     let status = session.get_status().await;
@@ -149,6 +149,33 @@ impl App {
                 "/usage" => {
                     let usage = session.get_usage().await?;
                     self.transcript.push(format!("usage: {}", serde_json::to_string(&usage).unwrap_or_default()));
+                }
+                "/goal-status" => {
+                    let goal = session.goal().await?;
+                    self.transcript.push(format!("goal: {}", serde_json::to_string(&goal["goal"]).unwrap_or_default()));
+                }
+                "/sessions" => {
+                    let sessions = self.harness.list_sessions(50).await?;
+                    if sessions.is_empty() {
+                        self.transcript.push("no sessions".into());
+                    }
+                    for s in sessions.iter().take(20) {
+                        let id = s["id"].as_str().unwrap_or("");
+                        let title = s["title"].as_str().unwrap_or("(untitled)");
+                        self.transcript.push(format!("{id}  {title}"));
+                    }
+                }
+                "/export" => {
+                    match self.harness.export_session(&self.session_id).await {
+                        Ok(zip) => {
+                            let path = format!("{}.zip", self.session_id);
+                            match std::fs::write(&path, &zip) {
+                                Ok(()) => self.transcript.push(format!("exported to {path} ({} bytes)", zip.len())),
+                                Err(e) => self.transcript.push(format!("write failed: {e}")),
+                            }
+                        }
+                        Err(e) => self.transcript.push(format!("export failed: {e}")),
+                    }
                 }
                 other => self.transcript.push(format!("unknown command {other} — try /help")),
             }
