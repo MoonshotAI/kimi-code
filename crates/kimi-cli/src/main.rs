@@ -119,6 +119,11 @@ enum Commands {
     },
     /// Serve the Agent Client Protocol (ACP) over stdio.
     Acp,
+    /// Generate a shell completion script.
+    Completions {
+        /// Target shell.
+        shell: clap_complete::Shell,
+    },
 }
 
 /// Sub-targets of `kimi doctor`.
@@ -888,6 +893,11 @@ async fn main() -> anyhow::Result<()> {
             let stdin = tokio::io::stdin();
             let mut stdout = tokio::io::stdout();
             kimi_acp::serve(harness, stdin, &mut stdout).await;
+        }
+        Commands::Completions { shell } => {
+            use clap::CommandFactory;
+            let mut cmd = Cli::command();
+            clap_complete::generate(shell, &mut cmd, "kimi", &mut std::io::stdout());
         }
         Commands::Export { session_id, output, yes } => {
             let mut client = connect(&server)?;

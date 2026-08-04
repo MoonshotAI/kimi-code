@@ -24,6 +24,7 @@ kimi-tui = { path = "../kimi-tui" }
 kimi-ui = { path = "../kimi-ui" }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+clap_complete = "4"
 
 [dev-dependencies]
 serde_json = { workspace = true }

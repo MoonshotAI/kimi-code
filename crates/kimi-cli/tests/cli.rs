@@ -464,6 +464,23 @@ fn chat_plan_mode_toggle() {
 }
 
 #[test]
+fn completions_generate_scripts() {
+    let home = temp_dir("completions");
+    for shell in ["bash", "zsh", "fish"] {
+        let output = run(&home, &["completions", shell]);
+        assert!(
+            output.status.success(),
+            "completions {shell} exits 0: {}",
+            output.status
+        );
+        assert!(
+            !stdout(&output).trim().is_empty(),
+            "completions {shell} prints a script"
+        );
+    }
+}
+
+#[test]
 fn server_mode_verbose_emits_events() {
     // `--verbose` over the Remote path: the serve binary fans engine events
     // to stderr (session.turn.started fires before the LLM call, so it lands
