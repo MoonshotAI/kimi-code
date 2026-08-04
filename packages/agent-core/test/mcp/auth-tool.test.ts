@@ -55,6 +55,7 @@ describe('createMcpAuthTool', () => {
       complete: async () => undefined,
       cancel: async () => undefined,
     }));
+    const before = Date.now();
     const { result, updates } = runTool({
       oauthService,
       reconnect: async () => {
@@ -73,11 +74,14 @@ describe('createMcpAuthTool', () => {
       serverName: 'notion',
       authorizationUrl: 'https://example.com/authorize?state=abc',
     });
-    // The deadline is absolute (now + wait timeout), so hosts never mirror
-    // the engine-side constant.
+    // The deadline is absolute (emit time + the effective wait timeout — the
+    // 100ms override here, not the 15-minute default), so hosts render from
+    // data instead of mirroring the engine constant. Bounding by the time
+    // window around the run keeps the assertion exact without depending on
+    // how long the test body takes.
     const { expiresAt } = authUpdate?.customData as { expiresAt?: number };
-    expect(expiresAt).toBeGreaterThan(Date.now());
-    expect(expiresAt).toBeLessThanOrEqual(Date.now() + 15 * 60 * 1000);
+    expect(expiresAt).toBeGreaterThanOrEqual(before + 100);
+    expect(expiresAt).toBeLessThanOrEqual(Date.now() + 100);
   });
 
   it('falls through to reconnect when the provider reports already-authorized', async () => {
