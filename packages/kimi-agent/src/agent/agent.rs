@@ -1485,8 +1485,14 @@ impl Agent {
                 run_turn_input,
                 &callbacks,
             ).await.map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())) as Box<dyn std::error::Error + Send + Sync>)
-        }?;
+        };
 
+        // Restore the goal from the interceptor BEFORE the turn outcome is
+        // unwrapped: a failed turn must not orphan the goal record (hosts
+        // would see no goal and pause/retry would no-op).
+        self.goal = goal_interceptor.take_goal();
+
+        let result = result?;
         self.has_active_turn = false;
 
         // Persist the assistant side of the turn: the loop reports the messages
@@ -1501,8 +1507,7 @@ impl Agent {
             }
         }
 
-        // Restore goal from interceptor and update bookkeeping.
-        self.goal = goal_interceptor.take_goal();
+        // Turn bookkeeping only on success (the goal was restored above).
         if let Some(ref mut goal) = self.goal {
             goal.increment_turn();
             goal.record_token_usage(result.usage.total_tokens.max(0) as u64);

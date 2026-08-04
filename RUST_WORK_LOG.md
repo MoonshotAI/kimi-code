@@ -5,6 +5,13 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㊴ 引擎 bug：run_turn 失败时 goal 孤儿 + 跨进程持久化链路（已提交）**：
+> - **发现（print --goal 集成测试驱动）**：`kimi print --goal` 后 goal 消失——三个叠加问题：
+>   ① **run_turn 失败孤儿 goal**：`let goal_temp = self.goal.take()` 移入 GoalToolInterceptor，turn 结果 `?` 在恢复 `self.goal = goal_interceptor.take_goal()` **之前**——turn 失败时 goal 永不恢复（self.goal 变 None），宿主看到 null、pause_goal 空转。修复：恢复移到 unwrap 之前（书签操作仅成功路径）。
+>   ② **print --goal 顺序**：goal 在 run_prompt 的二次 create（重建 agent）之前创建会被抹掉。修复：goal 创建移入 `run_prompt_with_setup`（create 之后、prompt 之前）。
+>   ③ **跨进程不持久化**：print 失败 exit 前不 save（goal/context 只在内存）；chat 重开会话 create 重建全新 agent 不读 store。修复：print 无论成败先 SESSION_SAVE；chat 启动 create 后 SESSION_LOAD（resume 语义，新建会话 no-op）。
+> - **验证**：`print_goal_mode_creates_goal` 集成测试（print --goal → chat /goal-status 读回 goal）从红转绿；kimi-agent goal 120 测试 + 3 集成 + kimi-server 52 + kimi-exec 3 + chat 9 全绿；clippy 0 警告。
+
 > **✅ 2026-08-03 ㊳ doctor 退出码修正（health 错误 → exit 1，已提交）**：
 > - **缺口**：全量 `kimi doctor` 在 health 报错时仍退出 0——CI 会把引擎不可达误判为通过。
 > - **实现**：health 错误分支 `std::process::exit(1)`（config/tui 目标的错误已 exit 1，行为对齐）。

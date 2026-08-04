@@ -607,6 +607,37 @@ fn chat_undo_and_fork_offline() {
 }
 
 #[test]
+fn print_goal_mode_creates_goal() {
+    // print --goal runs create -> goal_create -> prompt; the prompt errors
+    // without an LLM but the goal persists on the session.
+    let home = temp_dir("print-goal");
+    let out = run(&home, &["print", "--goal", "do the thing", "hi"]);
+    assert!(!out.status.success(), "no LLM -> print errors: {}", out.status);
+
+    // The goal is readable back on the same session via chat /goal-status.
+    let cwd = temp_dir("print-goal-cwd");
+    let mut child = Command::new(binary())
+        .args(["chat", "-s", "kimi-exec"])
+        .current_dir(&cwd)
+        .env("KIMI_AGENT_HOME", &home)
+        .env("HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn kimi chat");
+    {
+        use std::io::Write;
+        let stdin = child.stdin.as_mut().expect("stdin");
+        stdin.write_all(b"/goal-status\n/quit\n").expect("write");
+    }
+    let output = child.wait_with_output().expect("wait");
+    assert!(output.status.success(), "chat exits 0: {}", output.status);
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(out.contains("do the thing"), "goal persisted on session: {out}");
+}
+
+#[test]
 fn chat_approval_commands_offline_safe() {
     // /approvals + /approve|/deny are pure state ops (no LLM): an empty store
     // lists nothing and unknown ids resolve to "not found" without erroring.

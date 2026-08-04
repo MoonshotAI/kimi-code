@@ -12,6 +12,10 @@ pub struct PromptSetup {
     pub model: Option<String>,
     /// Enable plan mode before prompting (`session/set_plan_mode`).
     pub plan: bool,
+    /// Create a goal on the session before prompting (goal mode). Created
+    /// AFTER the session create so the (idempotent) create does not rebuild
+    /// the agent and wipe it.
+    pub goal: Option<String>,
 }
 
 /// Run one prompt: create a session, prompt it, return the wire result.
@@ -60,6 +64,17 @@ pub async fn run_prompt_with_setup(
             .call(
                 kimi_protocol::methods::SESSION_SET_PLAN_MODE,
                 serde_json::json!({ "session_id": session_id, "enabled": true }),
+            )
+            .await;
+        if body.get("error").is_some() {
+            return body;
+        }
+    }
+    if let Some(objective) = &setup.goal {
+        let body = client
+            .call(
+                kimi_protocol::methods::SESSION_GOAL_CREATE,
+                serde_json::json!({ "session_id": session_id, "objective": objective }),
             )
             .await;
         if body.get("error").is_some() {
@@ -119,11 +134,16 @@ mod tests {
     async fn run_prompt_with_setup_applies_model_and_plan() {
         let server = kimi_server::Server::build().expect("server");
         let mut client = AppServerClient::InProcess(kimi_server::in_process::spawn(server.processor));
-        let setup = PromptSetup { model: Some("setup-test-model".into()), plan: true };
+        let setup = PromptSetup {
+            model: Some("setup-test-model".into()),
+            plan: true,
+            goal: Some("setup goal".into()),
+        };
         let result =
             run_prompt_with_setup(&mut client, "s-setup", "hello", native_llm_from_config(), &setup).await;
-        // The pipeline runs create -> set_model -> set_plan_mode -> prompt;
-        // the prompt itself fails (no reachable LLM) but setup landed first.
+        // The pipeline runs create -> set_model -> set_plan_mode -> goal ->
+        // prompt; the prompt itself fails (no reachable LLM) but setup landed
+        // first.
         assert!(result.get("error").is_some(), "no LLM -> prompt errors: {result}");
         let status = client
             .call(
@@ -133,5 +153,14 @@ mod tests {
             .await;
         assert_eq!(status["result"]["plan_mode"], true, "plan mode set: {status}");
         assert_eq!(status["result"]["model"], "setup-test-model", "model set: {status}");
+        // The goal survived the create (created after it, so the agent
+        // rebuild could not wipe it).
+        let goal = client
+            .call(
+                kimi_protocol::methods::SESSION_GOAL_GET,
+                serde_json::json!({ "session_id": "s-setup" }),
+            )
+            .await;
+        assert_eq!(goal["result"]["goal"]["objective"], "setup goal", "goal set: {goal}");
     }
 }

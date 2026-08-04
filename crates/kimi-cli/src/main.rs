@@ -908,35 +908,11 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 "kimi-exec".to_string()
             };
-            // Goal mode: create the session + goal before prompting (pure
-            // state ops) so the engine drives continuation turns toward the
-            // objective; run_prompt's own create is idempotent.
-            if let Some(objective) = goal {
-                let created = client
-                    .call(
-                        kimi_protocol::methods::SESSION_CREATE,
-                        serde_json::json!({ "session_id": session_id }),
-                    )
-                    .await;
-                if let Some(error) = created.get("error") {
-                    eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
-                    std::process::exit(1);
-                }
-                let goal_created = client
-                    .call(
-                        kimi_protocol::methods::SESSION_GOAL_CREATE,
-                        serde_json::json!({
-                            "session_id": session_id,
-                            "objective": objective,
-                        }),
-                    )
-                    .await;
-                if let Some(error) = goal_created.get("error") {
-                    eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
-                    std::process::exit(1);
-                }
-            }
-            let setup = kimi_exec::PromptSetup { model, plan };
+            // Goal mode is applied inside run_prompt_with_setup, AFTER the
+            // (idempotent) create — creating the goal first and then letting
+            // run_prompt re-create the session would rebuild the agent and
+            // wipe it (create_agent replaces the live agent).
+            let setup = kimi_exec::PromptSetup { model, plan, goal };
             let result = kimi_exec::run_prompt_with_setup(
                 &mut client,
                 &session_id,
@@ -948,6 +924,16 @@ async fn main() -> anyhow::Result<()> {
             if let Some(renderer) = renderer {
                 renderer.abort();
             }
+            // Persist the session (context + goal) so a later `kimi resume`
+            // can continue it — even when the prompt itself failed. The
+            // engine only persists on session/save; the goal and context live
+            // in the agent otherwise.
+            let _ = client
+                .call(
+                    kimi_protocol::methods::SESSION_SAVE,
+                    serde_json::json!({ "session_id": session_id }),
+                )
+                .await;
             if let Some(error) = result.get("error") {
                 eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
                 std::process::exit(1);
@@ -1275,6 +1261,15 @@ async fn main() -> anyhow::Result<()> {
                 eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
                 std::process::exit(1);
             }
+            // Restore persisted state (context + goal) when resuming an
+            // existing session: create rebuilds a fresh agent, load re-applies
+            // the durable state. A no-op for brand-new sessions.
+            let _ = client
+                .call(
+                    kimi_protocol::methods::SESSION_LOAD,
+                    serde_json::json!({ "session_id": session_id }),
+                )
+                .await;
             // `--model` at startup (the REPL's `/model` covers mid-session).
             if let Some(model) = &model {
                 let body = client
