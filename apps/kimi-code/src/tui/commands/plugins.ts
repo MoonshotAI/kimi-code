@@ -1,8 +1,9 @@
 import { homedir as osHomedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 
-import type { PluginInfo, PluginSummary } from '@moonshot-ai/kimi-code-sdk';
+import type { PluginInfo, PluginSummary, Session } from '@moonshot-ai/kimi-code-sdk';
 
+import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import {
   PluginInstallTrustConfirmComponent,
   PluginMcpSelectorComponent,
@@ -50,11 +51,46 @@ interface ShowPluginMcpPickerOptions {
   readonly serverHint?: PluginMcpServerHint;
 }
 
+/** The plugin-management surface `/plugins` operates on. */
+type PluginApi = Pick<
+  Session,
+  | 'listPlugins'
+  | 'installPlugin'
+  | 'setPluginEnabled'
+  | 'setPluginMcpServerEnabled'
+  | 'removePlugin'
+  | 'reloadPlugins'
+  | 'getPluginInfo'
+>;
+
+/**
+ * Resolve the plugin-management API. On the v2 engine plugin state is
+ * app-global, so a session-less startup still gets a working `/plugins`
+ * through the harness's global facade; on v1 (and once a session exists) the
+ * session's own API is used.
+ */
+async function resolvePluginApi(host: SlashCommandHost): Promise<PluginApi> {
+  if (host.session !== undefined) return host.session;
+  if (!host.engineV2) {
+    throw new Error(NO_ACTIVE_SESSION_MESSAGE);
+  }
+  return {
+    listPlugins: () => host.harness.listPlugins(),
+    installPlugin: (source) => host.harness.installPlugin(source),
+    setPluginEnabled: (id, enabled) => host.harness.setPluginEnabled(id, enabled),
+    setPluginMcpServerEnabled: (id, server, enabled) =>
+      host.harness.setPluginMcpServerEnabled(id, server, enabled),
+    removePlugin: (id) => host.harness.removePlugin(id),
+    reloadPlugins: () => host.harness.reloadPlugins(),
+    getPluginInfo: (id) => host.harness.getPluginInfo(id),
+  };
+}
+
 export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: string): Promise<void> {
   const args = rawArgs.trim().split(/\s+/).filter((part) => part.length > 0);
   const sub = args[0];
   const rest = args.slice(1);
-  const session = host.requireSession();
+  const session = await resolvePluginApi(host);
 
   try {
     if (sub === undefined) {
@@ -163,7 +199,7 @@ async function showPluginsPicker(
 ): Promise<void> {
   let plugins: readonly PluginSummary[];
   try {
-    plugins = await host.requireSession().listPlugins();
+    plugins = await (await resolvePluginApi(host)).listPlugins();
   } catch (error) {
     host.showError(`Failed to load plugins: ${formatErrorMessage(error)}`);
     return;
@@ -230,7 +266,7 @@ async function showPluginMcpPicker(
 ): Promise<void> {
   let info: PluginInfo;
   try {
-    info = await host.requireSession().getPluginInfo(id);
+    info = await (await resolvePluginApi(host)).getPluginInfo(id);
   } catch (error) {
     host.showError(`Failed to load plugin MCP servers: ${formatErrorMessage(error)}`);
     return;
@@ -259,7 +295,7 @@ async function showPluginMcpPicker(
 async function confirmRemovePlugin(host: SlashCommandHost, id: string): Promise<boolean> {
   let displayName = id;
   try {
-    displayName = (await host.requireSession().getPluginInfo(id)).displayName;
+    displayName = (await (await resolvePluginApi(host)).getPluginInfo(id)).displayName;
   } catch {
     // Keep the confirmation available even when plugin details cannot be loaded.
   }
@@ -345,7 +381,7 @@ async function applyPluginEnabled(
   enabled: boolean,
   showStatus = true,
 ): Promise<string> {
-  const session = host.requireSession();
+  const session = await resolvePluginApi(host);
   await session.setPluginEnabled(id, enabled);
   let info: PluginInfo | undefined;
   try {
@@ -432,11 +468,9 @@ async function handlePluginMcpSelection(
 ): Promise<void> {
   switch (selection.kind) {
     case 'toggle':
-      await host.requireSession().setPluginMcpServerEnabled(
-        selection.pluginId,
-        selection.server,
-        selection.enabled,
-      );
+      await (
+        await resolvePluginApi(host)
+      ).setPluginMcpServerEnabled(selection.pluginId, selection.server, selection.enabled);
       await showPluginMcpPicker(host, selection.pluginId, {
         selectedServer: selection.server,
         serverHint: {
@@ -452,7 +486,7 @@ async function handlePluginMcpSelection(
 }
 
 async function removePlugin(host: SlashCommandHost, id: string): Promise<void> {
-  await host.requireSession().removePlugin(id);
+  await (await resolvePluginApi(host)).removePlugin(id);
   host.showStatus(`Removed ${id}.`);
   host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
 }
@@ -461,7 +495,7 @@ async function renderPluginsList(
   host: SlashCommandHost,
   plugins?: readonly PluginSummary[],
 ): Promise<void> {
-  const currentPlugins = plugins ?? (await host.requireSession().listPlugins());
+  const currentPlugins = plugins ?? (await (await resolvePluginApi(host)).listPlugins());
   const title = ` Plugins (${currentPlugins.length}) `;
   const panel = new UsagePanelComponent(
     () => buildPluginsListLines({ plugins: currentPlugins }),
@@ -473,7 +507,7 @@ async function renderPluginsList(
 }
 
 async function renderPluginInfo(host: SlashCommandHost, id: string): Promise<void> {
-  const info = await host.requireSession().getPluginInfo(id);
+  const info = await (await resolvePluginApi(host)).getPluginInfo(id);
   const panel = new UsagePanelComponent(
     () => buildPluginsInfoLines({ info }),
     'primary',
@@ -487,7 +521,7 @@ async function installPluginFromSource(
   host: SlashCommandHost,
   source: string,
 ): Promise<void> {
-  const session = host.requireSession();
+  const session = await resolvePluginApi(host);
   const beforeList = await session.listPlugins();
   const summary = await session.installPlugin(
     resolvePluginInstallSource(source, host.state.appState.workDir),
@@ -558,10 +592,13 @@ function truncateForStatus(input: string): string {
 }
 
 async function reloadPlugins(host: SlashCommandHost): Promise<void> {
-  const summary = await host.requireSession().reloadPlugins();
+  const summary = await (await resolvePluginApi(host)).reloadPlugins();
   const line = `Reload: +${summary.added.length} -${summary.removed.length}` +
     (summary.errors.length > 0 ? ` (${summary.errors.length} errors)` : '');
   host.showStatus(line);
+  // Rebuild the TUI's plugin slash-command list from the reloaded service so
+  // newly added/enabled commands resolve in this session-less UI right away.
+  await host.refreshPluginCommands(host.session);
 }
 
 function resolvePluginInstallSource(source: string, workDir: string): string {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DOUBLE_ESC_WINDOW_MS } from '#/tui/constant/kimi-tui';
+import { DOUBLE_ESC_WINDOW_MS, NO_ACTIVE_SESSION_MESSAGE } from '#/tui/constant/kimi-tui';
 import {
   EditorKeyboardController,
   type EditorKeyboardHost,
@@ -283,5 +283,86 @@ describe('EditorKeyboardController shell history recall', () => {
     restore('prompt');
 
     expect(editor['setInputMode'] as unknown as Mock).toHaveBeenCalledWith('prompt');
+  });
+});
+
+describe('EditorKeyboardController Shift-Tab plan toggle', () => {
+  function createShiftTabHarness(options: { sessionless?: boolean; engineV2?: boolean } = {}) {
+    const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {
+      setHistoryFilter: vi.fn() as unknown as (...args: never[]) => unknown,
+    };
+    const handlePlanToggle = vi.fn();
+    const track = vi.fn();
+    const showError = vi.fn();
+    const ensureSession = vi.fn(async (): Promise<{ id: string } | undefined> => ({ id: 'ses-lazy' }));
+    const host = {
+      state: {
+        editor,
+        activeDialog: null,
+        appState: { streamingPhase: 'idle', isCompacting: false, planMode: false },
+        footer: { setTransientHint: vi.fn() },
+        ui: { requestRender: vi.fn() },
+      },
+      session: options.sessionless ? undefined : { cancel: vi.fn(async () => {}) },
+      engineV2: options.engineV2 ?? false,
+      ensureSession,
+      handlePlanToggle,
+      track,
+      showError,
+      btwPanelController: { cancelRunning: vi.fn(), closeOrCancel: vi.fn() },
+    } as unknown as EditorKeyboardHost;
+
+    new EditorKeyboardController(host, undefined as unknown as ImageAttachmentStore).install();
+    const onShiftTab = editor['onShiftTab'] as unknown as () => void;
+    return { onShiftTab, handlePlanToggle, track, showError, ensureSession };
+  }
+
+  it('toggles plan mode directly with an active session', () => {
+    const { onShiftTab, handlePlanToggle, ensureSession } = createShiftTabHarness();
+
+    onShiftTab();
+
+    expect(ensureSession).not.toHaveBeenCalled();
+    expect(handlePlanToggle).toHaveBeenCalledWith(true);
+  });
+
+  it('reports no active session on v1 when session-less', () => {
+    const { onShiftTab, showError, handlePlanToggle } = createShiftTabHarness({
+      sessionless: true,
+    });
+
+    onShiftTab();
+
+    expect(showError).toHaveBeenCalledWith(NO_ACTIVE_SESSION_MESSAGE);
+    expect(handlePlanToggle).not.toHaveBeenCalled();
+  });
+
+  it('lazy-creates the session before toggling on v2 when session-less', async () => {
+    const { onShiftTab, ensureSession, handlePlanToggle, track } = createShiftTabHarness({
+      sessionless: true,
+      engineV2: true,
+    });
+
+    onShiftTab();
+    expect(handlePlanToggle).not.toHaveBeenCalled();
+
+    await vi.waitFor(() => {
+      expect(handlePlanToggle).toHaveBeenCalledWith(true);
+    });
+    expect(ensureSession).toHaveBeenCalledOnce();
+    expect(track).toHaveBeenCalledWith('shortcut_plan_toggle', { enabled: true });
+  });
+
+  it('does not toggle when the lazy creation fails on v2', async () => {
+    const { onShiftTab, ensureSession, handlePlanToggle } = createShiftTabHarness({
+      sessionless: true,
+      engineV2: true,
+    });
+    ensureSession.mockResolvedValue(undefined);
+
+    onShiftTab();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(handlePlanToggle).not.toHaveBeenCalled();
   });
 });
