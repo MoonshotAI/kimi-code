@@ -93,12 +93,23 @@ export interface CompactionTarget {
   };
   /** Reader for disk-backed values; reopened after snapshot/WAL rotation so
    *  remapped value pointers read from the new files. On Windows it is also
-   *  closed before the rotation renames (see rotateReplace). */
-  valueReader?: { reopenBoth(): void; close?(): void };
+   *  closed before the rotation renames (see rotateReplace). The optional
+   *  readAsync powers the stage-6 grouped async snapshot reads. */
+  valueReader?: {
+    reopenBoth(): void;
+    close?(): void;
+    readAsync?(loc: ValueLoc): Promise<Buffer>;
+  };
   /** Optional hook invoked (and awaited) after the snapshot + WAL rotation
    *  succeeds, so the owner can publish derived on-disk state (stage 5's
    *  index generation; legacy mode: text postings) against the new live set. */
   onCompacted?: () => void | Promise<void>;
+  /** Stage 6 maintenance integration: the rotation critical section is the
+   *  compaction's "publishing" phase — the scheduler WAITS for it on
+   *  shutdown instead of cancelling mid-rotation. Called with 'publishing'
+   *  as the rotation starts and 'running' as it ends (both in the failure
+   *  path and the success path). */
+  onMaintenancePhase?: (phase: 'running' | 'publishing') => void;
 }
 
 export function shouldCompact(db: CompactionTarget): boolean {
@@ -234,8 +245,13 @@ async function runCompaction(db: CompactionTarget): Promise<void> {
 
   // Phase 2: snapshot. NON-BLOCKING — writers keep appending to the WAL and
   // mutating the store while we iterate. Fuzziness is repaired by the tail.
+  // Stage 6: in disk valueMode the snapshot's value reads run through the
+  // async grouped reader (bounded concurrency, slice budget) instead of one
+  // synchronous positioned read per record on the event loop.
   const snapT0 = performance.now();
-  const snapRes = await writeSnapshot(db.store, tmp);
+  const snapRes = await writeSnapshot(db.store, tmp, {
+    readValueAsync: db.valueReader?.readAsync ? (loc) => db.valueReader!.readAsync!(loc) : undefined,
+  });
   db.stats.snapshotBytesWritten += snapRes.bytes;
   db.stats.compactionSnapshotDurationMs = (db.stats.compactionSnapshotDurationMs ?? 0) + (performance.now() - snapT0);
 
@@ -292,6 +308,9 @@ async function runCompaction(db: CompactionTarget): Promise<void> {
     releaseRotation = resolve;
   });
   const rotateT0 = performance.now();
+  // Stage 6: from here to the remap/reader reopen, a shutdown must wait for
+  // the rotation rather than cancelling it mid-flight.
+  db.onMaintenancePhase?.('publishing');
   let rotated = false;
   let remapped = false;
   // Remap disk-backed value pointers to the new snapshot/WAL files. Guarded
@@ -369,6 +388,7 @@ async function runCompaction(db: CompactionTarget): Promise<void> {
   } finally {
     releaseRotation();
     db._rotateLock = null;
+    db.onMaintenancePhase?.('running');
     // Wall time of the rotation critical section — the window writers were
     // parked (their per-op waits accumulate separately in MiniDb's
     // compactionRotationPauseMs).

@@ -25,6 +25,7 @@ import type { TuiConfig } from '#/tui/config';
 import { loadTuiConfig, TuiConfigParseError } from '#/tui/config';
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
 import { KimiTUI } from '#/tui/index';
+import { startupTrace } from '#/utils/startup-trace';
 import { currentTheme, getColorPalette } from '#/tui/theme';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
@@ -87,6 +88,7 @@ export async function runShell(
   const harness = engineV2
     ? createKimiHarnessV2(harnessOptions)
     : createKimiHarness(harnessOptions);
+  startupTrace('harness:created');
   log.info('kimi-code starting', {
     version,
     uiMode: CLI_UI_MODE,
@@ -107,6 +109,7 @@ export async function runShell(
     return;
   }
   const config = await harness.getConfig();
+  startupTrace('config:loaded');
   // Config diagnostics (deprecated keys, invalid sections, ...) are surfaced
   // by the TUI itself at `finishStartup` via `showConfigWarningsIfAny` —
   // folded into the dim startup notice they were too easy to miss.
@@ -243,7 +246,9 @@ export async function runShell(
   };
   try {
     const initStartedAt = Date.now();
+    startupTrace('tui.start:begin');
     await tui.start();
+    startupTrace('tui.start:end');
     const initMs = Date.now() - initStartedAt;
     const startupSessionId = tui.getCurrentSessionId();
     const mcpMs = await tui.getStartupMcpMs();

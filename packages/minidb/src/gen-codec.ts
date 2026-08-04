@@ -23,7 +23,7 @@
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
-import { crc32 } from './crc32.js';
+import { crc32 } from './crc32.ts';
 import type { ValueRef } from './store.js';
 
 /** Thrown by every reader on a malformed/truncated/crc-mismatched generation
@@ -252,22 +252,27 @@ export class GenFileWriter {
     const bufs = this.chunks.splice(0, this.chunks.length);
     this.queued = 0;
     for (const b of bufs) this.crc = crc32(b, this.crc);
+    // Index-based consumption walk: a flush can carry tens of thousands of
+    // tiny record buffers (the text docs image averages ~14 B/record), and a
+    // shift()-per-buffer loop is O(n²) on the main thread — measured 20+s of
+    // self time across one 1M-doc generation publish, surfacing as the
+    // multi-second event-loop stalls at the publish tail.
+    let idx = 0;
     let off = 0;
-    let cur = bufs;
-    while (cur.length > 0) {
-      const toWrite = off > 0 ? [cur[0]!.subarray(off), ...cur.slice(1)] : cur;
+    while (idx < bufs.length) {
+      const toWrite = off > 0 ? [bufs[idx]!.subarray(off), ...bufs.slice(idx + 1)] : idx === 0 ? bufs : bufs.slice(idx);
       const { bytesWritten } = await this.fh.writev(toWrite);
       if (bytesWritten === 0) throw new Error('generation file writev made no progress (short write)');
       this.bytes += bytesWritten;
       let rem = bytesWritten;
-      while (rem > 0 && cur.length > 0) {
-        const left = cur[0]!.length - off;
+      while (rem > 0 && idx < bufs.length) {
+        const left = bufs[idx]!.length - off;
         if (rem < left) {
           off += rem;
           rem = 0;
         } else {
           rem -= left;
-          cur.shift();
+          idx++;
           off = 0;
         }
       }
@@ -349,6 +354,42 @@ export async function readGenerationFileChecked(
     throw new GenerationCorruptError('generation file does not match manifest record');
   }
   return f.payload;
+}
+
+/** Sliced variant of readGenerationFileChecked (stage 6): the file is read
+ *  and crc'd in 1 MiB slices with event-loop yields, so verifying a large
+ *  dictionary/docs image never blocks the loop for the whole pass. The
+ *  payload still lands in RAM wholesale (it becomes in-memory state), only
+ *  the read + verification is sliced. */
+export async function readGenerationFileCheckedAsync(
+  path: string,
+  magic: string,
+  version: number,
+  expected: { bytes: number; crc32: number },
+): Promise<ByteReader> {
+  let buf: Buffer;
+  try {
+    buf = await fs.readFile(path);
+  } catch (e) {
+    throw new GenerationCorruptError(`generation file unreadable: ${(e as NodeJS.ErrnoException).code ?? String(e)}`);
+  }
+  if (buf.length < 8 + 4) throw new GenerationCorruptError('generation file too short');
+  for (let i = 0; i < 4; i++) {
+    if (buf.readUInt8(i) !== magic.charCodeAt(i)) throw new GenerationCorruptError(`bad magic (want ${magic})`);
+  }
+  if (buf.readUInt32LE(4) !== version) throw new GenerationCorruptError(`unsupported file version (want ${version})`);
+  const stored = buf.readUInt32LE(buf.length - 4);
+  let crc = 0;
+  const SLICE = 1 << 20;
+  for (let pos = 0; pos < buf.length - 4; pos += SLICE) {
+    crc = crc32(buf.subarray(pos, Math.min(pos + SLICE, buf.length - 4)), crc);
+    await new Promise((r) => setImmediate(r));
+  }
+  if (stored !== crc) throw new GenerationCorruptError('generation file crc mismatch');
+  if (buf.length !== expected.bytes || stored !== expected.crc32) {
+    throw new GenerationCorruptError('generation file does not match manifest record');
+  }
+  return new ByteReader(buf.subarray(8, buf.length - 4));
 }
 
 /** Verify a raw file against the manifest's integrity record by streaming
@@ -778,6 +819,19 @@ export async function writeTextDictionaryImage(
 export function readTextDictionaryImage(r: ByteReader): TextDictImageEntry[] {
   const out: TextDictImageEntry[] = [];
   while (!r.done) out.push({ term: r.term(), off: r.u64(), len: r.u32(), df: r.u32() });
+  return out;
+}
+
+/** Sliced variant (stage 6): identical result, with event-loop yields every
+ *  `yieldEvery` entries so a million-term dictionary never parses in one
+ *  synchronous run. */
+export async function readTextDictionaryImageAsync(r: ByteReader, yieldEvery = 65536): Promise<TextDictImageEntry[]> {
+  const out: TextDictImageEntry[] = [];
+  let n = 0;
+  while (!r.done) {
+    out.push({ term: r.term(), off: r.u64(), len: r.u32(), df: r.u32() });
+    if (++n % yieldEvery === 0) await new Promise((res) => setImmediate(res));
+  }
   return out;
 }
 

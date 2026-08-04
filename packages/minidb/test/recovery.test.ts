@@ -503,3 +503,143 @@ test('a read-only open racing a compaction rotation always recovers one complete
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+// ---- stage 6: async frame scanner -------------------------------------------
+
+import { scanFrameRefsFd, scanFrameRefsFdAsync, MAGIC, DEFAULT_RESYNC_CANDIDATE_BUDGET } from '../src/codec.js';
+import fsSync from 'node:fs';
+
+test('async scanner: results match the sync scanner on clean and corrupt files', async () => {
+  const dir = await tmpDir();
+  try {
+    await writeFive(dir);
+    const walPath = path.join(dir, 'db.wal');
+    // Add corruption: damage k2's frame, then append two valid frames after it.
+    const buf = await fs.readFile(walPath);
+    buf[2 * FRAME + HEADER_SIZE + 2] ^= 0xff;
+    const extra = Buffer.concat([
+      encodeFrame({ type: TYPE_SET, key: Buffer.from('k5'), value: Buffer.from('v5') }),
+      encodeFrame({ type: TYPE_SET, key: Buffer.from('k6'), value: Buffer.from('v6') }),
+    ]);
+    await fs.writeFile(walPath, Buffer.concat([buf, extra]));
+
+    for (const mode of ['resync', 'strict'] as const) {
+      const fd = fsSync.openSync(walPath, 'r');
+      let syncRes;
+      try {
+        syncRes = scanFrameRefsFd(fd, { onCorrupt: mode });
+      } finally {
+        fsSync.closeSync(fd);
+      }
+      const fd2 = fsSync.openSync(walPath, 'r');
+      let asyncRes;
+      try {
+        asyncRes = await scanFrameRefsFdAsync(fd2, { onCorrupt: mode });
+      } finally {
+        fsSync.closeSync(fd2);
+      }
+      assert.deepEqual(
+        asyncRes.frames.map((f) => [f.type, f.frameOff, f.valueOff, f.valLen, f.frameLen, f.key.toString('binary')]),
+        syncRes.frames.map((f) => [f.type, f.frameOff, f.valueOff, f.valLen, f.frameLen, f.key.toString('binary')]),
+      );
+      assert.deepEqual(asyncRes.corruptRanges, syncRes.corruptRanges);
+      assert.equal(asyncRes.eofOffset, syncRes.eofOffset);
+    }
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('async scanner: frames larger than the read window scan identically (chunked fallback)', async () => {
+  const dir = await tmpDir();
+  try {
+    // One 8 MiB value (exceeds the 4 MiB async window) between two small frames.
+    const frames = Buffer.concat([
+      encodeFrame({ type: TYPE_SET, key: Buffer.from('a'), value: Buffer.from('small-a') }),
+      encodeFrame({ type: TYPE_SET, key: Buffer.from('big'), value: Buffer.alloc(8 << 20, 0x61) }),
+      encodeFrame({ type: TYPE_SET, key: Buffer.from('z'), value: Buffer.from('small-z') }),
+    ]);
+    const walPath = path.join(dir, 'db.wal');
+    await fs.writeFile(walPath, frames);
+    const fd = fsSync.openSync(walPath, 'r');
+    let syncRes;
+    try {
+      syncRes = scanFrameRefsFd(fd, {});
+    } finally {
+      fsSync.closeSync(fd);
+    }
+    const fd2 = fsSync.openSync(walPath, 'r');
+    let asyncRes;
+    try {
+      asyncRes = await scanFrameRefsFdAsync(fd2, {});
+    } finally {
+      fsSync.closeSync(fd2);
+    }
+    assert.equal(asyncRes.frames.length, 3);
+    assert.deepEqual(
+      asyncRes.frames.map((f) => [f.frameOff, f.valLen, f.frameLen]),
+      syncRes.frames.map((f) => [f.frameOff, f.valLen, f.frameLen]),
+    );
+    assert.equal(asyncRes.eofOffset, syncRes.eofOffset);
+    assert.deepEqual(asyncRes.corruptRanges, []);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('async scanner: cancellation aborts the scan with AbortError', async () => {
+  const dir = await tmpDir();
+  try {
+    // A file large enough to span many yield points.
+    const big = Buffer.concat(
+      Array.from({ length: 200 }, (_, i) => encodeFrame({ type: TYPE_SET, key: Buffer.from(`k${i}`), value: Buffer.alloc(1 << 16, i & 0xff) })),
+    );
+    const walPath = path.join(dir, 'db.wal');
+    await fs.writeFile(walPath, big);
+    const fd = fsSync.openSync(walPath, 'r');
+    try {
+      const controller = new AbortController();
+      controller.abort(); // pre-aborted: the scan must not even start
+      await assert.rejects(scanFrameRefsFdAsync(fd, { signal: controller.signal }), (e) => (e as Error).name === 'AbortError');
+    } finally {
+      fsSync.closeSync(fd);
+    }
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('async scanner: resync candidate budget bounds fake-magic storms', async () => {
+  const dir = await tmpDir();
+  try {
+    // One valid frame, then a long storm of fake magic bytes (each looks like
+    // a resync candidate but never validates), then a valid frame that must
+    // be surrendered to the budget.
+    const head = encodeFrame({ type: TYPE_SET, key: Buffer.from('head'), value: Buffer.from('v') });
+    const storm = Buffer.alloc(DEFAULT_RESYNC_CANDIDATE_BUDGET * 2 + 64);
+    for (let i = 0; i < storm.length; i += 2) MAGIC.copy(storm, i);
+    const tail = encodeFrame({ type: TYPE_SET, key: Buffer.from('tail'), value: Buffer.from('v') });
+    const walPath = path.join(dir, 'db.wal');
+    await fs.writeFile(walPath, Buffer.concat([head, storm, tail]));
+
+    const fd = fsSync.openSync(walPath, 'r');
+    let res;
+    try {
+      const t0 = performance.now();
+      res = await scanFrameRefsFdAsync(fd, { onCorrupt: 'resync', maxResyncCandidates: 128 });
+      // The budget caps the work: 128 candidate validations, not 65k+.
+      assert.ok(performance.now() - t0 < 10_000, 'budget-bounded resync must be fast');
+    } finally {
+      fsSync.closeSync(fd);
+    }
+    // Only the head frame was recovered; the whole storm+tail is one corrupt
+    // range (the strict outcome for the tail), and the scan stopped there.
+    assert.equal(res.frames.length, 1);
+    assert.equal(res.frames[0]!.key.toString(), 'head');
+    assert.equal(res.corruptRanges.length, 1);
+    assert.equal(res.corruptRanges[0]![0], head.length);
+    assert.equal(res.eofOffset, head.length);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

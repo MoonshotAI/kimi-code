@@ -10,7 +10,7 @@ import fssync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { MiniDb } from '../src/index.js';
-import { TextIndex, tokenize } from '../src/text-index.js';
+import { TextIndex, tokenize } from '../src/text-index/index.js';
 import { normalizeLiteral, ngramTerm, createNgramTokenizer } from '../src/trigram.js';
 import {
   encodePostingList,
@@ -223,7 +223,7 @@ test('TextIndex: writes landing mid-build are replayed onto the new base', async
   try {
     const p = path.join(dir, 't.postings');
     const ti = new TextIndex({ postingsPath: p });
-    // More docs than BUILD_YIELD_DOCS (2048), so the build is guaranteed to
+    // More docs than BUILD_YIELD_DOCS (512), so the build is guaranteed to
     // yield at least once before its swap — the setImmediate below then lands
     // strictly inside the build window.
     const docs = Array.from({ length: 3000 }, (_, i) => ({
@@ -1158,4 +1158,226 @@ test('MiniDb: an overlong tokenizer term rejects set/batch; the postings rebuild
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
+});
+
+// ---- stage 6: byte-bounded cache + async search + rebase ---------------------
+
+test('decoded postings cache honors the byte budget, not just the term count', async () => {
+  const dir = await tmpDir();
+  try {
+    const postingsPath = path.join(dir, 'p.postings');
+    const ti = new TextIndex({ postingsPath, cacheTerms: 1000, cacheBytes: 4096 });
+    // 200 docs each carrying many distinct terms -> several large decoded
+    // lists; a 4 KiB byte budget can only hold a handful of them.
+    for (let i = 0; i < 200; i++) {
+      ti.add(`k${i}`, { text: `alpha beta gamma doc${i} shared${i % 10} common` });
+    }
+    await ti.build([...Array(200)].map((_, i) => ({ key: `k${i}`, value: { text: `alpha beta gamma doc${i} shared${i % 10} common` } })));
+    // Warm the cache with several hot lists (each has 200 entries ~ 4.8 KiB
+    // by the cache's own accounting).
+    ti.search('alpha');
+    ti.search('beta');
+    ti.search('gamma');
+    ti.search('common');
+    const cacheSize = (ti as unknown as { cache: Map<string, unknown> }).cache.size;
+    assert.ok(cacheSize < 4, `byte budget evicted big lists (cache holds ${cacheSize})`);
+    // Results stay correct after eviction.
+    assert.equal(ti.search('alpha', { limit: 300 }).length, 200);
+    await fs.rm(dir, { recursive: true, force: true });
+  } catch (e) {
+    await fs.rm(dir, { recursive: true, force: true });
+    throw e;
+  }
+});
+
+test('searchBoundedAsync matches searchBounded on a disk-backed index', async () => {
+  const dir = await tmpDir();
+  try {
+    const postingsPath = path.join(dir, 'p.postings');
+    const ti = new TextIndex({ postingsPath });
+    await ti.build([...Array(500)].map((_, i) => ({ key: `k${i}`, value: { text: `hello world doc ${i} 异步 ${i % 11}` } })));
+    for (const q of ['hello', '异步', 'hello world', 'missing-term']) {
+      assert.deepEqual(await ti.searchBoundedAsync(q, { limit: 25 }), ti.searchBounded(q, { limit: 25 }), q);
+    }
+    // With a visit budget too (capped decodes must match as well).
+    assert.deepEqual(await ti.searchBoundedAsync('hello', { maxVisits: 10 }), ti.searchBounded('hello', { maxVisits: 10 }));
+    ti.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  } catch (e) {
+    await fs.rm(dir, { recursive: true, force: true });
+    throw e;
+  }
+});
+
+test('commitRebase swaps in an externally built base and replays the capture', async () => {
+  const dir = await tmpDir();
+  try {
+    const postingsPath = path.join(dir, 'p.postings');
+    const ti = new TextIndex({ postingsPath });
+    await ti.build([
+      { key: 'a', value: { text: 'alpha one' } },
+      { key: 'b', value: { text: 'beta two' } },
+    ]);
+    assert.equal(ti.search('alpha').length, 1);
+
+    // Stage a "worker-produced" base by hand: a fresh postings file with a
+    // different doc set, then commit it through the rebase machinery while
+    // mutations land during the capture window.
+    const workerPostings = path.join(dir, 'w.postings');
+    const agg = new Map<string, Map<number, number>>([
+      ['gamma', new Map([[0, 1]])],
+      ['three', new Map([[0, 1]])],
+    ]);
+    const { PostingsFile: PF } = await import('../src/text-postings.js');
+    const built = await PF.rebuild(workerPostings, [...agg].map(([term, entries]) => ({ term, entries })));
+    ti.beginRebase();
+    // Mutations landing AFTER the capture started: must be replayed onto the
+    // new base at commit (they already applied to the live view too).
+    ti.add('d', { text: 'delta four' });
+    ti.remove('a');
+    const containers = await TextIndex.prepareRebaseContainers([...built.dict], ['c'], new Map([[0, 2]]));
+    ti.commitRebase({
+      postingsPath: workerPostings,
+      containers,
+      liveCount: 1,
+      postingsFileInfo: { bytes: built.bytes, crc32: built.crc32 },
+    });
+    // New base visible; old base gone; captured ops replayed.
+    assert.deepEqual(ti.search('gamma').map((h) => h.key), ['c']);
+    assert.equal(ti.search('alpha').length, 0);
+    assert.deepEqual(ti.search('delta').map((h) => h.key), ['d']);
+    ti.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  } catch (e) {
+    await fs.rm(dir, { recursive: true, force: true });
+    throw e;
+  }
+});
+
+test('abortRebase discards the capture and keeps the previous base', async () => {
+  const dir = await tmpDir();
+  try {
+    const postingsPath = path.join(dir, 'p.postings');
+    const ti = new TextIndex({ postingsPath });
+    await ti.build([{ key: 'a', value: { text: 'alpha one' } }]);
+    ti.beginRebase();
+    ti.add('b', { text: 'beta two' });
+    ti.abortRebase();
+    assert.equal(ti.rebasing, false);
+    assert.equal(ti.search('alpha').length, 1);
+    assert.equal(ti.search('beta').length, 1);
+    ti.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  } catch (e) {
+    await fs.rm(dir, { recursive: true, force: true });
+    throw e;
+  }
+});
+
+test('commitRebase adopts a disk base over a memory-base index (read-only scratch shape)', async () => {
+  const dir = await tmpDir();
+  try {
+    // A memory-base index (the read-only-open shape) adopts the worker-built
+    // disk base from a caller-owned location instead of throwing — the same
+    // flip a generation attach makes.
+    const ti = new TextIndex({});
+    assert.ok(ti.memBase !== null);
+    ti.add('old', { text: 'stale one' });
+
+    const workerPostings = path.join(dir, 'w.postings');
+    const agg = new Map<string, Map<number, number>>([['gamma', new Map([[0, 1]])]]);
+    const built = await PostingsFile.rebuild(workerPostings, [...agg].map(([term, entries]) => ({ term, entries })));
+    // The deferred open-time build arms the capture and marks the base
+    // unavailable until the commit lands.
+    ti.basePending = true;
+    ti.beginRebase();
+    assert.throws(() => ti.search('gamma'), /still building/);
+    ti.add('new', { text: 'delta two' });
+    const containers = await TextIndex.prepareRebaseContainers([...built.dict], ['c'], new Map([[0, 1]]));
+    ti.commitRebase({
+      postingsPath: workerPostings,
+      containers,
+      liveCount: 1,
+      postingsFileInfo: { bytes: built.bytes, crc32: built.crc32 },
+    });
+    assert.equal(ti.memBase, null); // flipped to the adopted disk base
+    assert.equal(ti.basePending, false);
+    assert.equal(ti.currentPostingsPath, workerPostings);
+    // The old memory base is gone; the captured write replayed onto the new one.
+    assert.deepEqual(ti.search('gamma').map((h) => h.key), ['c']);
+    assert.equal(ti.search('stale').length, 0);
+    assert.deepEqual(ti.search('delta').map((h) => h.key), ['new']);
+    ti.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  } catch (e) {
+    await fs.rm(dir, { recursive: true, force: true });
+    throw e;
+  }
+});
+
+test('an async base read straddling a base commit re-reads the fresh base instead of caching the stale one', async () => {
+  const dir = await tmpDir();
+  try {
+    const p1 = path.join(dir, 'a.postings');
+    const ti = new TextIndex({ postingsPath: p1 });
+    await ti.build([{ key: 'a', value: { text: 'alpha' } }]);
+    // Count terms instead of searching here — a search would warm the
+    // decoded-postings cache and the straddle below would never reach the file.
+    assert.equal(ti.termCount(), 1);
+
+    // Park the async postings read on a gate; a base commit lands meanwhile.
+    const realPf = ti.pf!;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    ti.pf = {
+      path: realPf.path,
+      read: (entry: never, max?: number) => realPf.read(entry, max),
+      readAsync: async (entry: never, max?: number) => {
+        await gate;
+        return realPf.read(entry, max);
+      },
+      close: () => realPf.close(),
+    } as unknown as PostingsFile;
+
+    const readP = ti.searchBoundedAsync('alpha');
+    // Let the read reach the parked gate before committing the new base.
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    const b = ti.beginBuild({ postingsPath: path.join(dir, 'b.postings') });
+    b.add('b', { text: 'beta' }); // the new base has no 'alpha' at all
+    await b.commit();
+    release();
+
+    const res = await readP;
+    // The straddled read must NOT serve the stale base's hit, and the cache
+    // must not be poisoned either: the next query sees only the fresh base.
+    assert.deepEqual(res.hits, []);
+    assert.deepEqual(ti.searchBounded('alpha').hits, []);
+    assert.equal(ti.searchBounded('beta').hits.length, 1);
+    ti.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  } catch (e) {
+    await fs.rm(dir, { recursive: true, force: true });
+    throw e;
+  }
+});
+
+test('TextIndexBuildingError while the base is pending (sync + async + query)', async () => {
+  const ti = new TextIndex({ name: 'guarded' });
+  ti.add('k', { text: 'hello world' });
+  // Pending base: every search entry raises the typed signal instead of
+  // silently serving the delta alone.
+  ti.basePending = true;
+  assert.throws(() => ti.search('hello'), (e: unknown) => e instanceof Error && e.name === 'TextIndexBuildingError');
+  assert.throws(() => ti.searchBounded('hello'), /still building/);
+  await assert.rejects(ti.searchBoundedAsync('hello'), /still building/);
+  // A base build with a LIVE old base underneath does NOT set the flag:
+  // staged builds keep serving (beginBuild alone must not trip the guard).
+  ti.basePending = false;
+  const b = ti.beginBuild();
+  assert.equal(ti.search('hello').length, 1);
+  b.abort();
+  assert.equal(ti.search('hello').length, 1);
 });

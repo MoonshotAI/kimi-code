@@ -110,8 +110,9 @@ export interface GlobalSearchHit {
 
 export interface GlobalSearchIndexState {
   /**
-   * building — the first full sync has not finished yet, results may be
-   * incomplete; ready — a full sync completed in this process;
+   * building — the first full sync has not finished yet, or the index base
+   * is (re)building after a no-generation fallback recovery — results may
+   * be incomplete; ready — a full sync completed in this process;
    * readonly — another process holds the index write lock, this process only
    * reads (catching up from the WAL in the background).
    */

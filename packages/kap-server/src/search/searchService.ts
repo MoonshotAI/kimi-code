@@ -67,7 +67,7 @@ import {
   workspacePersistenceScope,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
-import { LockError, MiniDb, normalizeLiteral, tokenize, type BatchInputOp } from '@moonshot-ai/minidb';
+import { LockError, MiniDb, TextIndexBuildingError, normalizeLiteral, tokenize, type BatchInputOp } from '@moonshot-ai/minidb';
 import type { TranscriptStore } from '@moonshot-ai/transcript';
 
 import type {
@@ -1706,21 +1706,7 @@ export class GlobalSearchService implements IGlobalSearchService {
         );
       }
       this.requestSync(); // kicks the open + first sync if nothing is running
-      return {
-        items: [],
-        hasMore: false,
-        pageToken: undefined,
-        incomplete: undefined,
-        indexState: {
-          state: 'building',
-          indexedSessions: 0,
-          totalSessions: this.summaries.size,
-          documents: 0,
-          stale: true,
-          degraded: this.lastRefreshError?.message,
-        },
-        source: 'index',
-      };
+      return this.buildingPage(null);
     }
 
     let stale: boolean;
@@ -1736,9 +1722,10 @@ export class GlobalSearchService implements IGlobalSearchService {
         this.lastRefreshError = { at: Date.now(), message: errorMessage(error) };
       }
       // A background refresh may have swapped (and closed) the captured
-      // handle during the await. Re-pin to the currently published handle:
-      // one re-check suffices because the rest of the query path is fully
-      // synchronous — after this point the handle cannot die underneath us.
+      // handle during the await. Re-pin to the currently published handle.
+      // (The stage-6 async query path awaits again below, so a later swap
+      // can still close it mid-query — the bounded pass retries once on the
+      // fresh handle for exactly that race.)
       if (this.db === null) {
         throw new GlobalSearchError('index_unavailable', 'search service is disposed');
       }
@@ -1761,22 +1748,58 @@ export class GlobalSearchService implements IGlobalSearchService {
     const generation = this.generation;
     const page = decodePageToken(q, 'index', pageToken, generation);
 
-    // One bounded text-index pass: db.searchBounded returns at most the
-    // budgeted candidates with their scores; container/role/time filters and
-    // the requested sort are applied in memory. (A separate db.query({text})
-    // for pagination would scan the same postings a second time.)
+    // The served handle's text base is still (re)building — the deferred
+    // open-time build on the no-generation fallback path has not committed (or
+    // finally failed). Answer with the building page instead of running a
+    // pass that would raise TextIndexBuildingError; the background build
+    // commits and a later search serves real hits. Tokens from an older
+    // generation already failed validation above, so reaching here with a
+    // building handle is always a first-page situation.
+    if (serveDb.textIndexBuilding(q.mode === 'literal' ? TRI_INDEX_NAME : TEXT_INDEX_NAME)) {
+      return this.buildingPage(serveDb);
+    }
+
+    // One bounded text-index pass: db.searchBoundedAsync returns at most the
+    // budgeted candidates with their scores (stage 6: the async variant —
+    // postings reads and disk-mode value reads run off the event loop);
+    // container/role/time filters and the requested sort are applied in
+    // memory. (A separate db.query({text}) for pagination would scan the
+    // same postings a second time.)
     let candidates: { key: string; value: SearchDoc | undefined; score: number }[];
     let incomplete: GlobalSearchIncomplete | undefined;
-    try {
+    const runBounded = (db2: MiniDb<SearchDoc>): Promise<{ hits: { key: string; value: SearchDoc; score: number }[]; visits: number; truncated: boolean }> => {
       if (q.mode === 'literal') {
         // Ask for one past the cap so an over-cap candidate set is
         // detectable; the postings budget bounds the index-side work before
         // confirmation even starts.
-        const res = serveDb.searchBounded(TRI_INDEX_NAME, q.query, {
+        return db2.searchBoundedAsync(TRI_INDEX_NAME, q.query, {
           op: 'AND',
           limit: this.literalCandidateCap + 1,
           maxVisits: this.postingsVisitBudget,
         });
+      }
+      return db2.searchBoundedAsync(TEXT_INDEX_NAME, q.query, {
+        op: q.op,
+        limit: this.maxTextHits + 1,
+        maxVisits: this.postingsVisitBudget,
+      });
+    };
+    try {
+      let res: { hits: { key: string; value: SearchDoc; score: number }[]; visits: number; truncated: boolean };
+      try {
+        res = await runBounded(serveDb);
+      } catch (error) {
+        // The async query path awaits: a background read-only refresh may
+        // have swapped (and closed) the pinned handle mid-query. Re-pin the
+        // currently published handle and retry ONCE — anything else is a
+        // real failure.
+        const msg = error instanceof Error ? error.message : String(error);
+        const closedRace = msg.includes('postings file is closed') || msg.includes('MiniDb is closed') || msg.includes('ValueReader is not open');
+        if (!closedRace || this.db === null || this.db === serveDb) throw error;
+        serveDb = this.db;
+        res = await runBounded(serveDb);
+      }
+      if (q.mode === 'literal') {
         candidates = res.hits;
         if (res.truncated) incomplete = 'postings_budget';
         if (candidates.length > this.literalCandidateCap) {
@@ -1784,11 +1807,6 @@ export class GlobalSearchService implements IGlobalSearchService {
           incomplete ??= 'candidate_cap';
         }
       } else {
-        const res = serveDb.searchBounded(TEXT_INDEX_NAME, q.query, {
-          op: q.op,
-          limit: this.maxTextHits + 1,
-          maxVisits: this.postingsVisitBudget,
-        });
         candidates = res.hits;
         if (res.truncated) incomplete = 'postings_budget';
         if (candidates.length > this.maxTextHits) {
@@ -1797,6 +1815,12 @@ export class GlobalSearchService implements IGlobalSearchService {
         }
       }
     } catch (error) {
+      // The base build's state flipped between the early check and the pass
+      // (or a read-only refresh swapped in a still-building handle mid-page):
+      // serve the same building page the early check produces.
+      if (error instanceof TextIndexBuildingError) {
+        return this.buildingPage(serveDb);
+      }
       // A read-only instance can open before the writer has created the text
       // index — serve an empty page instead of failing the search.
       if (error instanceof Error && error.message.includes('no such text index')) {
@@ -2018,12 +2042,43 @@ export class GlobalSearchService implements IGlobalSearchService {
     };
   }
 
+  /**
+   * The page served while the index base is unavailable: the first full sync
+   * has not finished (no db yet), or a deferred open-time base build is
+   * still running / finally failed on the served handle. Same "never wait"
+   * rule as every other request path — the background coordinator/build
+   * catches up and a later search serves real hits.
+   */
+  private buildingPage(db: MiniDb<SearchDoc> | null): GlobalSearchPage {
+    const stats = db?.get(STATS_KEY);
+    const indexed = stats?.kind === 'stats' ? stats.sessions : 0;
+    return {
+      items: [],
+      hasMore: false,
+      pageToken: undefined,
+      incomplete: undefined,
+      indexState: {
+        state: 'building',
+        indexedSessions: indexed,
+        totalSessions: db === null ? this.summaries.size : db.readOnly ? indexed : Math.max(indexed, this.summaries.size),
+        documents: stats?.kind === 'stats' ? stats.documents : 0,
+        stale: true,
+        degraded: this.lastRefreshError?.message,
+      },
+      source: 'index',
+    };
+  }
+
   private readIndexState(db: MiniDb<SearchDoc>, stale: boolean): GlobalSearchIndexState {
     const stats = db.get(STATS_KEY);
     const indexed = stats?.kind === 'stats' ? stats.sessions : 0;
     const documents = stats?.kind === 'stats' ? stats.documents : 0;
+    // A deferred open-time base build (no-generation fallback path) puts the
+    // served handle's text indexes into the building state — surface it as
+    // the same 'building' the first-sync window uses, whatever the process role.
+    const building = db.textIndexBuilding(TEXT_INDEX_NAME) || db.textIndexBuilding(TRI_INDEX_NAME);
     return {
-      state: db.readOnly ? 'readonly' : this.fullSyncDone ? 'ready' : 'building',
+      state: building ? 'building' : db.readOnly ? 'readonly' : this.fullSyncDone ? 'ready' : 'building',
       indexedSessions: indexed,
       totalSessions: db.readOnly ? indexed : Math.max(indexed, this.summaries.size),
       documents,

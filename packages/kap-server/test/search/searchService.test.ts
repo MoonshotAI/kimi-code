@@ -543,6 +543,64 @@ describe('GlobalSearchService', () => {
     await expect(reader.reindex()).rejects.toMatchObject({ reason: 'readonly_index' });
   });
 
+  // -- base-building contract (deferred open-time build) ----------------------
+
+  it('serves the building page while the index base is rebuilding, real hits after commit', async () => {
+    const s1 = summary('s1', 'shared', T1);
+    await writeWire(home!, 's1', 'main', [userLine('苹果 base', T1)]);
+    const service = track(makeService(home!, staticIndex([s1])));
+    await service.reindex();
+
+    // Force the base-building state on the served handle (the deferred
+    // open-time build sets exactly this): searches must return the building
+    // page — never throw, never silently serve partial results.
+    const db = internals(service).db as unknown as { textIndexBuilding(name: string): boolean };
+    const original = db.textIndexBuilding.bind(db);
+    db.textIndexBuilding = () => true;
+    try {
+      const building = await service.search({ query: '苹果' });
+      expect(building.indexState.state).toBe('building');
+      expect(building.indexState.stale).toBe(true);
+      expect(building.items).toEqual([]);
+      expect(building.pageToken).toBeUndefined();
+      // Literal mode (the tri index) takes the same building path.
+      const buildingLiteral = await service.search({ query: '苹果', mode: 'literal' });
+      expect(buildingLiteral.indexState.state).toBe('building');
+      expect(buildingLiteral.items).toEqual([]);
+    } finally {
+      db.textIndexBuilding = original;
+    }
+
+    // The build "committed": the same queries serve real hits again.
+    const ready = await service.search({ query: '苹果' });
+    expect(ready.items.length).toBe(1);
+    expect(ready.indexState.state).toBe('ready');
+  });
+
+  it('read-only instance serves the building page while its base is rebuilding', async () => {
+    const s1 = summary('s1', 'shared', T1);
+    await writeWire(home!, 's1', 'main', [userLine('苹果 base', T1)]);
+    const index = staticIndex([s1]);
+    const writer = track(makeService(home!, index));
+    await writer.reindex();
+    const reader = track(makeService(home!, index));
+    await reader.status(); // forces the read-only open
+
+    const db = internals(reader).db as unknown as { textIndexBuilding(name: string): boolean };
+    const original = db.textIndexBuilding.bind(db);
+    db.textIndexBuilding = () => true;
+    try {
+      const building = await reader.search({ query: '苹果' });
+      expect(building.indexState.state).toBe('building');
+      expect(building.items).toEqual([]);
+    } finally {
+      db.textIndexBuilding = original;
+    }
+    const ready = await reader.search({ query: '苹果' });
+    expect(ready.items.length).toBe(1);
+    expect(ready.indexState.state).toBe('readonly');
+  });
+
   // -- turn ordinals ------------------------------------------------------------
 
   it('assigns 0-based turn ordinals to user and assistant hits', async () => {

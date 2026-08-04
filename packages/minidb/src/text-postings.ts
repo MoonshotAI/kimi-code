@@ -24,7 +24,8 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { crc32 } from './crc32.js';
+import { crc32 } from './crc32.ts';
+import { readAtAsync } from './value-reader.ts';
 
 const HEADER_LEN = 2 + 4 + 4; // termLen + df + payloadLen (term is variable)
 const CRC_LEN = 4;
@@ -202,6 +203,22 @@ export class PostingsFile {
     let got = 0;
     while (got < entry.len) {
       const r = fs.readSync(this.fd, buf, got, entry.len - got, entry.off + got);
+      if (r === 0) throw new Error('postings: short read past EOF');
+      got += r;
+    }
+    const rec = decodeRecord(buf);
+    return decodePostingList(rec.payload, maxEntries);
+  }
+
+  /** Async twin of read() (stage 6): the positioned read runs on the libuv
+   *  thread pool, so a cold postings lookup no longer blocks the event loop
+   *  on readSync. Purely additive — the synchronous read path is unchanged. */
+  async readAsync(entry: PostingEntry, maxEntries?: number): Promise<[number, number][]> {
+    if (this.fd === null) throw new Error('postings file is closed');
+    const buf = Buffer.alloc(entry.len);
+    let got = 0;
+    while (got < entry.len) {
+      const r = await readAtAsync(this.fd, buf, got, entry.len - got, entry.off + got);
       if (r === 0) throw new Error('postings: short read past EOF');
       got += r;
     }

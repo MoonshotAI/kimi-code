@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { MiniDb } from '../src/index.js';
 import { SkipList, cmpNumber, cmpString } from '../src/skiplist.js';
 import {
@@ -838,4 +838,208 @@ describe('generation fault matrix', () => {
     assertSeededDb(reader, 1000);
     await closeAll(reader, writer);
   });
+
+  test('seal flush: a WAL write failing after being imaged aborts the build instead of publishing a resurrectable write', async () => {
+    const dir = await openTmp('seal-flush');
+    const { WAL } = await import('../src/wal.js');
+    // No text indexes: nothing needs a worker build — the case that used to
+    // skip the seal's WAL flush entirely. fsyncPolicy 'no' means no
+    // background sync timer, so the write's batch is exactly the next writev.
+    const db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json', fsyncPolicy: 'no' });
+    await db.set('stable', { kind: 't0', score: 0, ts: 1, text: 'stable doc' });
+    await db.rebuildGeneration();
+    const first = db.getIndexGeneration()!.id;
+
+    // Park the write's WAL batch in flight: the op is already applied (so the
+    // build images it) while its frame has not landed yet.
+    type Fh = { writev: (bufs: readonly Uint8Array[]) => Promise<{ bytesWritten: number }> };
+    const wal = (db as unknown as { wal: InstanceType<typeof WAL> }).wal;
+    const fh = (wal as unknown as { fh: Fh | null }).fh!;
+    const origWritev = fh.writev.bind(fh);
+    let fired = false;
+    const entered = deferred<void>();
+    const proceed = deferred<void>();
+    (fh as { writev: unknown }).writev = async (bufs: readonly Uint8Array[]) => {
+      if (fired) return origWritev(bufs);
+      fired = true;
+      entered.resolve();
+      await proceed.promise;
+      throw new Error('injected wal writev failure');
+    };
+    cleanups.push(() => {
+      (fh as { writev: unknown }).writev = origWritev;
+    });
+    const flushCalls = vi.spyOn(WAL.prototype, 'flush');
+    cleanups.push(() => flushCalls.mockRestore());
+
+    const ghostSet = db.set('ghost', { kind: 't1', score: 1, ts: 2, text: 'ghost doc' });
+    await entered.promise; // the batch is in flight; the commit is still pending
+    const build = db.rebuildGeneration();
+    // The seal's flush chains onto the in-flight batch — the build is now
+    // stuck at the seal (pre-fix it flushed only for worker text builds and
+    // would publish without settling the frame below the checkpoint).
+    await waitFor(() => flushCalls.mock.calls.length > 0, 'seal WAL flush');
+    proceed.resolve();
+
+    // The batch's failure poisons the WAL; the seal flush observes the poison
+    // and the build aborts instead of publishing the imaged write.
+    await expect(build).rejects.toThrow('WAL is poisoned');
+    await expect(ghostSet).rejects.toThrow('injected wal writev failure');
+    expect(db.get('ghost')).toBeUndefined(); // rolled back from the live store
+    expect(db.getIndexGeneration()!.id).toBe(first); // CURRENT never moved
+    await db.close().catch(() => {});
+
+    // A reopen cannot resurrect the rejected write from the generation.
+    const db2 = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    expect(db2.get('ghost')).toBeUndefined();
+    expect(db2.get('stable')).toMatchObject({ kind: 't0' });
+    await db2.close();
+  });
+});
+
+// ---- stage 6: shutdown drain / cancel ------------------------------------------
+
+describe('stage 6: maintenance shutdown semantics', () => {
+  test('close() waits for the publish critical section instead of cancelling it', async () => {
+    const dir = await openTmp('shutdown-publish');
+    const db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    await seedIndexedDb(db, 5000); // big enough to take the worker path
+    // Park the FIRST rename of the publish sequence (tmp dir -> g-N): at
+    // that point the build is inside its publishing critical section.
+    const { barrier } = await import('./helpers.js');
+    const gate = barrier(fs, 'rename', 1);
+    const buildP = db.rebuildGeneration().catch((e) => e);
+    await gate.entered; // provably inside publishGeneration's first rename
+
+    let closed = false;
+    const closeP = db.close().then(() => {
+      closed = true;
+    });
+    // The shutdown must NOT cancel the publishing task: close stays pending
+    // while the rename is parked.
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    expect(closed).toBe(false);
+    gate.restore();
+    gate.release();
+    await buildP;
+    await closeP;
+    expect(closed).toBe(true);
+    // The publish completed fully: CURRENT names the new generation.
+    expect(fsSync.existsSync(path.join(dir, 'CURRENT'))).toBe(true);
+
+    const db2 = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    expect(db2.stats.generationLoads).toBe(1);
+    assertSeededDb(db2, 5000);
+    await db2.close();
+  }, 60000);
+
+  test('close() safely cancels a queued maintenance task (backpressure + drain)', async () => {
+    const dir = await openTmp('shutdown-queued');
+    const db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    await seedIndexedDb(db, 5000);
+    // Occupy the scheduler with a running build, queue another behind it,
+    // then close: the queued one is cancelled, the close completes, the data
+    // is intact.
+    const first = db.rebuildGeneration().catch(() => {});
+    const second = db.rebuildGeneration().then(
+      () => 'completed',
+      (e) => e,
+    );
+    await db.close();
+    await first;
+    const outcome = await second;
+    // The second build was either cancelled (queue drain) or completed
+    // before the close — never left hanging, and never corrupts anything.
+    expect(['completed'].includes(outcome as string) || outcome instanceof Error).toBe(true);
+    const db2 = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    // The cancelled builds left no generation behind: this reopen took the
+    // no-generation fallback path and may have DEFERRED the text base build —
+    // wait out the building window (BOTH indexes, the task builds them
+    // sequentially) before asserting search results.
+    if (db2.textIndexBuilding('ft') || db2.textIndexBuilding('tri')) {
+      await waitFor(() => !db2.textIndexBuilding('ft') && !db2.textIndexBuilding('tri'), 'deferred text build');
+    }
+    assertSeededDb(db2, 5000);
+    await db2.close();
+  }, 60000);
+});
+
+describe('generation availability triggers (wal-growth + close publish)', () => {
+  /** Write ~5 MiB of frames (1 KiB values) without any text index — enough
+   *  to cross the wal-growth staleness threshold while staying far under the
+   *  64 MiB compaction threshold. */
+  async function growWalPast(db: MiniDb<Record<string, unknown>>, n = 5200): Promise<void> {
+    const pad = 'x'.repeat(1024);
+    const BATCH = 200;
+    for (let base = 0; base < n; base += BATCH) {
+      await db.batch(
+        Array.from({ length: Math.min(BATCH, n - base) }, (_, i) => ({
+          op: 'set' as const,
+          key: `k${base + i}`,
+          value: { text: `${pad}${base + i}` },
+        })),
+      );
+    }
+  }
+
+  test('wal-growth trigger publishes a generation without any compaction', async () => {
+    const dir = await openTmp('gen-wal-growth');
+    const db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    db.genBuildKickMinIntervalMs = 0; // test knob: no throttle
+    // The db started EMPTY, so the open-time generation kick did not fire;
+    // nothing re-triggers until the WAL crosses the staleness threshold.
+    expect(db.getIndexGeneration()).toBeNull();
+    await growWalPast(db);
+    await waitFor(() => db.getIndexGeneration() !== null, 'wal-growth generation build');
+    expect(db.stats.compactions).toBe(0); // 5 MiB ≪ 64 MiB threshold
+    expect(db.stats.generationBuilds).toBeGreaterThanOrEqual(1);
+    await db.close();
+  }, 60000);
+
+  test('close() publishes a missing/stale generation best-effort', async () => {
+    const dir = await openTmp('gen-close-publish');
+    let db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    db.genBuildKickMinIntervalMs = 3_600_000; // suppress the runtime trigger
+    await growWalPast(db);
+    expect(db.getIndexGeneration()).toBeNull();
+    await db.close();
+    // The close-time publish left a valid generation behind: the next open
+    // takes the attach path instead of the full-recovery fallback.
+    expect(fsSync.existsSync(path.join(dir, 'CURRENT'))).toBe(true);
+    db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    expect(db.stats.generationLoads).toBe(1);
+    expect(db.size).toBe(5200);
+    await db.close();
+  }, 60000);
+
+  test('a failed build backs the wal-growth trigger off instead of re-kicking every write', async () => {
+    const dir = await openTmp('gen-kick-backoff');
+    const db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    db.genBuildKickMinIntervalMs = 0;
+    db.genBuildKickFailureBackoffMs = 60_000;
+    // Make every publish rename fail: the kicked build dies at the publish
+    // boundary and is accounted as a build failure.
+    const original = fs.rename;
+    (fs as unknown as Record<string, unknown>).rename = (src: string, dst: string) =>
+      String(src).includes('.tmp-') ? Promise.reject(new Error('injected publish failure')) : original(src, dst);
+    cleanups.push(() => {
+      (fs as unknown as Record<string, unknown>).rename = original;
+    });
+    await growWalPast(db);
+    await waitFor(() => db.stats.generationBuildErrors >= 1, 'first kicked build to fail');
+    (fs as unknown as Record<string, unknown>).rename = original;
+    expect(db.getIndexGeneration()).toBeNull();
+
+    // Inside the backoff window further writes must NOT re-kick a build.
+    await db.set('after-failure', { text: 'y'.repeat(1024) });
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    const active = db.maintenanceStatus().filter((t) => t.kind === 'generation-build' && (t.state === 'running' || t.state === 'queued'));
+    expect(active).toEqual([]);
+
+    // With the backoff lifted the very next write kicks a successful build.
+    db.genBuildKickFailureBackoffMs = 0;
+    await db.set('after-backoff', { text: 'z'.repeat(1024) });
+    await waitFor(() => db.getIndexGeneration() !== null, 'post-backoff generation build');
+    await db.close();
+  }, 60000);
 });

@@ -314,6 +314,19 @@ export class Store {
     }
   }
 
+  /** Walk live records with their RAW value ref (never materialized): the
+   *  stage-6 snapshot writer reads disk-backed values through its own async
+   *  path (grouped, bounded-concurrency) instead of one synchronous
+   *  positioned read per record. Expired records are skipped exactly as in
+   *  entries(). Internal to the package. */
+  *rawRefRecords(): Generator<{ kstr: string; ref: ValueRef; expireAt: number; dt: Record<string, number> | null }> {
+    const now = Date.now();
+    for (const [k, r] of this.map) {
+      if (r.expireAt && r.expireAt <= now) continue;
+      yield { kstr: k, ref: r.ref, expireAt: r.expireAt, dt: r.dt };
+    }
+  }
+
   /** Ordered scan over keys. */
   *scan(opts: RangeOptions<string> = {}): Generator<StoreEntry> {
     for (const n of this.order.range(opts) as Iterable<RangeEntry<string, string>>) {

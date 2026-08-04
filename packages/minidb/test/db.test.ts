@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { MiniDb } from '../src/index.js';
 import { encodeFrame, TYPE_SET } from '../src/codec.js';
-import { barrier } from './helpers.js';
+import { barrier, waitFor } from './helpers.js';
 
 const B = (s) => Buffer.from(s);
 
@@ -512,6 +512,81 @@ test('maxMemory evict-lru evicts in least-recently-used order across many victim
     assert.equal(db.get('e'), '1234567890');
     assert.equal(db.get('f'), '1234567890');
     await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- stage 6: async read APIs -------------------------------------------------
+
+for (const valueMode of ['memory', 'disk'] as const) {
+  test(`async reads match sync reads (valueMode: ${valueMode})`, async () => {
+    const dir = await tmpDir();
+    try {
+      const db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json', valueMode, autoCompact: false });
+      await db.createTextIndex('ft', { fields: ['text'] });
+      await db.createIndex('byKind', { field: 'kind' });
+      for (let i = 0; i < 300; i++) {
+        await db.set(`k${i}`, { kind: `t${i % 5}`, score: i, text: `hello world doc ${i} 异步 读取 ${i % 7}` }, { dt: { ts: 1700000000000 + i } });
+      }
+      await db.del('k0');
+      await db.set('k1', { kind: 't1', score: 999, text: 'replaced 替换' });
+
+      // getAsync vs get
+      assert.deepEqual(await db.getAsync('k1'), db.get('k1'));
+      assert.deepEqual(await db.getAsync('k42'), db.get('k42'));
+      assert.equal(await db.getAsync('k0'), undefined);
+      assert.equal(await db.getAsync('missing'), undefined);
+
+      // searchBoundedAsync / searchAsync vs search
+      for (const q of ['hello', '异步', 'hello world', 'replaced']) {
+        const syncRes = db.searchBounded('ft', q, { limit: 20 });
+        const asyncRes = await db.searchBoundedAsync('ft', q, { limit: 20 });
+        assert.deepEqual(asyncRes, syncRes, `searchBoundedAsync(${q})`);
+        assert.deepEqual(await db.searchAsync('ft', q, { limit: 20 }), db.search('ft', q, { limit: 20 }));
+      }
+
+      // queryAsync vs query across the planner's shapes
+      const shapes = [
+        { filter: { kind: 't3' } },
+        { dt: { ts: { gte: 1700000000050 } }, limit: 10 },
+        { dt: { ts: { gte: 1700000000050 } }, sort: { ts: -1 as const }, limit: 5 },
+        { text: { index: 'ft', q: 'hello' }, limit: 10 },
+        { key: { prefix: 'k1' }, limit: 5 },
+        { sort: { score: -1 as const }, limit: 7 },
+        { filter: { kind: 't2' }, sort: { score: 1 as const }, skip: 3, limit: 6 },
+      ];
+      for (const q of shapes) {
+        assert.deepEqual(await db.queryAsync(q), db.query(q), `queryAsync(${JSON.stringify(q)})`);
+      }
+      await db.close();
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test('async reads stay correct across a compaction rotation (disk mode)', async () => {
+  const dir = await tmpDir();
+  try {
+    const db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json', valueMode: 'disk', compactThresholdBytes: 4096 });
+    for (let i = 0; i < 400; i++) {
+      await db.set(`k${i}`, { kind: `t${i % 5}`, score: i, text: `rotation doc ${i}` });
+    }
+    await waitFor(() => db.stats.compactions >= 1, 'auto compaction');
+    for (let i = 400; i < 500; i++) {
+      await db.set(`k${i}`, { kind: 't6', score: i, text: `post rotation doc ${i}` });
+    }
+    for (let i = 0; i < 500; i += 37) {
+      assert.deepEqual(await db.getAsync(`k${i}`), db.get(`k${i}`));
+    }
+    await db.close();
+    // read-only reopen: async reads identical to sync reads against the rotated files.
+    const ro = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json', valueMode: 'disk', readOnly: true });
+    for (let i = 0; i < 500; i += 41) {
+      assert.deepEqual(await ro.getAsync(`k${i}`), ro.get(`k${i}`));
+    }
+    await ro.close();
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

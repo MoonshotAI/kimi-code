@@ -35,9 +35,10 @@
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
-import { scanFrameRefsFd, scanBatchOpRefs, TYPE_SET, TYPE_DEL, TYPE_BATCH, MAGIC } from './codec.js';
+import { scanFrameRefsFd, scanFrameRefsFdAsync, scanBatchOpRefs, TYPE_SET, TYPE_DEL, TYPE_BATCH, MAGIC } from './codec.js';
 import type { FrameRef } from './codec.js';
 import { SNAPSHOT_FILE, WAL_FILE } from './generation.js';
+import { yieldToLoop } from './text-index/tokenize.js';
 import type { Store, ValueLoc, ValueRef } from './store.js';
 
 export type RecoveryMode = 'resync' | 'strict';
@@ -175,19 +176,30 @@ export function* frameToOps(
   }
 }
 
-function applyFrames(
+/** Yield to the event loop every this many applied frames (see applyFrames). */
+const APPLY_YIELD_FRAMES = 4096;
+
+/** Apply recovered frames to the store. This is pure in-memory bookkeeping —
+ *  one synchronous pass per file would be a noticeable event-loop stall on a
+ *  large db (the open-time freeze used to be dominated by the index rebuild
+ *  AFTER this pass, but the pass itself is not free either), so it yields
+ *  periodically. Safe: the store is not published until open() returns, so
+ *  nothing can observe a half-applied pass. */
+async function applyFrames(
   frames: FrameRef[],
   file: ValueLoc['file'],
   fd: number,
   store: Store,
   valueMode: ValueMode,
   onCorruptBatch?: () => void,
-): void {
+): Promise<void> {
+  let applied = 0;
   for (const f of frames) {
     for (const op of frameToOps(f, file, fd, valueMode, onCorruptBatch)) {
       if (op.type === TYPE_SET) store.setRef(op.key, op.ref!, op.expireAt, op.dt);
       else if (op.type === TYPE_DEL) store.del(op.key);
     }
+    if (++applied % APPLY_YIELD_FRAMES === 0) await yieldToLoop();
   }
 }
 
@@ -259,6 +271,7 @@ export async function recover({
   valueMode = 'memory',
   maxGenerationRetries = 4,
   attachValueReader,
+  signal,
 }: {
   dir: string;
   store: Store;
@@ -276,12 +289,24 @@ export async function recover({
    *  "old offsets read a new file" window between recovery's final forensics
    *  and the reader attach. */
   attachValueReader?: (anchors: GenerationAnchors) => boolean;
+  /** Cancellation for the async frame scans (stage 6): an aborted scan
+   *  throws an 'AbortError' and leaves the pass's partial state discarded. */
+  signal?: AbortSignal;
 }): Promise<RecoveryInfo> {
   const snapPath = path.join(dir, SNAPSHOT_FILE);
   const walPath = path.join(dir, WAL_FILE);
   let delay = GENERATION_RETRY_BASE_MS;
   for (let attempt = 0; ; attempt++) {
-    const pass = await recoverPass({ snapPath, walPath, store, mode, truncate, valueMode });
+    let pass: RecoverPassResult;
+    try {
+      pass = await recoverPass({ snapPath, walPath, store, mode, truncate, valueMode, signal });
+    } catch (e) {
+      // A cancelled scan may have applied a prefix of the pass's frames:
+      // discard the partial application so the error never carries state
+      // into a caller that retries with the same Store.
+      if ((e as Error).name === 'AbortError') resetStore(store);
+      throw e;
+    }
     if (pass.consistent && (!attachValueReader || attachValueReader(pass.anchors))) {
       pass.info.generationRetries = attempt;
       return pass.info;
@@ -310,6 +335,7 @@ async function recoverPass({
   mode,
   truncate,
   valueMode,
+  signal,
 }: {
   snapPath: string;
   walPath: string;
@@ -317,6 +343,7 @@ async function recoverPass({
   mode: RecoveryMode;
   truncate: boolean;
   valueMode: ValueMode;
+  signal?: AbortSignal;
 }): Promise<RecoverPassResult> {
   let corruptBatches = 0;
   const countCorruptBatch = (): void => {
@@ -332,8 +359,11 @@ async function recoverPass({
       const st = fsSync.fstatSync(fd);
       snapScanned = { dev: st.dev, ino: st.ino, size: st.size };
       snapshotBytes = st.size;
-      const r = scanFrameRefsFd(fd, { onCorrupt: mode });
-      applyFrames(r.frames, 'snapshot', fd, store, valueMode, countCorruptBatch);
+      // Stage 6: the scan itself is async (sequential window reads, CRC
+      // slices, periodic yields, abortable); only the in-memory apply below
+      // runs on the event loop.
+      const r = await scanFrameRefsFdAsync(fd, { onCorrupt: mode, signal });
+      await applyFrames(r.frames, 'snapshot', fd, store, valueMode, countCorruptBatch);
       snapshotFrames = r.frames.length;
       snapshotCorrupt = r.corruptRanges;
     } finally {
@@ -358,8 +388,8 @@ async function recoverPass({
       walScanned = { dev: st.dev, ino: st.ino, size: st.size };
       walSizeFloor = st.size;
       walBytes = st.size;
-      const r = scanFrameRefsFd(fd, { onCorrupt: mode });
-      applyFrames(r.frames, 'wal', fd, store, valueMode, countCorruptBatch);
+      const r = await scanFrameRefsFdAsync(fd, { onCorrupt: mode, signal });
+      await applyFrames(r.frames, 'wal', fd, store, valueMode, countCorruptBatch);
       walFrames = r.frames.length;
       walCorrupt = r.corruptRanges;
       walScanEnd = r.eofOffset;
