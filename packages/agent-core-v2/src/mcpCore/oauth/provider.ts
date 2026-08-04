@@ -14,6 +14,13 @@
  * The provider does not open browsers or run servers — it is the
  * persistence + flow-state shim.
  *
+ * `invalidateStaleRegistration` guards interactive flows: the callback
+ * listener binds a random port per flow while a DCR registration pins the
+ * redirect URIs of the flow that created it, so a reused registration whose
+ * URIs no longer cover the current callback would be rejected at the
+ * authorization endpoint ("invalid redirect URI", rendered only in the
+ * user's browser). Dropping it lets `auth()` re-register.
+ *
  * `clientName` is the product token for the default label
  * (`<clientName> (<serverName>)`), carrying the configured custom identity; it
  * is ignored when `clientLabel` states the whole label explicitly.
@@ -169,6 +176,17 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
     await this.ready;
     return this.discoveryCache;
+  }
+
+  async invalidateStaleRegistration(redirectUri: string): Promise<boolean> {
+    await this.ready;
+    const info = this.clientCache;
+    if (info === undefined || !('redirect_uris' in info)) return false;
+    const uris = info.redirect_uris;
+    if (!Array.isArray(uris) || uris.length === 0) return false;
+    if (uris.includes(redirectUri)) return false;
+    await this.invalidateCredentials('client');
+    return true;
   }
 
   async invalidateCredentials(
