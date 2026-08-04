@@ -138,6 +138,7 @@ export async function runAcpServerWithStream(
     disableAuth: opts.disableAuth,
     terminalAuthEnv: opts.terminalAuthEnv,
     terminalAuthLegacyCommand: opts.terminalAuthLegacyCommand,
+    slashCommands: opts.slashCommands,
     // Prompt-image compression persists originals into the session's own
     // media-originals dir (same resolution as kap-server's prompt route):
     // live session scope → `ISessionContext.sessionDir`. A session that is
@@ -150,19 +151,24 @@ export async function runAcpServerWithStream(
     },
   });
 
+  let closePromise: Promise<void> | undefined;
   const close = async (): Promise<void> => {
-    // Detach the klient's event subscriptions first so disposal below cannot
-    // deliver into a torn-down scope.
-    await klient.close();
-    // Flush the append-log write-behind before disposing, so a clean shutdown
-    // never races a pending drain against teardown (and doesn't drop the last
-    // persisted ops). Best-effort: a flush failure must not block disposal.
-    try {
-      await core.accessor.get(IAppendLogStore).flush();
-    } catch {
-      // ignore — disposal proceeds regardless
-    }
-    core.dispose();
+    if (closePromise !== undefined) return closePromise;
+    closePromise = (async () => {
+      // Detach the klient's event subscriptions first so disposal below cannot
+      // deliver into a torn-down scope.
+      await klient.close();
+      // Flush the append-log write-behind before disposing, so a clean shutdown
+      // never races a pending drain against teardown (and doesn't drop the last
+      // persisted ops). Best-effort: a flush failure must not block disposal.
+      try {
+        await core.accessor.get(IAppendLogStore).flush();
+      } catch {
+        // ignore — disposal proceeds regardless
+      }
+      core.dispose();
+    })();
+    return closePromise;
   };
 
   void conn.closed.then(() => {

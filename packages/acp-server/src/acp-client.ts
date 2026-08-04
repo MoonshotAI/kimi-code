@@ -14,6 +14,8 @@
 
 import {
   type AgentContext,
+  type CreateElicitationRequest,
+  type CreateElicitationResponse,
   type CreateTerminalRequest,
   type CreateTerminalResponse,
   methods,
@@ -36,6 +38,8 @@ export interface AcpClient extends IAcpFsClient, IAcpTerminalClient {
   sessionUpdate(params: SessionNotification): Promise<void>;
   /** Reverse-RPC `session/request_permission` (approval / ask-user bridge). */
   requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse>;
+  /** Reverse-RPC `elicitation/create` (ask-user bridge for form-capable clients). */
+  createElicitation(params: CreateElicitationRequest): Promise<CreateElicitationResponse>;
 }
 
 /**
@@ -47,6 +51,7 @@ export function acpClientFromContext(client: AgentContext): AcpClient {
     sessionUpdate: (params) => client.notify(methods.client.session.update, params),
     requestPermission: (params) =>
       client.request(methods.client.session.requestPermission, params),
+    createElicitation: (params) => client.request(methods.client.elicitation.create, params),
     readTextFile: (params) => client.request(methods.client.fs.readTextFile, params),
     writeTextFile: (params) => client.request(methods.client.fs.writeTextFile, params),
     createTerminal: async (params) => {

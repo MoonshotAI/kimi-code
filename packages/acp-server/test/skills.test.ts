@@ -141,6 +141,25 @@ describe('acp-server skills / available commands', () => {
     expect(compact?.input?.hint).toBe('<optional custom summarization instructions>');
   }, 30_000);
 
+  it('pushes available_commands_update only after the session/new response settles', async () => {
+    const c = await boot();
+    await c.send('session/new', { cwd: homeDir, mcpServers: [] });
+    await c.waitForSessionUpdate('available_commands_update', 10_000);
+
+    // Clients register the session when the response lands and silently drop
+    // `session/update` notifications that arrive earlier (Zed), so the slash
+    // commands push must come after the `session/new` response on the wire.
+    const responseIndex = c.received.findIndex(
+      (m) => (m.result as { sessionId?: string } | undefined)?.sessionId !== undefined,
+    );
+    const notificationIndex = c.received.findIndex((m) => {
+      const update = (m.params as { update?: { sessionUpdate?: string } } | undefined)?.update;
+      return m.method === 'session/update' && update?.sessionUpdate === 'available_commands_update';
+    });
+    expect(responseIndex).toBeGreaterThanOrEqual(0);
+    expect(notificationIndex).toBeGreaterThan(responseIndex);
+  }, 30_000);
+
   it('advertises a workspace skill as `skill:<name>` with its description', async () => {
     const c = await bootWithFixtureSkill();
     await c.send('session/new', { cwd: homeDir, mcpServers: [] });
@@ -218,6 +237,50 @@ describe('acp-server skills / available commands', () => {
       .find((u) => u?.sessionUpdate === 'agent_message_chunk');
     expect(chunk?.content?.text).toBe(
       'Unknown ACP command: /no-such-skill. Use /help to see available commands.',
+    );
+  }, 30_000);
+
+  it('/help includes dynamically advertised skills', async () => {
+    const c = await bootWithFixtureSkill();
+    const sessionId = await newSession(c);
+
+    await c.send('session/prompt', {
+      sessionId,
+      prompt: [{ type: 'text', text: '/help' }],
+    });
+
+    const help = c
+      .sessionUpdates()
+      .map((m) => (m.params as { update?: { sessionUpdate?: string; content?: { text?: string } } }).update)
+      .find((update) => update?.sessionUpdate === 'agent_message_chunk')?.content?.text;
+    expect(help).toContain('/skill:acp-fixture — ACP fixture skill');
+  }, 30_000);
+
+  it('supports a host-provided skill alias in the advertised palette', async () => {
+    const c = await bootWithFixtureSkill();
+    const alias = 'fixture-alias';
+    const aliasCommand = { name: alias, description: 'Activate the fixture skill' };
+    await c.close();
+    const aliasClient = await createTestClient({
+      homeDir: homeDir!,
+      extraSeeds: [scripted!.seed],
+      slashCommands: {
+        commands: [aliasCommand],
+        skillCommandMap: new Map([[alias, 'acp-fixture']]),
+      },
+    });
+    client = aliasClient;
+    await aliasClient.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
+    scripted!.mockNextText('ALIAS');
+    const sessionId = await newSession(aliasClient);
+
+    const result = (await aliasClient.send('session/prompt', {
+      sessionId,
+      prompt: [{ type: 'text', text: '/fixture-alias extra args' }],
+    })) as { stopReason: string };
+    expect(result.stopReason).toBe('end_turn');
+    expect(scripted!.callHistory()[0] && JSON.stringify(scripted!.callHistory()[0])).toContain(
+      'acp-fixture',
     );
   }, 30_000);
 });

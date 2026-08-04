@@ -65,6 +65,8 @@ export interface BuiltinCommandDeps {
   readonly modelId: string;
   readonly thinkingEnabled: boolean;
   readonly modeId: string;
+  /** Current merged palette (builtins + engine skills + host commands). */
+  readonly availableCommands: readonly AvailableCommand[];
 }
 
 /**
@@ -81,7 +83,7 @@ export async function runBuiltinSlashCommand(
 ): Promise<string> {
   switch (name) {
     case 'help':
-      return helpText();
+      return helpText(deps.availableCommands);
     case 'status':
       return statusText(await deps.session.get(), deps);
     case 'usage':
@@ -110,10 +112,8 @@ export async function runBuiltinSlashCommand(
   }
 }
 
-function helpText(): string {
-  const lines = ACP_BUILTIN_SLASH_COMMANDS.map(
-    (command) => `/${command.name} — ${command.description}`,
-  );
+function helpText(commands: readonly AvailableCommand[]): string {
+  const lines = commands.map((command) => `/${command.name} — ${command.description}`);
   return ['Available commands:', ...lines].join('\n');
 }
 

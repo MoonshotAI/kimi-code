@@ -33,7 +33,12 @@ import {
 } from './approval';
 import { acpToolCallId } from './events-map';
 import { log } from './log';
-import { outcomeToQuestionAnswer, questionItemToPermissionOptions } from './question';
+import {
+  elicitationResponseToQuestionAnswers,
+  outcomeToQuestionAnswer,
+  questionItemToPermissionOptions,
+  questionRequestToElicitationParams,
+} from './question';
 
 export class AcpInteractionBridge {
   /** Ids the bridge has already begun handling — guards against re-entry. */
@@ -45,6 +50,13 @@ export class AcpInteractionBridge {
     private readonly conn: AcpClient,
     private readonly session: SessionHandle,
     private readonly sessionId: string,
+    /**
+     * Whether the client advertised `elicitation.form` at `initialize`. When
+     * true, ask-user questions go through `elicitation/create` (native
+     * multi-question + multi-select); otherwise they degrade to the
+     * `request_permission` single-select bridge.
+     */
+    private readonly elicitationForm = false,
   ) {
     this.subscription = session.events.on('interactions.changed', (pending) => {
       this.onPendingChanged(pending);
@@ -149,16 +161,20 @@ export class AcpInteractionBridge {
   }
 
   /**
-   * Bridge an engine {@link QuestionRequest} (the AskUserQuestion tool) through
-   * the same `session/request_permission` surface approvals use.
-   *
-   * Degradation rules:
+   * Bridge an engine {@link QuestionRequest} (the AskUserQuestion tool) to the
+   * client. Form-capable clients get the full question set through
+   * `elicitation/create` (native multi-question + multi-select); everyone
+   * else falls back to the `session/request_permission` surface approvals
+   * use, with its degradation rules:
    *  - `questions.length > 1` → only the first question is asked (logged).
    *  - `multiSelect === true` → still asked as single-select; the engine's
    *    ask-user tool tolerates a single-key answer for a multi-select prompt.
    *
-   * Any RPC failure resolves with `null` so the tool takes its canonical
-   * "user dismissed" branch — strictly safer than fabricating an answer.
+   * An `elicitation/create` RPC failure (e.g. a client that advertises the
+   * capability but rejects the method) falls back to the permission bridge
+   * for the same request. Any failure of the final attempt resolves with
+   * `null` so the tool takes its canonical "user dismissed" branch —
+   * strictly safer than fabricating an answer.
    */
   private async handleQuestion(req: QuestionRequest): Promise<QuestionAnswers | null> {
     const questions = req.questions;
@@ -168,6 +184,23 @@ export class AcpInteractionBridge {
       });
       return null;
     }
+    const rawToolCallId = req.toolCallId ?? 'ask-user';
+    const toolCallId =
+      req.turnId !== undefined ? acpToolCallId(req.turnId, rawToolCallId) : rawToolCallId;
+    if (this.elicitationForm) {
+      try {
+        const response = await this.conn.createElicitation(
+          questionRequestToElicitationParams(questions, this.sessionId, toolCallId),
+        );
+        return elicitationResponseToQuestionAnswers(questions, response);
+      } catch (error) {
+        log.warn('acp: elicitation/create failed; falling back to request_permission', {
+          sessionId: this.sessionId,
+          toolCallId: req.toolCallId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     if (questions.length > 1) {
       log.warn('acp: handleQuestion degrading to first question only', {
         sessionId: this.sessionId,
@@ -176,9 +209,6 @@ export class AcpInteractionBridge {
     }
     const q = questions[0]!;
     const options = questionItemToPermissionOptions(q, 0);
-    const rawToolCallId = req.toolCallId ?? 'ask-user';
-    const toolCallId =
-      req.turnId !== undefined ? acpToolCallId(req.turnId, rawToolCallId) : rawToolCallId;
     try {
       const response = await this.conn.requestPermission({
         sessionId: this.sessionId,
