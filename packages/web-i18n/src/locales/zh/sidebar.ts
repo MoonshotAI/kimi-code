@@ -39,6 +39,8 @@ export default {
   pin: '置顶',
   unpin: '取消置顶',
   pinned: '置顶',
+  collapsePinned: '折叠置顶区',
+  expandPinned: '展开置顶区',
   delete: '删除',
   removeWorkspace: '移除工作区',
   brand: 'Kimi Code',

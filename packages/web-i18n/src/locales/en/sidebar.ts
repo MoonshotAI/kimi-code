@@ -39,6 +39,8 @@ export default {
   pin: 'Pin',
   unpin: 'Unpin',
   pinned: 'Pinned',
+  collapsePinned: 'Collapse pinned',
+  expandPinned: 'Expand pinned',
   delete: 'Delete',
   removeWorkspace: 'Remove workspace',
   brand: 'Kimi Code',

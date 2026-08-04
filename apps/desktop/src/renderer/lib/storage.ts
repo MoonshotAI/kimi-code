@@ -22,6 +22,7 @@ export const STORAGE_KEYS = {
   collapsedWorkspaces: 'kimi-web.collapsed-workspaces',
   workspaceOrder: 'kimi-web.workspace-order',
   pinnedSessions: 'kimi-web.pinned-sessions',
+  pinnedCollapsed: 'kimi-web.pinned-collapsed',
   workspaceNameOverrides: 'kimi-web.workspace-name-overrides',
   notifyEnabled: 'kimi-web.notify-enabled',
   notifySound: 'kimi-web.notify-sound',
@@ -152,6 +153,18 @@ export function loadCollapsedWorkspaces(): string[] {
 
 export function saveCollapsedWorkspaces(ids: Iterable<string>): void {
   safeSetJson(STORAGE_KEYS.collapsedWorkspaces, Array.from(ids));
+}
+
+/**
+ * Fold state of the sidebar's pinned section (PinnedSessionList). UI-only,
+ * no server-side source of truth — same rationale as collapsedWorkspaces.
+ */
+export function loadPinnedCollapsed(): boolean {
+  return safeGetJson<boolean>(STORAGE_KEYS.pinnedCollapsed) === true;
+}
+
+export function savePinnedCollapsed(collapsed: boolean): void {
+  safeSetJson(STORAGE_KEYS.pinnedCollapsed, collapsed);
 }
 
 /**

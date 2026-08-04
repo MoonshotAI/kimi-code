@@ -9,6 +9,7 @@ import { copyTextToClipboard } from '../lib/clipboard';
 import {
   loadCollapsedWorkspaces,
   saveCollapsedWorkspaces,
+  savePinnedCollapsed,
 } from '../lib/storage';
 import { moveInOrder, type DropPosition } from '../lib/workspaceOrder';
 import {
@@ -331,6 +332,29 @@ function handleGhClick(wsId: string, e: MouseEvent): void {
 
 function onSelectSession(sessionId: string): void {
   emit('select', sessionId);
+}
+
+// Explicit pins (row button, context menu, drop into the section) re-expand
+// a folded pinned section so the new row is seen — PinnedSessionList owns
+// the fold state and exposes expand() for exactly this path.
+const pinnedListRef = ref<InstanceType<typeof PinnedSessionList> | null>(null);
+
+function onPinSession(id: string): void {
+  if (pinnedListRef.value) {
+    pinnedListRef.value.expand();
+  } else {
+    // Section unmounted (zero pinned rows — e.g. the last one was archived
+    // from outside the sidebar while folded): expand() is unreachable, so
+    // clear the persisted fold here; the remounting list would re-read it
+    // and hide this first pin.
+    savePinnedCollapsed(false);
+  }
+  emit('pin', id);
+}
+
+function onPinSessionAt(id: string, targetId: string | null, position: DropPosition): void {
+  pinnedListRef.value?.expand();
+  emit('pinAt', id, targetId, position);
 }
 
 // ---------------------------------------------------------------------------
@@ -696,7 +720,6 @@ onBeforeUnmount(() => {
       <div
         class="sidebar-actions"
         :class="{
-          'sidebar-actions--scrolled': sessionsScrolled,
           'sidebar-actions--has-workspace-action': showNewWorkspaceButton,
         }"
       >
@@ -720,6 +743,53 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
+      <!-- Fixed head above the scroll container (same pattern as
+           .sidebar-actions / .side-footer): the pinned section and the
+           WORKSPACES label stay put while the workspace groups scroll under
+           them, so the block also owns the scroll-linked seam at its bottom
+           edge. Rendered only when at least one workspace exists (matching
+           the old in-list v-else). -->
+      <div
+        v-if="groups.length > 0"
+        class="sessions-head"
+        :class="{ 'sessions-head--scrolled': sessionsScrolled }"
+      >
+        <!-- Pinned section: above every workspace caption, listing pinned
+             sessions across all workspaces. Hidden when nothing is pinned. -->
+        <PinnedSessionList
+          ref="pinnedListRef"
+          v-if="pinnedSessions.length > 0"
+          :sessions="pinnedSessions"
+          :active-id="activeId"
+          :pending-by-session="pendingBySession"
+          :unread-by-session="unreadBySession"
+          @select-session="onSelectSession"
+          @rename-session="(id, title) => emit('rename', id, title)"
+          @archive-session="(id) => emit('archive', id)"
+          @fork-session="(id) => emit('fork', id)"
+          @export-session="(id) => emit('export', id)"
+          @pin-session="onPinSession"
+          @pin-session-at="onPinSessionAt"
+          @session-drag-start="onPinnedSessionDragStart"
+          @session-drag-end="onPinnedSessionDragEnd"
+          @reorder="(ids) => emit('reorderPinned', ids)"
+        />
+        <div class="side-section-label">
+          <span class="side-section-title">{{ t('sidebar.workspaces') }}</span>
+          <div class="side-section-actions">
+            <IconButton
+              class="side-section-toggle"
+              size="sm"
+              :label="allCollapsed ? t('sidebar.expandAll') : t('sidebar.collapseAll')"
+              @click.stop="allCollapsed ? expandAllWorkspaces() : collapseAllWorkspaces()"
+            >
+              <Icon v-if="allCollapsed" name="expand" />
+              <Icon v-else name="collapse" />
+            </IconButton>
+          </div>
+        </div>
+      </div>
+
       <!-- Session list — grouped by workspace -->
       <div ref="sessionsEl" class="sessions" :class="{ scrolling: sessionsScrolling }" @scroll="onSessionsScroll">
         <!-- Empty state — only when no workspace is registered at all; empty
@@ -729,39 +799,6 @@ onBeforeUnmount(() => {
         </div>
 
         <template v-else>
-          <!-- Pinned section: above every workspace caption, listing pinned
-               sessions across all workspaces. Hidden when nothing is pinned. -->
-          <PinnedSessionList
-            v-if="pinnedSessions.length > 0"
-            :sessions="pinnedSessions"
-            :active-id="activeId"
-            :pending-by-session="pendingBySession"
-            :unread-by-session="unreadBySession"
-            @select-session="onSelectSession"
-            @rename-session="(id, title) => emit('rename', id, title)"
-            @archive-session="(id) => emit('archive', id)"
-            @fork-session="(id) => emit('fork', id)"
-            @export-session="(id) => emit('export', id)"
-            @pin-session="(id) => emit('pin', id)"
-            @pin-session-at="(id, targetId, position) => emit('pinAt', id, targetId, position)"
-            @session-drag-start="onPinnedSessionDragStart"
-            @session-drag-end="onPinnedSessionDragEnd"
-            @reorder="(ids) => emit('reorderPinned', ids)"
-          />
-          <div class="side-section-label">
-            <span class="side-section-title">{{ t('sidebar.workspaces') }}</span>
-            <div class="side-section-actions">
-              <IconButton
-                class="side-section-toggle"
-                size="sm"
-                :label="allCollapsed ? t('sidebar.expandAll') : t('sidebar.collapseAll')"
-                @click.stop="allCollapsed ? expandAllWorkspaces() : collapseAllWorkspaces()"
-              >
-                <Icon v-if="allCollapsed" name="expand" />
-                <Icon v-else name="collapse" />
-              </IconButton>
-            </div>
-          </div>
           <div
             v-for="g in groups"
             :key="g.workspace.id"
@@ -796,7 +833,7 @@ onBeforeUnmount(() => {
               @archive-session="(id) => emit('archive', id)"
               @fork-session="(id) => emit('fork', id)"
               @export-session="(id) => emit('export', id)"
-              @pin-session="(id) => emit('pin', id)"
+              @pin-session="onPinSession"
               @drop-pinned-session="onDropPinnedSession"
               @expand="onExpand"
               @collapse="onCollapse"
@@ -1033,7 +1070,7 @@ onBeforeUnmount(() => {
 
 /* New chat and Search are direct siblings in one action group. The grid keeps
    the optional workspace action beside New chat while Search spans both
-   columns on the next row. The group also owns the scroll-linked list seam. */
+   columns on the next row. */
 .sidebar-actions {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1043,11 +1080,21 @@ onBeforeUnmount(() => {
   position: relative;
   z-index: 1;
   background: var(--color-sidebar-bg);
+}
+
+/* Fixed head — pinned section + WORKSPACES label, pinned above the scrolling
+   group list. It owns the scroll-linked list seam (hairline + fade) at its
+   bottom edge, shown only while the group list is scrolled. No background:
+   nothing scrolls under it, so the surface shows through unchanged. */
+.sessions-head {
+  position: relative;
+  z-index: 1;
+  padding: var(--space-3) var(--sb-inset) 0;
   border-bottom: 0.5px solid transparent;
   transition: border-color var(--duration-base) var(--ease-out),
     box-shadow var(--duration-base) var(--ease-out);
 }
-.sidebar-actions::after,
+.sessions-head::after,
 .side-footer::before {
   content: '';
   position: absolute;
@@ -1058,7 +1105,7 @@ onBeforeUnmount(() => {
   opacity: 0;
   transition: opacity var(--duration-base) var(--ease-out);
 }
-.sidebar-actions::after {
+.sessions-head::after {
   top: 100%;
   background:
     linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.5%, transparent), transparent 35%),
@@ -1066,10 +1113,10 @@ onBeforeUnmount(() => {
     linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 0.75%, transparent), transparent);
   transition-duration: var(--duration-slow);
 }
-.sidebar-actions--scrolled {
+.sessions-head--scrolled {
   border-bottom-color: var(--line);
 }
-.sidebar-actions--scrolled::after { opacity: 1; }
+.sessions-head--scrolled::after { opacity: 1; }
 .btn-new-chat {
   grid-column: 1 / -1;
   display: flex;
@@ -1152,15 +1199,16 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-/* Sessions — owns the vertical padding around the list (the 12px gap to the
-   search row above and the bottom breathing room). Scrolled content passes
-   through the top padding and clips at the .sidebar-actions seam. Scrollbar: the
-   4px ::-webkit-scrollbar below; standard scrollbar-width would kill it on
-   Chromium (see the global scrollbar block in style.css). */
+/* Sessions — scrolling group list. The top gap to the action rows lives on
+   the fixed .sessions-head (which carries the seam); this container keeps the
+   side inset and the bottom breathing room. Scrolled content clips at the
+   .sessions-head seam. Scrollbar: the 4px ::-webkit-scrollbar below; standard
+   scrollbar-width would kill it on Chromium (see the global scrollbar block
+   in style.css). */
 .sessions {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-3) var(--sb-inset);
+  padding: 0 var(--sb-inset) var(--space-3);
   min-height: 0;
 }
 .sessions::-webkit-scrollbar { width: 4px; }

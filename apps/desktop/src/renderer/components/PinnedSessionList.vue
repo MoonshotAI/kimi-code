@@ -10,8 +10,9 @@ import { useI18n } from 'vue-i18n';
 import type { Session } from '../types';
 import { moveInOrder, type DropPosition } from '../lib/workspaceOrder';
 import { SESSION_ROW_DRAG_MIME } from '../lib/pinnedSessions';
+import { loadPinnedCollapsed, savePinnedCollapsed } from '../lib/storage';
 import SessionRow from './SessionRow.vue';
-import { Tooltip } from '@moonshot-ai/web-ui';
+import { Icon, IconButton, Tooltip } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -37,6 +38,28 @@ const emit = defineEmits<{
   sessionDragEnd: [];
   reorder: [ids: string[]];
 }>();
+
+// Section collapse: the pinned block is pinned above the scrolling workspace
+// list, so a long pinned set would eat the sidebar — the user can fold it
+// away. Persisted (UI-only state, like the workspace fold in Sidebar).
+const collapsed = ref(loadPinnedCollapsed());
+
+function toggleCollapsed(): void {
+  collapsed.value = !collapsed.value;
+  savePinnedCollapsed(collapsed.value);
+}
+
+// Feedback for a new pin: Sidebar calls this from its pin / pin-at handlers
+// so the new row shows up where the user can see it. Deliberately NOT a
+// sessions-length watcher: first load fetches only each workspace's first
+// page and the missing pinned rows arrive in a later backfill, and that
+// growth must not clear a persisted fold.
+function expand(): void {
+  if (!collapsed.value) return;
+  collapsed.value = false;
+  savePinnedCollapsed(false);
+}
+defineExpose({ expand });
 
 // Hover tooltip: source workspace + the session's cwd — the pinned section
 // mixes workspaces, so the row alone can't say where the session lives.
@@ -158,37 +181,51 @@ function onContainerDragLeave(event: DragEvent): void {
   >
     <div class="pinned-label">
       <span class="pinned-title">{{ t('sidebar.pinned') }}</span>
+      <!-- The toggle stays visible while collapsed: a hidden control would
+           leave the folded section with no discoverable way back. -->
+      <IconButton
+        class="pinned-toggle"
+        :class="{ 'pinned-toggle--on': collapsed }"
+        size="sm"
+        :label="collapsed ? t('sidebar.expandPinned') : t('sidebar.collapsePinned')"
+        @click.stop="toggleCollapsed"
+      >
+        <Icon v-if="collapsed" name="chevron-right" />
+        <Icon v-else name="chevron-down" />
+      </IconButton>
     </div>
-    <div
-      v-for="s in sessions"
-      :key="s.id"
-      class="pin-drop-target"
-      :class="{
-        dragging: draggingId === s.id,
-        'drop-before': dragOver?.id === s.id && dragOver.position === 'before',
-        'drop-after': dragOver?.id === s.id && dragOver.position === 'after',
-      }"
-      draggable="true"
-      @dragstart="onDragStart(s.id, $event)"
-      @dragend="onDragEnd"
-      @dragover.stop="onDragOver($event, s.id)"
-      @drop.stop="onDrop(s.id, $event)"
-    >
-      <Tooltip :text="tooltipFor(s)">
-        <SessionRow
-          :session="s"
-          :active="s.id === activeId"
-          :approval-count="pendingBySession[s.id]?.approvals ?? 0"
-          :question-count="pendingBySession[s.id]?.questions ?? 0"
-          :unread="unreadBySession[s.id] ?? false"
-          @select="emit('selectSession', $event)"
-          @rename="(id, title) => emit('renameSession', id, title)"
-          @archive="emit('archiveSession', $event)"
-          @fork="emit('forkSession', $event)"
-          @export="emit('exportSession', $event)"
-          @pin="emit('pinSession', $event)"
-        />
-      </Tooltip>
+    <div v-if="!collapsed" class="pinned-rows">
+      <div
+        v-for="s in sessions"
+        :key="s.id"
+        class="pin-drop-target"
+        :class="{
+          dragging: draggingId === s.id,
+          'drop-before': dragOver?.id === s.id && dragOver.position === 'before',
+          'drop-after': dragOver?.id === s.id && dragOver.position === 'after',
+        }"
+        draggable="true"
+        @dragstart="onDragStart(s.id, $event)"
+        @dragend="onDragEnd"
+        @dragover.stop="onDragOver($event, s.id)"
+        @drop.stop="onDrop(s.id, $event)"
+      >
+        <Tooltip :text="tooltipFor(s)">
+          <SessionRow
+            :session="s"
+            :active="s.id === activeId"
+            :approval-count="pendingBySession[s.id]?.approvals ?? 0"
+            :question-count="pendingBySession[s.id]?.questions ?? 0"
+            :unread="unreadBySession[s.id] ?? false"
+            @select="emit('selectSession', $event)"
+            @rename="(id, title) => emit('renameSession', id, title)"
+            @archive="emit('archiveSession', $event)"
+            @fork="emit('forkSession', $event)"
+            @export="emit('exportSession', $event)"
+            @pin="emit('pinSession', $event)"
+          />
+        </Tooltip>
+      </div>
     </div>
   </div>
 </template>
@@ -215,6 +252,47 @@ function onContainerDragLeave(event: DragEvent): void {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Collapse toggle — mirrors the sidebar's .side-section-toggle (scoped styles
+   don't cross the component boundary): faint at rest, revealed on label
+   hover/focus-within, and kept visible while the section is folded. */
+.pinned-toggle {
+  color: var(--faint);
+  opacity: 0;
+  transition: opacity var(--duration-base) var(--ease-out);
+}
+.pinned-label:hover .pinned-toggle,
+.pinned-label:focus-within .pinned-toggle,
+.pinned-toggle--on {
+  opacity: 1;
+}
+.pinned-toggle:hover {
+  color: var(--dim);
+}
+.pinned-toggle svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Cap the expanded rows so a long pinned set can't push the workspace list
+   (and the footer) out of the column — the labels stay fixed, the rows
+   scroll internally. Thin overlay scrollbar mirroring the sidebar's. */
+.pinned-rows {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.pinned-rows::-webkit-scrollbar { width: 4px; }
+.pinned-rows::-webkit-scrollbar-track { background: transparent; }
+.pinned-rows::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: var(--radius-full);
+  transition: background var(--duration-base) var(--ease-out);
+}
+.pinned-rows:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-text) 12%, transparent);
+}
+.pinned-rows::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-text) 25%, transparent);
 }
 
 /* Drag affordance: the dragged row fades (the workspace group's .dragging),
