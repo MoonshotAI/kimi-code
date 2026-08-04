@@ -1,4 +1,30 @@
 
+> **✅ 2026-08-03 ⑨ wire 真源闭环（B 类：引擎 result 类型进 wire.gen.ts，已提交）**：
+> - **gen-wire 生成器修复（scripts/gen-wire-contract.mjs，4 处）**：① alias 分支递归 emit target（`pub type X = crate::usage::UsageStatus` 不再悬空）；② 枚举 serde attrs 从定义文件提取（`MessageOrigin` 的 `tag="kind"` 正确）；③ parseEnums 支持多行 struct 变体 + `},` 闭合（ContentPart/MessageOrigin 完整渲染）；④ renderEnum tagged 分支含 unit 变体（`{kind:'user'}`）；⑤ enum struct 变体字段依赖递归（ImageUrlValue/AudioUrlValue/VideoUrlValue）。`pnpm gen:wire` 幂等。
+> - **types.rs 新增 result 类型**：A 类 4 别名（SessionUsageResult=UsageStatus / SessionPlanResult=PlanData / TaskListResult=TaskInfoBase / SessionContextResult=AgentContextData）+ B 类 15 struct（SessionStatusResult / McpServerInfoRpc+List / SkillSummaryRpc+List / SessionWarning+Warnings / McpStartupMetricsResult / ListToolsResult / SessionSummaryRpc+List / PluginSummaryRpc+List / PluginMcpServerInfoRpc / PluginInfoRpc）。wire.gen.ts 88→120 types（+32）。
+> - **handler json! 收拢**：main.rs 的 approval_resolve（换用已有 ApprovalResolveResult）、list_mcp_servers、reconnect_mcp_server、list_skills、get_warnings、get_mcp_startup_metrics、list_tools、session/list、plugin/list、plugin/get（plugin_summary_json/plugin_info_json 改类型化函数）；agent.rs session_status() 返回 SessionStatusResult。session/prompt、activate_skill（usage 类型转换成本高）、git、run_shell、compact、export 等低收益/复杂形状**保持 json!**（C 类）。
+> - **node-sdk 消费端切换**：`rust/wire.ts` 删除 9 个手写 Engine* 接口（~100 行），改 `export type EngineX = wire.gen 类型`（SessionSummaryRpc/SessionStatusResult/McpServerInfoRpc/TaskInfoBase/SkillSummaryRpc/SessionWarning/UsageStatus/PluginSummaryRpc/PluginInfoRpc）；map 函数适配（mapTokenUsage 参数改 wire TokenUsage、mapStatus permission 断言、mapPluginInfo diagnostics 断言）；rpc-client sessionSummaryFor fallback record 补 title/work_dir。
+> - **宿主适配**：kimi-code native-session.ts permission 断言、session-picker-rows `||` fallback（空串回退 workDir/title）；2 个测试修正；klient flagState configValue 参数改**可选**（根治 lint-staged `--fix` 反复移除 trailing undefined 导致的 typecheck 回归）。
+> - **验证**：cargo test lib 2027 + 集成 52 全绿；node-sdk 425 passed + typecheck 0；kimi-code typecheck 0 + 相关测试 22 passed；klient 100 passed + typecheck 0。
+> - **遗留**：rust-loop.ts 的 11 个手写 Engine* 类型（2382-3055）未切换（Goal/Context/Plan/Cron 部分无 wire 对应，需 goal camelCase wire 专用 struct 等）；git/run_shell/compact/export 等 json! 保持 C 类；bg untagged union 保持。
+
+> **✅ 2026-08-03 ⑧ SDK wire 对齐闭环（④ 关闭，已提交）**：
+> - **rpc-client 补 map 层（修复 5 处 `as never` 透传形状错位）**：`getMcpStartupMetrics`（duration_ms→durationMs）、`getCronTasks`（created_at→createdAt 等，新增 `mapCronTaskSnapshot`）、`getBackground`（接入 `mapBackgroundTask`）、`listPlugins`/`getPluginInfo`（接入 `mapPluginSummary`/`mapPluginInfo`）——此前类型声称 camelCase 而线上 snake_case。
+> - **wire.ts/index.ts 导出面**：`mapBackgroundTask`/`mapPluginSummary`/`mapPluginInfo`/`mapToolCall` 与新增 `mapCronTaskSnapshot`/`mapMcpStartupMetrics` 从 `@moonshot-ai/kimi-code-sdk/rust` 入口导出。
+> - **HookDef/HookEventType 直切 wire 真源**：kimi-agent `exports` 新增 `./rpc/wire`（→ `src/rpc/wire.gen.ts`）；node-sdk `legacy/plugin/hooks.ts` 删除手写接口，re-export 生成类型（`HOOK_EVENT_TYPES` 运行时数组保留并 `satisfies` wire 联合）。
+> - **apps/kimi-code 重复副本清理**：`native-session.ts` 删除本地 map 函数副本（~200 行，与 wire.ts 字节级一致）改用 SDK/rust；`native-session-adapter.ts` 的 8 个 `Engine*` wire 类型统一 re-export SDK/rust（消除 version/status/usage 字段漂移），保留 adapter 独有 `EngineCronTask`/`EnginePlanInfo`/`EngineContextData`/`EngineGoalSnapshot`。
+> - **顺带修复**：klient `flagsCatalog.ts` `explainFlag` 末尾 `flagState(def, def.default, 'default', undefined)` 被上轮 lint-staged `oxlint --fix` 误删 `undefined`（unicorn no-useless-undefined，但 `configValue` 参数必选）→ 恢复，klient typecheck 回归绿。
+> - **验证**：node-sdk 34 文件 425 passed + typecheck 0；kimi-code typecheck 0 + native-session 10 测试绿；klient 100 passed + typecheck 0。
+> - **遗留**：③ agent 域 scope 收敛（引擎无表面）；B 类引擎 result 类型进 wire.gen.ts（需 Rust 侧收拢 `json!` 字面量为命名 struct，工程量大，暂维持手写 `Engine*` 镜像 + map 层）。
+
+> **✅ 2026-08-03 ⑦ 收尾退役 + klient 写面事件通路（①② 关闭，已提交 735561f92 + 5b299dabd）**：
+> - **P2-2 零-host 冒烟（commit 735561f92）**：`tests/stdio_rpc_integration.rs` 新增 `native_full_chain_self_served_persists_and_resumes`（两进程全链路：create→prompt(native LLM Read+文本)→save→重建→load→get_context 跨进程恢复）；`cargo test -p kimi-agent --test stdio_rpc_integration` = **52 passed**。
+> - **收尾退役（commit 5b299dabd）**：① `packages/minidb`(100 文件)→`retired/minidb/`（唯一消费者 agent-core-v2 已退役；flake.nix + pnpm-lock 清理）；② `packages/kosong/native`(25 文件)+`src/native-bridge.ts`→`retired/kosong-native/`（落实 bfc88c7d0「keep until deliberately retired」，零残留引用）；③ protocol `events.ts` 删 §3.3 残留 **22 接口/type + 23 schema**（turn.step.*/tool.progress/tool.call.delta/tool.list.updated/shell.started|completed/skill.activated/plugin_command.activated/subagent.*/compaction.blocked|cancelled|completed/background.task.*/cron.fired；保留活跃消费方 McpServerStatusEvent/AgentStatusUpdatedEvent 等）+ 测试适配（4 个预存失败清零）；protocol **28 文件 524 测试全绿**（基线 5 失败）、node-sdk/kosong/klient/kimi-code typecheck 全 0。
+> - **klient ① 宿主侧写面无事件通路（本批关闭）**：新增 host 本地事件总线（`host/events.ts` RustEventBus + `RustHostServices.events` + channel `listen` emitter 订阅路由到 bus，替代原「engine 无 onDid* emitter，直接过滤」）；写面 emit——`providerService.set/delete`（onDidChangeProviders）、`modelService.set/delete`（onDidChangeModels）、`providerDiscovery.removeProvider`/`applyManagedPatch`（providers+models 双发）、`configService.set/replace`（onDidChangeConfiguration + providers/models 域 delta）；smoke 断言 `kosong.providers.changed`/`kosong.models.changed` **全绿**。
+> - **klient ② providerService.set 空 home 自举（本批关闭）**：`readConfigForUpdate` 区分 ENOENT（无 config.toml → 空配置自举）与真损坏（仍抛错）；smoke 全新 temp home 直接 addProvider 成功。
+> - **验证**：klient typecheck 0、测试 100 通过、smoke: OK；protocol 524 全绿。
+> - **遗留**：③ agent 域 scope 收敛（引擎无表面）；④ SDK v1 wire 公开类型切 Rust 形状。
+
 > **✅ 2026-08-03 ⑤ klient Rust 传输（完整映射）+ agent-core-v2 退休（已提交）**：
 > - **目标**：klient 从退役的 agent-core-v2 v2 dispatcher 切到 rust 传输（rust-loop 驱动），随后 agent-core-v2 移入 retired/——`packages/*` 不再含任何 TS 引擎包。
 > - **rust 传输（src/transports/rust/）**：

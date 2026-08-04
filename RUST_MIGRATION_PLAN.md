@@ -4,6 +4,7 @@
 > - 模块映射明细 → `packages/kimi-agent/GAP_ANALYSIS.md`（滚动更新）
 > - 逐会话工作日志 → `RUST_WORK_LOG.md`（已入库）
 > - 根目录外的 `D:\kimi\plan.md` 是旧阶段快照，已废弃，仅作历史参考
+> - **方向演进（2026-08-03）**：引擎迁移已收官；**宿主层（CLI/TUI/Web/API）转入 Codex 方向的全 Rust 迁移**，目标架构与阶段见 `CODEX_MIGRATION_PLAN.md`。本文档覆盖引擎域的完成状态；宿主迁移进度以 `CODEX_MIGRATION_PLAN.md` 为准。
 
 ## 当前状态（2026-08-03 核对）
 

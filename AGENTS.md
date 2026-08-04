@@ -67,7 +67,9 @@ This is a TypeScript monorepo built for agent-assisted development. This file is
 
 ## Engine Ownership — Rust is the source of truth
 
-> **Status (2026-08-02):** the JS agent engines (`agent-core`, `agent-core-v2`) are **retired**. The only engine is the Rust engine (`packages/kimi-agent`). `schema.ts` `engine` enum is `'rust'` only — no JS fallback. The end state of this project is **all engine functionality in Rust and the TS engine code deleted**; the repo is still mid-migration on that path.
+> **Status (2026-08-03):** the JS agent engines (`agent-core`, `agent-core-v2`) are **retired**. The only engine is the Rust engine (`packages/kimi-agent`). `schema.ts` `engine` enum is `'rust'` only — no JS fallback.
+>
+> **方向（2026-08-03 定案，见 `CODEX_MIGRATION_PLAN.md`）**：走 Codex 方向——**核心全部 Rust，TS 只留前端与分发薄壳**。当前 TS 宿主（CLI/TUI/Web/API，约 17 万行）按计划逐阶段迁入 `crates/`（kimi-cli/kimi-tui/kimi-server/kimi-sdk/…）。迁移完成前 TS 宿主保留（见下方白名单），**新增宿主逻辑优先写 Rust**；已完成迁移的模块删除对应 TS。
 
 ### Where new code goes
 
@@ -75,17 +77,19 @@ This is a TypeScript monorepo built for agent-assisted development. This file is
 - **RPC/wire types are generated**: change the Rust type in `src/rpc/types.rs`, then run `pnpm gen:wire` and commit the generated `src/rpc/wire.gen.ts`. Never hand-edit `wire.gen.ts`.
 - **Do NOT implement or modify engine behavior in TypeScript.** Both TS engine packages are **retired**: `packages/agent-core` moved to `retired/agent-core/` (2026-08-03) and `packages/agent-core-v2` to `retired/agent-core-v2/` (2026-08-03) once klient switched to the rust transport. Hosts no longer reference either; do not extend them or reintroduce imports.
 
-### TS side is allowed only for the host layer (whitelist)
+### TS side is allowed only for the host layer (whitelist) — 过渡期
+
+> 方向修正：白名单是**过渡状态**。目标是把这些宿主层也迁入 Rust（`CODEX_MIGRATION_PLAN.md` 阶段 B-F）。迁移完成一个模块，删除对应 TS。
 
 | Scope | Files | Reason |
 |-------|-------|--------|
 | Rust bridge / adapter | `packages/kimi-agent/rust-loop.ts`, `apps/kimi-code/src/cli/rust-engine.ts`, `apps/kimi-code/src/cli/native-session.ts` | glue host ↔ Rust RPC |
 | Server host layer | `packages/kap-server/` (routes, `rustSessions.ts`, `RustSessionService`) | REST/WS projection over Rust RPC |
 | Generated files | `packages/kimi-agent/src/rpc/wire.gen.ts` | regenerated via `pnpm gen:wire`, never hand-edited |
-| CLI / TUI / Web / VS Code shells | `apps/*` UI + i18n | pure UI, no engine logic |
+| CLI / TUI / Web / VS Code shells | `apps/*` UI + i18n | pure UI, no engine logic（目标迁入 crates/） |
 | Test adaptation | TS tests asserting against the Rust engine | keep host behavior verified |
 
-Before writing any TS change, ask: *is this engine functionality?* If yes → implement in Rust. If it is host/UI → TS is fine.
+Before writing any TS change, ask: *is this engine functionality?* If yes → implement in Rust. If it is host/UI → TS is fine **for now, but prefer Rust** (see `CODEX_MIGRATION_PLAN.md`).
 
 ---
 
