@@ -273,7 +273,14 @@ impl App {
                 tokio::time::timeout(std::time::Duration::from_millis(50), source.next()).await
             {
                 let line = kimi_ui::render_event(&event).unwrap_or_else(|| event.to_string());
-                self.transcript.push(line);
+                // Mark tool progress lines so they read differently from the
+                // transcript and the user's own prompts.
+                let is_tool = event.get("type").and_then(|t| t.as_str()).is_some_and(|t| t.starts_with("session.tool."));
+                if is_tool {
+                    self.transcript.push(format!("  ⚙ {line}"));
+                } else {
+                    self.transcript.push(line);
+                }
             }
         }
     }
