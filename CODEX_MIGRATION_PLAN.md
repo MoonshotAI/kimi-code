@@ -347,16 +347,16 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 
 **新增/加固的 crate 与测试基线**：
 - `kimi-server`：52 测试（12 方法族全覆盖：session 44 方法含 btw、bg 全、cron 全、approval 全、permission/plugin/fs/git/config/health/task）
-- `kimi-cli`：12 子命令（print/sessions/resume/config/doctor/health/export/chat/acp/completions/provider/login + upgrade/web/vis 识别）+ 全局 `--server` Remote 模式 + print `--model/--plan/--continue` + `doctor config|tui` + 30 二进制级集成测试
+- `kimi-cli`：12 子命令（print/sessions/resume/config/doctor/health/export/chat/acp/completions/provider/login/**logout** + upgrade/web/vis 识别）+ 全局 `--server` Remote 模式 + print/resume/chat `--model`、print/resume `--plan`、print/chat `--continue` + `doctor config|tui` + **login 持久化**（providers.kimi.apiKey）+ **--verbose 实时文本流式**（TTY 滚动）+ 31 二进制级集成测试
 - `kimi-ui`：渲染原语（render_event 15/19 引擎事件类型 + last_assistant_text + **stream_delta**）+ `EventSource`，7 测试
 - `kimi-sdk`：Harness（内嵌/Remote + 事件流 + 审批 + 列表/配置读写 set_config + 导出 + list_models + run_prompt）+ Session **44/44 方法面**（生命周期全 + goal + 模式控制 + steer/undo + fork/import/clear + btw/activate_skill + skill/plan/usage/mcp/warnings/tools/dir/metadata/destroy/init/cancel_shell 读面），7 测试
 - `kimi-acp`：stdio 适配器 + `kimi acp` 命令（initialize + session 生命周期 + **set_mode/set_model** + notification 语义），6 测试
-- `kimi-tui`：ratatui 聊天界面（角色化转录/23 全命令面 Tab 补全/审批 y-n+详情/turn 取消/目标生命周期/**llm.delta 流式**/TestBackend 冒烟），11 测试
+- `kimi-tui`：ratatui 聊天界面（角色化转录/23 全命令面 Tab 补全/审批 y-n+详情/turn 取消/目标生命周期/**llm.delta 文本+thinking 流式**/TestBackend 冒烟），13 测试
 - `kimi-server-transport`：stdio + **websocket**（serve + `kimi-server-serve --ws`），7 测试（含二进制 WS e2e）
 - `kimi-server-client`：AppServerClient{InProcess, **Remote** stdio, **RemoteWs** websocket}，4 测试
-- 全 workspace 测试基线 **2860+**（kimi-agent 2027 + native-tools 617 + 宿主 240+）；三传输路径（in-process/stdio/ws）全端到端通过
+- 全 workspace 测试基线 **2870+**（kimi-agent 2027 + native-tools 617 + 宿主 250+）；三传输路径（in-process/stdio/ws）全端到端通过
 
-**本会话提交链（19）**：a008dd6dc 角色化转录+Tab 补全 → b60ffc5ab 审批 y/n → 66c663d6b TestBackend 冒烟 → 720cf5702 turn 取消 → 980fbf8fb chat 审批命令面 → 75e0142c6 upgrade/web/vis 识别 → 15fa8cffa print --model/--plan/--continue → 2ea0a0d72 审批详情 → 24c497cf0/2241e7e4e setup 旗标+回退 → de6387593 ACP set_mode/set_model → f4a6a307d WS 传输 → 7e7860c00 doctor tui → cbcf0aa19 llm.delta 流式 → 4596e8d7f llm.step 渲染 → f19cf536a WS 客户端 → 15027eabb SDK 44/44 → 7c26bc820 Harness::set_config → 0285086c5 serve_bin --ws e2e
+**本会话提交链（24）**：a008dd6dc 角色化转录+Tab 补全 → b60ffc5ab 审批 y/n → 66c663d6b TestBackend 冒烟 → 720cf5702 turn 取消 → 980fbf8fb chat 审批命令面 → 75e0142c6 upgrade/web/vis 识别 → 15fa8cffa print --model/--plan/--continue → 2ea0a0d72 审批详情 → 24c497cf0/2241e7e4e setup 旗标+回退 → de6387593 ACP set_mode/set_model → f4a6a307d WS 传输 → 7e7860c00 doctor tui → cbcf0aa19 llm.delta 流式 → 4596e8d7f llm.step 渲染 → f19cf536a WS 客户端 → 15027eabb SDK 44/44 → 7c26bc820 Harness::set_config → 0285086c5 serve_bin --ws e2e → **2f532d193 session/rename RPC → 1206455be CLI 实时文本流式 → f678d1f98 resume/chat 旗标对称 → 1414d064d login 持久化+logout → d41c3ef0a TUI thinking 流式**
 
 **迁移测试驱动的宿主缺陷修复（7 个）**：
 - `session/export` 缺 base64 编码（zip 变数字数组）
