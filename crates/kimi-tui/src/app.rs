@@ -99,6 +99,21 @@ struct TabState {
 struct PendingApproval {
     id: String,
     tool: String,
+    /// Matching permission rule label (e.g. "Always allow"), when known.
+    rule: String,
+    /// Compact preview of the tool arguments (bounded length).
+    args: String,
+}
+
+/// Compact single-line preview of a tool's arguments (≤ 80 chars, char-safe).
+fn args_preview(arguments: &serde_json::Value) -> String {
+    let text = serde_json::to_string(arguments).unwrap_or_default();
+    if text.chars().count() <= 80 {
+        text
+    } else {
+        let cut: String = text.chars().take(80).collect();
+        format!("{cut}…")
+    }
 }
 
 /// Merge newly fetched approval items into the pending queue (dedup by id).
@@ -111,8 +126,10 @@ fn queue_new_approvals(queue: &mut Vec<PendingApproval>, items: &[serde_json::Va
             continue;
         }
         let tool = item["tool_name"].as_str().unwrap_or("?").to_string();
+        let rule = item["approval_rule"].as_str().unwrap_or("?").to_string();
+        let args = args_preview(&item["arguments"]);
         if !queue.iter().any(|p| p.id == id) {
-            queue.push(PendingApproval { id, tool });
+            queue.push(PendingApproval { id, tool, rule, args });
             added += 1;
         }
     }
@@ -527,8 +544,10 @@ impl App {
                 if added > 0 {
                     if let Some(head) = self.pending_approvals.last() {
                         self.transcript.push(TranscriptLine::status(format!(
-                            "approval requested: {} — press y/n",
-                            head.tool
+                            "approval requested: {} ({rule}) {args} — press y/n",
+                            head.tool,
+                            rule = head.rule,
+                            args = head.args,
                         )));
                     }
                 }
@@ -806,28 +825,53 @@ mod tests {
     #[test]
     fn queues_approvals_with_dedup() {
         let mut queue = Vec::new();
-        // New items are queued in order.
+        // New items are queued in order with their rule + args preview.
         let items = vec![
-            serde_json::json!({ "id": "a1", "tool_name": "Bash" }),
-            serde_json::json!({ "id": "a2", "tool_name": "Read" }),
+            serde_json::json!({ "id": "a1", "tool_name": "Bash", "approval_rule": "Always allow", "arguments": { "command": "ls" } }),
+            serde_json::json!({ "id": "a2", "tool_name": "Read", "approval_rule": "Ask", "arguments": { "path": "/x" } }),
         ];
         assert_eq!(queue_new_approvals(&mut queue, &items), 2);
         assert_eq!(
             queue,
             vec![
-                PendingApproval { id: "a1".into(), tool: "Bash".into() },
-                PendingApproval { id: "a2".into(), tool: "Read".into() },
+                PendingApproval {
+                    id: "a1".into(),
+                    tool: "Bash".into(),
+                    rule: "Always allow".into(),
+                    args: r#"{"command":"ls"}"#.into(),
+                },
+                PendingApproval {
+                    id: "a2".into(),
+                    tool: "Read".into(),
+                    rule: "Ask".into(),
+                    args: r#"{"path":"/x"}"#.into(),
+                },
             ]
         );
         // Re-fetching the same ids adds nothing.
         assert_eq!(queue_new_approvals(&mut queue, &items), 0);
         // A fresh id appended; items without an id are skipped.
         let more = vec![
-            serde_json::json!({ "id": "a3", "tool_name": "Edit" }),
+            serde_json::json!({ "id": "a3", "tool_name": "Edit", "arguments": { "path": "/y" } }),
             serde_json::json!({ "tool_name": "no-id" }),
         ];
         assert_eq!(queue_new_approvals(&mut queue, &more), 1);
-        assert_eq!(queue[2], PendingApproval { id: "a3".into(), tool: "Edit".into() });
+        assert_eq!(queue[2].id, "a3");
+        assert_eq!(queue[2].rule, "?");
+    }
+
+    #[test]
+    fn args_preview_truncates_char_safely() {
+        // Short args pass through verbatim.
+        assert_eq!(args_preview(&serde_json::json!({ "command": "ls" })), r#"{"command":"ls"}"#);
+        // Missing arguments render as an empty preview.
+        assert_eq!(args_preview(&serde_json::Value::Null), "null");
+        // Long args are cut at 80 chars — with a multi-byte suffix the cut
+        // never splits a character.
+        let long = serde_json::json!({ "text": "界".repeat(120) });
+        let preview = args_preview(&long);
+        assert!(preview.chars().count() <= 81, "bounded: {preview}");
+        assert!(preview.ends_with('…'), "ellipsis: {preview}");
     }
 
     #[test]

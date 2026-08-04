@@ -1,4 +1,10 @@
 
+> **✅ 2026-08-03 ⑰ TUI 审批详情（rule + args 预览，已提交）**：
+> - **扩充**：`PendingApproval{id, tool, rule, args}`——`approval_rule` 标签 + `args_preview`（参数 JSON 单行预览，≤80 字符、char 安全截断 + `…`）。
+> - **请求行**：`approval requested: <tool> (<rule>) <args> — press y/n`（对齐 TS 审批卡的信息量）；/approvals 命令不变。
+> - **验证**：kimi-tui 测试 8 → 9（dedup 断言含 rule/args、args_preview 截断/多字节安全）；clippy kimi-tui 0 警告；workspace check 干净。
+> - **遗留**：TUI 审批无独立详情面板（多行展开），当前单行预览足够最小可用。
+
 > **✅ 2026-08-03 ⑯ print/chat TS 旗标对齐（--model/--plan/--continue，已提交）**：
 > - **kimi-exec**：新增 `PromptSetup{model, plan}` + `run_prompt_with_setup`（create → set_model → set_plan_mode → prompt，setup 失败同 create 契约返回 error body）；`run_prompt` 保留为默认 setup 的薄包装（向后兼容）。
 > - **CLI**：`kimi print --model <id> --plan --continue`（--continue 经 `latest_session_id` = session/list `updated_at DESC` 首条，复用最近会话而非固定 kimi-exec）；`kimi chat --continue` 同；goal 块改用解析后的 session_id。
