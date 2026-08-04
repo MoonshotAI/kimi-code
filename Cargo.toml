@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/kimi-cli",
     "crates/kimi-exec",
+    "crates/kimi-oauth",
     "crates/kimi-protocol",
     "crates/kimi-server",
     "crates/kimi-server-client",

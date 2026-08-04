@@ -1,0 +1,13 @@
+[package]
+name = "kimi-oauth"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Kimi Code OAuth — device flow over the kimi auth server (stage E, port of kimi-code-oauth)"
+
+[dependencies]
+anyhow = "1"
+reqwest = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt", "time"] }
