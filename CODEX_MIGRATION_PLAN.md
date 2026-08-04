@@ -350,7 +350,7 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - `kimi-ui`：渲染原语（render_event/last_assistant_text）+ `EventSource` 统一事件源（内嵌/Remote），6 测试
 - `kimi-sdk`：Harness（内嵌/Remote + 事件流 + 审批 + 列表/配置/导出 + **list_models**）+ Session（34 方法：生命周期全 + goal + 模式控制 + steer/undo + fork/import/clear + btw/activate_skill + skill/plan/usage 读面），3 集成测试
 - `kimi-acp`：stdio 适配器 + `kimi acp` 命令（initialize 协商 + session 生命周期 + notification 语义），3 测试
-- 全 workspace 测试基线 **2839**（kimi-agent 2027 + native-tools 617 + 宿主 51 + CLI 22 集成 + SDK/ACP/UI 等 200+）
+- 全 workspace 测试基线 **2839**（kimi-agent 2027 + native-tools 617 + 宿主 52 + CLI 22 集成 + SDK/ACP/UI 等 200+）；`kimi --server` Remote 模式全子命令端到端冒烟通过
 
 **迁移测试驱动的宿主缺陷修复（6 个）**：
 - `session/export` 缺 base64 编码（zip 变数字数组）
