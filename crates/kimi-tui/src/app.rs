@@ -27,6 +27,8 @@ pub struct App {
     /// Model aliases for `/model` Tab completion.
     model_aliases: Vec<String>,
     tab_idx: Option<usize>,
+    /// Transcript scroll offset (lines from the bottom).
+    scroll: u16,
 }
 
 impl App {
@@ -42,6 +44,7 @@ impl App {
             session: None,
             model_aliases: Vec::new(),
             tab_idx: None,
+            scroll: 0,
         }
     }
 
@@ -92,6 +95,8 @@ impl App {
                         self.history_idx = None;
                     }
                     KeyCode::Tab => self.complete_model(),
+                    KeyCode::PageUp => self.scroll = self.scroll.saturating_add(5),
+                    KeyCode::PageDown => self.scroll = self.scroll.saturating_sub(5),
                     KeyCode::Up => self.history_back(),
                     KeyCode::Down => self.history_forward(),
                     KeyCode::Esc => return Ok(()),
@@ -315,15 +320,21 @@ impl App {
         self.input = format!("/model {}", matches[idx]);
     }
 
-    fn draw(&self, frame: &mut ratatui::Frame<'_>) {
+    fn draw(&mut self, frame: &mut ratatui::Frame<'_>) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(3), Constraint::Length(3)])
             .split(frame.area());
         let transcript = self.transcript.join("\n");
+        let viewport = chunks[0].height.saturating_sub(2) as usize;
+        let total = self.transcript.len();
+        let max_scroll = total.saturating_sub(viewport);
+        if self.scroll as usize > max_scroll {
+            self.scroll = max_scroll as u16;
+        }
         let chat = Paragraph::new(transcript)
             .block(Block::default().borders(Borders::ALL).title("chat"))
-            .scroll((self.transcript.len().saturating_sub(1) as u16, 0));
+            .scroll((self.scroll, 0));
         let input = Paragraph::new(self.input.as_str())
             .block(Block::default().borders(Borders::ALL).title("input"));
         frame.render_widget(chat, chunks[0]);
