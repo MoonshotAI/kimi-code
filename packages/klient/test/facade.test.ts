@@ -214,7 +214,8 @@ describe('session skills routing', () => {
   });
 });
 
-describe('agent mcp / compaction routing', () => {  it('getMcpServers routes to agentMcpService.list with the agent scope', async () => {
+describe('agent mcp / compaction routing', () => {
+  it('getMcpServers waits for initial load before listing with the agent scope', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
     const agent = klient.session('s1').agent('main');
@@ -222,9 +223,16 @@ describe('agent mcp / compaction routing', () => {  it('getMcpServers routes to 
     const entries = [
       { name: 'mock', transport: 'stdio', status: 'connected', toolCount: 2 },
     ];
-    channel.result = entries;
+    channel.results.set('agentMcpService.waitForInitialLoad', undefined);
+    channel.results.set('agentMcpService.list', entries);
     await expect(agent.getMcpServers()).resolves.toEqual(entries);
     expect(channel.calls[0]).toEqual({
+      scope: { sessionId: 's1', agentId: 'main' },
+      service: 'agentMcpService',
+      method: 'waitForInitialLoad',
+      args: [],
+    });
+    expect(channel.calls[1]).toEqual({
       scope: { sessionId: 's1', agentId: 'main' },
       service: 'agentMcpService',
       method: 'list',

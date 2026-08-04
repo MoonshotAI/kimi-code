@@ -62,7 +62,10 @@ export interface AgentFacade {
   getTasks(input?: { activeOnly?: boolean; limit?: number }): Promise<readonly AgentTaskInfo[]>;
   stopTask(input: { taskId: string; reason?: string }): Promise<void>;
   getTaskOutput(input: { taskId: string; tail?: number }): Promise<string>;
-  /** Session-merged MCP server entries (workspace set + ephemeral session overlay). */
+  /**
+   * Session-merged MCP server entries (workspace set + ephemeral session
+   * overlay), after the initial connection attempt settles.
+   */
   getMcpServers(): Promise<readonly McpServerEntry[]>;
   /**
    * Trigger a manual full compaction. Async: `true` means the compaction was
@@ -114,8 +117,10 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
     },
     getTaskOutput: (input) =>
       call(scope, 'agentTaskService', 'readOutput', [input.taskId, input.tail]) as Promise<string>,
-    getMcpServers: () =>
-      call(scope, 'agentMcpService', 'list', []) as Promise<readonly McpServerEntry[]>,
+    getMcpServers: async () => {
+      await call(scope, 'agentMcpService', 'waitForInitialLoad', []);
+      return call(scope, 'agentMcpService', 'list', []) as Promise<readonly McpServerEntry[]>;
+    },
     compact: (input) =>
       call(scope, 'agentFullCompactionService', 'begin', [
         { source: 'manual', instruction: input?.instruction },
