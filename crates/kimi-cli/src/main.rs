@@ -1198,7 +1198,12 @@ async fn main() -> anyhow::Result<()> {
             let harness = connect_harness(&server)?;
             match harness.health().await {
                 Ok(status) => println!("health: {status}"),
-                Err(e) => println!("health: error — {e}"),
+                Err(e) => {
+                    println!("health: error — {e}");
+                    // A doctor that cannot reach a healthy engine must fail
+                    // the check for CI (not just print and exit 0).
+                    std::process::exit(1);
+                }
             }
             match harness.config().await {
                 Ok(config) => {
