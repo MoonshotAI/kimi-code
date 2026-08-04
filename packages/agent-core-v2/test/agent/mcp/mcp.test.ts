@@ -249,6 +249,31 @@ describe('AgentMcpService', () => {
     expect(statuses).toEqual(['s1:connected', 's2:connected', 's1:disabled']);
   });
 
+  it('holds the LLM step until the initial MCP load settles', async () => {
+    const manager = new FakeMcpManager();
+    let releaseLoad!: () => void;
+    manager.waitForInitialLoad = () =>
+      new Promise<void>((resolve) => {
+        releaseLoad = resolve;
+      });
+    createService(manager);
+
+    const loop = ix.get(IAgentLoopService);
+    let settled = false;
+    const step = loop.hooks.onWillBeginStep
+      .run({ turnId: 1, step: 1, signal: new AbortController().signal })
+      .then(() => {
+        settled = true;
+      });
+
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    releaseLoad();
+    await step;
+    expect(settled).toBe(true);
+  });
+
   it('resolves through the IAgentMcpService binding with no manager', () => {
     const created = createService(new FakeMcpManager());
     ix.set(IAgentMcpService, created);
