@@ -797,9 +797,13 @@ describe('FileSessionIndex (read model)', () => {
   // -- stage-3 performance baselines ------------------------------------------
   // Not tight CI thresholds: numbers are logged as JSON for phase-to-phase
   // comparison, and only loose complexity budgets are asserted so an
-  // accidental linear regression trips the test anywhere.
+  // accidental linear regression trips the test anywhere. Shared-runner load
+  // can still inflate a wall-clock median past any fixed budget, so the test
+  // retries once: a transient spike passes on the rerun, a genuine regression
+  // fails every attempt.
+  const baseline = { retry: 1, timeout: 120_000 };
 
-  it('baseline: warm listRecent(limit=20) at 1k vs 10k vs 50k sessions', async () => {
+  it('baseline: warm listRecent(limit=20) at 1k vs 10k vs 50k sessions', baseline, async () => {
     const store = build();
     // A small on-disk seed publishes generation 1; scale rows are written
     // directly into the generation (the mirror path is covered elsewhere).
@@ -865,5 +869,5 @@ describe('FileSessionIndex (read model)', () => {
     expect(at50k.get).toBeLessThan(50);
     expect(at50k.count).toBeLessThan(50);
     expect(at50k.list).toBeLessThan(at1k.list * 10 + 50);
-  }, 120_000);
+  });
 });
