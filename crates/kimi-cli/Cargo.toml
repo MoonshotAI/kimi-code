@@ -20,6 +20,7 @@ kimi-server = { path = "../kimi-server" }
 kimi-server-client = { path = "../kimi-server-client" }
 kimi-acp = { path = "../kimi-acp" }
 kimi-sdk = { path = "../kimi-sdk" }
+kimi-tui = { path = "../kimi-tui" }
 kimi-ui = { path = "../kimi-ui" }
 serde_json = { workspace = true }
 tokio = { workspace = true }

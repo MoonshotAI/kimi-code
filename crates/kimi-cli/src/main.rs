@@ -529,13 +529,18 @@ async fn main() -> anyhow::Result<()> {
     use clap::CommandFactory;
     let Cli { server, command } = Cli::parse();
     let Some(command) = command else {
-        // No subcommand: TS enters the interactive TUI here. That is stage D
-        // of the Rust migration (ratatui, offline-blocked) — point the user
-        // at the non-interactive paths instead.
+        // No subcommand: enter the interactive TUI (stage D) when the
+        // terminal supports it; otherwise fall back to help + a hint.
+        if std::io::stdin().is_terminal() {
+            let harness = connect_harness(&server)?;
+            let session_id = format!("kimi-{}", std::process::id());
+            let mut app = kimi_tui::App::new(harness, &session_id);
+            return app.run().await;
+        }
         let mut cmd = Cli::command();
         cmd.print_help()?;
         println!();
-        println!("interactive TUI is stage D of the Rust migration — use `kimi print -p \"...\"` for one-shot runs");
+        println!("interactive TUI needs a terminal — use `kimi chat` for a plain-text REPL or `kimi print -p \"...\"` for one-shot runs");
         return Ok(());
     };
     match command {

@@ -219,8 +219,8 @@ fn bare_invocation_prints_help_and_stage_d_hint() {
     let out = stdout(&output);
     assert!(out.contains("Usage:"), "help printed: {out}");
     assert!(
-        out.contains("stage D") && out.contains("kimi print"),
-        "stage D hint present: {out}"
+        out.contains("needs a terminal") && out.contains("kimi chat"),
+        "non-TTY hint present: {out}"
     );
 }
 
