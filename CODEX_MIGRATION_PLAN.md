@@ -336,10 +336,10 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 
 - [x] 阶段 A 框架落地（kimi-protocol + workspace + wire 类型下沉）✅
 - [x] 阶段 B 宿主协议层（kimi-server 52 测试 + transport/serve 二进制 + client InProcess/Remote 全链路）✅
-- [x] 阶段 C CLI + exec（21 集成测试 + typed client + 配置读写闭环 + chat REPL + acp 命令 + print/resume 目标模式）✅
-- [ ] 阶段 D TUI（kimi-ui 前置 ✅ + chat REPL ✅ + **kimi-tui 骨架 ✅**（ratatui 事件实时渲染/角色化转录/全命令 Tab 补全/审批 y-n 交互+详情/approvals 命令/Esc-Ctrl-C turn 取消/23 slash 全命令面/会话切换/目标生命周期，11 测试 + TestBackend 冒烟）；chatwidget 流式 ✅（llm.delta 接线））
-- [ ] 阶段 E SDK/ACP/OAuth/Config（kimi-sdk 🔶（Session 44/44 方法面）+ **kimi-acp ✅**（+set_mode/set_model + session/update 通知回放）+ **kimi-oauth ✅**（device flow）+ **catalog ✅**（models.dev）+ provider/login/completions 命令 ✅ + **WS 传输 ✅**（kimi-server-transport））
-- [ ] 阶段 F 退役（**npm 分发薄壳 ✅**：kimi-code-rust-bin 包装 + pack.mjs CI 打包；TS 删除与入口切换待续）
+- [x] 阶段 C CLI + exec（31 集成测试 + typed client + 配置读写闭环 + chat REPL + acp 命令 + print/resume 目标模式 + 全旗标对称）✅
+- [ ] 阶段 D TUI（kimi-ui 前置 ✅ + chat REPL ✅ + **kimi-tui ✅**（ratatui 事件实时渲染/角色化转录/23 全命令面 Tab 补全/审批 y-n 交互+详情/approvals 命令/Esc-Ctrl-C turn 取消/目标生命周期/**llm.delta 文本+thinking 流式**/TestBackend 冒烟，13 测试））
+- [ ] 阶段 E SDK/ACP/OAuth/Config（**kimi-sdk ✅**（Session 45/45 + Harness set_config + catalog）+ **kimi-acp ✅**（set_mode/set_model + session/update 通知回放）+ **kimi-oauth ✅**（device flow）+ **catalog ✅**（models.dev）+ provider/login/logout/acp--login 命令 ✅ + **WS 传输+客户端 ✅**（serve --ws + RemoteWs + e2e））
+- [ ] 阶段 F 退役（**npm 分发薄壳 ✅ 已验证**：kimi-code-rust-bin 包装 + pack.mjs CI 打包；**入口切换按记录决策未落代码**（Rust 全绿后执行，web/vis/upgrade 已识别）；TS 删除待续）
 
 ## 9. 迁移推进会话快照（2026-08，分支 feat/rust-agent-engine-migration）
 
@@ -369,4 +369,4 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 
 **离线边界更新（网络已恢复，2026-08）**：ratatui TUI、clap_complete、catalog（models.dev）、OAuth（kimi-oauth device flow）、npm 分发薄壳全部落地；剩余：ts-rs 绑定生成（可选）。
 
-**下一步建议**：① 阶段 E 剩余：kimi-sdk 测试平移（TS 425 用例，大项）/ TS harness 便捷层（rename/mcp 管理）按需；② 阶段 F：入口切换执行（Rust 全绿后 wrapper 优先 Rust 回退 TS）、TS 宿主退役（kap-server/node-sdk/klient/acp-adapter/oauth/protocol/kaos → retired/）；③ 真实 LLM 端点恢复后的 `kimi print`/TUI 流式端到端验证。
+**下一步建议**：① 阶段 E 剩余：kimi-sdk 测试平移（TS 425 用例，大项）按需；② 阶段 F：入口切换执行（Rust 全绿后 wrapper 优先 Rust 回退 TS——方案已记录、npm 薄壳已验证）、TS 宿主退役（kap-server/node-sdk/klient/acp-adapter/oauth/protocol/kaos → retired/）；③ 真实 LLM 端点恢复后的 `kimi print`/TUI 流式端到端验证（含 ACP 逐 token 通知）。
