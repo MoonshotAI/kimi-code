@@ -12,8 +12,11 @@
  * `ISessionAgentProfileCatalog`, and the caller's `IAgentProfileService`) and
  * threads it through the swarm tasks; otherwise binding is left to the
  * service, which keeps its own "no model bound" check and inherit-caller
- * fallback. Swarm mode is entered through `IAgentSwarmService`; the caller's
- * agent id comes from `IAgentScopeContext`. Pure tool — owns no scoped state.
+ * fallback. The advertised `model` parameter lists the secondary/primary
+ * pair via `buildSubagentModelDescriptions`, suffixing each line with the
+ * entry's capability flags resolved through `IModelCatalog`. Swarm mode is
+ * entered through `IAgentSwarmService`; the caller's agent id comes from
+ * `IAgentScopeContext`. Pure tool — owns no scoped state.
  *
  * Registered via the module-level `registerAgentToolService(IAgentSwarmTool,
  * AgentSwarmTool)` at the bottom of this file — the same "import = register"
