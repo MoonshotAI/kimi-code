@@ -5,20 +5,10 @@
  * layers `env > config.toml`) over the host's declared display name in
  * `IBootstrapService.args`. Bound at App scope.
  *
- * Every value is resolved **lazily, on each read** rather than snapshotted in
- * the constructor: config loads asynchronously, so a service constructed early
- * in boot would otherwise freeze the pre-load defaults and silently ignore a
- * configured identity — a race that only shows up under particular startup
- * orderings and is near-impossible to reproduce.
- *
- * Blank and whitespace-only values read as unset from every source — config,
- * env, and the host's declared name alike, matching what the env bindings
- * already do: without that a stray `name = ""` in the file
- * would claim an identity, rendering an empty display name into the prompt and
- * falling through slug normalization to the neutral token — silently changing
- * the outbound User-Agent. The slug follows the explicit `slug` when set and
- * the declared name otherwise; both are normalized, since a hand-written slug
- * may still carry spaces or non-ASCII characters.
+ * Reads on every access rather than snapshotting: config loads asynchronously,
+ * and a value frozen in the constructor would silently ignore a configured
+ * identity under some startup orderings. Blank values from any source read as
+ * unset, so a stray `name = ""` cannot claim an identity.
  */
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';

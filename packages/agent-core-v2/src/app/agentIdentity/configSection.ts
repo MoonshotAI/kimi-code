@@ -1,18 +1,12 @@
 /**
  * `agentIdentity` domain — the `[identity]` config section.
  *
- * Owns the user-facing custom-identity preference: `name` (the display name
- * the agent calls itself in the system prompt) and the optional `slug` (the
- * machine identifier that goes into protocol fields — the User-Agent product
- * token and the MCP client name). Both bind to environment variables
- * (`KIMI_CODE_IDENTITY_NAME` / `KIMI_CODE_IDENTITY_SLUG`) so a container or CI
- * run can state an identity without writing `config.toml`; precedence is the
- * standard `env > config.toml > unset`. `stripEnvBoundFields` keeps an env
- * override from ever being persisted back into the file.
- *
- * Leaving the section unset means "no custom identity" — every consumer keeps
- * its current behavior. Blank / whitespace-only env values parse to `undefined`
- * so `KIMI_CODE_IDENTITY_NAME=""` reads as unset rather than as an empty name.
+ * Owns the user-facing custom-identity preference: `name`, the display name in
+ * the system prompt, and the optional `slug` that goes into protocol fields.
+ * Both bind to `KIMI_CODE_IDENTITY_NAME` / `KIMI_CODE_IDENTITY_SLUG` so a
+ * container or CI run can state an identity without writing `config.toml`; an
+ * env override never persists back into the file. Leaving the section unset
+ * means no custom identity, and every consumer keeps its current behavior.
  *
  * Self-registered at module load via `registerConfigSection`.
  */

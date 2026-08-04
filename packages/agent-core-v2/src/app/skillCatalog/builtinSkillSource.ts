@@ -2,24 +2,14 @@
  * `skillCatalog` domain — builtin `ISkillSource` producer.
  *
  * Yields the code-defined `BUILTIN_SKILLS` as the lowest-priority contribution
- * (`builtin`, priority 0) so extra / user / workspace / plugin skills override it on
- * name collision. Bound at App scope.
+ * (`builtin`, priority 0) so extra / user / workspace / plugin skills override
+ * it on name collision. Bound at App scope.
  *
- * This is also where product-documentation skills are filtered out when
- * `builtinProductSkills` is off: a skill's name and description live in the
- * system prompt for the whole session, so dropping them has to happen while
- * the catalog is assembled — a later filter would leave them advertised to
- * the model. Only an explicit opt-out drops them, so a missing or
- * not-yet-registered section behaves like the shipped default. A change to
- * that section fires `onDidChange`, so the workspace catalog reloads this
- * contribution instead of serving the value the handler started with — the
- * session-less listings read the switch on every call, and the two views must
- * not disagree.
- *
- * The load awaits config readiness before reading that switch: this is the
- * lowest-priority source, so the workspace catalog loads it first, and the
- * contribution it produces is kept for the life of the handler with no reload
- * path — reading too early would strand the startup configuration.
+ * Product-documentation skills are filtered here rather than downstream: their
+ * names sit in the system prompt for the whole session, and being the
+ * lowest-priority source this one loads first and is kept for the life of the
+ * handler — hence the wait for config readiness, and the change event that
+ * lets the catalog reload it when the switch is toggled.
  */
 
 import { Emitter, type Event } from '#/_base/event';
