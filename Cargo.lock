@@ -1622,6 +1622,8 @@ dependencies = [
  "kimi-server",
  "kimi-server-client",
  "kimi-ui",
+ "reqwest",
+ "serde",
  "serde_json",
  "tokio",
 ]

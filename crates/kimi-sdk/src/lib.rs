@@ -4,6 +4,7 @@
 //! `Session` handles; interface layers (TUI controllers, ACP adapter, future
 //! SDK consumers) code against this instead of raw RPC.
 
+pub mod catalog;
 pub mod session;
 
 pub use session::Session;
