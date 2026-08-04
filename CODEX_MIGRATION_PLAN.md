@@ -334,7 +334,7 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 ## 8. 状态
 
 - [x] 阶段 A 框架落地（kimi-protocol + workspace + wire 类型下沉）✅
-- [x] 阶段 B 宿主协议层（kimi-server 51 测试 + transport/serve 二进制 + client InProcess/Remote 全链路）✅
+- [x] 阶段 B 宿主协议层（kimi-server 52 测试 + transport/serve 二进制 + client InProcess/Remote 全链路）✅
 - [x] 阶段 C CLI + exec（21 集成测试 + typed client + 配置读写闭环 + chat REPL + acp 命令 + print/resume 目标模式）✅
 - [ ] 阶段 D TUI（kimi-ui 前置完成 + chat 文本 REPL 原型；ratatui 离线待引入）
 - [ ] 阶段 E SDK/ACP/OAuth/Config（kimi-sdk 与 kimi-acp 起步 🔶；oauth/catalog 离线受限已调研）
@@ -345,10 +345,10 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 **范围**：本会话在阶段 A/B/C ✅ 之上，完成 D 前置与 E 起步，并全面加固测试。
 
 **新增/加固的 crate 与测试基线**：
-- `kimi-server`：51 测试（12 方法族全覆盖：session 24+ 方法、bg 全、cron 全、approval 全、permission/plugin/fs/git/config/health/task）
+- `kimi-server`：52 测试（12 方法族全覆盖：session 26+ 方法含 btw、bg 全、cron 全、approval 全、permission/plugin/fs/git/config/health/task）
 - `kimi-cli`：9 子命令（print/sessions/resume/config/doctor/health/export/chat/acp）+ 全局 `--server` Remote 模式 + 21 二进制级集成测试
 - `kimi-ui`：渲染原语（render_event/last_assistant_text）+ `EventSource` 统一事件源（内嵌/Remote），6 测试
-- `kimi-sdk`：Harness（内嵌/Remote + 事件流 + 审批 + 列表/配置/导出 + **list_models**）+ Session（30+ 方法：生命周期全 + goal + 模式控制 + steer/undo + fork/import/clear + skill/plan/usage 读面），3 集成测试
+- `kimi-sdk`：Harness（内嵌/Remote + 事件流 + 审批 + 列表/配置/导出 + **list_models**）+ Session（34 方法：生命周期全 + goal + 模式控制 + steer/undo + fork/import/clear + btw/activate_skill + skill/plan/usage 读面），3 集成测试
 - `kimi-acp`：stdio 适配器 + `kimi acp` 命令（initialize 协商 + session 生命周期 + notification 语义），3 测试
 - 全 workspace 测试基线 **2839**（kimi-agent 2027 + native-tools 617 + 宿主 51 + CLI 22 集成 + SDK/ACP/UI 等 200+）
 
