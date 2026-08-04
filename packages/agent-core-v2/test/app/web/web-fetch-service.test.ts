@@ -12,6 +12,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IOAuthService } from '#/app/auth/auth';
 import { SERVICES_SECTION, type ServicesConfig } from '#/app/auth/configSection';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
@@ -21,6 +22,8 @@ import { IWebFetchService } from '#/app/web/web';
 import { WebFetchService } from '#/app/web/webService';
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 
+import { stubAgentIdentity } from '../agentIdentity/stubs';
+
 const OAUTH_PROVIDER = 'managed:kimi-code';
 const NON_OAUTH_PROVIDER = 'openai-main';
 
@@ -29,12 +32,14 @@ describe('WebFetchService', () => {
   let ix: TestInstantiationService;
   let providers: Record<string, ProviderConfig>;
   let servicesConfig: ServicesConfig | undefined;
+  let identitySlug: string | undefined;
   let resolveTokenProvider: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     providers = {};
     servicesConfig = undefined;
+    identitySlug = undefined;
     resolveTokenProvider = vi
       .fn()
       .mockReturnValue({ getAccessToken: async () => 'access-token' });
@@ -46,6 +51,13 @@ describe('WebFetchService', () => {
         reg.definePartialInstance(IOAuthService, {
           resolveTokenProvider:
             resolveTokenProvider as unknown as IOAuthService['resolveTokenProvider'],
+        });
+        reg.defineInstance(IAgentIdentity, {
+          _serviceBrand: undefined,
+          displayName: undefined,
+          get slug(): string | undefined {
+            return identitySlug;
+          },
         });
         reg.definePartialInstance(IBootstrapService, {
           args: {
@@ -166,6 +178,41 @@ describe('WebFetchService', () => {
     expect(headers['User-Agent']).toBe('kimi-code-cli/test');
     expect(headers['X-Msh-Device-Id']).toBe('device-test');
     expect(headers['X-Config']).toBe('1');
+  });
+
+  // A `[services]` entry names its own endpoint, so the identity applies there;
+  // the managed OAuth endpoint is the one the session authenticated against and
+  // keeps the host's own token.
+  it('sends the configured identity to a services-config endpoint', async () => {
+    identitySlug = 'acme';
+    servicesConfig = {
+      moonshotFetch: { baseUrl: 'https://fetch.example.com/fetch', apiKey: 'fetch-key' },
+    };
+    const fetchMock = vi.fn().mockResolvedValue({ status: 200, text: async () => 'page body' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetcher().fetch('https://example.com/page');
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers['User-Agent']).toBe('acme/test');
+  });
+
+  it('keeps the host token on the managed oauth endpoint under a custom identity', async () => {
+    identitySlug = 'acme';
+    providers[OAUTH_PROVIDER] = {
+      type: 'kimi',
+      baseUrl: 'https://api.example.com/v1',
+      oauth: { storage: 'file', key: 'oauth/kimi-code' },
+    };
+    const fetchMock = vi.fn().mockResolvedValue({ status: 200, text: async () => 'page body' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetcher().fetch('https://example.com/page');
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers['User-Agent']).toBe('kimi-code-cli/test');
   });
 
   it('prefers the services.moonshot_fetch config over the managed oauth provider', () => {

@@ -13,6 +13,11 @@
  * fall back to the local fetcher on failure. Reads config and the managed
  * provider lazily on each `getUrlFetcher()` call so it tracks edits and login
  * state. Bound at App scope.
+ *
+ * A `[services]` entry names its own endpoint, so that path sends the host
+ * headers with the `User-Agent` product token resolved through
+ * `agentIdentity`; the managed OAuth path keeps the host headers verbatim,
+ * being the endpoint the session authenticated against.
  */
 
 import {
@@ -23,6 +28,7 @@ import {
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
 import { SERVICES_SECTION, type ServicesConfig } from '#/app/auth/configSection';
+import { IAgentIdentity, identityHeaders } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IProviderService } from '#/kosong/provider/provider';
@@ -42,6 +48,7 @@ export class WebFetchService implements IWebFetchService {
     @IOAuthService private readonly oauth: IOAuthService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
+    @IAgentIdentity private readonly identity: IAgentIdentity,
   ) {
     this.localFetcher = new LocalFetchURLProvider();
   }
@@ -63,7 +70,10 @@ export class WebFetchService implements IWebFetchService {
       baseUrl: fetchConfig.baseUrl,
       tokenProvider,
       apiKey: nonEmptyString(fetchConfig.apiKey),
-      defaultHeaders: { ...this.bootstrap.args.requestHeaders },
+      defaultHeaders: identityHeaders(
+        this.bootstrap.args.requestHeaders,
+        this.identity.slug,
+      ),
       customHeaders: fetchConfig.customHeaders,
       localFallback: this.localFetcher,
     });

@@ -14,6 +14,11 @@
  * source is configured it yields `undefined`.
  * Tests and hosts that need a custom backend bind `IWebSearchProviderService`
  * directly. Bound at App scope.
+ *
+ * A `[services]` entry names its own endpoint, so that path sends the host
+ * headers with the `User-Agent` product token resolved through
+ * `agentIdentity`; the managed OAuth path keeps the host headers verbatim,
+ * being the endpoint the session authenticated against.
  */
 
 import {
@@ -23,6 +28,7 @@ import {
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
+import { IAgentIdentity, identityHeaders } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IProviderService } from '#/kosong/provider/provider';
@@ -41,6 +47,7 @@ export class WebSearchProviderService implements IWebSearchProviderService {
     @IOAuthService private readonly oauth: IOAuthService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
+    @IAgentIdentity private readonly identity: IAgentIdentity,
   ) {}
 
   getWebSearchProvider(): WebSearchProvider | undefined {
@@ -60,7 +67,10 @@ export class WebSearchProviderService implements IWebSearchProviderService {
       baseUrl: search.baseUrl,
       tokenProvider,
       apiKey: nonEmptyString(search.apiKey),
-      defaultHeaders: { ...this.bootstrap.args.requestHeaders },
+      defaultHeaders: identityHeaders(
+        this.bootstrap.args.requestHeaders,
+        this.identity.slug,
+      ),
       customHeaders: search.customHeaders,
     });
   }
