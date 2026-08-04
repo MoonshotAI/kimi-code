@@ -1,4 +1,10 @@
 
+> **✅ 2026-08-04 ① kimi-server-client Remote Box 化 + 基线核对（已提交 24c497cf0）**：
+> - **clippy 修复**：`AppServerClient::Remote(StdioClient)` 变体 432 字节 → `Box<StdioClient>`（clippy::large_enum_variant）；4 处构造点（kimi-cli main.rs×2、kimi-sdk lib.rs、transport tests/remote_client.rs）同步 Box::new；match 处 Deref 自动解引用无需改。
+> - **验证**：kimi-cli 集成 28/28（含 3 个 server_mode Remote 路径）、kimi-exec 3/3、kimi-server-client 4/4、kimi-server-transport 3/3（含 remote_client_round_trip）、kimi-sdk 5/5（含 remote_harness_over_stdio）、kimi-tui 9/9；改动 crate clippy 0 警告。
+> - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
+> - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
+
 > **✅ 2026-08-03 ⑱ ACP session/set_mode + set_model（spec 方法补齐，已提交）**：
 > - **`session/set_mode`**：ACP 4-mode 映射（对齐 TS `acpModeToToggles`）——default/plan→permission manual、auto→auto、yolo→yolo；仅 plan 开 plan_mode；未知 modeId → -32602 invalid_params。**注意**：permission 门是进程级（引擎单门无 session 作用域），permission 半边落全局——与引擎设计一致，已注释。
 > - **`session/set_model`**：SESSION_SET_MODEL → result({sessionId})。

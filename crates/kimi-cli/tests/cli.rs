@@ -497,6 +497,21 @@ fn print_continue_resumes_latest_session() {
 }
 
 #[test]
+fn print_continue_empty_home_falls_back_to_default_session() {
+    // No persisted sessions: --continue must fall back to the default
+    // kimi-exec session id instead of failing or crashing (the create step
+    // is idempotent, so the prompt still runs and errors fast without LLM).
+    let home = temp_dir("print-continue-empty");
+    let out = run(&home, &["print", "--continue", "hi"]);
+    assert!(!out.status.success(), "no LLM -> print errors: {}", out.status);
+    let err = stderr(&out);
+    assert!(err.contains("error"), "stderr: {err}");
+    let list = run(&home, &["sessions", "--json"]);
+    let text = stdout(&list);
+    assert!(text.contains("kimi-exec"), "default session id used: {text}");
+}
+
+#[test]
 fn chat_approval_commands_offline_safe() {
     // /approvals + /approve|/deny are pure state ops (no LLM): an empty store
     // lists nothing and unknown ids resolve to "not found" without erroring.
