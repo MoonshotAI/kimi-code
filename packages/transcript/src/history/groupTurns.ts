@@ -37,9 +37,8 @@ import type { TranscriptFrame } from '../model/frame';
 import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import type { TurnOrigin } from '../model/turn';
 import {
-  matchMediaPathTagText,
+  pairMediaPathTagRefs,
   parseKimiFileRefFileId,
-  type MediaPathTagMatch,
 } from '../contract/mediaRef';
 
 export type HistoryMediaSource =
@@ -125,38 +124,20 @@ export function groupMessagesIntoSnapshot(
   /**
    * Turn-opening user message → prompt text + attachment ids. The upload pair
    * (`<media path>` tag text part + `kimi-file://` media part) folds into a
-   * single attachment: the tag is machine markup and never surfaces as prompt
-   * text. A bare tag (no adjacent daemon ref) is dropped the same way; a bare
-   * ref still yields an attachment, without a path-derived name.
+   * single attachment per the shared pairing (`pairMediaPathTagRefs`): a
+   * CLAIMED tag is machine markup and never surfaces as prompt text, while an
+   * unpaired standalone tag stays as text; a bare ref still yields an
+   * attachment, without a path-derived name.
    */
   const foldTurnOpeningInput = (
     message: HistoryMessage,
   ): { text: string; attachmentIds?: string[] } => {
     const parts = message.content ?? [];
-    const tagByIndex = new Map<number, MediaPathTagMatch>();
-    parts.forEach((part, index) => {
-      if (part.type === 'text' && 'text' in part && typeof part.text === 'string') {
-        const tag = matchMediaPathTagText(part.text);
-        if (tag !== undefined) tagByIndex.set(index, tag);
-      }
-    });
-    const claimed = new Set<number>();
-    // Edges emit tag-before-ref; persisted history also has ref-before-tag —
-    // an unclaimed, kind-compatible tag on either side pairs.
-    const pairPath = (refIndex: number, refKind: 'image' | 'video'): string | undefined => {
-      for (const neighbor of [refIndex - 1, refIndex + 1]) {
-        const tag = tagByIndex.get(neighbor);
-        if (tag === undefined || claimed.has(neighbor)) continue;
-        if (tag.kind !== 'file' && tag.kind !== refKind) continue;
-        claimed.add(neighbor);
-        return tag.path;
-      }
-      return undefined;
-    };
+    const pairing = pairMediaPathTagRefs(parts);
     const ids: string[] = [];
     const texts: string[] = [];
     parts.forEach((part, index) => {
-      if (tagByIndex.has(index)) return;
+      if (pairing.claimedTagIndices.has(index)) return;
       if (part.type === 'text' && 'text' in part && typeof part.text === 'string') {
         texts.push(part.text);
         return;
@@ -194,7 +175,7 @@ export function groupMessagesIntoSnapshot(
       }
       const ref = daemonRefFromHistoryPart(part);
       if (ref !== undefined) {
-        const path = pairPath(index, ref.kind);
+        const path = pairing.claimedPathByRefIndex.get(index);
         const entity: TranscriptAttachment = {
           attachmentId: `att_${attachments.length + 1}`,
           mediaType: `${ref.kind}/*`,

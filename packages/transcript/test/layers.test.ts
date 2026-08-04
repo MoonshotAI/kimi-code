@@ -576,11 +576,10 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(turn.prompt).toBe('open <image path="/tmp/other.png"></image> please');
   });
 
-  it('folds standalone <media path> tag variants away instead of showing them verbatim', () => {
+  it('keeps standalone <media path> tags as prompt text when no daemon ref pairs with them', () => {
     // The no-closing-tag and extra-attribute forms both exist in persisted
-    // sessions. Bare or paired, a whole-part tag is machine markup: it never
-    // surfaces as prompt text, and without an adjacent ref there is nothing
-    // to attach.
+    // sessions. Without an adjacent path-matching ref there is no pair: the
+    // tag is user-visible text, not markup the read model may eat.
     const snapshot = groupMessagesIntoSnapshot([
       {
         role: 'user',
@@ -596,9 +595,82 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
 
     const turn = snapshot.items[0];
     if (turn?.kind !== 'turn') throw new Error('expected turn');
-    expect(turn.prompt).toBe('');
+    expect(turn.prompt).toBe(
+      '<image path="/cache/shot.png"><image path="/cache/shot.png" content_type="image/png"></image><video path="/cache/clip.mp4">',
+    );
     expect(turn.attachmentIds).toBeUndefined();
     expect(snapshot.attachments).toEqual([]);
+  });
+
+  it('claims the tag for the path-matching ref, not the adjacent bare one', () => {
+    // [bareRefA, tagB, refB]: adjacency alone would misassign tagB to refA.
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://file_1?path=%2Fcache%2Fa.png' },
+          } as HistoryContentPart,
+          { type: 'text', text: '<image path="/cache/b.png"></image>' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://file_2?path=%2Fcache%2Fb.png' },
+          } as HistoryContentPart,
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    ]);
+
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'image/*',
+        name: undefined,
+        source: { kind: 'file', fileId: 'file_1' },
+      },
+      {
+        attachmentId: 'att_2',
+        mediaType: 'image/*',
+        name: 'b.png',
+        source: { kind: 'file', fileId: 'file_2' },
+      },
+    ]);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.prompt).toBe('');
+    expect(turn.attachmentIds).toEqual(['att_1', 'att_2']);
+  });
+
+  it('keeps a standalone tag as prompt text when the adjacent ref carries a different path', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '<image path="/cache/other.png"></image>' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://file_1?path=%2Fcache%2Fshot.png' },
+          } as HistoryContentPart,
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    ]);
+
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'image/*',
+        name: undefined,
+        source: { kind: 'file', fileId: 'file_1' },
+      },
+    ]);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.prompt).toBe('<image path="/cache/other.png"></image>');
+    expect(turn.attachmentIds).toEqual(['att_1']);
   });
 
   it('keeps cold tool calls running until a result is persisted', () => {

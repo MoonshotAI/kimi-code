@@ -33,9 +33,10 @@
  * the ingest edges already refuse unaccepted formats. A reference that
  * cannot be inlined (model without `image_in`, unreadable bytes, non-image
  * or unaccepted sniff) degrades through the reference's materialization
- * path: DROPPED silently only when an adjacent `<image path>` text part for
- * the same path actually exists in the message (the dual shape the edges
- * write already conveys it), otherwise the `<image path>` tag is SYNTHESIZED
+ * path: DROPPED silently only when the tag+ref pairing
+ * (`pairMediaPathTagRefs`, shared with the read-model fold) claims this exact
+ * reference — an adjacent standalone `<image path>` tag carrying the same
+ * path already conveys it — otherwise the `<image path>` tag is SYNTHESIZED
  * from the reference path so a bare SDK-supplied reference still leaves the
  * model the path to re-open; a reference without a path swaps in an
  * unavailable placeholder text. A message left with no parts at all keeps
@@ -58,7 +59,7 @@ import {
   buildMediaPathTag,
   type DaemonFileRef,
   daemonFileRefFromPart,
-  matchMediaPathTags,
+  pairMediaPathTagRefs,
 } from '#/kosong/contract/mediaRef';
 import type { ModelRequester } from '#/kosong/model/modelRequester';
 import { IBlobStore } from '#/persistence/interface/blobStore';
@@ -120,22 +121,25 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         continue;
       }
       const content: ContentPart[] = [];
-      for (const part of message.content) {
+      // The fold's own pairing decides which references a tag claims: an
+      // image degrade may drop the part only when the pairing actually
+      // claims THIS reference (an adjacent standalone `<image path>` tag
+      // carrying the same path); a bare or unclaimed reference gets the tag
+      // synthesized from its path.
+      const pairing = pairMediaPathTagRefs(message.content);
+      for (const [index, part] of message.content.entries()) {
         const daemonPart = daemonFileRefFromPart(part);
         if (daemonPart === undefined) {
           content.push(part);
           continue;
         }
-        // An image degrade can drop the part entirely, but only when an
-        // adjacent `<image path>` text part for the same path exists in this
-        // message; a bare reference gets the tag synthesized from its path.
         const resolved =
           daemonPart.kind === 'video'
             ? await this.resolveVideoPart(daemonPart.ref, requester, signal)
             : await this.resolveImagePart(
                 daemonPart.ref,
                 requester,
-                hasImagePathTag(message, daemonPart.ref.path),
+                pairing.claimedPathByRefIndex.has(index),
               );
         if (resolved !== undefined) content.push(resolved);
       }
@@ -285,29 +289,16 @@ function hasDaemonFileMediaPart(message: Message): boolean {
 
 /**
  * The degrade form of an unresolvable image reference: `undefined` (drop the
- * part) only when an adjacent `<image path>` tag for the same path exists in
- * the message, otherwise the tag synthesized from the reference path — so a
- * bare reference still leaves the model the path to re-open — or, when the
- * reference carries no path, the unavailable placeholder.
+ * part) only when the fold's pairing claims this exact reference (an adjacent
+ * standalone `<image path>` tag for the same path stays to convey it),
+ * otherwise the tag synthesized from the reference path — so a bare reference
+ * still leaves the model the path to re-open — or, when the reference carries
+ * no path, the unavailable placeholder.
  */
 function degradedImage(ref: DaemonFileRef, hasAdjacentPathTag: boolean): ContentPart | undefined {
   if (ref.path === undefined || ref.path.length === 0) return unavailableImageText();
   if (hasAdjacentPathTag) return undefined;
   return { type: 'text', text: buildMediaPathTag('image', ref.path) };
-}
-
-/**
- * Whether the message already carries an `<image path>` tag for `path` — the
- * dual shape the upload edges write next to the image part. Extra attributes
- * and a missing closing tag are tolerated by `matchMediaPathTags`.
- */
-function hasImagePathTag(message: Message, path: string | undefined): boolean {
-  if (path === undefined || path.length === 0) return false;
-  return message.content.some(
-    (part) =>
-      part.type === 'text' &&
-      matchMediaPathTags(part.text).some((tag) => tag.kind === 'image' && tag.path === path),
-  );
 }
 
 function unavailableImageText(): ContentPart {

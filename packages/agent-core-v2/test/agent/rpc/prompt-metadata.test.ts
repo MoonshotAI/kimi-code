@@ -68,14 +68,15 @@ describe('promptMetadataTextFromPayload', () => {
     expect(text).not.toContain('/Users/alice');
   });
 
-  it('drops a bare <image path> tag without a paired ref', () => {
+  it('keeps a bare <image path> tag as text when no ref pairs with it', () => {
+    // Without a paired daemon ref the tag is not machine markup the fold may
+    // claim: it stays user-visible text.
     const text = promptMetadataTextFromPayload({
       input: [
-        { type: 'text', text: '<image path="/Users/alice/cache/f_123.png">' },
+        { type: 'text', text: '<image path="/cache/f_123.png">' },
         { type: 'text', text: 'describe it' },
       ],
     });
-    expect(text).toBe('describe it');
-    expect(text).not.toContain('/Users/alice');
+    expect(text).toBe('<image path="/cache/f_123.png"> describe it');
   });
 });

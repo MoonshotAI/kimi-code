@@ -475,6 +475,63 @@ describe('AgentMediaResolverService image strategy', () => {
       { type: 'text', text: `<image path="${IMAGE_FALLBACK_PATH}"></image>` },
     ]);
   });
+
+  it('synthesizes the path tag when the same-path tag is not adjacent to the reference', async () => {
+    // The fold only claims ADJACENT pairs; a same-path tag elsewhere in the
+    // message does not cover the reference, so the degrade must synthesize.
+    const res = resolver(new Map());
+    const tagPart = imagePathTagPart(IMAGE_FALLBACK_PATH);
+    const message = imageMessage(
+      buildKimiFileUrl('missing', IMAGE_FALLBACK_PATH),
+      tagPart,
+      { type: 'text', text: 'in between' },
+    );
+
+    const out = await res.resolve([message], requester({}));
+
+    expect(out[0]!.content).toEqual([
+      tagPart,
+      { type: 'text', text: 'in between' },
+      { type: 'text', text: `<image path="${IMAGE_FALLBACK_PATH}"></image>` },
+    ]);
+  });
+
+  it('does not treat a tag embedded in user text as the adjacent tag', async () => {
+    const res = resolver(new Map());
+    const embedded: ContentPart = {
+      type: 'text',
+      text: `look <image path="${IMAGE_FALLBACK_PATH}"></image>`,
+    };
+    const message = imageMessage(buildKimiFileUrl('missing', IMAGE_FALLBACK_PATH), embedded);
+
+    const out = await res.resolve([message], requester({}));
+
+    expect(out[0]!.content).toEqual([
+      embedded,
+      { type: 'text', text: `<image path="${IMAGE_FALLBACK_PATH}"></image>` },
+    ]);
+  });
+
+  it('claims one tag for at most one ref, synthesizing the tag for the unclaimed ref', async () => {
+    const res = resolver(new Map());
+    const tagPart = imagePathTagPart(IMAGE_FALLBACK_PATH);
+    const first: ContentPart = {
+      type: 'image_url',
+      imageUrl: { url: buildKimiFileUrl('missing_1', IMAGE_FALLBACK_PATH) },
+    };
+    const second: ContentPart = {
+      type: 'image_url',
+      imageUrl: { url: buildKimiFileUrl('missing_2', IMAGE_FALLBACK_PATH) },
+    };
+    const message: Message = { role: 'user', content: [first, tagPart, second], toolCalls: [] };
+
+    const out = await res.resolve([message], requester({}));
+
+    expect(out[0]!.content).toEqual([
+      tagPart,
+      { type: 'text', text: `<image path="${IMAGE_FALLBACK_PATH}"></image>` },
+    ]);
+  });
 });
 
 describe('AgentMediaResolverService scoped registration', () => {

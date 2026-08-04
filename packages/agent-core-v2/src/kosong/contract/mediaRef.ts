@@ -259,57 +259,91 @@ export interface FoldedMediaRef {
 }
 
 export interface MediaPathTagFold {
-  /** Input parts minus every media-tag text part (paired or bare). */
+  /**
+   * Input parts minus the standalone media-tag text parts claimed by a daemon
+   * ref. An unpaired standalone tag STAYS as a text part: without a pairing
+   * ref it is user-visible text, not markup the read model may eat.
+   */
   readonly parts: ContentPart[];
   /** One entry per daemon-ref media part, in input order. */
   readonly media: FoldedMediaRef[];
 }
 
 /**
+ * The claim analysis behind the tag + daemon-ref fold — the single pairing
+ * algorithm {@link foldMediaPathTagRefs} and the request-time media resolver
+ * share, so the two can never drift apart.
+ *
+ * Pairing rules:
+ *   - only a STANDALONE tag (the whole text part is exactly one media path
+ *     tag) participates; a tag embedded in other text never does;
+ *   - a tag pairs with a daemon-ref media part immediately before or after it
+ *     (edges emit tag-before-ref; persisted history also has ref-before-tag)
+ *     when the kinds are compatible — a `file` tag matches either ref kind —
+ *     AND the tag's path equals the path the reference carries. A reference
+ *     without a path can never pair: both sides stay, conservatively;
+ *   - each tag claims at most one reference and each reference is claimed by
+ *     at most one tag; references claim in input order, checking the part
+ *     before them first.
+ */
+export interface MediaPathTagPairing {
+  /** Standalone media-tag text part indices claimed by an adjacent daemon ref. */
+  readonly claimedTagIndices: ReadonlySet<number>;
+  /** The claiming tag's path per daemon-ref part index; absent for an unpaired ref. */
+  readonly claimedPathByRefIndex: ReadonlyMap<number, string>;
+}
+
+export function pairMediaPathTagRefs(parts: readonly ContentPart[]): MediaPathTagPairing {
+  const tagByIndex = new Map<number, MediaPathTag>();
+  const refByIndex = new Map<number, { kind: 'image' | 'video'; path?: string }>();
+  parts.forEach((part, index) => {
+    if (part.type === 'text') {
+      const tag = matchSingleMediaPathTag(part.text);
+      if (tag !== undefined) tagByIndex.set(index, tag);
+      return;
+    }
+    const ref = daemonFileRefFromPart(part);
+    if (ref !== undefined) refByIndex.set(index, { kind: ref.kind, path: ref.ref.path });
+  });
+  const claimedTagIndices = new Set<number>();
+  const claimedPathByRefIndex = new Map<number, string>();
+  for (const [refIndex, ref] of refByIndex) {
+    if (ref.path === undefined) continue;
+    for (const neighbor of [refIndex - 1, refIndex + 1]) {
+      const tag = tagByIndex.get(neighbor);
+      if (tag === undefined || claimedTagIndices.has(neighbor)) continue;
+      if (tag.kind !== 'file' && tag.kind !== ref.kind) continue;
+      if (tag.path !== ref.path) continue;
+      claimedTagIndices.add(neighbor);
+      claimedPathByRefIndex.set(refIndex, tag.path);
+      break;
+    }
+  }
+  return { claimedTagIndices, claimedPathByRefIndex };
+}
+
+/**
  * Fold the upload pair `<media path> tag text part + daemon-ref media part`
- * for read models: the tag text part disappears (it is machine markup), and
- * each daemon-ref media part yields one {@link FoldedMediaRef} — carrying the
- * adjacent tag's path when an unclaimed, kind-compatible tag sits immediately
- * before or after it (edges emit tag-before-ref; persisted history also has
- * ref-before-tag). Bare refs fold with no path; bare tags simply vanish from
- * the parts. Non-daemon media parts and all other parts pass through.
+ * for read models: a CLAIMED tag text part disappears (it is machine markup —
+ * see {@link pairMediaPathTagRefs} for the pairing rules), and each daemon-ref
+ * media part yields one {@link FoldedMediaRef} — carrying the paired tag's
+ * path, or none for a bare ref. An unpaired standalone tag stays as a text
+ * part; non-daemon media parts and all other parts pass through.
  */
 export function foldMediaPathTagRefs(parts: readonly ContentPart[]): MediaPathTagFold {
-  const tagByIndex = new Map<number, MediaPathTag>();
-  parts.forEach((part, index) => {
-    if (part.type !== 'text') return;
-    const tag = matchSingleMediaPathTag(part.text);
-    if (tag !== undefined) tagByIndex.set(index, tag);
-  });
-  const claimed = new Set<number>();
+  const pairing = pairMediaPathTagRefs(parts);
   const kept: ContentPart[] = [];
   const media: FoldedMediaRef[] = [];
   parts.forEach((part, index) => {
-    if (tagByIndex.has(index)) return;
+    if (pairing.claimedTagIndices.has(index)) return;
     kept.push(part);
     const ref = daemonFileRefFromPart(part);
     if (ref === undefined) return;
     media.push({
       kind: ref.kind,
       ref: ref.ref,
-      path: claimAdjacentTagPath(tagByIndex, claimed, index, ref.kind),
+      path: pairing.claimedPathByRefIndex.get(index),
     });
   });
   return { parts: kept, media };
-}
-
-function claimAdjacentTagPath(
-  tagByIndex: ReadonlyMap<number, MediaPathTag>,
-  claimed: Set<number>,
-  refIndex: number,
-  refKind: 'image' | 'video',
-): string | undefined {
-  for (const neighbor of [refIndex - 1, refIndex + 1]) {
-    const tag = tagByIndex.get(neighbor);
-    if (tag === undefined || claimed.has(neighbor)) continue;
-    if (tag.kind !== 'file' && tag.kind !== refKind) continue;
-    claimed.add(neighbor);
-    return tag.path;
-  }
-  return undefined;
 }

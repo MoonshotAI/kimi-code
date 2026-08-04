@@ -26,6 +26,7 @@ import {
   mediaKindForMime,
   mediaKindForPath,
   mediaKindOfPart,
+  pairMediaPathTagRefs,
   parseDaemonFileUrl,
 } from '#/kosong/contract/mediaRef';
 
@@ -224,12 +225,10 @@ describe('foldMediaPathTagRefs', () => {
     ]);
   });
 
-  it('drops a bare tag without producing media', () => {
-    const fold = foldMediaPathTagRefs([
-      { type: 'text', text: '<image path="/cache/shot.png">' },
-      { type: 'text', text: 'kept' },
-    ]);
-    expect(fold.parts).toEqual([{ type: 'text', text: 'kept' }]);
+  it('keeps an unpaired standalone tag as text', () => {
+    const tag: ContentPart = { type: 'text', text: '<image path="/cache/shot.png">' };
+    const fold = foldMediaPathTagRefs([tag, { type: 'text', text: 'kept' }]);
+    expect(fold.parts).toEqual([tag, { type: 'text', text: 'kept' }]);
     expect(fold.media).toEqual([]);
   });
 
@@ -247,30 +246,63 @@ describe('foldMediaPathTagRefs', () => {
     expect(fold.media).toEqual([]);
   });
 
-  it('does not pair a kind-mismatched tag, but still drops it as markup', () => {
+  it('neither pairs nor drops a kind-mismatched adjacent tag', () => {
+    const tag: ContentPart = { type: 'text', text: '<image path="/cache/clip.mp4"></image>' };
     const ref: ContentPart = {
       type: 'video_url',
       videoUrl: { url: buildDaemonFileUrl('file_1', '/cache/clip.mp4') },
     };
-    const fold = foldMediaPathTagRefs([
-      { type: 'text', text: '<image path="/cache/shot.png"></image>' },
-      ref,
-    ]);
-    expect(fold.parts).toEqual([ref]);
+    const fold = foldMediaPathTagRefs([tag, ref]);
+    expect(fold.parts).toEqual([tag, ref]);
     expect(fold.media).toEqual([
       { kind: 'video', ref: { fileId: 'file_1', path: '/cache/clip.mp4' }, path: undefined },
     ]);
   });
 
-  it('pairs a file-kind tag with either ref kind', () => {
+  it('pairs a file-kind tag with either ref kind when the path matches', () => {
     const ref = daemonImage('file_1', '/cache/shot.png');
     const fold = foldMediaPathTagRefs([{ type: 'text', text: '<file path="/cache/shot.png">' }, ref]);
+    expect(fold.parts).toEqual([ref]);
     expect(fold.media[0]?.path).toBe('/cache/shot.png');
+  });
+
+  it('does not pair an adjacent tag whose path differs from the reference path', () => {
+    const tag: ContentPart = { type: 'text', text: '<image path="/cache/other.png"></image>' };
+    const ref = daemonImage('file_1', '/cache/shot.png');
+    const fold = foldMediaPathTagRefs([tag, ref]);
+    expect(fold.parts).toEqual([tag, ref]);
+    expect(fold.media).toEqual([
+      { kind: 'image', ref: { fileId: 'file_1', path: '/cache/shot.png' }, path: undefined },
+    ]);
+  });
+
+  it('never pairs a reference that carries no path — both sides stay', () => {
+    const tag: ContentPart = { type: 'text', text: '<image path="/cache/shot.png"></image>' };
+    const ref = daemonImage('file_1');
+    const fold = foldMediaPathTagRefs([tag, ref]);
+    expect(fold.parts).toEqual([tag, ref]);
+    expect(fold.media).toEqual([{ kind: 'image', ref: { fileId: 'file_1' }, path: undefined }]);
+  });
+
+  it('claims the tag for the path-matching ref, not the adjacent bare one', () => {
+    // [bareRefA, tagB, refB]: adjacency alone would misassign tagB to refA.
+    const bareRefA = daemonImage('file_1', '/cache/a.png');
+    const refB = daemonImage('file_2', '/cache/b.png');
+    const fold = foldMediaPathTagRefs([
+      bareRefA,
+      { type: 'text', text: '<image path="/cache/b.png"></image>' },
+      refB,
+    ]);
+    expect(fold.parts).toEqual([bareRefA, refB]);
+    expect(fold.media).toEqual([
+      { kind: 'image', ref: { fileId: 'file_1', path: '/cache/a.png' }, path: undefined },
+      { kind: 'image', ref: { fileId: 'file_2', path: '/cache/b.png' }, path: '/cache/b.png' },
+    ]);
   });
 
   it('claims a tag for at most one ref', () => {
     const first = daemonImage('file_1', '/cache/a.png');
-    const second = daemonImage('file_2', '/cache/b.png');
+    const second = daemonImage('file_2', '/cache/a.png');
     const fold = foldMediaPathTagRefs([
       first,
       { type: 'text', text: '<image path="/cache/a.png"></image>' },
@@ -280,10 +312,57 @@ describe('foldMediaPathTagRefs', () => {
     expect(fold.media.map((m) => m.path)).toEqual(['/cache/a.png', undefined]);
   });
 
+  it('claims at most one tag per ref, keeping the unclaimed tag as text', () => {
+    const ref = daemonImage('file_1', '/cache/shot.png');
+    const secondTag: ContentPart = { type: 'text', text: '<image path="/cache/shot.png"></image>' };
+    const fold = foldMediaPathTagRefs([
+      { type: 'text', text: '<image path="/cache/shot.png"></image>' },
+      ref,
+      secondTag,
+    ]);
+    expect(fold.parts).toEqual([ref, secondTag]);
+    expect(fold.media.map((m) => m.path)).toEqual(['/cache/shot.png']);
+  });
+
   it('keeps user text with an inline tag verbatim', () => {
     const text: ContentPart = { type: 'text', text: 'open <image path="/a.png"></image> please' };
     const fold = foldMediaPathTagRefs([text]);
     expect(fold.parts).toEqual([text]);
     expect(fold.media).toEqual([]);
+  });
+});
+
+describe('pairMediaPathTagRefs', () => {
+  const daemonImage = (fileId: string, path?: string): ContentPart => ({
+    type: 'image_url',
+    imageUrl: { url: buildDaemonFileUrl(fileId, path) },
+  });
+
+  it('reports the claimed tag indices and the per-ref claimed paths', () => {
+    const ref = daemonImage('file_1', '/cache/shot.png');
+    const pairing = pairMediaPathTagRefs([
+      { type: 'text', text: '<image path="/cache/shot.png"></image>' },
+      ref,
+    ]);
+    expect(pairing.claimedTagIndices).toEqual(new Set([0]));
+    expect(pairing.claimedPathByRefIndex).toEqual(new Map([[1, '/cache/shot.png']]));
+  });
+
+  it('claims nothing when the adjacent tag carries a different path', () => {
+    const pairing = pairMediaPathTagRefs([
+      { type: 'text', text: '<image path="/cache/other.png"></image>' },
+      daemonImage('file_1', '/cache/shot.png'),
+    ]);
+    expect(pairing.claimedTagIndices.size).toBe(0);
+    expect(pairing.claimedPathByRefIndex.size).toBe(0);
+  });
+
+  it('claims nothing for a reference without a path', () => {
+    const pairing = pairMediaPathTagRefs([
+      { type: 'text', text: '<image path="/cache/shot.png"></image>' },
+      daemonImage('file_1'),
+    ]);
+    expect(pairing.claimedTagIndices.size).toBe(0);
+    expect(pairing.claimedPathByRefIndex.size).toBe(0);
   });
 });

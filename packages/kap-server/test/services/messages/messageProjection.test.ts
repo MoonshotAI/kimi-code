@@ -74,7 +74,9 @@ describe('toProtocolMessage', () => {
     ]);
   });
 
-  it('drops a bare <media path> tag from user messages', () => {
+  it('keeps a bare <media path> tag as text in user messages', () => {
+    // Without a paired daemon ref the tag is not machine markup the fold may
+    // claim: it passes through as a text part.
     const msg: ContextMessage = {
       role: 'user',
       content: [
@@ -85,6 +87,7 @@ describe('toProtocolMessage', () => {
     };
 
     expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
+      { type: 'text', text: '<video path="/cache/clip.mp4">' },
       { type: 'text', text: 'watch this' },
     ]);
   });
