@@ -121,6 +121,31 @@ impl App {
                     self.session.as_mut().expect("session").set_plan_mode(enabled).await?;
                     self.transcript.push(format!("plan mode {}", if enabled { "on" } else { "off" }));
                 }
+                "/swarm" => {
+                    let enabled = rest == "on" || rest.is_empty();
+                    self.session.as_mut().expect("session").set_swarm_mode(enabled).await?;
+                    self.transcript.push(format!("swarm mode {}", if enabled { "on" } else { "off" }));
+                }
+                "/thinking" => {
+                    if rest.is_empty() {
+                        self.transcript.push("usage: /thinking <low|medium|high>".into());
+                    } else {
+                        self.session.as_mut().expect("session").set_thinking(Some(rest)).await?;
+                        self.transcript.push(format!("thinking effort set to {rest}"));
+                    }
+                }
+                "/models" => {
+                    let (aliases, default_model) = self.harness.list_models().await?;
+                    if aliases.is_empty() {
+                        self.transcript.push("no model aliases configured".into());
+                    }
+                    for alias in aliases.iter().take(20) {
+                        self.transcript.push(alias.clone());
+                    }
+                    if let Some(default_model) = default_model {
+                        self.transcript.push(format!("default: {default_model}"));
+                    }
+                }
                 "/model" => {
                     if rest.is_empty() {
                         self.transcript.push("usage: /model <model-id>".into());
