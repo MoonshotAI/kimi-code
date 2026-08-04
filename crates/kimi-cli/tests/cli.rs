@@ -685,6 +685,33 @@ fn chat_continue_reuses_latest_session() {
 }
 
 #[test]
+fn export_with_session_id_writes_zip() {
+    // The success path (explicit session id) was untested — only the error
+    // branches were covered.
+    let home = temp_dir("export-id");
+    let cwd = temp_dir("export-id-cwd");
+    let mut child = Command::new(binary())
+        .args(["chat", "-s", "export-me"])
+        .current_dir(&cwd)
+        .env("KIMI_AGENT_HOME", &home)
+        .env("HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn kimi chat");
+    {
+        use std::io::Write;
+        child.stdin.as_mut().expect("stdin").write_all(b"/quit\n").expect("write");
+    }
+    assert!(child.wait_with_output().expect("wait").status.success());
+
+    let out = run(&home, &["export", "export-me"]);
+    assert!(out.status.success(), "export exits 0: {}", out.status);
+    assert!(stdout(&out).contains("export-me.zip"), "path printed: {}", stdout(&out));
+}
+
+#[test]
 fn chat_approval_commands_offline_safe() {
     // /approvals + /approve|/deny are pure state ops (no LLM): an empty store
     // lists nothing and unknown ids resolve to "not found" without erroring.

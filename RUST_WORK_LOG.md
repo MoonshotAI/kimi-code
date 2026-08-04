@@ -5,6 +5,11 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㊺ export 成功路径测试（已提交）**：
+> - **缺口**：CLI `kimi export <id>` 只测了错误分支（无 id/无会话），成功路径未测。
+> - **实现**：export_with_session_id_writes_zip——seed 会话 → `export export-me` → 成功 + stdout 打印 zip 路径。
+> - **验证**：CLI 集成测试 35 → 36；clippy 0。
+
 > **✅ 2026-08-03 ㊹ CLI thinking 流式（StreamThink 暗色渲染，已提交）**：
 > - **缺口**：TUI 已渲染 think delta（㉚），CLI --verbose 仍跳过（cli_render 对 think → Skip）。
 > - **实现**：`CliRender::StreamThink`——TTY 下以 ANSI 暗色（`\x1b[2m`）滚动推理；非 TTY 静默（转录仍走 stdout）。
