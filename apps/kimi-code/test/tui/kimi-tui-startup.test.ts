@@ -82,6 +82,7 @@ function makeStartupInput(
       auto: false,
       plan: false,
       model: undefined,
+      effort: undefined,
       outputFormat: undefined,
       prompt: undefined,
       skillsDirs: [],
@@ -820,9 +821,23 @@ describe('KimiTUI startup', () => {
     expect(harness.createSession).toHaveBeenCalledWith({
       workDir: '/tmp/proj-a',
       model: 'kimi-code/k2.5',
+      thinking: undefined,
       permission: undefined,
       planMode: undefined,
     });
+  });
+
+  it('validates the CLI effort through the session setter after creating a fresh startup session', async () => {
+    const session = makeSession();
+    const harness = makeHarness(session);
+    const driver = makeDriver(harness, makeStartupInput({ effort: 'high' }));
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    expect(harness.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ thinking: 'high' }),
+    );
+    expect(session.setThinking).toHaveBeenCalledWith('high');
   });
 
   it('applies the CLI model override when resuming a startup session', async () => {
@@ -853,6 +868,53 @@ describe('KimiTUI startup', () => {
 
     expect(session.setModel).toHaveBeenCalledWith('kimi-code/k2.5');
     expect(driver.state.appState.model).toBe('kimi-code/k2.5');
+  });
+
+  it('syncs the engine-normalized effort after resuming a startup session', async () => {
+    let thinkingEffort = 'off';
+    const session = makeSession({
+      setThinking: vi.fn(async () => {
+        thinkingEffort = 'high';
+      }),
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingEffort,
+        permission: 'manual',
+        planMode: false,
+        contextTokens: 10,
+        maxContextTokens: 100,
+        contextUsage: 0.1,
+      })),
+    });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{ id: 'ses-latest' }]),
+    });
+    const driver = makeDriver(
+      harness,
+      makeStartupInput({ continue: true, effort: 'off' }),
+    );
+
+    await expect(driver.init()).resolves.toBe(true);
+
+    expect(session.setThinking).toHaveBeenCalledWith('off');
+    expect(driver.state.appState.thinkingEffort).toBe('high');
+  });
+
+  it('applies the model before effort when both resume overrides are provided', async () => {
+    const session = makeSession();
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{ id: 'ses-latest' }]),
+    });
+    const driver = makeDriver(
+      harness,
+      makeStartupInput({ continue: true, model: 'kimi-code/k2.5', effort: 'low' }),
+    );
+
+    await expect(driver.init()).resolves.toBe(true);
+
+    expect(session.setModel.mock.invocationCallOrder[0]).toBeLessThan(
+      session.setThinking.mock.invocationCallOrder[0]!,
+    );
   });
 
   it('enters picker startup for bare --session without creating a session', async () => {
@@ -1551,6 +1613,50 @@ describe('KimiTUI startup', () => {
       permissionMode: 'yolo',
       planMode: true,
     });
+  });
+
+  it('preserves the CLI effort when OAuth login recreates the startup session', async () => {
+    let thinkingEffort = 'off';
+    const session = makeSession({
+      setThinking: vi.fn(async (effort: string) => {
+        thinkingEffort = effort;
+      }),
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingEffort,
+        permission: 'manual',
+        planMode: false,
+        contextTokens: 10,
+        maxContextTokens: 100,
+        contextUsage: 0.1,
+      })),
+    });
+    const createSession = vi
+      .fn()
+      .mockRejectedValueOnce(loginRequiredError())
+      .mockResolvedValueOnce(session);
+    const harness = makeHarness(session, {
+      getConfig: vi.fn(async () => ({
+        defaultModel: 'k2',
+        thinking: { enabled: false },
+        models: {
+          k2: { model: 'moonshot-v1', maxContextSize: 100 },
+        },
+      })),
+      createSession,
+    });
+    const driver = makeDriver(harness, makeStartupInput({ effort: 'high' }));
+
+    await expect(driver.init()).resolves.toBe(false);
+    vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
+    await handleLoginCommand(driver as any);
+
+    expect(createSession).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ model: 'k2', thinking: 'high' }),
+    );
+    expect(session.setThinking).toHaveBeenCalledWith('high');
+    expect(driver.state.appState.thinkingEffort).toBe('high');
   });
 
   it('carries the agent binding into the post-login startup session', async () => {

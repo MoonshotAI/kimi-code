@@ -299,13 +299,16 @@ async function resolveNativeSession(
   }
 
   // `--agent` / `--agent-file` are creation-only: validateOptions rejects them
-  // together with --session/--continue, so resume paths only apply an
-  // explicitly requested model — the bound profile is restored by the engine.
-  const applyModelOverride = async (
+  // together with --session/--continue, so resume paths only apply explicit
+  // model/thinking overrides — the bound profile is restored by the engine.
+  // Model must be applied first because effort is validated against it.
+  const applyProfileOverrides = async (
     profile: IAgentProfileService,
     model: string | undefined,
+    effort: string | undefined,
   ): Promise<void> => {
     if (model !== undefined) await profile.setModel(model);
+    if (effort !== undefined) profile.setThinking(effort);
   };
 
   const resumeById = async (id: string): Promise<ISessionScopeHandle> => {
@@ -344,7 +347,7 @@ async function resolveNativeSession(
     const session = await resumeById(opts.session);
     const agent = await ensureMainAgent(session);
     const profile = agent.accessor.get(IAgentProfileService);
-    await applyModelOverride(profile, opts.model);
+    await applyProfileOverrides(profile, opts.model, opts.effort);
     const currentModel = profile.getModel();
     const { restorePermission } = forceAuto(agent);
     return {
@@ -363,7 +366,7 @@ async function resolveNativeSession(
       const session = await resumeById(previous.id);
       const agent = await ensureMainAgent(session);
       const profile = agent.accessor.get(IAgentProfileService);
-      await applyModelOverride(profile, opts.model);
+      await applyProfileOverrides(profile, opts.model, opts.effort);
       const currentModel = profile.getModel();
       const { restorePermission } = forceAuto(agent);
       return {
@@ -385,6 +388,8 @@ async function resolveNativeSession(
     mainAgentBinding: {
       profile: agentProfileName ?? 'agent',
       model,
+      thinking: opts.effort,
+      strictThinking: opts.effort !== undefined,
     },
   });
   const agent = await ensureMainAgent(session);

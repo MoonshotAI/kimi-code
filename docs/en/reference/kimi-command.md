@@ -18,6 +18,7 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--session [id]` | `-S` | Resume a session. With an ID, opens that session directly; without an ID, enters an interactive selector |
 | `--continue` | `-c` | Continue the most recent session in the current working directory, without specifying an ID manually |
 | `--model <model>` | `-m` | Specify a model alias for this launch. When omitted, new sessions use `default_model` from the config file |
+| `--effort <effort>` | | Set the thinking effort for this session. Supported values depend on the selected model |
 | `--prompt <prompt>` | `-p` | Run a single prompt non-interactively and stream the Assistant output to stdout. This mode does not open the TUI |
 | `--output-format <format>` | | Set the non-interactive output format; supports `text` and `stream-json`. Can only be used with `--prompt`; defaults to `text` |
 | `--yolo` | `-y` | Auto-approve regular tool calls, skipping approval requests |
@@ -45,6 +46,8 @@ The following combinations are rejected at startup:
 
 When resuming a session, you can override its saved permission or plan mode by adding `--auto`, `--yolo`, or `--plan`. For example, `kimi --continue --auto` resumes the latest session and switches it to auto permission mode.
 
+`--effort` accepts any non-empty string because each model can expose different effort levels; agent-core validates the value against the selected model. The flag works in the interactive TUI and `--prompt` mode. It initializes the setting for a new session or replaces the current setting when a session is resumed, without changing `config.toml`. When `--model` and `--effort` are both present, Kimi Code switches models before applying the effort.
+
 ## Common Usage
 
 Start a new session directly:
@@ -65,6 +68,16 @@ Choose from the session history list, or specify a known ID directly:
 kimi --session
 kimi --session 01HZ...XYZ
 ```
+
+Set the thinking effort for a new session, a one-shot prompt, or a resumed session:
+
+```sh
+kimi --effort high
+kimi -p "Analyze this project" --effort high
+kimi --session 01HZ...XYZ --model kimi-code/kimi-for-coding --effort low
+```
+
+The operational `KIMI_MODEL_THINKING_EFFORT` environment override can still force the effort sent to a supported Kimi provider while Thinking is on, taking precedence over the session value when it applies. See [Environment variables](../configuration/env-vars.md#define-a-model-from-environment-variables-kimi-model).
 
 Skip approval prompts — suitable for batch tasks that are known to be safe:
 

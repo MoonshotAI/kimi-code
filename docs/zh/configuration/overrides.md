@@ -3,7 +3,7 @@
 Kimi Code CLI 有三个地方可以影响运行参数：配置文件、命令行选项、环境变量。它们不是简单的"谁优先级高谁赢"——三者面向不同场景，作用范围互不相同：
 
 - **配置文件** 保存长期偏好（模型、密钥、循环控制等），每次启动都生效
-- **命令行选项** 做本次启动的临时切换，退出后失效
+- **命令行选项** 对启动时选中的会话生效，不修改全局配置文件；会话级取值可以随该会话保留
 - **环境变量** 主要负责数据目录定位、OAuth 端点切换，以及少数运行时开关——**不是配置字段的通用后备来源**
 
 这个区别很关键：很多人会在 shell 里 `export KIMI_API_KEY=xxx`，以为 CLI 会自动取到，但实际上不会。原因见下文[供应商凭证](#供应商凭证)。
@@ -20,7 +20,7 @@ Kimi Code CLI 有三个地方可以影响运行参数：配置文件、命令行
 
 对模型别名、Plan 模式、yolo 模式、Skills 目录等普通运行参数，优先级从高到低：
 
-1. **命令行选项**（`-m`、`--plan`、`--yolo` 等）：仅对本次启动生效
+1. **命令行选项**（`-m`、`--effort`、`--plan`、`--yolo` 等）：对启动时选中的会话生效，不会重写 `config.toml`
 2. **用户配置文件**（`~/.kimi-code/config.toml`）：保存长期偏好
 
 少数环境变量明确覆盖特定配置字段，例如 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 的优先级高于 `[background].keep_alive_on_exit`。这类例外在[环境变量](./env-vars.md)和[配置文件](./config-files.md)对应字段里都有标注。
@@ -59,9 +59,14 @@ Kimi Code CLI 有三个地方可以影响运行参数：配置文件、命令行
 | `--auto` | 以 auto 权限模式启动：完全自主，Agent 不会向用户提问 |
 | `--plan` | 以 Plan 模式启动 |
 | `-m, --model <model>` | 指定本次使用的模型别名 |
+| `--effort <effort>` | 设置本次会话的 thinking effort；支持值取决于所选模型 |
 | `-p, --prompt <prompt>` | 非交互模式：执行单条提示词后退出 |
 | `--output-format <format>` | `-p` 模式的输出格式：`text` 或 `stream-json` |
 | `--skills-dir <dir>` | 替换自动发现的 Skills 目录（可重复，仅本次生效） |
+
+`--effort` 接受任意非空字符串，具体模型支持校验由 agent-core 完成。新建会话时，该值写入会话配置；恢复会话时，它会替换该会话当前的 effort。省略该 flag 时，继续使用已有配置或模型默认值。同时传入 `--model` 时，会先应用模型，确保 effort 按目标模型校验。
+
+这是会话级覆盖，绝不会修改 `config.toml`。运维侧的 `KIMI_MODEL_THINKING_EFFORT` 环境变量语义不同：Thinking 开启且请求使用支持的 Kimi 供应商时，它可以强制覆盖最终发送到线上请求的 effort，因此优先级可能高于 CLI 会话值。详见[环境变量](./env-vars.md#用环境变量定义模型-kimi-model)。
 
 互斥规则（违反时启动报错）：
 
@@ -99,6 +104,12 @@ kimi --yolo -p "批量重命名以下文件..."
 
 ```sh
 kimi --plan
+```
+
+**设置会话的 thinking effort，不修改全局配置**：
+
+```sh
+kimi --session 01HZ...XYZ --model kimi-code/kimi-for-coding --effort high
 ```
 
 ## 下一步

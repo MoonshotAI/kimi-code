@@ -111,6 +111,7 @@ function opts(overrides: Record<string, unknown> = {}) {
     auto: false,
     plan: false,
     model: undefined,
+    effort: undefined,
     outputFormat: undefined,
     prompt: 'say hello',
     skillsDirs: [],
@@ -133,6 +134,7 @@ function makeFakeHarness() {
       {
         bind: vi.fn(async () => {}),
         setModel: vi.fn(async () => ({ model: 'k2' })),
+        setThinking: vi.fn(async () => ({ thinking: 'high' })),
         getModel: () => 'k2',
         data: () => ({ profileName: profileState.profileName }),
       },
@@ -348,7 +350,12 @@ describe('runV2Print', () => {
     expect(lifecycle.create).toHaveBeenCalledWith({
       workDir: process.cwd(),
       additionalDirs: undefined,
-      mainAgentBinding: { profile: 'reviewer', model: 'k2' },
+      mainAgentBinding: {
+        profile: 'reviewer',
+        model: 'k2',
+        thinking: undefined,
+        strictThinking: false,
+      },
     });
     const profile = agentServices.get(IAgentProfileService) as { bind: ReturnType<typeof vi.fn> };
     expect(profile.bind).not.toHaveBeenCalled();
@@ -382,7 +389,12 @@ describe('runV2Print', () => {
     expect(lifecycle.create).toHaveBeenCalledWith({
       workDir: process.cwd(),
       additionalDirs: undefined,
-      mainAgentBinding: { profile: 'file-reviewer', model: 'k2' },
+      mainAgentBinding: {
+        profile: 'file-reviewer',
+        model: 'k2',
+        thinking: undefined,
+        strictThinking: false,
+      },
     });
     const profile = agentServices.get(IAgentProfileService) as { bind: ReturnType<typeof vi.fn> };
     expect(profile.bind).not.toHaveBeenCalled();
@@ -438,6 +450,26 @@ describe('runV2Print', () => {
 
     const input = mocks.bootstrap.mock.calls[0]?.[0] as BootstrapInput;
     expect(input.args?.agentFiles ?? []).toEqual([]);
+  });
+
+  it('marks the CLI effort as strict in a fresh main-agent binding', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agent, handlerServices } = makeFakeHarness();
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue(agent);
+
+    await runV2Print(opts({ effort: 'high' }) as never, '1.2.3-test', { stdout, stderr });
+
+    const lifecycle = handlerServices.get(ISessionLifecycleService) as {
+      create: ReturnType<typeof vi.fn>;
+    };
+    expect(lifecycle.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mainAgentBinding: expect.objectContaining({ thinking: 'high', strictThinking: true }),
+      }),
+    );
   });
 
   it('passes --agent-file paths through unresolved so the engine can expand ~', async () => {
@@ -507,5 +539,32 @@ describe('runV2Print', () => {
     };
     expect(profile.bind).not.toHaveBeenCalled();
     expect(profile.setModel).toHaveBeenCalledWith('new-model');
+  });
+
+  it('applies the model before effort when both resumed profile overrides are provided', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agent, agentServices, appServices } = makeFakeHarness();
+
+    const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
+    index.get.mockResolvedValue({ id: 'ses_1', cwd: process.cwd() });
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue(agent);
+
+    await runV2Print(
+      opts({ session: 'ses_1', model: 'new-model', effort: 'low' }) as never,
+      '1.2.3-test',
+      { stdout, stderr },
+    );
+
+    const profile = agentServices.get(IAgentProfileService) as {
+      setModel: ReturnType<typeof vi.fn>;
+      setThinking: ReturnType<typeof vi.fn>;
+    };
+    expect(profile.setThinking).toHaveBeenCalledWith('low');
+    expect(profile.setModel.mock.invocationCallOrder[0]).toBeLessThan(
+      profile.setThinking.mock.invocationCallOrder[0]!,
+    );
   });
 });

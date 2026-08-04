@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => {
   const session = {
     id: 'ses_prompt',
     setModel: vi.fn(),
+    setThinking: vi.fn(),
     setPermission: vi.fn(),
     setApprovalHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
@@ -191,6 +192,7 @@ function opts(overrides: Partial<Parameters<typeof runPrompt>[0]> = {}) {
     auto: false,
     plan: false,
     model: undefined,
+    effort: undefined,
     outputFormat: undefined,
     prompt: 'say hello',
     skillsDirs: [],
@@ -275,6 +277,7 @@ describe('runPrompt', () => {
     expect(mocks.harnessCreateSession).toHaveBeenCalledWith({
       workDir: process.cwd(),
       model: 'k2',
+      thinking: undefined,
       permission: 'auto',
       additionalDirs: undefined,
       drainAgentTasksOnStop: true,
@@ -430,6 +433,7 @@ describe('runPrompt', () => {
     expect(mocks.harnessCreateSession).toHaveBeenCalledWith({
       workDir: process.cwd(),
       model: 'kimi-code/k2.5',
+      thinking: undefined,
       permission: 'auto',
       additionalDirs: undefined,
       drainAgentTasksOnStop: true,
@@ -437,6 +441,31 @@ describe('runPrompt', () => {
     expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'kimi-code/k2.5' }),
     );
+  });
+
+  it('validates the CLI effort through the session setter after creating a fresh prompt session', async () => {
+    await runPrompt(opts({ effort: 'high' }), '1.2.3-test', {
+      stdout: writer(),
+      stderr: writer(),
+    });
+
+    expect(mocks.harnessCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ thinking: 'high' }),
+    );
+    expect(mocks.session.setThinking).toHaveBeenCalledWith('high');
+  });
+
+  it('rejects a fresh prompt session when the engine rejects the CLI effort', async () => {
+    mocks.session.setThinking.mockRejectedValueOnce(new Error('unsupported thinking effort'));
+
+    await expect(
+      runPrompt(opts({ effort: 'custom' }), '1.2.3-test', {
+        stdout: writer(),
+        stderr: writer(),
+      }),
+    ).rejects.toThrow('unsupported thinking effort');
+
+    expect(mocks.session.prompt).not.toHaveBeenCalled();
   });
 
   it('passes the CLI additional directory when creating a fresh prompt session', async () => {
@@ -448,6 +477,7 @@ describe('runPrompt', () => {
     expect(mocks.harnessCreateSession).toHaveBeenCalledWith({
       workDir: process.cwd(),
       model: 'k2',
+      thinking: undefined,
       permission: 'auto',
       additionalDirs: ['../shared', '/tmp/extra'],
       drainAgentTasksOnStop: true,
@@ -709,6 +739,36 @@ describe('runPrompt', () => {
     expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'kimi-code/k2.5' }),
     );
+  });
+
+  it('applies the CLI effort override to resumed prompt sessions', async () => {
+    await runPrompt(opts({ session: 'ses_existing', effort: 'low' }), '1.2.3-test', {
+      stdout: writer(),
+      stderr: writer(),
+    });
+
+    expect(mocks.session.setThinking).toHaveBeenCalledWith('low');
+  });
+
+  it('applies the model before effort when both resume overrides are provided', async () => {
+    await runPrompt(
+      opts({ session: 'ses_existing', model: 'kimi-code/k2.5', effort: 'high' }),
+      '1.2.3-test',
+      { stdout: writer(), stderr: writer() },
+    );
+
+    expect(mocks.session.setModel.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.session.setThinking.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('keeps the resumed thinking setting when no effort override is provided', async () => {
+    await runPrompt(opts({ session: 'ses_existing' }), '1.2.3-test', {
+      stdout: writer(),
+      stderr: writer(),
+    });
+
+    expect(mocks.session.setThinking).not.toHaveBeenCalled();
   });
 
   it('writes stream-json output as assistant JSONL with resume meta without transcript bullets', async () => {
