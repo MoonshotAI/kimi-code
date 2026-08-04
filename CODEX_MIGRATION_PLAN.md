@@ -315,7 +315,8 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 5. **验证**：SDK 测试平移（425 用例）；ACP 兼容测试；node-sdk/klient 转薄壳 re-export
 
 ### 阶段 F — 退役
-1. apps/kimi-code 的 TS 删除（clap 入口切到 kimi-cli）
+0. ✅ **npm 分发薄壳**（kimi-code-rust-bin：bin 包装 + pack.mjs CI 打包 + KIMI_RUST_BIN 覆盖）
+1. 🔶 **入口切换方案（调研）**：apps/kimi-code `bin: {kimi: dist/main.mjs}`（`#!/usr/bin/env node`）→ 改为 wrapper（优先平台 Rust 二进制，回退 TS main.mjs）；迁移期双轨并存，Rust 全绿后删除 TS 入口。**未落代码**（保持 TS 主入口，避免破坏现有安装）
 2. packages/kap-server/node-sdk/klient/acp-adapter/oauth/protocol/kaos 移 `retired/`
 3. npm 分发薄壳（参考 codex-cli：bin → 包装 Rust 二进制）
 4. **验证**：CLI/TUI/web/API 全链路 Rust 端到端；旧 TS 测试删除或转 Rust
