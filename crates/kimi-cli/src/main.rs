@@ -359,6 +359,13 @@ fn connect_with_renderer(
                         let _ = std::io::stderr().flush();
                     }
                 }
+                CliRender::StreamThink(delta) => {
+                    if tty {
+                        // Dimmed ANSI: reasoning reads lighter than the answer.
+                        eprint!("\x1b[2m{delta}\x1b[0m");
+                        let _ = std::io::stderr().flush();
+                    }
+                }
                 CliRender::Line(line) => {
                     if event.get("type").and_then(|t| t.as_str())
                         == Some("session.approval.requested")
@@ -388,6 +395,8 @@ fn connect_with_renderer(
 enum CliRender {
     /// Live assistant text delta (llm.delta text parts).
     Stream(String),
+    /// Live model reasoning delta (llm.delta think parts) — dimmed on a TTY.
+    StreamThink(String),
     /// One progress line.
     Line(String),
     /// Not rendered.
@@ -396,6 +405,9 @@ enum CliRender {
 
 fn cli_render(event: &serde_json::Value) -> CliRender {
     if event.get("type").and_then(|t| t.as_str()) == Some("llm.delta") {
+        if let Some(think) = kimi_ui::stream_thinking(event) {
+            return CliRender::StreamThink(think.to_string());
+        }
         return match kimi_ui::stream_delta(event) {
             Some(delta) => CliRender::Stream(delta.to_string()),
             None => CliRender::Skip,
@@ -415,9 +427,9 @@ mod cli_render_tests {
     fn delta_streams_and_lines_render() {
         let delta = serde_json::json!({ "type": "llm.delta", "part": { "type": "text", "text": "hi" } });
         assert_eq!(cli_render(&delta), CliRender::Stream("hi".to_string()));
-        // Thinking deltas and unknown events stay silent.
+        // Thinking deltas stream dimmed; unknown events stay silent.
         let think = serde_json::json!({ "type": "llm.delta", "part": { "type": "think", "think": "hmm" } });
-        assert_eq!(cli_render(&think), CliRender::Skip);
+        assert_eq!(cli_render(&think), CliRender::StreamThink("hmm".to_string()));
         assert_eq!(cli_render(&serde_json::json!({ "type": "mystery.thing" })), CliRender::Skip);
         // Known progress types render as lines.
         let turn = serde_json::json!({ "type": "session.turn.started", "session_id": "s", "turn_id": 1 });

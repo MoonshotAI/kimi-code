@@ -5,6 +5,12 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㊹ CLI thinking 流式（StreamThink 暗色渲染，已提交）**：
+> - **缺口**：TUI 已渲染 think delta（㉚），CLI --verbose 仍跳过（cli_render 对 think → Skip）。
+> - **实现**：`CliRender::StreamThink`——TTY 下以 ANSI 暗色（`\x1b[2m`）滚动推理；非 TTY 静默（转录仍走 stdout）。
+> - **验证**：cli_render 单元测试（think → StreamThink）；clippy 0；workspace check 干净。
+> - **至此 CLI/TUI 流式完全对称**：文本（明）+ thinking（暗）双流。
+
 > **✅ 2026-08-03 ㊸ chat --continue 复用验证（已提交）**：
 > - **缺口**：chat --continue 旗标无集成测试（复用最近会话 vs 新建 chat-<pid> 的可观察差异）。
 > - **实现**：chat_continue_reuses_latest_session——seed continue-me → chat --continue → `sessions --json` 含 continue-me 且无 chat-*。
