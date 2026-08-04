@@ -7,7 +7,11 @@
  * change events incrementally (serialized on a mutation tail, always after
  * the initial connect settles), feeds the manager's global timeout defaults
  * from the config domain's tunables at each (re)connect, and reports
- * connection telemetry for the initial load.
+ * connection telemetry for the initial load. It also builds per-session
+ * overlays (`sessionOverlay`): a session-owned manager for a session's
+ * ephemeral (caller-injected, never persisted) servers, presented through a
+ * `MergedMcpConnectionView` over the shared manager and shut down by the
+ * session lifecycle when the session scope tears down.
  * An outright initial-load or change-apply failure is logged (per-server
  * failures are status entries). The manager (and its stdio child processes,
  * whose cwd is the handler root) lives as long as the handler — i.e. the
@@ -20,9 +24,11 @@ import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/
 import { ILogService } from '#/_base/log/log';
 
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import type { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import {
@@ -30,12 +36,18 @@ import {
   type McpServersChange,
 } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 
-import { IWorkspaceMcpService } from './workspaceMcp';
+import {
+  IWorkspaceMcpService,
+  type ISessionMcpOverlay,
+  type SessionMcpOverlayOptions,
+} from './workspaceMcp';
 
 export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpService {
   declare readonly _serviceBrand: undefined;
 
   private readonly manager: McpConnectionManager;
+  private readonly oauthService: McpOAuthService;
+  private readonly stdioCwd: string;
   readonly ready: Promise<void>;
   private mutationTail: Promise<void> = Promise.resolve();
 
@@ -47,11 +59,12 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
-    const oauthService = new McpOAuthService({ store: oauthStore });
+    this.stdioCwd = workspace.cwd;
+    this.oauthService = new McpOAuthService({ store: oauthStore });
     this.manager = new McpConnectionManager({
       log: this.log,
-      oauthService,
-      stdioCwd: workspace.cwd,
+      oauthService: this.oauthService,
+      stdioCwd: this.stdioCwd,
       resolveDefaultTimeouts: () => this.mcpConfig.tunables(),
     });
     this._register({ dispose: () => void this.manager.shutdown() });
@@ -74,6 +87,34 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       _serviceBrand: undefined,
       ready: this.ready,
       connectionManager: this.manager,
+    };
+  }
+
+  sessionOverlay(
+    servers: Readonly<Record<string, McpServerConfig>>,
+    opts?: SessionMcpOverlayOptions,
+  ): ISessionMcpOverlay {
+    const sessionManager = new McpConnectionManager({
+      log: this.log,
+      oauthService: this.oauthService,
+      stdioCwd: opts?.stdioCwd ?? this.stdioCwd,
+      resolveDefaultTimeouts: () => this.mcpConfig.tunables(),
+    });
+    const connect = sessionManager.connectAll({ ...servers }).catch((error: unknown) => {
+      this.log.error('session mcp overlay initial load failed', { error });
+    });
+    const view = new MergedMcpConnectionView(
+      this.manager,
+      sessionManager,
+      new Set(Object.keys(servers)),
+    );
+    return {
+      handle: {
+        _serviceBrand: undefined,
+        ready: Promise.all([this.ready, connect]).then(() => undefined),
+        connectionManager: view,
+      },
+      shutdown: () => sessionManager.shutdown(),
     };
   }
 

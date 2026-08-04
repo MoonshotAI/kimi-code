@@ -35,6 +35,7 @@ import type { ModelRecord } from '@moonshot-ai/agent-core-v2/kosong/model/model'
 import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 
+import type { McpServerConfig } from '../../contract/mcp.js';
 import type { AnonymousProviderInput, GenerateEvent, GenerateInput, GenerateParams, ProviderInput } from './kosong-types.js';
 import type {
   PluginCommandDef,
@@ -102,11 +103,14 @@ export interface GlobalSessionsFacade {
    * Create a session rooted at `workDir` (the workspace is registered
    * implicitly), optionally titled. Returns the persisted metadata. No agent
    * is created — `session(id).agent('main')` materializes it on first use.
+   * `mcpServers` injects ephemeral per-session MCP servers: connected only
+   * for this session, never persisted.
    */
   create(input: {
     workDir: string;
     additionalDirs?: readonly string[];
     title?: string;
+    mcpServers?: Readonly<Record<string, McpServerConfig>>;
   }): Promise<SessionMeta>;
 }
 
@@ -166,6 +170,13 @@ export interface GlobalKosongFacade {
 export interface GlobalAuthFacade {
   status(provider?: string): Promise<AuthStatus>;
   summarize(): Promise<readonly AuthStatus[]>;
+  /**
+   * The engine's own auth-readiness probe for a model (the default model when
+   * omitted): resolves config-file apiKey / provider env-bag credentials or an
+   * OAuth token, throwing a typed auth error when nothing resolves. Actual
+   * model usage does not depend on the OAuth-only {@link summarize} view.
+   */
+  ensureReady(modelOverride?: string): Promise<void>;
   startLogin(provider?: string): Promise<OAuthFlowStart>;
   flow(provider?: string): Promise<OAuthFlowSnapshot | undefined>;
   cancelLogin(provider?: string): Promise<OAuthLoginCancelResponse>;
@@ -280,14 +291,14 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       get: (id) => call('sessionIndex', 'get', [id]) as Promise<SessionSummary | undefined>,
       countActive: (workspaceIds) =>
         call('sessionIndex', 'countActive', [workspaceIds]) as Promise<number>,
-      create: async ({ workDir, additionalDirs, title }) => {
+      create: async ({ workDir, additionalDirs, title, mcpServers }) => {
         // The workspace handler owns session creation: materialize (or reuse)
         // the handler for the root, then create under it.
         const handler = (await scoped({}, 'workspaceLifecycleService', 'handlerFor', [
           { root: workDir },
         ])) as { id: string };
         const handle = (await scoped({ workspaceId: handler.id }, 'sessionLifecycleService', 'create', [
-          { workDir, additionalDirs },
+          { workDir, additionalDirs, mcpServers },
         ])) as { id: string };
         const scope = { sessionId: handle.id };
         if (title !== undefined) {
@@ -398,6 +409,8 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
     auth: {
       status: (provider) => call('oauthService', 'status', [provider]) as Promise<AuthStatus>,
       summarize: () => call('authSummaryService', 'summarize', []) as Promise<readonly AuthStatus[]>,
+      ensureReady: (modelOverride) =>
+        call('authSummaryService', 'ensureReady', [modelOverride]) as Promise<void>,
       startLogin: (provider) =>
         call('oauthService', 'startLogin', [provider]) as Promise<OAuthFlowStart>,
       flow: (provider) =>

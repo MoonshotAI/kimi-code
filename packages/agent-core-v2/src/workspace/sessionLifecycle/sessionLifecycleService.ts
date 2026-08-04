@@ -8,7 +8,12 @@
  * slots instance it runs around create/close,
  * tearing sessions down on close/archive — archiving flags the session's
  * metadata, removes its agents, restoring clears
- * the archived flag, and broadcasts the transition; session start and
+ * the archived flag, and broadcasts the transition; deleting closes a live
+ * session through the same flow, then removes the session directory
+ * (metadata, agent wire records, plans, logs), evicts the index read-model
+ * entry, and appends a `deleted` tombstone to the shared
+ * `session_index.jsonl`, raising `session.not_found` for ids this handler
+ * never persisted. Session start and
  * resume failures are reported through telemetry. Each Session scope
  * receives a telemetry view bound to its session id, while failures before
  * a scope is available use an ephemeral context view. Closing a session
@@ -40,9 +45,12 @@
  * with a fire-and-forget `reload()` so a fixed agent file unblocks later
  * creates
  * (the workspace skill catalog, by contrast, is kicked fire-and-forget).
- * The handler's shared MCP manager (file + plugin servers only — sessions
- * cannot contribute servers) is awaited before create/resume returns. The
- * session-level services whose subscriptions
+ * The handler's shared MCP manager is awaited before create/resume returns;
+ * a session created with ephemeral `mcpServers` additionally gets a session
+ * overlay from `workspaceMcp` (session-owned connections, seeded as a merged
+ * view, shut down when the session handle disposes), whose initial connect
+ * is awaited here too.
+ * The session-level services whose subscriptions
  * must exist before the first agent / turn (external hooks, cron, the
  * secondary-model startup warning) opt into `OnScopeCreated` activation.
  */
@@ -247,7 +255,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       'onWillCloseSession',
     ]);
     await this.hostEnv.ready;
-    const handle = createScopedChildHandle(
+    const mcpOverlay =
+      opts.mcpServers !== undefined && Object.keys(opts.mcpServers).length > 0
+        ? this.mcp.sessionOverlay(opts.mcpServers, { stdioCwd: opts.workDir })
+        : undefined;
+    const scopeHandle = createScopedChildHandle(
       this.instantiation,
       LifecycleScope.Session,
       opts.sessionId,
@@ -262,13 +274,23 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             workspaceKey: workspaceId,
           }),
           ...sessionInstructionsProviderSeed(this.instructions.sessionProvider()),
-          ...sessionMcpHandleSeed(this.mcp.sessionHandle()),
+          ...sessionMcpHandleSeed(mcpOverlay?.handle ?? this.mcp.sessionHandle()),
           ...sessionWorkspaceInfoSeed(this.workspaceDirs.sessionInfo()),
           ...sessionToolPolicyGateSeed(this.toolPolicy.sessionGate()),
           [ISessionProcessRunner, this.processRunner],
         ],
       },
     ) as ISessionScopeHandle;
+    const handle: ISessionScopeHandle =
+      mcpOverlay === undefined
+        ? scopeHandle
+        : {
+            ...scopeHandle,
+            dispose: () => {
+              void mcpOverlay.shutdown();
+              scopeHandle.dispose();
+            },
+          };
     try {
       await handle.accessor.get(ISessionMetadata).ready;
       await handle.accessor.get(ISessionToolPolicy).ready;
@@ -281,6 +303,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         this.pluginAgentProfileLoader.ready,
       ]);
       await this.mcp.ready;
+      await mcpOverlay?.handle.ready;
     } catch (error) {
       handle.dispose();
       void this.explicitAgentProfileLoader.reload().catch(() => undefined);
@@ -349,6 +372,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       sessionId,
       workDir,
       additionalDirs: opts?.additionalDirs,
+      mcpServers: opts?.mcpServers,
     });
     const agents = handle.accessor.get(IAgentLifecycleService);
     if (agents.get(MAIN_AGENT_ID) === undefined) {
@@ -392,11 +416,34 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     this._onDidArchiveSession.fire({ sessionId });
   }
 
-  async restore(sessionId: string): Promise<ISessionScopeHandle | undefined> {
-    const handle = await this.resume(sessionId);
+  async restore(
+    sessionId: string,
+    opts?: ResumeSessionOptions,
+  ): Promise<ISessionScopeHandle | undefined> {
+    const handle = await this.resume(sessionId, opts);
     if (handle === undefined) return undefined;
     await handle.accessor.get(ISessionMetadata).setArchived(false);
     return handle;
+  }
+
+  async delete(sessionId: string): Promise<void> {
+    const inflight = this.resuming.get(sessionId);
+    if (inflight !== undefined) {
+      await inflight.catch(() => undefined);
+    }
+    const handle = this.sessions.get(sessionId);
+    const summary = await this.index.get(sessionId);
+    const persistedHere = summary !== undefined && summary.workspaceId === this.workspaceId;
+    if (handle === undefined && !persistedHere) {
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
+    }
+    if (handle !== undefined) {
+      await this.close(sessionId);
+    }
+    await this.hostFs.remove(sessionDirOf(this.bootstrap.homeDir, this.handlerScope, sessionId));
+    await this.index.remove(sessionId);
+    this.appendLogStore.append('', 'session_index.jsonl', { sessionId, deleted: true });
+    await this.appendLogStore.flush();
   }
 
   private async announceWillClose(event: SessionWillCloseEvent): Promise<void> {

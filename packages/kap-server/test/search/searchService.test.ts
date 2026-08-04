@@ -45,6 +45,7 @@ function makeSessionIndex(list: ISessionIndex['list']): ISessionIndex {
     list,
     get: async () => undefined,
     countActive: async () => 0,
+    remove: async () => {},
   };
 }
 
@@ -948,6 +949,7 @@ describe('GlobalSearchService', () => {
         list: async () => ({ items: summaries, nextCursor: undefined }),
         get: async (id) => byId.get(id),
         countActive: async () => summaries.length,
+        remove: async () => {},
       };
     }
 

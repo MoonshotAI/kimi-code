@@ -37,7 +37,7 @@ import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoad
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
-import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
+import { IWorkspaceMcpService, type ISessionMcpOverlay } from '#/workspace/workspaceMcp/workspaceMcp';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionSecondaryModelWarningService } from '#/session/subagent/secondaryModelWarning';
@@ -74,6 +74,7 @@ import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { Error2, ErrorCodes } from '#/errors';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
@@ -289,6 +290,7 @@ function sessionIndexStub(): ISessionIndex {
     list: () => Promise.resolve({ items: [], total: 0, hasMore: false }),
     get: () => Promise.resolve(undefined),
     countActive: () => Promise.resolve(0),
+    remove: () => Promise.resolve(),
   };
 }
 
@@ -310,6 +312,7 @@ function sessionIndexWithSummary(
     list: () => Promise.resolve({ items: [summary], total: 1, hasMore: false }),
     get: (id) => Promise.resolve(id === sessionId ? summary : undefined),
     countActive: () => Promise.resolve(1),
+    remove: () => Promise.resolve(),
   };
 }
 
@@ -375,6 +378,9 @@ function workspaceMcpServiceStub(ready: Promise<void> = Promise.resolve()): IWor
         throw new Error('not implemented');
       },
     }),
+    sessionOverlay: () => {
+      throw new Error('not implemented');
+    },
   };
 }
 
@@ -910,6 +916,98 @@ describe('SessionLifecycleService', () => {
     expect(archived).toBe(false);
   });
 
+  describe('delete', () => {
+    function recordingAppendLogStore(appended: { key: string; record: unknown }[]): IAppendLogStore {
+      return {
+        ...appendLogStoreStub(),
+        append: (_scope: string, key: string, record: unknown) => {
+          appended.push({ key, record });
+        },
+      };
+    }
+
+    it('closes a live session, removes its directory, evicts the index, and appends the tombstone', async () => {
+      const root = await makeTmpRoot();
+      const appended: { key: string; record: unknown }[] = [];
+      const removedFromIndex: string[] = [];
+      const closed: string[] = [];
+      const svc = await build([
+        stubPair(IBootstrapService, tmpBootstrapStub(root)),
+        stubPair(IAppendLogStore, recordingAppendLogStore(appended)),
+        stubPair(ISessionIndex, {
+          ...sessionIndexStub(),
+          remove: (id: string) => {
+            removedFromIndex.push(id);
+            return Promise.resolve();
+          },
+        }),
+      ]);
+      svc.onDidCloseSession((e) => closed.push(e.sessionId));
+
+      await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+      const sessionDir = join(root, 'sessions', 'wd_stub', 's1');
+      await mkdir(join(sessionDir, 'agents', 'main'), { recursive: true });
+      await writeFile(join(sessionDir, 'agents', 'main', 'wire.jsonl'), '{}\n');
+
+      await svc.delete('s1');
+
+      expect(svc.get('s1')).toBeUndefined();
+      expect(closed).toEqual(['s1']);
+      await expect(stat(sessionDir)).rejects.toThrow();
+      expect(removedFromIndex).toEqual(['s1']);
+      expect(appended).toContainEqual({
+        key: 'session_index.jsonl',
+        record: { sessionId: 's1', deleted: true },
+      });
+    });
+
+    it('removes a persisted session that is not live', async () => {
+      const root = await makeTmpRoot();
+      const svc = await build([
+        stubPair(IBootstrapService, tmpBootstrapStub(root)),
+        stubPair(ISessionIndex, sessionIndexWithSummary('s1', '/tmp/proj', 'wd_stub')),
+      ]);
+      const sessionDir = join(root, 'sessions', 'wd_stub', 's1');
+      await mkdir(sessionDir, { recursive: true });
+      await writeFile(join(sessionDir, 'state.json'), '{}');
+
+      await svc.delete('s1');
+
+      expect(svc.get('s1')).toBeUndefined();
+      await expect(stat(sessionDir)).rejects.toThrow();
+    });
+
+    it('throws session.not_found for an unknown id and appends no tombstone', async () => {
+      const appended: { key: string; record: unknown }[] = [];
+      const svc = await build([stubPair(IAppendLogStore, recordingAppendLogStore(appended))]);
+
+      await expect(svc.delete('nope')).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_NOT_FOUND,
+      });
+      expect(appended).toEqual([]);
+    });
+
+    it('throws session.not_found when deleting the same id twice', async () => {
+      const svc = await build();
+      await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+
+      await svc.delete('s1');
+      await expect(svc.delete('s1')).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_NOT_FOUND,
+      });
+    });
+
+    it('throws session.not_found for a session persisted under another workspace', async () => {
+      const svc = await build([
+        stubPair(ISessionIndex, sessionIndexWithSummary('s1', '/tmp/proj', 'wd_other')),
+      ]);
+
+      await expect(svc.delete('s1')).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_NOT_FOUND,
+      });
+    });
+  });
+
   it('forks successfully even while the source has a busy agent (crash-equivalent copy)', async () => {
     const busyAgent = {
       id: MAIN_AGENT_ID,
@@ -1072,6 +1170,122 @@ describe('SessionLifecycleService', () => {
     resolveMcpReady?.();
     await create;
     expect(settled).toBe(true);
+  });
+
+  function overlayStub(ready: Promise<void> = Promise.resolve()) {
+    const handle: ISessionMcpHandle = {
+      _serviceBrand: undefined,
+      ready,
+      connectionManager: {} as unknown as McpConnectionManager,
+    };
+    const shutdown = vi.fn(() => Promise.resolve());
+    const sessionOverlay = vi.fn(
+      (..._args: Parameters<IWorkspaceMcpService['sessionOverlay']>): ISessionMcpOverlay => ({
+        handle,
+        shutdown,
+      }),
+    );
+    return { sessionOverlay, handle, shutdown };
+  }
+
+  it('create with mcpServers seeds the session overlay handle and shuts the overlay down on close', async () => {
+    const { sessionOverlay, handle: overlayHandle, shutdown } = overlayStub();
+    const svc = await build([
+      stubPair(IWorkspaceMcpService, { ...workspaceMcpServiceStub(), sessionOverlay }),
+    ]);
+    const mcpServers = { eph: { transport: 'stdio' as const, command: 'node' } };
+
+    const handle = await svc.create({ sessionId: 's1', workDir: '/tmp/proj', mcpServers });
+
+    expect(sessionOverlay).toHaveBeenCalledWith(mcpServers, { stdioCwd: '/tmp/proj' });
+    expect(handle.accessor.get(ISessionMcpHandle)).toBe(overlayHandle);
+
+    await svc.close('s1');
+    expect(shutdown).toHaveBeenCalledTimes(1);
+  });
+
+  it('resume with mcpServers seeds the session overlay handle on the re-materialized session', async () => {
+    const { sessionOverlay, handle: overlayHandle } = overlayStub();
+    const svc = await build([
+      stubPair(ISessionIndex, sessionIndexWithSummary('s1', '/tmp/proj', 'wd_stub')),
+      stubPair(IAgentLifecycleService, agentLifecycleWithMainStub()),
+      stubPair(IWorkspaceMcpService, { ...workspaceMcpServiceStub(), sessionOverlay }),
+    ]);
+    const mcpServers = { eph: { transport: 'stdio' as const, command: 'node' } };
+
+    const handle = await svc.resume('s1', { mcpServers });
+
+    expect(sessionOverlay).toHaveBeenCalledWith(mcpServers, { stdioCwd: '/tmp/proj' });
+    expect(handle?.accessor.get(ISessionMcpHandle)).toBe(overlayHandle);
+  });
+
+  it('waits for the session MCP overlay readiness before create returns', async () => {
+    let resolveOverlayReady: (() => void) | undefined;
+    const overlayReady = new Promise<void>((resolve) => {
+      resolveOverlayReady = resolve;
+    });
+    const { sessionOverlay } = overlayStub(overlayReady);
+    const svc = await build([
+      stubPair(IWorkspaceMcpService, { ...workspaceMcpServiceStub(), sessionOverlay }),
+    ]);
+
+    let settled = false;
+    const create = svc
+      .create({
+        sessionId: 's1',
+        workDir: '/tmp/proj',
+        mcpServers: { eph: { transport: 'stdio', command: 'node' } },
+      })
+      .then(() => {
+        settled = true;
+      });
+
+    await tick();
+    expect(settled).toBe(false);
+
+    resolveOverlayReady?.();
+    await create;
+    expect(settled).toBe(true);
+  });
+
+  it('shuts the session MCP overlay down when create fails after materialization', async () => {
+    const { sessionOverlay, shutdown } = overlayStub();
+    const svc = await build([
+      stubPair(IWorkspaceMcpService, { ...workspaceMcpServiceStub(), sessionOverlay }),
+      stubPair(IAgentLifecycleService, {
+        ...agentLifecycleStub(),
+        create: () => Promise.reject(new Error('Unknown agent profile')),
+      }),
+    ]);
+
+    await expect(
+      svc.create({
+        sessionId: 's1',
+        workDir: '/tmp/proj',
+        mainAgentBinding: { profile: 'missing', model: 'mock' },
+        mcpServers: { eph: { transport: 'stdio', command: 'node' } },
+      }),
+    ).rejects.toThrow('Unknown agent profile');
+
+    expect(shutdown).toHaveBeenCalledTimes(1);
+    expect(svc.get('s1')).toBeUndefined();
+  });
+
+  it('create without mcpServers keeps the shared workspace handle and builds no overlay', async () => {
+    const sessionOverlay = vi.fn(
+      (..._args: Parameters<IWorkspaceMcpService['sessionOverlay']>): ISessionMcpOverlay => {
+        throw new Error('unexpected overlay');
+      },
+    );
+    const svc = await build([
+      stubPair(IWorkspaceMcpService, { ...workspaceMcpServiceStub(), sessionOverlay }),
+    ]);
+
+    const handle = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+
+    expect(sessionOverlay).not.toHaveBeenCalled();
+    expect(handle.id).toBe('s1');
+    await svc.close('s1');
   });
 
   it('hides a session from get/list until its resume finishes', async () => {

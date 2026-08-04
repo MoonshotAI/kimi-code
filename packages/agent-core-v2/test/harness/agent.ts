@@ -75,7 +75,7 @@ import { OP_REGISTRY } from '#/wire/op';
 import { IProtocolAdapterRegistry, type ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
 import { hasProviderDefinition } from '#/kosong/provider/providerDefinition';
-import type { SkillCatalog } from '#/app/skillCatalog/types';
+import { summarizeSkill, type SkillCatalog } from '#/app/skillCatalog/types';
 import { type ModelCapability } from '#/kosong/contract/capability';
 import { isToolCall, isToolCallPart, type ContentPart, type Message as KosongMessage, type StreamedMessagePart } from '#/kosong/contract/message';
 import { type ThinkingEffort } from '#/kosong/contract/provider';
@@ -733,6 +733,7 @@ function createSessionSkillCatalog(catalog: SkillCatalog): ISessionSkillCatalog 
     onDidChange: Event.None as Event<string>,
     load: async () => { },
     reload: async () => { },
+    list: async () => catalog.listSkills().map(summarizeSkill),
   };
 }
 
