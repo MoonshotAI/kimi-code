@@ -902,4 +902,42 @@ describe('WorkspaceSkillCatalogService', () => {
       await rm(workDir, { recursive: true, force: true });
     }
   }, 15000);
+
+  it('rescans when a skill under a dot directory appears on disk', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'skill-watch-dot-'));
+    const host = createScopedTestHost([
+      stubPair(IBootstrapService, bootstrapStub),
+      stubPair(IConfigService, configStub()),
+      stubPair(IPluginService, pluginStub()),
+      stubPair(ILogService, stubLog()),
+      stubPair(ISkillDiscovery, new FileSkillDiscovery(stubLog())),
+      stubPair(IHostFsWatchService, new HostFsWatchService()),
+    ]);
+    const workspace = host.child(LifecycleScope.Workspace, 'w1', [
+      stubPair(IWorkspaceContext, workspaceContextStub(workDir)),
+    ]);
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      await catalog.load();
+      expect(catalog.catalog.getSkill('dot-skill')).toBeUndefined();
+
+      await mkdir(join(workDir, '.agents', 'skills', '.dot-skill'), { recursive: true });
+      await writeFile(
+        join(workDir, '.agents', 'skills', '.dot-skill', 'SKILL.md'),
+        '---\nname: dot-skill\ndescription: under dot dir\n---\nbody',
+        'utf8',
+      );
+
+      const deadline = Date.now() + 10000;
+      while (catalog.catalog.getSkill('dot-skill') === undefined) {
+        if (Date.now() > deadline) throw new Error('watch-driven refresh timed out');
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(catalog.catalog.getSkill('dot-skill')?.description).toBe('under dot dir');
+    } finally {
+      host.dispose();
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }, 15000);
 });

@@ -4,11 +4,14 @@
  * `subtreeWatchFilter` builds an `ignored` predicate that confines a recursive
  * fs watch to the candidate subtrees under `root` plus their ancestor chain
  * (so candidates that do not exist yet are still detected once created). The
- * optional knobs prune paths BELOW a candidate only: `skipEntry` rejects
- * entries by basename (e.g. a scanner's `node_modules` / dot-entry rule) and
- * `maxDepth` rejects anything deeper than that many segments below the
- * candidate — letting a watch mirror a scanner's own pruning instead of
- * watching subtrees the consumer would never read.
+ * optional knobs prune paths BELOW a candidate only, mirroring a
+ * recursion-gated scanner: `maxDepth` rejects anything deeper than that many
+ * segments below the candidate, and an entry matching `skipEntry` (e.g. the
+ * skill scanner's `node_modules` / dot-entry rule) stops further watching —
+ * but the entry itself, and with `keepEntryFile` also its direct child file
+ * of that name, stay watched, because a scanner still probes those without
+ * recursing deeper. Everything below that point is what the consumer never
+ * reads, and only that is pruned.
  */
 
 function normalizeSlashes(p: string): string {
@@ -18,6 +21,7 @@ function normalizeSlashes(p: string): string {
 export interface SubtreeWatchFilterOptions {
   readonly maxDepth?: number;
   readonly skipEntry?: (entryName: string) => boolean;
+  readonly keepEntryFile?: string;
 }
 
 export function subtreeWatchFilter(
@@ -47,6 +51,16 @@ function isPrunedBelowCandidate(
 ): boolean {
   if (options === undefined) return false;
   const segments = rel.split('/');
-  if (options.skipEntry !== undefined && segments.some(options.skipEntry)) return true;
+  if (options.skipEntry !== undefined) {
+    const excludedAt = segments.findIndex(options.skipEntry);
+    if (excludedAt !== -1) {
+      if (segments.length <= excludedAt + 1) return false;
+      return !(
+        options.keepEntryFile !== undefined &&
+        segments.length === excludedAt + 2 &&
+        segments.at(-1) === options.keepEntryFile
+      );
+    }
+  }
   return options.maxDepth !== undefined && segments.length > options.maxDepth;
 }

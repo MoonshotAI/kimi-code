@@ -9,8 +9,9 @@
  * project root, watched whether or not they exist yet) through
  * `hostFsWatch` and re-fires `onDidChange` debounced, so the catalog
  * re-scans THIS source only when project skill files change. The watch
- * mirrors the scanner's own pruning — `node_modules` / dot entries, and the
- * scan depth cap plus two segments (the skill directory and its SKILL.md)
+ * mirrors the scanner's own pruning — `node_modules` / dot entries gate
+ * recursion but their direct SKILL.md stays watched, and the depth cap is
+ * the scanner's plus two segments (the skill directory and its SKILL.md)
  * — and runs in `signal` mode, so a fat skill subtree (e.g. a skill
  * bundling a runtime environment) does not cost one fs-watch fd per file.
  * Bound at Workspace scope so every session of the handler shares one scan.
@@ -98,6 +99,7 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
       ignored: subtreeWatchFilter(projectRoot, candidates, {
         maxDepth: MAX_SKILL_SCAN_DEPTH + 2,
         skipEntry: isSkillScanExcludedEntry,
+        keepEntryFile: 'SKILL.md',
       }),
       signal: true,
     });
