@@ -978,7 +978,10 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Resume { session_id, prompt, verbose, json, goal, model, plan } => {
-            let (mut client, renderer) = connect_with_renderer(&server, verbose)?;
+            // TTY default capture, like print (verbose forces it; script
+            // pipes stay clean).
+            let capture = verbose || std::io::stderr().is_terminal();
+            let (mut client, renderer) = connect_with_renderer(&server, capture)?;
             let native_llm = kimi_exec::native_llm_from_config();
             let mut create_params = serde_json::json!({ "session_id": session_id });
             if let Some(nllm) = native_llm {

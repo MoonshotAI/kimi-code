@@ -5,6 +5,11 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㊷ resume TTY 事件捕获对称（已提交）**：
+> - **缺口**：print 默认 TTY 捕获事件流（`verbose || stderr.is_terminal()`），resume 只跟 `verbose`——TTY 下 `kimi resume <id> "x"` 无进度反馈。
+> - **实现**：resume 改同 print 的 TTY 默认捕获（脚本管道保持干净）。
+> - **验证**：编译 + clippy 0 警告。
+
 > **✅ 2026-08-03 ㊶ TUI/SDK 会话创建补 load（create/load 类修复收尾，已提交）**：
 > - **同类缺口**：TUI run() 启动与 `/resume` 的 create_session 从不 load（续开会话上下文/目标丢失）；SDK `Harness::run_prompt` 一次性 create+prompt 对既有会话同样不加载。
 > - **实现**：TUI run() 与 /resume 在 create_session 后 `session.load()`（新建会话 no-op）；SDK run_prompt 同样补 load。
