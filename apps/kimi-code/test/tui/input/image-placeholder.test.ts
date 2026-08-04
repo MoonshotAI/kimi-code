@@ -301,6 +301,49 @@ describe('extractMediaAttachments', () => {
       cleanup();
     }
   });
+
+  it('falls back to the inline base64 form when the cache copy for an uploaded image fails', () => {
+    const { cleanup } = setupTempCache();
+    try {
+      // Break the cache dir: a file at its path makes the mkdir fail, so the
+      // cache copy of the uploaded bytes cannot be written.
+      writeFileSync(getCacheDir(), 'occupied');
+      const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+      const store = new ImageAttachmentStore();
+      const att = store.addImage(bytes, 'image/png', 640, 480, undefined, 'file-1');
+      const r = extractMediaAttachments(`describe ${att.placeholder} please`, store);
+      expect(r.hasMedia).toBe(true);
+      expect(r.imageAttachmentIds).toEqual([1]);
+      // Same shape a paste-time upload failure produces: no <image path> tag,
+      // no kimi-file reference — the message still goes out, inline.
+      expect(r.parts).toEqual([
+        { type: 'text', text: 'describe ' },
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,iVBORw==' } },
+        { type: 'text', text: ' please' },
+      ]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('continues extraction for other attachments after one uploaded image falls back to inline', () => {
+    const { cleanup } = setupTempCache();
+    try {
+      writeFileSync(getCacheDir(), 'occupied');
+      const store = new ImageAttachmentStore();
+      const uploaded = store.addImage(new Uint8Array([1]), 'image/png', 10, 10, undefined, 'file-1');
+      const plain = store.addImage(new Uint8Array([2]), 'image/png', 20, 20);
+      const r = extractMediaAttachments(`${uploaded.placeholder} and ${plain.placeholder}`, store);
+      expect(r.imageAttachmentIds).toEqual([1, 2]);
+      expect(r.parts).toEqual([
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AQ==' } },
+        { type: 'text', text: ' and ' },
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,Ag==' } },
+      ]);
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 describe('rewriteMediaPlaceholders', () => {

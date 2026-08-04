@@ -111,12 +111,20 @@ export function extractMediaAttachments(
         // at request time, preceded by the `<image path>` tag text so the
         // model always has a path it can re-open. The tag's path is a cache
         // copy of the same (already-compressed) bytes.
-        const cachePath = materializeImageToCache(attachment);
-        parts.push({ type: 'text', text: buildMediaPathTag('image', cachePath) });
-        parts.push({
-          type: 'image_url',
-          imageUrl: { url: buildDaemonFileUrl(attachment.fileId, cachePath) },
-        });
+        try {
+          const cachePath = materializeImageToCache(attachment);
+          parts.push({ type: 'text', text: buildMediaPathTag('image', cachePath) });
+          parts.push({
+            type: 'image_url',
+            imageUrl: { url: buildDaemonFileUrl(attachment.fileId, cachePath) },
+          });
+        } catch {
+          // The cache copy failed (unwritable cache dir…): fall back to the
+          // inline base64 form for this attachment — the same shape a
+          // paste-time upload failure produces — so the message still goes
+          // out instead of being cancelled.
+          parts.push(imagePartForAttachment(attachment));
+        }
       } else {
         parts.push(imagePartForAttachment(attachment));
       }
