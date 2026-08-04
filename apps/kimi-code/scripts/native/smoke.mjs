@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { readFile, stat } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -73,10 +73,19 @@ assertIncludes(helpOutput, 'Usage: kimi', '--help');
 const exportHelpOutput = await runKimi(['export', '--help']);
 assertIncludes(exportHelpOutput, 'Usage: kimi export', 'export --help');
 
-const nativeAssetOutput = await runKimiWithEnv(['--version'], {
-  KIMI_CODE_HOME: smokeHome,
-  KIMI_CODE_NATIVE_ASSET_SMOKE: '1',
-});
-assertIncludes(nativeAssetOutput, `Native asset smoke passed: ${target}`, 'native asset smoke');
+const smokeCache = resolve(smokeHome, 'cache');
+await rm(smokeHome, { recursive: true, force: true });
+await mkdir(smokeCache, { recursive: true });
+try {
+  const nativeAssetOutput = await runKimiWithEnv(['--version'], {
+    KIMI_CODE_CACHE_DIR: smokeCache,
+    KIMI_CODE_HOME: smokeHome,
+    KIMI_CODE_NATIVE_ASSET_SMOKE: '1',
+  });
+  assertIncludes(nativeAssetOutput, `Native asset smoke passed: ${target}`, 'native asset smoke');
+  assertIncludes(nativeAssetOutput, 'MiniDb worker build passed', 'MiniDb worker smoke');
+} finally {
+  await rm(smokeHome, { recursive: true, force: true });
+}
 
 console.log(`Native smoke passed: ${executablePath}`);

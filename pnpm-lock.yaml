@@ -101,6 +101,9 @@ importers:
       '@moonshot-ai/migration-legacy':
         specifier: workspace:^
         version: link:../../packages/migration-legacy
+      '@moonshot-ai/minidb':
+        specifier: workspace:^
+        version: link:../../packages/minidb
       '@moonshot-ai/pi-tui':
         specifier: workspace:^
         version: link:../../packages/pi-tui
