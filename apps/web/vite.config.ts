@@ -7,9 +7,24 @@ const webPort = Number(process.env.WEB_PORT) || 5175;
 // Where the dev proxy forwards server traffic. Defaults to the local server
 // (or `pnpm dev:stub`). Override to point dev at another server instance.
 const serverTarget = process.env.KIMI_SERVER_URL || 'http://127.0.0.1:58627';
-const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8')) as {
-  version: string;
-};
+
+// The web bundle ships inside the Kimi Code CLI (apps/web/dist is synced to
+// apps/kimi-code/dist-web in the kimi-code submodule), so the version the UI
+// shows — and reports to the daemon as clientVersion — is the CLI's version,
+// not the workspace package's own (apps/web/package.json is a dev-only
+// artifact). Sourced from the submodule checkout.
+function readCliVersion(): string {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(new URL('../../kimi-code/apps/kimi-code/package.json', import.meta.url), 'utf-8'),
+    ) as { version: string };
+    return pkg.version;
+  } catch {
+    throw new Error(
+      '读取 CLI 版本失败：未找到 kimi-code/apps/kimi-code/package.json——先运行 `pnpm run sync` 初始化 submodule。',
+    );
+  }
+}
 
 // Shared renderer config (Vue + unplugin-icons `kimi` collection, ES2022 target,
 // module workers, `__KIMI_*` defines) lives in `@moonshot-ai/vite-preset` so the
@@ -23,7 +38,7 @@ const preset = kimiRendererViteConfig({
   // own same-origin URL). Unused by the same-origin production build.
   defines: {
     __KIMI_DEV_PROXY_TARGET__: JSON.stringify(serverTarget),
-    __KIMI_CLIENT_VERSION__: JSON.stringify(pkg.version),
+    __KIMI_CLIENT_VERSION__: JSON.stringify(readCliVersion()),
     // True only for the web bundle embedded in the Kimi Desktop app (set by the
     // desktop-build workflow). Gates an "internal testing build" banner. When
     // false (default) the banner is tree-shaken out of the production bundle.

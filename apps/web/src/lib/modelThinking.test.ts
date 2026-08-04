@@ -297,6 +297,8 @@ describe('useModelProviderState thinking on model selection', () => {
         );
       },
       updateSessionMessages: vi.fn(),
+      loadConfig: vi.fn().mockResolvedValue(undefined),
+      checkAuth: vi.fn().mockResolvedValue(undefined),
       ...depOverrides,
     };
     const provider = useModelProviderState(state, deps);

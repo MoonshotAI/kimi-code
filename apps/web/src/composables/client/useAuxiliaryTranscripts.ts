@@ -21,7 +21,6 @@ export function createAuxiliaryTranscriptPool(deps: {
   const entries = shallowReactive(new Map<string, AuxiliaryTranscriptEntry>());
   const desiredAgentBySession = new Map<string, string>();
   const subscribedAgentBySession = new Map<string, string>();
-  const keyOf = (sessionId: string, agentId: string) => `${sessionId}\0${agentId}`;
 
   // Streaming ops can notify many times per second; the version ref only feeds
   // UI recomputation, so bump it once per frame (task fallback for hidden
@@ -52,6 +51,10 @@ export function createAuxiliaryTranscriptPool(deps: {
     taskHandle = setTimeout(flushNotifications, 50);
   }
 
+  function keyOf(sessionId: string, agentId: string): string {
+    return `${sessionId}\0${agentId}`;
+  }
+
   function subscribeCurrent(sessionId: string, agentId: string, sinceSeq?: number): void {
     const connection = deps.getEventConnection();
     if (connection === null) return;
@@ -62,16 +65,19 @@ export function createAuxiliaryTranscriptPool(deps: {
   function getOrCreate(sessionId: string, agentId: string): AuxiliaryTranscriptEntry {
     const key = keyOf(sessionId, agentId);
     const existing = entries.get(key);
-    if (existing) return existing;
+    if (existing !== undefined) return existing;
     const entry: AuxiliaryTranscriptEntry = {
       channel: new TranscriptChannel({
         sessionId,
         agentId,
-        fetchPage: (query) => deps.api.getSessionTranscript(sessionId, { ...query, agentId }),
+        fetchPage: (query) =>
+          deps.api.getSessionTranscript(sessionId, { ...query, agentId }),
         onChange: () => {
           scheduleNotification(entry);
         },
-        onGap: () => void refreshAndResume(entry),
+        onGap: () => {
+          void refreshAndResume(entry);
+        },
       }),
       version: ref(0),
       baselineLoaded: false,

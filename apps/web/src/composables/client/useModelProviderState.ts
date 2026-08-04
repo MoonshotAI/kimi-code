@@ -7,8 +7,9 @@
 
 import { ref, watch, type ComputedRef } from 'vue';
 import { getKimiWebApi } from '../../api';
-import type { AppMessage, AppModel, AppProvider, AppSession, AppSkill, ManagedUsageResult, OAuthLoginStartResult, ThinkingLevel } from '../../api/types';
-import { logWarn } from '../../lib/log';
+import { DaemonApiError } from '../../api/errors';
+import type { AddProviderInput, AppCatalogProvider, AppMessage, AppModel, AppProvider, AppProviderDetail, AppSession, AppSkill, DeleteProviderResult, ImportCatalogProviderInput, ImportCustomRegistryInput, ManagedUsageResult, OAuthLoginStartResult, ThinkingLevel, UpdateProviderInput } from '../../api/types';
+import { logError, logWarn } from '../../lib/log';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
 import {
   defaultThinkingLevelFor,
@@ -80,6 +81,14 @@ export interface UseModelProviderStateDeps {
     sessionId: string,
     update: (messages: AppMessage[]) => AppMessage[],
   ) => void;
+  /** Reload the global config. Provider/model writes (and discovery refreshes)
+   *  rewrite config sections; the edit form reads model records from config,
+   *  so every mutation must end with a fresh snapshot. */
+  loadConfig: () => Promise<void>;
+  /** Re-check /auth readiness. The provider count feeds the composer send
+   *  gate, so every provider mutation (add/delete/import) must refresh it —
+   *  adding the first provider unblocks sending, deleting the last re-arms it. */
+  checkAuth: () => Promise<unknown>;
 }
 
 export function useModelProviderState(
@@ -93,6 +102,8 @@ export function useModelProviderState(
     activity,
     updateSession,
     updateSessionMessages,
+    loadConfig,
+    checkAuth,
   } = deps;
 
   // Models + Providers reactive state (lazy-loaded, cached)
@@ -463,30 +474,67 @@ export function useModelProviderState(
     }
   }
 
-  /** Add a provider, then reload providers + models */
-  async function addProvider(input: {
-    type: string;
-    apiKey?: string;
-    baseUrl?: string;
-    defaultModel?: string;
-  }): Promise<void> {
+  /**
+   * Fetch a single provider's detail — the only call that reveals the stored
+   * API key, used by the edit form to prefill the password field. Throws to
+   * the caller (the form degrades to the redacted placeholder on failure).
+   */
+  async function getProvider(id: string): Promise<AppProviderDetail> {
+    return getKimiWebApi().getProvider(id);
+  }
+
+  /**
+   * Add a provider, then reload providers + models. Resolves to null on
+   * success, or to the error message on failure — the add form shows that
+   * message in its inline banner, so failures are NOT toasted here (only
+   * logged, keeping them diagnosable from the console/web log).
+   */
+  async function addProvider(input: AddProviderInput): Promise<string | null> {
     try {
       const api = getKimiWebApi();
       await api.addProvider(input);
-      await Promise.all([loadProviders(), loadModels()]);
+      await Promise.all([loadProviders(), loadModels(), loadConfig()]);
+      await checkAuth();
+      return null;
     } catch (err) {
-      pushOperationFailure('addProvider', err);
+      logError('[kimi-web] operation failed: addProvider', err);
+      return err instanceof Error ? err.message : String(err);
     }
   }
 
-  /** Delete a provider, then reload providers + models */
-  async function deleteProvider(id: string): Promise<void> {
+  /**
+   * Update a provider (PUT replace semantics), then reload providers + models.
+   * Same error contract as addProvider: resolves to null on success, or to the
+   * error message for the panel's inline banner (failures are logged, not
+   * toasted).
+   */
+  async function updateProvider(id: string, input: UpdateProviderInput): Promise<string | null> {
     try {
       const api = getKimiWebApi();
-      await api.deleteProvider(id);
-      await Promise.all([loadProviders(), loadModels()]);
+      await api.updateProvider(id, input);
+      await Promise.all([loadProviders(), loadModels(), loadConfig()]);
+      return null;
+    } catch (err) {
+      logError('[kimi-web] operation failed: updateProvider', err);
+      return err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  /**
+   * Delete a provider, then reload providers + models + config. Resolves to
+   * `{ deleted: id }` on success (the daemon never touches the global default
+   * pointers on delete), or null on failure (toasted here).
+   */
+  async function deleteProvider(id: string): Promise<DeleteProviderResult | null> {
+    try {
+      const api = getKimiWebApi();
+      const result = await api.deleteProvider(id);
+      await Promise.all([loadProviders(), loadModels(), loadConfig()]);
+      await checkAuth();
+      return result;
     } catch (err) {
       pushOperationFailure('deleteProvider', err);
+      return null;
     }
   }
 
@@ -499,7 +547,7 @@ export function useModelProviderState(
           message: failure.provider,
         });
       }
-      await Promise.all([loadProviders(), loadModels()]);
+      await Promise.all([loadProviders(), loadModels(), loadConfig()]);
     } catch (err) {
       pushOperationFailure('refreshProvider', err);
     }
@@ -514,9 +562,75 @@ export function useModelProviderState(
           message: failure.provider,
         });
       }
-      await Promise.all([loadProviders(), loadModels()]);
+      await Promise.all([loadProviders(), loadModels(), loadConfig()]);
     } catch (err) {
       pushOperationFailure('refreshAllProviders', err);
+    }
+  }
+
+  /**
+   * Load the server-proxied models.dev directory for the add-provider flow.
+   * Three-way outcome: 'ok' carries the entries, 'unsupported' means the
+   * connected server predates the catalog routes (an old daemon answers the
+   * unknown route with a non-envelope 404, surfacing as a DaemonApiError
+   * without a code — the flow then hides the directory source), 'error' is
+   * any other failure (directory unavailable, network down — retryable).
+   */
+  async function loadCatalogProviders(): Promise<
+    | { kind: 'ok'; items: AppCatalogProvider[] }
+    | { kind: 'unsupported' }
+    | { kind: 'error' }
+  > {
+    try {
+      const items = await getKimiWebApi().listCatalogProviders();
+      return { kind: 'ok', items };
+    } catch (err) {
+      if (err instanceof DaemonApiError && err.code === undefined) {
+        return { kind: 'unsupported' };
+      }
+      logError('[kimi-web] operation failed: loadCatalogProviders', err);
+      return { kind: 'error' };
+    }
+  }
+
+  /**
+   * Import a models.dev directory entry as a provider, then reload providers
+   * + models + config. Same error contract as addProvider: null on success,
+   * the error message otherwise (inline banner, logged not toasted).
+   */
+  async function importCatalogProvider(
+    input: ImportCatalogProviderInput,
+  ): Promise<string | null> {
+    try {
+      const api = getKimiWebApi();
+      await api.importCatalogProvider(input);
+      await Promise.all([loadProviders(), loadModels(), loadConfig()]);
+      await checkAuth();
+      return null;
+    } catch (err) {
+      logError('[kimi-web] operation failed: importCatalogProvider', err);
+      return err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  /**
+   * Import a custom registry (api.json URL + optional key), then reload
+   * providers + models + config. Success carries the imported providers (the
+   * flow expands the first one); failure resolves to the error message for
+   * the flow's inline banner (logged, not toasted).
+   */
+  async function importCustomRegistry(
+    input: ImportCustomRegistryInput,
+  ): Promise<{ providers: AppProvider[]; modelsImported: number } | string> {
+    try {
+      const api = getKimiWebApi();
+      const result = await api.importCustomRegistry(input);
+      await Promise.all([loadProviders(), loadModels(), loadConfig()]);
+      await checkAuth();
+      return result;
+    } catch (err) {
+      logError('[kimi-web] operation failed: importCustomRegistry', err);
+      return err instanceof Error ? err.message : String(err);
     }
   }
 
@@ -597,7 +711,12 @@ export function useModelProviderState(
     toggleStarModel,
     activateSkill,
     addProvider,
+    updateProvider,
     deleteProvider,
+    getProvider,
+    loadCatalogProviders,
+    importCatalogProvider,
+    importCustomRegistry,
     refreshProvider,
     refreshAllProviders,
     startOAuthLogin,

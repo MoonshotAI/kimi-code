@@ -17,10 +17,13 @@
 //   apps/desktop/build/tray.png, tray@2x.png         Linux tray (white silhouette)
 //   apps/desktop/build/trayTemplate.png, trayTemplate@2x.png  macOS menu-bar template
 //   apps/desktop/build/tray.ico   4 frames (16–48), Windows tray (white tile)
-//   apps/web/public/favicon.ico   5 frames (16–64)
 //   Inline brand marks between `brand-mark:start/end` comments in:
-//     apps/desktop/src/renderer/components/onboarding/BrandLogo.vue (+ apps/web copy)
-//     apps/desktop/src/renderer/components/Sidebar.vue            (+ apps/web copy)
+//     apps/desktop/src/renderer/components/onboarding/BrandLogo.vue
+//     apps/desktop/src/renderer/components/Sidebar.vue
+//
+// NOTE: apps/web is intentionally NOT an output. The web UI forked its brand
+// back to the legacy "little blue" mark (sidebar, onboarding, favicon) — do
+// not re-add web targets here, or the next run clobbers that fork.
 //
 // Geometry decisions (do not change casually — they keep the icon consistent
 // with macOS conventions and the pre-refresh assets):
@@ -33,7 +36,6 @@
 //   - Tile corners are a baked macOS squircle (superellipse n=4.5, ~1.5px AA),
 //     so pre-Tahoe macOS (no system masking) still shows a rounded icon; Tahoe
 //     re-clips the already-transparent corners to the same shape.
-//   - favicon keeps the tile full-bleed (a 16px tab icon can't afford margins).
 //   - App icons rasterize from the kit's SVG vectors (White/Black Background)
 //     for full sharpness; the kit PNGs are only previews and tray sources.
 //   - Tray silhouette: mark fit into a 16px box centered on a 22px canvas
@@ -216,11 +218,6 @@ async function buildAppIcons() {
   const res = spawnSync('iconutil', ['-c', 'icns', iconset, '-o', icnsOut], { stdio: 'inherit' });
   if (res.status !== 0) throw new Error('iconutil failed');
   written.push(path.relative(ROOT, icnsOut));
-
-  // favicon: full-bleed squircle (no margin — tab icons are tiny).
-  const favSizes = [16, 24, 32, 48, 64];
-  const favFrames = await Promise.all(favSizes.map(resizeFull));
-  save(path.join(ROOT, 'apps', 'web', 'public', 'favicon.ico'), icoBuffer(favFrames, favSizes));
 }
 
 // ---------------------------------------------------------------------------
@@ -409,10 +406,11 @@ function buildComponentMarks() {
   const originalKit = parseKitSvg(path.join(KIT, 'Original Logo.svg'));
   const brandLogo = genBrandLogo(whiteKit);
   const sidebarLogo = genSidebarLogo(originalKit);
-  for (const app of ['apps/desktop/src/renderer', 'apps/web/src']) {
-    spliceBrandMark(path.join(ROOT, app, 'components/onboarding/BrandLogo.vue'), brandLogo, 'White Background.svg');
-    spliceBrandMark(path.join(ROOT, app, 'components/Sidebar.vue'), sidebarLogo, 'Original Logo.svg');
-  }
+  // Desktop only — apps/web forked its brand marks back to the legacy
+  // "little blue"; do not re-add it here (see the header note).
+  const app = path.join(ROOT, 'apps', 'desktop', 'src', 'renderer');
+  spliceBrandMark(path.join(app, 'components/onboarding/BrandLogo.vue'), brandLogo, 'White Background.svg');
+  spliceBrandMark(path.join(app, 'components/Sidebar.vue'), sidebarLogo, 'Original Logo.svg');
 }
 
 // ---------------------------------------------------------------------------

@@ -516,10 +516,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    *  - 'retry'                — transient failure (network, timeout, 5xx); the
    *                             caller should retry instead of treating it as
    *                             "not signed in" */
-  // Generation guard for the fire-and-forget /oauth/userinfo fetch below:
-  // bumped at every checkAuth() entry so the last-issued call wins — a stale
-  // late response must not overwrite, nor a stale rejection clear, the
-  // profile the newest call wrote.
+  // Generation guard for the /oauth/userinfo fetches below: bumped at every
+  // issued fetch so the last-issued call wins — a stale late response must
+  // not overwrite, nor a stale rejection clear, the profile the newest call
+  // wrote.
   let userInfoFetchGeneration = 0;
 
   /** One guarded /oauth/userinfo fetch. Shared by checkAuth (fire-and-forget,

@@ -30,12 +30,8 @@ export function auxiliaryTranscriptToTurns(
         )
       : [],
   );
-  return messagesToTurns(
-    messages,
-    [],
-    getFileUrl,
-    snapshot.meta.activity === 'turn',
-  ).map(clearMissingTimestamps);
+  const running = snapshot.meta.activity === 'turn';
+  return messagesToTurns(messages, [], getFileUrl, running).map(clearMissingTimestamps);
 }
 
 function turnToMessages(
@@ -158,10 +154,13 @@ function turnToMessages(
       }
     }
   }
+
   const duration = turn.durationMs ?? durationMs(createdAt || undefined, endedAt);
-  const lastAssistant = messages.findLastIndex((message) => message.role === 'assistant');
-  if (duration !== undefined && lastAssistant >= 0) {
-    messages[lastAssistant] = { ...messages[lastAssistant]!, durationMs: duration };
+  if (duration !== undefined) {
+    const lastAssistant = messages.findLastIndex((message) => message.role === 'assistant');
+    if (lastAssistant >= 0) {
+      messages[lastAssistant] = { ...messages[lastAssistant]!, durationMs: duration };
+    }
   }
   return messages;
 }
@@ -217,17 +216,19 @@ function attachmentToContent(
   if (attachment.mediaType.startsWith('image/')) {
     return {
       type: 'image',
-      source: attachment.source.kind === 'url'
-        ? { kind: 'url', url: attachment.source.url }
-        : { kind: 'file', fileId: attachment.source.fileId },
+      source:
+        attachment.source.kind === 'url'
+          ? { kind: 'url', url: attachment.source.url }
+          : { kind: 'file', fileId: attachment.source.fileId },
     };
   }
   if (attachment.mediaType.startsWith('video/')) {
     return {
       type: 'video',
-      source: attachment.source.kind === 'url'
-        ? { kind: 'url', url: attachment.source.url }
-        : { kind: 'file', fileId: attachment.source.fileId },
+      source:
+        attachment.source.kind === 'url'
+          ? { kind: 'url', url: attachment.source.url }
+          : { kind: 'file', fileId: attachment.source.fileId },
     };
   }
   if (attachment.source.kind !== 'file') return undefined;

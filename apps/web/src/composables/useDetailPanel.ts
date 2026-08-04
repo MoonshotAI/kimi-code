@@ -179,6 +179,7 @@ export function useDetailPanel({
       outputLines: toolMetadata.outputLines,
     };
   });
+
   const agentPanelTurns = computed(() => {
     const entry = agentTranscriptState.value.entry;
     if (!entry) return [];
@@ -231,7 +232,9 @@ export function useDetailPanel({
 
   function closeAgentPanel(): void {
     const target = agentTarget.value;
-    if (target) client.auxiliaryTranscripts.deactivate(target.sessionId, target.subagentId);
+    if (target) {
+      client.auxiliaryTranscripts.deactivate(target.sessionId, target.subagentId);
+    }
     agentTarget.value = null;
     if (detailTarget.value === 'agent') detailTarget.value = null;
   }
@@ -239,7 +242,9 @@ export function useDetailPanel({
   watch(detailTarget, (current, previous) => {
     if (previous !== 'agent' || current === 'agent') return;
     const target = agentTarget.value;
-    if (target) client.auxiliaryTranscripts.deactivate(target.sessionId, target.subagentId);
+    if (target) {
+      client.auxiliaryTranscripts.deactivate(target.sessionId, target.subagentId);
+    }
   });
 
   function loadOlderAgentMessages(): void {

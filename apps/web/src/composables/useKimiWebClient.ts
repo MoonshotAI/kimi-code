@@ -2637,6 +2637,9 @@ const modelProvider = useModelProviderState(rawState, {
   activity,
   updateSession,
   updateSessionMessages,
+  // Lazy: workspaceState is composed below, but only invoked after creation.
+  loadConfig: () => workspaceState.loadConfig(),
+  checkAuth: () => workspaceState.checkAuth(),
 });
 
 /** Git info for the active session from the daemon's fs:git_status response */
@@ -3496,9 +3499,14 @@ export function useKimiWebClient() {
     setModel: modelProvider.setModel,
     toggleStarModel: modelProvider.toggleStarModel,
     addProvider: modelProvider.addProvider,
+    updateProvider: modelProvider.updateProvider,
+    getProvider: modelProvider.getProvider,
     deleteProvider: modelProvider.deleteProvider,
     refreshProvider: modelProvider.refreshProvider,
     refreshAllProviders: modelProvider.refreshAllProviders,
+    loadCatalogProviders: modelProvider.loadCatalogProviders,
+    importCatalogProvider: modelProvider.importCatalogProvider,
+    importCustomRegistry: modelProvider.importCustomRegistry,
 
     // Auth state
     authReady,
@@ -3507,8 +3515,12 @@ export function useKimiWebClient() {
     managedUserInfo,
     managedMembership,
 
+    // Transient notices (WarningToasts)
+    notify: pushWarning,
+
     // Config state + actions
     config,
+    loadConfig: workspaceState.loadConfig,
     updateConfig: workspaceState.updateConfig,
 
     // Auth actions

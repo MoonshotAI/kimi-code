@@ -5,17 +5,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, onUpdated, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { serverEndpointLabel } from '../api/config';
-import {
-  fetchDevBackendState,
-  initialDevBackendState,
-  shortOrigin,
-  switchDevBackend,
-  type BackendName,
-  type DevBackendState,
-} from '../api/devBackend';
 import { copyTextToClipboard } from '../lib/clipboard';
-import { logWarn } from '../lib/log';
 import {
   loadCollapsedWorkspaces,
   saveCollapsedWorkspaces,
@@ -34,39 +24,9 @@ import WorkspaceGroup from './WorkspaceGroup.vue';
 import PinnedSessionList from './PinnedSessionList.vue';
 import { isMacosDesktop } from '../lib/desktopFlag';
 import { SESSIONS_EXPAND_BATCH } from '../composables/client/useWorkspaceState';
-import { Icon, IconButton, Kbd, Menu, MenuItem, Pill } from '@moonshot-ai/web-ui';
+import { Icon, IconButton, Kbd, Menu, MenuItem } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
-
-// Dev-only affordance: when the page is served by the Vite dev server, a
-// backend pill next to the brand shows the engine generation reported by
-// /meta (v1 = older server binary, v2 = kap-server) plus the endpoint the dev
-// proxy forwards to — click it to switch presets without restarting Vite. In
-// production this is all inert.
-const isDev = import.meta.env.DEV;
-const devBackend = ref<DevBackendState | null>(isDev ? initialDevBackendState() : null);
-if (isDev) {
-  onMounted(async () => {
-    const live = await fetchDevBackendState();
-    if (live) devBackend.value = live;
-  });
-}
-// host:port of the server the dev proxy currently forwards to (fallback: the
-// build-time label when the dev endpoints are unavailable).
-const endpoint = computed(() => {
-  if (!isDev) return '';
-  const current = devBackend.value?.current;
-  return current ? shortOrigin(current) : serverEndpointLabel();
-});
-const backendNames: BackendName[] = ['default', 'multi'];
-function presetUrl(name: BackendName): string {
-  const url = devBackend.value?.presets[name] ?? '';
-  return url ? shortOrigin(url) : '';
-}
-function isCurrentBackend(name: BackendName): boolean {
-  const state = devBackend.value;
-  return state !== null && state.current === state.presets[name];
-}
 
 const props = withDefaults(
   defineProps<{
@@ -78,8 +38,6 @@ const props = withDefaults(
      *  pinned section above all workspace groups; empty hides the section. */
     pinnedSessions?: Session[];
     activeId: string;
-    /** Backend engine generation from /meta — dev-only badge next to the brand. */
-    backend?: 'v1' | 'v2';
     attentionBySession?: Record<string, number>;
     /** Per-session pending counts split by kind, for the coloured tags. */
     pendingBySession?: Record<string, { approvals: number; questions: number }>;
@@ -97,7 +55,6 @@ const props = withDefaults(
     activeWorkspace: null,
     activeWorkspaceId: null,
     pinnedSessions: () => [],
-    backend: 'v1',
     attentionBySession: () => ({}),
     pendingBySession: () => ({}),
     unreadBySession: () => ({}),
@@ -140,7 +97,10 @@ const emit = defineEmits<{
 // ---------------------------------------------------------------------------
 const showSearch = ref(false);
 const sessionSearchKeys = isAppleShortcutPlatform() ? ['⌘', 'K'] : ['Ctrl', 'K'];
-const newChatKeys = isAppleShortcutPlatform() ? ['⌘', 'N'] : ['Ctrl', 'N'];
+// New chat is Ctrl+Shift+O on every platform (real Control key, ⌃ on macOS):
+// browsers reserve ⌘N / Ctrl+N for "new window" and never deliver that
+// keydown to the page, so the old chord could never fire outside Electron.
+const newChatKeys = isAppleShortcutPlatform() ? ['⌃', '⇧', 'O'] : ['Ctrl', 'Shift', 'O'];
 
 function openSearch(): void {
   // Sessions are loaded per-workspace (first page only); lazily drain the rest
@@ -155,7 +115,9 @@ function onSearchKeydown(e: KeyboardEvent): void {
   if (e.key.toLowerCase() === 'k') {
     e.preventDefault();
     openSearch();
-  } else if (e.key.toLowerCase() === 'n') {
+  } else if (!e.metaKey && e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'o') {
+    // See newChatKeys: ⌘N/Ctrl+N is reserved by the browser chrome, so new
+    // chat listens for the Ctrl+Shift+O chord instead.
     e.preventDefault();
     emit('create');
   }
@@ -602,76 +564,10 @@ function deleteWs(ws: WorkspaceView): void {
   emit('deleteWorkspace', ws.id);
 }
 
-// ---------------------------------------------------------------------------
-// Dev backend switcher menu (the pill next to the brand). Dev-only: repoints
-// the Vite dev proxy at the other engine, then reloads so every client state
-// (REST, WS, /meta) re-initializes against the new backend.
-// ---------------------------------------------------------------------------
-const backendMenuOpen = ref(false);
-const backendMenuStyle = ref<Record<string, string>>({});
-const backendMenuRef = ref<InstanceType<typeof Menu> | null>(null);
-
-function onBackendMenuDocClick(e: MouseEvent): void {
-  const target = e.target as Element;
-  if (target.closest('.ch-backend') || target.closest('.backend-menu')) return;
-  closeBackendMenu();
-}
-
-async function toggleBackendMenu(e: MouseEvent): Promise<void> {
-  if (devBackend.value === null) return;
-  if (backendMenuOpen.value) {
-    closeBackendMenu();
-    return;
-  }
-  const btn = e.currentTarget as HTMLElement;
-  backendMenuOpen.value = true;
-  document.addEventListener('mousedown', onBackendMenuDocClick);
-  window.addEventListener('resize', closeBackendMenu);
-  await nextTick();
-  const menu = backendMenuRef.value?.el;
-  const r = btn.getBoundingClientRect();
-  const gap = 4;
-  const margin = 8;
-  const menuH = menu?.offsetHeight ?? 0;
-  let top = r.bottom + gap;
-  if (top + menuH > window.innerHeight - margin) {
-    top = Math.max(margin, r.top - menuH - gap);
-  }
-  backendMenuStyle.value = {
-    top: `${Math.round(top)}px`,
-    left: `${Math.round(Math.max(margin, r.left))}px`,
-  };
-}
-
-function closeBackendMenu(): void {
-  backendMenuOpen.value = false;
-  document.removeEventListener('mousedown', onBackendMenuDocClick);
-  window.removeEventListener('resize', closeBackendMenu);
-}
-
-async function chooseBackend(name: BackendName): Promise<void> {
-  if (isCurrentBackend(name)) {
-    closeBackendMenu();
-    return;
-  }
-  const next = await switchDevBackend(name);
-  if (next === null) {
-    logWarn('[kimi-web] dev backend switch failed:', name);
-    closeBackendMenu();
-    return;
-  }
-  // Full reload: every client channel (REST base state, WS, /meta) must
-  // re-initialize against the new backend — a soft swap would leave stale
-  // session streams subscribed through the old target.
-  window.location.reload();
-}
-
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onGhMenuDocClick, true);
   document.removeEventListener('mousedown', onWsMenuDocClick);
-  document.removeEventListener('mousedown', onBackendMenuDocClick);
   window.removeEventListener('resize', closeWsMenu);
-  window.removeEventListener('resize', closeBackendMenu);
 });
 
 // Logo easter-egg: clicking the Kimi mark plays one quick blink. It's a one-shot
@@ -756,44 +652,26 @@ onBeforeUnmount(() => {
       <div class="ch">
         <div class="ch-brand">
           <template v-if="!isMacosDesktop">
-            <!-- Brand mark: the robot mascot (transparent background, no tile).
-                 The .ch-eyes/.ch-eye classes hook the shared idle look/blink
-                 keyframes in style.css; the viewBox stays ~32 wide so those
-                 px-based transforms keep their old proportions. -->
-            <!-- brand-mark:start — generated by scripts/build-brand-icons.mjs from
-                 KIMI CODE LOGO/Original Logo.svg; do not edit by hand -->
-            <svg ref="logoRef" class="ch-logo" viewBox="0 0 32 28.2791" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="onLogoClick" @pointerdown="onLogoPointerDown" @pointerup="onLogoPointerUp" @pointercancel="onLogoPointerUp">
+            <!-- Brand mark: the legacy "little blue" (rounded rect with eye
+                 cutouts). WEB FORK — desktop ships the robot mascot generated by
+                 scripts/build-brand-icons.mjs; the generator no longer touches
+                 this file, so keep this divergence on purpose. The
+                 .ch-eyes/.ch-eye classes hook the shared idle look/blink
+                 keyframes in style.css (the eyes are mask cutouts, so animating
+                 them moves the transparent holes). -->
+            <svg ref="logoRef" class="ch-logo" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="onLogoClick" @pointerdown="onLogoPointerDown" @pointerup="onLogoPointerUp" @pointercancel="onLogoPointerUp">
               <defs>
-                <radialGradient id="chLogoFace" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(14.5195 12.5993) scale(14.1117)">
-                  <stop stop-color="#117DFB" />
-                  <stop offset="0.759254" stop-color="#449BFF" />
-                  <stop offset="1" stop-color="#77B6FF" />
-                </radialGradient>
+                <mask id="kimiEyes" maskUnits="userSpaceOnUse">
+                  <rect x="0" y="0" width="32" height="22" fill="#fff" />
+                  <g class="ch-eyes" fill="#000">
+                    <rect class="ch-eye" x="11.8" y="7" width="2.8" height="8" rx="1.4" />
+                    <rect class="ch-eye" x="17.4" y="7" width="2.8" height="8" rx="1.4" />
+                  </g>
+                </mask>
               </defs>
-              <path d="M 14.5195 0.3556 C 22.2186 0.3556 28.4601 6.5969 28.4601 14.2961 C 28.4601 21.9952 22.2186 28.2366 14.5195 28.2366 C 6.8204 28.2366 0.579 21.9952 0.579 14.2961 C 0.579 6.5969 6.8204 0.3556 14.5195 0.3556 Z" fill="#2389FF" />
-              <path d="M 14.5195 0.3556 C 22.2186 0.3556 28.4601 6.5969 28.4601 14.2961 C 28.4601 21.9952 22.2186 28.2366 14.5195 28.2366 C 6.8204 28.2366 0.579 21.9952 0.579 14.2961 C 0.579 6.5969 6.8204 0.3556 14.5195 0.3556 Z" fill="url(#chLogoFace)" />
-              <g class="ch-eyes" fill="#fff">
-                <path class="ch-eye" d="M 12.8637 8.8339 C 12.7301 7.8611 13.4042 6.965 14.3693 6.8324 C 15.3344 6.6999 16.2251 7.3811 16.3587 8.3539 L 16.7656 11.3165 C 16.8992 12.2893 16.2251 13.1854 15.26 13.318 C 14.2949 13.4505 13.4042 12.7693 13.2706 11.7965 L 12.8637 8.8339 Z" />
-                <path class="ch-eye" d="M 20.1974 7.8996 C 20.0705 6.9754 20.6717 6.1295 21.5403 6.0102 C 22.4089 5.8909 23.216 6.5434 23.3429 7.4676 L 23.7295 10.282 C 23.8564 11.2062 23.2551 12.0521 22.3865 12.1714 C 21.5179 12.2907 20.7109 11.6382 20.5839 10.714 L 20.1974 7.8996 Z" />
-              </g>
-              <rect x="0" y="17.8221" width="31.9124" height="10.4405" rx="1.158" fill="#002E58" />
-              <path d="M 2.6265 21.0396 L 5.5577 22.7318 C 5.7989 22.8711 5.7989 23.2193 5.5577 23.3586 L 2.6265 25.0509" stroke="#fff" stroke-width="1.3133" stroke-linecap="round" />
-              <path d="M 8.7332 25.439 H 11.6282" stroke="#007CFF" stroke-width="1.3133" stroke-linecap="round" />
-              <path d="M 28.9734 0 C 30.2364 0 31.2604 1.0239 31.2604 2.287 C 31.2604 3.55 30.2364 4.574 28.9734 4.574 L 26.9555 4.574 C 26.8068 4.574 26.6864 4.4535 26.6864 4.3049 L 26.6864 2.287 C 26.6864 1.0239 27.7103 0 28.9734 0 Z" fill="#1783FF" />
+              <rect x="1" y="1" width="30" height="20" rx="6" fill="var(--logo)" mask="url(#kimiEyes)" />
             </svg>
-            <!-- brand-mark:end -->
             <span class="ch-name">Kimi Code</span>
-            <Pill
-              v-if="isDev"
-              class="ch-backend"
-              :clickable="devBackend !== null"
-              :title="t('sidebar.backendTitle', { backend, endpoint })"
-              @click="toggleBackendMenu"
-            >
-              <span class="ch-backend-kind" :class="`is-${backend}`">{{ backend }}</span>
-              <span class="ch-backend-ep"> · {{ endpoint }}</span>
-              <Icon v-if="devBackend !== null" name="chevron-down" size="sm" />
-            </Pill>
           </template>
         </div>
         <div class="ch-tail">
@@ -998,22 +876,6 @@ onBeforeUnmount(() => {
         </MenuItem>
       </Menu>
     </Transition>
-    <!-- Dev backend switcher menu (position:fixed, anchored to the brand pill) -->
-    <Menu
-      v-if="backendMenuOpen"
-      ref="backendMenuRef"
-      class="backend-menu"
-      :style="backendMenuStyle"
-      @click.stop
-    >
-      <MenuItem v-for="name in backendNames" :key="name" @click="chooseBackend(name)">
-        <span class="section-menu-check">
-          <Icon v-if="isCurrentBackend(name)" name="check" size="sm" />
-        </span>
-        <span class="backend-menu-name">{{ name }}</span>
-        <span class="backend-menu-url">{{ presetUrl(name) }}</span>
-      </MenuItem>
-    </Menu>
     <!-- Session search dialog (Cmd/Ctrl+K) -->
     <SearchSessionsDialog
       v-if="showSearch"
@@ -1122,9 +984,7 @@ onBeforeUnmount(() => {
 }
 .ch-logo {
   height: 22px;
-  /* The mascot is near-square (32×28.914 viewBox); let the width follow the
-     fixed height instead of pinning the old wide-mark 32px. */
-  width: auto;
+  width: 32px;
   flex: none;
   display: block;
   cursor: pointer;
@@ -1165,35 +1025,8 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Dev-only backend pill next to the brand: shows the engine generation from
-   /meta (v1 / v2) and opens the dev-proxy preset switcher menu. v2 is
-   accent-colored so it reads differently at a glance. */
-.ch-backend {
-  flex: none;
-  min-width: 0;
-  font-family: var(--font-ui);
-}
-.ch-backend-kind {
-  font-family: inherit;
-  font-weight: 500;
-  color: var(--color-text-muted);
-}
-.ch-backend-kind.is-v2 {
-  color: var(--color-accent);
-}
-.ch-backend-ep {
-  font-family: inherit;
-  color: var(--color-text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Responsive brand row: below 320px the pill's endpoint drops out (the v1/v2
-   kind + chevron stay — the full target is one tooltip away); below 250px the
-   product name also drops out so the logo and action buttons keep their room. */
-@container sidebar-col (max-width: 320px) {
-  .ch-backend-ep { display: none; }
-}
+/* Responsive brand row: below 250px the product name drops out so the logo
+   and action buttons keep their room. */
 @container sidebar-col (max-width: 250px) {
   .ch-name { display: none; }
 }
@@ -1476,8 +1309,7 @@ onBeforeUnmount(() => {
 /* Workspace menus — surface + items come from Menu / MenuItem; only the
    fixed positioning stays here (anchored to the ⋯ trigger / cursor). */
 .ws-menu,
-.gh-menu,
-.backend-menu {
+.gh-menu {
   position: fixed;
   top: 0;
   left: 0;
@@ -1515,17 +1347,6 @@ onBeforeUnmount(() => {
   display: inline-flex;
   flex: none;
   width: 14px;
-}
-
-/* Backend switcher menu rows: mono engine name + muted preset URL. */
-.backend-menu-name {
-  font-family: var(--mono);
-  font-weight: 500;
-}
-.backend-menu-url {
-  margin-left: 8px;
-  font-family: var(--mono);
-  color: var(--color-text-muted);
 }
 
 </style>

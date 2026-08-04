@@ -10,6 +10,7 @@ import type { AppSession } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import LanguageSwitcher from './LanguageSwitcher.vue';
+import ProvidersPanel from './ProvidersPanel.vue';
 import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
 import { useUpdateStatus, type UpdateCheckResult } from '../../composables/useUpdateStatus';
@@ -24,7 +25,7 @@ import { Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Swit
 
 const { t } = useI18n();
 
-type SettingsTab = 'general' | 'agent' | 'account' | 'advanced' | 'archived';
+type SettingsTab = 'general' | 'agent' | 'account' | 'providers' | 'advanced' | 'archived';
 
 const props = defineProps<{
   colorScheme: ColorScheme;
@@ -70,7 +71,6 @@ const emit = defineEmits<{
   setNotifySound: [on: boolean];
   login: [];
   logout: [];
-  openProviders: [];
   updateConfig: [patch: Partial<AppConfig>];
   close: [];
 }>();
@@ -121,6 +121,8 @@ const tabs: { id: SettingsTab; labelKey: string; icon: IconName }[] = [
   { id: 'general', labelKey: 'settings.tabs.general', icon: 'sliders' },
   { id: 'agent', labelKey: 'settings.tabs.agent', icon: 'robot' },
   { id: 'account', labelKey: 'settings.tabs.account', icon: 'user' },
+  // No plug-style glyph exists in the icon registry; the bolt is the closest.
+  { id: 'providers', labelKey: 'settings.tabs.providers', icon: 'bolt' },
   { id: 'advanced', labelKey: 'settings.tabs.advanced', icon: 'microscope' },
   { id: 'archived', labelKey: 'settings.tabs.archived', icon: 'archive' },
 ];
@@ -627,6 +629,13 @@ function archiveTime(iso: string): string {
           </section>
           <PlanUpgradeCard v-if="showPlanUpgrade" />
           <PlanUsageCard v-else-if="signedIn" :on-fetch-usage="props.onFetchUsage" />
+        </section>
+
+        <!-- Providers (accordion management). v-if (not v-show): the panel
+             refetches providers/models on mount, so reopening the tab always
+             shows fresh data. -->
+        <section v-if="activeTab === 'providers'" class="panel">
+          <ProvidersPanel />
         </section>
 
         <!-- Agent defaults -->

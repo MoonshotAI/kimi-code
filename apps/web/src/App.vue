@@ -12,7 +12,6 @@ import SideChatPanel from './components/chat/SideChatPanel.vue';
 import DiffView from './components/chat/DiffView.vue';
 import TurnDiffPanel from './components/chat/TurnDiffPanel.vue';
 import ModelPicker from './components/settings/ModelPicker.vue';
-import ProviderManager from './components/settings/ProviderManager.vue';
 import LoginDialog from './components/dialogs/LoginDialog.vue';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
 import AddWorkspaceDialog from './components/dialogs/AddWorkspaceDialog.vue';
@@ -143,6 +142,14 @@ const showOnboarding = ref(!client.onboarded.value);
 function completeOnboarding(): void {
   client.setOnboarded(true);
   showOnboarding.value = false;
+}
+
+// The wizard's custom-provider card: first run completes via this detour
+// (same as skipping the login step), landing directly on the Providers tab.
+function handleWizardAddProvider(): void {
+  completeOnboarding();
+  settingsInitialTab.value = 'providers';
+  showSettings.value = true;
 }
 
 // iOS Safari does not shrink `dvh` for the on-screen keyboard. Instead it pans
@@ -324,7 +331,6 @@ const conversationPaneRef = ref<InstanceType<typeof ConversationPane> | null>(nu
 
 // Dialog visibility refs
 const showModelPicker = ref(false);
-const showProviders = ref(false);
 
 const showLogin = ref(false);
 const showAddWorkspace = ref(false);
@@ -373,7 +379,6 @@ const anyOverlayOpen = computed<boolean>(
   () =>
     openDialogCount.value > 0 ||
     showModelPicker.value ||
-    showProviders.value ||
     showLogin.value ||
     showAddWorkspace.value ||
     showStatusPanel.value ||
@@ -386,8 +391,6 @@ const anyOverlayOpen = computed<boolean>(
 // Loading state for model/provider fetches
 const modelsLoading = ref(false);
 const modelsUnavailable = ref(false);
-const providersLoading = ref(false);
-const providersUnavailable = ref(false);
 const configSaving = ref(false);
 
 async function openModelPicker(): Promise<void> {
@@ -403,19 +406,6 @@ async function openModelPicker(): Promise<void> {
     modelsUnavailable.value = true;
   } finally {
     modelsLoading.value = false;
-  }
-}
-
-async function openProviders(): Promise<void> {
-  providersLoading.value = true;
-  providersUnavailable.value = false;
-  showProviders.value = true;
-  try {
-    await client.loadProviders();
-  } catch {
-    providersUnavailable.value = true;
-  } finally {
-    providersLoading.value = false;
   }
 }
 
@@ -459,18 +449,7 @@ async function handleComposerSelectModel(modelId: string): Promise<void> {
   }
 }
 
-async function handleAddProvider(input: { type: string; apiKey?: string; baseUrl?: string; defaultModel?: string }): Promise<void> {
-  await client.addProvider(input);
-  // Provider count feeds /auth readiness (the composer send gate) — refresh it
-  // so a just-added provider unblocks sending without a full reload.
-  await client.checkAuth();
-}
-
-async function handleRefreshProvider(id: string): Promise<void> {
-  await client.refreshProvider(id);
-}
-
-// Destructive workspace/provider actions confirm through the shared modal
+// Destructive workspace actions confirm through the shared modal
 // here (the menu components only emit the intent). Each passes its work as
 // the dialog `action`, so the dialog stays open with a loading state until
 // the operation settles. Both client calls toast their own errors and never
@@ -502,7 +481,7 @@ async function undoArchive(): Promise<void> {
 // Deep link into a settings tab (the archive undo toast opens Settings →
 // Archived). Read once at SettingsDialog mount, then reset on close so later
 // manual opens land on General again.
-const settingsInitialTab = ref<'archived' | undefined>(undefined);
+const settingsInitialTab = ref<'providers' | 'archived' | undefined>(undefined);
 // Same deep link for the mobile settings sheet (its archived sub-view).
 // Reset when the sheet closes so later manual opens land on the main view.
 const mobileSettingsInitialView = ref<'archived' | undefined>(undefined);
@@ -530,20 +509,6 @@ async function confirmDeleteWorkspace(id: string): Promise<void> {
     message: t('workspace.removeWorkspaceConfirm', { name }),
     variant: 'danger',
     action: () => client.deleteWorkspace(id),
-  });
-}
-
-async function confirmDeleteProvider(id: string): Promise<void> {
-  await confirm({
-    title: t('providers.delete'),
-    message: t('providers.confirmDelete'),
-    variant: 'danger',
-    // Refresh /auth readiness too — deleting the last provider must re-arm
-    // the composer send gate.
-    action: async () => {
-      await client.deleteProvider(id);
-      await client.checkAuth();
-    },
   });
 }
 
@@ -939,7 +904,6 @@ function openPr(url: string): void {
         :attention-by-session="client.attentionBySession.value"
         :pending-by-session="client.pendingBySession.value"
         :unread-by-session="client.unreadBySession.value"
-        :backend="client.backend.value"
         @select="client.selectSession($event)"
         @create="handleCreateSession"
         @create-in-workspace="handleCreateSessionInWorkspace($event)"
@@ -1248,21 +1212,7 @@ function openPr(url: string): void {
       @update-config="handleUpdateConfig($event)"
       @login="() => { showSettings = false; openLogin(); }"
       @logout="confirmLogout"
-      @open-providers="() => { showSettings = false; openProviders(); }"
       @close="showSettings = false; settingsInitialTab = undefined"
-    />
-
-    <!-- Provider Manager overlay -->
-    <ProviderManager
-      v-if="showProviders"
-      :providers="client.providers.value"
-      :loading="providersLoading"
-      :unavailable="providersUnavailable"
-      @add="handleAddProvider($event)"
-      @refresh="handleRefreshProvider($event)"
-      @delete="confirmDeleteProvider($event)"
-      @open-login="() => { showProviders = false; openLogin(); }"
-      @close="showProviders = false"
     />
 
     <!-- Status panel overlay (/status) — renders current client state, no daemon call -->
@@ -1373,6 +1323,7 @@ function openPr(url: string): void {
       :on-cancel-o-auth-login="handleCancelOAuthLogin"
       @complete="completeOnboarding"
       @login-success="handleWizardLoginSuccess"
+      @add-provider="handleWizardAddProvider"
     />
     <!-- Login Dialog overlay. It is outside `.app` so `/login` can open it too. -->
     <LoginDialog

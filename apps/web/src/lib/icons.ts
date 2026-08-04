@@ -113,6 +113,8 @@ import RiCalendarTodoLine from '~icons/ri/calendar-todo-line';
 import RiCodeLine from '~icons/ri/code-line';
 import RiEmotionLine from '~icons/ri/emotion-line';
 import RiExternalLinkLine from '~icons/ri/external-link-line';
+import RiEyeLine from '~icons/ri/eye-line';
+import RiEyeOffLine from '~icons/ri/eye-off-line';
 import RiFileAddLine from '~icons/ri/file-add-line';
 import RiFlashlightLine from '~icons/ri/flashlight-line';
 import RiFolderFill from '~icons/ri/folder-fill';
@@ -207,6 +209,8 @@ import RawCalendarTodoLine from '~icons/ri/calendar-todo-line?raw';
 import RawCodeLine from '~icons/ri/code-line?raw';
 import RawEmotionLine from '~icons/ri/emotion-line?raw';
 import RawExternalLinkLine from '~icons/ri/external-link-line?raw';
+import RawEyeLine from '~icons/ri/eye-line?raw';
+import RawEyeOffLine from '~icons/ri/eye-off-line?raw';
 import RawFileAddLine from '~icons/ri/file-add-line?raw';
 import RawFlashlightLine from '~icons/ri/flashlight-line?raw';
 import RawFolderFill from '~icons/ri/folder-fill?raw';
@@ -277,6 +281,8 @@ export type IconName =
   | 'file-off'
   | 'attachment'
   | 'image-off'
+  | 'eye'
+  | 'eye-off'
   | 'code'
   | 'terminal'
   | 'pencil'
@@ -383,6 +389,8 @@ export const ICONS: Record<IconName, IconEntry> = {
   'file-off': entry(KimiFile, RawKimiFile),
   attachment: entry(TablerPaperclip, RawTablerPaperclip),
   'image-off': entry(KimiImageFailed, RawKimiImageFailed),
+  eye: entry(RiEyeLine, RawEyeLine),
+  'eye-off': entry(RiEyeOffLine, RawEyeOffLine),
   code: entry(RiCodeLine, RawCodeLine),
   terminal: entry(KimiTerminal, RawKimiTerminal),
   pencil: entry(KimiPencil, RawKimiPencil),
@@ -462,6 +470,8 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'sliders',
       'log-in',
       'log-out',
+      'eye',
+      'eye-off',
     ],
   ],
   [

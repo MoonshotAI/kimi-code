@@ -12,13 +12,9 @@ declare global {
   // In production builds this is still defined but unused (same-origin daemon).
   const __KIMI_DEV_PROXY_TARGET__: string;
 
-  // Injected by Vite `define`: the named dev-backend presets offered by the dev
-  // backend switcher (see api/devBackend.ts). Absent when the switcher's Vite
-  // plugin is not mounted.
-  const __KIMI_DEV_BACKENDS__: { default: string; multi: string };
-
-  // Injected by Vite `define`: the client version, from apps/web/package.json
-  // (see vite.config.ts).
+  // Injected by Vite `define`: the client version — the Kimi Code CLI version
+  // this web bundle ships with (from the kimi-code submodule, see
+  // vite.config.ts), NOT apps/web/package.json.
   const __KIMI_CLIENT_VERSION__: string;
 
   // Injected by Vite `define`: true only in the web bundle embedded in the Kimi

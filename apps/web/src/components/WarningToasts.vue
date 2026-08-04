@@ -33,6 +33,16 @@ function isError(warning: AppWarning): boolean {
   return warning.startsWith(`${t('warnings.errorLabel')}:`) || /\b4\d\d\b|error|失败|failed/i.test(warning);
 }
 
+function toastVariant(warning: AppWarning): 'info' | 'success' | 'warning' | 'danger' {
+  if (isNotice(warning)) {
+    if (warning.severity === 'error') return 'danger';
+    if (warning.severity === 'success') return 'success';
+    if (warning.severity === 'info') return 'info';
+    return 'warning';
+  }
+  return isError(warning) ? 'danger' : 'warning';
+}
+
 function warningKey(warning: AppWarning): string {
   if (!isNotice(warning)) return `text:${warning}`;
   return `notice:${warning.severity}:${warning.title}:${warning.message ?? ''}:${JSON.stringify(warning.details ?? [])}`;
@@ -193,7 +203,7 @@ onUnmounted(() => {
     <Toast
       v-for="toast in toasts"
       :key="toast.id"
-      :variant="isError(toast.warning) ? 'danger' : 'warning'"
+      :variant="toastVariant(toast.warning)"
       :title="toastTitle(toast.warning)"
       :message="toastMessage(toast.warning)"
       :dismiss-label="t('warnings.dismiss')"

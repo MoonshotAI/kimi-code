@@ -30,7 +30,7 @@
 - `packages/*`：`@moonshot-ai/{web-core,web-i18n,web-markdown,web-ui}` + `vite-preset`（exports→src，被 apps/web 与 desktop renderer 复用）；共享字体产物在 `web-ui/src/assets/fonts`（gitignored），由 `scripts/prepare-fonts.mjs` 自动准备。
 - `kimi-code/`：git submodule（核心仓）。`kimi-code/packages/*` 提供 `kap-server`、`agent-core-v2`、`kimi-code-sdk` 等源码。
 - `scripts/sync-web-to-kimi-code.mjs`：`apps/web/dist` → `<kimi-code checkout>/apps/kimi-code/dist-web`（`KIMI_CODE_REPO` 必传，指定目标 checkout）。
-- `KIMI CODE LOGO/` + `scripts/build-brand-icons.mjs`：品牌源文件与全部图标资源的生成脚本（`pnpm build:icons`）；`apps/desktop/build/` 的图标与组件内联品牌标是产物，勿手改。
+- `KIMI CODE LOGO/` + `scripts/build-brand-icons.mjs`：品牌源文件与 desktop 图标资源的生成脚本（`pnpm build:icons`）；`apps/desktop/build/` 的图标与 desktop 组件内联品牌标是产物，勿手改。**web 品牌已分叉**：`apps/web` 的侧栏 / onboarding / favicon 用回旧版小蓝标，不由该脚本生成（脚本刻意不再写 apps/web），勿用机器人标冲掉。
 - `publish-desktop-cdn.sh`：desktop 产物的 CDN 发布（GH Release → TOS 双链路 + 切 latest*.yml 指针 + 刷新 `download/` 入口），本地手动，TOS 凭证限内网；完整流程见根 `README.md` 发布节。
 - `.github/workflows/`：`desktop-build.yml` 打四平台安装包（macOS 签名 secrets 等见文件头注释）；`release.yml` 驱动 changeset 发版（不发 npm），细节见 `.changeset/README.md`。
 
@@ -39,7 +39,7 @@
 ```bash
 pnpm run sync      # git submodule update --init --recursive
 pnpm install       # 装依赖（首次或 workspace 变动后；postinstall 会准备共享字体）
-pnpm build:icons   # 从 KIMI CODE LOGO/ 品牌源文件重新生成全部图标资源（apps/desktop/build/、web favicon、组件内联品牌标）
+pnpm build:icons   # 从 KIMI CODE LOGO/ 品牌源文件重新生成 desktop 图标资源（apps/desktop/build/ + desktop 组件内联品牌标；web 已分叉回小蓝，不在输出内）
 pnpm dev:desktop   # 桌面端（renderer HMR + 默认启动内嵌 server）
 pnpm dev:desktop:debug  # 桌面端，并开启 Electron remote debugging（端口 9222，供 agent-browser 连接）
 pnpm dev:web       # Web UI（Vite，代理到 127.0.0.1:58627）
