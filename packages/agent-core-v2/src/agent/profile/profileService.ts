@@ -86,7 +86,6 @@ import {
 } from '#/kosong/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { IAgentProfileRenderer } from '#/app/agentProfileCatalog/agentProfileRenderer';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { ErrorCodes, Error2 } from "#/errors";
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -219,7 +218,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IProtocolAdapterRegistry private readonly protocolAdapters: IProtocolAdapterRegistry,
     @IHostEnvironment private readonly env: IHostEnvironment,
     @IHostClock private readonly clock: IHostClock,
-    @IAgentProfileRenderer private readonly profileRenderer: IAgentProfileRenderer,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
@@ -345,7 +343,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       thinkingLevel: snapshot.thinkingLevel,
       systemPrompt: snapshot.systemPrompt,
       environmentDisclosure: snapshot.environmentDisclosure,
-      renderGeneration: snapshot.renderGeneration,
       agentsMdPaths,
       disallowedTools: snapshot.disallowedTools ?? [],
     });
@@ -384,7 +381,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const context = await this.buildSystemPromptContext(profile);
     this.assertBindable(profile.name);
     const currentProfileName = this.profileName;
-    const rendered = this.profileRenderer.render(profile, context);
+    const rendered = profile.renderSystemPrompt(context);
     this.activeProfile = profile;
     this.cacheAgentsMdWarning(context);
 
@@ -400,7 +397,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       thinkingEffort: thinkingLevel,
       systemPrompt: rendered.text,
       environmentDisclosure: rendered.environment,
-      renderGeneration: this.profileState.renderGeneration + 1,
       agentsMdPaths: context.agentsMdPaths ?? [],
       activeToolNames: profile.tools,
       disallowedTools: profile.disallowedTools ?? [],
@@ -470,7 +466,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void {
     this.activeProfile = profile;
-    const rendered = this.profileRenderer.render(profile, context);
+    const rendered = profile.renderSystemPrompt(context);
     this.update({
       profileName: profile.name,
       systemPrompt: rendered.text,
@@ -506,7 +502,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       return;
     }
     this.activeProfile = profile;
-    const rendered = this.profileRenderer.render(profile, context);
+    const rendered = profile.renderSystemPrompt(context);
     this.update({
       profileName: profile.name,
       systemPrompt: rendered.text,
@@ -646,8 +642,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       payload.systemPrompt = changed.systemPrompt;
       if (changed.environmentDisclosure !== undefined) {
         payload.environmentDisclosure = changed.environmentDisclosure;
-        payload.renderGeneration =
-          changed.renderGeneration ?? this.profileState.renderGeneration + 1;
       }
     }
     if (changed.agentsMdPaths !== undefined) {

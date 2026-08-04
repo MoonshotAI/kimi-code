@@ -14,7 +14,6 @@ import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/
 import { ILogService } from '#/_base/log/log';
 import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { IAgentProfileRenderer } from '#/app/agentProfileCatalog/agentProfileRenderer';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -47,7 +46,6 @@ export class UserAgentProfileLoaderService
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService log: ILogService,
     @IBuiltinAgentProfileLoader private readonly builtin: IBuiltinAgentProfileLoader,
-    @IAgentProfileRenderer private readonly profileRenderer: IAgentProfileRenderer,
     @IAgentProfileRegistry registry: IAgentProfileRegistry,
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
   ) {
@@ -77,13 +75,12 @@ export class UserAgentProfileLoaderService
       this.fs,
       this.bootstrap.homeDir,
       this.builtin.getDefault(),
-      this.profileRenderer,
       (message) => this.log.warn(message),
     );
     this.defaultProfile = systemMd ?? this.builtin.getDefault();
     const contribution = profilesFromDiscovery(
       await discoverAgentFiles(this.fs, roots, (message) => this.log.warn(message)),
-      (context) => this.profileRenderer.render(this.defaultProfile, context),
+      (context) => this.defaultProfile.renderSystemPrompt(context),
     );
     if (systemMd === undefined) return contribution;
     return { ...contribution, profiles: [...contribution.profiles, systemMd] };

@@ -153,8 +153,6 @@ import '#/kosong/provider/bases/openai/index';
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 import '#/kosong/provider/providers/standard.contrib';
 export * from '#/app/agentProfileCatalog/agentProfileCatalog';
-export * from '#/app/agentProfileCatalog/agentProfileRenderer';
-import '#/app/agentProfileCatalog/agentProfileRendererService';
 export * from '#/app/agentProfileCatalog/agentProfileContribution';
 export * from '#/app/agentProfileCatalog/agentProfileRegistry';
 export * from '#/app/agentProfileCatalog/agentProfileRegistryService';

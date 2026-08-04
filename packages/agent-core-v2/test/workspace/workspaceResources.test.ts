@@ -30,8 +30,6 @@ import { ILogService } from '#/_base/log/log';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { AgentProfileRegistryService } from '#/app/agentProfileCatalog/agentProfileRegistryService';
-import { IAgentProfileRenderer } from '#/app/agentProfileCatalog/agentProfileRenderer';
-import { AgentProfileRendererService } from '#/app/agentProfileCatalog/agentProfileRendererService';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { BuiltinAgentProfileLoaderService } from '#/app/agentProfileCatalog/builtinAgentProfileLoaderService';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
@@ -258,7 +256,6 @@ describe('workspace resource sharing (handler chain)', () => {
     registerScopedService(LifecycleScope.App, IUserFileSkillSource, UserFileSkillSource, ScopeActivation.OnDemand, 'skillCatalog');
     registerScopedService(LifecycleScope.App, IAgentProfileRegistry, AgentProfileRegistryService, ScopeActivation.OnDemand, 'agentProfileCatalog');
     registerScopedService(LifecycleScope.App, IBuiltinAgentProfileLoader, BuiltinAgentProfileLoaderService, ScopeActivation.OnDemand, 'agentProfileCatalog');
-    registerScopedService(LifecycleScope.App, IAgentProfileRenderer, AgentProfileRendererService, ScopeActivation.OnScopeCreated, 'agentProfileCatalog');
   });
 
   afterEach(async () => {

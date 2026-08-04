@@ -67,7 +67,6 @@ function updateSystemPromptWithDate(
   cwd: string,
   iso: string,
   localDate: string,
-  renderGeneration?: number,
 ): void {
   const environment: EnvironmentDisclosureSnapshot = {
     cwd,
@@ -82,7 +81,6 @@ function updateSystemPromptWithDate(
   profile.update({
     systemPrompt: systemPromptWithDate(iso),
     environmentDisclosure: environment,
-    renderGeneration,
   });
 }
 
@@ -316,7 +314,6 @@ describe('AgentDateChangeService', () => {
       ctx.get(ISessionContext).cwd,
       '2026-07-28T04:00:00.000Z',
       '2026-07-28',
-      2,
     );
     context.append({
       role: 'user',
@@ -402,5 +399,48 @@ describe('AgentDateChangeService', () => {
 
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
+  });
+
+  it('treats an empty snapshot cwd as unknown and uses the disclosed date as baseline', async () => {
+    updateSystemPromptWithDate(profile, '', '2026-07-28T04:00:00.000Z', '2026-07-28');
+
+    await runWillBeginStepHooks(loop);
+
+    const reminders = dateReminders(context);
+    expect(reminders).toHaveLength(1);
+    expect(messageText(reminders[0] as ContextMessage)).toContain(
+      "Today's date is now 2026-07-29",
+    );
+  });
+
+  it('seeds quietly then announces when the snapshot cwd is empty and no date is disclosed', async () => {
+    updateSystemPromptWithoutDate(profile, '');
+    await runWillBeginStepHooks(loop);
+    expect(dateReminders(context)).toHaveLength(0);
+
+    clock.set('2026-07-30T04:00:00.000Z');
+    await runWillBeginStepHooks(loop);
+
+    const reminders = dateReminders(context);
+    expect(reminders).toHaveLength(1);
+    expect(messageText(reminders[0] as ContextMessage)).toContain(
+      "Today's date is now 2026-07-30",
+    );
+  });
+
+  it('never injects when the snapshot belongs to a different cwd', async () => {
+    updateSystemPromptWithDate(
+      profile,
+      '/some/other/workspace',
+      '2026-07-28T04:00:00.000Z',
+      '2026-07-28',
+    );
+
+    await runWillBeginStepHooks(loop);
+    expect(dateReminders(context)).toHaveLength(0);
+
+    clock.set('2026-07-30T04:00:00.000Z');
+    await runWillBeginStepHooks(loop);
+    expect(dateReminders(context)).toHaveLength(0);
   });
 });

@@ -11,7 +11,6 @@ import {
   DEFAULT_AGENT_PROFILE_NAME,
   type EnvironmentDisclosureSnapshot,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { IAgentProfileRenderer } from '#/app/agentProfileCatalog/agentProfileRenderer';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -215,7 +214,6 @@ function buildHost(key: string): {
   host.stub(IConfigService, createConfigStub());
   host.stub(IModelCatalog, modelCatalog);
   host.stub(IProtocolAdapterRegistry, createProtocolRegistryStub());
-  host.stub(IAgentProfileRenderer, stubUnused());
   host.stub(IHostEnvironment, stubUnused());
   host.stub(IHostFileSystem, stubUnused());
   host.stub(IBootstrapService, stubUnused());
@@ -397,6 +395,39 @@ describe('AgentProfileService (wire-backed config.update)', () => {
       systemPrompt: 'rendered prompt',
       environmentDisclosure: environment,
       renderGeneration: 7,
+    });
+    replay.ix.dispose();
+  });
+
+  it('replays a legacy config.update record with an explicit renderGeneration verbatim', async () => {
+    const environment: EnvironmentDisclosureSnapshot = {
+      cwd: '/work',
+      date: {
+        disclosed: true,
+        value: { localDate: '2026-07-29', timeZone: 'Asia/Shanghai' },
+      },
+    };
+
+    const replay = buildHost('profile-replay-legacy-generation');
+    await restoreTestAgentWire(
+      replay.wire,
+      replay.log,
+      testWireScope(SCOPE, 'profile-replay-legacy-generation'),
+      [
+        {
+          type: 'config.update',
+          systemPrompt: 'legacy prompt',
+          environmentDisclosure: environment,
+          renderGeneration: 100,
+          time: 1,
+        },
+      ],
+    );
+
+    expect(modelOf(replay.wire)).toMatchObject({
+      systemPrompt: 'legacy prompt',
+      environmentDisclosure: environment,
+      renderGeneration: 100,
     });
     replay.ix.dispose();
   });

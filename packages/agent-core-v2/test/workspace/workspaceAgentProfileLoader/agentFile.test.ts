@@ -286,9 +286,9 @@ describe('agentProfileFromFile', () => {
       }),
     );
 
-    const rendered = profile.renderSystemPrompt?.({ cwd: '/work' });
-    expect(rendered?.text).toBe('extra instructions\n\nBASE_PROMPT');
-    expect(rendered?.environment).toEqual({
+    const rendered = profile.renderSystemPrompt({ cwd: '/work' });
+    expect(rendered.text).toBe('extra instructions\n\nBASE_PROMPT');
+    expect(rendered.environment).toEqual({
       cwd: '/work',
       date: {
         disclosed: true,

@@ -5,7 +5,8 @@
  * re-rendered at profile (re)bind and after compaction, so a session that runs
  * past midnight keeps a stale date; this provider appends a system-reminder at
  * the next step boundary instead. The provider runs only while the profile's
- * rendered snapshot exists and matches the live cwd, and reads current time
+ * rendered snapshot exists and matches the live cwd (an empty recorded cwd
+ * means the render did not know it and never blocks), and reads current time
  * through the App-scoped `hostClock`. The baseline prefers the
  * typed disclosure on the newest surviving `date_change` injection, then the
  * persisted rendered snapshot, then a runtime seed kept in `agentState`: a
@@ -62,7 +63,13 @@ export class AgentDateChangeService extends Disposable implements IAgentDateChan
   }: ContextInjectionContext): ContextInjectionResult | undefined {
     const profileData = this.profile.data();
     const environment = profileData.environmentDisclosure;
-    if (environment !== undefined && environment.cwd !== this.sessionContext.cwd) return undefined;
+    if (
+      environment !== undefined &&
+      environment.cwd !== '' &&
+      environment.cwd !== this.sessionContext.cwd
+    ) {
+      return undefined;
+    }
     const renderGeneration = profileData.renderGeneration ?? 0;
     const current = currentDateDisclosure(this.clock);
     const baseline = pickDisclosureBaseline<DateDisclosure>(
@@ -89,7 +96,13 @@ export class AgentDateChangeService extends Disposable implements IAgentDateChan
   private dateFromProfile(): DateDisclosure | undefined {
     const profileData = this.profile.data();
     const environment = profileData.environmentDisclosure;
-    if (environment !== undefined && environment.cwd !== this.sessionContext.cwd) return undefined;
+    if (
+      environment !== undefined &&
+      environment.cwd !== '' &&
+      environment.cwd !== this.sessionContext.cwd
+    ) {
+      return undefined;
+    }
     const date = environment?.date;
     if (!date?.disclosed) return undefined;
     return {

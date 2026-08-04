@@ -22,7 +22,6 @@ import {
   AGENT_PROFILE_SOURCE_PRIORITY,
   type AgentProfileContribution,
 } from '#/app/agentProfileCatalog/agentProfileContribution';
-import { IAgentProfileRenderer } from '#/app/agentProfileCatalog/agentProfileRenderer';
 import { profilesFromDiscovery } from './internal/agentProfileFromFile';
 import { IUserAgentProfileLoader } from './userAgentProfileLoader';
 import { IPluginAgentProfileLoader } from './pluginAgentProfileLoader';
@@ -41,7 +40,6 @@ export class PluginAgentProfileLoaderService
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService log: ILogService,
     @IUserAgentProfileLoader private readonly user: IUserAgentProfileLoader,
-    @IAgentProfileRenderer private readonly profileRenderer: IAgentProfileRenderer,
     @IAgentProfileRegistry registry: IAgentProfileRegistry,
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
   ) {
@@ -66,7 +64,7 @@ export class PluginAgentProfileLoaderService
       await discoverAgentFiles(this.fs, roots, (message) => {
         this.log.warn(message);
       }),
-      (context) => this.profileRenderer.render(this.user.getDefaultProfile(), context),
+      (context) => this.user.getDefaultProfile().renderSystemPrompt(context),
     );
   }
 }

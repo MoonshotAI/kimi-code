@@ -18,9 +18,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_AGENT_PROFILE_NAME,
+  normalizeAgentProfile,
   type AgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import type { IAgentProfileRenderer } from '#/app/agentProfileCatalog/agentProfileRenderer';
 import {
   SYSTEM_MD_FILENAME,
   loadSystemMdProfile,
@@ -30,22 +30,14 @@ import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 
 const hostFs = new HostFileSystem();
-const profileRenderer: IAgentProfileRenderer = {
-  _serviceBrand: undefined,
-  render: (profile, context) =>
-    profile.renderSystemPrompt?.(context) ?? {
-      text: profile.systemPrompt(context),
-      environment: { cwd: context.cwd ?? '', date: { disclosed: false } },
-    },
-};
 
-const BUILTIN_DEFAULT: AgentProfile = {
+const BUILTIN_DEFAULT: AgentProfile = normalizeAgentProfile({
   name: DEFAULT_AGENT_PROFILE_NAME,
   description: 'builtin default description',
   tools: ['Read', 'Skill', 'Bash'],
   disallowedTools: ['Write'],
   systemPrompt: () => 'BUILTIN PROMPT',
-};
+});
 
 function collectWarnings(): { warnings: string[]; warn: (message: string) => void } {
   const warnings: string[] = [];
@@ -60,7 +52,7 @@ describe('loadSystemMdProfile', () => {
     builtinDefault: AgentProfile,
     warn: (message: string) => void,
   ) {
-    return loadSystemMdProfile(fs, home, builtinDefault, profileRenderer, warn);
+    return loadSystemMdProfile(fs, home, builtinDefault, warn);
   }
 
   beforeEach(async () => {
@@ -130,12 +122,12 @@ describe('loadSystemMdProfile', () => {
 
   it('empties ${skills} when the builtin default disables the Skill tool', async () => {
     await writeFile(join(home, SYSTEM_MD_FILENAME), 'skills=${skills}');
-    const noSkillBuiltin: AgentProfile = {
+    const noSkillBuiltin: AgentProfile = normalizeAgentProfile({
       name: DEFAULT_AGENT_PROFILE_NAME,
       description: 'builtin without Skill',
       tools: ['Read', 'Bash'],
       systemPrompt: () => 'BUILTIN PROMPT',
-    };
+    });
     const { warn } = collectWarnings();
 
     const profile = await loadProfile(hostFs, noSkillBuiltin, warn);

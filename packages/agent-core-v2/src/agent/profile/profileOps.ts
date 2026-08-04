@@ -3,13 +3,18 @@
  * Op (`configUpdate`) for the agent's persistent configuration slice.
  *
  * Declares the persistent profile config — `modelAlias`, `profileName`,
- * Declares the persistent profile config — `modelAlias`, `profileName`,
  * the resolved base thinking effort, `systemPrompt`, its injected AGENTS.md
  * path provenance, the profile `disallowedTools` denylist and `subagents`
  * delegation allowlist, and the environment disclosure snapshot associated
  * with the rendered prompt — as a wire Model (initial `defaultProfileModel()`),
  * plus the single Op whose `apply` is a pure merge of an already-resolved
- * payload. Live records carry
+ * payload. `renderGeneration` advances on accepted system-prompt writes; on
+ * the live path an Op's `apply` is the only place that increments it (render
+ * callers omit it). The optional payload field is deprecated for new writes:
+ * legacy `config.update` records and live `profile.bind` snapshot/fork
+ * transfers may carry an explicit value, and `apply` then honors the recorded
+ * value verbatim so a replay or resumed binding rebuilds the exact generation
+ * the record was written with. Live records carry
  * `thinkingEffort` (matching the v1 wire field); legacy replay still accepts
  * `thinkingLevel`. The value is
  * resolved to a `ThinkingEffort` at the call site and carried in the

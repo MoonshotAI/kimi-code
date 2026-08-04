@@ -19,11 +19,10 @@ import { join } from 'pathe';
 
 import {
   DEFAULT_AGENT_PROFILE_NAME,
+  normalizeAgentProfile,
   type AgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import type { IAgentProfileRenderer } from '#/app/agentProfileCatalog/agentProfileRenderer';
 import {
-  renderPromptTemplate,
   renderPromptTemplateResult,
   skillActiveFor,
 } from '#/app/agentProfileCatalog/profile-shared';
@@ -38,7 +37,6 @@ export async function loadSystemMdProfile(
   fs: IHostFileSystem,
   brandHome: string,
   builtinDefault: AgentProfile,
-  profileRenderer: Pick<IAgentProfileRenderer, 'render'>,
   warn: (message: string) => void,
 ): Promise<AgentProfile | undefined> {
   const path = join(brandHome, SYSTEM_MD_FILENAME);
@@ -60,20 +58,16 @@ export async function loadSystemMdProfile(
   const skillActive =
     (builtinDefault.tools === undefined || skillActiveFor(builtinDefault.tools)) &&
     !(builtinDefault.disallowedTools ?? []).includes('Skill');
-  return {
+  return normalizeAgentProfile({
     name: DEFAULT_AGENT_PROFILE_NAME,
     description: builtinDefault.description,
     override: true,
     tools: builtinDefault.tools,
     disallowedTools: builtinDefault.disallowedTools,
     subagents: builtinDefault.subagents,
-    systemPrompt: (context) =>
-      renderPromptTemplate(text, context, { skillActive }, (ctx) =>
-        profileRenderer.render(builtinDefault, ctx),
-      ),
     renderSystemPrompt: (context) =>
       renderPromptTemplateResult(text, context, { skillActive }, (ctx) =>
-        profileRenderer.render(builtinDefault, ctx),
+        builtinDefault.renderSystemPrompt(ctx),
       ),
-  };
+  });
 }

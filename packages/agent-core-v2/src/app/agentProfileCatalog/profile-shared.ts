@@ -17,7 +17,7 @@
  * work the same way: the context may carry overrides seeded by the embedding
  * host (e.g. a desktop app), and the table falls back to the CLI defaults
  * ({@link DEFAULT_PRODUCT_NAME}, {@link DEFAULT_REPLY_STYLE_GUIDE}) when it
- * does not. `renderPromptTemplate` renders a user-owned template (an
+ * does not. `renderPromptTemplateResult` renders a user-owned template (an
  * agent-file body or `SYSTEM.md`) against the table; `${base_prompt}` is
  * bound to the default profile's prompt when a `basePrompt` is given,
  * resolved lazily and only when the template actually references it. Also
@@ -125,32 +125,16 @@ export function systemPromptVars(
   };
 }
 
-export function renderPromptTemplate(
-  template: string,
-  context: AgentProfileContext,
-  options: { readonly skillActive: boolean },
-  basePrompt?: (context: AgentProfileContext) => string | SystemPromptRenderResult,
-): string {
-  return renderPromptTemplateResult(template, context, options, basePrompt).text;
-}
-
 export function renderPromptTemplateResult(
   template: string,
   context: AgentProfileContext,
   options: { readonly skillActive: boolean },
-  basePrompt?: (context: AgentProfileContext) => string | SystemPromptRenderResult,
+  basePrompt?: (context: AgentProfileContext) => SystemPromptRenderResult,
 ): SystemPromptRenderResult {
   const vars = systemPromptVars(context, options);
   let baseResult: SystemPromptRenderResult | undefined;
   if (basePrompt !== undefined && template.includes('${base_prompt}')) {
-    const rendered = basePrompt(context);
-    baseResult =
-      typeof rendered === 'string'
-        ? {
-            text: rendered,
-            environment: undisclosedEnvironment(context),
-          }
-        : rendered;
+    baseResult = basePrompt(context);
     vars['base_prompt'] = baseResult.text;
   }
   return {
@@ -160,14 +144,6 @@ export function renderPromptTemplateResult(
       baseResult?.environment,
     ),
   };
-}
-
-export function renderSystemPrompt(
-  roleAdditional: string,
-  context: AgentProfileContext,
-  options: { readonly skillActive: boolean },
-): string {
-  return renderSystemPromptResult(roleAdditional, context, options).text;
 }
 
 export function renderSystemPromptResult(
@@ -201,13 +177,6 @@ function environmentForTemplate(
           },
         }
       : { disclosed: false },
-  };
-}
-
-function undisclosedEnvironment(context: AgentProfileContext): EnvironmentDisclosureSnapshot {
-  return {
-    cwd: context.cwd ?? '',
-    date: { disclosed: false },
   };
 }
 

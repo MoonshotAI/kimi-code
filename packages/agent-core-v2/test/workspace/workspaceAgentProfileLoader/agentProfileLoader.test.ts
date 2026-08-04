@@ -24,10 +24,10 @@ import { UserAgentProfileLoaderService } from '#/workspace/workspaceAgentProfile
 import type { PluginAgentRoot } from '#/app/plugin/types';
 import {
   DEFAULT_AGENT_PROFILE_NAME,
+  normalizeAgentProfile,
   type AgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { AgentProfileRegistryService } from '#/app/agentProfileCatalog/agentProfileRegistryService';
-import { AgentProfileRendererService } from '#/app/agentProfileCatalog/agentProfileRendererService';
 import { BuiltinAgentProfileLoaderService } from '#/app/agentProfileCatalog/builtinAgentProfileLoaderService';
 import {
   _clearAgentProfileContributionsForTests,
@@ -259,14 +259,12 @@ function makeStack(fixture: Fixture, opts?: StackOptions) {
   const workspaceContext = workspaceContextStub(fixture.workDir);
 
   const registry = new AgentProfileRegistryService();
-  const profileRenderer = new AgentProfileRendererService();
   const builtinLoader = new BuiltinAgentProfileLoaderService(registry);
   const userLoader = new UserAgentProfileLoaderService(
     bootstrap,
     hostFs,
     log,
     builtinLoader,
-    profileRenderer,
     registry,
     workspaceContext,
   );
@@ -275,7 +273,6 @@ function makeStack(fixture: Fixture, opts?: StackOptions) {
     hostFs,
     log,
     userLoader,
-    profileRenderer,
     registry,
     workspaceContext,
   );
@@ -284,7 +281,6 @@ function makeStack(fixture: Fixture, opts?: StackOptions) {
     hostFs,
     log,
     userLoader,
-    profileRenderer,
     opts?.fsWatch ?? fsWatchStub(),
     registry,
   );
@@ -295,7 +291,6 @@ function makeStack(fixture: Fixture, opts?: StackOptions) {
     hostFs,
     log,
     userLoader,
-    profileRenderer,
     registry,
   );
   const explicitLoader = new ExplicitAgentProfileLoaderService(
@@ -304,7 +299,6 @@ function makeStack(fixture: Fixture, opts?: StackOptions) {
     hostFs,
     log,
     userLoader,
-    profileRenderer,
     registry,
   );
   const seed: ISessionAgentProfileCatalogSeed = {
@@ -372,11 +366,11 @@ describe('agent profile loaders + session catalog', () => {
     // The builtin loader snapshots the module-level contributions on
     // construction; pin them to one known default profile per test.
     _clearAgentProfileContributionsForTests();
-    const builtinDefault: AgentProfile = {
+    const builtinDefault: AgentProfile = normalizeAgentProfile({
       name: DEFAULT_AGENT_PROFILE_NAME,
       description: 'builtin default',
       systemPrompt: () => 'BUILTIN PROMPT',
-    };
+    });
     registerAgentProfile(builtinDefault);
   });
 

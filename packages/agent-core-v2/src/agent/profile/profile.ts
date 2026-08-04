@@ -77,8 +77,7 @@ export type ProfileUpdateData = Partial<{
   profileName: string;
   thinkingLevel: string;
   systemPrompt: string;
-  environmentDisclosure?: EnvironmentDisclosureSnapshot;
-  renderGeneration?: number;
+  environmentDisclosure: EnvironmentDisclosureSnapshot;
   agentsMdPaths: readonly string[];
   disallowedTools: readonly string[];
   activeToolNames: readonly string[];

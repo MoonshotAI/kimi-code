@@ -7,7 +7,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { Event } from '#/_base/event';
 import { ConfigTarget, IConfigService } from '#/app/config/config';
 import { TOOLS_SECTION } from '#/agent/toolPolicy/configSection';
-import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { DEFAULT_AGENT_PROFILE_NAME, normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { AgentProfileRegistryService } from '#/app/agentProfileCatalog/agentProfileRegistryService';
 import { BuiltinAgentProfileLoaderService } from '#/app/agentProfileCatalog/builtinAgentProfileLoaderService';
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
@@ -988,12 +988,12 @@ describe('AgentProfileService tool-pattern warnings', () => {
   // A file-defined agent, as far as the warning path is concerned: inline so
   // its typo stays out of the builtin-profile known-name vocabulary (a
   // registerAgentProfile contribution would legitimize its own entries).
-  const fileProfile: ResolvedAgentProfile = {
+  const fileProfile: ResolvedAgentProfile = normalizeAgentProfile({
     name: 'bad-patterns',
     tools: ['Bashh', 'mcp__github'],
     disallowedTools: ['*'],
     systemPrompt: () => 'tool pattern warning test',
-  };
+  });
 
   it('warns about profile entries that can never activate anything', async () => {
     ctx = createTestAgent(hostEnvironmentServices(homeDir));
