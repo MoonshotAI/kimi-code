@@ -32,11 +32,14 @@
  * accepted image formats (`isModelAcceptedImageMime`) as defense in depth —
  * the ingest edges already refuse unaccepted formats. A reference that
  * cannot be inlined (model without `image_in`, unreadable bytes, non-image
- * or unaccepted sniff) degrades by DROPPING the part when the reference
- * carries its materialization path — the adjacent `<image path>` text part
- * the edge wrote into context already conveys it — or by swapping in an
- * unavailable placeholder text when it does not; a message left with no
- * parts at all keeps one placeholder so its content never goes empty.
+ * or unaccepted sniff) degrades through the reference's materialization
+ * path: DROPPED silently only when an adjacent `<image path>` text part for
+ * the same path actually exists in the message (the dual shape the edges
+ * write already conveys it), otherwise the `<image path>` tag is SYNTHESIZED
+ * from the reference path so a bare SDK-supplied reference still leaves the
+ * model the path to re-open; a reference without a path swaps in an
+ * unavailable placeholder text. A message left with no parts at all keeps
+ * one placeholder so its content never goes empty.
  *
  * The plain-data state (`resolved`, the video memo) is registered into
  * `agentState` (`IAgentStateService`) and read/written through it. Bound at
@@ -51,7 +54,12 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IFileService } from '#/app/file/fileService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ContentPart, Message } from '#/kosong/contract/message';
-import { type DaemonFileRef, daemonFileRefFromPart } from '#/kosong/contract/mediaRef';
+import {
+  buildMediaPathTag,
+  type DaemonFileRef,
+  daemonFileRefFromPart,
+  matchMediaPathTags,
+} from '#/kosong/contract/mediaRef';
 import type { ModelRequester } from '#/kosong/model/modelRequester';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 
@@ -118,12 +126,17 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
           content.push(part);
           continue;
         }
-        // An image degrade can drop the part entirely: the adjacent
-        // `<image path>` text part the edge wrote already conveys the path.
+        // An image degrade can drop the part entirely, but only when an
+        // adjacent `<image path>` text part for the same path exists in this
+        // message; a bare reference gets the tag synthesized from its path.
         const resolved =
           daemonPart.kind === 'video'
             ? await this.resolveVideoPart(daemonPart.ref, requester, signal)
-            : await this.resolveImagePart(daemonPart.ref, requester);
+            : await this.resolveImagePart(
+                daemonPart.ref,
+                requester,
+                hasImagePathTag(message, daemonPart.ref.path),
+              );
         if (resolved !== undefined) content.push(resolved);
       }
       out.push({ ...message, content: content.length > 0 ? content : [unavailableImageText()] });
@@ -139,8 +152,9 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
   private async resolveImagePart(
     ref: DaemonFileRef,
     requester: ModelRequester,
+    hasAdjacentPathTag: boolean,
   ): Promise<ContentPart | undefined> {
-    if (!requester.model.capabilities.image_in) return degradedImage(ref);
+    if (!requester.model.capabilities.image_in) return degradedImage(ref, hasAdjacentPathTag);
 
     let bytes: Buffer;
     let filename: string;
@@ -149,12 +163,12 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       bytes = await readStream(file.stream());
       filename = file.meta.name;
     } catch {
-      return degradedImage(ref);
+      return degradedImage(ref, hasAdjacentPathTag);
     }
 
     const fileType = detectFileType(filename, bytes.subarray(0, MEDIA_SNIFF_BYTES), 'media');
-    if (fileType.kind !== 'image') return degradedImage(ref);
-    if (!isModelAcceptedImageMime(fileType.mimeType)) return degradedImage(ref);
+    if (fileType.kind !== 'image') return degradedImage(ref, hasAdjacentPathTag);
+    if (!isModelAcceptedImageMime(fileType.mimeType)) return degradedImage(ref, hasAdjacentPathTag);
 
     return {
       type: 'image_url',
@@ -271,12 +285,29 @@ function hasDaemonFileMediaPart(message: Message): boolean {
 
 /**
  * The degrade form of an unresolvable image reference: `undefined` (drop the
- * part) when the reference carries its materialization path, otherwise the
- * unavailable placeholder.
+ * part) only when an adjacent `<image path>` tag for the same path exists in
+ * the message, otherwise the tag synthesized from the reference path — so a
+ * bare reference still leaves the model the path to re-open — or, when the
+ * reference carries no path, the unavailable placeholder.
  */
-function degradedImage(ref: DaemonFileRef): ContentPart | undefined {
-  if (ref.path !== undefined && ref.path.length > 0) return undefined;
-  return unavailableImageText();
+function degradedImage(ref: DaemonFileRef, hasAdjacentPathTag: boolean): ContentPart | undefined {
+  if (ref.path === undefined || ref.path.length === 0) return unavailableImageText();
+  if (hasAdjacentPathTag) return undefined;
+  return { type: 'text', text: buildMediaPathTag('image', ref.path) };
+}
+
+/**
+ * Whether the message already carries an `<image path>` tag for `path` — the
+ * dual shape the upload edges write next to the image part. Extra attributes
+ * and a missing closing tag are tolerated by `matchMediaPathTags`.
+ */
+function hasImagePathTag(message: Message, path: string | undefined): boolean {
+  if (path === undefined || path.length === 0) return false;
+  return message.content.some(
+    (part) =>
+      part.type === 'text' &&
+      matchMediaPathTags(part.text).some((tag) => tag.kind === 'image' && tag.path === path),
+  );
 }
 
 function unavailableImageText(): ContentPart {

@@ -12,7 +12,7 @@
  */
 
 import { createControlledPromise } from '@antfu/utils';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
@@ -141,6 +141,7 @@ function createService(
     | undefined,
   options: {
     readonly thinkingLevel?: ThinkingEffort;
+    readonly mediaResolver?: Partial<IAgentMediaResolverService>;
   } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
@@ -196,7 +197,7 @@ function createService(
 
   ix.stub(IAgentContextMemoryService, context);
   ix.stub(IAgentToolSelectService, toolSelect);
-  ix.stub(IAgentMediaResolverService, { resolve: async (messages) => messages });
+  ix.stub(IAgentMediaResolverService, options.mediaResolver ?? { resolve: async (messages) => messages });
   if (projector === undefined) {
     ix.set(
       IAgentContextProjectorService,
@@ -802,5 +803,20 @@ describe('AgentLLMRequesterService trace id', () => {
     expect(
       telemetryRecords.find((record) => record.event === 'api_error')?.properties?.['trace_id'],
     ).toBeUndefined();
+  });
+});
+
+describe('AgentLLMRequesterService media resolver wiring', () => {
+  it('resolves the projected messages through the DI-injected media resolver', async () => {
+    const requester = createRequester({ value: 0 }, null);
+    const resolve = vi.fn(async (messages: readonly Message[], _requester: ModelRequester) => messages);
+    const { service } = createService(requester, undefined, {
+      mediaResolver: { resolve },
+    });
+
+    await service.request();
+
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(resolve.mock.calls[0]?.[1]).toBe(requester);
   });
 });

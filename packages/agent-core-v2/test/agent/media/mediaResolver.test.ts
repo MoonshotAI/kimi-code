@@ -1,17 +1,30 @@
 import { Readable } from 'node:stream';
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { DisposableStore } from '#/_base/di/lifecycle';
+import {
+  LifecycleScope,
+  ScopeActivation,
+  _clearScopedRegistryForTests,
+  registerScopedService,
+} from '#/_base/di/scope';
+import { createScopedTestHost, createServices, stubPair } from '#/_base/di/test';
 import { buildKimiFileUrl, parseKimiFileUrl } from '#/agent/media/kimiFileUrl';
+import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { AgentMediaResolverService } from '#/agent/media/mediaResolverService';
+import { IAgentVideoResolverService } from '#/agent/media/videoResolver';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import type { GetResult, IFileService } from '#/app/file/fileService';
-import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import { type GetResult, IFileService } from '#/app/file/fileService';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ContentPart, Message, VideoURLPart } from '#/kosong/contract/message';
 import type { ModelRequester } from '#/kosong/model/modelRequester';
 import type { Protocol } from '#/kosong/protocol/protocol';
-import type { IBlobStore } from '#/persistence/interface/blobStore';
+import { IBlobStore } from '#/persistence/interface/blobStore';
+
+import { registerStateServices } from '../../state/stubs';
 
 const FILE_ID = 'file_abc';
 const FALLBACK_PATH = '/cache/file_abc.mp4';
@@ -127,8 +140,25 @@ function msPart(id: string): VideoURLPart {
   return { type: 'video_url', videoUrl: { url: `ms://${id}`, id } };
 }
 
-function resolver(files: Map<string, { name: string; bytes: Buffer }>): AgentMediaResolverService {
-  return new AgentMediaResolverService(fileService(files), blobStore(), telemetry, new AgentStateService());
+let disposables: DisposableStore;
+
+beforeEach(() => {
+  disposables = new DisposableStore();
+});
+
+afterEach(() => disposables.dispose());
+
+function resolver(files: Map<string, { name: string; bytes: Buffer }>): IAgentMediaResolverService {
+  const ix = createServices(disposables, {
+    base: [registerStateServices],
+    additionalServices: (reg) => {
+      reg.defineInstance(IFileService, fileService(files));
+      reg.defineInstance(IBlobStore, blobStore());
+      reg.defineInstance(ITelemetryService, telemetry);
+      reg.define(IAgentMediaResolverService, AgentMediaResolverService);
+    },
+  });
+  return ix.get(IAgentMediaResolverService);
 }
 
 describe('kimiFileUrl', () => {
@@ -170,6 +200,11 @@ describe('AgentMediaResolverService video strategy', () => {
     const blobs = blobStore();
     const message = videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH));
 
+    // Two independent instances over one shared blob store: the container
+    // hands out a singleton per token and would share the state service (and
+    // with it the in-memory upload memo), so the persisted-cache path would
+    // never run — direct construction is di-testing.md's two-instance
+    // exception.
     const upload1 = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
     await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService()).resolve(
       [message],
@@ -386,12 +421,109 @@ describe('AgentMediaResolverService image strategy', () => {
     expect(out[0]!.content).toEqual([tagPart]);
   });
 
-  it('keeps one unavailable placeholder when dropping would empty the content', async () => {
+  it('synthesizes the path tag for a bare stale reference with no adjacent tag', async () => {
     const res = resolver(new Map());
     const message = imageMessage(buildKimiFileUrl('missing', IMAGE_FALLBACK_PATH));
 
     const out = await res.resolve([message], requester({}));
 
+    expect(out[0]!.content).toEqual([
+      { type: 'text', text: `<image path="${IMAGE_FALLBACK_PATH}"></image>` },
+    ]);
+  });
+
+  it('emits an unavailable placeholder for a bare stale reference with no path', async () => {
+    const res = resolver(new Map());
+    const message = imageMessage(buildKimiFileUrl('missing'));
+
+    const out = await res.resolve([message], requester({}));
+
     expect(out[0]!.content).toEqual([{ type: 'text', text: IMAGE_UNAVAILABLE_TEXT }]);
+  });
+
+  it('synthesizes the path tag when the model cannot ingest images and no adjacent tag exists', async () => {
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+    const message = imageMessage(buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH));
+
+    const out = await res.resolve([message], requester({ imageIn: false }));
+
+    expect(out[0]!.content).toEqual([
+      { type: 'text', text: `<image path="${IMAGE_FALLBACK_PATH}"></image>` },
+    ]);
+  });
+
+  it('synthesizes the path tag when the bytes sniff as an unaccepted image mime and no adjacent tag exists', async () => {
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.bmp', bytes: BMP_BYTES }]]));
+    const message = imageMessage(buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH));
+
+    const out = await res.resolve([message], requester({}));
+
+    expect(out[0]!.content).toEqual([
+      { type: 'text', text: `<image path="${IMAGE_FALLBACK_PATH}"></image>` },
+    ]);
+  });
+
+  it('synthesizes the path tag when the only adjacent tag references a different path', async () => {
+    const res = resolver(new Map());
+    const otherTag = imagePathTagPart('/cache/other.png');
+    const message = imageMessage(buildKimiFileUrl('missing', IMAGE_FALLBACK_PATH), otherTag);
+
+    const out = await res.resolve([message], requester({}));
+
+    expect(out[0]!.content).toEqual([
+      otherTag,
+      { type: 'text', text: `<image path="${IMAGE_FALLBACK_PATH}"></image>` },
+    ]);
+  });
+});
+
+describe('AgentMediaResolverService scoped registration', () => {
+  let host: ReturnType<typeof createScopedTestHost>;
+
+  beforeEach(() => {
+    _clearScopedRegistryForTests();
+    registerScopedService(
+      LifecycleScope.Agent,
+      IAgentMediaResolverService,
+      AgentMediaResolverService,
+      ScopeActivation.OnScopeCreated,
+      'media',
+    );
+  });
+
+  afterEach(() => host.dispose());
+
+  function agentScope(files: Map<string, { name: string; bytes: Buffer }>) {
+    host = createScopedTestHost([
+      stubPair(IFileService, fileService(files)),
+      stubPair(IBlobStore, blobStore()),
+      stubPair(ITelemetryService, telemetry),
+    ]);
+    return host.child(LifecycleScope.Agent, 'main', [
+      stubPair(IAgentStateService, new AgentStateService()),
+    ]);
+  }
+
+  it('resolves the media resolver token to a working instance through the scope tree', async () => {
+    const agent = agentScope(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+
+    const svc = agent.accessor.get(IAgentMediaResolverService);
+    const out = await svc.resolve(
+      [imageMessage(buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH))],
+      requester({}),
+    );
+
+    expect(firstPart(out)).toEqual({
+      type: 'image_url',
+      imageUrl: { url: `data:image/png;base64,${PNG_BYTES.toString('base64')}` },
+    });
+  });
+
+  it('resolves the legacy video-resolver alias to the same instance', () => {
+    const agent = agentScope(new Map());
+
+    expect(agent.accessor.get(IAgentVideoResolverService)).toBe(
+      agent.accessor.get(IAgentMediaResolverService),
+    );
   });
 });
