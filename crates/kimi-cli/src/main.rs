@@ -138,6 +138,12 @@ enum Commands {
         #[arg(long, default_value_t = 60)]
         max_polls: u32,
     },
+    /// Update the CLI to the latest version (managed by the distribution).
+    Upgrade,
+    /// Launch the web UI (frontend ships with the TS distribution).
+    Web,
+    /// Launch the visualization frontend (ships with the TS distribution).
+    Vis,
 }
 
 /// Sub-commands of `kimi provider`.
@@ -1033,6 +1039,24 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             anyhow::bail!("timed out waiting for approval");
+        }
+        Commands::Upgrade => {
+            // Self-update is owned by the distribution (npm wrapper / package
+            // manager), not the Rust binary — give the user the right lever
+            // instead of a silent unknown-subcommand.
+            println!("upgrade is managed by your package manager:");
+            println!("  npm i -g kimi-code@latest        # TS distribution");
+            println!("  npm i -g kimi-code-rust-bin@latest  # Rust-first wrapper");
+        }
+        Commands::Web | Commands::Vis => {
+            // The web/vis frontends stay in the TS distribution (pure UI); the
+            // Rust build has no bundled frontend. Fail loudly rather than
+            // pretending to launch.
+            eprintln!(
+                "{} ships with the TS distribution (npm wrapper) — not bundled in the Rust build",
+                if matches!(command, Commands::Web) { "the web UI" } else { "the vis frontend" }
+            );
+            std::process::exit(1);
         }
         Commands::Provider { cmd } => {
             match cmd {

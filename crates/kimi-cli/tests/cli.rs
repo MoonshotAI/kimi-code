@@ -432,6 +432,23 @@ fn chat_goal_lifecycle() {
 }
 
 #[test]
+fn upgrade_and_frontend_commands_are_recognized() {
+    // Stage-C "待" surface: the Rust CLI recognizes TS-owned commands instead
+    // of erroring "unknown subcommand".
+    let home = temp_dir("recognized");
+    let out = run(&home, &["upgrade"]);
+    assert!(out.status.success(), "upgrade exits 0: {}", out.status);
+    let text = stdout(&out);
+    assert!(text.contains("package manager"), "upgrade hint: {text}");
+    for cmd in ["web", "vis"] {
+        let out = run(&home, &[cmd]);
+        assert!(!out.status.success(), "{cmd} exits non-zero");
+        let err = stderr(&out);
+        assert!(err.contains("TS distribution"), "{cmd}: {err}");
+    }
+}
+
+#[test]
 fn chat_approval_commands_offline_safe() {
     // /approvals + /approve|/deny are pure state ops (no LLM): an empty store
     // lists nothing and unknown ids resolve to "not found" without erroring.

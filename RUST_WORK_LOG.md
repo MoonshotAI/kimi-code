@@ -1,4 +1,10 @@
 
+> **✅ 2026-08-03 ⑮ Rust CLI 命令面收口（upgrade/web/vis 识别，已提交）**：
+> - **背景**：TS CLI 顶层有 upgrade/web/vis/migrate，Rust CLI 此前缺失 → clap 报 unknown subcommand；阶段 C「待」项。
+> - **实现**：`kimi upgrade` → 提示自更新由分发方管理（npm i -g kimi-code / kimi-code-rust-bin），exit 0；`kimi web`/`kimi vis` → 前端归属 TS 分发，Rust 构建不捆绑，stderr 提示 + exit 1（不假装启动）。
+> - **验证**：kimi-cli 集成测试 25 → 26（`upgrade_and_frontend_commands_are_recognized`）；clippy kimi-cli 0 警告。
+> - **意义**：为阶段 F 入口切换铺路——Rust 入口遇到 TS 自有命令给出明确指引而非静默失败。
+
 > **✅ 2026-08-03 ⑭ chat REPL 审批命令面（已提交）**：
 > - **事件提示**：事件渲染器遇 `session.approval.requested` 输出 `⚠ approval requested — /approvals, /approve <id>`（此前 REPL 对审批静默）。
 > - **命令面**：`/approvals`（pending id/tool/rule）、`/approve <id>`、`/deny <id>`（`approval_resolve` allow/deny，未知 id → resolved:false 不报错）；/help 同步。
