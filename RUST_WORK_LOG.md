@@ -5,6 +5,12 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㉕ Harness::set_config（config 写路径，已提交）**：
+> - **缺口**：TS KimiHarness 有 setConfig，Rust Harness 只有 config() 读——host 编程式写配置需走 CLI 或裸 call。
+> - **实现**：`Harness::set_config(patch)` → CONFIG_SET（嵌套对象、null 删键），返回 `{ok, path}`；合并结果经 config() 回读。
+> - **验证**：kimi-sdk 集成测试 4 → 5（harness_set_config_round_trip：写 ok + config() 回读 defaultModel 落位）；clippy 0 警告；workspace check 干净。
+> - **遗留**：TS harness 其余面（renameSession/mcp add-update-remove/telemetry/getConfigDiagnostics 等）多为 config 便捷层或 TS 专属，按需平移。
+
 > **✅ 2026-08-03 ㉔ SDK Session 方法面补全（12 缺口，已提交）**：
 > - **审计**：server 44 个 session 方法 vs SDK 暴露面——12 个缺口（mcp list/reconnect/startup_metrics、warnings、list_tools、add/remove_additional_dir、update_metadata、clear_plan、destroy、init、cancel_shell_command）。
 > - **新增 Session 方法**：`list_mcp_servers`/`get_mcp_startup_metrics`/`reconnect_mcp_server(name)`/`get_warnings`/`list_tools`/`add_additional_dir(path)`/`remove_additional_dir(path)`/`update_metadata(Value)`/`clear_plan`/`destroy`/`init`/`cancel_shell_command(command_id)`（simple_call / json! params，错误 bail 契约同既有方法）。

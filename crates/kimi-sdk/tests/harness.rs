@@ -144,6 +144,25 @@ async fn harness_exposes_engine_events() {
 }
 
 #[tokio::test]
+async fn harness_set_config_round_trip() {
+    let home = std::env::temp_dir().join(format!("kimi-sdk-cfgset-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).expect("mkdir");
+    std::env::set_var("KIMI_AGENT_HOME", &home);
+
+    let harness = Harness::embedded().expect("embedded");
+    let write = harness
+        .set_config(serde_json::json!({ "defaultModel": "sdk-set-model" }))
+        .await
+        .expect("set_config");
+    assert_eq!(write["ok"], true, "write: {write}");
+
+    // The patch landed and reads back through the merged config.
+    let config = harness.config().await.expect("config");
+    assert_eq!(config["defaultModel"], "sdk-set-model", "config: {config}");
+}
+
+#[tokio::test]
 async fn session_extended_surfaces_offline() {
     let home = std::env::temp_dir().join(format!("kimi-sdk-ext-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);

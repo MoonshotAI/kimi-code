@@ -94,6 +94,22 @@ impl Harness {
         Ok(body["result"].clone())
     }
 
+    /// Apply a config patch (nested object; `null` deletes keys), merged over
+    /// the loaded config and persisted. Resolves with the write result
+    /// (`{ ok, path }`); read the merged config back via `config()`.
+    pub async fn set_config(&self, patch: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let body = self
+            .client
+            .lock()
+            .await
+            .call(kimi_protocol::methods::CONFIG_SET, serde_json::json!({ "patch": patch }))
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("set config: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"].clone())
+    }
+
     /// Configured model aliases (keys) plus the default model, if any.
     pub async fn list_models(&self) -> anyhow::Result<(Vec<String>, Option<String>)> {
         let config = self.config().await?;
