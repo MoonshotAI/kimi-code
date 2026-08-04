@@ -7,7 +7,11 @@
  *     on `frame.upsert` (whole frame state) and `append` (deltas).
  *   - The turn prompt arrives on `turn.started` itself
  *     (`TurnStartedEvent.prompt`) — the context append carrying the same text
- *     is not a bus event and lands after the turn header.
+ *     is not a bus event and lands after the turn header. Upload media
+ *     referenced by the prompt ride the same event (`promptAttachments`),
+ *     projected as `attachment.upsert` entities plus `turn.attachmentIds` —
+ *     one attachment per daemon-referenced upload, the paired `<media path>`
+ *     tag already folded away engine-side.
  *   - Flush: at step/turn completion boundaries every open text/thinking frame
  *     of that step is re-emitted as a full-text `frame.upsert` — this is how
  *     'block'-grade subscribers (who never see `append`) reconverge.
@@ -74,6 +78,7 @@ import type {
   TextFrame,
   ToolCallFrame,
   ToolFrameProgress,
+  TranscriptAttachment,
   TranscriptFrame,
   TranscriptInteraction,
   TranscriptMarker,
@@ -110,6 +115,8 @@ export interface ProjectorInteraction {
  * so a shape drift on the engine side fails the compile here.
  */
 type PlanRevisionEvent = Extract<DomainEvent, { type: 'plan.revision' }>;
+
+type TurnStartedBusEvent = Extract<DomainEvent, { type: 'turn.started' }>;
 
 type AgentActivityUpdatedEvent = Extract<DomainEvent, { type: 'agent.activity.updated' }>;
 type PromptCompletedEvent = Extract<DomainEvent, { type: 'prompt.completed' }>;
@@ -296,13 +303,26 @@ export class AgentTranscriptProjector {
 
   // ---------------------------------------------------------------- turn / step
 
-  private onTurnStarted(event: {
-    turnId: number;
-    origin: unknown;
-    prompt?: string;
-  }): TranscriptOperation[] {
+  private onTurnStarted(event: TurnStartedBusEvent): TranscriptOperation[] {
     const n = event.turnId;
     const turnId = `t${n}`;
+    const ops: TranscriptOperation[] = [];
+    let attachmentIds: string[] | undefined;
+    if (event.promptAttachments !== undefined && event.promptAttachments.length > 0) {
+      attachmentIds = [];
+      for (const input of event.promptAttachments) {
+        // Turn-scoped id namespace: cold-rebuild attachments use `att_<n>`,
+        // so a live id can never collide with a backfilled one.
+        const attachment: TranscriptAttachment = {
+          attachmentId: `${turnId}.att${attachmentIds.length + 1}`,
+          mediaType: `${input.kind}/*`,
+          name: input.name,
+          source: { kind: 'file', fileId: input.fileId },
+        };
+        ops.push({ op: 'attachment.upsert', attachment });
+        attachmentIds.push(attachment.attachmentId);
+      }
+    }
     this.currentTurn = {
       kind: 'turn',
       turnId,
@@ -310,12 +330,14 @@ export class AgentTranscriptProjector {
       state: 'running',
       origin: mapTurnOrigin(event.origin),
       prompt: event.prompt,
+      attachmentIds,
       startedAt: nowIso(),
     };
     this.currentStep = undefined;
     this.openText = undefined;
     this.openThinking = undefined;
-    return [{ op: 'turn.upsert', turn: this.currentTurn }];
+    ops.push({ op: 'turn.upsert', turn: this.currentTurn });
+    return ops;
   }
 
   private onTurnEnded(event: {
@@ -344,6 +366,7 @@ export class AgentTranscriptProjector {
       state,
       origin: prev?.origin ?? { kind: 'other' },
       prompt: prev?.prompt,
+      attachmentIds: prev?.attachmentIds,
       startedAt: prev?.startedAt,
       endedAt: nowIso(),
       durationMs: event.durationMs,

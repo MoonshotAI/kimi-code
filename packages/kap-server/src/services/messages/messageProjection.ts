@@ -18,9 +18,15 @@
  * (the materialization path is stripped, never leaked to clients); any other
  * url becomes `{ kind: 'url' }` carrying the provider id. An `audio_url`
  * part still flattens to a text marker.
+ *
+ * A user upload persists as the pair `<media path>` tag text part +
+ * `kimi-file://` media part (`foldMediaPathTagRefs`): the pair folds into the
+ * single media part — the tag is machine markup and must not reach the wire
+ * as a text part (clients would render one upload twice). Assistant output
+ * passes through verbatim.
  */
 
-import { parseDaemonFileUrl, parseKimiFileUrl, type ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { foldMediaPathTagRefs, parseDaemonFileUrl, parseKimiFileUrl, type ContextMessage } from '@moonshot-ai/agent-core-v2';
 
 import type { Message, MessageContent, MessageRole, ToolUseContent } from '../../protocol/message';
 
@@ -89,7 +95,10 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
     return [part];
   }
 
-  const base = msg.content.map((p) => mapContentPart(p));
+  // User messages fold the upload pair (`<media path>` tag + daemon-ref media
+  // part) into the single media part; assistant output passes through verbatim.
+  const content = msg.role === 'user' ? foldMediaPathTagRefs(msg.content).parts : msg.content;
+  const base = content.map((p) => mapContentPart(p));
 
   if (msg.role === 'assistant' && msg.toolCalls.length > 0) {
     for (const call of msg.toolCalls) {

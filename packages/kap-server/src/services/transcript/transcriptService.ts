@@ -506,12 +506,21 @@ export class TranscriptService {
     if (snapshot === undefined || this.live.get(sessionId)?.store !== entry.store) return;
     const transcript = entry.store.getAgent(agentId);
     if (transcript === undefined) return;
-    const ops: TranscriptOperation[] = [];
+    const turnOps: TranscriptOperation[] = [];
     for (const item of snapshot.items) {
       if (item.kind !== 'turn' || !ordinals.has(item.ordinal)) continue;
-      ops.push(...healTurnOps(item, transcript.getTurn(item.turnId)));
+      turnOps.push(...healTurnOps(item, transcript.getTurn(item.turnId)));
     }
-    if (ops.length === 0) return;
+    if (turnOps.length === 0) return;
+    // Attachment entities are global (not turn-scoped): upsert the snapshot's
+    // set alongside the healed turns so their `attachmentIds` never dangle.
+    const ops: TranscriptOperation[] = [
+      ...snapshot.attachments.map((attachment) => ({
+        op: 'attachment.upsert' as const,
+        attachment,
+      })),
+      ...turnOps,
+    ];
     transcript.apply(ops);
     // Fan the heal out like any mapped-op batch so attached subscribers
     // converge; all ops are state-style upserts.
@@ -605,7 +614,8 @@ export class TranscriptService {
  * Flatten a snapshot into idempotent upsert ops (turn/step/frame upserts,
  * standalone items, tasks, meta). Deliberately never a `reset`: upserts merge
  * by id and keep ordinal order, so the backfill cannot clobber live ops that
- * landed while the records were being read.
+ * landed while the records were being read. Global attachment entities flatten
+ * too — without them a backfilled turn's `attachmentIds` would dangle.
  *
  * Standalone items (markers / taskrefs) carry a `beforeTurn` placement anchor:
  * the reducer's standalone path is append-only, so without an anchor a
@@ -649,6 +659,9 @@ export function snapshotToOps(
   // precede the engine's next live turn (`lastTurnOrdinal + 1`, matched
   // robustly by the reducer's `>=` placement when ordinals drift).
   flushPending(lastTurnOrdinal === undefined ? undefined : lastTurnOrdinal + 1);
+  for (const attachment of snapshot.attachments) {
+    ops.push({ op: 'attachment.upsert', attachment });
+  }
   for (const task of snapshot.tasks) {
     ops.push({ op: 'task.upsert', task });
   }

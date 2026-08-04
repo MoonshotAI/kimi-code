@@ -9,13 +9,17 @@
  * prompt rides the event only for displayable user origins
  * ({@link isDisplayablePromptOrigin}) — a system-triggered turn (goal
  * continuation, subagent run, cron…) has internal steering text as its input,
- * which must never surface in transcripts.
+ * which must never surface in transcripts. An upload's `<media path>` tag
+ * text part is machine markup paired with its daemon-ref media part
+ * (`foldMediaPathTagRefs`): the tag never reaches the prompt text, and the
+ * referenced media rides as {@link TurnStartedEvent.promptAttachments}.
  */
 
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { FinishReason } from '#/kosong/contract/provider';
 import type { ContentPart, TextPart } from '#/kosong/contract/message';
+import { foldMediaPathTagRefs } from '#/kosong/contract/mediaRef';
 import type { TokenUsage } from '#/kosong/contract/usage';
 
 export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
@@ -28,19 +32,48 @@ export type TurnInterruptReason =
   | 'filtered'
   | 'blocked';
 
+/**
+ * One daemon-referenced upload carried by the turn-opening input. `name` is
+ * a display label (the paired tag path's basename) — never an absolute path,
+ * so the payload stays safe to forward onto client-facing event streams.
+ */
+export interface TurnPromptAttachment {
+  readonly kind: 'image' | 'video';
+  readonly fileId: string;
+  readonly name?: string;
+}
+
 export interface TurnStartedEvent {
   readonly type: 'turn.started';
   readonly turnId: number;
   readonly origin: PromptOrigin;
   readonly prompt?: string;
+  readonly promptAttachments?: readonly TurnPromptAttachment[];
 }
 
 export function turnPromptText(input: readonly ContentPart[]): string | undefined {
-  const text = input
-    .filter((part): part is TextPart => part.type === 'text')
+  const text = foldMediaPathTagRefs(input)
+    .parts.filter((part): part is TextPart => part.type === 'text')
     .map((part) => part.text)
     .join('');
   return text.length > 0 ? text : undefined;
+}
+
+export function turnPromptAttachments(
+  input: readonly ContentPart[],
+): readonly TurnPromptAttachment[] | undefined {
+  const { media } = foldMediaPathTagRefs(input);
+  if (media.length === 0) return undefined;
+  return media.map((entry) => ({
+    kind: entry.kind,
+    fileId: entry.ref.fileId,
+    name: entry.path === undefined ? undefined : pathBaseName(entry.path),
+  }));
+}
+
+function pathBaseName(path: string): string {
+  const sep = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  return sep === -1 ? path : path.slice(sep + 1);
 }
 
 export function isDisplayablePromptOrigin(origin: PromptOrigin): boolean {

@@ -731,6 +731,44 @@ describe('Agent loop', () => {
 
     expect(prompts).toEqual([undefined, 'hi']);
   });
+
+  it('folds an upload tag+ref pair into turn.started prompt and promptAttachments', async () => {
+    const started: Array<{ prompt?: string; promptAttachments?: unknown }> = [];
+    const subscription = ctx.get(IEventBus).subscribe('turn.started', (event) => {
+      started.push({ prompt: event.prompt, promptAttachments: event.promptAttachments });
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'a screenshot' });
+
+    const turn = (
+      await loop.enqueue(
+        new MessageStepRequest(
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'what is this?' },
+              { type: 'text', text: '<image path="/cache/f_123.png"></image>' },
+              {
+                type: 'image_url',
+                imageUrl: { url: 'kimi-file://f_123?path=%2Fcache%2Ff_123.png' },
+              },
+            ],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          { admission: 'newTurn' },
+        ),
+      ).assigned
+    ).turn;
+    await turn.result;
+    subscription.dispose();
+
+    expect(started).toEqual([
+      {
+        prompt: 'what is this?',
+        promptAttachments: [{ kind: 'image', fileId: 'f_123', name: 'f_123.png' }],
+      },
+    ]);
+  });
 });
 
 describe('turn telemetry', () => {

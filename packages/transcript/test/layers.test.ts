@@ -485,14 +485,12 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(firstTurn.attachmentIds).toEqual(['att_1', 'att_2', 'att_3']);
   });
 
-  it('treats persisted kimi-file image refs and <image path> tags exactly like the video forms', () => {
+  it('folds persisted kimi-file media refs and their <media path> tags into single attachments', () => {
     // The engine persists an uploaded medium as a kosong `image_url` /
     // `video_url` part carrying a `kimi-file://<fileId>?path=…` ref, plus an
-    // adjacent `<image|video path=…>` text tag. The cold rebuild has no
-    // media-ref projection: `collectAttachments` only knows the v1
-    // `{ type, source }` part shape, so both url parts fall through and are
-    // dropped, while the tag rides the prompt verbatim — image on exact
-    // parity with video.
+    // adjacent `<image|video path=…>` text tag. The pair folds into ONE
+    // attachment (source = the daemon upload, name = the tag path's
+    // basename); the tag is machine markup and never surfaces as prompt text.
     const snapshot = groupMessagesIntoSnapshot([
       {
         role: 'user',
@@ -509,33 +507,80 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       {
         role: 'user',
         content: [
+          { type: 'text', text: 'what is this?' },
+          { type: 'text', text: '<image path="/cache/shot.png"></image>' },
           {
             type: 'image_url',
             imageUrl: { url: 'kimi-file://file_2?path=%2Fcache%2Fshot.png' },
           } as HistoryContentPart,
-          { type: 'text', text: '<image path="/cache/shot.png"></image>' },
         ],
         toolCalls: [],
         origin: { kind: 'user' },
       },
     ]);
 
-    expect(snapshot.attachments).toEqual([]);
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'video/*',
+        name: 'clip.mp4',
+        source: { kind: 'file', fileId: 'file_1' },
+      },
+      {
+        attachmentId: 'att_2',
+        mediaType: 'image/*',
+        name: 'shot.png',
+        source: { kind: 'file', fileId: 'file_2' },
+      },
+    ]);
     const videoTurn = snapshot.items[0];
     const imageTurn = snapshot.items[1];
     if (videoTurn?.kind !== 'turn' || imageTurn?.kind !== 'turn') {
       throw new Error('expected turns');
     }
-    expect(videoTurn.attachmentIds).toBeUndefined();
-    expect(imageTurn.attachmentIds).toBeUndefined();
-    expect(videoTurn.prompt).toBe('<video path="/cache/clip.mp4"></video>');
-    expect(imageTurn.prompt).toBe('<image path="/cache/shot.png"></image>');
+    expect(videoTurn.attachmentIds).toEqual(['att_1']);
+    expect(imageTurn.attachmentIds).toEqual(['att_2']);
+    expect(videoTurn.prompt).toBe('');
+    expect(imageTurn.prompt).toBe('what is this?');
   });
 
-  it('passes standalone <image path> tag variants through verbatim, same as <video path>', () => {
+  it('keeps a bare kimi-file ref as a pathless attachment and inline tags as user text', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'open <image path="/tmp/other.png"></image> please' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://file_3?path=%2Fcache%2Fplain.png' },
+          } as HistoryContentPart,
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    ]);
+
+    // No adjacent tag: the attachment carries no path-derived name; the
+    // inline tag inside real user text stays verbatim (never stripped).
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'image/*',
+        name: undefined,
+        source: { kind: 'file', fileId: 'file_3' },
+      },
+    ]);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.attachmentIds).toEqual(['att_1']);
+    expect(turn.prompt).toBe('open <image path="/tmp/other.png"></image> please');
+  });
+
+  it('folds standalone <media path> tag variants away instead of showing them verbatim', () => {
     // The no-closing-tag and extra-attribute forms both exist in persisted
-    // sessions; the cold rebuild keeps every spelling as raw prompt text,
-    // identical to the `<video path>` spellings.
+    // sessions. Bare or paired, a whole-part tag is machine markup: it never
+    // surfaces as prompt text, and without an adjacent ref there is nothing
+    // to attach.
     const snapshot = groupMessagesIntoSnapshot([
       {
         role: 'user',
@@ -551,11 +596,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
 
     const turn = snapshot.items[0];
     if (turn?.kind !== 'turn') throw new Error('expected turn');
-    expect(turn.prompt).toBe(
-      '<image path="/cache/shot.png">' +
-        '<image path="/cache/shot.png" content_type="image/png"></image>' +
-        '<video path="/cache/clip.mp4">',
-    );
+    expect(turn.prompt).toBe('');
     expect(turn.attachmentIds).toBeUndefined();
     expect(snapshot.attachments).toEqual([]);
   });

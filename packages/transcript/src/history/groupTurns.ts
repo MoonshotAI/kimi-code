@@ -11,7 +11,10 @@
  *    context messages do not carry them (turn end facts DO persist as
  *    `turn.ended` records and are folded in by `foldWireRecordFacts`);
  *  - media content parts become attachment entities (metadata only — base64
- *    bytes are dropped, never shipped); mid-turn media is not anchored;
+ *    bytes are dropped, never shipped); mid-turn media is not anchored. An
+ *    upload persists as the pair `<media path>` tag text part + `kimi-file://`
+ *    media part: the pair folds into a single attachment, and the tag —
+ *    machine markup — never surfaces as prompt text;
  *  - streamed-vs-persisted duplication is assumed already resolved upstream;
  *  - only the turn tree is built here: tasks / interactions / todos / meta
  *    (goal, plan, swarm) are NOT context messages — the companion fold
@@ -33,6 +36,11 @@ import type { TranscriptAttachment } from '../model/attachment';
 import type { TranscriptFrame } from '../model/frame';
 import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import type { TurnOrigin } from '../model/turn';
+import {
+  matchMediaPathTagText,
+  parseKimiFileRefFileId,
+  type MediaPathTagMatch,
+} from '../contract/mediaRef';
 
 export type HistoryMediaSource =
   | { readonly kind: 'url'; readonly url: string }
@@ -114,12 +122,47 @@ export function groupMessagesIntoSnapshot(
   let nextOrdinal = 0;
   let markerCount = 0;
 
-  /** Media parts of a turn-opening user message → attachment entities (+ ids). */
-  const collectAttachments = (message: HistoryMessage): string[] | undefined => {
+  /**
+   * Turn-opening user message → prompt text + attachment ids. The upload pair
+   * (`<media path>` tag text part + `kimi-file://` media part) folds into a
+   * single attachment: the tag is machine markup and never surfaces as prompt
+   * text. A bare tag (no adjacent daemon ref) is dropped the same way; a bare
+   * ref still yields an attachment, without a path-derived name.
+   */
+  const foldTurnOpeningInput = (
+    message: HistoryMessage,
+  ): { text: string; attachmentIds?: string[] } => {
+    const parts = message.content ?? [];
+    const tagByIndex = new Map<number, MediaPathTagMatch>();
+    parts.forEach((part, index) => {
+      if (part.type === 'text' && 'text' in part && typeof part.text === 'string') {
+        const tag = matchMediaPathTagText(part.text);
+        if (tag !== undefined) tagByIndex.set(index, tag);
+      }
+    });
+    const claimed = new Set<number>();
+    // Edges emit tag-before-ref; persisted history also has ref-before-tag —
+    // an unclaimed, kind-compatible tag on either side pairs.
+    const pairPath = (refIndex: number, refKind: 'image' | 'video'): string | undefined => {
+      for (const neighbor of [refIndex - 1, refIndex + 1]) {
+        const tag = tagByIndex.get(neighbor);
+        if (tag === undefined || claimed.has(neighbor)) continue;
+        if (tag.kind !== 'file' && tag.kind !== refKind) continue;
+        claimed.add(neighbor);
+        return tag.path;
+      }
+      return undefined;
+    };
     const ids: string[] = [];
-    for (const part of message.content ?? []) {
+    const texts: string[] = [];
+    parts.forEach((part, index) => {
+      if (tagByIndex.has(index)) return;
+      if (part.type === 'text' && 'text' in part && typeof part.text === 'string') {
+        texts.push(part.text);
+        return;
+      }
       if (part.type === 'image' || part.type === 'video' || part.type === 'audio') {
-        if (!('source' in part) || part.source === undefined) continue;
+        if (!('source' in part) || part.source === undefined) return;
         const source = part.source as HistoryMediaSource;
         const entity: TranscriptAttachment = {
           attachmentId: `att_${attachments.length + 1}`,
@@ -135,7 +178,9 @@ export function groupMessagesIntoSnapshot(
         };
         attachments.push(entity);
         ids.push(entity.attachmentId);
-      } else if (part.type === 'file' && 'file_id' in part) {
+        return;
+      }
+      if (part.type === 'file' && 'file_id' in part) {
         const entity: TranscriptAttachment = {
           attachmentId: `att_${attachments.length + 1}`,
           mediaType: part.media_type as string,
@@ -145,9 +190,22 @@ export function groupMessagesIntoSnapshot(
         };
         attachments.push(entity);
         ids.push(entity.attachmentId);
+        return;
       }
-    }
-    return ids.length > 0 ? ids : undefined;
+      const ref = daemonRefFromHistoryPart(part);
+      if (ref !== undefined) {
+        const path = pairPath(index, ref.kind);
+        const entity: TranscriptAttachment = {
+          attachmentId: `att_${attachments.length + 1}`,
+          mediaType: `${ref.kind}/*`,
+          name: path === undefined ? undefined : pathBaseName(path),
+          source: { kind: 'file', fileId: ref.fileId },
+        };
+        attachments.push(entity);
+        ids.push(entity.attachmentId);
+      }
+    });
+    return { text: texts.join(''), attachmentIds: ids.length > 0 ? ids : undefined };
   };
 
   const ensureTurn = (origin: TurnOrigin = FALLBACK_ORIGIN): TurnDraft => {
@@ -200,7 +258,8 @@ export function groupMessagesIntoSnapshot(
         }
         continue;
       }
-      startTurn(mapOrigin(message), textOf(message), collectAttachments(message));
+      const opening = foldTurnOpeningInput(message);
+      startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
       continue;
     }
 
@@ -327,6 +386,32 @@ function textOf(message: HistoryMessage): string {
     .filter((part): part is { readonly type: 'text'; readonly text: string } => part.type === 'text' && 'text' in part)
     .map((part) => part.text)
     .join('');
+}
+
+/**
+ * The daemon upload behind a kosong `image_url` / `video_url` part carrying a
+ * `kimi-file://` reference — the persisted shape of an uploaded medium (the
+ * structural `HistoryContentPart` union keeps these parts on its catch-all).
+ */
+function daemonRefFromHistoryPart(
+  part: HistoryContentPart,
+): { kind: 'image' | 'video'; fileId: string } | undefined {
+  if (part.type !== 'image_url' && part.type !== 'video_url') return undefined;
+  const holder = (part as unknown as Record<string, unknown>)[
+    part.type === 'image_url' ? 'imageUrl' : 'videoUrl'
+  ];
+  if (holder === null || typeof holder !== 'object') return undefined;
+  const url = (holder as { url?: unknown }).url;
+  if (typeof url !== 'string') return undefined;
+  const fileId = parseKimiFileRefFileId(url);
+  return fileId === undefined
+    ? undefined
+    : { kind: part.type === 'image_url' ? 'image' : 'video', fileId };
+}
+
+function pathBaseName(path: string): string {
+  const sep = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  return sep === -1 ? path : path.slice(sep + 1);
 }
 
 function parseArguments(raw: string | null): unknown {

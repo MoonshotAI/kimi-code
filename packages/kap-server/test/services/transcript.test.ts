@@ -146,6 +146,52 @@ describe('AgentTranscriptProjector', () => {
     expect(turn.state).toBe('completed');
   });
 
+  it('projects turn.started promptAttachments into attachment entities and turn.attachmentIds', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const ops: TranscriptOperation[] = [];
+    const feed = (event: DomainEvent): void => {
+      const mapped = projector.map(event);
+      ops.push(...mapped);
+      tx.apply(mapped);
+    };
+
+    feed(
+      ev({
+        type: 'turn.started',
+        turnId: 0,
+        origin: { kind: 'user' },
+        prompt: 'what is this?',
+        promptAttachments: [{ kind: 'image', fileId: 'file_1', name: 'shot.png' }],
+      }),
+    );
+    feed(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+
+    // Op-level: one attachment entity per referenced upload.
+    expect(ops.filter((op) => op.op === 'attachment.upsert')).toEqual([
+      {
+        op: 'attachment.upsert',
+        attachment: {
+          attachmentId: 't0.att1',
+          mediaType: 'image/*',
+          name: 'shot.png',
+          source: { kind: 'file', fileId: 'file_1' },
+        },
+      },
+    ]);
+
+    // Converged store: the id list survives the turn.ended header rebuild.
+    const turn = turnOps('t0', tx.getItems());
+    expect(turn.prompt).toBe('what is this?');
+    expect(turn.attachmentIds).toEqual(['t0.att1']);
+    expect(tx.getAttachment('t0.att1')).toEqual({
+      attachmentId: 't0.att1',
+      mediaType: 'image/*',
+      name: 'shot.png',
+      source: { kind: 'file', fileId: 'file_1' },
+    });
+  });
+
   it('places late-attach deltas into the engine-reported active step', () => {
     const tx = new AgentTranscript('main');
     // The projector missed turn.started AND turn.step.started for step 2 —
@@ -393,6 +439,46 @@ describe('AgentTranscriptProjector', () => {
         return item.refId;
       }),
     ).toEqual(['t0', 'm1', 't1', 'r1', 't2']);
+  });
+
+  it('snapshotToOps flattens attachment entities so backfilled attachmentIds never dangle', () => {
+    const snapshot: AgentTranscriptSnapshot = {
+      interactions: [],
+      attachments: [
+        {
+          attachmentId: 'att_1',
+          mediaType: 'image/*',
+          name: 'shot.png',
+          source: { kind: 'file', fileId: 'file_1' },
+        },
+      ],
+      todos: [],
+      prompts: [],
+      items: [
+        {
+          kind: 'turn',
+          turnId: 't0',
+          ordinal: 0,
+          state: 'completed',
+          origin: { kind: 'user' },
+          prompt: 'what is this?',
+          attachmentIds: ['att_1'],
+          steps: [],
+        },
+      ],
+      tasks: [],
+      meta: {},
+    };
+
+    const ops = snapshotToOps(snapshot);
+    expect(ops.filter((op) => op.op === 'attachment.upsert')).toEqual([
+      { op: 'attachment.upsert', attachment: snapshot.attachments[0] },
+    ]);
+
+    const tx = new AgentTranscript('main');
+    tx.apply(ops);
+    expect(tx.getAttachment('att_1')).toEqual(snapshot.attachments[0]);
+    expect(turnOps('t0', tx.getItems()).attachmentIds).toEqual(['att_1']);
   });
 
   it('flushes open frames on turn.ended even without step completion', () => {

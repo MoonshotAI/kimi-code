@@ -84,7 +84,7 @@ import {
   type TurnSeed,
 } from './stepRequest';
 import { StepRequestQueue, type StepRequestBatch } from './stepRequestQueue';
-import { isDisplayablePromptOrigin, turnPromptText, type TurnInterruptReason } from './turnEvents';
+import { isDisplayablePromptOrigin, turnPromptAttachments, turnPromptText, type TurnInterruptReason } from './turnEvents';
 import { cancelTurn, endTurn, promptTurn, TurnModel } from './turnOps';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
@@ -451,11 +451,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.wire.dispatch(promptTurn({ input: job.seed.input, origin }));
     job.turn.state = 'running';
     this.activeTurnJob = job;
+    const displayable = isDisplayablePromptOrigin(origin);
     this.eventBus.publish({
       type: 'turn.started',
       turnId: job.turn.id,
       origin,
-      prompt: isDisplayablePromptOrigin(origin) ? turnPromptText(job.seed.input) : undefined,
+      prompt: displayable ? turnPromptText(job.seed.input) : undefined,
+      promptAttachments: displayable ? turnPromptAttachments(job.seed.input) : undefined,
     });
     void this.runTurn(job.turn, job.ready).then(job.result.resolve, job.result.reject);
   }

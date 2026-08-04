@@ -52,4 +52,30 @@ describe('promptMetadataTextFromPayload', () => {
     expect(text).not.toContain('<system>');
     expect(text).not.toContain('Image compressed');
   });
+
+  it('keeps an upload <image path> tag out of the metadata text', () => {
+    // The upload pair (`<image path>` tag + daemon-ref image part) folds to
+    // the `[image]` placeholder — the materialization path must never leak
+    // into titles / lastPrompt.
+    const text = promptMetadataTextFromPayload({
+      input: [
+        { type: 'text', text: 'what is this?' },
+        { type: 'text', text: '<image path="/Users/alice/cache/f_123.png"></image>' },
+        { type: 'image_url', imageUrl: { url: 'kimi-file://f_123?path=%2FUsers%2Falice%2Fcache%2Ff_123.png' } },
+      ],
+    });
+    expect(text).toBe('what is this? [image]');
+    expect(text).not.toContain('/Users/alice');
+  });
+
+  it('drops a bare <image path> tag without a paired ref', () => {
+    const text = promptMetadataTextFromPayload({
+      input: [
+        { type: 'text', text: '<image path="/Users/alice/cache/f_123.png">' },
+        { type: 'text', text: 'describe it' },
+      ],
+    });
+    expect(text).toBe('describe it');
+    expect(text).not.toContain('/Users/alice');
+  });
 });
