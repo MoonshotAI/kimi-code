@@ -29,6 +29,8 @@ pub struct App {
     tab_idx: Option<usize>,
     /// Transcript scroll offset (lines from the bottom).
     scroll: u16,
+    /// Session status summary for the footer (plan/swarm).
+    status: String,
 }
 
 impl App {
@@ -45,13 +47,19 @@ impl App {
             model_aliases: Vec::new(),
             tab_idx: None,
             scroll: 0,
+            status: String::new(),
         }
     }
 
     /// Run the event loop until the user quits (`/quit` or Ctrl-C).
     pub async fn run(&mut self) -> anyhow::Result<()> {
         // Open the session up front.
-        let session = self.harness.create_session(&self.session_id).await?;
+        let mut session = self.harness.create_session(&self.session_id).await?;
+        // Seed the footer status (best-effort) before the session moves.
+        let status = session.get_status().await;
+        let plan = status["result"]["plan_mode"].as_bool().unwrap_or(false);
+        let swarm = status["result"]["swarm_mode"].as_bool().unwrap_or(false);
+        self.status = format!("plan={} swarm={}", if plan { "on" } else { "off" }, if swarm { "on" } else { "off" });
         self.session = Some(session);
         self.transcript.push(format!("session {} ready — type /help", self.session_id));
         // Preload model aliases for `/model` Tab completion (best-effort).
@@ -343,7 +351,7 @@ impl App {
             .block(Block::default().borders(Borders::ALL).title("chat"))
             .scroll((self.scroll, 0));
         let input = Paragraph::new(self.input.as_str())
-            .block(Block::default().borders(Borders::ALL).title("input"));
+            .block(Block::default().borders(Borders::ALL).title(format!("input — {} | {}", self.session_id, self.status)));
         frame.render_widget(chat, chunks[0]);
         frame.render_widget(input, chunks[1]);
     }
