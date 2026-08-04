@@ -116,6 +116,8 @@ export const ErrorCode = {
   GOAL_UNSUPPORTED_AGENT: 40920,
   /** 创建时 provider_id 已存在 */
   PROVIDER_ALREADY_EXISTS: 40921,
+  /** 会话标题生成不可用（flag 未开 / 无 managed OAuth 登录 / 还没有 prompt / 后端失败） */
+  SESSION_TITLE_UNAVAILABLE: 40922,
 
   /** approval 60s 超时 */
   APPROVAL_EXPIRED: 41001,

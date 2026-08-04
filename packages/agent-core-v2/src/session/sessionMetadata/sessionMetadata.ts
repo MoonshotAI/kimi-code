@@ -23,11 +23,13 @@ export interface AgentMeta {
 
 export const SESSION_META_VERSION = 2;
 
+export type SessionTitleKind = 'replaceable' | 'generated' | 'custom';
+
 export interface SessionMeta {
   readonly id: string;
   readonly version?: number;
   readonly title?: string;
-  readonly isCustomTitle?: boolean;
+  readonly titleKind?: SessionTitleKind;
   readonly lastPrompt?: string;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -52,6 +54,12 @@ export interface ISessionMetadata {
   read(): Promise<SessionMeta>;
   update(patch: SessionMetaPatch): Promise<void>;
   setTitle(title: string): Promise<void>;
+  /**
+   * Applies a generated title unless the user customized theirs; the title
+   * kind is re-checked inside the serialized update, right before the write,
+   * so a custom title set while a generation was in flight still wins.
+   */
+  setGeneratedTitleIfUncustomized(title: string): Promise<boolean>;
   setArchived(archived: boolean): Promise<void>;
   registerAgent(agentId: string, meta: AgentMeta): Promise<void>;
 }

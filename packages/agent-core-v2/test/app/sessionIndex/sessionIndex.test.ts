@@ -15,7 +15,10 @@ import { ILogService } from '#/_base/log/log';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
-import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
+import {
+  ISessionIndex,
+  type SessionSummary,
+} from '#/app/sessionIndex/sessionIndex';
 import { FileSessionIndex } from '#/app/sessionIndex/sessionIndexService';
 import { MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
@@ -295,7 +298,7 @@ describe('FileSessionIndex (read model)', () => {
     await fsp.writeFile(join(dir, 'state.json'), JSON.stringify(meta));
   }
 
-  function summary(id: string, overrides: Partial<SessionSummary> = {}): SessionSummary {
+  function summary(id: string, overrides: Partial<SessionSummary> = {}) {
     return {
       id,
       workspaceId,

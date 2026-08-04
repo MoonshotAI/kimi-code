@@ -7,10 +7,22 @@
  * construction (creating it on first run), and logs through `log`. The
  * plain-data state (`data`) is registered into `sessionState`
  * (`ISessionStateService`) and read/written through it. The
- * document always carries the `agents` / `custom` maps — seeded at creation,
- * backfilled and persisted on load for documents written before the seeding
- * existed (without touching `updatedAt`, so a format heal never reorders
- * session listings). Re-registering an agent whose metadata is unchanged is
+ * document always carries the `agents` / `custom` maps that v1's
+ * `Session.resume()` reads unconditionally — seeded at creation, backfilled
+ * and persisted on load for documents written before the seeding existed
+ * (without touching `updatedAt`, so a format heal never reorders session
+ * listings) — keeping sessions on a shared `KIMI_CODE_HOME` resumable by
+ * released v1 builds. The canonical title state is `titleKind`; every
+ * persist additionally double-writes the v1-readable `isCustomTitle`
+ * marker derived from it, and on load an explicit `isCustomTitle: true`
+ * outranks a stale `titleKind` (a v1 rename spreads the original document,
+ * so the two can disagree) while a `false` marker never downgrades a
+ * modern generated/custom state. The generated-title write path
+ * (`setGeneratedTitleIfUncustomized`) serializes through the same update
+ * queue as everything else and re-checks the title kind inside the queued
+ * write, so a custom title set while a generation was in flight is never
+ * overwritten.
+ * Re-registering an agent whose metadata is unchanged is
  * a no-op (no write, no mirror, no event), so resuming a session — which
  * re-registers its agents as they materialize — never bumps `updatedAt` and
  * never reorders session listings. Bound at Session scope.
@@ -42,6 +54,7 @@ import {
   type SessionMeta,
   type SessionMetadataChangedEvent,
   type SessionMetaPatch,
+  type SessionTitleKind,
 } from './sessionMetadata';
 
 const META_KEY = 'state.json';
@@ -93,21 +106,30 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
   }
 
   async update(patch: SessionMetaPatch): Promise<void> {
-    return this.enqueueUpdate(() => this.applyUpdate(patch));
+    await this.enqueueUpdate(() => this.applyUpdate(patch));
   }
 
-  private async applyUpdate(patch: SessionMetaPatch): Promise<void> {
+  private async applyUpdate(patch: SessionMetaPatch): Promise<boolean> {
     await this.ready;
     this.data = { ...this.data, ...patch, updatedAt: Date.now() };
-    await this.store.set(this.scope, META_KEY, this.data);
+    await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
     await this.mirrorToReadModel();
     this._onDidChangeMetadata.fire({
       changed: Object.keys(patch) as (keyof SessionMeta)[],
     });
+    return true;
   }
 
   async setTitle(title: string): Promise<void> {
-    await this.update({ title, isCustomTitle: true });
+    await this.update({ title, titleKind: 'custom' });
+  }
+
+  async setGeneratedTitleIfUncustomized(title: string): Promise<boolean> {
+    return this.enqueueUpdate(async () => {
+      await this.ready;
+      if (this.data.titleKind === 'custom') return false;
+      return this.applyUpdate({ title, titleKind: 'generated' });
+    });
   }
 
   async setArchived(archived: boolean): Promise<void> {
@@ -124,9 +146,12 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
     });
   }
 
-  private enqueueUpdate(work: () => Promise<void>): Promise<void> {
+  private enqueueUpdate<T>(work: () => Promise<T>): Promise<T> {
     const run = this.updateQueue.then(work, work);
-    this.updateQueue = run.catch(() => {});
+    this.updateQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
     return run;
   }
 
@@ -156,13 +181,17 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
     const existing = await this.store.get<SessionMeta>(this.scope, META_KEY);
     if (existing !== undefined) {
       this.data = normalizeSessionMeta(existing, this.ctx.sessionId);
-      if (this.data.agents === undefined || this.data.custom === undefined) {
+      if (
+        this.data.agents === undefined ||
+        this.data.custom === undefined ||
+        sessionMetaTitleNeedsMigration(existing, this.data)
+      ) {
         this.data = {
           ...this.data,
           agents: this.data.agents ?? {},
           custom: this.data.custom ?? {},
         };
-        await this.store.set(this.scope, META_KEY, this.data);
+        await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
       }
       return;
     }
@@ -177,7 +206,7 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
       agents: {},
       custom: {},
     };
-    await this.store.set(this.scope, META_KEY, this.data);
+    await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
     this.log.debug('session metadata created', { sessionId: this.ctx.sessionId });
   }
 }
@@ -202,26 +231,81 @@ function recordEquals(a: AgentMeta['labels'], b: AgentMeta['labels']): boolean {
 }
 
 export function normalizeSessionMeta(raw: SessionMeta, sessionId: string): SessionMeta {
-  const legacy = raw as unknown as {
-    createdAt?: unknown;
-    updatedAt?: unknown;
-    workDir?: unknown;
-  };
+  const legacy = raw as unknown as LegacySessionMeta;
+  const normalizedTitle = normalizeSessionTitle(legacy);
+  const {
+    createdAt: legacyCreatedAt,
+    updatedAt: legacyUpdatedAt,
+    workDir: legacyWorkDir,
+    titleSource: _legacyTitleSource,
+    isCustomTitle: _legacyIsCustomTitle,
+    customTitle: _legacyCustomTitle,
+    ...clean
+  } = legacy;
   const cwd =
-    raw.cwd ?? (typeof legacy.workDir === 'string' && legacy.workDir.length > 0
-      ? legacy.workDir
+    clean.cwd ?? (typeof legacyWorkDir === 'string' && legacyWorkDir.length > 0
+      ? legacyWorkDir
       : undefined);
-  if (raw.version === SESSION_META_VERSION) {
-    return cwd === raw.cwd ? raw : { ...raw, cwd };
-  }
+  const { title, titleKind } = normalizedTitle;
   return {
-    ...raw,
-    id: sessionId,
+    ...clean,
+    id: clean.version === SESSION_META_VERSION ? clean.id : sessionId,
     version: SESSION_META_VERSION,
     cwd,
-    createdAt: toEpochMs(legacy.createdAt),
-    updatedAt: toEpochMs(legacy.updatedAt),
+    title,
+    titleKind,
+    createdAt: toEpochMs(legacyCreatedAt),
+    updatedAt: toEpochMs(legacyUpdatedAt),
   };
+}
+
+type LegacySessionMeta = Omit<SessionMeta, 'createdAt' | 'updatedAt'> & {
+  readonly createdAt?: unknown;
+  readonly updatedAt?: unknown;
+  readonly workDir?: unknown;
+  readonly titleSource?: unknown;
+  readonly isCustomTitle?: unknown;
+  readonly customTitle?: unknown;
+};
+
+function normalizeSessionTitle(
+  raw: LegacySessionMeta,
+): Pick<SessionMeta, 'title' | 'titleKind'> {
+  const title = typeof raw.title === 'string' ? raw.title : undefined;
+  if (title !== undefined && raw.isCustomTitle === true) {
+    return { title, titleKind: 'custom' };
+  }
+  if (title !== undefined && isSessionTitleKind(raw.titleKind)) {
+    return { title, titleKind: raw.titleKind };
+  }
+  if (title !== undefined && raw.isCustomTitle === false) {
+    return { title, titleKind: 'replaceable' };
+  }
+  if (typeof raw.customTitle === 'string') {
+    return { title: raw.customTitle, titleKind: 'custom' };
+  }
+  return title === undefined ? {} : { title, titleKind: 'replaceable' };
+}
+
+function isSessionTitleKind(value: unknown): value is SessionTitleKind {
+  return value === 'replaceable' || value === 'generated' || value === 'custom';
+}
+
+type PersistedSessionMeta = SessionMeta & { readonly isCustomTitle: boolean };
+
+function encodeSessionMeta(meta: SessionMeta): PersistedSessionMeta {
+  return { ...meta, isCustomTitle: meta.titleKind === 'custom' };
+}
+
+function sessionMetaTitleNeedsMigration(raw: SessionMeta, normalized: SessionMeta): boolean {
+  const record = raw as unknown as Record<string, unknown>;
+  return (
+    raw.title !== normalized.title ||
+    raw.titleKind !== normalized.titleKind ||
+    record['isCustomTitle'] !== (normalized.titleKind === 'custom') ||
+    Object.hasOwn(record, 'titleSource') ||
+    Object.hasOwn(record, 'customTitle')
+  );
 }
 
 export function toEpochMs(value: unknown): number {

@@ -30,7 +30,7 @@ export interface SessionMetaUpdatedPayload {
   readonly patch: {
     readonly title?: string;
     readonly isCustomTitle?: boolean;
-    readonly lastPrompt: string;
+    readonly lastPrompt?: string;
   };
 }
 
@@ -73,9 +73,9 @@ const sessionMetaUpdatedSchema = z.object({
   patch: z.object({
     title: z.string().optional(),
     isCustomTitle: z.boolean().optional(),
-    lastPrompt: z.string(),
+    lastPrompt: z.string().optional(),
   }),
-});
+}) satisfies z.ZodType<SessionMetaUpdatedPayload>;
 
 export const catalogChangedSchema = z.object({
   changed: z.array(

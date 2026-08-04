@@ -218,7 +218,9 @@ const KNOWN_DIFFS = {
   // default title 'New Session' into state.json and reports it for
   // never-titled sessions where v2 leaves the title unset; only that
   // materialized default is projected away (explicit titles compare in
-  // full). Per-home paths (sessionDir, agent homedirs) compare after the
+  // full). `titleKind` is v2-only (the v1 wire has no canonical title-state
+  // field, only the `isCustomTitle` boolean inside `sessionMetadata`) —
+  // deleted. Per-home paths (sessionDir, agent homedirs) compare after the
   // home-prefix scrub — both engines lay sessions out as
   // `<home>/sessions/<workdir-key>/<id>` with the same key derivation.
   listSessions: (summaries: readonly SessionSummary[], home: HomePair): unknown =>
@@ -343,6 +345,7 @@ function projectSessionSummary(summary: SessionSummary, home: HomePair): unknown
   const projected = scrubHomePrefixes(summary, home) as Record<string, unknown>;
   delete projected['createdAt'];
   delete projected['updatedAt'];
+  delete projected['titleKind'];
   if (projected['title'] === 'New Session') delete projected['title'];
   return projected;
 }

@@ -468,7 +468,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       const title = opts.title ?? `Fork: ${sourceMeta?.title || sourceId}`;
       await targetMeta.update({
         title,
-        isCustomTitle: opts.title !== undefined ? true : sourceMeta?.isCustomTitle === true,
+        titleKind: opts.title === undefined ? 'replaceable' : 'custom',
         forkedFrom: sourceId,
         archived: false,
         lastPrompt: sourceMeta?.lastPrompt,

@@ -16,7 +16,9 @@ import {
   Error2,
   ErrorCodes,
   IBootstrapService,
+  IOAuthService,
   type DomainEvent,
+  type IOAuthService as IOAuthServiceType,
   IAgentConversationUndoService,
   IAgentGoalService,
   IAgentLifecycleService,
@@ -27,6 +29,7 @@ import {
   getLiveSessionById,
   sessionDirOf,
   type ServiceIdentifier,
+  type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
 import { sessionWarningsResponseSchema } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
@@ -104,6 +107,8 @@ describe('server-v2 /api/v1/sessions', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -511,6 +516,131 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
     expect(got.body.data.title).toBe('renamed');
+  });
+
+  it('returns title-unavailable when generation cannot run', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+
+    const generated = await postJson<null>(
+      `/api/v1/sessions/${created.body.data.id}/title/generate`,
+    );
+
+    expect(generated.body.code).toBe(40922);
+  });
+
+  it('generates and persists a title through the public REST path', async () => {
+    await server?.close();
+    server = undefined;
+    await writeFile(
+      join(home as string, 'config.toml'),
+      [
+        'default_model = "stub"',
+        '',
+        '[providers.stub]',
+        'type = "openai"',
+        'base_url = "http://127.0.0.1:9999"',
+        'api_key = "stub"',
+        '',
+        '[models.stub]',
+        'provider = "stub"',
+        'model = "stub"',
+        'max_context_size = 1000',
+        '',
+        '[providers."managed:kimi-code"]',
+        'type = "kimi"',
+        'base_url = "https://api.example.test/coding/v1"',
+        '',
+        '[providers."managed:kimi-code".oauth]',
+        'storage = "file"',
+        'key = "kimi-code"',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const oauth: IOAuthServiceType = {
+      _serviceBrand: undefined,
+      startLogin: async () => {
+        throw new Error('unused');
+      },
+      getFlow: () => undefined,
+      cancelLogin: async () => {
+        throw new Error('unused');
+      },
+      logout: async () => {
+        throw new Error('unused');
+      },
+      status: async () => ({ loggedIn: true, provider: 'managed:kimi-code' }),
+      refreshOAuthProviderModels: async () => ({ changed: [], unchanged: [], failed: [] }),
+      getManagedUsage: async () => ({ kind: 'error', message: 'unused' }),
+      getManagedUserInfo: async () => ({ kind: 'error', message: 'unused' }),
+      resolveTokenProvider: () => ({ getAccessToken: async () => 'test-token' }),
+      getCachedAccessToken: async () => 'test-token',
+    };
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      seeds: [[IOAuthService, oauth]] as ScopeSeed,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+
+    let toolsRequest: { method: string; params: { chat_content: string } } | undefined;
+    const actualFetch = globalThis.fetch.bind(globalThis);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url === 'https://api.example.test/coding/v1/tools') {
+        const body = init?.body;
+        if (typeof body !== 'string') {
+          throw new TypeError('expected a string request body');
+        }
+        toolsRequest = JSON.parse(body) as typeof toolsRequest;
+        return new Response(JSON.stringify({ title: 'generated from REST' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return actualFetch(input, init);
+    });
+
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    for (const text of ['first REST prompt', 'second REST prompt', 'third REST prompt']) {
+      const submitted = await postJson<{ prompt_id: string }>(
+        `/api/v1/sessions/${id}/prompts`,
+        { content: [{ type: 'text', text }] },
+      );
+      expect(submitted.body.code).toBe(0);
+    }
+
+    const generated = await postJson<{ title: string }>(
+      `/api/v1/sessions/${id}/title/generate`,
+    );
+    expect(generated.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
+    expect(toolsRequest).toEqual({
+      method: 'chat_title',
+      params: {
+        chat_content:
+          'user: first REST prompt\nuser: second REST prompt\nuser: third REST prompt',
+      },
+    });
+
+    const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
+    expect(got.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
+  });
+
+  it('returns session-not-found when generating a title for a missing session', async () => {
+    const generated = await postJson<null>(
+      '/api/v1/sessions/sess_missing_title/title/generate',
+    );
+
+    expect(generated.body.code).toBe(40401);
   });
 
   it('returns best-effort status for a live session', async () => {
