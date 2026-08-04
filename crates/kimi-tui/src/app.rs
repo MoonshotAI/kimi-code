@@ -188,6 +188,12 @@ impl App {
                     self.session.as_mut().expect("session").clear_context().await?;
                     self.transcript.push("context cleared".into());
                 }
+                "/compact" => {
+                    match self.session.as_mut().expect("session").compact().await {
+                        Ok(_) => self.transcript.push("context compacted".into()),
+                        Err(e) => self.transcript.push(format!("compact failed: {e}")),
+                    }
+                }
                 "/usage" => {
                     let usage = self.session.as_mut().expect("session").get_usage().await?;
                     self.transcript.push(format!("usage: {}", serde_json::to_string(&usage).unwrap_or_default()));
