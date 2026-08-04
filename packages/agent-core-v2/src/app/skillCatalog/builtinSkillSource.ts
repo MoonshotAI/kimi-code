@@ -23,7 +23,12 @@ import {
   BUILTIN_PRODUCT_SKILLS_SECTION,
   builtinProductSkillsEnabled,
 } from './configSection';
-import { SKILL_SOURCE_PRIORITY, type ISkillSource, type SkillContribution } from './skillSource';
+import {
+  BUILTIN_SKILL_SOURCE_ID,
+  SKILL_SOURCE_PRIORITY,
+  type ISkillSource,
+  type SkillContribution,
+} from './skillSource';
 
 export interface IBuiltinSkillSource extends ISkillSource {
   readonly _serviceBrand: undefined;
@@ -35,7 +40,7 @@ export const IBuiltinSkillSource: ServiceIdentifier<IBuiltinSkillSource> =
 export class BuiltinSkillSource extends Disposable implements IBuiltinSkillSource {
   declare readonly _serviceBrand: undefined;
 
-  readonly id = 'builtin';
+  readonly id = BUILTIN_SKILL_SOURCE_ID;
   readonly priority = SKILL_SOURCE_PRIORITY.builtin;
   private readonly onDidChangeEmitter = this._register(new Emitter<void>());
   readonly onDidChange: Event<void> = this.onDidChangeEmitter.event;

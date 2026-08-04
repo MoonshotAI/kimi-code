@@ -41,7 +41,12 @@
  * plugin changes reach the prompt when the skill catalog re-pulls its plugin
  * source on explicit plugin reload (the Workspace-scope catalog forwards the
  * plugin source's change through the session seed) — the same point where
- * plugin skills take effect. `refreshSystemPrompt` never rejects: a
+ * plugin skills take effect. The builtin source is refreshed on the same
+ * signal: it changes only when its config switch is toggled, so it costs what
+ * a config edit costs, unlike the file-backed sources whose fs watches would
+ * rebuild every agent's prompt on each edit. Subscribing to the catalog rather
+ * than to the config section matters — the catalog fires after the
+ * contribution is replaced, so the rebuilt prompt cannot read the old listing. `refreshSystemPrompt` never rejects: a
  * failed context build keeps the current prompt and surfaces a warning,
  * because the `[tools]` config watcher fires it voided (an unhandled
  * rejection would crash kap-server) and the Session tool-policy fan-out
@@ -100,7 +105,10 @@ import type { ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
-import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
+import {
+  BUILTIN_SKILL_SOURCE_ID,
+  PLUGIN_SKILL_SOURCE_ID,
+} from '#/app/skillCatalog/skillSource';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
@@ -261,7 +269,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     );
     this._register(
       this.skillCatalog.onDidChange((sourceId) => {
-        if (sourceId === PLUGIN_SKILL_SOURCE_ID) {
+        if (sourceId === PLUGIN_SKILL_SOURCE_ID || sourceId === BUILTIN_SKILL_SOURCE_ID) {
           void this.refreshSystemPrompt();
         }
       }),

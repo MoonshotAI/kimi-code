@@ -10,8 +10,12 @@ import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSystemPrompt } from '#/app/plugin/types';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
+import type { SkillCatalog } from '#/app/skillCatalog/types';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
-import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
+import {
+  BUILTIN_SKILL_SOURCE_ID,
+  PLUGIN_SKILL_SOURCE_ID,
+} from '#/app/skillCatalog/skillSource';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { DEFAULT_PRODUCT_NAME } from '#/app/agentProfileCatalog/profile-shared';
 
@@ -40,6 +44,12 @@ const pluginProfile: ResolvedAgentProfile = {
   systemPrompt: (context) =>
     typeof context['pluginSections'] === 'string' ? context['pluginSections'] : '',
   tools: [],
+};
+
+const skillsProfile: ResolvedAgentProfile = {
+  name: 'skills-profile',
+  systemPrompt: (context) => `skills:${context.skills ?? ''}`,
+  tools: ['Skill'],
 };
 
 const exactProfile: ResolvedAgentProfile = {
@@ -213,6 +223,29 @@ describe('AgentProfileService.applyProfile', () => {
     change.dispose();
   });
 
+  // The builtin source changes only when its config switch is toggled, so it
+  // shares the plugin source's refresh. Subscribing to the catalog rather than
+  // the config section is what makes the rebuilt prompt see the new listing:
+  // the catalog fires after the contribution is replaced.
+  it('refreshes the system prompt when the builtin skill source reloads', async () => {
+    const change = new Emitter<string>();
+    const listing = { value: 'before' };
+    const catalog = {
+      getModelSkillListing: () => listing.value,
+    } as unknown as SkillCatalog;
+    const { profile: svc } = buildContext(skillCatalogWithChange(change, catalog));
+    await svc.applyProfile(skillsProfile);
+    expect(svc.data().systemPrompt).toBe('skills:before');
+
+    listing.value = 'after';
+    change.fire(BUILTIN_SKILL_SOURCE_ID);
+
+    await vi.waitFor(() => {
+      expect(svc.data().systemPrompt).toBe('skills:after');
+    });
+    change.dispose();
+  });
+
   it('skips plugin sections beyond the aggregate byte budget and warns once', async () => {
     const large = 'x'.repeat(48 * 1024);
     const sections = {
@@ -251,10 +284,13 @@ describe('AgentProfileService.applyProfile', () => {
   });
 });
 
-function skillCatalogWithChange(change: Emitter<string>): TestAgentServiceOverride {
+function skillCatalogWithChange(
+  change: Emitter<string>,
+  catalog: SkillCatalog = new InMemorySkillCatalog(),
+): TestAgentServiceOverride {
   return sessionService(ISessionSkillCatalog, {
     _serviceBrand: undefined,
-    catalog: new InMemorySkillCatalog(),
+    catalog,
     ready: Promise.resolve(),
     onDidChange: change.event,
     load: async () => {},
