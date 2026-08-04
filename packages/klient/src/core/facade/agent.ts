@@ -64,7 +64,8 @@ export interface AgentFacade {
   getTaskOutput(input: { taskId: string; tail?: number }): Promise<string>;
   /**
    * Session-merged MCP server entries (workspace set + ephemeral session
-   * overlay), after the initial connection attempt settles.
+   * overlay). This is a live snapshot, so entries may still be pending while
+   * the initial connection attempt runs.
    */
   getMcpServers(): Promise<readonly McpServerEntry[]>;
   /**
@@ -117,10 +118,8 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
     },
     getTaskOutput: (input) =>
       call(scope, 'agentTaskService', 'readOutput', [input.taskId, input.tail]) as Promise<string>,
-    getMcpServers: async () => {
-      await call(scope, 'agentMcpService', 'waitForInitialLoad', []);
-      return call(scope, 'agentMcpService', 'list', []) as Promise<readonly McpServerEntry[]>;
-    },
+    getMcpServers: () =>
+      call(scope, 'agentMcpService', 'list', []) as Promise<readonly McpServerEntry[]>,
     compact: (input) =>
       call(scope, 'agentFullCompactionService', 'begin', [
         { source: 'manual', instruction: input?.instruction },

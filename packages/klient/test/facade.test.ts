@@ -215,29 +215,23 @@ describe('session skills routing', () => {
 });
 
 describe('agent mcp / compaction routing', () => {
-  it('getMcpServers waits for initial load before listing with the agent scope', async () => {
+  it('getMcpServers returns the live snapshot with the agent scope', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
     const agent = klient.session('s1').agent('main');
 
     const entries = [
-      { name: 'mock', transport: 'stdio', status: 'connected', toolCount: 2 },
+      { name: 'mock', transport: 'stdio', status: 'pending', toolCount: 0 },
     ];
-    channel.results.set('agentMcpService.waitForInitialLoad', undefined);
     channel.results.set('agentMcpService.list', entries);
     await expect(agent.getMcpServers()).resolves.toEqual(entries);
     expect(channel.calls[0]).toEqual({
       scope: { sessionId: 's1', agentId: 'main' },
       service: 'agentMcpService',
-      method: 'waitForInitialLoad',
-      args: [],
-    });
-    expect(channel.calls[1]).toEqual({
-      scope: { sessionId: 's1', agentId: 'main' },
-      service: 'agentMcpService',
       method: 'list',
       args: [],
     });
+    expect(channel.calls).toHaveLength(1);
   });
 
   it('compact issues a manual begin with the optional instruction', async () => {

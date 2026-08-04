@@ -54,7 +54,6 @@ export const mcpServerEntrySchema = z.object({
 });
 
 export const agentMcpContract = {
-  waitForInitialLoad: { input: z.tuple([]), output: noResult },
   list: { input: z.tuple([]), output: z.array(mcpServerEntrySchema) },
 } satisfies ServiceContract;
 
