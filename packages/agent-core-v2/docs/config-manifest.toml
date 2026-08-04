@@ -8,7 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (22 sections · 3 overlay(s))
+# Index (23 sections · 3 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   cron                     src/app/cron/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
@@ -30,6 +30,7 @@
 #   subagent                 src/session/subagent/configSection.ts
 #   task                     src/agent/task/configSection.ts
 #   thinking                 src/app/kosongConfig/configSection.ts
+#   tokenCounting            src/agent/tokenCounting/configSection.ts
 #   tools                    src/agent/toolPolicy/configSection.ts
 #   (overlay) servicesCredentialEnvOverlay  src/app/auth/configSection.ts
 #   (overlay) kimiModelEnvOverlay  src/app/kosongConfig/envOverlay.ts
@@ -389,6 +390,18 @@ timeout_ms = 7200000
 # effort: string
 # forced_effort: string
 # keep: string
+
+# ##########################################################################
+# tokenCounting (config.toml: token_counting)
+#   owner: src/agent/tokenCounting/configSection.ts
+#   scope: core
+#   hooks: stripEnv
+#   env:
+#     strategy <- KIMI_TOKEN_COUNTING_STRATEGY (custom parse)
+# ##########################################################################
+
+[token_counting]
+strategy = "measured+estimated"
 
 # ##########################################################################
 # tools

@@ -692,6 +692,11 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       return;
     }
     if (!this.hasModel()) return;
+    // An alias that no longer resolves (e.g. the model entry was removed from
+    // config) yields UNKNOWN_CAPABILITY whose max_context_tokens is 0 — the
+    // "unknown" marker, not a real limit. Omit the field instead of pushing 0.
+    const capabilities = this.tryResolveRawModel()?.capabilities;
+    const maxContextTokens = capabilities?.max_input_tokens ?? capabilities?.max_context_tokens;
     this.eventBus.publish({
       type: 'agent.status.updated',
       model: this.modelAlias,
@@ -699,8 +704,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         ? this.getEffectiveThinkingLevel()
         : undefined,
       maxContextTokens:
-        this.getModelCapabilities().max_input_tokens ??
-        this.getModelCapabilities().max_context_tokens,
+        maxContextTokens !== undefined && maxContextTokens > 0 ? maxContextTokens : undefined,
     });
   }
 

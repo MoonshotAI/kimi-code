@@ -38,6 +38,12 @@ import '#/agent/permissionMode/configSection';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
 import '#/agent/media/configSection';
 import { IMAGE_SECTION, type ImageConfig } from '#/agent/media/configSection';
+import '#/agent/tokenCounting/configSection';
+import {
+  TOKEN_COUNTING_SECTION,
+  TOKEN_COUNTING_STRATEGY_ENV,
+  type TokenCountingConfig,
+} from '#/agent/tokenCounting/configSection';
 import '#/agent/loop/configSection';
 import {
   LOOP_CONTROL_SECTION,
@@ -758,6 +764,60 @@ describe('image config section', () => {
     // …but persistence drops the env-owned field and keeps the genuine edit.
     expect(config.inspect<ImageConfig>(IMAGE_SECTION).userValue).toEqual({
       readByteBudget: 262144,
+    });
+
+    disposables.dispose();
+  });
+});
+
+describe('tokenCounting config section', () => {
+  it('registers the tokenCounting section with the mixed strategy as default', () => {
+    const registry = new ConfigRegistry();
+
+    const section = registry.getSection(TOKEN_COUNTING_SECTION);
+    expect(section).toBeDefined();
+    expect(section?.defaultValue).toEqual({ strategy: 'measured+estimated' });
+
+    expect(registry.validate(TOKEN_COUNTING_SECTION, { strategy: 'measured' })).toEqual({
+      strategy: 'measured',
+    });
+    expect(registry.validate(TOKEN_COUNTING_SECTION, { strategy: 'estimated' })).toEqual({
+      strategy: 'estimated',
+    });
+    expect(() => registry.validate(TOKEN_COUNTING_SECTION, { strategy: 'bogus' })).toThrow();
+    expect(() => registry.validate(TOKEN_COUNTING_SECTION, {})).toThrow();
+  });
+
+  it('re-applies the env override on every get() and ignores invalid values', async () => {
+    const env: Record<string, string> = {};
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    expect(config.get<TokenCountingConfig>(TOKEN_COUNTING_SECTION)).toEqual({
+      strategy: 'measured+estimated',
+    });
+
+    env[TOKEN_COUNTING_STRATEGY_ENV] = 'bogus';
+    expect(config.get<TokenCountingConfig>(TOKEN_COUNTING_SECTION)).toEqual({
+      strategy: 'measured+estimated',
+    });
+
+    env[TOKEN_COUNTING_STRATEGY_ENV] = 'measured';
+    expect(config.get<TokenCountingConfig>(TOKEN_COUNTING_SECTION)).toEqual({
+      strategy: 'measured',
+    });
+
+    env[TOKEN_COUNTING_STRATEGY_ENV] = 'estimated';
+    expect(config.get<TokenCountingConfig>(TOKEN_COUNTING_SECTION)).toEqual({
+      strategy: 'estimated',
     });
 
     disposables.dispose();
