@@ -5,6 +5,11 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㊽ session/fs list 动作测试（glob 映射覆盖，已提交）**：
+> - **缺口**：fs 处理器 3 个测试（read 缺失/不支持动作/read 往返）独缺 **list**——正是迁移修复过「action=list 从不传 Glob pattern」的映射动作。
+> - **实现**：fs_list_globs_workspace——临时目录 + `*.txt` 查询 → 断言无 RPC 错误、非 refused、content 含匹配文件。
+> - **验证**：kimi-server 52 → 53；clippy 新增 0（7 条既有）；workspace check 干净。
+
 > **✅ 2026-08-03 ㊼ 全量门禁结论（环境约束，基线逐 crate 确立）**：
 > - **尝试**：`cargo test --workspace` 三次——首次后台 grep 过滤 36 绿套件 + kimi-acp doctest E0463 竞态（已定案为工具链并行竞态）；干净单次落文件跑至 kimi_exec 时被**后台 600s 超时**终止（套件实际 ~15 分钟；前台 300s 上限、双跑自误两次）。
 > - **基线确立方式**：本会话每次改动后**逐 crate 单独验证全绿**——kimi-agent 2027+52、native-tools 617、kimi-server 52、kimi-cli 36 集成、kimi-exec 4、kimi-sdk 7、kimi-acp 7、kimi-tui 13、kimi-ui 8、kimi-server-transport 7、kimi-server-client 4、kimi-shared 47、kimi-oauth 3。累计 **2890+**。

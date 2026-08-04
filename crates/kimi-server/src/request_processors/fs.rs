@@ -136,6 +136,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fs_list_globs_workspace() {
+        // action=list maps to the Glob tool; the query becomes the glob
+        // pattern (the migration-fixed mapping) and results land in content.
+        let mut server = MessageProcessor::new();
+        FsProcessor.register(&mut server);
+        let dir = std::env::temp_dir().join(format!("kimi-fs-list-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("hello.txt"), "hi").expect("write");
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/fs".into(),
+                params: serde_json::json!({
+                    "session_id": "x",
+                    "action": "list",
+                    "homedir": dir.to_string_lossy(),
+                    "query": "*.txt",
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "list: {body}");
+        assert_eq!(body["result"]["is_error"], false, "list refused: {body}");
+        let content = body["result"]["content"].as_str().unwrap_or("");
+        assert!(content.contains("hello.txt"), "glob output: {content}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
     async fn fs_read_roundtrip() {
         let dir = std::env::temp_dir().join(format!("kimi-fs-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
