@@ -5,6 +5,10 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㉝ npm 薄壳活体验证（阶段 F item 0，无代码改动）**：
+> - **验证**：`KIMI_RUST_BIN=<target/debug/kimi.exe> node packages/kimi-code-rust-bin/bin/kimi.js health` → `ok` exit 0（spawn 路径 + 真实二进制全通）；无二进制 → 清晰构建提示 exit 1。
+> - **意义**：阶段 F 分发薄壳 artifact 可用，入口切换的载体就绪。
+
 > **✅ 2026-08-03 ㉜ ACP session/update 通知（load 回放 + prompt 结果，阶段 E 🔶 关闭，已提交）**：
 > - **实现**：serve 循环在写 response 前按 method 挂通知钩子（低侵入，不动 handle 签名）——`session/load` 回放持久化上下文为 `user_message_chunk`/`agent_message_chunk`/`agent_thought_chunk`（逐 content part，对齐 TS replay）；`session/prompt` 成功后先发 `agent_message_chunk`（完整文本）再回 response（逐 token 流式仍留待联网）。
 > - **顺带修**：ACP load 处理器原只 `create_session`——它重建 agent 清空内存上下文且从不恢复持久化状态（回放必空）；补 `SESSION_LOAD` 恢复 durable state。
