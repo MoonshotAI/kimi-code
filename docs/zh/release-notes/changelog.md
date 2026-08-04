@@ -10,12 +10,12 @@ outline: 2
 
 ### 新功能
 
-- 新增 `TurnStarted`、`UserPromptQueued`、`TaskStarted` 和 `SessionHeartbeat` 四个 hook 事件；会话被归档（而非退出）时 `SessionEnd` 现上报为 `archive`。在 `config.toml` 的 `[[hooks]]` 下配置，详见 [Hooks](../customization/hooks.md)。
+- 新增四个 hook 事件：`TurnStarted`、`UserPromptQueued`、`TaskStarted` 和 `SessionHeartbeat`。在 `config.toml` 的 `[[hooks]]` 下配置，详见 [Hooks](https://moonshotai.github.io/kimi-code/zh/customization/hooks.html)。
 
 ### 优化
 
-- `[loop_control]` 两个配置键改名：`max_retries_per_step` → `max_attempts_per_step`、`max_steps_per_run` → `max_steps_per_turn`；旧键不再生效（启动时会有改名警告），详见 `[loop_control](../configuration/config-files.md#loop-control)`。
-- 新增 `[token_counting]` 配置节：供应商不上报 token 用量时，可将上下文大小显示切换为本地估算，详见 `[token_counting](../configuration/config-files.md#token-counting)`。
+- `[loop_control]` 两个配置键改名：`max_retries_per_step` → `max_attempts_per_step`、`max_steps_per_run` → `max_steps_per_turn`；旧键不再生效，启动时会有改名警告，详见 [loop_control](https://moonshotai.github.io/kimi-code/zh/configuration/config-files.html#loop-control)。
+- 新增 `[token_counting]` 配置节：供应商不上报 token 用量时，可将上下文大小显示切换为本地估算，详见 [token_counting](https://moonshotai.github.io/kimi-code/zh/configuration/config-files.html#token-counting)。
 
 ### 修复
 
