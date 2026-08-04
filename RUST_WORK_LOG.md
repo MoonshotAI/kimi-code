@@ -5,6 +5,11 @@
 > - **⚠️ 环境备忘（预存，非本次引入）**：`cargo test -p kimi-exec` 的 doctest 在本机报 E0463 `can't find crate for kimi_server_client`（lib 单测正常，doctest 0 个也会编译失败）；用 `--lib` 跳过即可，未阻塞 CI（CI 仅 native-tools 跑 cargo test）。
 > - **并行会话观察**：15fa8cffa（print/chat flags）/ 2ea0a0d72（TUI 审批详情）/ de6387593（ACP set_mode/set_model）为另一并行会话所提交，本会话已全部验证绿；其 kimi-acp 工作区改动（get_config 投影，14:42 后）未触碰。
 
+> **✅ 2026-08-03 ㊸ chat --continue 复用验证（已提交）**：
+> - **缺口**：chat --continue 旗标无集成测试（复用最近会话 vs 新建 chat-<pid> 的可观察差异）。
+> - **实现**：chat_continue_reuses_latest_session——seed continue-me → chat --continue → `sessions --json` 含 continue-me 且无 chat-*。
+> - **验证**：CLI 集成测试 33 → 34；clippy 0。
+
 > **✅ 2026-08-03 ㊷ resume TTY 事件捕获对称（已提交）**：
 > - **缺口**：print 默认 TTY 捕获事件流（`verbose || stderr.is_terminal()`），resume 只跟 `verbose`——TTY 下 `kimi resume <id> "x"` 无进度反馈。
 > - **实现**：resume 改同 print 的 TTY 默认捕获（脚本管道保持干净）。

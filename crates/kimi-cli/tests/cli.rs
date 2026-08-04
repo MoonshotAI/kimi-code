@@ -638,6 +638,53 @@ fn print_goal_mode_creates_goal() {
 }
 
 #[test]
+fn chat_continue_reuses_latest_session() {
+    // chat --continue must reuse the most recent session instead of creating
+    // a fresh chat-<pid> one.
+    let home = temp_dir("chat-continue");
+    let cwd = temp_dir("chat-continue-cwd");
+
+    // Seed a session.
+    let mut child = Command::new(binary())
+        .args(["chat", "-s", "continue-me"])
+        .current_dir(&cwd)
+        .env("KIMI_AGENT_HOME", &home)
+        .env("HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn kimi chat");
+    {
+        use std::io::Write;
+        child.stdin.as_mut().expect("stdin").write_all(b"/quit\n").expect("write");
+    }
+    assert!(child.wait_with_output().expect("wait").status.success());
+
+    // --continue picks it up; no fresh chat-* session is created.
+    let mut child = Command::new(binary())
+        .args(["chat", "--continue"])
+        .current_dir(&cwd)
+        .env("KIMI_AGENT_HOME", &home)
+        .env("HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn kimi chat");
+    {
+        use std::io::Write;
+        child.stdin.as_mut().expect("stdin").write_all(b"/quit\n").expect("write");
+    }
+    assert!(child.wait_with_output().expect("wait").status.success());
+
+    let list = run(&home, &["sessions", "--json"]);
+    let text = stdout(&list);
+    assert!(text.contains("continue-me"), "seeded session listed: {text}");
+    assert!(!text.contains("chat-"), "no fresh chat session created: {text}");
+}
+
+#[test]
 fn chat_approval_commands_offline_safe() {
     // /approvals + /approve|/deny are pure state ops (no LLM): an empty store
     // lists nothing and unknown ids resolve to "not found" without erroring.
