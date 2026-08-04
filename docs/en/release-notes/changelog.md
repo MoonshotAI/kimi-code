@@ -6,6 +6,26 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.32.0 (2026-08-04)
+
+### Features
+
+- Add four hook events: `TurnStarted`, `UserPromptQueued`, `TaskStarted`, and `SessionHeartbeat`; `SessionEnd` now also reports `archive` when a session is archived instead of exited. Configure the events under `[[hooks]]` in `config.toml` — see [Hooks](../customization/hooks.md) for details.
+
+### Polish
+
+- Rename `[loop_control] max_retries_per_step` to `max_attempts_per_step`, and `max_steps_per_run` to `max_steps_per_turn`. The old keys no longer take effect and a startup warning prompts the rename in `config.toml`; the `KIMI_LOOP_MAX_RETRIES_PER_STEP` env var is deprecated in favor of `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP` but still works with a warning.
+- Add a `[token_counting]` config section to choose which token count the context-size display shows (`measured+estimated`, `measured`, or `estimated`); useful for providers that do not report token usage. Set `strategy` under `[token_counting]` in `config.toml` (or `KIMI_TOKEN_COUNTING_STRATEGY`) to switch.
+
+### Bug Fixes
+
+- Fix answers to interactive question prompts being rejected when the model provider returns tool call IDs containing colons (some OpenAI-compatible gateways).
+- Fix automatic context compaction getting stuck retrying an oversized request until it fails.
+- Fall back to the built-in models.dev catalog snapshot when the public catalog is unreachable, so importing a known provider still works offline or in blocked networks.
+- Fix the context window limit showing as 0 when no model is configured; it now falls back to the default model.
+- web: Fix dark-mode monochrome controls and align the chat composer corner radius with the design system.
+- Fix the `/login` already-logged-in confirmation being hard to read; it now uses the success color.
+
 ## 0.31.1 (2026-07-31)
 
 ### Polish
