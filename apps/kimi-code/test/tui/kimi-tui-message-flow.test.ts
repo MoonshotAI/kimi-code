@@ -742,6 +742,50 @@ describe('KimiTUI message flow', () => {
     });
   });
 
+  it('blocks a session-picker switch once the waited-out first prompt starts a turn (v2 engine)', async () => {
+    const lazySession = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(
+      lazySession,
+      {
+        listSessions: vi.fn(async () => [
+          { id: 'ses-old', title: 'Old session', workDir: '/tmp/proj-a', updatedAt: Date.now() },
+        ]),
+      },
+      startupInput,
+    );
+
+    // Hold the lazy createSession open so the first prompt is still pending
+    // when the picker selection arrives.
+    let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
+    harness.createSession.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCreate = resolve; }),
+    );
+
+    driver.handleUserInput('hello');
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledTimes(1);
+    });
+
+    await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\r');
+
+    resolveCreate(lazySession);
+    // The prompt starts its turn first; the switch must then be rejected
+    // instead of being overwritten when the lazy creation completes.
+    await vi.waitFor(() => {
+      expect(lazySession.prompt).toHaveBeenCalledWith('hello');
+      expect(stripSgr(renderTranscript(driver))).toContain('Cannot switch sessions while streaming');
+    });
+    expect(harness.resumeSession).not.toHaveBeenCalled();
+    expect(driver.getCurrentSessionId()).toBe('ses-lazy');
+  });
+
   it('carries a session-only thinking choice into the lazy-created session (v2 engine)', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
