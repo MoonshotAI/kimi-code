@@ -5,7 +5,8 @@
  * `IAgentLifecycleService.fork`, then disables tool calls via an
  * `onBeforeExecuteTool` veto listener (blocks every tool call with the
  * `toolApproval.formatDenyMessage`-formatted TOOL_CALL_DISABLED_MESSAGE) and
- * appends the side-channel system reminder. Bound at Session scope —
+ * enqueues the side-channel reminder into the child's `reminderQueue`. Bound
+ * at Session scope —
  * `fork('main')` is a session-level operation, so the service injects the
  * session's `IAgentLifecycleService` directly rather than resolving it through
  * the main agent's accessor. Callers materialize the main agent first;
@@ -13,7 +14,7 @@
  */
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { IAgentReminderQueueService } from '#/agent/reminderQueue/reminderQueue';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -31,11 +32,8 @@ export class SessionBtwService implements ISessionBtwService {
   async start(): Promise<string> {
     const child = await this.lifecycle.fork('main');
     child.accessor
-      .get(IAgentSystemReminderService)
-      ?.appendSystemReminder(SIDE_QUESTION_SYSTEM_REMINDER, {
-        kind: 'system_trigger',
-        name: 'btw',
-      });
+      .get(IAgentReminderQueueService)
+      ?.enqueue({ variant: 'btw', content: SIDE_QUESTION_SYSTEM_REMINDER });
     const reason =
       child.accessor.get(IAgentToolApprovalService)?.formatDenyMessage(
         TOOL_CALL_DISABLED_MESSAGE,

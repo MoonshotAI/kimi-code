@@ -22,6 +22,8 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { UndoCut } from '#/agent/contextMemory/contextOps';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
+import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { AgentContextInjectorService } from '#/agent/contextInjector/contextInjectorService';
 import {
   IAgentLoopService,
   type AfterStepContext,
@@ -33,6 +35,7 @@ import {
 } from '#/agent/loop/loop';
 import type { StepRequest } from '#/agent/loop/stepRequest';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentReminderQueueService } from '#/agent/reminderQueue/reminderQueue';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
@@ -46,7 +49,7 @@ import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/too
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
-import { DYNAMIC_TOOL_SCHEMA_VARIANT, LOADABLE_TOOLS_TRIGGER } from '#/agent/toolSelect/dynamicTools';
+import { DYNAMIC_TOOL_SCHEMA_VARIANT, LOADABLE_TOOLS_VARIANT } from '#/agent/toolSelect/dynamicTools';
 import { TOOL_SELECT_FLAG_ID } from '#/agent/toolSelect/flag';
 import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
@@ -54,10 +57,11 @@ import { AgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSele
 import { AgentToolSelectService } from '#/agent/toolSelect/toolSelectService';
 import { SelectToolsTool } from '#/agent/tools/select-tools/selectToolsTool';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IWireService } from '#/wire/wire';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry } from '../../app/telemetry/stubs';
 import { registerStateServices } from '../../state/stubs';
-import { stubToolExecutor } from '../loop/stubs';
+import { stubToolExecutor, stubWire } from '../loop/stubs';
 import { registerToolResultTruncationServices } from '../toolResultTruncation/stubs';
 
 const MCP_ALPHA = 'mcp__srv__alpha';
@@ -285,7 +289,8 @@ class FakeContextMemory implements IAgentContextMemoryService {
       role: 'user',
       content: [{ type: 'text', text: `<system-reminder>\n${content.trim()}\n</system-reminder>` }],
       toolCalls: [],
-      origin: { kind: 'system_trigger', name: LOADABLE_TOOLS_TRIGGER },
+      // v1 journal compat: older announcements carry the system_trigger origin.
+      origin: { kind: 'system_trigger', name: LOADABLE_TOOLS_VARIANT },
     });
   }
 }
@@ -319,6 +324,13 @@ function registerSharedServices(
   reg.definePartialInstance(IFlagService, {
     enabled: (id: string) => (id === TOOL_SELECT_FLAG_ID ? flagEnabled : false),
   });
+  reg.defineInstance(IWireService, stubWire());
+  reg.defineInstance(IAgentReminderQueueService, {
+    _serviceBrand: undefined,
+    enqueue: () => '',
+    drain: () => {},
+  });
+  reg.define(IAgentContextInjectorService, AgentContextInjectorService);
   reg.define(IAgentToolRegistryService, AgentToolRegistryService);
   reg.define(IAgentToolSelectService, AgentToolSelectService);
   reg.define(IAgentToolSelectAnnouncementsService, AgentToolSelectAnnouncementsService);
@@ -400,6 +412,14 @@ function registerUser(
   return registration;
 }
 
+function announcementText(message: ContextMessage): string {
+  return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}
+
+function isNewAnnouncement(message: ContextMessage): boolean {
+  return message.origin?.kind === 'injection' && message.origin.variant === LOADABLE_TOOLS_VARIANT;
+}
+
 async function announce(h: Harness, step = 1): Promise<string | undefined> {
   const before = h.contextMemory.appended.length;
   await h.loop.hooks.onWillBeginStep.run({
@@ -407,18 +427,22 @@ async function announce(h: Harness, step = 1): Promise<string | undefined> {
     step,
     signal: new AbortController().signal,
   });
-  const announcement = h.contextMemory.appended
-    .slice(before)
-    .find(
-      (message) =>
-        message.origin?.kind === 'system_trigger' &&
-        message.origin.name === LOADABLE_TOOLS_TRIGGER,
-    );
+  const announcement = h.contextMemory.appended.slice(before).find(isNewAnnouncement);
   h.contextMemory.landAppended();
   if (announcement === undefined) return undefined;
-  return announcement.content
-    .map((part) => (part.type === 'text' ? part.text : ''))
-    .join('');
+  return announcementText(announcement);
+}
+
+async function announceAfterCompaction(h: Harness): Promise<string | undefined> {
+  const injector = h.ix.get(IAgentContextInjectorService) as unknown as {
+    injectAfterCompaction(): Promise<void>;
+  };
+  const before = h.contextMemory.appended.length;
+  await injector.injectAfterCompaction();
+  const announcement = h.contextMemory.appended.slice(before).find(isNewAnnouncement);
+  h.contextMemory.landAppended();
+  if (announcement === undefined) return undefined;
+  return announcementText(announcement);
 }
 
 async function execute(
@@ -1015,9 +1039,8 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
     expect(await announce(h, 2)).toBeUndefined();
 
     h.contextMemory.clear();
-    h.eventBus.emit('compaction.completed');
-
-    const reannounced = await announce(h, 2);
+    // The compaction pipeline re-arms per-turn providers through the injector.
+    const reannounced = await announceAfterCompaction(h);
     expect(reannounced).toContain(`<tools_added>\n${MCP_ALPHA}\n${MCP_BETA}\n</tools_added>`);
   });
 

@@ -269,6 +269,28 @@ describe('WireService', () => {
     }
   });
 
+  it('skips retired record types during replay without reporting them', async () => {
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      await restoreTestAgentWire(
+        wire,
+        log,
+        testWireScope(SCOPE, KEY),
+        [
+          { type: 'store.counter.add', by: 2 },
+          { type: 'interruptionReminder.recorded', turnId: 0 },
+          { type: 'store.counter.add', by: 3 },
+        ],
+      );
+
+      expect(wire.getModel(CounterModel)).toEqual({ value: 5 });
+      expect(unexpected).toEqual([]);
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
+  });
+
   it('freezes state: getModel is frozen and mutation throws in strict mode', () => {
     wire.dispatch(counterAdd({ by: 2 }));
     const state = wire.getModel(CounterModel);

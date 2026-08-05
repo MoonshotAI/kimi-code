@@ -17,10 +17,8 @@
  * same on-disk shape the v1 loop writes — and `contextAppendLoopEvent` folds
  * them into assistant / tool messages both at live dispatch time and on
  * replay, so v1- and v2-written sessions reduce
- * identically. The swarm-mode exit reminder removal is a cross-model fold:
- * `ContextModel` registers a reducer on `swarm_mode.exit` (see
- * `popSwarmModeReminder`) so the pop replays from the `swarm_mode.exit` record
- * itself.
+ * identically. Swarm-mode announcements are owned by the `swarm` domain's
+ * context-injection provider, not by this Model.
  *
  * `context.undo` counts conversation ticks with the single `isUndoAnchor`
  * predicate — the same definition the checkpoint
@@ -119,18 +117,7 @@ export const ContextModel = defineModel<ContextMessage[]>('contextMemory', () =>
       return changed ? result : state;
     },
   },
-  reducers: {
-    'swarm_mode.exit': popSwarmModeReminder,
-  },
 });
-
-function popSwarmModeReminder(state: ContextMessage[], _payload: unknown): ContextMessage[] {
-  const last = state[state.length - 1];
-  if (last === undefined) return state;
-  const origin = last.origin;
-  if (origin?.kind !== 'injection' || origin.variant !== 'swarm_mode') return state;
-  return resetFold(state.slice(0, -1)) as ContextMessage[];
-}
 
 declare module '#/wire/types' {
   interface PersistedOpMap {

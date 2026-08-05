@@ -65,7 +65,7 @@ describe('Agent resume', () => {
     expect(persistence.records.filter((record) => record.type === 'metadata')).toHaveLength(1);
   });
 
-  it('reconciles a pending user interruption after restore when the reminder is missing', async () => {
+  it('drains a pending once-reminder after restore (crash before delivery)', async () => {
     const persistence = new RecordingAgentPersistence([
       resumeConfigRecord(),
       {
@@ -98,6 +98,15 @@ describe('Agent resume', () => {
         },
       },
       { type: 'turn.cancel', turnId: 0, target: 'active', reason: 'user_cancelled' },
+      {
+        type: 'reminderQueue.enqueue',
+        entry: {
+          id: 'r1',
+          variant: 'interruption',
+          content:
+            "The previous turn was interrupted by the user before completion; any partial output shown above is incomplete. The user's next message continues the conversation.",
+        },
+      },
     ] as unknown as WireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
@@ -119,7 +128,7 @@ describe('Agent resume', () => {
         }),
       );
       expect(persistence.appended).toContainEqual(
-        expect.objectContaining({ type: 'interruptionReminder.recorded', turnId: 0 }),
+        expect.objectContaining({ type: 'reminderQueue.delivered', id: 'r1' }),
       );
 
       await ctx.expectResumeMatches();

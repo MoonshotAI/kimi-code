@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { IAgentReminderQueueService } from '#/agent/reminderQueue/reminderQueue';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ToolCall } from '#/kosong/contract/message';
@@ -21,14 +21,14 @@ describe('SessionBtwService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let fork: ReturnType<typeof vi.fn>;
-  let appendSystemReminder: ReturnType<typeof vi.fn>;
+  let enqueue: ReturnType<typeof vi.fn>;
   let formatDenyMessage: ReturnType<typeof vi.fn>;
   let executorEvents: ToolExecutorEventStubs;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
-    appendSystemReminder = vi.fn();
+    enqueue = vi.fn(() => 'reminder-id');
     // The suffix mimics the worker-rejection guidance formatDenyMessage appends
     // for forked sub agents, so the assertion proves the reason went through it.
     formatDenyMessage = vi.fn((message: string) => `${message} [worker guidance]`);
@@ -38,7 +38,7 @@ describe('SessionBtwService', () => {
       id: 'agent-btw-1',
       accessor: {
         get: (id: unknown) => {
-          if (id === IAgentSystemReminderService) return { appendSystemReminder };
+          if (id === IAgentReminderQueueService) return { enqueue };
           if (id === IAgentToolApprovalService) return { formatDenyMessage };
           if (id === IAgentToolExecutorService) return executorEvents.executor;
           return undefined;
@@ -60,9 +60,9 @@ describe('SessionBtwService', () => {
 
     expect(id).toBe('agent-btw-1');
     expect(fork).toHaveBeenCalledWith('main');
-    expect(appendSystemReminder).toHaveBeenCalledWith(SIDE_QUESTION_SYSTEM_REMINDER, {
-      kind: 'system_trigger',
-      name: 'btw',
+    expect(enqueue).toHaveBeenCalledWith({
+      variant: 'btw',
+      content: SIDE_QUESTION_SYSTEM_REMINDER,
     });
   });
 

@@ -15,6 +15,7 @@ import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { IGoalDeadlineScheduler } from '#/agent/goal/goalDeadlineScheduler';
 import { type AgentGoalService } from '#/agent/goal/goalService';
+import { IAgentReminderQueueService } from '#/agent/reminderQueue/reminderQueue';
 import { UpdateGoalToolInputSchema } from '#/agent/tools/goal/update-goal/update-goal';
 import { UpdateGoalTool } from '#/agent/tools/goal/update-goal/updateGoalTool';
 import {
@@ -500,8 +501,11 @@ describe('AgentGoalService', () => {
       const removed = await goals.cancelGoal();
       expect(removed.status).toBe('active');
       expect(goals.getGoal()).toEqual({ goal: null });
+      // The cancellation reminder rides the once-reminder queue now; the
+      // boundary scheduler delivers it ahead of the next prompt.
+      ctx.get(IAgentReminderQueueService).drain();
       const reminder = context.get().at(-1);
-      expect(reminder?.origin).toEqual({ kind: 'system_trigger', name: 'goal_cancelled' });
+      expect(reminder?.origin).toEqual({ kind: 'injection', variant: 'goal_cancelled' });
       expect(JSON.stringify(reminder?.content)).toContain('Ignore earlier active-goal reminders');
       await expect(goals.cancelGoal()).rejects.toMatchObject({ code: ErrorCodes.GOAL_NOT_FOUND });
     });
@@ -2001,7 +2005,7 @@ describe('AgentGoalService mid-turn budget stop', () => {
       const toolResultIndex = history.findIndex((message) => message.role === 'tool');
       const reminderIndex = history.findIndex(
         (message) =>
-          message.origin?.kind === 'system_trigger' && message.origin.name === 'goal_budget_stop',
+          message.origin?.kind === 'injection' && message.origin.variant === 'goal_budget_stop',
       );
       expect(toolResultIndex).toBeGreaterThanOrEqual(0);
       expect(reminderIndex).toBeGreaterThan(toolResultIndex);
@@ -2303,12 +2307,39 @@ describe('AgentGoalService fork boundaries', () => {
     ]);
 
     expect(goals.getGoal().goal).toBeNull();
+    // Enqueued during replay normalization; the boundary scheduler delivers
+    // it ahead of the next prompt.
+    ctx.get(IAgentReminderQueueService).drain();
     const reminder = context.get().at(-1);
-    expect(reminder?.origin).toEqual({ kind: 'system_trigger', name: 'goal_fork_cleared' });
+    expect(reminder?.origin).toEqual({ kind: 'injection', variant: 'goal_fork_cleared' });
     const text = JSON.stringify(reminder?.content);
     expect(text).toContain('This fork does not have a current goal.');
     expect(text).toContain('Ignore earlier active-goal reminders from the source session.');
     expect(text).toContain('Handle requests normally unless the user starts a new goal.');
+  });
+
+  it('does not re-deliver a fork-cleared reminder recorded with the legacy system_trigger origin', async () => {
+    await restoreGoalRecords(ctx, goals, [
+      { type: 'goal.create', goalId: 'source-goal', objective: 'source work' },
+      { type: 'forked' },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: '<system-reminder>\nlegacy fork cleared\n</system-reminder>' },
+          ],
+          toolCalls: [],
+          origin: { kind: 'system_trigger', name: 'goal_fork_cleared' },
+        },
+      },
+    ]);
+
+    // The legacy reminder clears the pending flag during replay, so the
+    // normalization enqueues nothing and the drain delivers nothing.
+    ctx.get(IAgentReminderQueueService).drain();
+    expect(context.get()).toHaveLength(1);
+    expect(context.get()[0]?.origin).toEqual({ kind: 'system_trigger', name: 'goal_fork_cleared' });
   });
 
   it('does not append a fork-cleared reminder when the fork had no goal', async () => {

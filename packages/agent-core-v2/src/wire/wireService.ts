@@ -49,6 +49,13 @@ import {
 
 const MAX_DRAIN = 100;
 
+/**
+ * Record types this build intentionally removed. Replay drops them silently:
+ * their absence is by design, so they must not surface as unexpected errors
+ * the way genuinely unknown types do.
+ */
+const RETIRED_RECORD_TYPES: ReadonlySet<string> = new Set(['interruptionReminder.recorded']);
+
 export class CycleError extends WireError {
   constructor(readonly depth: number, readonly opTypes: readonly string[]) {
     super(
@@ -213,7 +220,9 @@ export class WireService extends Disposable implements IWireService {
   private replayRecord(record: WireRecord, index: number): void {
     const descriptor = OP_REGISTRY.get(record.type);
     if (descriptor === undefined) {
-      this.reportSkippedRecord(record.type, index);
+      if (!RETIRED_RECORD_TYPES.has(record.type)) {
+        this.reportSkippedRecord(record.type, index);
+      }
       return;
     }
     const payload = descriptor.schema.safeParse(wireRecordToPayload(record));

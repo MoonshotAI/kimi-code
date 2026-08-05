@@ -16,7 +16,7 @@
  * `StepRequest`s onto `loop` (the continuation message materializes when the
  * loop pops it), accounts live
  * turn usage through `usage`, observes terminal goal tool results through
- * `toolExecutor`, writes system reminders through `systemReminder`, reports
+ * `toolExecutor`, enqueues one-time reminder events through `reminderQueue`, reports
  * telemetry through `telemetry`, and checks main-agent eligibility through
  * `scopeContext`. Measures time and arms hard deadlines through `goal`'s
  * App-scoped deadline scheduler. Two `onBeforeExecuteTool` veto listeners
@@ -58,7 +58,7 @@ import {
 import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
 import { LoopErrors } from '#/agent/loop/errors';
 import { ContinuationStepRequest, MessageStepRequest } from '#/agent/loop/stepRequest';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { IAgentReminderQueueService } from '#/agent/reminderQueue/reminderQueue';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import type { ExecutableToolResult } from '#/tool/toolContract';
@@ -217,10 +217,10 @@ const GoalForkNoticeModel = defineModel<GoalForkNoticeState>(
 );
 
 function isGoalForkClearedReminder(message: ContextMessage | undefined): boolean {
-  return (
-    message?.origin?.kind === 'system_trigger' &&
-    message.origin.name === GOAL_FORK_CLEARED_REMINDER_NAME
-  );
+  const origin = message?.origin;
+  if (origin?.kind === 'injection') return origin.variant === GOAL_FORK_CLEARED_REMINDER_NAME;
+  // Legacy journals announced through `{kind: 'system_trigger'}`.
+  return origin?.kind === 'system_trigger' && origin.name === GOAL_FORK_CLEARED_REMINDER_NAME;
 }
 
 function isGoalContinuationOrigin(origin: TurnStartedEvent['origin']): boolean {
@@ -285,7 +285,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   constructor(
     @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
-    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
+    @IAgentReminderQueueService private readonly reminderQueue: IAgentReminderQueueService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
     @IAgentLoopService private readonly loopService: IAgentLoopService,
@@ -626,9 +626,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     }
     this.clearInternal(actor);
     if (actor === 'user') {
-      this.reminders.appendSystemReminder(GOAL_CANCELLED_REMINDER, {
-        kind: 'system_trigger',
-        name: 'goal_cancelled',
+      this.reminderQueue.enqueue({
+        variant: 'goal_cancelled',
+        content: GOAL_CANCELLED_REMINDER,
       });
     }
     return snapshot;
@@ -804,9 +804,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       hasStepBudgetRemaining(maxSteps, ctx.step)
     ) {
       this.budgetGraceTurns.add(ctx.turnId);
-      this.reminders.appendSystemReminder(GOAL_BUDGET_STOP_REMINDER, {
-        kind: 'system_trigger',
-        name: GOAL_BUDGET_STOP_REMINDER_NAME,
+      this.reminderQueue.enqueue({
+        variant: GOAL_BUDGET_STOP_REMINDER_NAME,
+        content: GOAL_BUDGET_STOP_REMINDER,
       });
       return true;
     }
@@ -1018,9 +1018,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
 
   private appendForkClearedReminder(): void {
     if (!this.wire.getModel(GoalForkNoticeModel).reminderPending) return;
-    this.reminders.appendSystemReminder(GOAL_FORK_CLEARED_REMINDER, {
-      kind: 'system_trigger',
-      name: GOAL_FORK_CLEARED_REMINDER_NAME,
+    this.reminderQueue.enqueue({
+      variant: GOAL_FORK_CLEARED_REMINDER_NAME,
+      content: GOAL_FORK_CLEARED_REMINDER,
     });
   }
 

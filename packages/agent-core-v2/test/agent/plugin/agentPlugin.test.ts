@@ -75,23 +75,6 @@ function findPluginSessionStartMessages(ctx: TestAgentContext) {
   );
 }
 
-function waitForPluginSessionStartMessage(ctx: TestAgentContext): Promise<void> {
-  return new Promise((resolve) => {
-    const subscription = ctx.get(IEventBus).subscribe('context.spliced', (event) => {
-      if (
-        event.messages.some(
-          (message) =>
-            message.origin?.kind === 'injection' &&
-            message.origin.variant === 'plugin_session_start',
-        )
-      ) {
-        subscription.dispose();
-        resolve();
-      }
-    });
-  });
-}
-
 function messageText(message: { readonly content: readonly { readonly type: string; readonly text?: string }[] }): string {
   return message.content.map((part) => (part.type === 'text' ? (part.text ?? '') : '')).join('');
 }
@@ -223,9 +206,11 @@ describe('AgentPluginService plugin session-start wiring', () => {
 
     expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
 
-    const appended = waitForPluginSessionStartMessage(ctx);
+    // The catalog change only marks the provider dirty; the supersedes
+    // render lands at the next injection boundary.
     sinkChange.fire('plugin');
-    await appended;
+    expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
+    await injectRegistered(ctx);
 
     const messages = findPluginSessionStartMessages(ctx);
     expect(messages.length).toBeGreaterThanOrEqual(2);
@@ -269,10 +254,9 @@ describe('AgentPluginService plugin session-start wiring', () => {
     await injectRegistered(ctx);
     expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
 
-    const appended = waitForPluginSessionStartMessage(ctx);
     sinkChange.fire('user');
     sinkChange.fire('plugin');
-    await appended;
+    await injectRegistered(ctx);
 
     expect(findPluginSessionStartMessages(ctx)).toHaveLength(2);
     sinkChange.dispose();

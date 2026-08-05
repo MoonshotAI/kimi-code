@@ -1,9 +1,12 @@
 /**
  * `contextInjector` domain — `IAgentContextInjectorService` implementation.
  *
- * Injects registered context providers through `loop` and `systemReminder`,
- * tracks their positions in `contextMemory` through `eventBus`, and reconciles
- * those positions after `wire` restoration. The plain-data `isNewTurn` flag is
+ * The unified boundary scheduler for every model-facing reminder. It drains
+ * the persisted once-reminder queue (`reminderQueue`, past-tense events,
+ * exactly-once) ahead of reconciling the registered context providers
+ * (present-tense state) through `loop` and `systemReminder`, tracks provider
+ * positions in `contextMemory` through `eventBus`, and reconciles those
+ * positions after `wire` restoration. The plain-data `isNewTurn` flag is
  * registered into `agentState` (`IAgentStateService`) and read/written through
  * it; `entries` stays a plain instance field (its values hold provider
  * functions, not plain data). Bound at Agent scope.
@@ -15,6 +18,7 @@ import { defineState } from '#/_base/state/stateRegistry';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentReminderQueueService } from '#/agent/reminderQueue/reminderQueue';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventBus } from '#/app/event/eventBus';
@@ -43,6 +47,7 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentLoopService loopService: IAgentLoopService,
+    @IAgentReminderQueueService private readonly reminderQueue: IAgentReminderQueueService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IEventBus private readonly eventBus: IEventBus,
     @IWireService wire: IWireService,
@@ -58,6 +63,9 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     );
     this._register(
       this.eventBus.subscribe('turn.started', () => {
+        // Draining here lands once-reminders ahead of the next prompt, which
+        // only materializes later (in the turn's first step).
+        this.reminderQueue.drain();
         this.isNewTurn = true;
       }),
     );
@@ -68,6 +76,10 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     );
     this._register(
       wire.hooks.onDidRestore.register('context-injector', async (_ctx, next) => {
+        // Replay rebuilds the pending ledger; deliver what was left pending
+        // before the loop resumes, then fold the fresh messages into
+        // position tracking.
+        this.reminderQueue.drain();
         this.resyncPositions();
         await next();
       }),
@@ -104,6 +116,10 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
   }
 
   private async inject(): Promise<void> {
+    // Once-reminders (past-tense events) drain ahead of the reconcile pass so
+    // state reminders never wedge themselves between an event and the message
+    // it annotates.
+    this.reminderQueue.drain();
     const isNewTurn = this.isNewTurn;
     this.isNewTurn = false;
     for (const entry of this.entries) {

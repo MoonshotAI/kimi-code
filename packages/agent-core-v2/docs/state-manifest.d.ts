@@ -23,7 +23,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 69 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 70 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -57,6 +57,7 @@
 //     activityView.lastTurn                           src/agent/activityView/activityViewService.ts
 //     activityView.lifecycle                          src/agent/activityView/activityViewService.ts
 //     activityView.turn                               src/agent/activityView/activityViewService.ts
+//     agentPlugin.sessionStartDirty                   src/agent/plugin/agentPluginService.ts
 //     agentsMdReminder.cwd                            src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.known                          src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
@@ -103,6 +104,7 @@
 //     shellCommand.tasks                              src/agent/shellCommand/shellCommandService.ts
 //     stepRetry.failedAttempts                        src/agent/stepRetry/stepRetryService.ts
 //     stepRetry.lastFailedDriverId                    src/agent/stepRetry/stepRetryService.ts
+//     swarm.lastRendered                              src/agent/swarm/injection/swarmInjection.ts
 //     task.activeTaskReminderPending                  src/agent/task/taskService.ts
 //     task.deliveredNotificationKeys                  src/agent/task/taskService.ts
 //     task.ghosts                                     src/agent/task/taskService.ts
@@ -117,7 +119,6 @@
 //     toolDedupe.syntheticCallIds                     src/agent/toolDedupe/toolDedupeService.ts
 //     toolExecutor.dupTypeTurnId                      src/agent/toolExecutor/toolExecutorService.ts
 //     toolExecutor.toolCallDupTypes                   src/agent/toolExecutor/toolExecutorService.ts
-//     toolSelect.needsBoundaryInjection               src/agent/toolSelect/toolSelectAnnouncementsService.ts
 //     toolSelect.pendingLoaded                        src/agent/toolSelect/toolSelectService.ts
 //     usage.currentTurn                               src/agent/usage/usageService.ts
 //     usage.currentTurnId                             src/agent/usage/usageService.ts
@@ -1085,6 +1086,8 @@ export interface AgentStateSnapshot {
   'permissionMode.lastMode': 'manual' | 'yolo' | 'auto' | undefined;
   // src/agent/plan/injection/planModeInjection.ts
   'plan.wasActive': boolean;
+  // src/agent/plugin/agentPluginService.ts
+  'agentPlugin.sessionStartDirty': boolean;
   // src/agent/profile/profileService.ts
   'profile.activeToolNamesOverlay': readonly string[] | undefined;
   'profile.agentsMdWarning': string | undefined;
@@ -1098,6 +1101,8 @@ export interface AgentStateSnapshot {
   // src/agent/stepRetry/stepRetryService.ts
   'stepRetry.failedAttempts': number;
   'stepRetry.lastFailedDriverId': string | undefined;
+  // src/agent/swarm/injection/swarmInjection.ts
+  'swarm.lastRendered': 'active' | 'inactive' | undefined;
   // src/agent/task/taskService.ts
   'task.activeTaskReminderPending': boolean;
   'task.deliveredNotificationKeys': Set<string>;
@@ -1155,8 +1160,6 @@ export interface AgentStateSnapshot {
   // src/agent/toolExecutor/toolExecutorService.ts
   'toolExecutor.dupTypeTurnId': number | undefined;
   'toolExecutor.toolCallDupTypes': Map<string, /* ToolCallDupType — packages/agent-core-v2/src/agent/toolExecutor/toolExecutor.ts */ 'same_step' | 'cross_step'>;
-  // src/agent/toolSelect/toolSelectAnnouncementsService.ts
-  'toolSelect.needsBoundaryInjection': boolean;
   // src/agent/toolSelect/toolSelectService.ts
   'toolSelect.pendingLoaded': Set<string>;
   // src/agent/usage/usageService.ts

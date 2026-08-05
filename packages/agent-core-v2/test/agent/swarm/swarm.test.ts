@@ -4,14 +4,21 @@ import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { AgentContextInjectorService } from '#/agent/contextInjector/contextInjectorService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import type { ContextMessage } from '#/agent/contextMemory/types';
 import { DEFAULT_SUBAGENT_TIMEOUT_MS } from '#/session/subagent/configSection';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionSwarmService, type SessionSwarmRunResult, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
+import { IAgentReminderQueueService } from '#/agent/reminderQueue/reminderQueue';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { AgentSwarmService } from '#/agent/swarm/swarmService';
+import SWARM_MODE_ENTER_REMINDER from '../../../src/agent/swarm/enter-reminder.md?raw';
 import { SwarmModel } from '#/agent/swarm/swarmOps';
 import { SECONDARY_DERIVED_MODEL_ID } from '#/app/kosongConfig/secondaryModelOverlay';
 import { AgentSwarmToolInputSchema } from '#/agent/tools/agent-swarm/agent-swarm';
@@ -36,6 +43,7 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+import { IWireService } from '#/wire/wire';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 
@@ -156,11 +164,18 @@ describe('AgentSwarmService', () => {
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
-    ix.stub(IAgentContextMemoryService, stubContextMemory());
+    ix.set(IEventBus, new SyncDescriptor(EventBusService));
+    ix.stub(IAgentContextMemoryService, stubContextMemory(ix.get(IEventBus)));
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    ix.set(IEventBus, new SyncDescriptor(EventBusService));
     ix.stub(IAgentLoopService, stubLoopWithHooks());
+    ix.stub(IAgentReminderQueueService, {
+      _serviceBrand: undefined,
+      enqueue: () => '',
+      drain: () => {},
+    });
+    ix.set(IAgentStateService, new AgentStateService());
+    ix.set(IAgentContextInjectorService, new SyncDescriptor(AgentContextInjectorService));
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     ix.stub(IAgentLifecycleService, {});
     ix.stub(ISessionSwarmService, {
@@ -206,11 +221,113 @@ describe('AgentSwarmService', () => {
     swarm.exit();
     expect(swarm.isActive).toBe(false);
 
+    // Exit no longer pops the enter reminder out of the context — reminders
+    // are pure state renders through the injector, so no splice is emitted.
     expect(events).toEqual([
       { type: 'agent.status.updated', swarmMode: true },
       { type: 'agent.status.updated', swarmMode: false },
-      { type: 'context.spliced', start: 0, deleteCount: 1, messages: [] },
     ]);
+  });
+
+  it('renders the enter guidance on enter and the exit guidance on exit through the injector', async () => {
+    const swarm = ix.get(IAgentSwarmService);
+    const context = ix.get(IAgentContextMemoryService);
+    const injector = ix.get(IAgentContextInjectorService) as unknown as {
+      inject(): Promise<void>;
+    };
+    const textOf = (message: ContextMessage | undefined): string =>
+      message?.content.map((part) => (part.type === 'text' ? part.text : '')).join('') ?? '';
+
+    swarm.enter('manual');
+    await injector.inject();
+
+    let reminder = context.get().at(-1);
+    expect(reminder?.origin).toEqual({ kind: 'injection', variant: 'swarm_mode' });
+    expect(textOf(reminder)).toContain('You are now in "agent swarm" mode.');
+
+    // No transition and the guidance is still live: nothing re-renders.
+    await injector.inject();
+    expect(context.get()).toHaveLength(1);
+
+    swarm.exit();
+    await injector.inject();
+
+    reminder = context.get().at(-1);
+    expect(reminder?.origin).toEqual({ kind: 'injection', variant: 'swarm_mode' });
+    expect(textOf(reminder)).toContain('Swarm Mode has ended.');
+    // The exit render replaces, not appends to, the enter guidance — and the
+    // enter copy is never spliced out.
+    expect(context.get()).toHaveLength(2);
+  });
+
+  it('renders no reminder at all for tool-triggered swarms', async () => {
+    const swarm = ix.get(IAgentSwarmService);
+    const context = ix.get(IAgentContextMemoryService);
+    const injector = ix.get(IAgentContextInjectorService) as unknown as {
+      inject(): Promise<void>;
+    };
+
+    swarm.enter('tool');
+    await injector.inject();
+    swarm.exit();
+    await injector.inject();
+
+    expect(context.get()).toHaveLength(0);
+  });
+
+  it('does not duplicate the enter guidance on resume while it is still live in history', async () => {
+    const swarm = ix.get(IAgentSwarmService);
+    const context = ix.get(IAgentContextMemoryService);
+    const injector = ix.get(IAgentContextInjectorService) as unknown as {
+      inject(): Promise<void>;
+    };
+
+    // A previous process rendered the guidance; replay rebuilds the trigger
+    // and the restore seed recovers the rendered flag from the history.
+    ix.get(IAgentSystemReminderService).appendSystemReminder(SWARM_MODE_ENTER_REMINDER, {
+      kind: 'injection',
+      variant: 'swarm_mode',
+    });
+    await restoreTestAgentWire(
+      ix.get(IWireService),
+      ix.get(IAppendLogStore),
+      testWireScope('wire', 'swarm-test'),
+      [{ type: 'swarm_mode.enter', trigger: 'manual' }],
+    );
+
+    await injector.inject();
+
+    expect(swarm.isActive).toBe(true);
+    expect(context.get()).toHaveLength(1);
+  });
+
+  it('renders a corrective exit reminder when resume finds live enter guidance but swarm is off', async () => {
+    const swarm = ix.get(IAgentSwarmService);
+    const context = ix.get(IAgentContextMemoryService);
+    const injector = ix.get(IAgentContextInjectorService) as unknown as {
+      inject(): Promise<void>;
+    };
+
+    ix.get(IAgentSystemReminderService).appendSystemReminder(SWARM_MODE_ENTER_REMINDER, {
+      kind: 'injection',
+      variant: 'swarm_mode',
+    });
+    await restoreTestAgentWire(
+      ix.get(IWireService),
+      ix.get(IAppendLogStore),
+      testWireScope('wire', 'swarm-test'),
+      [{ type: 'swarm_mode.enter', trigger: 'manual' }, { type: 'swarm_mode.exit' }],
+    );
+
+    await injector.inject();
+
+    expect(swarm.isActive).toBe(false);
+    const reminder = context.get().at(-1);
+    expect(reminder?.origin).toEqual({ kind: 'injection', variant: 'swarm_mode' });
+    const text =
+      reminder?.content.map((part) => (part.type === 'text' ? part.text : '')).join('') ?? '';
+    expect(text).toContain('Swarm Mode has ended.');
+    expect(context.get()).toHaveLength(2);
   });
 
   it('dispatch persists enter/exit records and replay rebuilds the trigger (silent)', async () => {

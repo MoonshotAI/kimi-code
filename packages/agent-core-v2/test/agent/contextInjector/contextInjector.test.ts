@@ -20,6 +20,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentReminderQueueService } from '#/agent/reminderQueue/reminderQueue';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
@@ -75,6 +76,11 @@ describe('AgentContextInjectorService', () => {
         reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
         reg.defineInstance(IWireService, stubWire());
         reg.defineInstance(IAgentStateService, new AgentStateService());
+        reg.defineInstance(IAgentReminderQueueService, {
+          _serviceBrand: undefined,
+          enqueue: () => '',
+          drain: () => {},
+        });
         reg.define(IAgentSystemReminderService, AgentSystemReminderService);
         reg.define(IAgentContextInjectorService, AgentContextInjectorService);
       },
@@ -313,5 +319,24 @@ describe('AgentContextInjectorService', () => {
       { kind: 'compaction_summary' },
       { kind: 'injection', variant: 'per_turn_test' },
     ]);
+  });
+
+  it('drains the reminder queue before running the providers', async () => {
+    const calls: string[] = [];
+    ix.stub(IAgentReminderQueueService, {
+      _serviceBrand: undefined,
+      enqueue: () => '',
+      drain: () => {
+        calls.push('drain');
+      },
+    });
+    injector(ix).register('ordering_test', () => {
+      calls.push('provider');
+      return undefined;
+    });
+
+    await injector(ix).inject();
+
+    expect(calls).toEqual(['drain', 'provider']);
   });
 });

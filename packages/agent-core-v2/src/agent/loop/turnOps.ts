@@ -6,8 +6,7 @@
  * legacy loop-event observations. Also persists the terminal `turn.ended`
  * record (reason / error / durationMs) so downstream history rebuilds can
  * recover how a turn ended; the record carries no engine-restorable state, so
- * its `apply` is a no-op. Consumed by the Agent-scope `loopService`; the
- * `interruptionReminder` domain projects `turn.cancel` into its own model.
+ * its `apply` is a no-op. Consumed by the Agent-scope `loopService`.
  */
 
 import { z } from 'zod';

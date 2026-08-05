@@ -672,7 +672,7 @@ describe('Agent context', () => {
     ]);
   });
 
-  it('removes a pre-anchor image compression reminder when undoing its prompt', async () => {
+  it('removes the image compression reminder delivered after its prompt when undoing it', async () => {
     profile.update({ activeToolNames: [] });
     const caption = buildImageCompressionCaption({
       original: { width: 3264, height: 666, byteLength: 344 * 1024, mimeType: 'image/png' },
@@ -685,9 +685,11 @@ describe('Agent context', () => {
     });
     await ctx.untilTurnEnd();
 
+    // Captions ride the once-reminder queue now and land after their host
+    // prompt; undo still cuts the pair together.
     expect(context.get()).toMatchObject([
-      { origin: { kind: 'injection', variant: 'image_compression' } },
       { origin: { kind: 'user' } },
+      { origin: { kind: 'injection', variant: 'image_compression' } },
       { role: 'assistant' },
     ]);
 
