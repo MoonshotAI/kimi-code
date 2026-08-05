@@ -141,9 +141,15 @@ Kimi WebBridge 让 AI 直接操控你的浏览器，带着你的登录状态和 
 
 #### 安装浏览器扩展
 
-通过 `/plugins` 安装后，还需要在浏览器中安装 Kimi WebBridge 扩展，AI 才能操控你的浏览器。推荐从应用商店安装：打开 [Chrome 应用商店](https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc)或 [Edge 应用商店](https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg)，点击添加即可。
+通过 `/plugins` 安装后，还需要在浏览器中安装 Kimi WebBridge 扩展，AI 才能操控你的浏览器。有两种安装方式：
 
-无法访问应用商店时，按以下步骤手动安装：
+**方式一：应用商店安装（推荐）**
+
+打开 [Chrome 应用商店](https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc)或 [Edge 应用商店](https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg)，点击添加即可。
+
+**方式二：手动安装**
+
+无法访问应用商店时使用这种方式，按以下步骤操作：
 
 1. [下载扩展安装包](https://kimi-web-img.moonshot.cn/webbridge/latest/extension/kimi-webbridge-extension.zip)并解压
 2. 在浏览器地址栏输入 `chrome://extensions/` 打开扩展管理页，开启右上角的**开发者模式**

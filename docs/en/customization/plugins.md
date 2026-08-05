@@ -141,9 +141,15 @@ Kimi WebBridge lets AI drive your browser directly — not an emulator, not a cr
 
 #### Install the browser extension
 
-After installing via `/plugins`, you also need the Kimi WebBridge extension in your browser before AI can drive it. The recommended way is to install from a store: open the [Chrome Web Store](https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc) or [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg) page and click Add.
+After installing via `/plugins`, you also need the Kimi WebBridge extension in your browser before AI can drive it. There are two ways to install it:
 
-If you can't reach the stores, install manually:
+**Option 1: Install from a store (recommended)**
+
+Open the [Chrome Web Store](https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc) or [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg) page and click Add.
+
+**Option 2: Install manually**
+
+Use this when you can't reach the stores:
 
 1. [Download the extension package](https://kimi-web-img.moonshot.cn/webbridge/latest/extension/kimi-webbridge-extension.zip) and unzip it
 2. Type `chrome://extensions/` in the address bar to open the extensions page, then turn on **Developer mode** in the top-right corner
