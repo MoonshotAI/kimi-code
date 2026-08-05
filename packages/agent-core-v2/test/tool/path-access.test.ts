@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { extendWorkspaceWithSkillRoots, isSensitiveFile } from '#/tool/path-access';
+import type { ShellPathBridge } from '#/_base/execEnv/shellPathBridge';
+import {
+  DEFAULT_WORKSPACE_ACCESS_POLICY,
+  extendWorkspaceWithSkillRoots,
+  isSensitiveFile,
+  resolvePathAccess,
+  resolvePathAccessPath,
+} from '#/tool/path-access';
 
 describe('isSensitiveFile', () => {
   it('flags base .env files in any directory', () => {
@@ -100,5 +107,52 @@ describe('extendWorkspaceWithSkillRoots', () => {
         'win32',
       ).additionalDirs,
     ).toEqual([]);
+  });
+});
+
+describe('resolvePathAccess shell path bridge', () => {
+  const WIN_ENV = {
+    pathClass: 'win32' as const,
+    homeDir: 'C:\\Users\\test',
+    osKind: 'Windows',
+    shellName: 'bash' as const,
+    shellPath: 'C:\\kimi-test-nonexistent\\Git\\bin\\bash.exe',
+  };
+
+  it('routes win32 file-tool paths through the shell path bridge', () => {
+    const result = resolvePathAccessPath('/c/workspace/file.txt', {
+      env: WIN_ENV,
+      workspace: { workspaceDir: 'C:\\workspace', additionalDirs: [] },
+      operation: 'read',
+    });
+    expect(result).toBe('C:/workspace/file.txt');
+  });
+
+  it('passes root-relative POSIX paths through when cygpath is unavailable', () => {
+    const result = resolvePathAccessPath('/tmp/scratch.txt', {
+      env: WIN_ENV,
+      workspace: { workspaceDir: 'C:\\workspace', additionalDirs: [] },
+      operation: 'read',
+    });
+    expect(result).toBe('/tmp/scratch.txt');
+  });
+
+  it('normalizes through an explicitly injected shell path bridge', () => {
+    const bridge: ShellPathBridge = {
+      toShellPath: (p) => p,
+      fromShellPath: (p) => (p.startsWith('/tmp/') ? `C:/Temp/${p.slice('/tmp/'.length)}` : p),
+    };
+    const result = resolvePathAccess(
+      '/tmp/notes.txt',
+      'C:\\workspace',
+      { workspaceDir: 'C:\\workspace', additionalDirs: [] },
+      {
+        operation: 'read',
+        pathClass: 'win32',
+        policy: DEFAULT_WORKSPACE_ACCESS_POLICY,
+        shellPathBridge: bridge,
+      },
+    );
+    expect(result).toEqual({ path: 'C:/Temp/notes.txt', outsideWorkspace: true });
   });
 });

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import type { Environment, ShellPathBridge } from '@moonshot-ai/kaos';
+
 import {
   canonicalizePath,
   DEFAULT_WORKSPACE_ACCESS_POLICY,
@@ -27,6 +29,26 @@ const WIN_WORKSPACE: WorkspaceConfig = {
 const POSIX_KAOS = {
   pathClass: () => 'posix' as const,
   gethome: () => '/home/test',
+  osEnv: {
+    osKind: 'Linux',
+    osArch: 'x86_64',
+    osVersion: 'test',
+    shellName: 'bash',
+    shellPath: '/bin/bash',
+  } satisfies Environment,
+};
+
+const WIN_KAOS = {
+  pathClass: () => 'win32' as const,
+  gethome: () => 'C:\\Users\\test',
+  osEnv: {
+    osKind: 'Windows',
+    osArch: 'x86_64',
+    osVersion: 'test',
+    shellName: 'bash',
+    // Deliberately nonexistent so no cygpath.exe is ever found — resolution degrades to pass-through.
+    shellPath: 'C:\\kimi-test-nonexistent\\Git\\bin\\bash.exe',
+  } satisfies Environment,
 };
 
 describe('path access policy', () => {
@@ -135,6 +157,38 @@ describe('path access policy', () => {
         expandHome: false,
       }),
     ).toBe('/workspace/~/notes/today.txt');
+  });
+
+  it('routes win32 file-tool paths through the shell path bridge', () => {
+    const result = resolvePathAccessPath('/c/workspace/file.txt', {
+      kaos: WIN_KAOS,
+      workspace: { workspaceDir: 'C:\\workspace', additionalDirs: [] },
+      operation: 'read',
+    });
+    expect(result).toBe('C:/workspace/file.txt');
+  });
+
+  it('passes root-relative POSIX paths through when cygpath is unavailable', () => {
+    const result = resolvePathAccessPath('/tmp/scratch.txt', {
+      kaos: WIN_KAOS,
+      workspace: { workspaceDir: 'C:\\workspace', additionalDirs: [] },
+      operation: 'read',
+    });
+    expect(result).toBe('/tmp/scratch.txt');
+  });
+
+  it('normalizes through an explicitly injected shell path bridge', () => {
+    const bridge: ShellPathBridge = {
+      toShellPath: (p) => p,
+      fromShellPath: (p) => (p.startsWith('/tmp/') ? `C:/Temp/${p.slice('/tmp/'.length)}` : p),
+    };
+    const result = resolvePathAccess('/tmp/notes.txt', 'C:\\workspace', WIN_WORKSPACE, {
+      operation: 'read',
+      pathClass: 'win32',
+      policy: DEFAULT_WORKSPACE_ACCESS_POLICY,
+      shellPathBridge: bridge,
+    });
+    expect(result).toEqual({ path: 'C:/Temp/notes.txt', outsideWorkspace: true });
   });
 
   it('legacy assertPathAllowed allows absolute outside paths but rejects relative escapes', () => {
@@ -383,6 +437,7 @@ describe('path access policy', () => {
     const cases: ReadonlyArray<readonly [string, string]> = [
       ['/c/Users/foo', 'C:/Users/foo'],
       ['/d/Projects/kimi', 'D:/Projects/kimi'],
+      ['/c:/Users/foo', 'C:/Users/foo'],
       ['/C/Users/foo', 'C:/Users/foo'],
       ['/c/', 'C:/'],
       ['/c', 'C:/'],
