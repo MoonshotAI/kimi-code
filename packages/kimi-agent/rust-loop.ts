@@ -1130,11 +1130,15 @@ export function createRunTurnOverride(
           const usage = event['usage'] as
             | { input_tokens?: number; output_tokens?: number }
             | undefined;
+          // Cache accounting rides as top-level llm.step.end fields (the wire
+          // `usage` carries no cache counts).
+          const cacheRead = (event['input_cache_read'] as number | undefined) ?? 0;
+          const cacheCreation = (event['input_cache_creation'] as number | undefined) ?? 0;
           openStep.usage = {
             inputOther: usage?.input_tokens ?? 0,
             output: usage?.output_tokens ?? 0,
-            inputCacheRead: 0,
-            inputCacheCreation: 0,
+            inputCacheRead: cacheRead,
+            inputCacheCreation: cacheCreation,
           };
           // Native-LLM parity: this event only fires when Rust calls the
           // provider itself (llm/http.rs), where the host llm callback — and
@@ -1468,7 +1472,10 @@ export function createRunTurnOverride(
           response.toolCalls?.map((tc: { id: string; name: string; arguments?: unknown }) => ({
             id: tc.id,
             name: tc.name,
-            arguments: tc.arguments !== undefined ? tryParseJson(String(tc.arguments)) : null,
+            arguments:
+              tc.arguments !== undefined
+                ? tryParseJson(typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments))
+                : null,
           })) ?? [],
         finish_reason: response.providerFinishReason ?? 'stop',
         usage: {
