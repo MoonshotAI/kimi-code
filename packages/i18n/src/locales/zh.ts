@@ -450,7 +450,7 @@ export const zh: DeepPartial<typeof import('./en').default> = {
     writeFailedParentNotFound: '写入 {{path}} 失败：父目录不存在。',
     parentNotDirectory: '父路径不是目录: {{parent}}。',
     editNoChanges: '无需更改：old_string 和 new_string 完全相同。',
-    editReplaced: '在 {{path}} 中替换了 {{count}} 处',
+    editReplaced: '在 {{path}} 中替换了 {{count}} 处（{{occurrences}}）',
     occurrence: '处',
     occurrences: '处',
     webSearch: {
@@ -485,7 +485,7 @@ export const zh: DeepPartial<typeof import('./en').default> = {
       unknownAction: '未知的 memory 操作: {{action}}',
       searchQueryRequired: '搜索需要 `query` 参数。',
       noEntriesFound: '未找到匹配 "{{query}}" 的 memory 条目',
-      foundEntries: '找到 {{count}} 条 memory 条目:\n',
+      foundEntries: '找到 {{count}} 条 memory 条目{{plural}}:\n',
       readPathRequired: '读取需要 `path` 参数。',
       writePathRequired: '写入需要 `path` 参数（文件名）。',
       writeContentRequired: '写入需要 `content` 参数。',

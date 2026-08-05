@@ -21,7 +21,17 @@ pub struct Server {
 impl Server {
     /// Build a server with fresh shared state and all method families.
     pub fn build() -> anyhow::Result<Self> {
-        let state = ServerState::new()?;
+        Self::with_state(ServerState::new()?)
+    }
+
+    /// Build a server with an LLM step override installed (SDK runtime-test
+    /// hook; mirrors TS `createKimiHarness`'s `llmStep`).
+    pub fn build_with_llm_step(step: crate::callbacks::LlmStep) -> anyhow::Result<Self> {
+        Self::with_state(ServerState::with_llm_step(step)?)
+    }
+
+    /// Build a server over caller-provided shared state.
+    pub fn with_state(state: ServerState) -> anyhow::Result<Self> {
         let mut processor = MessageProcessor::new();
 
         HealthProcessor.register(&mut processor);

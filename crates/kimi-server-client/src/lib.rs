@@ -3,6 +3,11 @@
 //! enum with an in-process variant (bounded channel, same JSON-RPC envelope)
 //! and a remote variant (spawn a server process over stdio). Hosts (CLI /
 //! TUI / SDK) code against this and cannot tell which path a call took.
+//!
+//! All methods take `&self`: the in-process variant is a channel and
+//! concurrent by design, and the remote variants serialize internally, so a
+//! shared client never needs a caller-owned lock — and a long-running call
+//! (a prompt turn) cannot block a short control call (`session/cancel`).
 
 use kimi_server::in_process::InProcessClient;
 
@@ -23,7 +28,7 @@ pub enum AppServerClient {
 
 impl AppServerClient {
     /// Make a JSON-RPC call; resolves with the full wire response body.
-    pub async fn call(&mut self, method: &str, params: serde_json::Value) -> serde_json::Value {
+    pub async fn call(&self, method: &str, params: serde_json::Value) -> serde_json::Value {
         match self {
             Self::InProcess(client) => client.call(method, params).await,
             Self::Remote(client) => client.call(method, params).await,
@@ -33,7 +38,7 @@ impl AppServerClient {
 
     /// Typed: create a session.
     pub async fn session_create(
-        &mut self,
+        &self,
         session_id: &str,
     ) -> serde_json::Value {
         self.call(
@@ -44,7 +49,7 @@ impl AppServerClient {
     }
 
     /// Typed: list sessions.
-    pub async fn session_list(&mut self, limit: u32) -> serde_json::Value {
+    pub async fn session_list(&self, limit: u32) -> serde_json::Value {
         self.call(
             kimi_protocol::methods::SESSION_LIST,
             serde_json::json!({ "limit": limit }),
@@ -53,14 +58,14 @@ impl AppServerClient {
     }
 
     /// Typed: health.
-    pub async fn health(&mut self) -> serde_json::Value {
+    pub async fn health(&self) -> serde_json::Value {
         self.call(kimi_protocol::methods::HEALTH, serde_json::Value::Null)
             .await
     }
 
     /// Typed: run one prompt on a session.
     pub async fn session_prompt(
-        &mut self,
+        &self,
         session_id: &str,
         text: &str,
     ) -> serde_json::Value {
@@ -75,7 +80,7 @@ impl AppServerClient {
     }
 
     /// Typed: the session's current context (history + token count).
-    pub async fn session_get_context(&mut self, session_id: &str) -> serde_json::Value {
+    pub async fn session_get_context(&self, session_id: &str) -> serde_json::Value {
         self.call(
             kimi_protocol::methods::SESSION_GET_CONTEXT,
             serde_json::json!({ "session_id": session_id }),
@@ -84,13 +89,13 @@ impl AppServerClient {
     }
 
     /// Typed: the engine's parsed config.
-    pub async fn config_get(&mut self) -> serde_json::Value {
+    pub async fn config_get(&self) -> serde_json::Value {
         self.call(kimi_protocol::methods::CONFIG_GET, serde_json::Value::Null)
             .await
     }
 
     /// Typed: a session's status snapshot.
-    pub async fn session_get_status(&mut self, session_id: &str) -> serde_json::Value {
+    pub async fn session_get_status(&self, session_id: &str) -> serde_json::Value {
         self.call(
             kimi_protocol::methods::SESSION_GET_STATUS,
             serde_json::json!({ "session_id": session_id }),
@@ -99,7 +104,7 @@ impl AppServerClient {
     }
 
     /// Typed: request cancellation of a running turn.
-    pub async fn session_cancel(&mut self, session_id: &str) -> serde_json::Value {
+    pub async fn session_cancel(&self, session_id: &str) -> serde_json::Value {
         self.call(
             kimi_protocol::methods::SESSION_CANCEL,
             serde_json::json!({ "session_id": session_id }),
@@ -108,7 +113,7 @@ impl AppServerClient {
     }
 
     /// Typed: run a shell command in the session workspace.
-    pub async fn session_run_shell(&mut self, session_id: &str, command: &str) -> serde_json::Value {
+    pub async fn session_run_shell(&self, session_id: &str, command: &str) -> serde_json::Value {
         self.call(
             kimi_protocol::methods::SESSION_RUN_SHELL,
             serde_json::json!({ "session_id": session_id, "command": command }),
@@ -117,7 +122,7 @@ impl AppServerClient {
     }
 
     /// Typed: pending approvals for a session scope (all when `None`).
-    pub async fn approval_list(&mut self, session_id: Option<&str>) -> serde_json::Value {
+    pub async fn approval_list(&self, session_id: Option<&str>) -> serde_json::Value {
         let params = match session_id {
             Some(id) => serde_json::json!({ "session_id": id }),
             None => serde_json::Value::Null,
@@ -127,7 +132,7 @@ impl AppServerClient {
 
     /// Typed: resolve a pending approval (`allow` or `deny` with a reason).
     pub async fn approval_resolve(
-        &mut self,
+        &self,
         id: &str,
         allow: bool,
         reason: Option<&str>,
@@ -151,7 +156,7 @@ mod tests {
     #[tokio::test]
     async fn in_process_client_round_trip() {
         let server = Server::build().expect("server");
-        let mut client = AppServerClient::InProcess(kimi_server::in_process::spawn(server.processor));
+        let client = AppServerClient::InProcess(kimi_server::in_process::spawn(server.processor));
         let body = client.health().await;
         assert_eq!(body["result"]["status"], "ok");
 
@@ -167,7 +172,7 @@ mod tests {
     async fn stateless_processor_via_client() {
         let mut processor = kimi_server::MessageProcessor::new();
         HealthProcessor.register(&mut processor);
-        let mut client = AppServerClient::InProcess(kimi_server::in_process::spawn(processor));
+        let client = AppServerClient::InProcess(kimi_server::in_process::spawn(processor));
         let body = client.health().await;
         assert_eq!(body["result"]["status"], "ok");
     }
@@ -175,7 +180,7 @@ mod tests {
     #[tokio::test]
     async fn typed_methods_round_trip() {
         let server = Server::build().expect("server");
-        let mut client = AppServerClient::InProcess(kimi_server::in_process::spawn(server.processor));
+        let client = AppServerClient::InProcess(kimi_server::in_process::spawn(server.processor));
 
         // config_get parses the merged engine config.
         let body = client.config_get().await;
@@ -196,7 +201,7 @@ mod tests {
     #[tokio::test]
     async fn typed_control_methods_round_trip() {
         let server = Server::build().expect("server");
-        let mut client = AppServerClient::InProcess(kimi_server::in_process::spawn(server.processor));
+        let client = AppServerClient::InProcess(kimi_server::in_process::spawn(server.processor));
         let body = client.session_create("s-ctrl").await;
         assert_eq!(body["result"]["session_id"], "s-ctrl");
 

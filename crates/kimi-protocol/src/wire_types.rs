@@ -51,6 +51,14 @@ pub struct NativeLlmConfig {
     /// `None` omits it.
     #[serde(default)]
     pub reasoning_effort: Option<String>,
+    /// Session affinity key. Sent as `metadata.user_id` on Anthropic requests
+    /// (billing/audit attribution — it does not affect cache hits, which are
+    /// keyed on byte-stable prefixes and shared globally). OpenAI/Kimi cache
+    /// keys are a fixed global namespace (`prompt_cache_key`), NOT this value,
+    /// so system + tool prefixes are shared across sessions. The engine stamps
+    /// the owning session id before building a request; absent → no `user_id`.
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 /// LLM provider definition for MultiLLM.

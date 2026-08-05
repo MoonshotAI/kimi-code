@@ -790,6 +790,11 @@ pub struct Agent {
     /// placeholder; the standalone binary swaps in an HTTP downloader
     /// (`KIMI_FILE_BASE_URL`) so media materialises without a host round-trip.
     pub file_downloader: Arc<dyn crate::media::kimi_file_url::FileDownloader>,
+    /// Byte-bounded memo of downloaded `kimi://file/<id>` materialisation
+    /// (file_id → (mime, base64)). Kimi file URLs are content-addressed, so a
+    /// file referenced across turns is downloaded + base64-encoded at most
+    /// once per process instead of once per turn.
+    media_materialize_cache: Arc<std::sync::Mutex<crate::media::materialize_cache::MaterializeCache>>,
     /// Native permission gate (mode from `KIMI_PERMISSION_MODE`). Lets the
     /// engine approve/deny tool calls locally; interactive `Ask` still defers
     /// to the host.
@@ -902,6 +907,9 @@ impl Agent {
                 Some(http) => Arc::new(http),
                 None => Arc::new(crate::media::kimi_file_url::NoopFileDownloader),
             },
+            media_materialize_cache: Arc::new(std::sync::Mutex::new(
+                crate::media::materialize_cache::MaterializeCache::default(),
+            )),
             permission: options.permission.clone()
                 .unwrap_or_else(crate::permission::gate::PermissionGate::from_env),
             subagent_depth: 0,
@@ -1155,8 +1163,14 @@ impl Agent {
             // token stream.)
             let sink_callbacks = self.callbacks.clone();
             let sink_session = self.session_id.clone();
+            // Stamp the session affinity key so the Anthropic request carries
+            // `metadata.user_id` for billing/audit attribution. Cache hits are
+            // keyed on byte-stable prefixes (shared globally), so this never
+            // partitions the system/tool prefix per session.
+            let mut llm_cfg = cfg.clone();
+            llm_cfg.session_id = self.session_id.clone();
             Box::new(
-                crate::llm::http::NativeHttpLlm::new(cfg.clone(), self.config.system_prompt.clone())
+                crate::llm::http::NativeHttpLlm::new(llm_cfg, self.config.system_prompt.clone())
                     .with_sink(std::sync::Arc::new(move |event: serde_json::Value| {
                         sink_callbacks.emit_event(stamp_session_id(event, &sink_session));
                     })),
@@ -2302,6 +2316,19 @@ any partial output shown above is incomplete. The user's next message continues 
 
         let mut out = std::collections::HashMap::new();
         for url in urls {
+            // kimi://file/<id> is content-addressed (immutable), so the
+            // downloaded + encoded result is cached across turns.
+            let file_id = crate::media::kimi_file_url::parse_kimi_file_url(&url)
+                .map(|parsed| parsed.file_id)
+                .unwrap_or_default();
+            if !file_id.is_empty() {
+                if let Some((mime, b64)) =
+                    self.media_materialize_cache.lock().unwrap_or_else(|e| e.into_inner()).get(&file_id)
+                {
+                    out.insert(url, (mime.clone(), b64.clone()));
+                    continue;
+                }
+            }
             let bytes = match crate::media::kimi_file_url::parse_and_download(
                 &url,
                 self.file_downloader.as_ref(),
@@ -2317,6 +2344,12 @@ any partial output shown above is incomplete. The user's next message continues 
                 .map(|m| m.mime.to_string())
                 .unwrap_or_else(|| "image/png".to_string());
             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            if !file_id.is_empty() {
+                self.media_materialize_cache
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(&file_id, mime.clone(), b64.clone());
+            }
             out.insert(url, (mime, b64));
         }
         out
@@ -3216,5 +3249,47 @@ mod tests {
         let messages = vec![image_message("kimi://file/abc")];
         let media = agent.materialize_kimi_media(&messages).await;
         assert!(media.is_empty());
+    }
+
+    #[tokio::test]
+    async fn materialize_kimi_media_caches_content_addressed_downloads() {
+        // A content-addressed kimi:// file must be downloaded at most once:
+        // a second turn reusing the same URL hits the materialise cache.
+        struct CountingDownloader {
+            calls: std::sync::atomic::AtomicUsize,
+        }
+        impl crate::media::kimi_file_url::FileDownloader for CountingDownloader {
+            fn download(
+                &self,
+                _file_id: &str,
+            ) -> crate::media::kimi_file_url::DownloadFuture {
+                self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Box::pin(async move { Ok(b"fake-png-bytes".to_vec()) })
+            }
+        }
+        let downloader = Arc::new(CountingDownloader {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut agent = Agent::new(
+            Arc::new(NoopHost),
+            AgentOptions {
+                run_turn_override: Some(Arc::new(ScriptedDriver {
+                    turn: std::sync::atomic::AtomicUsize::new(0),
+                    script: vec![],
+                })),
+                ..AgentOptions::default()
+            },
+        );
+        agent.file_downloader = downloader.clone();
+
+        let messages = vec![image_message("kimi://file/abc")];
+        let first = agent.materialize_kimi_media(&messages).await;
+        assert!(first.contains_key("kimi://file/abc"));
+        assert_eq!(downloader.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        // Second turn: same URL → served from the cache, no re-download.
+        let second = agent.materialize_kimi_media(&messages).await;
+        assert_eq!(second.get("kimi://file/abc"), first.get("kimi://file/abc"));
+        assert_eq!(downloader.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }

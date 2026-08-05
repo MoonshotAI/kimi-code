@@ -47,8 +47,8 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let stdin = tokio::io::stdin();
-    let mut stdout = tokio::io::stdout();
-    kimi_server_transport::stdio::serve(&processor, stdin, &mut stdout).await;
+    let stdout = tokio::io::stdout();
+    kimi_server_transport::stdio::serve(&processor, stdin, stdout).await;
     event_printer.abort();
     Ok(())
 }

@@ -70,6 +70,10 @@ clippy_output.txt
 **/.kimi-code/knowledge.db
 **/.kimi-code/knowledge.db-shm
 **/.kimi-code/knowledge.db-wal
+**/.kimi-code/config.toml
+
+# Agent scratch plan files (empty placeholders, not project docs)
+**/plan/plan-*.md
 
 # Agent scratch memory
 .workbuddy/

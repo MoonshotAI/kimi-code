@@ -285,8 +285,10 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 2. ✅ `kimi-server-transport`（stdio serve + **`kimi-server-serve` 二进制**：独立进程宿主，Remote 客户端经 stdio 驱动，端到端测试；**引擎事件扇出到 stderr**，Remote `--verbose` 免第二通道）
 3. ✅ `kimi-server-client`（AppServerClient{InProcess, Remote} 门面；Remote 经 stdio 全链路测试）
 4. ✅ **方法族迁移完成（11 processor）**：session **44 方法**（create/prompt/cancel/run_shell/cancel_shell_command/compact/save/load/delete/fork/export/set_model/set_thinking/set_swarm_mode/set_plan_mode/clear_context/get_context/get_status/list/get_usage/get_plan/get_warnings/list_mcp_servers/list_skills/undo_history/import_context/activate_skill/steer/goal 全生命周期/start_btw/end_btw/**init/destroy/clear_plan/get_mcp_startup_metrics/reconnect_mcp_server/list_tools/add_additional_dir/remove_additional_dir/update_metadata**）+ health/config(get+set)/fs/git/approval/plugin/permission(get/set_mode/**add_rule**)/cron/bg（register/list/get/stop/output/append_output/**settle/detach**）/task——宿主可服务的全部请求方法在 Rust 协议层，与 main.rs handler 同源（`agent/*`、`host/*` 属引擎侧 stdio 协议，由 kimi-agent 原生实现；bg/event、cron/fired 为事件流 wire 常量）
-5. [ ] kap-server 测试平移（377 基线，TS 面，阶段 B 收尾可选）
+5. [ ] kap-server 测试平移（377 基线，TS 面，阶段 B 收尾可选；组 A 引擎 wire 缺口已补，见下）
 6. **验证**：kimi-server 40 测试 + client 4 + exec 2 全绿；CLI 集成 13 + kimi-ui 6；workspace check 干净；0 warnings
+   - **2026-08-05 增强（已实测）**：kimi-server **62**（A1–A7：export web_log 256KiB 校验/注入、fs:search、prompt 成功路径、config 容错、approval 缺 decision、bg 空态）、kimi-server-client 6、kimi-server-transport lib 4 + 集成 6、kimi-cli 36 集成、kimi-sdk runtime 18 + harness 6、kimi-acp 7——全绿 0 warnings
+   - **传输并发化（2026-08-05）**：stdio + WebSocket serve 帧/行并发（对齐引擎 rpc/server.rs）；`StdioClient`/`WsClient` 后台读循环 + pending id 路由，`call(&self)` 不持锁等响应——挂起 prompt 不再阻塞同客户端 cancel；新测试 `serve_dispatches_concurrently`/`remote_client_concurrent_calls`/`websocket_dispatches_concurrently`/`ws_client_concurrent_calls`
 
 ### 阶段 C — CLI + exec
 1. ✅ `kimi-cli`：clap 分发 + 子命令平移（print/sessions/resume/config/doctor/health/**export**；acp/login/provider/upgrade/vis/web 待）+ **全局 `--server <bin>`**：所有子命令可选走 Remote stdio 传输（独立 `kimi-server-serve` 进程），而非内嵌 server；**doctor 含 config 文件级检查**（OK/SKIP/ERROR + 合并解析验证 + `config <path>` 单文件校验 + tui.toml 存在性，TS parity）；**事件渲染**（turn/tool/usage → 进度行，内嵌与 Remote 统一；非 verbose 在 stderr 为 TTY 时同样渲染，脚本管道保持 stdout 契约）；**print/resume 默认可读转录**（`--json` 保留原始 RPC）；**`config --set KEY=VALUE`**（点路径写盘）；**`sessions --json`**；**裸 `kimi` 打印帮助 + 阶段 D 提示**
@@ -316,7 +318,7 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 
 ### 阶段 F — 退役
 0. ✅ **npm 分发薄壳**（kimi-code-rust-bin：bin 包装 + pack.mjs CI 打包 + KIMI_RUST_BIN 覆盖）
-1. 🔶 **入口切换方案（调研）**：apps/kimi-code `bin: {kimi: dist/main.mjs}`（`#!/usr/bin/env node`）→ 改为 wrapper（优先平台 Rust 二进制，回退 TS main.mjs）；迁移期双轨并存，Rust 全绿后删除 TS 入口。**未落代码**（保持 TS 主入口，避免破坏现有安装）
+1. ✅ **入口切换 wrapper（已落代码）**：apps/kimi-code `bin: {kimi: bin/kimi.mjs}`——wrapper 优先平台 Rust 二进制（候选命名对齐 rust-bin pack.mjs：`kimi-<platform>-<arch>[.exe]` + 通用名，Windows 需 .exe；`KIMI_RUST_BIN` 显式覆盖），找不到回退 TS `dist/main.mjs`；spawn + SIGINT/SIGTERM/SIGHUP 转发 + 退出码/信号镜像（参考 codex-cli bin 模式）；`KIMI_ENTRY_DEBUG=1` 打印命中路径。迁移期双轨并存，Rust 全绿后删除 TS 入口（`smoke:entry` 冒烟覆盖两条路径）
 2. packages/kap-server/node-sdk/klient/acp-adapter/oauth/protocol/kaos 移 `retired/`
 3. npm 分发薄壳（参考 codex-cli：bin → 包装 Rust 二进制）
 4. **验证**：CLI/TUI/web/API 全链路 Rust 端到端；旧 TS 测试删除或转 Rust
@@ -339,9 +341,20 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - [x] 阶段 C CLI + exec（31 集成测试 + typed client + 配置读写闭环 + chat REPL + acp 命令 + print/resume 目标模式 + 全旗标对称）✅
 - [ ] 阶段 D TUI（kimi-ui 前置 ✅ + chat REPL ✅ + **kimi-tui ✅**（ratatui 事件实时渲染/角色化转录/23 全命令面 Tab 补全/审批 y-n 交互+详情/approvals 命令/Esc-Ctrl-C turn 取消/目标生命周期/**llm.delta 文本+thinking 流式**/TestBackend 冒烟，13 测试））
 - [ ] 阶段 E SDK/ACP/OAuth/Config（**kimi-sdk ✅**（Session 45/45 + Harness set_config + catalog）+ **kimi-acp ✅**（set_mode/set_model + session/update 通知回放）+ **kimi-oauth ✅**（device flow）+ **catalog ✅**（models.dev）+ provider/login/logout/acp--login 命令 ✅ + **WS 传输+客户端 ✅**（serve --ws + RemoteWs + e2e））
-- [ ] 阶段 F 退役（**npm 分发薄壳 ✅ 已验证**：kimi-code-rust-bin 包装 + pack.mjs CI 打包；**入口切换按记录决策未落代码**（Rust 全绿后执行，web/vis/upgrade 已识别）；TS 删除待续）
+- [ ] 阶段 F 退役（**npm 分发薄壳 ✅ 已验证**：kimi-code-rust-bin 包装 + pack.mjs CI 打包；**入口切换 wrapper ✅ 已落代码**：apps/kimi-code `bin` → `bin/kimi.mjs` 优先 Rust 回退 TS，`smoke:entry` 冒烟两条路径通过；web/vis/upgrade 已识别；TS 删除待续）
 
 ## 9. 迁移推进会话快照（2026-08，分支 feat/rust-agent-engine-migration）
+
+**2026-08-05 追加（Rust 端补全 goal 会话，未提交）**：
+- **kap-server 测试缺口 A1–A7**：export web_log 256KiB 引擎侧校验（`MAX_WEB_LOG_BYTES`，export.rs）+ 注入/拒绝测试、fs:search 3 测试、prompt 成功路径（`with_llm_step` fake LLM）、config 容错、approval 缺 decision、bg/list 空态、Remote stdio 方法族冒烟 → kimi-server 53→**63**
+- **传输并发化（stdio + WS）**：serve 行/帧并发（对齐引擎 rpc/server.rs）+ `StdioClient`/`WsClient` 后台读循环 + pending id 路由，`call(&self)` 不持锁等响应——挂起 prompt 不再阻塞同客户端 cancel；新测试 `serve_dispatches_concurrently`/`remote_client_concurrent_calls`/`websocket_dispatches_concurrently`/`ws_client_concurrent_calls`
+- **引擎流式**：`NativeHttpLlm` SSE `llm.delta` 发射测试（本地 SSE 服务器）；llm.delta 设计核对（native 发/host 回调宿主发，非缺口）
+- **SDK 补齐**：`Session::fork` turn_index（TS `fork({turnIndex})`）、`set_permission`、background task 四方法、`session.renamed` 事件（EventBus::emit + rename handler）、import markup 断言
+- **核对关闭（9 项）**：llm.delta 设计、catalog 写面（kimi-cli Provider::Add 覆盖）、MCP 合并（McpManager::list 完备）、KIMI_CODE_HOME 技能解析（宿主面）、list workDir 过滤（TS 死选项）、config 深合并/KIMI_CONFIG_PATH/无效 patch（与 TS 对齐/设计差异）、bg stop 面
+- **阶段 F**：`klient` 退役 ✅（retired/klient + flake.nix 两处移除，零包级消费者复核）
+- **测试基线（实测）**：kimi-server **63**、kimi-sdk runtime **19** + harness 6 + catalog 2 + probe 1、kimi-server-transport lib 4 + 集成 6、kimi-server-client 6、kimi-cli 36、kimi-acp 7、kimi-agent http 9（全量 2042/2044 绿，2 个外部会话挂起测试除外）；`cargo check --workspace --all-targets` 0 errors/0 warnings
+- **⚠️ 外部会话**：2 个 kimi-agent 测试独立挂起（`task_tool_tracks_and_settles_a_detached_task`、`resume_agent_ids_is_accepted_and_renders_agent_ids`，agent.rs/swarm_tool.rs 改动区），阻塞 `cargo test --workspace`；另多次回滚 export.rs、cargo clean 拒绝访问——并行会话注意隔离。
+
 
 **范围**：本会话在阶段 A/B/C ✅ 之上，完成阶段 D 全部（TUI 聊天组件 + 流式）与阶段 E 大部分（ACP/传输/SDK/config 面），并全面加固测试。
 
@@ -369,4 +382,4 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 
 **离线边界更新（网络已恢复，2026-08）**：ratatui TUI、clap_complete、catalog（models.dev）、OAuth（kimi-oauth device flow）、npm 分发薄壳全部落地；剩余：ts-rs 绑定生成（可选）。
 
-**下一步建议**：① 阶段 E 剩余：kimi-sdk 测试平移（TS 425 用例，大项）按需；② 阶段 F：入口切换执行（Rust 全绿后 wrapper 优先 Rust 回退 TS——方案已记录、npm 薄壳已验证）、TS 宿主退役（kap-server/node-sdk/klient/acp-adapter/oauth/protocol/kaos → retired/）；③ 真实 LLM 端点恢复后的 `kimi print`/TUI 流式端到端验证（含 ACP 逐 token 通知）。
+**下一步建议**：① 阶段 E 剩余：kimi-sdk 测试平移（TS 425 用例，大项）按需；② 阶段 F 剩余：TS 宿主退役（kap-server/node-sdk/klient/acp-adapter/oauth/protocol/kaos → retired/，Rust 全绿后删除 TS 入口）；③ 真实 LLM 端点恢复后的 `kimi print`/TUI 流式端到端验证（含 ACP 逐 token 通知）。

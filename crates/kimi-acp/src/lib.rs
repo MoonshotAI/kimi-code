@@ -106,7 +106,7 @@ fn session_update(session_id: &str, kind: &str, text: String) -> serde_json::Val
 /// mirroring the TS adapter's `session/load` replay. Empty history yields
 /// no notifications.
 async fn replay_updates(harness: &Harness, session_id: &str) -> Vec<serde_json::Value> {
-    let body = harness.client().await.session_get_context(session_id).await;
+    let body = harness.client().session_get_context(session_id).await;
     let Some(history) = body["result"]["history"].as_array() else {
         return Vec::new();
     };
@@ -215,7 +215,6 @@ async fn handle(
                 Ok(_) => {
                     let _ = harness
                         .client()
-                        .await
                         .call(
                             kimi_protocol::methods::SESSION_LOAD,
                             serde_json::json!({ "session_id": session_id }),
@@ -260,7 +259,7 @@ async fn handle(
             if session_id.is_empty() {
                 return error(-32602, "session/get_config requires sessionId");
             }
-            let mut client = harness.client().await;
+            let client = harness.client();
             let status = client.session_get_status(session_id).await;
             if let Some(e) = status.get("error") {
                 return error(-32603, e["message"].as_str().unwrap_or("status failed"));
@@ -298,7 +297,7 @@ async fn handle(
             if session_id.is_empty() || config_id.is_empty() {
                 return error(-32602, "session/set_config_option requires sessionId and configId");
             }
-            let mut client = harness.client().await;
+            let client = harness.client();
             let outcome = match (config_id, value.as_str()) {
                 ("model", Some(model)) if !model.is_empty() => {
                     client
@@ -373,7 +372,7 @@ async fn handle(
             // Processed for its side effect; no response body.
             let session_id = params.get("sessionId").and_then(|v| v.as_str()).unwrap_or("");
             if !session_id.is_empty() {
-                let _ = harness.client().await.session_cancel(session_id).await;
+                let _ = harness.client().session_cancel(session_id).await;
             }
             None
         }
@@ -393,7 +392,7 @@ async fn handle(
                 "yolo" => (false, "yolo"),
                 _ => return error(-32602, &format!("Unknown modeId: {mode_id}")),
             };
-            let mut client = harness.client().await;
+            let client = harness.client();
             let plan_body = client
                 .call(
                     kimi_protocol::methods::SESSION_SET_PLAN_MODE,
@@ -422,7 +421,7 @@ async fn handle(
             if session_id.is_empty() || model_id.is_empty() {
                 return error(-32602, "session/set_model requires sessionId and modelId");
             }
-            let mut client = harness.client().await;
+            let client = harness.client();
             let body = client
                 .call(
                     kimi_protocol::methods::SESSION_SET_MODEL,

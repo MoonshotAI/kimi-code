@@ -7,13 +7,12 @@
 //! Mirrors `packages/kimi-native-tools/src/web_search.rs` (ureq + scraper)
 //! and `packages/agent-core-v2/src/app/auth/webSearch/tools/web-search.ts`.
 
-use std::time::Duration;
+use crate::tools::fetch_url::shared_web_client;
 
 const DDG_HTML_URL: &str = "https://html.duckduckgo.com/html/";
 const DDG_USER_AGENT: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
      (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36";
-const DEFAULT_TIMEOUT_SECS: u64 = 30;
 const MAX_RESULTS: usize = 10;
 
 /// A single web search result entry.
@@ -29,17 +28,11 @@ pub type WebSearchResult = Vec<WebSearchResultEntry>;
 
 /// Search the web using DuckDuckGo's HTML endpoint.
 pub async fn web_search(query: &str) -> Result<WebSearchResult, String> {
-    let timeout = Duration::from_secs(DEFAULT_TIMEOUT_SECS);
-
-    let client = reqwest::Client::builder()
-        .timeout(timeout)
-        .user_agent(DDG_USER_AGENT)
-        .build()
-        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
-
-    // POST form-encoded query to DuckDuckGo HTML endpoint
-    let response = client
+    // Reuse the shared web client (see `fetch_url`): connection pooling
+    // avoids a fresh TCP + TLS + DNS round per search call.
+    let response = shared_web_client()
         .post(DDG_HTML_URL)
+        .header(reqwest::header::USER_AGENT, DDG_USER_AGENT)
         .header("Content-Type", "application/x-www-form-urlencoded")
         .header("Accept", "*/*")
         .header("Host", "html.duckduckgo.com")

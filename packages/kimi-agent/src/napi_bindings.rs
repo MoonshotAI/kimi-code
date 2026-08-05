@@ -318,6 +318,8 @@ pub struct JsNativeLlmConfig {
     pub max_tokens: Option<u32>,
     /// Reasoning effort (`"low"|"medium"|"high"`), mapped per protocol.
     pub reasoning_effort: Option<String>,
+    /// Session affinity key (`prompt_cache_key` / `metadata.user_id`).
+    pub session_id: Option<String>,
 }
 
 #[napi(object)]
@@ -480,6 +482,8 @@ async fn run_turn_rust_impl(
                 // JS host owns permission approval on this path.
                 permission: None,
                 hooks: None,
+                // JS host owns the pending-approval store on this path.
+                approval: None,
             }),
             None => base_callbacks.clone(),
         },
@@ -499,6 +503,7 @@ async fn run_turn_rust_impl(
                     max_tokens: cfg.max_tokens,
                     reasoning_effort: cfg.reasoning_effort,
                     custom_headers: Default::default(),
+                    session_id: cfg.session_id,
                 },
                 params.system_prompt.clone(),
             )

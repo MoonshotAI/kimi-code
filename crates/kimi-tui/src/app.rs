@@ -502,7 +502,7 @@ impl App {
                     if rest.is_empty() {
                         self.transcript.push(TranscriptLine::status("usage: /fork <new-session-id>"));
                     } else {
-                        self.session.as_mut().expect("session").fork(rest, None).await?;
+                        self.session.as_mut().expect("session").fork(rest, None, None).await?;
                         self.transcript.push(TranscriptLine::status(format!("forked to {rest}")));
                     }
                 }

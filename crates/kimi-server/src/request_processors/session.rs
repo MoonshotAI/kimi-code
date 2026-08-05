@@ -1287,17 +1287,27 @@ impl Processor for SessionProcessor {
         );
 
         // `session/rename` — persist a new session title (SDK `renameSession`
-        // parity). The session must exist in the live cache.
+        // parity). The session must exist in the live cache. Subscribers are
+        // notified via `session.renamed` so hosts can refresh their listing.
         let mgr = self.state.manager.clone();
+        let events = self.state.events.clone();
         processor.register(kimi_protocol::methods::SESSION_RENAME, move |params| {
             let mgr = mgr.clone();
+            let events = events.clone();
             Box::pin(async move {
                 let input: kimi_protocol::wire_types::SessionRenameParams =
                     serde_json::from_value(params)
                         .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
                 let mut manager = mgr.lock().await;
                 match manager.rename_session(&input.session_id, &input.title) {
-                    Ok(Some(record)) => Ok(serde_json::json!({ "ok": true, "title": record.title })),
+                    Ok(Some(record)) => {
+                        events.emit(serde_json::json!({
+                            "type": "session.renamed",
+                            "session_id": input.session_id,
+                            "title": input.title,
+                        }));
+                        Ok(serde_json::json!({ "ok": true, "title": record.title }))
+                    }
                     Ok(None) => Err(JsonRpcError::internal_error(format!(
                         "no session: {}",
                         input.session_id
@@ -1463,7 +1473,14 @@ mod tests {
             })
             .await;
         assert!(body.get("error").is_none(), "session/list should not error: {body}");
-        assert_eq!(body["result"]["sessions"], serde_json::json!([]));
+        // Shape: an array (not null / not an error). The strict empty assertion
+        // is racy here — other create tests write the shared default store in
+        // parallel — so the empty-state wire shape is pinned by
+        // `bg_list_empty_returns_array` (in-memory store, no env contention).
+        assert!(
+            body["result"]["sessions"].is_array(),
+            "sessions shape: {body}"
+        );
     }
 
 
@@ -1981,6 +1998,42 @@ mod create_tests {
         assert!(body.get("error").is_none(), "get_plan failed: {body}");
     }
 
+    /// `session/rename` notifies subscribers via `session.renamed` (the SDK's
+    /// rename event), so hosts can refresh their session listing.
+    #[tokio::test]
+    async fn rename_emits_session_renamed_event() {
+        let state = crate::state::ServerState::new().expect("state");
+        let mut rx = state.events.subscribe();
+        let processor = SessionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/create".into(),
+                params: serde_json::json!({ "session_id": "s-ren" }),
+            })
+            .await;
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/rename".into(),
+                params: serde_json::json!({ "session_id": "s-ren", "title": "my title" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "rename failed: {body}");
+        assert_eq!(body["result"]["title"], "my title");
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("event within 5s")
+            .expect("stream alive");
+        assert_eq!(event["type"], "session.renamed", "event: {event}");
+        assert_eq!(event["session_id"], "s-ren", "event: {event}");
+        assert_eq!(event["title"], "my title", "event: {event}");
+    }
+
     #[tokio::test]
     async fn list_tools_returns_native_and_goal_tools() {
         let state = crate::state::ServerState::new().expect("state");
@@ -2132,7 +2185,7 @@ mod create_tests {
         let previous = std::env::var_os("KIMI_AGENT_HOME");
         std::env::set_var("KIMI_AGENT_HOME", &home);
 
-        let result = async {
+        async {
             let state = crate::state::ServerState::new().expect("state");
             let processor = SessionProcessor::with_state(state);
             let mut server = MessageProcessor::new();
@@ -2188,7 +2241,6 @@ mod create_tests {
             None => std::env::remove_var("KIMI_AGENT_HOME"),
         }
         let _ = std::fs::remove_dir_all(&home);
-        result;
     }
 
     #[tokio::test]
@@ -2202,7 +2254,7 @@ mod create_tests {
         let previous = std::env::var_os("KIMI_AGENT_HOME");
         std::env::set_var("KIMI_AGENT_HOME", &home);
 
-        let result = async {
+        async {
             let state = crate::state::ServerState::new().expect("state");
             let processor = SessionProcessor::with_state(state);
             let mut server = MessageProcessor::new();
@@ -2264,7 +2316,6 @@ mod create_tests {
             None => std::env::remove_var("KIMI_AGENT_HOME"),
         }
         let _ = std::fs::remove_dir_all(&home);
-        result;
     }
 
     #[tokio::test]
@@ -2279,7 +2330,7 @@ mod create_tests {
         let previous = std::env::var_os("KIMI_AGENT_HOME");
         std::env::set_var("KIMI_AGENT_HOME", &tmp);
 
-        let result = async {
+        async {
             let state = crate::state::ServerState::new().expect("state");
             let processor = SessionProcessor::with_state(state);
             let mut server = MessageProcessor::new();
@@ -2316,9 +2367,140 @@ mod create_tests {
             None => std::env::remove_var("KIMI_AGENT_HOME"),
         }
         let _ = std::fs::remove_dir_all(&tmp);
-        result;
     }
 
+    /// Drive `session/export` with a `web_log` payload end-to-end: the RPC
+    /// accepts it and the returned zip still carries the manifest entry.
+    #[tokio::test]
+    async fn export_with_web_log_roundtrips() {
+        let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("kimi-export-web-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).expect("mkdir");
+        let previous = std::env::var_os("KIMI_AGENT_HOME");
+        std::env::set_var("KIMI_AGENT_HOME", &tmp);
+
+        async {
+            let state = crate::state::ServerState::new().expect("state");
+            let processor = SessionProcessor::with_state(state);
+            let mut server = MessageProcessor::new();
+            processor.register(&mut server);
+            server
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(1),
+                    method: "session/create".into(),
+                    params: serde_json::json!({ "session_id": "s-web" }),
+                })
+                .await;
+
+            let body = server
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(2),
+                    method: "session/export".into(),
+                    params: serde_json::json!({
+                        "session_id": "s-web",
+                        "web_log": "{\"type\":\"user.message\",\"text\":\"hi\"}\n",
+                    }),
+                })
+                .await;
+            assert!(body.get("error").is_none(), "export with web_log: {body}");
+            let b64 = body["result"]["zip_base64"].as_str().expect("zip_base64 string");
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .expect("valid base64");
+            assert_eq!(&bytes[..2], b"PK", "zip magic bytes");
+        }
+        .await;
+
+        match previous {
+            Some(v) => std::env::set_var("KIMI_AGENT_HOME", v),
+            None => std::env::remove_var("KIMI_AGENT_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// An oversized `web_log` (past the 256 KiB cap) is rejected at the RPC
+    /// boundary, mirroring the upstream route's payload rejection.
+    #[tokio::test]
+    async fn export_rejects_oversized_web_log() {
+        let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("kimi-export-big-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).expect("mkdir");
+        let previous = std::env::var_os("KIMI_AGENT_HOME");
+        std::env::set_var("KIMI_AGENT_HOME", &tmp);
+
+        // 87_382 CJK chars ≈ 262_146 bytes > 256 KiB, mirroring the upstream
+        // route's rejection fixture.
+        let oversized = "你".repeat(87_382);
+        assert!(oversized.len() > 256 * 1024, "fixture len: {}", oversized.len());
+
+        // The wire round-trip preserves the byte length (no unicode loss).
+        let wire: kimi_protocol::wire_types::SessionExportParams =
+            serde_json::from_value(serde_json::json!({
+                "session_id": "s-big",
+                "web_log": oversized.clone(),
+            }))
+            .expect("parse params");
+        assert!(
+            wire.web_log.as_deref().unwrap_or_default().len() > 256 * 1024,
+            "wire web_log len: {}",
+            wire.web_log.as_deref().unwrap_or_default().len()
+        );
+
+        // The engine function itself rejects the oversized log (probes that
+        // the linked kimi-agent lib carries the cap enforcement).
+        {
+            let store = kimi_agent::persistence::SqliteStore::in_memory().unwrap();
+            let rs = kimi_agent::persistence::RecordStore::new(store);
+            let engine_result = kimi_agent::session::export::export_session_with_web_log(
+                "s-big",
+                std::path::Path::new(&tmp),
+                &rs,
+                Some(&oversized),
+            );
+            assert!(engine_result.is_err(), "engine must reject: {engine_result:?}");
+        }
+
+        async {
+            let state = crate::state::ServerState::new().expect("state");
+            let processor = SessionProcessor::with_state(state);
+            let mut server = MessageProcessor::new();
+            processor.register(&mut server);
+            server
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(1),
+                    method: "session/create".into(),
+                    params: serde_json::json!({ "session_id": "s-big" }),
+                })
+                .await;
+
+            let body = server
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(2),
+                    method: "session/export".into(),
+                    params: serde_json::json!({
+                        "session_id": "s-big",
+                        "web_log": oversized,
+                    }),
+                })
+                .await;
+            let error = body.get("error").unwrap_or_else(|| {
+                panic!("oversized web_log must error, got: {body}");
+            });
+            let message = error["message"].as_str().unwrap_or("");
+            assert!(message.contains("web_log"), "error message: {message}");
+        }
+        .await;
+
+        match previous {
+            Some(v) => std::env::set_var("KIMI_AGENT_HOME", v),
+            None => std::env::remove_var("KIMI_AGENT_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 
     #[tokio::test]
     async fn run_shell_reaches_bash_runner() {
@@ -2351,5 +2533,59 @@ mod create_tests {
         // Either ran natively (output present) or reported unavailable (no
         // bash detected) — both are valid; the pipeline must not RPC-error.
         assert!(body.get("error").is_none(), "run_shell failed: {body}");
+    }
+
+    /// A prompt turn driven by a fake LLM step completes with a real
+    /// stop_reason/steps envelope: one text reply with no tool calls ends the
+    /// turn (EndTurn) in a single step, with usage recorded.
+    #[tokio::test]
+    async fn prompt_returns_stop_reason_and_steps() {
+        use std::sync::Arc;
+        let step: crate::callbacks::LlmStep = Arc::new(
+            move |_req: kimi_protocol::wire_types::LlmChatRequest| {
+                Box::pin(async move {
+                    Ok(kimi_protocol::wire_types::LlmChatResponse {
+                        content: "hello from fake llm".into(),
+                        tool_calls: vec![],
+                        finish_reason: Some("stop".into()),
+                        usage: kimi_protocol::wire_types::TokenUsage {
+                            input_tokens: 10,
+                            output_tokens: 10,
+                            total_tokens: 20,
+                        },
+                    })
+                })
+            },
+        );
+        let state = crate::state::ServerState::with_llm_step(step).expect("state");
+        let processor = SessionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+
+        server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/create".into(),
+                params: serde_json::json!({ "session_id": "s-prompt-ok" }),
+            })
+            .await;
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/prompt".into(),
+                params: serde_json::json!({
+                    "session_id": "s-prompt-ok",
+                    "input": [{"type": "text", "text": "hello"}],
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "prompt failed: {body}");
+        assert_eq!(body["result"]["stop_reason"], "EndTurn", "stop: {body}");
+        assert_eq!(body["result"]["steps"], 1, "steps: {body}");
+        assert!(body["result"]["usage"].is_object(), "usage: {body}");
+        assert_eq!(body["result"]["usage"]["output_tokens"], 10, "usage: {body}");
     }
 }

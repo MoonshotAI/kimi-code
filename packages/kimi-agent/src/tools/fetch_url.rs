@@ -8,9 +8,27 @@ use std::time::Duration;
 
 /// Configuration for FetchURL.
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
-const MAX_REDIRECTS: usize = 10;
 const MAX_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 const USER_AGENT: &str = "Mozilla/5.0 (compatible; KimiCode/1.0)";
+
+/// Shared HTTP client for the web tools (`fetch_url` / `web_search`).
+///
+/// A `reqwest::Client` owns a connection pool; building a fresh one per call
+/// (as this tool used to) threw the pool away on every fetch, so repeated web
+/// calls inside one turn each paid a fresh TCP + TLS + DNS round. Sharing a
+/// single 30s-timeout client keeps connections warm across calls. The default
+/// redirect policy (at most 10 redirects) matches the old explicit
+/// `limited(10)`; the user agent rides per request.
+static SHARED_WEB_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
+pub(crate) fn shared_web_client() -> &'static reqwest::Client {
+    SHARED_WEB_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+            .build()
+            .unwrap_or_default()
+    })
+}
 
 /// Result of a fetch operation.
 #[derive(Debug, Clone)]
@@ -36,17 +54,10 @@ pub async fn fetch_url(url: &str) -> Result<FetchResult, String> {
         return Err(format!("SSRF blocked: {host} is a private/reserved address"));
     }
 
-    // Build client
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
-        .redirect(reqwest::redirect::Policy::limited(MAX_REDIRECTS))
-        .user_agent(USER_AGENT)
-        .build()
-        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
-
-    // Fetch
-    let response = client
+    // Fetch via the shared web client (connection reuse across calls).
+    let response = shared_web_client()
         .get(url)
+        .header(reqwest::header::USER_AGENT, USER_AGENT)
         .send()
         .await
         .map_err(|e| format!("HTTP request failed: {e}"))?;

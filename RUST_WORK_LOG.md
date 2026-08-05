@@ -1,4 +1,32 @@
 
+> **✅ 2026-08-05 挂起测试诊断（供外部会话修复参考）**：
+> - `task_tool_tracks_and_settles_a_detached_task`（agent.rs:3018）：挂点在 `run_prompt`（3020 行）——task 工具注册的 child agent 经 subagent 机制跑 NoopHost；settle 依赖 child 结束信号（task/mod.rs `settle` + notifications）。疑似 task/settle 与 subagent 完成等待的交互未唤醒。
+> - `resume_agent_ids_is_accepted_and_renders_agent_ids`（swarm_tool.rs）：同域（agent/swarm），独立运行即挂起。
+> - 两测试均独立挂起（非并行竞态），`cargo test -p kimi-agent --lib -- --skip <两个>` 其余 2042 全绿。
+
+> **✅ 2026-08-05 集成验证收口（goal 会话，未提交）**：
+> - **全量验证结果**：`cargo check --workspace --all-targets` 0 errors/0 warnings；`cargo test -p kimi-agent --lib`（除 2 个外部挂起测试）= **2042 passed, 0 failed**（30.3s）
+> - **⚠️ 外部会话测试挂起（与本会话无关，需外部会话修复）**：`agent::agent::tests::task_tool_tracks_and_settles_a_detached_task`、`agent::swarm_tool::tests::resume_agent_ids_is_accepted_and_renders_agent_ids`——均独立运行即挂起（60s+ 无完成，timeout kill），属 agent.rs/swarm_tool.rs 的 task/settle、swarm resume 改动区（另一会话进行中工作）。此前 `cargo test --workspace` 卡 30min+ 即此二测试所致
+> - **kimi-exec doctest E0463 已自愈**（RUST_WORK_LOG 旧记录：本机 doctest 报 can't find crate；现 `cargo test -p kimi-exec --doc` 正常 0 tests）
+> - **全量测试方式备忘**：kimi-agent 2044 单测输出量大（每测试独立行），全量套件 ~30s（跳过挂起时）；`cargo test --workspace` 受外部挂起测试阻塞，逐 crate 验证为可靠基线方式
+
+> **✅ 2026-08-04/05 Rust 端补全批次（goal 会话，未提交，分支 feat/rust-agent-engine-migration）**：
+> - **kap-server 测试缺口 A1–A7**（kimi-agent/kimi-server）：
+>   - A1 export 增强：`MAX_WEB_LOG_BYTES=256KiB` 引擎侧校验（export.rs，对齐上游 sessionExport 路由）+ web_log 注入 manifest/zip 断言 + RPC 级拒绝测试；`ExportManifest` 补 Deserialize
+>   - A2 fs:search 3 测试（命中/空查询顶层列表/目录 read 拒绝 in-band）
+>   - A3 prompt 成功路径（`ServerState::with_llm_step` fake LLM → stop_reason=EndTurn/steps=1/usage）
+>   - A4 config 容错（宿主未知字段如 default_permission_mode 静默丢弃，引擎无 permission 域）
+>   - A5 approval 缺 decision 参数校验；A6 bg/list 空态；A7 Remote stdio 方法族冒烟（remote_client.rs）
+>   - 修复：list_returns_empty_page 并行 env 竞态（放宽为数组形状，严格空态由 bg_list_empty 承担）；清理 7 处 `result;` path-statement 警告
+> - **传输并发化**（stdio+ws 双路径，对齐引擎 rpc/server.rs 并发语义）：
+>   - `kimi-server-transport/src/stdio.rs` serve：每行 spawn + `Arc<Mutex<W>>` 整行写回，writer 改 owned；`bin/kimi-server-serve.rs` 适配
+>   - `kimi-server-client/src/stdio_client.rs` 重构：后台读循环 + pending map + 唯一 id 路由，`call(&self)` 不持锁等响应——挂起 prompt 不再阻塞同客户端 cancel
+>   - `websocket.rs` serve 帧并发 + `ws_client.rs` 同构重构；新测试 `serve_dispatches_concurrently`/`remote_client_concurrent_calls`/`websocket_dispatches_concurrently`/`ws_client_concurrent_calls`
+> - **llm.delta 核对**：native_llm 模式引擎发（host/event）、host 回调模式宿主发（设计自洽非缺口）；补 `streaming_openai_chat_emits_text_deltas`（本地 SSE 服务器，断言 delta 事件）
+> - **kimi-sdk Session 补齐**：`set_permission`（TS setPermission）+ background task 四方法（list/get_output/stop/detach，TS listBackgroundTasks 等）
+> - **测试基线（实测）**：kimi-agent http 9、kimi-server **62**、kimi-server-client 6、kimi-server-transport lib 4 + 集成 6、kimi-sdk runtime **18** + harness 6、kimi-cli 36 集成、kimi-acp 7——全绿 0 warnings
+> - **⚠️ 外部进程干扰记录**：另一 cargo/rustc 进程并行构建（02:49），曾两次回滚 `packages/kimi-agent/src/session/export.rs` 改动、`cargo clean` 报拒绝访问、编译产物瞬时不一致；最终在文件完整窗口验证通过。并行会话注意勿同时编辑 export.rs / 共享 target。
+
 > **✅ 2026-08-04 ① kimi-server-client Remote Box 化 + 基线核对（已提交 24c497cf0）**：
 > - **clippy 修复**：`AppServerClient::Remote(StdioClient)` 变体 432 字节 → `Box<StdioClient>`（clippy::large_enum_variant）；4 处构造点（kimi-cli main.rs×2、kimi-sdk lib.rs、transport tests/remote_client.rs）同步 Box::new；match 处 Deref 自动解引用无需改。
 > - **验证**：kimi-cli 集成 28/28（含 3 个 server_mode Remote 路径）、kimi-exec 3/3、kimi-server-client 4/4、kimi-server-transport 3/3（含 remote_client_round_trip）、kimi-sdk 5/5（含 remote_harness_over_stdio）、kimi-tui 9/9；改动 crate clippy 0 警告。

@@ -18,6 +18,7 @@ pub mod image;
 pub mod image_config;
 pub mod kimi_file_url;
 pub mod http_downloader;
+pub mod materialize_cache;
 pub mod originals;
 pub mod read_media;
 pub mod tokenizer;

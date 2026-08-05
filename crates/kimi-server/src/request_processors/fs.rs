@@ -232,4 +232,101 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[tokio::test]
+    async fn fs_search_finds_named_files() {
+        // action=search maps to the FsSearch tool: a non-empty query matches
+        // entries whose name contains it (case-insensitively).
+        let dir = std::env::temp_dir().join(format!("kimi-fs-search-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("main.rs"), "fn main() {}").expect("write");
+        std::fs::write(dir.join("lib.rs"), "pub fn lib() {}").expect("write");
+        std::fs::write(dir.join("README.md"), "# readme").expect("write");
+
+        let mut server = MessageProcessor::new();
+        FsProcessor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/fs".into(),
+                params: serde_json::json!({
+                    "session_id": "x",
+                    "action": "search",
+                    "homedir": dir.to_string_lossy(),
+                    "query": "main",
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "fs search: {body}");
+        assert_eq!(body["result"]["is_error"], false, "search refused: {body}");
+        let content = body["result"]["content"].as_str().unwrap_or("");
+        assert!(content.contains("main.rs"), "hit main.rs: {content}");
+        assert!(!content.contains("lib.rs"), "no lib.rs: {content}");
+        assert!(!content.contains("README.md"), "no README.md: {content}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn fs_search_empty_query_lists_top_level() {
+        // An empty query falls back to the top-level listing (the @-mention
+        // picker's initial state): real entries appear, hidden ones do not.
+        let dir = std::env::temp_dir().join(format!("kimi-fs-search-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::create_dir_all(dir.join("src")).expect("mkdir src");
+        std::fs::write(dir.join("hello.txt"), "hi").expect("write");
+        std::fs::write(dir.join(".hidden"), "nope").expect("write hidden");
+
+        let mut server = MessageProcessor::new();
+        FsProcessor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/fs".into(),
+                params: serde_json::json!({
+                    "session_id": "x",
+                    "action": "search",
+                    "homedir": dir.to_string_lossy(),
+                    "query": "",
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "fs search empty: {body}");
+        let content = body["result"]["content"].as_str().unwrap_or("");
+        assert!(content.contains("hello.txt"), "top-level file listed: {content}");
+        assert!(content.contains("src"), "top-level dir listed: {content}");
+        assert!(!content.contains(".hidden"), "hidden entry excluded: {content}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn fs_read_directory_is_refused_in_band() {
+        // Reading a directory is a tool-level refusal: the RPC succeeds and
+        // surfaces it as an in-band is_error, not an RPC error.
+        let dir = std::env::temp_dir().join(format!("kimi-fs-read-dir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+
+        let mut server = MessageProcessor::new();
+        FsProcessor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/fs".into(),
+                params: serde_json::json!({
+                    "session_id": "x",
+                    "action": "read",
+                    "homedir": dir.to_string_lossy(),
+                    "path": dir.to_string_lossy(),
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "dir read should not RPC-error: {body}");
+        assert_eq!(body["result"]["is_error"], true, "dir read refused: {body}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -8,9 +8,20 @@
 //! native LLM + native toolset paths run engine-side), so they report a clear
 //! "not configured" error rather than silently dropping.
 
+use std::sync::Arc;
+
 use kimi_agent::callbacks::HostCallbacks;
-use kimi_protocol::wire_types::{LlmChatRequest, LlmChatResponse, ToolExecuteRequest, ToolExecuteResponse};
+use kimi_protocol::wire_types::{
+    BoxFuture, LlmChatRequest, LlmChatResponse, ToolExecuteRequest, ToolExecuteResponse,
+};
 use tokio::sync::broadcast;
+
+/// An injectable LLM step override (SDK runtime-test hook, mirrors TS
+/// `createKimiHarness({ llmStep })`). When set, `ServerHostCallbacks::llm_chat`
+/// delegates to it instead of reporting "not configured", so integration tests
+/// can drive real engine turns offline.
+pub type LlmStep =
+    Arc<dyn Fn(LlmChatRequest) -> BoxFuture<'static, Result<LlmChatResponse, String>> + Send + Sync>;
 
 /// Event fan-out for engine `host/event` notifications.
 #[derive(Clone)]
@@ -29,11 +40,20 @@ impl EventBus {
     pub fn subscribe(&self) -> broadcast::Receiver<serde_json::Value> {
         self.tx.subscribe()
     }
+
+    /// Broadcast an event to all subscribers (lagging receivers are dropped,
+    /// matching the engine's bounded fan-out).
+    pub fn emit(&self, event: serde_json::Value) {
+        let _ = self.tx.send(event);
+    }
 }
 
 /// The kimi-server host-callback implementation.
 pub struct ServerHostCallbacks {
     events: EventBus,
+    /// Optional LLM step override; when absent `llm_chat` reports
+    /// "not configured" (bare-server behavior).
+    llm_step: Option<LlmStep>,
 }
 
 impl ServerHostCallbacks {
@@ -44,7 +64,16 @@ impl ServerHostCallbacks {
 
     /// Create sharing a caller-provided event bus.
     pub fn with_events(events: EventBus) -> Self {
-        Self { events }
+        Self {
+            events,
+            llm_step: None,
+        }
+    }
+
+    /// Install an LLM step override (SDK runtime-test hook).
+    pub fn with_llm_step(mut self, step: LlmStep) -> Self {
+        self.llm_step = Some(step);
+        self
     }
 
     /// Access the event bus (interface layer subscribes here).
@@ -62,8 +91,11 @@ impl HostCallbacks for ServerHostCallbacks {
 
     fn llm_chat(
         &self,
-        _request: LlmChatRequest,
+        request: LlmChatRequest,
     ) -> kimi_agent::rpc::types::BoxFuture<'static, Result<LlmChatResponse, String>> {
+        if let Some(step) = &self.llm_step {
+            return step(request);
+        }
         Box::pin(async { Err("llm_chat host callback not configured".into()) })
     }
 

@@ -1226,8 +1226,8 @@ export default {
       providerCatalogUnsupported: '提供商"{{id}}"在目录中的传输类型不受支持。',
       providerCatalogModelNotInProvider:
         '模型"{{model}}"不在提供商"{{id}}"中。运行"kimi provider catalog list {{id}}"查看可用 ID。',
-      providerImported: '已从 {{url}} 导入 {{name}}（{{id}}），包含 {{count}} 个模型。',
-      providerMultipleImported: '已从 {{url}} 导入 {{count}} 个提供商（{{modelCount}} 个模型）：',
+      providerImported: '已从 {{url}} 导入 {{name}}（{{id}}），包含 {{count}} 个模型{{plural}}。',
+      providerMultipleImported: '已从 {{url}} 导入 {{count}} 个提供商{{plural}}（{{modelCount}} 个模型{{modelPlural}}）：',
       providerDefaultSet: '默认模型已设置为 {{id}}/{{model}}。',
       providerCatalogFetchFailed: '从 {{url}} 获取目录失败{{suffix}}：{{error}}',
       // tui/commands/provider.ts
@@ -1281,7 +1281,7 @@ export default {
       doctorFileNotExistDefaults: '文件不存在；将使用内置默认值。',
       doctorTitle: 'Kimi 诊断',
       doctorAllValid: '所有检查的配置文件均有效。',
-      doctorFoundIssues: 'Kimi 诊断发现了 {{count}} 个问题。',
+      doctorFoundIssues: 'Kimi 诊断发现了 {{count}} 个问题{{plural}}。',
       doctorInvalidConfig: '{{path}} 中的配置无效。',
       doctorValidationIssues: '验证问题：',
       // update/preflight.ts
@@ -1810,7 +1810,7 @@ export default {
         '如果持续出现，运行 `/export-debug-zip` 并与我们分享文件以供诊断。请勿公开分享。',
       // tui/utils/goal-completion.ts
       goalComplete: '✓ 目标完成{{reason}}。',
-      goalCompleteTurns: '{{count}} 轮',
+      goalCompleteTurns: '{{count}} 轮{{plural}}',
       goalCompleteSummary: '在 {{elapsed}} 内完成了 {{turns}}，使用了 {{tokens}} 个 token。',
       // tui/utils/event-payload.ts
       eventFilteredResponse: '提供商在可见输出之前过滤了响应（finishReason={{reason}}{{raw}}）。',

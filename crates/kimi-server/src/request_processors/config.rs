@@ -108,6 +108,7 @@ mod tests {
 
     #[tokio::test]
     async fn config_get_returns_kimi_config() {
+        let _guard = CONFIG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut processor = MessageProcessor::new();
         ConfigProcessor.register(&mut processor);
         let body = processor
@@ -140,7 +141,7 @@ mod tests {
         let previous = std::env::var_os("KIMI_CONFIG_PATH");
         std::env::set_var("KIMI_CONFIG_PATH", &tmp);
 
-        let result = async {
+        async {
             let mut processor = MessageProcessor::new();
             ConfigProcessor.register(&mut processor);
             let body = processor
@@ -181,6 +182,63 @@ mod tests {
             None => std::env::remove_var("KIMI_CONFIG_PATH"),
         }
         let _ = std::fs::remove_file(&tmp);
-        result;
+    }
+
+    /// The engine config schema has no `permission` section — upstream's
+    /// `default_permission_mode` / yolo derivation is a host projection. The
+    /// engine must still tolerate a host-passed patch carrying such keys:
+    /// unknown fields are dropped without an error and existing values are
+    /// preserved.
+    #[tokio::test]
+    async fn config_set_tolerates_host_unknown_fields() {
+        let _guard = CONFIG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("kimi-config-lenient-{}", std::process::id()));
+        std::fs::write(
+            &tmp,
+            "[providers.mock]\ntype = \"openai\"\nbaseUrl = \"http://localhost:9999/v1\"\n",
+        )
+        .expect("seed config");
+        let previous = std::env::var_os("KIMI_CONFIG_PATH");
+        std::env::set_var("KIMI_CONFIG_PATH", &tmp);
+
+        async {
+            let mut processor = MessageProcessor::new();
+            ConfigProcessor.register(&mut processor);
+            let body = processor
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(1),
+                    method: "config/set".into(),
+                    params: serde_json::json!({
+                        "patch": {
+                            "default_permission_mode": "yolo",
+                            "defaultModel": "kimi-k2",
+                        }
+                    }),
+                })
+                .await;
+            assert!(body.get("error").is_none(), "lenient set failed: {body}");
+
+            // The known field survived; the unknown one is dropped, and a
+            // subsequent get still reflects the known value.
+            let on_disk = std::fs::read_to_string(&tmp).expect("read back");
+            assert!(on_disk.contains("defaultModel"), "known field kept: {on_disk}");
+            let body = processor
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(2),
+                    method: "config/get".into(),
+                    params: serde_json::Value::Null,
+                })
+                .await;
+            assert_eq!(body["result"]["defaultModel"], "kimi-k2", "get: {body}");
+        }
+        .await;
+
+        match previous {
+            Some(v) => std::env::set_var("KIMI_CONFIG_PATH", v),
+            None => std::env::remove_var("KIMI_CONFIG_PATH"),
+        }
+        let _ = std::fs::remove_file(&tmp);
     }
 }

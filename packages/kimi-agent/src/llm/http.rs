@@ -29,6 +29,15 @@ const REQUEST_TIMEOUT_SECS: u64 = 600;
 /// upstream traffic classification sees one host identity.
 const USER_AGENT_PRODUCT: &str = "kimi-code-cli";
 
+/// Text deltas below this cumulative length are coalesced into a single
+/// `llm.delta` event before being forwarded to the host.
+const TEXT_COALESCE_MAX_CHARS: usize = 64;
+
+/// Streaming stall budget: when no SSE event arrives within this window,
+/// pending coalesced text is flushed so trickle streams keep rendering.
+/// Also bounds the coalesce latency for slow producers.
+const TEXT_COALESCE_IDLE: std::time::Duration = std::time::Duration::from_millis(8);
+
 /// Environment variable naming the client identity sent as an
 /// `X-Kimi-Client` header. When unset (or empty), the header is omitted.
 const CLIENT_IDENTITY_ENV: &str = "KIMI_CODE_CLIENT_IDENTITY";
@@ -89,17 +98,47 @@ enum Protocol {
     Google,
 }
 
-impl NativeHttpLlm {
-    pub fn new(config: NativeLlmConfig, system_prompt: String) -> Self {
-        let client = reqwest::Client::builder()
+/// Net prompt tokens for the host's `inputOther` accounting.
+///
+/// OpenAI/Moonshot `prompt_tokens` and Gemini `promptTokenCount` already
+/// include the cached portion; Anthropic `input_tokens` does not (it reports
+/// cache reads separately). kosong parity (`openai-common.ts` extractUsage):
+/// `inputOther = max(prompt - cached, 0)` — without the subtraction a cache
+/// hit would be billed twice.
+fn net_input_other(protocol: Protocol, input_tokens: u32, cache_read: u32) -> u32 {
+    match protocol {
+        Protocol::Anthropic => input_tokens,
+        _ => input_tokens.saturating_sub(cache_read),
+    }
+}
+
+/// Process-wide HTTP client shared by every `NativeHttpLlm` instance.
+///
+/// A `reqwest::Client` owns a connection pool keyed by (host, port, scheme,
+/// TLS config). Building a fresh client per instance — as this transport used
+/// to — discarded the pool on every turn, forcing a new TCP + TLS + DNS round
+/// on each LLM call. Sharing one client keeps provider connections warm across
+/// turns and sessions. The timeouts mirror the old per-instance configuration.
+static SHARED_LLM_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
+fn shared_llm_client() -> &'static reqwest::Client {
+    SHARED_LLM_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
             .connect_timeout(std::time::Duration::from_secs(15))
             .build()
-            .unwrap_or_default();
+            .unwrap_or_default()
+    })
+}
+
+impl NativeHttpLlm {
+    pub fn new(config: NativeLlmConfig, system_prompt: String) -> Self {
         Self {
             config,
             system_prompt,
-            client,
+            // Clone of the shared client — reqwest clients are `Arc` inside,
+            // so cloning is cheap and every clone draws from the same pool.
+            client: shared_llm_client().clone(),
             sink: None,
         }
     }
@@ -170,6 +209,7 @@ impl NativeHttpLlm {
                 &params.tools,
                 true,
                 self.config.reasoning_effort.as_deref(),
+                self.config.session_id.as_deref(),
             ),
             Protocol::Google => {
                 // Streaming is selected by the endpoint; the model lives in
@@ -182,8 +222,12 @@ impl NativeHttpLlm {
                 )
             }
             Protocol::OpenAi => {
-                let mut b =
-                    openai::build_request_with_options(&self.config.model, &wire, &params.tools, true);
+                let mut b = openai::build_request_with_options(
+                    &self.config.model,
+                    &wire,
+                    &params.tools,
+                    true,
+                );
                 // Reasoning models: emit `reasoning_effort` when configured
                 // (set at create or via `session/set_thinking`).
                 if let Some(effort) = self.config.reasoning_effort.as_deref() {
@@ -240,39 +284,113 @@ impl NativeHttpLlm {
             (protocol == Protocol::Google).then(google_genai::StreamAccumulator::new);
 
         let mut stream = response.bytes_stream().eventsource();
-        while let Some(event) = stream.next().await {
-            let event = event.map_err(|e| format!("llm sse decode error: {e}"))?;
-            if event.data == "[DONE]" {
-                break;
+        // Coalesce consecutive text deltas into fewer, larger `llm.delta`
+        // events: providers stream text as many tiny chunks, and forwarding
+        // each one individually multiplies the host-side event volume. Text
+        // is flushed when it reaches TEXT_COALESCE_MAX_CHARS, when a thinking
+        // delta interrupts the text run, when the stream stalls past
+        // TEXT_COALESCE_IDLE_MS (trickle streams stay responsive), or at
+        // stream end.
+        let mut text_buf = String::new();
+        let mut last_text_flush = std::time::Instant::now();
+        loop {
+            if !text_buf.is_empty() && last_text_flush.elapsed() >= TEXT_COALESCE_IDLE {
+                self.emit_delta(&text_buf);
+                text_buf.clear();
+                last_text_flush = std::time::Instant::now();
             }
-            let value: serde_json::Value = match serde_json::from_str(&event.data) {
-                Ok(v) => v,
-                // Tolerate non-JSON keep-alive payloads.
-                Err(_) => continue,
-            };
-            let delta = if let Some(acc) = openai_acc.as_mut() {
-                acc.feed(&value)
-            } else if let Some(acc) = anthropic_acc.as_mut() {
-                acc.feed(&value)
-            } else if let Some(acc) = google_acc.as_mut() {
-                acc.feed(&value)
-            } else {
-                None
-            };
-            if let Some(delta) = delta {
-                match delta {
-                    crate::llm::StreamDelta::Text(text) => self.emit_delta(&text),
-                    crate::llm::StreamDelta::Thinking(thinking) => self.emit_thinking(&thinking),
+
+            match tokio::time::timeout(TEXT_COALESCE_IDLE, stream.next()).await {
+                Ok(Some(Ok(event))) => {
+                    if event.data == "[DONE]" {
+                        break;
+                    }
+                    let value: serde_json::Value = match serde_json::from_str(&event.data) {
+                        Ok(v) => v,
+                        // Tolerate non-JSON keep-alive payloads.
+                        Err(_) => continue,
+                    };
+                    let delta = if let Some(acc) = openai_acc.as_mut() {
+                        acc.feed(&value)
+                    } else if let Some(acc) = anthropic_acc.as_mut() {
+                        acc.feed(&value)
+                    } else if let Some(acc) = google_acc.as_mut() {
+                        acc.feed(&value)
+                    } else {
+                        None
+                    };
+                    if let Some(delta) = delta {
+                        match delta {
+                            crate::llm::StreamDelta::Text(text) => {
+                                text_buf.push_str(&text);
+                                if text_buf.len() >= TEXT_COALESCE_MAX_CHARS {
+                                    self.emit_delta(&text_buf);
+                                    text_buf.clear();
+                                    last_text_flush = std::time::Instant::now();
+                                }
+                            }
+                            crate::llm::StreamDelta::Thinking(thinking) => {
+                                // Channel switch — flush pending text first so
+                                // stream ordering is preserved, then surface
+                                // the thinking delta immediately.
+                                if !text_buf.is_empty() {
+                                    self.emit_delta(&text_buf);
+                                    text_buf.clear();
+                                }
+                                last_text_flush = std::time::Instant::now();
+                                self.emit_thinking(&thinking);
+                            }
+                        }
+                    }
+                }
+                Ok(Some(Err(e))) => {
+                    if !text_buf.is_empty() {
+                        self.emit_delta(&text_buf);
+                        text_buf.clear();
+                    }
+                    return Err(format!("llm sse decode error: {e}"));
+                }
+                Ok(None) => break,
+                Err(_elapsed) => {
+                    // Idle read: nothing arrived within the coalesce budget.
+                    // Flush pending text NOW so trickle/stalled streams keep
+                    // rendering (the earlier "top of loop flushes next pass"
+                    // was dead — resetting the timer there suppressed it).
+                    if !text_buf.is_empty() {
+                        self.emit_delta(&text_buf);
+                        text_buf.clear();
+                    }
+                    last_text_flush = std::time::Instant::now();
                 }
             }
         }
+        if !text_buf.is_empty() {
+            self.emit_delta(&text_buf);
+        }
 
+        let (cache_read, cache_creation) = match (
+            openai_acc.as_ref(),
+            anthropic_acc.as_ref(),
+            google_acc.as_ref(),
+        ) {
+            (Some(acc), _, _) => (acc.cache_read, acc.cache_creation),
+            (_, Some(acc), _) => (acc.cache_read, acc.cache_creation),
+            (_, _, Some(acc)) => (acc.cache_read, acc.cache_creation),
+            _ => (0, 0),
+        };
         let response = match (openai_acc, anthropic_acc, google_acc) {
             (Some(acc), _, _) => acc.finish(),
             (_, Some(acc), _) => acc.finish(),
             (_, _, Some(acc)) => acc.finish(),
             _ => unreachable!("one accumulator is always constructed"),
         };
+
+        // Prompt token counts from OpenAI/Moonshot (`prompt_tokens`) and
+        // Gemini (`promptTokenCount`) INCLUDE the cached portion. The host
+        // maps them to `inputOther`, which must exclude cache reads (kosong
+        // `extractUsage` parity); reporting the gross count would double-count
+        // cache hits. Anthropic's `input_tokens` already excludes cache reads.
+        let input_other = net_input_other(protocol, response.usage.input_tokens, cache_read);
 
         // Report the finished step (content + tool calls + usage) so the
         // host can record the assistant message without owning the call.
@@ -286,10 +404,15 @@ impl NativeHttpLlm {
             })).collect::<Vec<_>>(),
             "finish_reason": response.finish_reason,
             "usage": {
-                "input_tokens": response.usage.input_tokens,
+                "input_tokens": input_other,
                 "output_tokens": response.usage.output_tokens,
                 "total_tokens": response.usage.total_tokens,
             },
+            // Cache accounting rides as top-level event fields: the wire
+            // `TokenUsage` carries no cache counts, and the host maps these
+            // into `inputCacheRead` / `inputCacheCreation`.
+            "input_cache_read": cache_read,
+            "input_cache_creation": cache_creation,
         }));
 
         Ok(response)
@@ -365,6 +488,7 @@ mod tests {
             max_tokens: None,
             custom_headers: HashMap::new(),
             reasoning_effort: None,
+            session_id: None,
         }
     }
 
@@ -375,6 +499,18 @@ mod tests {
 
         let llm = NativeHttpLlm::new(config("anthropic", "https://api.example.com/v1"), String::new());
         assert_eq!(llm.endpoint(), "https://api.example.com/v1/messages");
+    }
+
+    #[test]
+    fn net_input_other_excludes_cache_for_openai_and_google() {
+        // OpenAI/Moonshot: prompt_tokens includes cached → net subtracts.
+        assert_eq!(net_input_other(Protocol::OpenAi, 100, 90), 10);
+        assert_eq!(net_input_other(Protocol::OpenAi, 100, 100), 0);
+        assert_eq!(net_input_other(Protocol::Google, 100, 90), 10);
+        // No cache reported → gross unchanged.
+        assert_eq!(net_input_other(Protocol::OpenAi, 100, 0), 100);
+        // Anthropic: input_tokens already excludes cache reads → gross.
+        assert_eq!(net_input_other(Protocol::Anthropic, 100, 90), 100);
     }
 
     #[test]
@@ -530,5 +666,86 @@ mod tests {
         let headers = capture_request_headers(cfg).await;
         let ua = headers.get("user-agent").expect("User-Agent header present");
         assert_eq!(ua, "my-agent/1.2", "custom UA must replace the default, not append");
+    }
+
+    /// Streaming OpenAI-style SSE chunks are forwarded to the event sink as
+    /// `llm.delta` text events, and the accumulated transcript text matches.
+    /// This pins the native-LLM streaming path the TUI renders from
+    /// (`llm.delta` → transcript) — the host-callback path owns its own stream
+    /// and never goes through `with_sink`.
+    #[tokio::test]
+    async fn streaming_openai_chat_emits_text_deltas() {
+        use std::sync::Arc;
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.expect("accept");
+            let (reader, mut writer) = sock.split();
+            let mut lines = tokio::io::BufReader::new(reader).lines();
+            // Drain request headers up to the blank line.
+            while let Ok(Some(line)) = lines.next_line().await {
+                if line.is_empty() {
+                    break;
+                }
+            }
+            writer
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n")
+                .await
+                .expect("status");
+            writer
+                .write_all(
+                    b"data: {\"id\":\"1\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hello \"},\"finish_reason\":null}]}\n\n\
+                      data: {\"id\":\"2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"world\"},\"finish_reason\":null}]}\n\n\
+                      data: {\"id\":\"3\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n\
+                      data: [DONE]\n\n",
+                )
+                .await
+                .expect("body");
+            writer.flush().await.expect("flush");
+        });
+
+        let deltas: Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink_deltas = deltas.clone();
+        let llm = NativeHttpLlm::new(
+            config("openai", &format!("http://{addr}/v1")),
+            String::new(),
+        )
+        .with_sink(Arc::new(move |event: serde_json::Value| {
+            if event["type"] == "llm.delta" {
+                sink_deltas.lock().unwrap_or_else(|e| e.into_inner()).push(event);
+            }
+        }));
+
+        let response = llm
+            .chat_impl(LLMChatParams {
+                messages: vec![crate::turn_loop::types::LLMMessage {
+                    role: "user".into(),
+                    content: "hi".into(),
+                    ..Default::default()
+                }],
+                tools: vec![],
+            })
+            .await
+            .expect("chat");
+
+        assert_eq!(response.content, "hello world", "accumulated text");
+        let _ = server.await;
+
+        // Coalescing may merge the two chunks into one event, so assert on the
+        // concatenated delta text rather than the event count.
+        let deltas = deltas.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(!deltas.is_empty(), "expected llm.delta events");
+        let text: String = deltas
+            .iter()
+            .filter_map(|e| e["part"]["text"].as_str())
+            .collect();
+        assert_eq!(text, "hello world", "delta text: {text}");
+        assert!(
+            deltas.iter().all(|e| e["part"]["type"] == "text"),
+            "deltas are text parts: {deltas:?}"
+        );
     }
 }

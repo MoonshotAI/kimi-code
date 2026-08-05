@@ -9,10 +9,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::persistence::record_store::RecordStore;
 
+/// Web log size cap (bytes, UTF-8), matching the upstream `sessionExport`
+/// route's 256 KiB rejection.
+pub const MAX_WEB_LOG_BYTES: usize = 256 * 1024;
+
 /// Export manifest — metadata about the exported session. Field names are
 /// camelCase to match the v1 export manifest wire shape (`sessionId`,
 /// `webLogPath`, …).
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportManifest {
     pub version: u32,
@@ -80,12 +84,24 @@ pub fn export_session(
 
 /// Export with an optional client-supplied web JSONL log (`web_log`), archived
 /// as `logs/kimi-web.jsonl` with a matching manifest `webLogPath` entry.
+///
+/// The log is size-bounded: the upstream `sessionExport` route rejects logs
+/// larger than 256 KiB (UTF-8 bytes), and the engine enforces the same cap so
+/// a rogue payload cannot bloat the archive or the response envelope.
 pub fn export_session_with_web_log(
     session_id: &str,
     session_dir: &Path,
     record_store: &RecordStore,
     web_log: Option<&str>,
 ) -> Result<Vec<u8>, String> {
+    if let Some(log) = web_log {
+        if log.len() > MAX_WEB_LOG_BYTES {
+            return Err(format!(
+                "web_log exceeds the {MAX_WEB_LOG_BYTES}-byte cap ({} bytes)",
+                log.len()
+            ));
+        }
+    }
     let zip_buf = std::io::Cursor::new(Vec::new());
     let mut zip = zip::ZipWriter::new(zip_buf);
 
@@ -206,5 +222,68 @@ mod tests {
         assert!(result.is_ok(), "export failed: {:?}", result.err());
         let zip_data = result.unwrap();
         assert!(!zip_data.is_empty(), "zip should not be empty");
+    }
+
+    #[test]
+    fn test_export_with_web_log_injects_manifest_and_archive_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteStore::in_memory().unwrap();
+        let record_store = RecordStore::new(store);
+        let session_dir = dir.path().join("sessions").join("test-session");
+        std::fs::create_dir_all(&session_dir).unwrap();
+
+        let log = r#"{"type":"user.message","text":"hi"}
+{"type":"assistant.message","text":"hello"}
+"#;
+        let result = export_session_with_web_log(
+            "test-session",
+            &session_dir,
+            &record_store,
+            Some(log),
+        );
+        assert!(result.is_ok(), "export failed: {:?}", result.err());
+        let zip_data = result.unwrap();
+
+        // The archive carries the log at logs/kimi-web.jsonl and the manifest
+        // advertises it via webLogPath.
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&zip_data)).expect("read zip");
+        let manifest: ExportManifest = {
+            let mut file = archive.by_name("manifest.json").expect("manifest entry");
+            let mut text = String::new();
+            std::io::Read::read_to_string(&mut file, &mut text).expect("read manifest");
+            serde_json::from_str(&text).expect("parse manifest")
+        };
+        assert_eq!(
+            manifest.web_log_path.as_deref(),
+            Some("logs/kimi-web.jsonl"),
+            "webLogPath: {manifest:?}"
+        );
+        let mut file = archive.by_name("logs/kimi-web.jsonl").expect("web log entry");
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut file, &mut text).expect("read web log");
+        assert_eq!(text, log, "archived web log matches the input");
+    }
+
+    #[test]
+    fn test_export_rejects_oversized_web_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteStore::in_memory().unwrap();
+        let record_store = RecordStore::new(store);
+        let session_dir = dir.path().join("sessions").join("test-session");
+        std::fs::create_dir_all(&session_dir).unwrap();
+
+        // 87_382 CJK chars ≈ 262_146 bytes > 256 KiB, mirroring the upstream
+        // route's rejection fixture.
+        let oversized = "你".repeat(87_382);
+        assert!(oversized.len() > MAX_WEB_LOG_BYTES, "fixture must exceed the cap");
+        let result = export_session_with_web_log(
+            "test-session",
+            &session_dir,
+            &record_store,
+            Some(&oversized),
+        );
+        let err = result.expect_err("oversized web log must be rejected");
+        assert!(err.contains("web_log"), "error mentions web_log: {err}");
+        assert!(err.contains("262144"), "error mentions the cap: {err}");
     }
 }

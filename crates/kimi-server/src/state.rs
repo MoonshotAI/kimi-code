@@ -47,11 +47,25 @@ pub struct ServerState {
 impl ServerState {
     /// Assemble fresh shared state (own store, own approval/permission).
     pub fn new() -> anyhow::Result<Self> {
+        Self::assemble(None)
+    }
+
+    /// Assemble shared state with an LLM step override installed on the host
+    /// callbacks (SDK runtime-test hook; mirrors TS `createKimiHarness`'s
+    /// `llmStep`). Without one, `llm_chat` reports "not configured".
+    pub fn with_llm_step(step: crate::callbacks::LlmStep) -> anyhow::Result<Self> {
+        Self::assemble(Some(step))
+    }
+
+    fn assemble(llm_step: Option<crate::callbacks::LlmStep>) -> anyhow::Result<Self> {
         let store = open_session_store()?;
         let manager = Arc::new(Mutex::new(SessionManager::new(SessionStore::new(store))));
         let events = crate::callbacks::EventBus::new(256);
-        let callbacks: Arc<dyn HostCallbacks> =
-            Arc::new(crate::callbacks::ServerHostCallbacks::with_events(events.clone()));
+        let mut callbacks = crate::callbacks::ServerHostCallbacks::with_events(events.clone());
+        if let Some(step) = llm_step {
+            callbacks = callbacks.with_llm_step(step);
+        }
+        let callbacks: Arc<dyn HostCallbacks> = Arc::new(callbacks);
         let approval = Arc::new(ApprovalStore::new());
         let permission = PermissionGate::from_env();
         Ok(Self {

@@ -192,4 +192,24 @@ mod tests {
             .await;
         assert!(body.get("error").is_some(), "unknown decision -> error: {body}");
     }
+
+    #[tokio::test]
+    async fn approval_resolve_missing_decision_is_rejected() {
+        // A resolve without a decision is a parameter-level error (the
+        // `decision` wire field is mandatory), surfacing the field name.
+        let processor = ApprovalProcessor::new();
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/approval_resolve".into(),
+                params: serde_json::json!({ "id": "x" }),
+            })
+            .await;
+        assert!(body.get("error").is_some(), "missing decision -> error: {body}");
+        let message = body["error"]["message"].as_str().unwrap_or("");
+        assert!(message.contains("decision"), "error names the field: {message}");
+    }
 }

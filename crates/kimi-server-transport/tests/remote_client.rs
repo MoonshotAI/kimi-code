@@ -10,7 +10,7 @@ fn serve_bin() -> &'static str {
 
 #[tokio::test]
 async fn remote_client_round_trip() {
-    let mut client = AppServerClient::Remote(Box::new(
+    let client = AppServerClient::Remote(Box::new(
         kimi_server_client::stdio_client::StdioClient::spawn(serve_bin())
             .expect("spawn kimi-server-serve"),
     ));
@@ -31,6 +31,62 @@ async fn remote_client_round_trip() {
     // An unknown method surfaces a JSON-RPC error, not a hang.
     let body = client.call("session/does_not_exist", serde_json::Value::Null).await;
     assert!(body.get("error").is_some(), "unknown method -> error: {body}");
+
+    drop(client);
+}
+
+/// Representative method-family smoke over Remote stdio: the read-only
+/// control-plane families (config/approval/task/bg) all answer with their
+/// wire shapes through the exact process boundary a host would use.
+#[tokio::test]
+async fn remote_client_method_family_smoke() {
+    let client = AppServerClient::Remote(Box::new(
+        kimi_server_client::stdio_client::StdioClient::spawn(serve_bin())
+            .expect("spawn kimi-server-serve"),
+    ));
+
+    let body = client.config_get().await;
+    assert!(body.get("error").is_none(), "config/get: {body}");
+
+    let body = client.approval_list(Some("s-smoke")).await;
+    assert!(body.get("error").is_none(), "approval_list: {body}");
+    assert_eq!(body["result"]["pending"], serde_json::json!([]), "empty approvals: {body}");
+
+    let body = client.call("task/list", serde_json::Value::Null).await;
+    assert!(body.get("error").is_none(), "task/list: {body}");
+    assert!(body["result"].is_array(), "task/list shape: {body}");
+
+    let body = client.call("bg/list", serde_json::Value::Null).await;
+    assert!(body.get("error").is_none(), "bg/list: {body}");
+    assert!(body["result"].is_array(), "bg/list shape: {body}");
+
+    let body = client.call("session/get_usage", serde_json::json!({ "session_id": "nope" }))
+        .await;
+    // Missing session is an engine error, but the envelope round-trips (no
+    // hang, no transport failure).
+    assert!(body.get("error").is_some(), "missing session errors: {body}");
+
+    drop(client);
+}
+
+/// Two calls in flight at once over Remote stdio: the client's background
+/// reader routes each response back to its caller by request id, so a
+/// slow call (session/create persists) and a fast one (health) can be
+/// awaited concurrently without blocking each other.
+#[tokio::test]
+async fn remote_client_concurrent_calls() {
+    let client = AppServerClient::Remote(Box::new(
+        kimi_server_client::stdio_client::StdioClient::spawn(serve_bin())
+            .expect("spawn kimi-server-serve"),
+    ));
+
+    let (created, health) = tokio::join!(
+        client.session_create("s-conc"),
+        client.health(),
+    );
+    assert_eq!(created["result"]["session_id"], "s-conc", "create: {created}");
+    assert!(created.get("error").is_none(), "create error: {created}");
+    assert_eq!(health["result"]["status"], "ok", "health: {health}");
 
     drop(client);
 }
@@ -70,7 +126,7 @@ async fn serve_bin_over_websocket() {
     .expect("banner read");
 
     // The real binary path over WebSocket: health + session lifecycle.
-    let mut client = AppServerClient::RemoteWs(Box::new(
+    let client = AppServerClient::RemoteWs(Box::new(
         kimi_server_client::ws_client::WsClient::connect(&format!("127.0.0.1:{port}"))
             .await
             .expect("connect"),

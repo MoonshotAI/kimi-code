@@ -14,8 +14,8 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { register } from 'node:module';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const __filename = import.meta.filename;
+const __dirname = import.meta.dirname;
 const ROOT = resolve(__dirname, '..');
 
 // ── Locale source definitions ────────────────────────────────────────────────
@@ -77,7 +77,7 @@ function collectLeafKeys(obj, prefix = '') {
       keys.push(fullKey);
     }
   }
-  return keys.sort();
+  return keys.toSorted();
 }
 
 // ── Dynamic TS loader ────────────────────────────────────────────────────────
@@ -102,13 +102,13 @@ async function loadModule(p) {
   try {
     const mod = await import(fileUrl);
     return mod.default || mod;
-  } catch (err) {
+  } catch (error) {
     // Try .ts extension explicitly
     try {
       const mod = await import(`${fileUrl}`);
       return mod.default || mod;
     } catch {
-      throw new Error(`Cannot load ${p}: ${err.message}`);
+      throw new Error(`Cannot load ${p}: ${error.message}`);
     }
   }
 }
@@ -176,9 +176,9 @@ for (const source of LOCALE_SOURCES) {
         }
       }
     }
-  } catch (err) {
+  } catch (error) {
     hasErrors = true;
-    console.error(`✗ ${source.name}: ${err.message}`);
+    console.error(`✗ ${source.name}: ${error.message}`);
   }
 }
 

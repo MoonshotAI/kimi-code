@@ -21,6 +21,7 @@ export interface NativeLlmConfig {
   max_tokens?: number | undefined;
   custom_headers?: Record<string, string>;
   reasoning_effort?: string | undefined;
+  session_id?: string | undefined;
 }
 
 export interface ToolDef {
@@ -472,6 +473,11 @@ export interface SessionRemoveDirResult {
 export interface SessionUpdateMetadataParams {
   session_id: string;
   metadata: unknown;
+}
+
+export interface SessionRenameParams {
+  session_id: string;
+  title: string;
 }
 
 export interface SessionListParams {

@@ -286,6 +286,25 @@ mod tests {
     use kimi_protocol::rpc::JsonRpcRequest;
 
     #[tokio::test]
+    async fn bg_list_empty_returns_array() {
+        // Empty state wire shape: bg/list is an array (not null / not an
+        // error) on a fresh manager.
+        let processor = BgProcessor::new().expect("bg processor");
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "bg/list".into(),
+                params: serde_json::Value::Null,
+            })
+            .await;
+        assert!(body.get("error").is_none(), "bg/list failed: {body}");
+        assert_eq!(body["result"], serde_json::json!([]), "empty shape: {body}");
+    }
+
+    #[tokio::test]
     async fn bg_register_then_list() {
         let processor = BgProcessor::new().expect("bg processor");
         let mut server = MessageProcessor::new();

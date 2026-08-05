@@ -21,7 +21,7 @@ pub fn build_request(
     messages: &[WireMessage],
     tools: &[ToolInfo],
 ) -> Value {
-    build_request_with_options(model, max_tokens, messages, tools, false, None)
+    build_request_with_options(model, max_tokens, messages, tools, false, None, None)
 }
 
 /// Map a reasoning-effort level to an Anthropic `thinking.budget_tokens`.
@@ -41,6 +41,12 @@ fn budget_tokens_for_effort(effort: &str) -> Option<u32> {
 /// includes `thinking: { type: "enabled", budget_tokens: N }` and
 /// `max_tokens` is raised above the budget if needed (Anthropic requires
 /// `max_tokens > budget_tokens`).
+///
+/// When `session_id` is present, prompt-cache breakpoints are injected
+/// (`cache_control: { type: "ephemeral" }` on the system block, the last
+/// tool definition, and the last content block of the last message) and the
+/// affinity key rides `metadata.user_id`. The cacheable block types mirror
+/// the TS provider (`text`/`image`/`tool_use`/`tool_result`).
 pub fn build_request_with_options(
     model: &str,
     max_tokens: u32,
@@ -48,6 +54,7 @@ pub fn build_request_with_options(
     tools: &[ToolInfo],
     stream: bool,
     reasoning_effort: Option<&str>,
+    session_id: Option<&str>,
 ) -> Value {
     let mut system = String::new();
     let mut msgs: Vec<Value> = Vec::new();
@@ -101,6 +108,19 @@ pub fn build_request_with_options(
         }
     }
 
+    // Sliding cache breakpoint on the last content block of the last message
+    // (after role projection, so it lands on the final tool_result in a merged
+    // tool-result user turn). Only cacheable block types take the marker.
+    if let Some(last) = msgs.last_mut() {
+        if let Some(content) = last.get_mut("content").and_then(|c| c.as_array_mut()) {
+            if let Some(last_block) = content.last_mut() {
+                if block_type_is_cacheable(last_block) {
+                    last_block["cache_control"] = json!({ "type": "ephemeral" });
+                }
+            }
+        }
+    }
+
     // When thinking is enabled the effective max_tokens must exceed the
     // thinking budget (Anthropic rejects max_tokens <= budget_tokens).
     let thinking_budget = reasoning_effort.and_then(budget_tokens_for_effort);
@@ -122,23 +142,47 @@ pub fn build_request_with_options(
     }
 
     if !system.is_empty() {
-        req["system"] = json!(system);
+        // A block-array `system` (rather than a bare string) is what allows
+        // the cache breakpoint on the system prefix.
+        let mut sys = json!({ "type": "text", "text": system });
+        sys["cache_control"] = json!({ "type": "ephemeral" });
+        req["system"] = json!([sys]);
     }
     if !tools.is_empty() {
         let tool_defs: Vec<Value> = tools
             .iter()
-            .map(|t| {
-                json!({
+            .enumerate()
+            .map(|(i, t)| {
+                let mut def = json!({
                     "name": t.name,
                     "description": t.description,
                     "input_schema": t.input_schema,
-                })
+                });
+                // Stable cache breakpoint: the last tool definition.
+                if i == tools.len() - 1 {
+                    def["cache_control"] = json!({ "type": "ephemeral" });
+                }
+                def
             })
             .collect();
         req["tools"] = json!(tool_defs);
     }
 
+    if let Some(sid) = session_id {
+        if !sid.is_empty() {
+            req["metadata"] = json!({ "user_id": sid });
+        }
+    }
+
     req
+}
+
+/// Whether a projected Anthropic content block may carry a cache breakpoint.
+fn block_type_is_cacheable(block: &Value) -> bool {
+    match block.get("type").and_then(|t| t.as_str()) {
+        Some("text") | Some("image") | Some("tool_use") | Some("tool_result") => true,
+        _ => false,
+    }
 }
 
 /// Project a single content block to the Anthropic content-block form.
@@ -229,6 +273,12 @@ pub struct StreamAccumulator {
     blocks: Vec<Option<PartialBlock>>,
     finish_reason: Option<String>,
     usage: TokenUsage,
+    /// Cache-hit input tokens from the `message_start` usage block
+    /// (`cache_read_input_tokens`). Reported separately because the wire
+    /// `TokenUsage` carries no cache fields.
+    pub cache_read: u32,
+    /// Cache-write input tokens (`cache_creation_input_tokens`).
+    pub cache_creation: u32,
 }
 
 impl StreamAccumulator {
@@ -254,6 +304,16 @@ impl StreamAccumulator {
                 if let Some(usage) = v.get("message").and_then(|m| m.get("usage")) {
                     self.usage.input_tokens = usage
                         .get("input_tokens")
+                        .and_then(|x| x.as_u64())
+                        .unwrap_or(0) as u32;
+                    // Anthropic reports cache hit/creation counts on the
+                    // message_start usage block.
+                    self.cache_read = usage
+                        .get("cache_read_input_tokens")
+                        .and_then(|x| x.as_u64())
+                        .unwrap_or(0) as u32;
+                    self.cache_creation = usage
+                        .get("cache_creation_input_tokens")
                         .and_then(|x| x.as_u64())
                         .unwrap_or(0) as u32;
                 }
@@ -390,8 +450,12 @@ mod tests {
 
         assert_eq!(req["model"], "claude-x");
         assert_eq!(req["max_tokens"], 4096);
-        // System messages are concatenated into the top-level `system` field.
-        assert_eq!(req["system"], "sys-a\n\nsys-b");
+        // System messages are concatenated into the top-level `system` block
+        // array carrying the cache breakpoint.
+        let sys = req["system"].as_array().unwrap();
+        assert_eq!(sys[0]["type"], "text");
+        assert_eq!(sys[0]["text"], "sys-a\n\nsys-b");
+        assert_eq!(sys[0]["cache_control"], json!({ "type": "ephemeral" }));
 
         let msgs = req["messages"].as_array().unwrap();
         // user, assistant, tool-result-as-user
@@ -483,7 +547,7 @@ mod tests {
 
     #[test]
     fn build_request_streaming_sets_stream_flag() {
-        let req = build_request_with_options("m", 100, &[WireMessage::text("user", "x")], &[], true, None);
+        let req = build_request_with_options("m", 100, &[WireMessage::text("user", "x")], &[], true, None, None);
         assert_eq!(req["stream"], true);
     }
 
@@ -566,6 +630,7 @@ mod tests {
             &[],
             true,
             Some("high"),
+            None,
         );
         assert_eq!(req["thinking"]["type"], "enabled");
         assert_eq!(req["thinking"]["budget_tokens"], 32_000);
@@ -583,6 +648,7 @@ mod tests {
             &[],
             false,
             Some("high"),
+            None,
         );
         assert_eq!(req["thinking"]["budget_tokens"], 32_000);
         assert_eq!(req["max_tokens"], 32_000 + 4096);
@@ -591,12 +657,12 @@ mod tests {
     #[test]
     fn reasoning_effort_low_and_medium_map_correctly() {
         let low = build_request_with_options(
-            "m", 64_000, &[WireMessage::text("user", "x")], &[], false, Some("low"),
+            "m", 64_000, &[WireMessage::text("user", "x")], &[], false, Some("low"), None,
         );
         assert_eq!(low["thinking"]["budget_tokens"], 1024);
 
         let med = build_request_with_options(
-            "m", 64_000, &[WireMessage::text("user", "x")], &[], false, Some("medium"),
+            "m", 64_000, &[WireMessage::text("user", "x")], &[], false, Some("medium"), None,
         );
         assert_eq!(med["thinking"]["budget_tokens"], 4096);
     }
@@ -604,8 +670,102 @@ mod tests {
     #[test]
     fn no_reasoning_effort_omits_thinking() {
         let req = build_request_with_options(
-            "m", 4096, &[WireMessage::text("user", "x")], &[], false, None,
+            "m", 4096, &[WireMessage::text("user", "x")], &[], false, None, None,
         );
         assert!(req.get("thinking").is_none());
+    }
+
+    #[test]
+    fn session_id_stamps_metadata_user_id_and_tool_cache_breakpoint() {
+        let tools = vec![
+            ToolInfo {
+                name: "Read".into(),
+                description: "read".into(),
+                input_schema: json!({ "type": "object" }),
+            },
+            ToolInfo {
+                name: "Bash".into(),
+                description: "run".into(),
+                input_schema: json!({ "type": "object" }),
+            },
+        ];
+        let req = build_request_with_options(
+            "claude-x",
+            4096,
+            &[WireMessage::text("user", "hi")],
+            &tools,
+            false,
+            None,
+            Some("sess-7"),
+        );
+        assert_eq!(req["metadata"]["user_id"], "sess-7");
+        // Last tool definition carries the cache breakpoint; the first does not.
+        assert!(req["tools"][0].get("cache_control").is_none());
+        assert_eq!(req["tools"][1]["cache_control"], json!({ "type": "ephemeral" }));
+    }
+
+    #[test]
+    fn empty_session_id_omits_metadata() {
+        let req = build_request_with_options(
+            "m", 100, &[WireMessage::text("user", "x")], &[], false, None, Some(""),
+        );
+        assert!(req.get("metadata").is_none());
+    }
+
+    #[test]
+    fn last_message_block_gets_cache_breakpoint() {
+        let req = build_request_with_options(
+            "m",
+            100,
+            &[WireMessage::tool_result("tu_1", "file body")],
+            &[],
+            false,
+            None,
+            None,
+        );
+        let last_msg = req["messages"].as_array().unwrap().last().unwrap();
+        let blocks = last_msg["content"].as_array().unwrap();
+        assert_eq!(blocks.last().unwrap()["cache_control"], json!({ "type": "ephemeral" }));
+    }
+
+    #[test]
+    fn parse_response_reads_cache_tokens() {
+        // Non-streaming parse carries no cache fields on the wire TokenUsage;
+        // cache accounting flows only through the stream accumulator. This
+        // asserts the plain parse still works with cache usage present.
+        let v = json!({
+            "content": [{ "type": "text", "text": "hi" }],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 5,
+                "cache_read_input_tokens": 90,
+                "cache_creation_input_tokens": 10
+            }
+        });
+        let parsed = parse_response(&v).unwrap();
+        assert_eq!(parsed.usage.input_tokens, 100);
+        assert_eq!(parsed.usage.output_tokens, 5);
+    }
+
+    #[test]
+    fn stream_accumulator_reads_cache_tokens() {
+        let mut acc = StreamAccumulator::new();
+        acc.feed(&json!({
+            "type": "message_start",
+            "message": {
+                "usage": {
+                    "input_tokens": 100,
+                    "cache_read_input_tokens": 90,
+                    "cache_creation_input_tokens": 10
+                }
+            }
+        }));
+        let cache_read = acc.cache_read;
+        let cache_creation = acc.cache_creation;
+        let resp = acc.finish();
+        assert_eq!(cache_read, 90);
+        assert_eq!(cache_creation, 10);
+        assert_eq!(resp.usage.input_tokens, 100);
     }
 }

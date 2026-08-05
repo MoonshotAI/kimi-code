@@ -11,7 +11,7 @@ async fn embedded_harness_creates_sessions() {
     std::fs::create_dir_all(&home).expect("mkdir");
     std::env::set_var("KIMI_AGENT_HOME", &home);
 
-    let mut harness = Harness::embedded().expect("embedded engine");
+    let harness = Harness::embedded().expect("embedded engine");
     assert_eq!(harness.health().await.expect("health"), "ok");
 
     let mut session = harness.create_session("s-sdk").await.expect("create");
@@ -56,13 +56,13 @@ async fn harness_exposes_engine_events() {
     std::fs::create_dir_all(&home).expect("mkdir");
     std::env::set_var("KIMI_AGENT_HOME", &home);
 
-    let mut harness = Harness::embedded().expect("embedded engine");
+    let harness = Harness::embedded().expect("embedded engine");
     // Subscribe BEFORE driving the session so no event is missed.
     let mut guard = harness.events().await;
-    let mut events = guard.as_mut().expect("embedded exposes an event source");
+    let events = guard.as_mut().expect("embedded exposes an event source");
 
     harness.create_session("s-events").await.expect("create");
-    harness.client().await.call(
+    harness.client().call(
         kimi_protocol::methods::SESSION_LOAD,
         serde_json::json!({ "session_id": "s-events" }),
     ).await;
@@ -117,7 +117,7 @@ async fn harness_exposes_engine_events() {
     assert!(default_model.is_none() || default_model.as_deref().is_some_and(|d| !d.is_empty()));
 
     // Fork copies the session; both ids are listed afterwards.
-    session.fork("s-goal-fork", Some("forked")).await.expect("fork");
+    session.fork("s-goal-fork", Some("forked"), None).await.expect("fork");
     let sessions = harness.list_sessions(50).await.expect("list");
     assert!(sessions.iter().any(|s| s["id"] == "s-goal-fork"), "fork listed: {sessions:?}");
 
@@ -169,7 +169,7 @@ async fn session_extended_surfaces_offline() {
     std::fs::create_dir_all(&home).expect("mkdir");
     std::env::set_var("KIMI_AGENT_HOME", &home);
 
-    let mut harness = Harness::embedded().expect("embedded");
+    let harness = Harness::embedded().expect("embedded");
     let mut session = harness.create_session("s-ext").await.expect("create");
 
     // Read surfaces on a bare server (empty/neutral results, no error).
@@ -220,11 +220,75 @@ async fn remote_harness_over_stdio() {
         eprintln!("skipping: kimi-server-serve binary not built");
         return;
     };
-    let mut harness = Harness::remote(serve.to_str().unwrap()).expect("remote engine");
+    let harness = Harness::remote(serve.to_str().unwrap()).expect("remote engine");
     assert_eq!(harness.health().await.expect("health"), "ok");
 
     let mut session = harness.create_session("s-sdk-remote").await.expect("create");
     let status = session.get_status().await;
     assert!(status.get("error").is_none(), "get_status: {status}");
     assert!(status["result"]["context_tokens"].is_u64());
+}
+
+#[tokio::test]
+async fn fake_llm_step_drives_an_offline_turn() {
+    use std::sync::Arc;
+    let home = std::env::temp_dir().join(format!("kimi-sdk-turn-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).expect("mkdir");
+    std::env::set_var("KIMI_AGENT_HOME", &home);
+
+    // A fake LLM that answers one shot: text, no tool calls -> EndTurn.
+    let step: kimi_server::callbacks::LlmStep = Arc::new(move |_req: kimi_protocol::wire_types::LlmChatRequest| {
+        Box::pin(async move {
+            Ok(kimi_protocol::wire_types::LlmChatResponse {
+                content: "hello from fake llm".into(),
+                tool_calls: vec![],
+                finish_reason: Some("stop".into()),
+                usage: kimi_protocol::wire_types::TokenUsage {
+                    input_tokens: 10,
+                    output_tokens: 10,
+                    total_tokens: 20,
+                },
+            })
+        })
+    });
+
+    let harness = Harness::embedded_with_llm_step(Some(step)).expect("embedded with llm step");
+
+    // Subscribe before driving so the turn events are observed.
+    let mut guard = harness.events().await;
+    let events = guard.as_mut().expect("event source");
+
+    let mut session = harness.create_session("s-turn").await.expect("create");
+    let body = session.prompt("hello").await;
+    assert!(body.get("error").is_none(), "prompt: {body}");
+    assert_eq!(body["result"]["steps"], 1, "one step: {body}");
+    assert_eq!(body["result"]["stop_reason"], "EndTurn", "stop: {body}");
+
+    // The transcript should contain the fake assistant text.
+    let transcript = session.transcript().await.expect("transcript").unwrap_or_default();
+    assert!(transcript.contains("hello from fake llm"), "transcript: {transcript}");
+
+    // The turn emitted start + end events on the harness stream.
+    let mut saw_start = false;
+    let mut saw_end = false;
+    for _ in 0..8 {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), events.next())
+            .await
+            .expect("event within 5s")
+            .expect("stream alive");
+        match event["type"].as_str() {
+            Some("session.turn.started") => saw_start = true,
+            Some("session.turn.ended") => {
+                saw_end = true;
+                assert_eq!(event["stop_reason"], "EndTurn", "ended stop: {event}");
+            }
+            _ => {}
+        }
+        if saw_start && saw_end {
+            break;
+        }
+    }
+    assert!(saw_start, "turn.started observed");
+    assert!(saw_end, "turn.ended observed");
 }

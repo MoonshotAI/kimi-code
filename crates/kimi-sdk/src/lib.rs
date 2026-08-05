@@ -18,7 +18,7 @@ use tokio::sync::Mutex;
 /// Engine lifecycle + typed session factory.
 #[derive(Clone)]
 pub struct Harness {
-    client: Arc<Mutex<AppServerClient>>,
+    client: Arc<AppServerClient>,
     /// Engine event stream (embedded EventBus / remote captured stderr).
     events: Arc<Mutex<Option<kimi_ui::EventSource>>>,
 }
@@ -26,14 +26,26 @@ pub struct Harness {
 impl Harness {
     /// Open an engine embedded in this process.
     pub fn embedded() -> anyhow::Result<Self> {
-        let server = kimi_server::Server::build()?;
+        Self::embedded_with_llm_step(None)
+    }
+
+    /// Open an engine embedded in this process with an optional LLM step
+    /// override (SDK runtime-test hook; mirrors TS `createKimiHarness`'s
+    /// `llmStep`). When set, real prompt turns run offline against it.
+    pub fn embedded_with_llm_step(
+        llm_step: Option<kimi_server::callbacks::LlmStep>,
+    ) -> anyhow::Result<Self> {
+        let server = match llm_step {
+            Some(step) => kimi_server::Server::build_with_llm_step(step)?,
+            None => kimi_server::Server::build()?,
+        };
         Ok(Self {
             events: Arc::new(Mutex::new(Some(kimi_ui::EventSource::from_bus(
                 server.state.subscribe_events(),
             )))),
-            client: Arc::new(Mutex::new(AppServerClient::InProcess(
+            client: Arc::new(AppServerClient::InProcess(
                 kimi_server::in_process::spawn(server.processor),
-            ))),
+            )),
         })
     }
 
@@ -46,7 +58,7 @@ impl Harness {
             events: Arc::new(Mutex::new(Some(kimi_ui::EventSource::from_lines(
                 stderr,
             )))),
-            client: Arc::new(Mutex::new(AppServerClient::Remote(Box::new(client)))),
+            client: Arc::new(AppServerClient::Remote(Box::new(client))),
         })
     }
 
@@ -58,9 +70,15 @@ impl Harness {
         self.events.lock().await
     }
 
+    /// The protocol client — shared, so concurrent calls (a prompt turn and a
+    /// `session/cancel` racing it) reach the engine without a caller-owned lock.
+    pub fn client(&self) -> &AppServerClient {
+        &self.client
+    }
+
     /// Engine health (`ok` on success).
     pub async fn health(&self) -> anyhow::Result<String> {
-        let body = self.client.lock().await.health().await;
+        let body = self.client.health().await;
         if let Some(error) = body.get("error") {
             anyhow::bail!("health: {}", error["message"].as_str().unwrap_or("unknown"));
         }
@@ -69,7 +87,7 @@ impl Harness {
 
     /// Create (or resume) a session by id and return a typed handle.
     pub async fn create_session(&self, session_id: &str) -> anyhow::Result<Session> {
-        let body = self.client.lock().await.session_create(session_id).await;
+        let body = self.client.session_create(session_id).await;
         if let Some(error) = body.get("error") {
             anyhow::bail!("create session: {}", error["message"].as_str().unwrap_or("unknown"));
         }
@@ -78,7 +96,7 @@ impl Harness {
 
     /// Persisted sessions (newest first), as their summary objects.
     pub async fn list_sessions(&self, limit: u32) -> anyhow::Result<Vec<serde_json::Value>> {
-        let body = self.client.lock().await.session_list(limit).await;
+        let body = self.client.session_list(limit).await;
         if let Some(error) = body.get("error") {
             anyhow::bail!("list sessions: {}", error["message"].as_str().unwrap_or("unknown"));
         }
@@ -87,7 +105,7 @@ impl Harness {
 
     /// The engine's parsed config.
     pub async fn config(&self) -> anyhow::Result<serde_json::Value> {
-        let body = self.client.lock().await.config_get().await;
+        let body = self.client.config_get().await;
         if let Some(error) = body.get("error") {
             anyhow::bail!("config: {}", error["message"].as_str().unwrap_or("unknown"));
         }
@@ -100,8 +118,6 @@ impl Harness {
     pub async fn set_config(&self, patch: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         let body = self
             .client
-            .lock()
-            .await
             .call(kimi_protocol::methods::CONFIG_SET, serde_json::json!({ "patch": patch }))
             .await;
         if let Some(error) = body.get("error") {
@@ -125,8 +141,6 @@ impl Harness {
     pub async fn delete_session(&self, session_id: &str) -> anyhow::Result<bool> {
         let body = self
             .client
-            .lock()
-            .await
             .call(
                 kimi_protocol::methods::SESSION_DELETE,
                 serde_json::json!({ "session_id": session_id }),
@@ -142,8 +156,6 @@ impl Harness {
     pub async fn export_session(&self, session_id: &str) -> anyhow::Result<Vec<u8>> {
         let body = self
             .client
-            .lock()
-            .await
             .call(
                 kimi_protocol::methods::SESSION_EXPORT,
                 serde_json::json!({ "session_id": session_id }),
@@ -166,7 +178,7 @@ impl Harness {
         &self,
         session_id: Option<&str>,
     ) -> anyhow::Result<Vec<serde_json::Value>> {
-        let body = self.client.lock().await.approval_list(session_id).await;
+        let body = self.client.approval_list(session_id).await;
         if let Some(error) = body.get("error") {
             anyhow::bail!("approval list: {}", error["message"].as_str().unwrap_or("unknown"));
         }
@@ -181,16 +193,11 @@ impl Harness {
         allow: bool,
         reason: Option<&str>,
     ) -> anyhow::Result<bool> {
-        let body = self.client.lock().await.approval_resolve(id, allow, reason).await;
+        let body = self.client.approval_resolve(id, allow, reason).await;
         if let Some(error) = body.get("error") {
             anyhow::bail!("approval resolve: {}", error["message"].as_str().unwrap_or("unknown"));
         }
         Ok(body["result"]["resolved"].as_bool().unwrap_or(false))
-    }
-
-    /// The protocol client (borrowed) — advanced callers escape to raw RPC.
-    pub async fn client(&self) -> tokio::sync::MutexGuard<'_, AppServerClient> {
-        self.client.lock().await
     }
 
     /// One-shot: create (or resume) a session, run a prompt, and return the

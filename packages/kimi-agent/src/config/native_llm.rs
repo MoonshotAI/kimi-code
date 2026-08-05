@@ -87,6 +87,7 @@ pub fn resolve_native_llm(
         max_tokens: provider.max_tokens,
         reasoning_effort: None,
         custom_headers: provider.custom_headers.clone().unwrap_or_default(),
+        session_id: None,
     })
 }
 
@@ -151,6 +152,7 @@ pub fn native_llm_from_env(env: &std::collections::HashMap<String, String>) -> O
             .filter(|s| !s.trim().is_empty())
             .map(|s| s.trim().to_string()),
         custom_headers: HashMap::new(),
+        session_id: None,
     })
 }
 
@@ -242,6 +244,7 @@ pub fn resolve_secondary_native_llm(
         max_tokens: None,
         reasoning_effort: effort,
         custom_headers: primary.custom_headers.clone(),
+        session_id: primary.session_id.clone(),
     })
 }
 

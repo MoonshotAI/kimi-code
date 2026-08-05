@@ -60,8 +60,8 @@ function checkPlaceholders(filePath) {
     delete require.cache[require.resolve(filePath)];
     const mod = require(filePath);
     data = mod.default || mod;
-  } catch (err) {
-    errors.push(`Failed to load ${filePath}: ${err.message}`);
+  } catch (error) {
+    errors.push(`Failed to load ${filePath}: ${error.message}`);
     return errors;
   }
 
@@ -75,7 +75,7 @@ function checkPlaceholders(filePath) {
     if (opens !== closes) {
       errors.push(
         `${filePath} → ${path}: mismatched placeholder braces ` +
-        `({{ count: ${opens}, }} count: ${closes}) in "${value.substring(0, 60)}${value.length > 60 ? '...' : ''}"`,
+        `({{ count: ${opens}, }} count: ${closes}) in "${value.slice(0, 60)}${value.length > 60 ? '...' : ''}"`,
       );
     }
   }
@@ -96,7 +96,7 @@ function checkPlaceholderParity(enPath, zhPath) {
     delete require.cache[require.resolve(zhPath)];
     enData = (require(enPath)).default || require(enPath);
     zhData = (require(zhPath)).default || require(zhPath);
-  } catch (err) {
+  } catch (error) {
     // Skip parity check if files can't be loaded (already reported above)
     return errors;
   }
@@ -112,8 +112,8 @@ function checkPlaceholderParity(enPath, zhPath) {
     const zhValue = zhMap.get(key);
     if (zhValue === undefined) continue; // missing key handled by type check
 
-    const enPlaceholders = [...enValue.matchAll(PLACEHOLDER_WELL_FORMED)].map(m => m[1]).sort();
-    const zhPlaceholders = [...zhValue.matchAll(PLACEHOLDER_WELL_FORMED)].map(m => m[1]).sort();
+    const enPlaceholders = [...enValue.matchAll(PLACEHOLDER_WELL_FORMED)].map(m => m[1]).toSorted();
+    const zhPlaceholders = [...zhValue.matchAll(PLACEHOLDER_WELL_FORMED)].map(m => m[1]).toSorted();
 
     if (enPlaceholders.length > 0 && JSON.stringify(enPlaceholders) !== JSON.stringify(zhPlaceholders)) {
       errors.push(

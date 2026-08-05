@@ -21,9 +21,21 @@ pub fn build_request(model: &str, messages: &[WireMessage], tools: &[ToolInfo]) 
     build_request_with_options(model, messages, tools, false)
 }
 
+/// Prompt-cache namespace shared by every session (Moonshot/OpenAI
+/// `prompt_cache_key`). The system prompt and tool table are byte-stable
+/// across sessions, so a single global key lets the provider's prefix cache
+/// be shared model-wide: every session re-uses the same prefill for
+/// system + tools. A per-session key would partition identical prefixes into
+/// separate buckets and force each session to re-prefill the shared prefix.
+const GLOBAL_CACHE_KEY: &str = "kimi-code";
+
 /// Build an OpenAI Chat Completions request body, optionally streaming.
 /// Streaming requests set `stream_options.include_usage` so the final
 /// chunk carries token usage.
+///
+/// The request always carries a stable `prompt_cache_key`, scoping the
+/// provider's prefix cache to the global namespace (system prompt + tool
+/// tables are session-independent).
 pub fn build_request_with_options(
     model: &str,
     messages: &[WireMessage],
@@ -40,6 +52,7 @@ pub fn build_request_with_options(
     if stream {
         req["stream_options"] = json!({ "include_usage": true });
     }
+    req["prompt_cache_key"] = json!(GLOBAL_CACHE_KEY);
 
     if !tools.is_empty() {
         let tool_defs: Vec<Value> = tools
@@ -186,6 +199,22 @@ fn parse_usage(usage: Option<&Value>) -> TokenUsage {
     TokenUsage { input_tokens, output_tokens, total_tokens }
 }
 
+/// Cache-hit input tokens reported by the provider: Moonshot top-level
+/// `cached_tokens`, or OpenAI `prompt_tokens_details.cached_tokens`. `0`
+/// when the provider does not report cache hits.
+fn cached_tokens(usage: Option<&Value>) -> u32 {
+    usage
+        .and_then(|u| u.get("cached_tokens"))
+        .and_then(|x| x.as_u64())
+        .or_else(|| {
+            usage
+                .and_then(|u| u.get("prompt_tokens_details"))
+                .and_then(|d| d.get("cached_tokens"))
+                .and_then(|x| x.as_u64())
+        })
+        .unwrap_or(0) as u32
+}
+
 // ── Streaming (SSE) accumulation ───────────────────────────────────────
 
 /// A tool call being accumulated across stream chunks, keyed by its
@@ -206,6 +235,12 @@ pub struct StreamAccumulator {
     tool_calls: Vec<PartialToolCall>,
     finish_reason: Option<String>,
     usage: TokenUsage,
+    /// Cache-hit input tokens from the final usage chunk (`cached_tokens` /
+    /// `prompt_tokens_details.cached_tokens`). Reported separately because
+    /// the wire `TokenUsage` carries no cache fields.
+    pub cache_read: u32,
+    /// Cache-write input tokens (not reported by OpenAI-compatible streams).
+    pub cache_creation: u32,
 }
 
 impl StreamAccumulator {
@@ -222,6 +257,7 @@ impl StreamAccumulator {
         if let Some(usage) = v.get("usage") {
             if !usage.is_null() {
                 self.usage = parse_usage(Some(usage));
+                self.cache_read = cached_tokens(Some(usage));
             }
         }
         let choice = v.get("choices").and_then(|c| c.as_array()).and_then(|a| a.first())?;
@@ -400,6 +436,40 @@ mod tests {
         let req = build_request_with_options("m", &[WireMessage::text("user", "x")], &[], true);
         assert_eq!(req["stream"], true);
         assert_eq!(req["stream_options"]["include_usage"], true);
+    }
+
+    #[test]
+    fn build_request_carries_global_prompt_cache_key() {
+        // System prompt + tool tables are byte-stable across sessions, so the
+        // cache key must be session-independent to share the prefix globally.
+        let req = build_request_with_options("m", &[WireMessage::text("user", "x")], &[], false);
+        assert_eq!(req["prompt_cache_key"], "kimi-code");
+
+        let req = build_request("m", &[WireMessage::text("user", "x")], &[]);
+        assert_eq!(req["prompt_cache_key"], "kimi-code");
+    }
+
+    #[test]
+    fn parse_usage_reads_moonshot_cached_tokens() {
+        let mut acc = StreamAccumulator::new();
+        acc.feed(&json!({ "choices": [], "usage": { "prompt_tokens": 100, "completion_tokens": 5, "total_tokens": 105, "cached_tokens": 90 } }));
+        assert_eq!(acc.cache_read, 90);
+        assert_eq!(acc.usage.input_tokens, 100);
+        assert_eq!(acc.usage.output_tokens, 5);
+    }
+
+    #[test]
+    fn parse_usage_reads_openai_prompt_tokens_details() {
+        let mut acc = StreamAccumulator::new();
+        acc.feed(&json!({
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 5,
+                "prompt_tokens_details": { "cached_tokens": 80 }
+            }
+        }));
+        assert_eq!(acc.cache_read, 80);
     }
 
     #[test]

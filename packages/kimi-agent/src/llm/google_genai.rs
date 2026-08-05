@@ -180,6 +180,12 @@ pub struct StreamAccumulator {
     tool_calls: Vec<ToolCall>,
     finish_reason: Option<String>,
     usage: TokenUsage,
+    /// Cache-hit input tokens from `usageMetadata.cachedContentTokenCount`
+    /// (`cachedTokensDetails[].tokenCount` summed where present). Reported
+    /// separately because the wire `TokenUsage` carries no cache fields.
+    pub cache_read: u32,
+    /// Cache-write input tokens (not reported by Gemini stream usage).
+    pub cache_creation: u32,
 }
 
 impl StreamAccumulator {
@@ -199,6 +205,25 @@ impl StreamAccumulator {
             if let Some(n) = usage.get("candidatesTokenCount").and_then(|x| x.as_u64()) {
                 self.usage.output_tokens = n as u32;
             }
+            // Gemini reports cached input via `cachedContentTokenCount`
+            // (v1beta) or the `cachedTokensDetails[]` list (v1); sum the
+            // latter when the flat count is absent.
+            self.cache_read = usage
+                .get("cachedContentTokenCount")
+                .and_then(|x| x.as_u64())
+                .map(|n| n as u32)
+                .or_else(|| {
+                    usage
+                        .get("cachedTokensDetails")
+                        .and_then(|d| d.as_array())
+                        .map(|details| {
+                            details
+                                .iter()
+                                .filter_map(|d| d.get("tokenCount").and_then(|x| x.as_u64()))
+                                .sum::<u64>() as u32
+                        })
+                })
+                .unwrap_or(0);
         }
 
         let candidates = v.get("candidates").and_then(|c| c.as_array())?;

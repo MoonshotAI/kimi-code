@@ -41,13 +41,23 @@ impl InProcessClient {
 
 /// Spawn the worker task that dispatches calls onto `processor`, returning a
 /// client handle. The worker owns the processor; callers only see the handle.
+///
+/// Requests are handled **concurrently**: each call spawns its own task so a
+/// long-running handler (a prompt turn that holds the manager lock for the
+/// whole turn) never starves control-plane requests (`session/cancel`,
+/// `session/steer`, status reads…). Those handlers cooperate via the
+/// per-session cancel/steer flags and the `busy` map, which is exactly why a
+/// blocked prompt must not also block the worker.
 pub fn spawn(processor: MessageProcessor) -> InProcessClient {
     let processor = Arc::new(processor);
     let (tx, mut rx) = mpsc::channel::<Call>(64);
     tokio::spawn(async move {
         while let Some(call) = rx.recv().await {
-            let response = processor.handle(call.request).await;
-            let _ = call.reply.send(response);
+            let processor = processor.clone();
+            tokio::spawn(async move {
+                let response = processor.handle(call.request).await;
+                let _ = call.reply.send(response);
+            });
         }
     });
     InProcessClient { tx }

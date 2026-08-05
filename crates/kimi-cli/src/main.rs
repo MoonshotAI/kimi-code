@@ -86,7 +86,7 @@ async fn run_kimi_login(
                 println!("logged in — storing kimi provider key into config");
                 // Persist the token so the native engine path can use it
                 // (config `providers.kimi.apiKey`).
-                let mut client = connect(server)?;
+                let client = connect(server)?;
                 let body = client
                     .call(
                         kimi_protocol::methods::CONFIG_SET,
@@ -975,7 +975,7 @@ async fn main() -> anyhow::Result<()> {
             eprintln!("To resume this session: kimi resume {session_id}");
         }
         Commands::Sessions { limit, json } => {
-            let mut client = connect(&server)?;
+            let client = connect(&server)?;
             let body = client.session_list(limit).await;
             if let Some(error) = body.get("error") {
                 eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
@@ -1001,7 +1001,7 @@ async fn main() -> anyhow::Result<()> {
             // TTY default capture, like print (verbose forces it; script
             // pipes stay clean).
             let capture = verbose || std::io::stderr().is_terminal();
-            let (mut client, renderer) = connect_with_renderer(&server, capture)?;
+            let (client, renderer) = connect_with_renderer(&server, capture)?;
             let native_llm = kimi_exec::native_llm_from_config();
             let mut create_params = serde_json::json!({ "session_id": session_id });
             if let Some(nllm) = native_llm {
@@ -1083,7 +1083,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Config { set, delete } => {
-            let mut client = connect(&server)?;
+            let client = connect(&server)?;
             if !delete.is_empty() {
                 // `kimi config --delete providers.<id>`: build a section-level
                 // null patch (the engine's null-delete path is section-scoped
@@ -1261,7 +1261,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Health => {
-            let mut client = connect(&server)?;
+            let client = connect(&server)?;
             let body = client.health().await;
             println!("{}", body["result"]["status"].as_str().unwrap_or("?"));
         }
@@ -1388,7 +1388,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Logout => {
             // Remove the kimi provider from the engine config (null patch
             // deletes the whole provider entry, mirroring `provider remove`).
-            let mut client = connect(&server)?;
+            let client = connect(&server)?;
             let body = client
                 .call(
                     kimi_protocol::methods::CONFIG_SET,
@@ -1542,7 +1542,7 @@ async fn main() -> anyhow::Result<()> {
                     if let Some(model) = default_model {
                         patch["defaultModel"] = serde_json::json!(model);
                     }
-                    let mut client = connect(&server)?;
+                    let client = connect(&server)?;
                     let body = client
                         .call(
                             kimi_protocol::methods::CONFIG_SET,
@@ -1558,7 +1558,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Export { session_id, output, yes } => {
-            let mut client = connect(&server)?;
+            let client = connect(&server)?;
             // Resolve the session id: explicit, or the most recent session when
             // `-y` opts in (mirrors the TS CLI's previous-session flow).
             let resolved_id = match session_id {
