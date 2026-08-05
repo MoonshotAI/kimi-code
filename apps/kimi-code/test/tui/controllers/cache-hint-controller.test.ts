@@ -359,7 +359,8 @@ describe('CacheHintController cache-break detection', () => {
     expect(host.track).toHaveBeenCalledWith(
       'cache_break_detected',
       expect.objectContaining({
-        model: 'k2',
+        prev_model: 'k2',
+        curr_model: 'k2',
         prev_input_cache_read: 10000,
         curr_input_cache_read: 7000,
         cache_read_drop_ratio: 0.3,
@@ -394,7 +395,7 @@ describe('CacheHintController cache-break detection', () => {
     );
   });
 
-  it('resets the baseline on compaction and on model change', () => {
+  it('resets the baseline on compaction, but records a mid-session model/effort switch', () => {
     const { host, state } = makeHost();
     const controller = new CacheHintController(host);
     controller.noteStepUsage(u(10000));
@@ -402,10 +403,19 @@ describe('CacheHintController cache-break detection', () => {
     controller.noteStepUsage(u(100)); // post-compaction drop is expected
     expect(host.track).not.toHaveBeenCalled();
 
+    // A model switch busts the cache key — that drop IS the signal to record.
     controller.noteStepUsage(u(10000));
     state.appState.model = 'other-model';
-    controller.noteStepUsage(u(100)); // model changed — incomparable
-    expect(host.track).not.toHaveBeenCalled();
+    controller.noteStepUsage(u(100));
+    expect(host.track).toHaveBeenCalledWith(
+      'cache_break_detected',
+      expect.objectContaining({
+        prev_model: 'k2',
+        curr_model: 'other-model',
+        prev_input_cache_read: 10000,
+        curr_input_cache_read: 100,
+      }),
+    );
   });
 });
 

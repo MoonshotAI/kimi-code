@@ -46,6 +46,7 @@ const CACHE_BREAK_DROP_RATIO = 0.95;
 
 interface CacheBreakBaseline {
   readonly model: string;
+  readonly effort: string;
   readonly usage: TokenUsage;
   readonly time: number;
 }
@@ -79,9 +80,12 @@ export class CacheHintController {
   /**
    * Cache-break detection (client-side, main loop): feed each completed
    * step's usage. A step whose cache read drops sharply below the previous
-   * one is reported as `cache_break_detected` with both usages, the drop
-   * ratio, and the interval. Unmeasured (missing/all-zero) usage is skipped
-   * without touching the baseline; a model change resets the comparison.
+   * one is reported as `cache_break_detected` with both usages, both
+   * model/effort values, the drop ratio, and the interval — a mid-session
+   * model/effort switch busts the cache key, and that cause is exactly what
+   * the report should carry. Unmeasured (missing/all-zero) usage is skipped
+   * without touching the baseline; compaction resets it (the drop there is
+   * expected).
    */
   noteStepUsage(usage: TokenUsage | undefined): void {
     if (usage === undefined) return;
@@ -94,16 +98,20 @@ export class CacheHintController {
       return;
     }
     const model = this.host.state.appState.model;
+    const effort = this.host.state.appState.thinkingEffort;
     const now = Date.now();
     const prev = this.breakBaseline;
-    this.breakBaseline = { model, usage, time: now };
-    if (prev === undefined || prev.model !== model) return;
+    this.breakBaseline = { model, effort, usage, time: now };
+    if (prev === undefined) return;
     const prevRead = prev.usage.inputCacheRead;
     const currRead = usage.inputCacheRead;
     if (currRead >= prevRead * CACHE_BREAK_DROP_RATIO) return;
     if (prevRead - currRead <= CACHE_BREAK_MIN_DROP_TOKENS) return;
     this.host.track('cache_break_detected', {
-      model,
+      prev_model: prev.model,
+      curr_model: model,
+      prev_effort: prev.effort,
+      curr_effort: effort,
       prev_input_cache_read: prevRead,
       curr_input_cache_read: currRead,
       prev_input_other: prev.usage.inputOther,
