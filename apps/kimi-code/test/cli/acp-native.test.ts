@@ -1,5 +1,5 @@
 /**
- * `kimi acp-v2`
+ * `kimi acp`
  *
  * Verifies that the ACP v2 sub-command is registered on the program and that
  * the action wires `@moonshot-ai/acp-server`'s `runAcpServer` (the real server
@@ -17,7 +17,8 @@ vi.mock('@moonshot-ai/acp-server', () => ({
 
 import { runAcpServer } from '@moonshot-ai/acp-server';
 
-import { registerAcpV2Command } from '#/cli/sub/acp-v2';
+import { registerAcpCommand } from '#/cli/sub/acp';
+import { registerNativeAcpCommand } from '#/cli/sub/acp-native';
 import { getDataDir } from '#/utils/paths';
 
 class ExitCalled extends Error {
@@ -26,11 +27,12 @@ class ExitCalled extends Error {
   }
 }
 
-describe('kimi acp-v2', () => {
+describe('kimi acp', () => {
   let exitSpy: ReturnType<typeof vi.spyOn>;
   let stderrSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
+    vi.stubEnv('KIMI_CODE_LEGACY_FLAG', '');
     vi.mocked(runAcpServer).mockClear();
     exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number | string | null) => {
       throw new ExitCalled(code);
@@ -41,22 +43,36 @@ describe('kimi acp-v2', () => {
   afterEach(() => {
     exitSpy.mockRestore();
     stderrSpy.mockRestore();
+    vi.unstubAllEnvs();
   });
 
-  it('registers an `acp-v2` subcommand on the program', () => {
+  it('registers an `acp` subcommand on the program', () => {
     const program = new Command('kimi');
-    registerAcpV2Command(program);
+    registerNativeAcpCommand(program);
 
-    const acpV2 = program.commands.find((c) => c.name() === 'acp-v2');
+    const acpV2 = program.commands.find((c) => c.name() === 'acp');
     expect(acpV2).toBeDefined();
     expect(acpV2?.description()).toMatch(/Agent Client Protocol/);
   });
 
+  it('uses the v2 server for the default `acp` command', async () => {
+    const program = new Command('kimi').exitOverride();
+    registerAcpCommand(program);
+
+    await expect(program.parseAsync(['node', 'kimi', 'acp'])).rejects.toThrow(ExitCalled);
+
+    expect(runAcpServer).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(runAcpServer).mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ homeDir: getDataDir() }),
+    );
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
   it('invokes runAcpServer with the v2 host options and exits 0 on success', async () => {
     const program = new Command('kimi').exitOverride();
-    registerAcpV2Command(program);
+    registerNativeAcpCommand(program);
 
-    await expect(program.parseAsync(['node', 'kimi', 'acp-v2'])).rejects.toThrow(ExitCalled);
+    await expect(program.parseAsync(['node', 'kimi', 'acp'])).rejects.toThrow(ExitCalled);
 
     expect(runAcpServer).toHaveBeenCalledTimes(1);
     const optsArg = vi.mocked(runAcpServer).mock.calls[0]?.[0];
@@ -74,9 +90,9 @@ describe('kimi acp-v2', () => {
     process.env['KIMI_CODE_HOME'] = '/tmp/kimi-debug';
     try {
       const program = new Command('kimi').exitOverride();
-      registerAcpV2Command(program);
+      registerNativeAcpCommand(program);
 
-      await expect(program.parseAsync(['node', 'kimi', 'acp-v2'])).rejects.toThrow(ExitCalled);
+      await expect(program.parseAsync(['node', 'kimi', 'acp'])).rejects.toThrow(ExitCalled);
 
       const optsArg = vi.mocked(runAcpServer).mock.calls[0]?.[0];
       expect(optsArg).toEqual(
@@ -99,9 +115,9 @@ describe('kimi acp-v2', () => {
     delete process.env['KIMI_CODE_HOME'];
     try {
       const program = new Command('kimi').exitOverride();
-      registerAcpV2Command(program);
+      registerNativeAcpCommand(program);
 
-      await expect(program.parseAsync(['node', 'kimi', 'acp-v2'])).rejects.toThrow(ExitCalled);
+      await expect(program.parseAsync(['node', 'kimi', 'acp'])).rejects.toThrow(ExitCalled);
 
       const optsArg = vi.mocked(runAcpServer).mock.calls[0]?.[0] as {
         terminalAuthEnv?: unknown;
@@ -118,9 +134,9 @@ describe('kimi acp-v2', () => {
 
   it('forwards process.argv[1] as terminalAuthLegacyCommand', async () => {
     const program = new Command('kimi').exitOverride();
-    registerAcpV2Command(program);
+    registerNativeAcpCommand(program);
 
-    await expect(program.parseAsync(['node', 'kimi', 'acp-v2'])).rejects.toThrow(ExitCalled);
+    await expect(program.parseAsync(['node', 'kimi', 'acp'])).rejects.toThrow(ExitCalled);
 
     const optsArg = vi.mocked(runAcpServer).mock.calls[0]?.[0] as {
       terminalAuthLegacyCommand?: string;
@@ -145,12 +161,12 @@ describe('kimi acp-v2', () => {
       };
     });
     vi.resetModules();
-    const { registerAcpV2Command: freshRegister } = await import('#/cli/sub/acp-v2');
+    const { registerNativeAcpCommand: freshRegister } = await import('#/cli/sub/acp-native');
     try {
       const program = new Command('kimi').exitOverride();
       freshRegister(program);
 
-      await expect(program.parseAsync(['node', 'kimi', 'acp-v2', '--login'])).rejects.toThrow(
+      await expect(program.parseAsync(['node', 'kimi', 'acp', '--login'])).rejects.toThrow(
         ExitCalled,
       );
 

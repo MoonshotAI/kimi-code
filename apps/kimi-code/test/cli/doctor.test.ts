@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { Command } from 'commander';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   handleDoctor,
@@ -14,11 +14,13 @@ import {
 let dir: string;
 
 beforeEach(async () => {
+  vi.stubEnv('KIMI_CODE_LEGACY_FLAG', '');
   dir = join(tmpdir(), `kimi-doctor-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   await mkdir(dir, { recursive: true });
 });
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await rm(dir, { recursive: true, force: true });
 });
 
@@ -99,6 +101,27 @@ describe('kimi doctor', () => {
     expect(out).toContain('SKIP config.toml');
     expect(out).toContain('SKIP tui.toml');
     expect(out).toContain('built-in defaults will apply');
+  });
+
+  it('uses the legacy validator when legacy wins over the experimental flag', async () => {
+    const configPath = join(dir, 'config.toml');
+    const text = '[providers.kimi]\ntype = "kimi"\n';
+    await writeFile(configPath, text, 'utf-8');
+    vi.stubEnv('KIMI_CODE_LEGACY_FLAG', '1');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
+    const validateConfigToml = vi.fn(async () => undefined);
+    const { deps } = makeDeps();
+
+    const code = await handleDoctor(
+      {
+        ...deps,
+        configRpc: { validateConfigToml } as unknown as NonNullable<DoctorDeps['configRpc']>,
+      },
+      { target: 'config' },
+    );
+
+    expect(code).toBe(0);
+    expect(validateConfigToml).toHaveBeenCalledWith({ text, filePath: configPath });
   });
 
   it('checks only config.toml when the config target is selected', async () => {
@@ -269,13 +292,8 @@ max_context_size = "large"
   });
 });
 
-describe('kimi doctor (v2 config validation)', () => {
-  beforeEach(() => {
-    process.env['KIMI_CODE_EXPERIMENTAL_FLAG'] = '1';
-  });
-
+describe('kimi doctor (default v2 config validation)', () => {
   afterEach(() => {
-    delete process.env['KIMI_CODE_EXPERIMENTAL_FLAG'];
     delete process.env['KIMI_LOOP_MAX_RETRIES_PER_STEP'];
     delete process.env['KIMI_LOOP_MAX_ATTEMPTS_PER_STEP'];
   });

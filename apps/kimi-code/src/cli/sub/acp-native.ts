@@ -1,11 +1,9 @@
 /**
- * `kimi acp-v2` sub-command.
+ * Native `kimi acp` implementation.
  *
  * Starts the Agent Client Protocol (ACP) server backed directly by the
  * DI × Scope agent engine (`agent-core-v2`) over stdio, so ACP-compatible
- * clients can drive a kimi-code session on the new engine. This is the v2
- * counterpart to `kimi acp` (which runs the legacy `@moonshot-ai/acp-adapter`
- * over the SDK harness).
+ * clients can drive a kimi-code session on the default engine.
  *
  * Wire-up mirrors `kimi acp` for the parts that are host-independent:
  *  - `--login` pivots into the shared device-code login flow (the entry point
@@ -17,9 +15,8 @@
  *    `_meta['terminal-auth'].command` fallback.
  *
  * `@moonshot-ai/acp-server` (and its `agent-core-v2` engine) is loaded via a
- * lazy dynamic import so the default CLI / `kimi acp` module graph stays free
- * of the experimental v2 engine — mirroring the `kimi server run` v2 routing
- * in `#/cli/sub/server/run.ts`.
+ * lazy dynamic import so parsing the CLI does not initialize the ACP engine —
+ * mirroring the `kimi server run` v2 routing in `#/cli/sub/server/run.ts`.
  */
 
 import type { Command } from 'commander';
@@ -30,12 +27,10 @@ import { getDataDir } from '#/utils/paths';
 
 import { runLoginFlow } from './login-flow';
 
-export function registerAcpV2Command(parent: Command): void {
+export function registerNativeAcpCommand(parent: Command): void {
   parent
-    .command('acp-v2')
-    .description(
-      'Run kimi-code as an Agent Client Protocol (ACP) server over stdio (experimental agent-core-v2 engine).',
-    )
+    .command('acp')
+    .description('Run kimi-code as an Agent Client Protocol (ACP) server over stdio.')
     .option(
       '--login',
       'Run the device-code login flow then exit (entry point for ACP terminal-auth).',
@@ -70,7 +65,7 @@ export function registerAcpV2Command(parent: Command): void {
         });
         process.exit(0);
       } catch (error) {
-        process.stderr.write(`acp-v2 server: fatal error: ${String(error)}\n`);
+        process.stderr.write(`acp server: fatal error: ${String(error)}\n`);
         process.exit(1);
       }
     });
