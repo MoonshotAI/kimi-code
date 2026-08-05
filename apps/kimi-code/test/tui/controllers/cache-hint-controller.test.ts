@@ -406,6 +406,27 @@ describe('CacheHintController scenario 1 (resume)', () => {
     expect(host.mountEditorReplacement).not.toHaveBeenCalled();
   });
 
+  it('drops the dialog when a turn started during the config fetch', async () => {
+    let resolveFetch!: (config: CacheHintConfig) => void;
+    getMock.mockImplementation(
+      () =>
+        new Promise<CacheHintConfig>((res) => {
+          resolveFetch = res;
+        }),
+    );
+    const session = resumeSession([Date.now() - 1200_000], 150000);
+    const { host, state } = makeHost({ session });
+    const controller = new CacheHintController(host);
+
+    const pending = controller.maybeShowOnResume();
+    await flush();
+    // The user sent the first prompt while the fetch was in flight.
+    state.appState.streamingPhase = 'waiting';
+    resolveFetch(CONFIG);
+    await pending;
+    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
+  });
+
   it('ignores local-only state records when computing the resume idle time', async () => {
     getMock.mockResolvedValue(CONFIG);
     const oldMessage = { type: 'message', time: Date.now() - 1200_000 };

@@ -118,8 +118,12 @@ export class CacheHintController {
     });
     // The config fetch above can outlive the user's patience: if they switched
     // sessions meanwhile, this dialog (and its actions) would target the wrong
-    // session — drop it.
+    // session — drop it. Likewise, if they already sent the first prompt and
+    // a turn is now running, don't mount over the active turn.
     if (host.session !== session) return;
+    if (host.state.appState.streamingPhase !== 'idle' || host.state.appState.isCompacting) {
+      return;
+    }
     if (decision.kind === 'skip') return;
     this.resumedSessions.add(session.id);
     // The resume dialog also covers this idle cycle: the first submit right
