@@ -22,10 +22,6 @@ import type { PromptOrigin } from '#/agent/contextMemory/types';
 export interface TurnModelState {
   readonly nextTurnId: number;
   readonly cancelledTurnIds: readonly number[];
-  /** Terminal outcome of the most recently ended turn, folded from the
-   *  persisted `turn.ended` record — lets cold-resumed read models (the
-   *  activity view) recover how the last turn ended without replaying the
-   *  journal. */
   readonly lastEnded?: {
     readonly turnId: number;
     readonly reason: 'completed' | 'cancelled' | 'failed' | 'blocked';

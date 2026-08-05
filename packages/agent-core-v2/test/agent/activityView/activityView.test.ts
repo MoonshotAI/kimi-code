@@ -71,12 +71,26 @@ function harness(
     status: () => ({ state: 'idle', pendingTurnIds: [], hasPendingRequests: false }),
   } as unknown as IAgentLoopService;
   const tasks = { list: () => seedTasks } as unknown as IAgentTaskService;
+  const wireState: { lastEnded?: TurnModelState['lastEnded'] } = { lastEnded };
+  const restoreHooks: Array<() => Promise<void>> = [];
   const wire = {
     getModel: (model: unknown) =>
       model === TurnModel
-        ? { nextTurnId: 1, cancelledTurnIds: [], lastEnded }
+        ? { nextTurnId: 1, cancelledTurnIds: [], lastEnded: wireState.lastEnded }
         : undefined,
+    hooks: {
+      onDidRestore: {
+        register: (_id: string, fn: (ctx: undefined, next: () => Promise<void>) => Promise<void>) => {
+          restoreHooks.push(async () => fn(undefined, async () => {}));
+          return { dispose: () => {} };
+        },
+      },
+    },
   } as unknown as IWireService;
+  const restore = async (ended: TurnModelState['lastEnded']): Promise<void> => {
+    wireState.lastEnded = ended;
+    for (const hook of restoreHooks) await hook();
+  };
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IEventBus, bus as unknown as IEventBus);
   ix.stub(IAgentLoopService, loop);
@@ -93,7 +107,7 @@ function harness(
     bus.published
       .filter((e) => e.type === 'agent.activity.updated')
       .map((e) => e as unknown as AgentActivityState);
-  return { bus, view, updates };
+  return { bus, view, updates, restore };
 }
 
 describe('AgentActivityView', () => {
@@ -127,9 +141,23 @@ describe('AgentActivityView', () => {
     expect(view.state().background).toEqual([{ kind: 'process', id: 'bash-9', since: 100 }]);
   });
 
-  it('seeds lastTurn from the wire TurnModel on a cold resume', () => {
+  it('seeds lastTurn from the wire TurnModel when the view is built after restore', () => {
     const { view } = harness([], null, { turnId: 7, reason: 'failed', durationMs: 1234 });
     expect(view.state().lastTurn).toMatchObject({ turnId: 7, reason: 'failed', durationMs: 1234 });
+  });
+
+  it('seeds lastTurn when the wire restore lands after construction (cold resume ordering)', async () => {
+    const { view, restore } = harness();
+    expect(view.state().lastTurn).toBeUndefined();
+    await restore({ turnId: 7, reason: 'failed', durationMs: 1234 });
+    expect(view.state().lastTurn).toMatchObject({ turnId: 7, reason: 'failed', durationMs: 1234 });
+  });
+
+  it('does not overwrite a live lastTurn when the restore hook runs', async () => {
+    const { bus, view, restore } = harness([], null, { turnId: 7, reason: 'failed' });
+    bus.publish({ type: 'turn.ended', turnId: 9, reason: 'completed' });
+    await restore({ turnId: 7, reason: 'failed' });
+    expect(view.state().lastTurn).toMatchObject({ turnId: 9, reason: 'completed' });
   });
 
   it('leaves lastTurn empty when the wire has no ended turn', () => {

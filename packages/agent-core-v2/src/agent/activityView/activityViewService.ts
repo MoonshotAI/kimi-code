@@ -6,11 +6,13 @@
  * events drive the live phase/stream/retry detail, permission approval events
  * drive the pending-approval list, while task and full-compaction events drive
  * the background-work slice. The view seeds once from `IAgentLoopService`,
- * `IAgentTaskService`, `IAgentFullCompactionService`, and the wire
- * `TurnModel`'s persisted `lastEnded` — so a cold-resumed agent still knows
- * how its last turn ended (reads, never writes) — and otherwise holds only
- * derived state, so it can be discarded and rebuilt
- * at any time. The mutable view state (`lifecycle`, `turn`, `lastTurn`,
+ * `IAgentTaskService`, and `IAgentFullCompactionService`, and folds the wire
+ * `TurnModel`'s persisted `lastEnded` into `lastTurn` through the
+ * `IWireService` `onDidRestore` hook — the journal is replayed only after the
+ * agent scope (and this view) is constructed, so the restore-time fold is
+ * what lets a cold-resumed agent still know how its last turn ended (reads,
+ * never writes). Otherwise the view holds only derived state, so it can be
+ * discarded and rebuilt at any time. The mutable view state (`lifecycle`, `turn`, `lastTurn`,
  * `background`, `current`) is registered into `agentState`
  * (`IAgentStateService`) and read/written through it; the event-bus
  * subscription handles stay mechanism held by the `Disposable` base, and
@@ -89,6 +91,12 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
     this.seedFromLoop();
     this.seedFromTasks();
     this.seedFromFullCompaction();
+    this._register(
+      this.wire.hooks.onDidRestore.register('activityView', async (_ctx, next) => {
+        this.seedLastTurnFromWire();
+        await next();
+      }),
+    );
 
     this._register(this.eventBus.subscribe('turn.started', (e) => this.onTurnStarted(e.turnId, e.origin)));
     this._register(this.eventBus.subscribe('turn.step.started', (e) => this.onStepStarted(e.step)));
@@ -230,10 +238,11 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
       this.publish();
       return;
     }
-    // Cold resume: no live turn has ended in this process, but the wire's
-    // persisted `turn.ended` record still knows how the last turn finished —
-    // seed `lastTurn` from it so the outcome (e.g. a provider failure)
-    // survives a server restart.
+    this.seedLastTurnFromWire();
+  }
+
+  private seedLastTurnFromWire(): void {
+    if (this.turn !== undefined || this.lastTurn !== undefined) return;
     const lastEnded = this.wire.getModel(TurnModel).lastEnded;
     if (lastEnded === undefined) return;
     this.lastTurn = {
