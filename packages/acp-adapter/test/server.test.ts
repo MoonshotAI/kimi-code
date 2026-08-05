@@ -103,7 +103,7 @@ describe('AcpServer + AgentSideConnection', () => {
     expect(method).toMatchObject({
       id: 'login',
       type: 'terminal',
-      name: expect.any(String),
+      name: 'Set up Kimi Code',
       args: ['--login'],
     });
   });
@@ -182,7 +182,7 @@ describe('AcpServer + AgentSideConnection', () => {
     // Legacy _meta fallback uses absolute command + 'login' subcommand.
     expect(method._meta?.['terminal-auth']).toEqual({
       type: 'terminal',
-      label: 'Login with Kimi account',
+      label: 'Set up Kimi Code',
       command: '/abs/path/to/kimi',
       args: ['login'],
       env: { KIMI_CODE_HOME: '/tmp/kimi-debug' },

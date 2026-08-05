@@ -39,7 +39,7 @@ import { createKimiCodeHostIdentity } from './version';
 export async function runShell(
   opts: CLIOptions,
   version: string,
-  runOptions: { readonly migrateOnly?: boolean } = {},
+  runOptions: { readonly migrateOnly?: boolean; readonly loginOnly?: boolean } = {},
 ): Promise<void> {
   const startedAt = Date.now();
   const configStartedAt = startedAt;
@@ -98,11 +98,13 @@ export async function runShell(
   });
 
   await harness.ensureConfigFile();
-  const migrationPlan = await detectPendingMigration({
-    sourceHome: join(homedir(), '.kimi'),
-    targetHome: harness.homeDir,
-    ignoreMarker: runOptions.migrateOnly,
-  });
+  const migrationPlan = runOptions.loginOnly
+    ? null
+    : await detectPendingMigration({
+        sourceHome: join(homedir(), '.kimi'),
+        targetHome: harness.homeDir,
+        ignoreMarker: runOptions.migrateOnly,
+      });
   if (runOptions.migrateOnly === true && migrationPlan === null) {
     process.stdout.write('  Nothing to migrate from ~/.kimi/.\n');
     await harness.close();
@@ -127,6 +129,7 @@ export async function runShell(
     startupNotice: configWarning,
     migrationPlan,
     migrateOnly: runOptions.migrateOnly,
+    loginOnly: runOptions.loginOnly,
     engineV2,
   });
 
