@@ -316,6 +316,56 @@ describe('buildExportMarkdown', () => {
     expect(md).toContain('deep thought');
   });
 
+  it('folds an upload tag+ref pair out of the exported user message', () => {
+    // An uploaded image persists as `<image path>` tag text + a `kimi-file://`
+    // image part; the claimed tag is machine markup carrying the
+    // materialization path — the export keeps the real text and `[image]`,
+    // never the path or the internal url.
+    const msgs: ContextMessage[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'what is this? ' },
+          { type: 'text', text: '<image path="/Users/alice/media/f_1.png"></image>' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
+          },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+      assistantMsg('a screenshot'),
+    ];
+    const md = buildExportMarkdown({
+      sessionId: 'ses_test',
+      workDir: '/tmp',
+      history: msgs,
+      tokenCount: 0,
+      now,
+    });
+    expect(md).toContain('what is this?');
+    expect(md).toContain('[image]');
+    expect(md).not.toContain('/Users/alice');
+    expect(md).not.toContain('kimi-file');
+    expect(md).not.toContain('<image path=');
+  });
+
+  it('keeps an unpaired standalone <media path> tag as user text in the export', () => {
+    const msgs: ContextMessage[] = [
+      userMsg('<image path="/tmp/shot.png">', { kind: 'user' }),
+      assistantMsg('ok'),
+    ];
+    const md = buildExportMarkdown({
+      sessionId: 'ses_test',
+      workDir: '/tmp',
+      history: msgs,
+      tokenCount: 0,
+      now,
+    });
+    expect(md).toContain('<image path="/tmp/shot.png">');
+  });
+
   it('renders tool calls and results', () => {
     const tc = makeToolCall('c1', 'Read', { file_path: '/foo.ts' });
     const msgs: ContextMessage[] = [
