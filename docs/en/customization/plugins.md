@@ -86,9 +86,11 @@ All official plugins share the same installation and upgrade flow:
 2. Find the plugin you want and press `Enter` to install
 3. After installation completes, run `/reload` or `/new` to activate it
 
-Official plugins do not update automatically — when an update is available, you'll be prompted the next time you use the old version. To upgrade, repeat the installation steps above.
+::: info Note
+Kimi WebBridge installs in two parts: after the steps above, you also need to [install the browser extension](#install-the-browser-extension) before it works.
+:::
 
-One exception: Kimi WebBridge installs in two parts. After the steps above, you also need to [install the browser extension](#install-the-browser-extension) before it works.
+Official plugins do not update automatically — when an update is available, you'll be prompted the next time you use the old version. To upgrade, repeat the installation steps above.
 
 ### Kimi Datasource <Badge type="tip" text="v3.3.0" />
 
@@ -175,7 +177,11 @@ The first time you use Kimi Computer Use after installation, it shows an authori
 1. Click **Authorize** next to **Accessibility** and **Screen Recording**, and enable both permissions in System Settings — the former lets it perform clicks, typing, and scrolling; the latter lets it read screen content and locate UI elements
 2. Turn on the **Kimi Code** switch under "Connect local agents", then restart Kimi Code for it to take effect
 
+<div style="max-width: 380px; margin: 0 auto;">
+
 ![Kimi Computer Use authorization window](../../media/kimi-computer-use-auth.jpeg)
+
+</div>
 
 #### What you can do
 

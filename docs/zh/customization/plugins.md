@@ -86,9 +86,11 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元——可以
 2. 找到要安装的插件，按 `Enter` 安装
 3. 安装完成后运行 `/reload` 或 `/new` 激活
 
-官方插件更新后会在使用旧版时提示更新，不会自动更新，要升级到新版本，重复上述安装步骤即可。
+::: info 说明
+Kimi WebBridge 分两步安装：完成上述步骤后，还需要[安装浏览器扩展](#安装浏览器扩展)才能使用。
+:::
 
-例外：Kimi WebBridge 分两步安装，按上述步骤安装 plugin 后，还需要[安装浏览器扩展](#安装浏览器扩展)才能使用。
+官方插件更新后会在使用旧版时提示更新，不会自动更新，要升级到新版本，重复上述安装步骤即可。
 
 ### Kimi Datasource <Badge type="tip" text="v3.3.0" />
 
@@ -175,7 +177,11 @@ Kimi Computer Use 让 AI 直接操作你的 Mac 桌面应用，可以完成点�
 1. 点击**辅助功能**和**屏幕录制**右侧的**去授权**，在系统设置中开启这两项权限。前者用于执行点击、输入与滚动，后者用于读取屏幕内容、识别需要操作的位置
 2. 在**接入本地 Agent**中打开 **Kimi Code** 开关，重启 Kimi Code 后生效
 
+<div style="max-width: 380px; margin: 0 auto;">
+
 ![Kimi Computer Use 授权窗口](../../media/kimi-computer-use-auth.jpeg)
+
+</div>
 
 #### 能做什么
 
