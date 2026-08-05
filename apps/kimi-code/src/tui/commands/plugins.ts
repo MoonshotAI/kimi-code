@@ -1,7 +1,13 @@
 import { homedir as osHomedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 
-import type { PluginInfo, PluginSummary, Session } from '@moonshot-ai/kimi-code-sdk';
+import {
+  log,
+  type CapabilityStatus,
+  type PluginInfo,
+  type PluginSummary,
+  type Session,
+} from '@moonshot-ai/kimi-code-sdk';
 
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import {
@@ -26,8 +32,8 @@ import {
   isOfficialPluginInstall,
   isOfficialPluginSource,
 } from '../utils/plugin-source-label';
-import { QUOTA_CONSUMING_PLUGIN_IDS } from '#/constant/app';
-import { loadPluginMarketplace } from '#/utils/plugin-marketplace';
+import { KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV, QUOTA_CONSUMING_PLUGIN_IDS } from '#/constant/app';
+import { loadPluginMarketplace, type PluginMarketplaceEntry } from '#/utils/plugin-marketplace';
 import { openUrl } from '#/utils/open-url';
 import type { SlashCommandHost } from './dispatch';
 
@@ -125,7 +131,7 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
       const marketplaceSource = rest.join(' ').trim() || undefined;
       await showPluginsPicker(host, {
         // Custom marketplaces often omit `tier`, so their entries land on the
-        // Third-party tab (entry.tier !== 'official'). Open there when a custom
+        // Curated tab (entry.tier !== 'official'). Open there when a custom
         // source is supplied; otherwise the default catalog's official entries
         // make Official the right landing tab.
         initialTab: marketplaceSource === undefined ? 'official' : 'third-party',
@@ -193,6 +199,44 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
   }
 }
 
+/**
+ * Resolve the capability API. Like plugin state, capability state is
+ * app-global on the v2 engine, so a session-less startup still gets
+ * readiness and installs through the harness's global facade; with a live
+ * session the session's own API is used (v1 included, where the capability
+ * surface then reports itself unavailable).
+ */
+type CapabilityApi = Pick<Session, 'listCapabilities' | 'getCapability' | 'installCapability'>;
+
+async function resolveCapabilityApi(host: SlashCommandHost): Promise<CapabilityApi> {
+  if (host.session !== undefined) return host.session;
+  if (!host.engineV2) {
+    throw new Error(NO_ACTIVE_SESSION_MESSAGE);
+  }
+  return host.harness;
+}
+
+function logCapabilityStatus(capability: CapabilityStatus, installed?: boolean): void {
+  const payload = {
+    capabilityId: capability.id,
+    installed,
+    supported: capability.supported,
+    state: capability.state,
+    version: capability.version,
+    install: capability.install,
+    steps: capability.steps,
+  };
+  const hasStepIssues = capability.steps.some((step) => step.state !== 'ok');
+  if (
+    capability.install.error !== undefined ||
+    (installed !== false && hasStepIssues)
+  ) {
+    log.warn('capability needs attention', payload);
+  } else {
+    log.info('capability status', payload);
+  }
+}
+
 async function showPluginsPicker(
   host: SlashCommandHost,
   options?: ShowPluginsPickerOptions,
@@ -205,9 +249,25 @@ async function showPluginsPicker(
     return;
   }
 
+  let capabilities: readonly CapabilityStatus[] = [];
+  if (host.engineV2) {
+    try {
+      capabilities = await (await resolveCapabilityApi(host)).listCapabilities();
+    } catch (error) {
+      log.warn('capability status unavailable', { error });
+    }
+  }
+
+  const installedIds = new Set(plugins.map((plugin) => plugin.id));
+  for (const capability of capabilities) {
+    logCapabilityStatus(capability, installedIds.has(capability.id));
+  }
+
   const panel = new PluginsPanelComponent({
     installed: plugins,
-    installedIds: new Set(plugins.map((plugin) => plugin.id)),
+    installedIds,
+    capabilities,
+    catalogIsDefault: isDefaultMarketplaceCatalog(options?.marketplaceSource),
     initialTab: options?.initialTab,
     selectedId: options?.selectedId,
     pluginHint: options?.pluginHint,
@@ -222,35 +282,73 @@ async function showPluginsPicker(
     onCancel: () => {
       host.restoreEditor();
     },
-    // Every tab except Custom needs the catalog: Official/Third-party list it,
+    // Every tab except Custom needs the catalog: Official/Curated list it,
     // and Installed uses it to show update badges. The Installed/Custom tabs
     // keep working even when the marketplace is unreachable (badges simply stay
     // hidden until data arrives).
     onRequestMarketplace: () => {
-      void loadMarketplaceCatalog(host, panel, options?.marketplaceSource);
+      void loadMarketplaceCatalog(host, panel, options?.marketplaceSource, capabilities);
     },
   });
   host.mountEditorReplacement(panel);
   // Kick off the catalog fetch for any tab that needs it: Installed uses it for
-  // update badges, Official/Third-party list it. Custom never reads the catalog,
+  // update badges, Official/Curated list it. Custom never reads the catalog,
   // so skip the fetch there. Done here (after `panel` is initialized) rather
   // than inside the component constructor, because the callback above closes
   // over `panel`.
   if (options?.initialTab !== 'custom') {
     panel.setMarketplaceLoading();
-    void loadMarketplaceCatalog(host, panel, options?.marketplaceSource);
+    void loadMarketplaceCatalog(host, panel, options?.marketplaceSource, capabilities);
   }
+}
+
+/**
+ * Adapt a capability from the engine's registry into a catalog row. The
+ * engine is the single source of truth for what the built-in capabilities
+ * are — the CLI only renders them. The `capability:<id>` source marker
+ * routes installs through the capability flow (never a plain plugin
+ * install), so the row needs no real URL.
+ */
+function capabilityMarketplaceEntry(capability: CapabilityStatus): PluginMarketplaceEntry {
+  return {
+    id: capability.id,
+    displayName: capability.displayName,
+    description: capability.description,
+    tier: 'official',
+    source: `capability:${capability.id}`,
+    builtIn: true,
+  };
+}
+
+/**
+ * Injection is part of the DEFAULT catalog experience only: any explicit
+ * replacement (the slash-command source or a user-set env override) opts out
+ * wholesale. The dev marketplace server started by scripts/dev.mjs serves
+ * this repo's own catalog and marks itself, so it still counts as default.
+ */
+function isDefaultMarketplaceCatalog(
+  source: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (source !== undefined) return false;
+  if (env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV] === undefined) return true;
+  return env['KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER'] === '1';
 }
 
 async function loadMarketplaceCatalog(
   host: SlashCommandHost,
   panel: PluginsPanelComponent,
-  source?: string,
+  source: string | undefined,
+  capabilities: readonly CapabilityStatus[],
 ): Promise<void> {
   try {
     const marketplace = await loadPluginMarketplace({
       workDir: host.state.appState.workDir,
       source,
+      builtInEntries:
+        host.engineV2 && isDefaultMarketplaceCatalog(source)
+          ? capabilities.map(capabilityMarketplaceEntry)
+          : undefined,
     });
     panel.setMarketplace(marketplace.plugins, marketplace.source);
   } catch (error) {
@@ -333,6 +431,135 @@ async function confirmInstallTrust(
       }),
     );
   });
+}
+
+const CAPABILITY_POLL_INTERVAL_MS = 700;
+const CAPABILITY_POLL_ATTEMPTS = 260; // ~3 minutes of runtime setup budget
+
+/** Client-injected v2 entries install their runtime and plugin together.
+ * Trust keys on the parser-proof `builtIn` flag — the `capability:<id>`
+ * source string stays purely diagnostic. */
+function isCapabilityEntry(host: SlashCommandHost, entry: PluginMarketplaceEntry): boolean {
+  return host.engineV2 && entry.builtIn === true;
+}
+
+/**
+ * Closed-set id check for the post-remove note. The capability ids are part
+ * of the client/engine CONTRACT (mirrored in the klient zod enum), not
+ * product data that drifts — so they may be named here. What must not
+ * happen is the alternative: answering set membership by running
+ * `listCapabilities()`, which fires every entry's detector (seconds of
+ * probes) just to decide whether to print one hint line.
+ */
+function isCapabilityId(host: SlashCommandHost, id: string): boolean {
+  return host.engineV2 && (id === 'kimi-cu' || id === 'kimi-webbridge');
+}
+
+/** Poll a background capability install until it settles (or we run out of budget). */
+async function pollCapabilityInstall(
+  host: SlashCommandHost,
+  id: string,
+): Promise<CapabilityStatus | undefined> {
+  const api = await resolveCapabilityApi(host);
+  let previousProgress = '';
+  for (let attempt = 0; attempt < CAPABILITY_POLL_ATTEMPTS; attempt += 1) {
+    await new Promise((resolve) => {
+      setTimeout(resolve, CAPABILITY_POLL_INTERVAL_MS);
+    });
+    const status = await api.getCapability(id);
+    if (!status.install.running) return status;
+    const progress = `${status.install.step ?? ''}:${status.install.percent ?? ''}`;
+    if (progress !== previousProgress) {
+      previousProgress = progress;
+      log.info('capability install progress', {
+        capabilityId: id,
+        step: status.install.step,
+        percent: status.install.percent,
+      });
+    }
+  }
+  return undefined;
+}
+
+export const __pluginsCommandInternals = {
+  isCapabilityEntry,
+  installCapabilityFromPanel,
+  isDefaultMarketplaceCatalog,
+  pollCapabilityInstall,
+  removePlugin,
+};
+
+async function installCapabilityFromPanel(
+  host: SlashCommandHost,
+  panel: PluginsPanelComponent,
+  entry: PluginMarketplaceEntry,
+): Promise<void> {
+  const label = entry.displayName;
+  // Capability entries are official by construction; the trust prompt is
+  // reserved for unreviewed third-party plugins.
+  panel.setInstalling(truncateForStatus(label));
+  host.state.ui.requestRender();
+  const api = await resolveCapabilityApi(host);
+  log.info('capability install requested', { capabilityId: entry.id });
+  try {
+    // An install already running (started from another panel or client) is
+    // followed, not restarted — the service rejects duplicate starts even
+    // though the original is healthy.
+    const alreadyRunning = await api
+      .getCapability(entry.id)
+      .then((status) => status.install.running, () => false);
+    if (!alreadyRunning) {
+      await api.installCapability(entry.id);
+    } else {
+      log.info('following running capability install', { capabilityId: entry.id });
+    }
+  } catch (error) {
+    log.warn('capability install failed to start', { capabilityId: entry.id, error });
+    panel.clearInstalling();
+    host.state.ui.requestRender();
+    host.showError(`Failed to install ${label}: ${formatErrorMessage(error)}`);
+    host.restoreEditor();
+    return;
+  }
+  let result: CapabilityStatus | undefined;
+  try {
+    result = await pollCapabilityInstall(host, entry.id);
+  } catch (error) {
+    log.warn('capability install polling failed', { capabilityId: entry.id, error });
+    result = undefined;
+  }
+  panel.clearInstalling();
+  // Close the panel so the result lines land in the transcript, matching the
+  // plain plugin install flow.
+  host.restoreEditor();
+  if (result === undefined) {
+    host.showStatus(`${label} installation is still running in the background.`);
+    return;
+  }
+  logCapabilityStatus(result);
+  if (result.install.error !== undefined) {
+    host.showError(`${label} installation failed. Check the logs and install again from /plugins.`);
+    return;
+  }
+  if (result.state !== 'ready') {
+    const permissionsRequired =
+      entry.id === 'kimi-cu' &&
+      result.steps.some((step) => step.id === 'permissions' && step.state !== 'ok');
+    if (permissionsRequired) {
+      host.showStatus(
+        'Grant Accessibility and Screen Recording in System Settings → Privacy & Security.',
+        'warning',
+      );
+    } else {
+      host.showError(
+        `${label} installation did not complete. Check the logs and install again from /plugins.`,
+      );
+    }
+    host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
+    return;
+  }
+  host.showStatus(`${label} is installed.`);
+  host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
 }
 
 async function installFromPanel(
@@ -436,6 +663,10 @@ async function handlePluginsPanelSelection(
       await showPluginsPicker(host, { initialTab: 'installed' });
       return;
     case 'install':
+      if (isCapabilityEntry(host, selection.entry)) {
+        await installCapabilityFromPanel(host, panel, selection.entry);
+        return;
+      }
       await installFromPanel(
         host,
         panel,
@@ -488,6 +719,11 @@ async function handlePluginMcpSelection(
 async function removePlugin(host: SlashCommandHost, id: string): Promise<void> {
   await (await resolvePluginApi(host)).removePlugin(id);
   host.showStatus(`Removed ${id}.`);
+  if (isCapabilityId(host, id)) {
+    host.showStatus(
+      'Note: the runtime binaries were left untouched, but Kimi Code plugin wiring is disabled for new sessions. Reinstall any time from the Official tab.',
+    );
+  }
   host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
 }
 

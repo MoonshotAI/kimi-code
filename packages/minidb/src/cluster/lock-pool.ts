@@ -10,14 +10,18 @@
 // Readers: read-only MiniDb instances used for keys whose shard this process
 // does not currently hold. A MiniDb reader replays snapshot+WAL only at open
 // time and would go stale afterwards, so every reader use is guarded by a
-// cheap file fingerprint (mtime+size of the shard's WAL, snapshot and index
-// definition files). A change refreshes the reader first:
+// cheap file fingerprint (dev:ino:size:mtimeMs of the shard's WAL, snapshot,
+// CURRENT, and every index-definition sidecar — FINGERPRINT_FILES, derived
+// from the authoritative generation module so a newly added file can never be
+// missed). A change refreshes the reader first:
 //  - when only the WAL changed as pure appends on the same inode (tracked by
 //    a {dev, ino, size} watermark), the appended frames are scanned and
 //    applied incrementally (MiniDb.catchUpFromWal) — O(delta);
-//  - anything else (rotation, truncation, snapshot/index-def changes, an
-//    offset that turns out not to be a frame boundary) falls back to a close
-//    + full reopen — O(shard size).
+//  - anything else (rotation, truncation, a generation switch on CURRENT,
+//    snapshot/index-def changes, an offset that turns out not to be a frame
+//    boundary) falls back to a close + full reopen — with a published
+//    generation that reopen loads the new checkpoint instead of rebuilding
+//    every index from the full corpus.
 // Because a writer's WAL append is complete before its set() resolves, a read
 // that starts after another process's write resolved always observes it.
 
@@ -25,6 +29,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { MiniDb } from '../index.js';
 import { LockError } from '../lockfile.js';
+import { OpTracker } from '../op-tracker.js';
+import { FINGERPRINT_FILES } from '../generation.js';
 import { ShardHandle } from './shard.js';
 import type { ShardOpenOptions } from './shard.js';
 import { sleep } from './utils.js';
@@ -69,16 +75,14 @@ interface ReaderEntry {
 async function statFingerprint(file: string): Promise<string> {
   try {
     const s = await fs.stat(file);
-    return `${s.mtimeMs}:${s.size}`;
+    // dev:ino:size:mtimeMs — sidecars are replaced by rename (tmp + rename),
+    // so the inode eliminates the "same size, same mtime alias" window a
+    // size+mtime fingerprint would leave open.
+    return `${s.dev}:${s.ino}:${s.size}:${s.mtimeMs}`;
   } catch {
     return '-';
   }
 }
-
-/** Cheap change detector for a shard directory. WAL appends change size (and
- *  usually mtime); compaction swaps both snapshot and WAL; index definition
- *  changes rewrite their JSON files. */
-const FINGERPRINT_FILES = ['db.wal', 'db.snapshot', 'db.indexes.json', 'db.textindexes.json'] as const;
 
 async function shardFingerprint(dir: string): Promise<string[]> {
   return Promise.all(FINGERPRINT_FILES.map((f) => statFingerprint(path.join(dir, f))));
@@ -100,6 +104,13 @@ export class ShardLockPool {
   private readonly openingWriters = new Map<number, Promise<WriterEntry>>();
   private readonly openingReaders = new Map<number, Promise<ReaderEntry>>();
   private closed = false;
+  /** Lifecycle gates behind closeAll() (review #18): every withWriter /
+   *  withReader — acquire AND callback — runs inside one enter/leave, so the
+   *  trackers' drain in closeAll() means "no callback can still touch a
+   *  handle". The per-entry busy counters stay: LRU eviction, retire and the
+   *  reader-reopen drain make their synchronous decisions on them. */
+  private readonly writerOps = new OpTracker();
+  private readonly readerOps = new OpTracker();
 
   readonly stats = {
     writerOpens: 0,
@@ -124,21 +135,25 @@ export class ShardLockPool {
    *  process does not hold it yet. The writer cannot be evicted while busy. */
   async withWriter<T>(shardId: number, dir: string, fn: (db: MiniDb<unknown>) => T | Promise<T>): Promise<T> {
     if (this.opts.readOnly) throw new Error('ClusterDb is open in read-only mode');
-    if (this.closed) throw new Error('ClusterDb is closed');
-    const entry = await this.acquireWriter(shardId, dir);
-    entry.busy++;
+    if (!this.writerOps.enter()) throw new Error('ClusterDb is closed');
     try {
-      return await fn(entry.handle.db);
-    } finally {
-      entry.busy--;
-      entry.lastUsedAt = Date.now();
-      if (entry.retire && entry.busy === 0) {
-        // The hold window expired while ops were in flight: yield the lock so
-        // other processes can take the shard over.
-        if (this.writers.get(shardId) === entry) this.writers.delete(shardId);
-        await entry.handle.close().catch(() => {});
+      const entry = await this.acquireWriter(shardId, dir);
+      entry.busy++;
+      try {
+        return await fn(entry.handle.db);
+      } finally {
+        entry.busy--;
+        entry.lastUsedAt = Date.now();
+        if (entry.retire && entry.busy === 0) {
+          // The hold window expired while ops were in flight: yield the lock so
+          // other processes can take the shard over.
+          if (this.writers.get(shardId) === entry) this.writers.delete(shardId);
+          await entry.handle.close().catch(() => {});
+        }
+        await this.evictWriters();
       }
-      await this.evictWriters();
+    } finally {
+      this.writerOps.leave();
     }
   }
 
@@ -146,33 +161,51 @@ export class ShardLockPool {
    *  writer when this process holds the shard (current and lock-free), else a
    *  fingerprint-revalidated read-only instance. */
   async withReader<T>(shardId: number, dir: string, fn: (db: MiniDb<unknown>) => T | Promise<T>): Promise<T> {
-    if (this.closed) throw new Error('ClusterDb is closed');
-    if (!this.opts.readOnly) {
-      const w = this.writers.get(shardId);
-      if (w) {
-        w.busy++;
-        try {
-          return await fn(w.handle.db);
-        } finally {
-          w.busy--;
-          w.lastUsedAt = Date.now();
+    if (!this.readerOps.enter()) throw new Error('ClusterDb is closed');
+    try {
+      if (!this.opts.readOnly) {
+        const w = this.writers.get(shardId);
+        if (w) {
+          w.busy++;
+          try {
+            return await fn(w.handle.db);
+          } finally {
+            w.busy--;
+            w.lastUsedAt = Date.now();
+          }
         }
       }
-    }
-    const entry = await this.acquireReader(shardId, dir);
-    entry.busy++;
-    try {
-      return await fn(entry.handle.db);
+      const entry = await this.acquireReader(shardId, dir);
+      entry.busy++;
+      try {
+        return await fn(entry.handle.db);
+      } finally {
+        entry.busy--;
+        entry.lastUsedAt = Date.now();
+        await this.evictReaders();
+      }
     } finally {
-      entry.busy--;
-      entry.lastUsedAt = Date.now();
-      await this.evictReaders();
+      this.readerOps.leave();
     }
   }
 
   async closeAll(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    // Close both gates and wait for every in-flight op — including its user
+    // callback — to settle (review #18). New withWriter/withReader reject at
+    // enter() from now on, so after the drain no busy counter can be non-zero
+    // and no callback can still touch a handle. Before this, closeAll was the
+    // pool's only close path that ignored busy: it closed handles under live
+    // callbacks, which then died on 'MiniDb is closed'.
+    await Promise.all([this.writerOps.close(), this.readerOps.close()]);
+    // Defense in depth: opens in flight are wrapped by the trackers above,
+    // but a late entry landing here after the drain would outlive closeAll —
+    // holding its lock and recreating db.wal/lock files after the owner had
+    // already started tearing the directory down.
+    for (const opening of [...this.openingWriters.values(), ...this.openingReaders.values()]) {
+      await opening.catch(() => {});
+    }
     const writers = [...this.writers.values()];
     const readers = [...this.readers.values()];
     this.writers.clear();
@@ -287,10 +320,30 @@ export class ShardLockPool {
       return cached;
     }
     if (cached) {
-      // Something in the shard changed. When the change is confined to WAL
-      // appends on the same inode, apply just those frames instead of paying
-      // for a full replay (fallback: a clean full reopen below).
-      if (parts[1] === cached.fpParts[1] && parts[2] === cached.fpParts[2] && parts[3] === cached.fpParts[3]) {
+      // Something in the shard changed. When the change is confined to the
+      // WAL (parts[0]) — i.e. the snapshot and EVERY sidecar are unchanged —
+      // it can only be WAL appends on the same inode, so apply just those
+      // frames instead of paying for a full replay (fallback: a clean full
+      // reopen below). A compound/secondary/text definition change lands on
+      // this reopen path too: it rewrites its sidecar, which the fingerprint
+      // tracks.
+      //
+      // CURRENT (parts[2]) is deliberately NOT part of the wal-only verdict:
+      // a pure generation publish (background build / manual rebuild) changes
+      // CURRENT without rotating the snapshot, and the reader's WAL-catch-up
+      // view stays perfectly valid — forcing a reopen would just churn. A
+      // compaction always rotates the snapshot, and THAT is what sends the
+      // reader to a reopen (which then loads the new generation instead of
+      // rebuilding from the corpus).
+      let walOnly = true;
+      for (let i = 1; i < parts.length; i++) {
+        if (i === 2) continue; // CURRENT — see above
+        if (parts[i] !== cached.fpParts[i]) {
+          walOnly = false;
+          break;
+        }
+      }
+      if (walOnly) {
         if (await this.tryCatchUpReader(cached, dir, parts)) return cached;
       }
       // A change the watermark cannot advance over (rotation, truncation,

@@ -1,5 +1,5 @@
 /**
- * Scenario: session-owned agent creation, persistence, and MCP readiness.
+ * Scenario: session-owned agent creation, persistence, and MCP wiring.
  *
  * Exercises `AgentLifecycleService` through its DI contract with controlled
  * persistence and MCP boundaries, including completion ordering.
@@ -648,7 +648,7 @@ describe('AgentLifecycleService', () => {
     ]);
   });
 
-  it('waits for the MCP handle readiness before returning an agent', async () => {
+  it('returns an agent without waiting for the MCP handle readiness', async () => {
     let releaseReady!: () => void;
     const ready = new Promise<void>((resolve) => {
       releaseReady = resolve;
@@ -660,21 +660,12 @@ describe('AgentLifecycleService', () => {
     } satisfies ISessionMcpHandle);
 
     const svc = ix.get(IAgentLifecycleService);
-    let settled = false;
-    const create = svc.create({ agentId: 'main' }).then(() => {
-      settled = true;
-    });
-
-    // The wire seal + registerAgent complete first; the create call then
-    // parks on the seeded MCP readiness promise.
-    await vi.waitFor(() => {
-      expect(registerAgent).toHaveBeenCalled();
-    });
-    expect(settled).toBe(false);
+    // MCP connects in the background; the agent's LLM steps wait on the
+    // seeded readiness promise instead of agent creation.
+    const handle = await svc.create({ agentId: 'main' });
+    expect(handle.id).toBe('main');
 
     releaseReady();
-    await create;
-    expect(settled).toBe(true);
   });
 
   it('exposes the in-flight handle and joins it after bootstrap', async () => {

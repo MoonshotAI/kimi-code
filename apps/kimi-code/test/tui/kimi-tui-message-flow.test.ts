@@ -47,6 +47,8 @@ import {
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { handleFeedbackCommand } from '#/tui/commands/info';
+import { openUrl } from '#/utils/open-url';
+import { createFeedbackArchivePath } from '../../src/feedback/archive';
 import { packageCodebase, scanCodebase } from '../../src/feedback/codebase';
 import { uploadArchive } from '../../src/feedback/upload';
 import {
@@ -80,9 +82,19 @@ vi.mock('../../src/feedback/upload', () => ({
   uploadArchive: vi.fn(),
 }));
 
-// /feedback falls back to opening GitHub Issues in a browser when not signed in
-// or when submission fails — stub it out so the test suite never spawns a
-// browser window.
+vi.mock('../../src/feedback/archive', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/feedback/archive')>();
+  return {
+    ...actual,
+    // Wrap the real implementation so archive packaging keeps working in the
+    // other tests; individual tests can reject it to simulate an unwritable
+    // cache dir.
+    createFeedbackArchivePath: vi.fn(actual.createFeedbackArchivePath),
+  };
+});
+
+// /feedback opens GitHub Issues in a browser when submission fails — stub it
+// out so the test suite never spawns a browser window.
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
 const ESC = String.fromCodePoint(0x1b);
@@ -284,7 +296,11 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     }),
     getExperimentalFeatures: vi.fn(async () => []),
     auth: {
-      status: vi.fn(),
+      // /feedback gates on the OAuth token rather than the active model, so
+      // the default mock is a signed-in user; signed-out cases override this.
+      status: vi.fn(async () => ({
+        providers: [{ providerName: 'managed:kimi-code', hasToken: true }],
+      })),
       login: vi.fn(),
       logout: vi.fn(),
       getManagedUsage: vi.fn(),
@@ -1429,21 +1445,68 @@ command = "vim"
     expect(transcript).toContain('Session reloaded.');
   });
 
-  it('tracks successful feedback submissions only after the request succeeds', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
-          },
-        })),
+  it('prints the sign-up page and GitHub Issues links when not signed in', async () => {
+    const { driver, harness } = await makeDriver(makeSession());
+    harness.auth.status.mockResolvedValueOnce({
+      providers: [{ providerName: 'managed:kimi-code', hasToken: false }],
+    });
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(openUrl).mockClear();
+
+    await handleFeedbackCommand(feedbackDriver as any);
+
+    expect(openUrl).not.toHaveBeenCalled();
+    expect(promptFeedbackInput).not.toHaveBeenCalled();
+    expect(harness.auth.submitFeedback).not.toHaveBeenCalled();
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain("You're not signed in");
+    expect(transcript).toContain('https://www.kimi.com/code');
+    expect(transcript).toContain('https://github.com/MoonshotAI/kimi-code/issues');
+  });
+
+  it('falls back to GitHub Issues when the sign-in status cannot be read', async () => {
+    const { driver, harness } = await makeDriver(makeSession());
+    harness.auth.status.mockRejectedValueOnce(new Error('token storage unavailable'));
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(promptFeedbackInput).mockClear();
+    vi.mocked(openUrl).mockClear();
+
+    await handleFeedbackCommand(feedbackDriver as any);
+
+    expect(openUrl).toHaveBeenCalledTimes(1);
+    expect(openUrl).toHaveBeenCalledWith('https://github.com/MoonshotAI/kimi-code/issues');
+    expect(promptFeedbackInput).not.toHaveBeenCalled();
+    expect(harness.auth.submitFeedback).not.toHaveBeenCalled();
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Opening GitHub Issues as fallback');
+  });
+
+  it('submits feedback via OAuth for a signed-in user on an API-key model', async () => {
+    const { driver, harness } = await makeDriver(makeSession());
+    driver.state.appState.availableModels = {
+      k2: {
+        provider: 'openai',
+        model: 'gpt-x',
+        maxContextSize: 100,
+        displayName: 'GPT X',
+        capabilities: [],
       },
-    );
+    };
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 7 });
+
+    await handleFeedbackCommand(feedbackDriver as any);
+
+    expect(harness.auth.submitFeedback).toHaveBeenCalledOnce();
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Feedback ID: 7');
+  });
+
+  it('tracks successful feedback submissions only after the request succeeds', async () => {
+    const { driver, harness } = await makeDriver(makeSession());
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
@@ -1466,20 +1529,7 @@ command = "vim"
   });
 
   it('submits text feedback before preparing requested attachments', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
-          },
-        })),
-      },
-    );
+    const { driver, harness } = await makeDriver(makeSession());
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs');
@@ -1532,20 +1582,7 @@ command = "vim"
   });
 
   it('waits for the codebase upload to finish before returning', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
-          },
-        })),
-      },
-    );
+    const { driver, harness } = await makeDriver(makeSession());
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(scanCodebase).mockReset();
     harness.exportSession.mockReset();
@@ -1619,20 +1656,7 @@ command = "vim"
   });
 
   it('uploads session logs when codebase scanning fails but the session directory is available', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
-          },
-        })),
-      },
-    );
+    const { driver, harness } = await makeDriver(makeSession());
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(scanCodebase).mockReset();
     harness.exportSession.mockReset();
@@ -1668,21 +1692,27 @@ command = "vim"
     expect(transcript).toContain('attachment upload failed');
   });
 
+  it('keeps archive-path creation failures as partial failures without the GitHub fallback', async () => {
+    const { driver, harness } = await makeDriver(makeSession());
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+    harness.listSessions.mockResolvedValueOnce([{ id: 'ses-1', sessionDir: '/tmp/session-a' }] as never);
+    vi.mocked(createFeedbackArchivePath).mockRejectedValueOnce(new Error('cache dir not writable'));
+    vi.mocked(openUrl).mockClear();
+
+    await handleFeedbackCommand(feedbackDriver as any);
+
+    expect(openUrl).not.toHaveBeenCalled();
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Feedback submitted, thank you!');
+    expect(transcript).toContain('Feedback ID: 3');
+    expect(transcript).toContain('attachment upload failed');
+  });
+
   it('tells the user when feedback is sent but codebase packaging fails', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
-          },
-        })),
-      },
-    );
+    const { driver, harness } = await makeDriver(makeSession());
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(scanCodebase).mockReset();
     vi.mocked(packageCodebase).mockReset();
@@ -1724,20 +1754,7 @@ command = "vim"
   });
 
   it('tells the user when the codebase upload fails', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
-          },
-        })),
-      },
-    );
+    const { driver, harness } = await makeDriver(makeSession());
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
@@ -1767,20 +1784,7 @@ command = "vim"
   });
 
   it('shows feedback API error messages without replacing them with HTTP status text', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
-          },
-        })),
-      },
-    );
+    const { driver, harness } = await makeDriver(makeSession());
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
@@ -1798,21 +1802,23 @@ command = "vim"
     expect(transcript).not.toContain('Failed to submit feedback (HTTP 500).');
   });
 
+  it('falls back to GitHub Issues when the submission request rejects', async () => {
+    const { driver, harness } = await makeDriver(makeSession());
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
+    harness.auth.submitFeedback.mockRejectedValueOnce(new Error('socket hangup'));
+    vi.mocked(openUrl).mockClear();
+
+    await expect(handleFeedbackCommand(feedbackDriver as any)).rejects.toThrow('socket hangup');
+
+    expect(openUrl).toHaveBeenCalledWith('https://github.com/MoonshotAI/kimi-code/issues');
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Opening GitHub Issues as fallback');
+  });
+
   it('does not track feedback when the dialog is cancelled', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
-          },
-        })),
-      },
-    );
+    const { driver, harness } = await makeDriver(makeSession());
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => undefined);
     harness.track.mockClear();

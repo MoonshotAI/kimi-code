@@ -251,6 +251,7 @@ describe('PluginManager consumption plane', () => {
         skills: [stubSkill('provided')],
         skipped: [],
         scannedRoots: [],
+        scannedDirectories: [],
       }),
     });
     await manager.load();

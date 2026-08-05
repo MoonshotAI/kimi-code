@@ -2,6 +2,12 @@
  * `kosongConfig` domain — models.dev upstream: fetch the third-party
  * directory, in-memory cache, built-in snapshot fallback, and the pruned
  * item mapping behind the import service's browse methods.
+ *
+ * The caller states the outbound `User-Agent`: this module is plain
+ * module-level state with no container access, and the value depends on the
+ * host and the configured identity, which only the calling service can see.
+ * The cached catalog does not vary by caller, so a later call with a different
+ * value still reuses it.
  */
 
 import { CoreErrors } from '#/_base/errors/codes';
@@ -64,20 +70,20 @@ export function upstreamFetch(): typeof fetch {
   return fetchImpl;
 }
 
-export async function getModelsDevCatalog(): Promise<ModelsDevCatalog> {
+export async function getModelsDevCatalog(userAgent: string): Promise<ModelsDevCatalog> {
   const now = nowImpl();
   if (cache !== undefined && now - cache.fetchedAt < CACHE_TTL_MS) return cache.catalog;
-  inFlight ??= fetchAndCache().finally(() => {
+  inFlight ??= fetchAndCache(userAgent).finally(() => {
     inFlight = undefined;
   });
   return inFlight;
 }
 
-async function fetchAndCache(): Promise<ModelsDevCatalog> {
+async function fetchAndCache(userAgent: string): Promise<ModelsDevCatalog> {
   const now = nowImpl();
   try {
     const res = await fetchImpl(MODELS_DEV_URL, {
-      headers: { Accept: 'application/json', 'User-Agent': 'kimi-code-kap-server' },
+      headers: { Accept: 'application/json', 'User-Agent': userAgent },
       signal: AbortSignal.timeout(UPSTREAM_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) {

@@ -54,7 +54,7 @@ export interface ProjectSkillRootCandidates {
 export async function projectSkillRootCandidates(
   workDir: string,
 ): Promise<ProjectSkillRootCandidates> {
-  const projectRoot = await findProjectRoot(workDir);
+  const projectRoot = await realpathOrSelf(await findProjectRoot(workDir));
   return {
     projectRoot,
     candidates: [...PROJECT_BRAND_DIRS, ...PROJECT_GENERIC_DIRS].map((dir) =>
@@ -143,6 +143,14 @@ async function isDir(p: string): Promise<boolean> {
 
 async function realpath(p: string): Promise<string> {
   return (await fs.realpath(p)).replaceAll('\\', '/');
+}
+
+async function realpathOrSelf(p: string): Promise<string> {
+  try {
+    return await realpath(p);
+  } catch {
+    return p.replaceAll('\\', '/');
+  }
 }
 
 async function exists(p: string): Promise<boolean> {

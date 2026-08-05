@@ -8,8 +8,9 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (23 sections · 3 overlay(s))
+# Index (25 sections · 3 overlay(s))
 #   background               src/agent/task/configSection.ts
+#   builtinProductSkills     src/app/skillCatalog/configSection.ts
 #   cron                     src/app/cron/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
 #   defaultPlanMode          src/agent/plan/configSection.ts
@@ -17,6 +18,7 @@
 #   extraAgentDirs           src/workspace/workspaceAgentProfileLoader/configSection.ts
 #   extraSkillDirs           src/app/skillCatalog/configSection.ts
 #   hooks                    src/agent/externalHooks/configSection.ts
+#   identity                 src/app/agentIdentity/configSection.ts
 #   image                    src/agent/media/configSection.ts
 #   loopControl              src/agent/loop/configSection.ts
 #   mcp                      src/app/mcpConfig/configSection.ts
@@ -55,6 +57,17 @@
 # print_wait_ceiling_s: integer
 # print_background_mode: "exit" | "drain" | "steer"
 # print_max_turns: integer
+
+# ##########################################################################
+# builtinProductSkills (config.toml: builtin_product_skills)
+#   owner: src/app/skillCatalog/configSection.ts
+#   scope: core
+#   hooks: stripEnv
+#   env:
+#      <- KIMI_CODE_BUILTIN_PRODUCT_SKILLS (custom parse)
+# ##########################################################################
+
+builtin_product_skills = true
 
 # ##########################################################################
 # cron
@@ -134,6 +147,20 @@ extra_skill_dirs = []
   # matcher: string
   # command: string
   # timeout: integer
+
+# ##########################################################################
+# identity
+#   owner: src/app/agentIdentity/configSection.ts
+#   scope: core
+#   hooks: stripEnv
+#   env:
+#     name <- KIMI_CODE_IDENTITY_NAME (custom parse)
+#     slug <- KIMI_CODE_IDENTITY_SLUG (custom parse)
+# ##########################################################################
+
+[identity]
+# name: string
+# slug: string
 
 # ##########################################################################
 # image

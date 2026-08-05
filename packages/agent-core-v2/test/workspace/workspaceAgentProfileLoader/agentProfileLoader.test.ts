@@ -24,6 +24,7 @@ import { UserAgentProfileLoaderService } from '#/workspace/workspaceAgentProfile
 import type { PluginAgentRoot } from '#/app/plugin/types';
 import {
   DEFAULT_AGENT_PROFILE_NAME,
+  normalizeAgentProfile,
   type AgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { AgentProfileRegistryService } from '#/app/agentProfileCatalog/agentProfileRegistryService';
@@ -112,6 +113,7 @@ function fsWatchStub(): IHostFsWatchService {
   return {
     _serviceBrand: undefined,
     watch: (): IHostFsWatchHandle => ({
+      ready: Promise.resolve(),
       onDidChange: Event.None as Event<HostFsChange>,
       dispose: () => {},
     }),
@@ -365,11 +367,11 @@ describe('agent profile loaders + session catalog', () => {
     // The builtin loader snapshots the module-level contributions on
     // construction; pin them to one known default profile per test.
     _clearAgentProfileContributionsForTests();
-    const builtinDefault: AgentProfile = {
+    const builtinDefault: AgentProfile = normalizeAgentProfile({
       name: DEFAULT_AGENT_PROFILE_NAME,
       description: 'builtin default',
       systemPrompt: () => 'BUILTIN PROMPT',
-    };
+    });
     registerAgentProfile(builtinDefault);
   });
 

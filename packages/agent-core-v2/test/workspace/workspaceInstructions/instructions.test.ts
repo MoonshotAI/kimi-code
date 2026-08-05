@@ -73,7 +73,7 @@ describe('WorkspaceInstructionsService', () => {
           emitter = new Emitter<HostFsChange>();
           watchFires.set(path, emitter);
         }
-        return { onDidChange: emitter.event, dispose: () => {} };
+        return { ready: Promise.resolve(), onDidChange: emitter.event, dispose: () => {} };
       },
     };
   }

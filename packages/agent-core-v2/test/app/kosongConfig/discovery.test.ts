@@ -28,6 +28,7 @@ import { createScopedTestHost } from '#/_base/di/test';
 import { isError2 } from '#/_base/errors/errors';
 import { ILogService, type LogPayload } from '#/_base/log/log';
 import { IOAuthService } from '#/app/auth/auth';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ConfigRegistry } from '#/app/config/configService';
@@ -53,6 +54,7 @@ import '#/kosong/provider/providers/standard.contrib';
 
 import { StubConfigService, stubOAuthService, stubTokenProvider } from '../../kosong/stubs';
 import { stubBootstrap } from '../bootstrap/stubs';
+import { stubAgentIdentity } from '../agentIdentity/stubs';
 
 function stubEvents(): IEventService & { published: Array<{ type: string; payload: unknown }> } {
   const published: Array<{ type: string; payload: unknown }> = [];
@@ -104,6 +106,10 @@ async function createHost(
     [
       IBootstrapService,
       stubBootstrap('/tmp/kimi-home', {}, { requestHeaders: { 'User-Agent': 'kimi-test/1.0' } }),
+    ],
+    [
+      IAgentIdentity,
+      stubAgentIdentity({ hostRequestHeaders: { 'User-Agent': 'kimi-test/1.0' } }),
     ],
   ]);
   const providers = host.app.accessor.get(IProviderService);

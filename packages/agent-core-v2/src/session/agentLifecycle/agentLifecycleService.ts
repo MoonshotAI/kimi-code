@@ -14,9 +14,9 @@
  *
  * No agent id is special here: the main agent is simply the agent created
  * with the conventional `MAIN_AGENT_ID`, and `fork` requires its source to
- * exist. The workspace's shared MCP
- * manager arrives through the seeded `ISessionMcpHandle`, whose initial
- * connect this service awaits during creation.
+ * exist. MCP readiness is not awaited here: the workspace's shared manager
+ * connects in the background and the agent's LLM steps wait on it instead
+ * (see `AgentMcpService`).
  */
 
 import { IInstantiationService } from '#/_base/di/instantiation';
@@ -40,7 +40,6 @@ import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -82,7 +81,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
-    @ISessionMcpHandle private readonly mcpHandle: ISessionMcpHandle,
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
@@ -145,7 +143,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   }
 
   private async doCreate(agentId: string, opts: CreateAgentOptions): Promise<IAgentScopeHandle> {
-    const mcpReady = this.mcpHandle.ready;
     const agentScope = this.ctx.scope(`agents/${agentId}`);
     const agentHomedir = join(this.bootstrap.homeDir, agentScope);
     const handle = createScopedChildHandle(
@@ -171,7 +168,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         labels: opts.labels,
       });
       this.onDidCreateEmitter.fire(handle);
-      await mcpReady;
       await wire.restore();
       await this.bindBootstrap(handle, opts);
       await handle.accessor.get(IAgentToolActivationService).activate();

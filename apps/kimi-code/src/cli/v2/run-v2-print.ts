@@ -13,7 +13,7 @@
  *   - applies the print-mode background policy (config-driven, v1-aligned:
  *     `exit` / `drain` / `steer`) before exiting.
  *
- * Selected by `runPrompt` when `KIMI_CODE_EXPERIMENTAL_FLAG` is set.
+ * Selected by `runPrompt` unless `KIMI_CODE_LEGACY_FLAG` is truthy.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -330,8 +330,7 @@ async function resolveNativeSession(
   };
 
   if (opts.session !== undefined) {
-    const page = await index.list({});
-    const target = page.items.find((summary) => summary.id === opts.session);
+    const target = await index.get(opts.session);
     if (target === undefined) {
       throw new Error(`Session "${opts.session}" not found.`);
     }
@@ -358,7 +357,7 @@ async function resolveNativeSession(
   }
 
   if (opts.continue) {
-    const page = await index.list({});
+    const page = await index.listRecent({});
     const previous = page.items.find((summary) => summary.cwd === workDir);
     if (previous !== undefined) {
       const session = await resumeById(previous.id);

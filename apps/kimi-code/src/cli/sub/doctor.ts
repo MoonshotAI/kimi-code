@@ -134,9 +134,9 @@ function resolveDeps(deps: Partial<DoctorDeps> | DoctorDeps | undefined): Resolv
       deps?.validateConfigToml ??
       (async (text, filePath) => {
         if (isKimiV2Enabled()) {
-          // Experimental v2 route (same master switch as `kimi -p`): validate
-          // with the agent-core-v2 section registry instead of the v1 schema.
-          // Loaded lazily so the v2 module graph stays off the default path.
+          // Default v2 route (same engine gate as `kimi -p`): validate with
+          // the agent-core-v2 section registry instead of the legacy schema.
+          // Loaded lazily so the v2 module graph stays off the legacy path.
           const { validateConfigTomlV2 } = await import('../v2/validate-config');
           return validateConfigTomlV2(text, filePath);
         }

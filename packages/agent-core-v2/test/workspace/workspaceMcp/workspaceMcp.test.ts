@@ -36,6 +36,7 @@ import { WorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcpServic
 
 import { stubLog } from '../../_base/log/stubs';
 import { createMemoryMcpOAuthStore, stdioFixture } from '../../mcpCore/stubs';
+import { registerAgentIdentityStub } from '../../app/agentIdentity/stubs';
 
 function stdioServer(): McpServerConfig {
   return { transport: 'stdio', command: process.execPath, args: [stdioFixture] };
@@ -86,6 +87,7 @@ describe('WorkspaceMcpService', () => {
         reg.definePartialInstance(IMcpOAuthStore, createMemoryMcpOAuthStore());
         reg.defineInstance(ILogService, stubLog());
         reg.defineInstance(ITelemetryService, noopTelemetryService);
+        registerAgentIdentityStub(reg);
         reg.define(IWorkspaceMcpService, WorkspaceMcpService);
       },
     });

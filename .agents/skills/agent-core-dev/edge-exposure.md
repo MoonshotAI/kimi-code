@@ -55,9 +55,9 @@ Read = `GET`, write = `POST`. `sid` = `session_id`, `aid` = `agent_id`.
 
 | resource | action | Service.method | verb |
 |---|---|---|---|
-| `sessions` | `list` | ISessionIndex.list | GET |
+| `sessions` | `listRecent` | ISessionIndex.listRecent | GET |
 | `sessions` | `get` | ISessionIndex.get | GET |
-| `sessions` | `countActive` | ISessionIndex.countActive | GET |
+| `sessions` | `count` | ISessionIndex.count | GET |
 | `workspaces` | `list` | IWorkspaceService.list | GET |
 | `workspaces` | `get` | IWorkspaceService.get | GET |
 | `workspaces` | `createOrTouch` | IWorkspaceService.createOrTouch | POST |

@@ -130,6 +130,26 @@ describe('FetchURLTool output note', () => {
   });
 });
 
+describe('FetchURLTool backend resolution', () => {
+  // Agent creation constructs the tool; the backend must not materialize
+  // until a call needs it. The service documents that each getUrlFetcher()
+  // call re-reads config and login state, and a construction-time read would
+  // race the identity freeze during a fast bootstrap.
+  it('resolves the fetcher per invocation, never at construction', async () => {
+    const fetch = vi
+      .fn<UrlFetcher['fetch']>()
+      .mockResolvedValue({ content: 'hello', kind: 'passthrough' } satisfies UrlFetchResult);
+    const getUrlFetcher = vi.fn(() => ({ fetch }));
+    const tool = new FetchURLTool({ _serviceBrand: undefined, getUrlFetcher });
+
+    expect(getUrlFetcher).not.toHaveBeenCalled();
+
+    await execute(tool, 'https://example.com', new AbortController().signal);
+    await execute(tool, 'https://example.com', new AbortController().signal);
+    expect(getUrlFetcher).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('LocalFetchURLProvider abort signal', () => {
   it('passes the signal through to fetchImpl', async () => {
     const controller = new AbortController();

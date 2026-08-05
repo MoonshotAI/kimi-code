@@ -145,6 +145,8 @@ import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import { extractMediaAttachments, rewriteMediaPlaceholders } from './utils/image-placeholder';
+import { installInputLatencyProbe } from './utils/input-latency';
+import { startupTrace } from '#/utils/startup-trace';
 import { REPLAY_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
@@ -193,7 +195,7 @@ export interface KimiTUIStartupInput {
   readonly migrationPlan?: MigrationPlan | null;
   /** When true, run only the migration screen, then exit (the `kimi migrate` command). */
   readonly migrateOnly?: boolean;
-  /** agent-core-v2 engine (KIMI_CODE_EXPERIMENTAL_FLAG); enables the startup workspace-trust prompt. */
+  /** agent-core-v2 engine; enables the startup workspace-trust prompt. */
   readonly engineV2?: boolean;
 }
 
@@ -577,6 +579,7 @@ export class KimiTUI {
   // =========================================================================
 
   async start(): Promise<void> {
+    startupTrace('tui:start');
     // Signal handlers must be installed before raw mode to avoid EIO loops.
     this.registerSignalHandlers();
     // Outer try rolls back signal listeners on startup failure.
@@ -604,16 +607,25 @@ export class KimiTUI {
         return;
       }
 
+      startupTrace('trustPrompt:begin');
       const trustPromptStartedLoop = await this.maybeRunWorkspaceTrustPrompt();
+      startupTrace('trustPrompt:end');
+      startupTrace('initMainTui:begin');
       const shouldReplayHistory = await this.initMainTui();
+      startupTrace('initMainTui:end');
+      // Debug-only input→render latency overlay (KIMI_TUI_INPUT_LATENCY=1).
+      if (process.env['KIMI_TUI_INPUT_LATENCY']) installInputLatencyProbe(this.state.ui);
       // When the trust prompt already started the event loop, starting it
       // again would re-run pi-tui's terminal.start() — stacking a second
       // Kitty keyboard-protocol push (leaking CSI-u mode past exit) and
       // duplicate stdin listeners.
       if (!trustPromptStartedLoop) this.startEventLoop();
+      startupTrace('eventLoop:started');
       try {
         this.startBackgroundFdAutocomplete();
+        startupTrace('finishStartup:begin');
         await this.finishStartup(shouldReplayHistory);
+        startupTrace('finishStartup:end');
       } catch (error) {
         this.disposeTerminalTracking();
         this.state.ui.stop();

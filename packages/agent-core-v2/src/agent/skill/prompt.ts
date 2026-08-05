@@ -37,9 +37,9 @@ export function renderModelToolSkillPrompt(input: RenderModelToolSkillPromptInpu
 
 export function renderSkillLoadedBlock(input: RenderSkillLoadedBlockInput): string {
   return [
-    `<kimi-skill-loaded${renderSkillAttributes(input)}>`,
+    `<skill-loaded${renderSkillAttributes(input)}>`,
     input.skillContent,
-    '</kimi-skill-loaded>',
+    '</skill-loaded>',
   ].join('\n');
 }
 
