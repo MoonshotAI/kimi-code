@@ -10,7 +10,7 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import { Disposable } from '#/_base/di/lifecycle';
+import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { TimeoutTimer } from '#/_base/utils/timer';
@@ -21,10 +21,6 @@ import {
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   type MergeAllAvailableSkillsConfig,
 } from '#/app/skillCatalog/configSection';
-import {
-  MAX_SKILL_SCAN_DEPTH,
-  isSkillScanExcludedEntry,
-} from '#/app/skillCatalog/fileSkillDiscovery';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import { projectRoots, projectSkillRootCandidates } from '#/app/skillCatalog/skillRoots';
 import {
@@ -54,7 +50,9 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
   private readonly onDidChangeEmitter = this._register(new Emitter<void>());
   readonly onDidChange: Event<void> = this.onDidChangeEmitter.event;
   private readonly watchDebounce = this._register(new TimeoutTimer());
+  private readonly watchResources = this._register(new DisposableStore());
   private readonly watchReady: Promise<void>;
+  private watchSignature: string | undefined;
 
   constructor(
     @ISkillDiscovery private readonly discovery: ISkillDiscovery,
@@ -69,7 +67,7 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
         if (event.domain === MERGE_ALL_AVAILABLE_SKILLS_SECTION) this.onDidChangeEmitter.fire();
       }),
     );
-    this.watchReady = this.watchProjectSkillRoots();
+    this.watchReady = this.updateProjectSkillRootWatch([]);
   }
 
   async load(): Promise<SkillContribution> {
@@ -80,27 +78,33 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
     await this.config.ready;
     const mergeAllAvailableSkills =
       this.config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
-    return this.discovery.discover(
+    const contribution = await this.discovery.discover(
       await projectRoots(this.workspace.cwd, { mergeAllAvailableSkills }),
     );
+    await this.updateProjectSkillRootWatch(contribution.scannedDirectories);
+    return contribution;
   }
 
-  private async watchProjectSkillRoots(): Promise<void> {
+  private async updateProjectSkillRootWatch(
+    scannedDirectories: readonly string[],
+  ): Promise<void> {
     const { projectRoot, candidates } = await projectSkillRootCandidates(this.workspace.cwd);
+    const signature = [...scannedDirectories].toSorted().join('\0');
+    if (signature === this.watchSignature) return;
     const handle = this.fsWatch.watch(projectRoot, {
       ignored: subtreeWatchFilter(projectRoot, candidates, {
-        maxDepth: MAX_SKILL_SCAN_DEPTH + 2,
-        skipEntry: isSkillScanExcludedEntry,
+        scannedDirectories,
         keepEntryFile: 'SKILL.md',
       }),
       signal: true,
     });
-    this._register(handle);
-    this._register(
-      handle.onDidChange(() => {
-        this.watchDebounce.cancelAndSet(() => this.onDidChangeEmitter.fire(), WATCH_DEBOUNCE_MS);
-      }),
-    );
+    const subscription = handle.onDidChange(() => {
+      this.watchDebounce.cancelAndSet(() => this.onDidChangeEmitter.fire(), WATCH_DEBOUNCE_MS);
+    });
+    this.watchResources.clear();
+    this.watchResources.add(handle);
+    this.watchResources.add(subscription);
+    this.watchSignature = signature;
   }
 }
 

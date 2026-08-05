@@ -40,6 +40,7 @@ export async function discoverFileSkills(
 ): Promise<SkillDiscoveryResult> {
   const byDiscoveryKey = new Map<string, SkillDefinition>();
   const skipped: SkippedSkill[] = [];
+  const scannedDirectories: string[] = [];
 
   async function walkSkillDir(
     dirPath: string,
@@ -56,6 +57,7 @@ export async function discoverFileSkills(
     } catch {
       return;
     }
+    scannedDirectories.push(dirPath);
 
     const directorySkills = new Set<string>();
     const subdirs: string[] = [];
@@ -138,6 +140,7 @@ export async function discoverFileSkills(
     skills: sortSkills([...byDiscoveryKey.values()]),
     skipped,
     scannedRoots: roots.map((root) => root.path),
+    scannedDirectories,
   };
 }
 

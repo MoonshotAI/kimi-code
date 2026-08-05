@@ -26,7 +26,12 @@ import { IPluginService } from '#/app/plugin/plugin';
 import { PluginService } from '#/app/plugin/pluginService';
 import type { ReloadSummary } from '#/app/plugin/types';
 import { IProviderService } from '#/kosong/provider/provider';
-import { IHostFsWatchService, type HostFsChange, type IHostFsWatchHandle } from '#/os/interface/hostFsWatch';
+import {
+  IHostFsWatchService,
+  type HostFsChange,
+  type HostFsWatchOptions,
+  type IHostFsWatchHandle,
+} from '#/os/interface/hostFsWatch';
 import { IAppStateService } from '#/app/state/appState';
 import { AppStateService } from '#/app/state/appStateService';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
@@ -149,13 +154,18 @@ function workspaceContextStub(workDir: string): IWorkspaceContext {
   };
 }
 
-function fsWatchStub(): IHostFsWatchService {
+function fsWatchStub(
+  onWatch?: (options: HostFsWatchOptions | undefined) => void,
+): IHostFsWatchService {
   return {
     _serviceBrand: undefined,
-    watch: (): IHostFsWatchHandle => ({
-      onDidChange: Event.None as Event<HostFsChange>,
-      dispose: () => {},
-    }),
+    watch: (_path, options): IHostFsWatchHandle => {
+      onWatch?.(options);
+      return {
+        onDidChange: Event.None as Event<HostFsChange>,
+        dispose: () => {},
+      };
+    },
   };
 }
 
@@ -408,7 +418,7 @@ describe('WorkspaceSkillCatalogService', () => {
       calls = 0;
       async discover() {
         this.calls++;
-        return { skills: [], skipped: [], scannedRoots: [] };
+        return { skills: [], skipped: [], scannedRoots: [], scannedDirectories: [] };
       }
     }
     const store = new CountingDiscovery();
@@ -492,7 +502,7 @@ describe('WorkspaceSkillCatalogService', () => {
         const pluginSkills = roots
           .filter((root) => root.plugin !== undefined)
           .map((root) => stubSkill('demo-skill', { source: 'extra', plugin: root.plugin }));
-        return { skills: pluginSkills, skipped: [], scannedRoots: [] };
+        return { skills: pluginSkills, skipped: [], scannedRoots: [], scannedDirectories: [] };
       }
     }
     const store = new ExtraRootStore();
@@ -519,6 +529,7 @@ describe('WorkspaceSkillCatalogService', () => {
             scannedRoots: roots
               .filter((root) => root.source === 'project')
               .map((root) => root.path),
+            scannedDirectories: [],
           };
         }
       }
@@ -551,6 +562,7 @@ describe('WorkspaceSkillCatalogService', () => {
             skills: [],
             skipped: isProject ? [skippedEntry] : [],
             scannedRoots: [],
+            scannedDirectories: [],
           };
         }
       }
@@ -835,6 +847,49 @@ describe('WorkspaceSkillCatalogService', () => {
       await rm(workDir, { recursive: true, force: true });
     }
   }, 15000);
+
+  it('prunes terminal skill payloads from the workspace watch after discovery', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'skill-watch-plan-'));
+    const skillDir = join(workDir, '.agents', 'skills', 'demo');
+    const runtimeFile = join(skillDir, 'runtime', '0.py');
+    await mkdir(join(skillDir, 'runtime'), { recursive: true });
+    await writeFile(
+      join(skillDir, 'SKILL.md'),
+      '---\nname: demo\ndescription: demo\n---\nbody',
+      'utf8',
+    );
+    await writeFile(runtimeFile, 'x', 'utf8');
+    const watchedSkillDir = await realpath(skillDir);
+    const watchedRuntimeFile = await realpath(runtimeFile);
+    let ignored: ((path: string) => boolean) | undefined;
+    const host = createScopedTestHost([
+      stubPair(IBootstrapService, bootstrapStub),
+      stubPair(IConfigService, configStub()),
+      stubPair(IPluginService, pluginStub()),
+      stubPair(ILogService, stubLog()),
+      stubPair(ISkillDiscovery, new FileSkillDiscovery(stubLog())),
+      stubPair(
+        IHostFsWatchService,
+        fsWatchStub((options) => {
+          ignored = options?.ignored;
+        }),
+      ),
+    ]);
+    const workspace = host.child(LifecycleScope.Workspace, 'w1', [
+      stubPair(IWorkspaceContext, workspaceContextStub(workDir)),
+    ]);
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      await catalog.load();
+
+      expect(ignored?.(join(watchedSkillDir, 'SKILL.md'))).toBe(false);
+      expect(ignored?.(watchedRuntimeFile)).toBe(true);
+    } finally {
+      host.dispose();
+      await rm(workDir, { recursive: true, force: true });
+    }
+  });
 
   it('rescans when a skill under a dot directory appears on disk', async () => {
     const workDir = await mkdtemp(join(tmpdir(), 'skill-watch-dot-'));

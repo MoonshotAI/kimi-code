@@ -69,4 +69,39 @@ describe('subtree watch filtering', () => {
     expect(ignored('/repo/.agents/skills')).toBe(false);
     expect(ignored('/repo/.agents/skills/demo')).toBe(false);
   });
+
+  it('keeps direct probes but prunes payload below a terminal bundle', () => {
+    const ignored = subtreeWatchFilter(root, candidates, {
+      scannedDirectories: ['/repo/.agents/skills'],
+      keepEntryFile: 'SKILL.md',
+    });
+    expect(ignored('/repo/.agents/skills/demo')).toBe(false);
+    expect(ignored('/repo/.agents/skills/demo/SKILL.md')).toBe(false);
+    expect(ignored('/repo/.agents/skills/demo/runtime')).toBe(true);
+    expect(ignored('/repo/.agents/skills/demo/runtime/0.py')).toBe(true);
+    expect(ignored('/repo/.agents/skills/.flat.md')).toBe(false);
+  });
+
+  it('keeps direct bundle probes when the candidate root has not been scanned yet', () => {
+    const ignored = subtreeWatchFilter(root, candidates, {
+      scannedDirectories: [],
+      keepEntryFile: 'SKILL.md',
+    });
+    expect(ignored('/repo/.agents/skills/new-skill')).toBe(false);
+    expect(ignored('/repo/.agents/skills/new-skill/SKILL.md')).toBe(false);
+    expect(ignored('/repo/.agents/skills/new-skill/runtime')).toBe(true);
+  });
+
+  it('keeps direct sub-skill probes below a directory the scanner traversed', () => {
+    const ignored = subtreeWatchFilter(root, candidates, {
+      scannedDirectories: [
+        '/repo/.agents/skills',
+        '/repo/.agents/skills/parent',
+      ],
+      keepEntryFile: 'SKILL.md',
+    });
+    expect(ignored('/repo/.agents/skills/parent/child')).toBe(false);
+    expect(ignored('/repo/.agents/skills/parent/child/SKILL.md')).toBe(false);
+    expect(ignored('/repo/.agents/skills/parent/child/runtime')).toBe(true);
+  });
 });

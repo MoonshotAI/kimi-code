@@ -13,6 +13,7 @@ export interface SubtreeWatchFilterOptions {
   readonly maxDepth?: number;
   readonly skipEntry?: (entryName: string) => boolean;
   readonly keepEntryFile?: string;
+  readonly scannedDirectories?: readonly string[];
 }
 
 export function subtreeWatchFilter(
@@ -22,13 +23,22 @@ export function subtreeWatchFilter(
 ): (path: string) => boolean {
   const normRoot = normalizeSlashes(root);
   const normCandidates = candidates.map(normalizeSlashes);
+  const normScannedDirectories =
+    options?.scannedDirectories === undefined
+      ? undefined
+      : new Set([...normCandidates, ...options.scannedDirectories.map(normalizeSlashes)]);
   return (p: string): boolean => {
     const norm = normalizeSlashes(p);
     if (norm === normRoot) return false;
     for (const candidate of normCandidates) {
       if (norm === candidate) return false;
       if (norm.startsWith(`${candidate}/`)) {
-        return isPrunedBelowCandidate(norm.slice(candidate.length + 1), options);
+        return isPrunedBelowCandidate(
+          norm,
+          norm.slice(candidate.length + 1),
+          options,
+          normScannedDirectories,
+        );
       }
       if (candidate.startsWith(`${norm}/`)) return false;
     }
@@ -37,8 +47,10 @@ export function subtreeWatchFilter(
 }
 
 function isPrunedBelowCandidate(
+  normPath: string,
   rel: string,
   options: SubtreeWatchFilterOptions | undefined,
+  scannedDirectories: ReadonlySet<string> | undefined,
 ): boolean {
   if (options === undefined) return false;
   const segments = rel.split('/');
@@ -54,5 +66,29 @@ function isPrunedBelowCandidate(
       );
     }
   }
+  if (scannedDirectories !== undefined) {
+    return !isScannerVisiblePath(normPath, scannedDirectories, options.keepEntryFile);
+  }
   return false;
+}
+
+function isScannerVisiblePath(
+  normPath: string,
+  scannedDirectories: ReadonlySet<string>,
+  keepEntryFile: string | undefined,
+): boolean {
+  if (scannedDirectories.has(normPath)) return true;
+  const separatorAt = normPath.lastIndexOf('/');
+  if (separatorAt === -1) return false;
+  const parent = normPath.slice(0, separatorAt);
+  if (scannedDirectories.has(parent)) return true;
+  if (
+    keepEntryFile === undefined ||
+    normPath.slice(separatorAt + 1) !== keepEntryFile
+  ) {
+    return false;
+  }
+  const parentSeparatorAt = parent.lastIndexOf('/');
+  if (parentSeparatorAt === -1) return false;
+  return scannedDirectories.has(parent.slice(0, parentSeparatorAt));
 }
