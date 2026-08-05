@@ -131,7 +131,9 @@ export type {
 export {
   buildDaemonFileUrl,
   buildMediaPathTag,
+  foldMediaPathTagRefs,
   isDaemonFileUrl,
+  matchSingleMediaPathTag,
   parseDaemonFileUrl,
 } from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
 export type {
