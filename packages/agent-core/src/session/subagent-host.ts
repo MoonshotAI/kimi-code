@@ -339,7 +339,21 @@ export class SessionSubagentHost {
    */
   delegatableSubagents(callerProfileName?: string): Record<string, ResolvedAgentProfile> {
     const owner = this.getOwnerAgent?.() ?? this.session.getReadyAgent(this.ownerAgentId);
-    return this.resolveDelegatableSubagents(callerProfileName, owner?.config.subagentNames);
+    const profiles = this.resolveDelegatableSubagents(callerProfileName, owner?.config.subagentNames);
+    // Apply global [tools].disabled to the profiles exposed to the parent
+    // agent's Agent tool description, so the model does not advertise a
+    // subagent as having a tool the spawned child will not receive. #2534.
+    const toolsDisabled = this.session.readToolsDisabled();
+    if (toolsDisabled.length === 0) return profiles;
+    return Object.fromEntries(
+      Object.entries(profiles).map(([name, profile]) => [
+        name,
+        {
+          ...profile,
+          disallowedTools: [...(profile.disallowedTools ?? []), ...toolsDisabled],
+        },
+      ]),
+    );
   }
 
   private resolveDelegatableSubagents(
