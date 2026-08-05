@@ -21,6 +21,7 @@ const SLASH_COMMANDS: &[&str] = &[
     "/archive",
     "/clear",
     "/compact",
+    "/config",
     "/deny",
     "/exit",
     "/export",
@@ -396,6 +397,18 @@ impl App {
                         "status: {}",
                         serde_json::to_string_pretty(&status["result"]).unwrap_or_default()
                     )));
+                }
+                "/config" => {
+                    let config = self.harness.config().await;
+                    match config {
+                        Ok(cfg) => self.transcript.push(TranscriptLine::status(format!(
+                            "config: {}",
+                            serde_json::to_string_pretty(&cfg).unwrap_or_default()
+                        ))),
+                        Err(e) => self
+                            .transcript
+                            .push(TranscriptLine::error(format!("config failed: {e}"))),
+                    }
                 }
                 "/plan" => {
                     let enabled = rest == "on" || rest.is_empty();
