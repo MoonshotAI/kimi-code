@@ -326,6 +326,12 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 > - **✅ 2026-08-05 plugin commands 补全（commit 232a829c4）**：引擎 manifest 支持 `commands` 字段（Markdown 文件/目录；文件名=命令名，首行=描述）；`plugin/list_commands` + `plugin/activate_command`（展开 `$ARGUMENTS` 后作为 prompt turn 发送）；kimi-sdk Harness `list_plugin_commands`/`activate_plugin_command`；node-sdk 桥接（listPluginCommands 聚合所有插件，activatePluginCommand 转发）
 > - **✅ node-sdk Rust 桥接 nativeUnavailable 全部消除**：`archiveSession`/`cancelCompaction`/`activatePluginCommand`/`listPluginCommands` 及此前的 plugin 写面全部接线为真实引擎调用——**零 nativeUnavailable 调用残留**
 > - **基线**：kimi-agent 2045（+1 manifest commands 测试）、kimi-server/sdk/protocol 全绿、node-sdk 34 文件 429 测试全绿；clippy 0 新 warning
+>
+> **✅ 2026-08-05 宿主面收尾（TS 宿主接入 Rust 能力）**：
+> - kimi-sdk Harness 补 `close_session`/`fork_session`/`rename_session`（commit 8c1dd3650）
+> - TUI 宿主 `native-session` plugin 写面接线（install/enable/mcp/remove/reload/list_commands/activate 全部替代 naError stub，commit f56c75ae6）+ `cancelCompaction` 接线（commit baf37445e）
+> - TUI `/archive` + REPL `/archive`、`/steer` 命令（commit 600cb1ae6/dbb23e9e4/3eb3448e5），SLASH_COMMANDS 29
+> - 测试策略：**重写而非平移**（用户定案）——TS 用例平移跳过
 
 ### 阶段 F — 退役
 0. ✅ **npm 分发薄壳**（kimi-code-rust-bin：bin 包装 + pack.mjs CI 打包 + KIMI_RUST_BIN 覆盖）
