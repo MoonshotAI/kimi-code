@@ -1047,6 +1047,10 @@ export class SessionEventHandler {
       event.result.tokensAfter,
       event.result.summary,
     );
+    // A completed compaction just refreshed and shrank the cached context —
+    // count it as activity so the next submit isn't judged against the
+    // pre-compaction timestamp. (Cancellations don't count.)
+    this.host.recordSessionActivity();
     this.finishCompaction(sendQueued);
   }
 

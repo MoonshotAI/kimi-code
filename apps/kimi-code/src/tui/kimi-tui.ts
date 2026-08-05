@@ -146,6 +146,7 @@ import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import { extractMediaAttachments, rewriteMediaPlaceholders } from './utils/image-placeholder';
+import type { ExtractionResult } from './utils/image-placeholder';
 import { installInputLatencyProbe } from './utils/input-latency';
 import { startupTrace } from '#/utils/startup-trace';
 import { REPLAY_TURN_LIMIT } from './utils/message-replay';
@@ -1247,22 +1248,22 @@ export class KimiTUI {
     this.updateQueueDisplay();
   }
 
-  async sendNormalUserInput(text: string): Promise<void> {
+  async sendNormalUserInput(text: string, preExtracted?: ExtractionResult): Promise<void> {
     if (this.btwPanelController.sendUserInput(text)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
     }
-    // Idle cache-hint interception sits before media extraction and session
-    // creation; it is synchronous unless a hint actually fires, keeping the
-    // send path await-free up to sendMessage.
-    if (this.cacheHint.maybeInterceptOnSubmit(text)) return;
     let extraction: ReturnType<typeof extractMediaAttachments>;
     try {
       // Pasted videos are copied into the cache and expand to a `file://`
       // `video_url` part; the engine resolves (uploads or degrades) them
       // inside the turn, so submission stays fully synchronous.
-      extraction = extractMediaAttachments(text, this.imageStore);
+      //
+      // A cache-hint-swallowed resend passes its pre-dialog extraction back
+      // in: the image store may already be cleared (e.g. after "Start a new
+      // session"), so re-extracting from the text would lose the media.
+      extraction = preExtracted ?? extractMediaAttachments(text, this.imageStore);
     } catch (error) {
       // A video cache copy failed (unwritable cache dir, vanished source…);
       // nothing was dispatched.
@@ -1270,6 +1271,10 @@ export class KimiTUI {
       return;
     }
     if (!this.validateMediaCapabilities(extraction)) return;
+    // Idle cache-hint interception sits before session creation; it is
+    // synchronous unless a hint actually fires, keeping the send path
+    // await-free up to sendMessage.
+    if (this.cacheHint.maybeInterceptOnSubmit(text, extraction)) return;
     let session = this.session;
     if (session === undefined) {
       if (!this.engineV2) {
@@ -3097,7 +3102,12 @@ export class KimiTUI {
 
   /** Compaction shrinks the cached prefix — reset the cache-break baseline. */
   noteCompactionFinished(): void {
-    this.cacheHint.noteCompactionFinished();
+    this.cacheHint.resetCacheBreakBaseline();
+  }
+
+  /** /undo cut the context — the next step's cache drop is expected. */
+  noteContextCut(): void {
+    this.cacheHint.resetCacheBreakBaseline();
   }
 
   private async runMigrationScreen(plan: MigrationPlan): Promise<MigrationScreenResult> {

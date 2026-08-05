@@ -125,7 +125,7 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     await flush();
     expect(getMock).toHaveBeenCalled();
     // Fetch resolved without a matching rule → the message is released.
-    expect(host.sendNormalUserInput).toHaveBeenCalledWith('hello');
+    expect(host.sendNormalUserInput).toHaveBeenCalledWith('hello', undefined);
     expect(host.mountEditorReplacement).not.toHaveBeenCalled();
     vi.restoreAllMocks();
   });
@@ -203,6 +203,22 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
+  it('releases instead of mounting when a foreground operation started during the fetch', async () => {
+    getMock.mockResolvedValue(CONFIG);
+    const { host, state } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+    expect(controller.maybeInterceptOnSubmit('hello')).toBe(true);
+    // A foreground operation (turn / /compact) kicked off mid-fetch.
+    state.appState.streamingPhase = 'waiting';
+    await flush();
+    vi.restoreAllMocks();
+
+    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
+    expect(host.sendNormalUserInput).toHaveBeenCalledWith('hello', undefined);
+  });
+
   it('intercepts and shows the dialog when all conditions hold', () => {
     peekMock.mockReturnValue(CONFIG);
     const { host } = makeHost();
@@ -246,7 +262,7 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     dialog.handleInput('\u001B[B'); // down → continue
     dialog.handleInput('\r');
     await flush();
-    expect(host.sendNormalUserInput).toHaveBeenCalledWith('hello');
+    expect(host.sendNormalUserInput).toHaveBeenCalledWith('hello', undefined);
     expect(host.track).toHaveBeenCalledWith('cache_hint_action', {
       action: 'continue',
       scene: 'idle',
@@ -290,7 +306,7 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
       state.appState.isCompacting = true;
     }, 10);
     await vi.waitFor(() => {
-      expect(host.sendNormalUserInput).toHaveBeenCalledWith('hello');
+      expect(host.sendNormalUserInput).toHaveBeenCalledWith('hello', undefined);
     });
     expect(compact).toHaveBeenCalledWith({});
   });
@@ -311,7 +327,7 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     dialog.handleInput('\r');
     await flush();
     expect(host.createNewSession).toHaveBeenCalled();
-    expect(host.sendNormalUserInput).toHaveBeenCalledWith('hello');
+    expect(host.sendNormalUserInput).toHaveBeenCalledWith('hello', undefined);
   });
 
   it('keeps the input when new-session creation fails', async () => {
@@ -399,7 +415,7 @@ describe('CacheHintController cache-break detection', () => {
     const { host, state } = makeHost();
     const controller = new CacheHintController(host);
     controller.noteStepUsage(u(10000));
-    controller.noteCompactionFinished();
+    controller.resetCacheBreakBaseline();
     controller.noteStepUsage(u(100)); // post-compaction drop is expected
     expect(host.track).not.toHaveBeenCalled();
 

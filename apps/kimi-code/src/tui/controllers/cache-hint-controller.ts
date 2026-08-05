@@ -21,6 +21,14 @@ import type { AppState } from '../types';
 import type { TUIState } from '../tui-state';
 import { evaluateCacheHint } from '../utils/cache-hint';
 import { formatErrorMessage } from '../utils/event-payload';
+import type { ExtractionResult } from '../utils/image-placeholder';
+
+/** A swallowed submit: the raw text plus its media extraction (done before
+ *  the dialog so pasted attachments survive a later store clear). */
+interface StashedSubmit {
+  readonly text: string;
+  readonly extraction?: ExtractionResult;
+}
 
 export interface CacheHintHost {
   readonly engineV2: boolean;
@@ -34,7 +42,7 @@ export interface CacheHintHost {
   restoreInputText(text: string): void;
   showError(message: string): void;
   createNewSession(): Promise<void>;
-  sendNormalUserInput(text: string): Promise<void>;
+  sendNormalUserInput(text: string, preExtracted?: ExtractionResult): Promise<void>;
 }
 
 type HintDecision = { readonly idleSeconds: number; readonly totalTokens: number };
@@ -125,8 +133,9 @@ export class CacheHintController {
     });
   }
 
-  /** Compaction legitimately shrinks the cached prefix — reset the baseline. */
-  noteCompactionFinished(): void {
+  /** Compaction legitimately shrinks the cached prefix — reset the baseline.
+   *  Also used when the context is cut by other means (e.g. /undo). */
+  resetCacheBreakBaseline(): void {
     this.breakBaseline = undefined;
   }
 
@@ -208,7 +217,7 @@ export class CacheHintController {
    * is swallowed while the config is fetched (spec: the trigger must reach
    * the interface); the message is then either shown the dialog or released.
    */
-  maybeInterceptOnSubmit(text: string): boolean {
+  maybeInterceptOnSubmit(text: string, extraction?: ExtractionResult): boolean {
     const { host } = this;
     if (!host.engineV2 || host.session === undefined) return false;
     // A stashed message being released re-enters the send path here — never
@@ -222,6 +231,7 @@ export class CacheHintController {
     // Coarse floor: configured cache durations are 10min+, so anything
     // fresher than a minute can never hint.
     if (Date.now() - this.lastActivityAt < 60_000) return false;
+    const stash: StashedSubmit = { text, extraction };
     const cached = peekCacheHintConfig();
     if (cached !== undefined) {
       const decision = evaluateCacheHint({
@@ -235,7 +245,7 @@ export class CacheHintController {
       if (decision.kind === 'skip') return false;
       this.idlePrompted = true;
       // Mounts synchronously inside; the action resolution runs async.
-      void this.showDialog('idle', decision, text);
+      void this.showDialog('idle', decision, stash);
       return true;
     }
     // Config cache cold: fetch at trigger time. Submits arriving while the
@@ -247,7 +257,7 @@ export class CacheHintController {
     const sessionId = host.session.id;
     this.pendingInterceptions += 1;
     this.interceptionTail = this.interceptionTail
-      .then(() => this.interceptAfterFetch(text, sessionId))
+      .then(() => this.interceptAfterFetch(stash, sessionId))
       .finally(() => {
         this.pendingInterceptions -= 1;
       });
@@ -255,7 +265,7 @@ export class CacheHintController {
   }
 
   /** Cold-cache path: fetch the config, then show the dialog or release. */
-  private async interceptAfterFetch(text: string, sessionId: string): Promise<void> {
+  private async interceptAfterFetch(stash: StashedSubmit, sessionId: string): Promise<void> {
     const { host } = this;
     // A dialog already ran for this idle cycle: chained submits follow the
     // fate of the message that opened it. If that message was restored
@@ -263,9 +273,9 @@ export class CacheHintController {
     // would reorder the conversation.
     if (this.idlePrompted) {
       if (this.lastDialogRestored) {
-        this.restoreStashedInput(text);
+        this.restoreStashedInput(stash.text);
       } else {
-        await this.releaseStashed(text);
+        await this.releaseStashed(stash);
       }
       return;
     }
@@ -274,7 +284,14 @@ export class CacheHintController {
     // meanwhile, never send the stashed text into the wrong session — hand it
     // back to the editor instead.
     if (host.session?.id !== sessionId) {
-      this.restoreStashedInput(text);
+      this.restoreStashedInput(stash.text);
+      return;
+    }
+    // If a foreground operation (turn, /compact, …) started meanwhile, don't
+    // mount over it — release through the normal path, which queues behind
+    // the running operation.
+    if (host.state.appState.streamingPhase !== 'idle' || host.state.appState.isCompacting) {
+      await this.releaseStashed(stash);
       return;
     }
     if (config !== undefined) {
@@ -288,22 +305,22 @@ export class CacheHintController {
       });
       if (decision.kind === 'hint') {
         this.idlePrompted = true;
-        await this.showDialog('idle', decision, text);
+        await this.showDialog('idle', decision, stash);
         return;
       }
     }
     // No hint (fetch failed or rules don't match): release the message. The
     // re-entry skips the fetch (fresh cache or triggerFetchAttempted) and
     // flows straight to send.
-    await this.releaseStashed(text);
+    await this.releaseStashed(stash);
   }
 
   /** Release a stashed message through the normal send path, bypassing the
    *  interception gate so the re-entry cannot start a second fetch. */
-  private async releaseStashed(text: string): Promise<void> {
+  private async releaseStashed(stash: StashedSubmit): Promise<void> {
     this.releasingStashed = true;
     try {
-      await this.host.sendNormalUserInput(text);
+      await this.host.sendNormalUserInput(stash.text, stash.extraction);
     } finally {
       this.releasingStashed = false;
     }
@@ -343,7 +360,7 @@ export class CacheHintController {
   private async showDialog(
     scene: 'resume' | 'idle',
     decision: HintDecision,
-    stashedInput: string | undefined,
+    stashed: StashedSubmit | undefined,
   ): Promise<void> {
     const { host } = this;
     host.track('cache_hint_shown', {
@@ -370,17 +387,17 @@ export class CacheHintController {
     host.state.activeDialog = null;
     host.restoreEditor();
     host.track('cache_hint_action', { action, scene });
-    await this.runAction(action, stashedInput);
+    await this.runAction(action, stashed);
   }
 
   private async runAction(
     action: CacheHintAction | 'dismiss',
-    stashedInput: string | undefined,
+    stashed: StashedSubmit | undefined,
   ): Promise<void> {
     const { host } = this;
     const restoreInput = () => {
       this.lastDialogRestored = true;
-      this.restoreStashedInput(stashedInput);
+      this.restoreStashedInput(stashed?.text);
     };
     switch (action) {
       case 'dismiss':
@@ -404,7 +421,7 @@ export class CacheHintController {
             restoreInput();
             return;
           }
-          if (stashedInput !== undefined) {
+          if (stashed !== undefined) {
             // compact() is trigger-only — the engine engages asynchronously.
             // Wait for the engagement barrier so the resend lands in the
             // queue and drains automatically when compaction finishes.
@@ -431,7 +448,7 @@ export class CacheHintController {
         break;
     }
     this.lastDialogRestored = false;
-    if (stashedInput !== undefined) await host.sendNormalUserInput(stashedInput);
+    if (stashed !== undefined) await host.sendNormalUserInput(stashed.text, stashed.extraction);
   }
 
   /** Bounded wait for the engine to flip `isCompacting` after a compact RPC. */
