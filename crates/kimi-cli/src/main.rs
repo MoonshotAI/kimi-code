@@ -478,6 +478,7 @@ async fn handle_chat_command(
             println!("/undo        undo the last turn");
             println!("/fork <id>   fork this session under a new id");
             println!("/import <t>  import prior conversation text");
+            println!("/steer <t>   steer the running turn");
             println!("/approvals   list pending tool approvals");
             println!("/approve <id> allow a pending approval");
             println!("/deny <id>   deny a pending approval");
@@ -722,6 +723,26 @@ async fn handle_chat_command(
                 return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
             }
             println!("imported {} chars", rest.chars().count());
+            ChatCommand::Handled
+        }
+        "/steer" => {
+            // Steer the running turn with extra instruction text.
+            if rest.is_empty() {
+                return ChatCommand::Error("usage: /steer <text>".into());
+            }
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_STEER,
+                    serde_json::json!({
+                        "session_id": *session_id,
+                        "input": [{ "type": "text", "text": rest }],
+                    }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            println!("steer queued");
             ChatCommand::Handled
         }
         "/approvals" => {
