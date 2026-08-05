@@ -82,6 +82,7 @@ auto_install = false
     expect(host.harness.getConfig).toHaveBeenCalledWith({ reload: true });
     expect(host.harness.getExperimentalFeatures).toHaveBeenCalledOnce();
     expect(host.refreshSlashCommandAutocomplete).toHaveBeenCalledOnce();
+    expect(host.refreshTerminalMouseTracking).toHaveBeenCalledOnce();
     expect(isExperimentalFlagEnabled('micro_compaction')).toBe(true);
     expect(host.state.appState.theme).toBe('light');
     expect(host.state.appState.availableModels).toEqual({
@@ -195,6 +196,7 @@ function makeHost({
       state.appState.theme = theme;
     }),
     refreshTerminalThemeTracking: vi.fn(),
+    refreshTerminalMouseTracking: vi.fn(),
     refreshSlashCommandAutocomplete: vi.fn(),
     reloadCurrentSessionView: vi.fn(async () => {}),
     showStatus: vi.fn(),
@@ -204,6 +206,7 @@ function makeHost({
       readonly getExperimentalFeatures: ReturnType<typeof vi.fn>;
     };
     readonly refreshSlashCommandAutocomplete: ReturnType<typeof vi.fn>;
+    readonly refreshTerminalMouseTracking: ReturnType<typeof vi.fn>;
     readonly reloadCurrentSessionView: ReturnType<typeof vi.fn>;
     readonly showStatus: ReturnType<typeof vi.fn>;
   };

@@ -97,6 +97,13 @@ export interface Component {
 	invalidate(): void;
 }
 
+export interface RenderedChildLayout {
+	readonly startRow: number;
+	readonly endRow: number;
+	readonly totalRows: number;
+	readonly width: number;
+}
+
 type InputListenerResult = { consume?: boolean; data?: string } | undefined;
 type InputListener = (data: string) => InputListenerResult;
 type PendingOsc11BackgroundQuery = {
@@ -342,6 +349,7 @@ export class TUI extends Container {
 	private pendingOsc11BackgroundQueries: PendingOsc11BackgroundQuery[] = [];
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
 	private terminalColorSchemeNotificationsEnabled = false;
+	private renderedChildLayouts = new Map<Component, RenderedChildLayout>();
 
 	// Overlay stack for modal components rendered on top of base content
 	private focusOrderCounter = 0;
@@ -354,6 +362,46 @@ export class TUI extends Container {
 		if (showHardwareCursor !== undefined) {
 			this.showHardwareCursor = showHardwareCursor;
 		}
+	}
+
+	override render(width: number): string[] {
+		width = Math.max(1, width);
+		const lines: string[] = [];
+		const pendingLayouts: Array<{
+			component: Component;
+			startRow: number;
+			endRow: number;
+		}> = [];
+
+		for (const child of this.children) {
+			const startRow = lines.length;
+			lines.push(...child.render(width));
+			pendingLayouts.push({ component: child, startRow, endRow: lines.length });
+		}
+
+		const totalRows = lines.length;
+		this.renderedChildLayouts = new Map(
+			pendingLayouts.map(({ component, startRow, endRow }) => [
+				component,
+				{ startRow, endRow, totalRows, width },
+			]),
+		);
+		return lines;
+	}
+
+	getRenderedChildLayout(component: Component): RenderedChildLayout | undefined {
+		const layout = this.renderedChildLayouts.get(component);
+		return layout === undefined ? undefined : { ...layout };
+	}
+
+	/**
+	 * Return the logical row currently shown at the top of the terminal viewport.
+	 * This may be larger than max(0, renderedLineCount - terminalHeight) after a
+	 * differential shrink, because the renderer deliberately preserves the
+	 * existing viewport instead of replaying scrollback.
+	 */
+	getRenderedViewportTop(): number {
+		return this.previousViewportTop;
 	}
 
 	get fullRedraws(): number {

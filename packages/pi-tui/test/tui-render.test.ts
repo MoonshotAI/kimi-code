@@ -72,6 +72,57 @@ function getCellItalic(terminal: VirtualTerminal, row: number, col: number): num
 	return cell.isItalic();
 }
 
+describe("TUI rendered child layout", () => {
+	it("records top-level child row ranges during normal rendering", () => {
+		const tui = new TUI(new VirtualTerminal(40, 10));
+		const first = new TestComponent();
+		const second = new TestComponent();
+		first.lines = ["a", "b"];
+		second.lines = ["c", "d", "e"];
+		tui.addChild(first);
+		tui.addChild(second);
+
+		assert.strictEqual(tui.getRenderedChildLayout(second), undefined);
+		assert.deepStrictEqual(tui.render(40), ["a", "b", "c", "d", "e"]);
+		assert.deepStrictEqual(tui.getRenderedChildLayout(first), {
+			startRow: 0,
+			endRow: 2,
+			totalRows: 5,
+			width: 40,
+		});
+		assert.deepStrictEqual(tui.getRenderedChildLayout(second), {
+			startRow: 2,
+			endRow: 5,
+			totalRows: 5,
+			width: 40,
+		});
+	});
+
+	it("reports the preserved viewport after a differential shrink", async () => {
+		const terminal = new VirtualTerminal(40, 4);
+		const tui = new TUI(terminal);
+		tui.setClearOnShrink(false);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = ["0", "1", "2", "3", "4", "5"];
+		tui.start();
+		await terminal.waitForRender();
+		assert.strictEqual(tui.getRenderedViewportTop(), 2);
+
+		component.lines = ["0", "1", "2", "3", "4"];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		assert.strictEqual(
+			tui.getRenderedViewportTop(),
+			2,
+			"the terminal keeps the old viewport instead of moving to totalRows - height",
+		);
+		tui.stop();
+	});
+});
+
 describe("TUI Kitty image cleanup", () => {
 	it("clears reserved Kitty image rows before drawing appended image placements", async () => {
 		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });

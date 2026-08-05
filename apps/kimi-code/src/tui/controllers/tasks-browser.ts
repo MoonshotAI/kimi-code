@@ -18,6 +18,8 @@ export interface TasksBrowserHost {
   readonly session: Session | undefined;
   showError(msg: string): void;
   setTasksBrowser(value: TasksBrowserState | undefined): void;
+  suspendTerminalMouseTracking(): void;
+  refreshTerminalMouseTracking(): void;
 }
 
 export type TasksBrowserState = {
@@ -83,6 +85,7 @@ export class TasksBrowserController {
     );
 
     const savedChildren = [...state.ui.children];
+    this.host.suspendTerminalMouseTracking();
     state.ui.clear();
     state.ui.addChild(component);
     state.ui.setFocus(component);
@@ -125,6 +128,7 @@ export class TasksBrowserController {
     }
     this.host.setTasksBrowser(undefined);
     state.ui.setFocus(state.editor);
+    this.host.refreshTerminalMouseTracking();
     state.ui.requestRender(true);
   }
 
