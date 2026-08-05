@@ -1348,27 +1348,14 @@ export class Session {
     // Apply global [tools].disabled to resumed/reloaded agents too. The
     // bootstrap path (bootstrapAgentProfile) merges it at session start, but
     // restoreAgentProfileHandle only calls setActiveProfile - which does not
-    // re-apply the tool denylist. Without this, a persisted agent resumed
-    // after [tools].disabled was added keeps its old tools active. #2534.
-    // Only re-apply when disabled tools exist - agent.resume() has already
-    // replayed persisted tool state, and unconditionally calling
-    // setActiveTools would reset the replayed enabled set. #2534.
+    // re-apply the tool denylist. agent.resume() has already replayed
+    // persisted tool state, so add the denylist without replacing the
+    // replayed enabled set (which would drop unrelated runtime selections).
+    // #2534.
+    agent.setActiveProfile(profile, this.options.kimiHomeDir);
     const toolsDisabled = this.readToolsDisabled();
     if (toolsDisabled.length > 0) {
-      const effectiveProfile = {
-        ...profile,
-        disallowedTools: [
-          ...(profile.disallowedTools ?? []),
-          ...toolsDisabled,
-        ],
-      };
-      agent.setActiveProfile(effectiveProfile, this.options.kimiHomeDir);
-      agent.tools.setActiveTools(
-        effectiveProfile.tools,
-        effectiveProfile.disallowedTools,
-      );
-    } else {
-      agent.setActiveProfile(profile, this.options.kimiHomeDir);
+      agent.tools.addDisallowedTools(toolsDisabled);
     }
   }
 

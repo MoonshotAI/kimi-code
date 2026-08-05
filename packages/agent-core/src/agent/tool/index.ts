@@ -540,8 +540,7 @@ export class ToolManager {
     this.enabledTools = new Set(names.filter((name) => !isMcpToolName(name)));
     this.mcpAccessPatterns = names.filter((name) => isMcpToolName(name));
     this.disabledTools = new Set((disallowedNames ?? []).filter((name) => !isMcpToolName(name)));
-    this.mcpDenyPatterns = (disallowedNames ?? []).filter((name) => isMcpToolName(name));
-    // Builtin construction reads the enabled set (Bash/Agent bake
+    this.mcpDenyPatterns = (disallowedNames ?? []).filter((name) => isMcpToolName(name));    // Builtin construction reads the enabled set (Bash/Agent bake
     // `allowBackground` from the Task* trio), and the constructor may already
     // have built the map while the enabled set was still empty. The lazy
     // re-init in `get tools()` only fires on an empty map, so rebuild here —
@@ -549,6 +548,24 @@ export class ToolManager {
     // the construction-time capabilities.
     if (this.agent.config.hasProvider) {
       this.initializeBuiltinTools();
+    }
+  }
+
+  /**
+   * Add to the denied set without replacing the replayed enabled set. Used by
+   * the resume path so applying [tools].disabled to a restored agent does not
+   * drop unrelated replayed host/user tools or a previous runtime selection.
+   * #2534.
+   */
+  addDisallowedTools(names: readonly string[]): void {
+    if (names.length === 0) return;
+    const denials = names.filter((name) => !isMcpToolName(name));
+    const mcpDenies = names.filter((name) => isMcpToolName(name));
+    if (denials.length > 0) {
+      this.disabledTools = new Set([...this.disabledTools, ...denials]);
+    }
+    if (mcpDenies.length > 0) {
+      this.mcpDenyPatterns = [...this.mcpDenyPatterns, ...mcpDenies];
     }
   }
 
