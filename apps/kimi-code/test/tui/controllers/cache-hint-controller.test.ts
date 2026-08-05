@@ -147,6 +147,37 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     vi.restoreAllMocks();
   });
 
+  it('serializes cold-cache submits so they keep their order', async () => {
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+
+    expect(controller.maybeInterceptOnSubmit('hello')).toBe(true);
+    expect(controller.maybeInterceptOnSubmit('world')).toBe(true);
+    await flush();
+    vi.restoreAllMocks();
+
+    expect(host.sendNormalUserInput).toHaveBeenCalledTimes(2);
+    expect(
+      (host.sendNormalUserInput as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]),
+    ).toEqual(['hello', 'world']);
+  });
+
+  it('hands the stashed input back when the session switched during the fetch', async () => {
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+    expect(controller.maybeInterceptOnSubmit('hello')).toBe(true);
+    (host as unknown as { session: unknown }).session = { id: 's2' };
+    await flush();
+    vi.restoreAllMocks();
+
+    expect(host.restoreInputText).toHaveBeenCalledWith('hello');
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+  });
+
   it('intercepts and shows the dialog when all conditions hold', () => {
     peekMock.mockReturnValue(CONFIG);
     const { host } = makeHost();
@@ -328,6 +359,26 @@ describe('CacheHintController scenario 1 (resume)', () => {
 
     await showOnResumeAndDismiss(controller, host);
     expect(host.mountEditorReplacement).toHaveBeenCalledOnce();
+  });
+
+  it('drops the dialog when the session switched during the config fetch', async () => {
+    let resolveFetch!: (config: CacheHintConfig) => void;
+    getMock.mockImplementation(
+      () =>
+        new Promise<CacheHintConfig>((res) => {
+          resolveFetch = res;
+        }),
+    );
+    const session = resumeSession([Date.now() - 1200_000], 150000);
+    const { host } = makeHost({ session });
+    const controller = new CacheHintController(host);
+
+    const pending = controller.maybeShowOnResume();
+    await flush(); // let the fetch start (resolveFetch gets assigned)
+    (host as unknown as { session: unknown }).session = { id: 'other-session' };
+    resolveFetch(CONFIG);
+    await pending;
+    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
   });
 
   it('skips when the config cannot be resolved', async () => {

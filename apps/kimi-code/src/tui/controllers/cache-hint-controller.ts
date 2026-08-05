@@ -47,6 +47,12 @@ export class CacheHintController {
   /** Cold-cache trigger fetches at most once per idle cycle (loop guard for
    *  the release-and-resend path). */
   private triggerFetchAttempted = false;
+  /** Swallowed submits waiting on the cold-cache interception chain. */
+  private pendingInterceptions = 0;
+  /** FIFO chain serializing swallowed submits so they keep submit order. */
+  private interceptionTail: Promise<void> = Promise.resolve();
+  /** Set while a stashed message is being released back into the send path. */
+  private releasingStashed = false;
   /** Resume scenario fires at most once per session per TUI instance. */
   private readonly resumedSessions = new Set<string>();
 
@@ -97,6 +103,10 @@ export class CacheHintController {
       config: await this.resolveConfig(),
       dismissed: host.state.appState.cacheExpiryHint === false,
     });
+    // The config fetch above can outlive the user's patience: if they switched
+    // sessions meanwhile, this dialog (and its actions) would target the wrong
+    // session — drop it.
+    if (host.session !== session) return;
     if (decision.kind === 'skip') return;
     this.resumedSessions.add(session.id);
     // The resume dialog also covers this idle cycle: the first submit right
@@ -116,6 +126,9 @@ export class CacheHintController {
   maybeInterceptOnSubmit(text: string): boolean {
     const { host } = this;
     if (!host.engineV2 || host.session === undefined) return false;
+    // A stashed message being released re-enters the send path here — never
+    // re-intercept it (that would start a second fetch loop).
+    if (this.releasingStashed) return false;
     if (this.idlePrompted || this.lastActivityAt === undefined) return false;
     if (host.state.appState.streamingPhase !== 'idle' || host.state.appState.isCompacting) {
       return false;
@@ -140,21 +153,43 @@ export class CacheHintController {
       void this.showDialog('idle', decision, text);
       return true;
     }
-    // Config cache cold: fetch at trigger time, once per idle cycle.
-    if (this.triggerFetchAttempted) return false;
+    // Config cache cold: fetch at trigger time. Submits arriving while the
+    // interception is in flight are swallowed too and replayed through a FIFO
+    // chain, so a later prompt can never overtake the stashed one. A fetch
+    // that already failed this cycle falls through to the normal send path.
+    if (this.triggerFetchAttempted && this.pendingInterceptions === 0) return false;
     this.triggerFetchAttempted = true;
-    void this.interceptAfterFetch(text);
+    const sessionId = host.session.id;
+    this.pendingInterceptions += 1;
+    this.interceptionTail = this.interceptionTail
+      .then(() => this.interceptAfterFetch(text, sessionId))
+      .finally(() => {
+        this.pendingInterceptions -= 1;
+      });
     return true;
   }
 
   /** Cold-cache path: fetch the config, then show the dialog or release. */
-  private async interceptAfterFetch(text: string): Promise<void> {
+  private async interceptAfterFetch(text: string, sessionId: string): Promise<void> {
+    const { host } = this;
+    // A dialog already shown for this idle cycle releases straight to send.
+    if (this.idlePrompted) {
+      await this.releaseStashed(text);
+      return;
+    }
     const config = await this.resolveConfig();
+    // The fetch window is unbounded for the user: if they switched sessions
+    // meanwhile, never send the stashed text into the wrong session — hand it
+    // back to the editor instead.
+    if (host.session?.id !== sessionId) {
+      host.restoreInputText(text);
+      return;
+    }
     if (config !== undefined) {
       const decision = evaluateCacheHint({
         now: Date.now(),
         lastActiveAt: this.lastActivityAt ?? 0,
-        totalTokens: this.host.state.appState.contextTokens,
+        totalTokens: host.state.appState.contextTokens,
         modelId: this.upstreamModelId(),
         config,
         dismissed: false,
@@ -168,7 +203,18 @@ export class CacheHintController {
     // No hint (fetch failed or rules don't match): release the message. The
     // re-entry skips the fetch (fresh cache or triggerFetchAttempted) and
     // flows straight to send.
-    await this.host.sendNormalUserInput(text);
+    await this.releaseStashed(text);
+  }
+
+  /** Release a stashed message through the normal send path, bypassing the
+   *  interception gate so the re-entry cannot start a second fetch. */
+  private async releaseStashed(text: string): Promise<void> {
+    this.releasingStashed = true;
+    try {
+      await this.host.sendNormalUserInput(text);
+    } finally {
+      this.releasingStashed = false;
+    }
   }
 
   private upstreamModelId(): string | undefined {
