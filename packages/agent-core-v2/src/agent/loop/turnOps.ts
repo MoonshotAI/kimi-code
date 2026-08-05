@@ -5,9 +5,11 @@
  * Owns the next available turn id, including cancelled queued reservations and
  * legacy loop-event observations. Also persists the terminal `turn.ended`
  * record (reason / error / durationMs) so downstream history rebuilds can
- * recover how a turn ended; the record carries no engine-restorable state, so
- * its `apply` is a no-op. Consumed by the Agent-scope `loopService`; the
- * `interruptionReminder` domain projects `turn.cancel` into its own model.
+ * recover how a turn ended; the model folds the latest record into
+ * `lastEnded` so cold-resumed read models (e.g. the activity view) can seed
+ * the last turn's outcome without replaying the journal. Consumed by the
+ * Agent-scope `loopService`; the `interruptionReminder` domain projects
+ * `turn.cancel` into its own model.
  */
 
 import { z } from 'zod';
@@ -20,6 +22,15 @@ import type { PromptOrigin } from '#/agent/contextMemory/types';
 export interface TurnModelState {
   readonly nextTurnId: number;
   readonly cancelledTurnIds: readonly number[];
+  /** Terminal outcome of the most recently ended turn, folded from the
+   *  persisted `turn.ended` record — lets cold-resumed read models (the
+   *  activity view) recover how the last turn ended without replaying the
+   *  journal. */
+  readonly lastEnded?: {
+    readonly turnId: number;
+    readonly reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
+    readonly durationMs?: number;
+  };
 }
 
 export const TurnModel = defineModel<TurnModelState>(
@@ -85,7 +96,10 @@ export const endTurn = TurnModel.defineOp('turn.ended', {
     error: z.custom<KimiErrorPayload>().optional(),
     durationMs: z.number().optional(),
   }),
-  apply: (s) => s,
+  apply: (s, { turnId, reason, durationMs }) => ({
+    ...s,
+    lastEnded: { turnId, reason, durationMs },
+  }),
 });
 
 function advanceTurnClock(

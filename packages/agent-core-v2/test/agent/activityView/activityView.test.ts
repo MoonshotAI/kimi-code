@@ -17,10 +17,10 @@ import { IAgentTaskService } from '#/agent/task/task';
 import type { AgentTaskInfo } from '#/agent/task/types';
 import { AgentActivityView } from '#/agent/activityView/activityViewService';
 import { IAgentActivityView, type AgentActivityState } from '#/agent/activityView/activityView';
-import {
-  IAgentFullCompactionService,
-  type FullCompactionTask,
-} from '#/agent/fullCompaction/fullCompaction';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import type { FullCompactionTask } from '#/agent/fullCompaction/fullCompaction';
+import { TurnModel, type TurnModelState } from '#/agent/loop/turnOps';
+import { IWireService } from '#/wire/wire';
 
 class FakeBus {
   private readonly byType = new Map<string, Array<(e: DomainEvent) => void>>();
@@ -64,16 +64,24 @@ let disposables: DisposableStore;
 function harness(
   seedTasks: readonly AgentTaskInfo[] = [],
   compacting: FullCompactionTask | null = null,
+  lastEnded?: TurnModelState['lastEnded'],
 ) {
   const bus = new FakeBus();
   const loop = {
     status: () => ({ state: 'idle', pendingTurnIds: [], hasPendingRequests: false }),
   } as unknown as IAgentLoopService;
   const tasks = { list: () => seedTasks } as unknown as IAgentTaskService;
+  const wire = {
+    getModel: (model: unknown) =>
+      model === TurnModel
+        ? { nextTurnId: 1, cancelledTurnIds: [], lastEnded }
+        : undefined,
+  } as unknown as IWireService;
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IEventBus, bus as unknown as IEventBus);
   ix.stub(IAgentLoopService, loop);
   ix.stub(IAgentTaskService, tasks);
+  ix.stub(IWireService, wire);
   ix.set(IAgentStateService, new AgentStateService());
   ix.stub(IAgentFullCompactionService, {
     _serviceBrand: undefined,
@@ -117,6 +125,16 @@ describe('AgentActivityView', () => {
   it('seeds the background slice from the task registry on creation', () => {
     const { view } = harness([makeTaskInfo('bash-9')]);
     expect(view.state().background).toEqual([{ kind: 'process', id: 'bash-9', since: 100 }]);
+  });
+
+  it('seeds lastTurn from the wire TurnModel on a cold resume', () => {
+    const { view } = harness([], null, { turnId: 7, reason: 'failed', durationMs: 1234 });
+    expect(view.state().lastTurn).toMatchObject({ turnId: 7, reason: 'failed', durationMs: 1234 });
+  });
+
+  it('leaves lastTurn empty when the wire has no ended turn', () => {
+    const { view } = harness();
+    expect(view.state().lastTurn).toBeUndefined();
   });
 
   it('folds full compaction into the background slice', () => {
