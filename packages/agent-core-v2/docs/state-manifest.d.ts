@@ -1014,6 +1014,7 @@ export interface AgentStateSnapshot {
   'agentsMdReminder.seeded': boolean;
   // src/agent/cacheBreak/cacheBreakService.ts
   'cacheBreak.baseline': /* CacheBreakBaseline — packages/agent-core-v2/src/agent/cacheBreak/cacheBreakService.ts */ {
+    readonly model: string;
     readonly usage: /* TokenUsage — packages/agent-core-v2/src/kosong/contract/usage.ts */ {
       inputOther: number;
       output: number;

@@ -207,4 +207,21 @@ describe('AgentCacheBreakService', () => {
       curr_input_cache_read: 5000,
     });
   });
+
+  it('resets the baseline when the model changes', () => {
+    usageService.record('model-a', usage(10000), { type: 'turn', turnId: 1 });
+    // A model switch makes cache reads incomparable — no cross-model report.
+    usageService.record('model-b', usage(100), { type: 'turn', turnId: 2 });
+    expect(telemetryEvents).toEqual([]);
+
+    usageService.record('model-b', usage(10000), { type: 'turn', turnId: 3 });
+    usageService.record('model-b', usage(5000), { type: 'turn', turnId: 4 });
+    // The baseline is model-b's own record now, not model-a's.
+    expect(telemetryEvents).toHaveLength(1);
+    expect(telemetryEvents[0]?.properties).toMatchObject({
+      model: 'model-b',
+      prev_input_cache_read: 10000,
+      curr_input_cache_read: 5000,
+    });
+  });
 });

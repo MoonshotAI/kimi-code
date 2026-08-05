@@ -2,12 +2,13 @@
  * `cacheBreak` domain — `IAgentCacheBreakService` implementation.
  *
  * Self-wiring plugin: its constructor subscribes to `usage`'s `onDidRecord`
- * event and keeps the previous turn record's usage and record time as the
- * per-agent baseline. `operation` records (e.g. compaction) clear the
+ * event and keeps the previous turn record's model, usage, and record time as
+ * the per-agent baseline. `operation` records (e.g. compaction) clear the
  * baseline because a cache-read drop after them is expected; records without
- * a turn source are ignored entirely, and all-zero records from streams
- * without usage reporting are skipped without touching the baseline. When a
- * turn record's `inputCacheRead`
+ * a turn source are ignored entirely, all-zero records from streams without
+ * usage reporting are skipped without touching the baseline, and a model
+ * change resets the comparison since caches are per-model. When a turn
+ * record's `inputCacheRead`
  * falls below 95% of the baseline by more than `MIN_CACHE_BREAK_DROP_TOKENS`,
  * the service writes a debug entry through `log` and reports
  * `cache_break_detected` through `telemetry`. The baseline is registered into
@@ -31,6 +32,7 @@ import { IAgentCacheBreakService, MIN_CACHE_BREAK_DROP_TOKENS } from './cacheBre
 const CACHE_BREAK_DROP_RATIO = 0.95;
 
 export interface CacheBreakBaseline {
+  readonly model: string;
   readonly usage: TokenUsage;
   readonly time: number;
 }
@@ -88,7 +90,9 @@ export class AgentCacheBreakService extends Disposable implements IAgentCacheBre
 
     const prev = this.baseline;
     const now = Date.now();
-    if (prev !== undefined) {
+    // Caches are per-model: a model change makes cache reads incomparable,
+    // so only judge records against a same-model baseline.
+    if (prev !== undefined && prev.model === ctx.model) {
       const prevCacheRead = prev.usage.inputCacheRead;
       const currCacheRead = ctx.usage.inputCacheRead;
       if (
@@ -98,7 +102,7 @@ export class AgentCacheBreakService extends Disposable implements IAgentCacheBre
         this.report(ctx, prev, now);
       }
     }
-    this.baseline = { usage: { ...ctx.usage }, time: now };
+    this.baseline = { model: ctx.model, usage: { ...ctx.usage }, time: now };
   }
 
   private report(ctx: UsageRecordedContext, prev: CacheBreakBaseline, now: number): void {
