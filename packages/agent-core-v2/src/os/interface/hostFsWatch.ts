@@ -7,9 +7,8 @@
  * `HostFsWatchOptions.signal` marks callers that consume events as a mere
  * "something changed" signal (ignoring action/kind); the backend may then
  * pick a cheaper implementation (one native recursive watch instead of
- * per-node watchers), and action/kind may be coarse — a deleted entry whose
- * kind was never observed is reported as 'file'. App-scoped — one shared
- * instance.
+ * per-node watchers). Signal events may use the watched root as their path
+ * and report coarse action/kind values. App-scoped — one shared instance.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

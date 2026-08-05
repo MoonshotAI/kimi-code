@@ -1,28 +1,16 @@
 /**
  * `hostFsWatch` domain — `IHostFsWatchService` implementation.
  *
- * Wraps `chokidar` to report raw create/modify/delete events under an absolute
- * path. Each `watch()` call owns an independent watcher; disposing the handle
- * closes it. A `signal`-mode recursive watch on darwin/win32 instead uses ONE
- * native recursive `fs.watch` (FSEvents / ReadDirectoryChangesW), whose fd
- * footprint stays constant in the subtree size — chokidar holds one
- * `fs.watch` fd per file and per directory on macOS, so per-node watching of
- * a fat subtree can exhaust the process fd budget and break every subsequent
- * spawn. The signal leg owns its recovery: a native error (including sync
- * creation failure) fires one root-level invalidation and re-arms the native
- * watch with capped exponential backoff, so a transient failure neither
- * downgrades the consumer to the per-node watcher nor silently ends hot
- * reload; chokidar serves only when the platform has no recursive
- * `fs.watch`. Event mapping lives in `NativeSignalMapper` as pure logic
- * with the stat call injected, so it is testable off darwin/win32.
- * Bound at App scope.
+ * Reports precise or coarse host filesystem changes through platform
+ * watchers. Each handle owns and disposes its watcher. Bound at App scope.
  */
 
-import { watch as fsWatch, lstatSync, type FSWatcher as NodeFSWatcher } from 'node:fs';
+import { watch as fsWatch } from 'node:fs';
 import { basename, isAbsolute, join, relative } from 'node:path';
 
 import { FSWatcher } from 'chokidar';
 
+import type { IDisposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
@@ -41,53 +29,34 @@ const DEFAULT_IGNORED = (p: string): boolean => /(?:^|[/\\])\.git(?:$|[/\\])/.te
 const NATIVE_RETRY_BASE_MS = 1000;
 const NATIVE_RETRY_MAX_MS = 30000;
 
-export interface NativeSignalStat {
-  kindOf(absPath: string): HostFsChangeKind | undefined;
+interface NativeFsWatcher {
+  close(): void;
+  on(event: 'error', listener: (error: NodeJS.ErrnoException) => void): this;
 }
 
-export class NativeSignalMapper {
-  private readonly knownKinds = new Map<string, HostFsChangeKind>();
-
-  constructor(private readonly stat: NativeSignalStat) {}
-
-  map(
+interface HostFsWatchRuntime {
+  readonly platform: NodeJS.Platform;
+  watchNative(
     root: string,
-    eventType: string,
-    filename: string | null,
-    ignored: (path: string) => boolean,
-  ): HostFsChange | undefined {
-    const absPath = this.resolveEventPath(root, filename);
-    if (absPath !== root && ignored(absPath)) return undefined;
-    if (eventType === 'change') {
-      return { path: absPath, action: 'modified', kind: this.knownKinds.get(absPath) ?? 'file' };
-    }
-    if (eventType !== 'rename') return undefined;
-    const statKind = this.stat.kindOf(absPath);
-    if (statKind !== undefined) {
-      const action: HostFsChangeAction = this.knownKinds.has(absPath) ? 'modified' : 'created';
-      this.knownKinds.set(absPath, statKind);
-      return { path: absPath, action, kind: statKind };
-    }
-    const kind = this.knownKinds.get(absPath) ?? 'file';
-    this.knownKinds.delete(absPath);
-    return { path: absPath, action: 'deleted', kind };
-  }
-
-  private resolveEventPath(root: string, filename: string | null): string {
-    if (filename === null || filename === '') return root;
-    if (isAbsolute(filename)) return clampToRoot(root, filename);
-    if (filename === basename(root) && this.stat.kindOf(join(root, filename)) === undefined) {
-      return root;
-    }
-    return join(root, filename);
-  }
+    listener: (eventType: string, filename: string | null) => void,
+  ): NativeFsWatcher;
+  scheduleRetry(callback: () => void, delayMs: number): IDisposable;
 }
 
-function clampToRoot(root: string, absPath: string): string {
-  const rel = relative(root, absPath);
-  if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return absPath;
-  return root;
-}
+const NODE_HOST_FS_WATCH_RUNTIME: HostFsWatchRuntime = {
+  platform: process.platform,
+  watchNative: (root, listener) =>
+    fsWatch(root, { persistent: false, recursive: true }, listener),
+  scheduleRetry: (callback, delayMs) => {
+    const timer = setTimeout(callback, delayMs);
+    timer.unref?.();
+    return {
+      dispose: () => {
+        clearTimeout(timer);
+      },
+    };
+  },
+};
 
 class HostFsWatchHandle implements IHostFsWatchHandle {
   readonly onDidChange: Event<HostFsChange>;
@@ -129,22 +98,18 @@ class SignalWatchHandle implements IHostFsWatchHandle {
 
   private readonly emitter: Emitter<HostFsChange>;
   private readonly ignored: (path: string) => boolean;
-  private readonly mapper = new NativeSignalMapper({
-    kindOf: (absPath) => {
-      try {
-        return lstatSync(absPath).isDirectory() ? 'directory' : 'file';
-      } catch {
-        return undefined;
-      }
-    },
-  });
-  private nativeWatcher: NodeFSWatcher | undefined;
+  private nativeWatcher: NativeFsWatcher | undefined;
   private chokidarLeg: HostFsWatchHandle | undefined;
-  private retryTimer: ReturnType<typeof setTimeout> | undefined;
+  private retry: IDisposable | undefined;
   private retryAttempts = 0;
+  private recovering = false;
   private disposed = false;
 
-  constructor(private readonly root: string, options: HostFsWatchOptions | undefined) {
+  constructor(
+    private readonly root: string,
+    options: HostFsWatchOptions | undefined,
+    private readonly runtime: HostFsWatchRuntime,
+  ) {
     this.emitter = new Emitter<HostFsChange>();
     this.onDidChange = this.emitter.event;
     this.ignored = options?.ignored ?? DEFAULT_IGNORED;
@@ -154,41 +119,47 @@ class SignalWatchHandle implements IHostFsWatchHandle {
   private startNativeLeg(): void {
     if (this.disposed) return;
     try {
-      const watcher = fsWatch(
-        this.root,
-        { persistent: false, recursive: true },
-        (eventType, filename) => {
-          if (this.disposed) return;
-          const mapped = this.mapper.map(this.root, eventType, filename, this.ignored);
-          if (mapped !== undefined) this.emitter.fire(mapped);
-        },
-      );
+      const watcher = this.runtime.watchNative(this.root, (_eventType, filename) => {
+        if (this.disposed) return;
+        this.retryAttempts = 0;
+        const absPath = resolveNativeSignalPath(this.root, filename);
+        if (absPath !== this.root && this.ignored(absPath)) return;
+        this.fireInvalidation();
+      });
       watcher.on('error', (error: NodeJS.ErrnoException) => {
-        this.onNativeError(error);
+        this.onNativeError(watcher, error);
       });
       this.nativeWatcher = watcher;
-      this.retryAttempts = 0;
+      if (this.recovering) {
+        this.recovering = false;
+        this.fireInvalidation();
+      }
     } catch (error) {
-      this.onNativeError(error as NodeJS.ErrnoException);
+      this.onNativeError(undefined, error as NodeJS.ErrnoException);
     }
   }
 
-  private onNativeError(error: NodeJS.ErrnoException): void {
+  private onNativeError(watcher: NativeFsWatcher | undefined, error: NodeJS.ErrnoException): void {
     if (this.disposed) return;
-    this.nativeWatcher?.close();
+    if (watcher !== undefined && watcher !== this.nativeWatcher) return;
+    watcher?.close();
     this.nativeWatcher = undefined;
     if (error.code === 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM') {
+      this.recovering = false;
       this.startChokidarLeg();
+      this.fireInvalidation();
       return;
     }
     onUnexpectedError(error);
-    this.emitter.fire({ path: this.root, action: 'modified', kind: 'directory' });
+    this.recovering = true;
+    this.fireInvalidation();
     const delay = Math.min(NATIVE_RETRY_BASE_MS * 2 ** this.retryAttempts, NATIVE_RETRY_MAX_MS);
     this.retryAttempts += 1;
-    this.retryTimer = setTimeout(() => {
+    this.retry?.dispose();
+    this.retry = this.runtime.scheduleRetry(() => {
+      this.retry = undefined;
       this.startNativeLeg();
     }, delay);
-    this.retryTimer.unref?.();
   }
 
   private startChokidarLeg(): void {
@@ -200,10 +171,14 @@ class SignalWatchHandle implements IHostFsWatchHandle {
     this.chokidarLeg = leg;
   }
 
+  private fireInvalidation(): void {
+    this.emitter.fire({ path: this.root, action: 'modified', kind: 'directory' });
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    if (this.retryTimer !== undefined) clearTimeout(this.retryTimer);
+    this.retry?.dispose();
     this.nativeWatcher?.close();
     this.chokidarLeg?.dispose();
     this.emitter.dispose();
@@ -213,20 +188,36 @@ class SignalWatchHandle implements IHostFsWatchHandle {
 export class HostFsWatchService implements IHostFsWatchService {
   declare readonly _serviceBrand: undefined;
 
+  constructor(private readonly runtime: HostFsWatchRuntime = NODE_HOST_FS_WATCH_RUNTIME) {}
+
   watch(path: string, options?: HostFsWatchOptions): IHostFsWatchHandle {
-    if (useNativeRecursive(options)) {
-      return new SignalWatchHandle(path, options);
+    if (useNativeRecursive(options, this.runtime.platform)) {
+      return new SignalWatchHandle(path, options, this.runtime);
     }
     return new HostFsWatchHandle(path, options);
   }
 }
 
-function useNativeRecursive(options: HostFsWatchOptions | undefined): boolean {
+function useNativeRecursive(
+  options: HostFsWatchOptions | undefined,
+  platform: NodeJS.Platform,
+): boolean {
   return (
     options?.signal === true &&
     options.recursive !== false &&
-    (process.platform === 'darwin' || process.platform === 'win32')
+    (platform === 'darwin' || platform === 'win32')
   );
+}
+
+function resolveNativeSignalPath(root: string, filename: string | null): string {
+  if (filename === null || filename === '' || filename === basename(root)) return root;
+  return clampToRoot(root, isAbsolute(filename) ? filename : join(root, filename));
+}
+
+function clampToRoot(root: string, absPath: string): string {
+  const rel = relative(root, absPath);
+  if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return absPath;
+  return root;
 }
 
 function mapChokidarEvent(eventName: string, absPath: string): HostFsChange | undefined {

@@ -2,11 +2,8 @@
  * `skillCatalog` domain — filesystem `ISkillDiscovery` backend.
  *
  * Discovers skill bundles by walking caller-supplied roots and parsing each
- * SKILL.md, pruning `node_modules` / dot entries and capping the walk depth
- * (`isSkillScanExcludedEntry`, `MAX_SKILL_SCAN_DEPTH` — exported so fs
- * watches can mirror the scan's own pruning instead of watching subtrees it
- * would never read). Exposes both the App-scoped `ISkillDiscovery` service
- * and a stateless standalone function.
+ * SKILL.md. Exposes discovery through the App-scoped service and a stateless
+ * filesystem entry point.
  */
 
 import { promises as fs } from 'node:fs';

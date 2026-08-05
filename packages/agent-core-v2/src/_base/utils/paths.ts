@@ -1,17 +1,8 @@
 /**
- * Path-filter helpers — pure string predicates, no IO.
+ * `_base/utils/paths` (cross-cutting) — pure path-filter predicates.
  *
- * `subtreeWatchFilter` builds an `ignored` predicate that confines a recursive
- * fs watch to the candidate subtrees under `root` plus their ancestor chain
- * (so candidates that do not exist yet are still detected once created). The
- * optional knobs prune paths BELOW a candidate only, mirroring a
- * recursion-gated scanner: `maxDepth` rejects anything deeper than that many
- * segments below the candidate, and an entry matching `skipEntry` (e.g. the
- * skill scanner's `node_modules` / dot-entry rule) stops further watching —
- * but the entry itself, and with `keepEntryFile` also its direct child file
- * of that name, stay watched, because a scanner still probes those without
- * recursing deeper. Everything below that point is what the consumer never
- * reads, and only that is pruned.
+ * Constrains filesystem watches to selected subtrees and scanner-visible
+ * entries.
  */
 
 function normalizeSlashes(p: string): string {
@@ -51,6 +42,7 @@ function isPrunedBelowCandidate(
 ): boolean {
   if (options === undefined) return false;
   const segments = rel.split('/');
+  if (options.maxDepth !== undefined && segments.length > options.maxDepth) return true;
   if (options.skipEntry !== undefined) {
     const excludedAt = segments.findIndex(options.skipEntry);
     if (excludedAt !== -1) {
@@ -62,5 +54,5 @@ function isPrunedBelowCandidate(
       );
     }
   }
-  return options.maxDepth !== undefined && segments.length > options.maxDepth;
+  return false;
 }

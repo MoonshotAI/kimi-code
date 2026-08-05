@@ -1,117 +1,138 @@
 /**
- * `hostFsWatch` domain — integration tests against the real watcher
- * backends (chokidar, plus the native recursive watch used by `signal`
- * mode on darwin/win32) on a temporary directory, and platform-independent
- * unit tests for the native event-mapping logic (`NativeSignalMapper`,
- * stat injected).
+ * Scenario: precise host watches and coarse native signal watches.
+ * Responsibilities: event delivery, filtering, recovery, disposal, and the
+ * macOS descriptor bound. Wiring: real temporary files for integration and an
+ * injected native-watch boundary with a manual retry scheduler for recovery.
+ * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/os/backends/node-local/hostFsWatchService.test.ts`.
  */
 
 import { readdirSync } from 'node:fs';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
-  HostFsWatchService,
-  NativeSignalMapper,
-} from '#/os/backends/node-local/hostFsWatchService';
+  resetUnexpectedErrorHandler,
+  setUnexpectedErrorHandler,
+} from '#/_base/errors/unexpectedError';
+import { HostFsWatchService } from '#/os/backends/node-local/hostFsWatchService';
 import type {
   HostFsChange,
-  HostFsChangeKind,
   IHostFsWatchHandle,
+  IHostFsWatchService,
 } from '#/os/interface/hostFsWatch';
 
 const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-describe('NativeSignalMapper', () => {
-  const root = join(tmpdir(), 'mapper-root');
-  const noIgnore = (): boolean => false;
+type HostFsWatchRuntime = NonNullable<ConstructorParameters<typeof HostFsWatchService>[0]>;
 
-  function mapperWith(kinds: Record<string, HostFsChangeKind | undefined>): NativeSignalMapper {
-    return new NativeSignalMapper({ kindOf: (p) => kinds[p] });
+class TestNativeWatcher {
+  private errorListener: ((error: NodeJS.ErrnoException) => void) | undefined;
+  closed = false;
+
+  on(_event: 'error', listener: (error: NodeJS.ErrnoException) => void): this {
+    this.errorListener = listener;
+    return this;
   }
 
-  it('maps a create → modify → delete sequence', () => {
-    const file = join(root, 'a.txt');
-    const kinds: Record<string, HostFsChangeKind | undefined> = { [file]: 'file' };
-    const mapper = mapperWith(kinds);
-    expect(mapper.map(root, 'rename', 'a.txt', noIgnore)).toEqual({
-      path: file,
-      action: 'created',
-      kind: 'file',
-    });
-    expect(mapper.map(root, 'rename', 'a.txt', noIgnore)).toEqual({
-      path: file,
-      action: 'modified',
-      kind: 'file',
-    });
-    delete kinds[file];
-    expect(mapper.map(root, 'rename', 'a.txt', noIgnore)).toEqual({
-      path: file,
-      action: 'deleted',
-      kind: 'file',
-    });
-  });
+  close(): void {
+    this.closed = true;
+  }
 
-  it('reports the directory kind for renamed directories', () => {
-    const dir = join(root, 'd');
-    const mapper = mapperWith({ [dir]: 'directory' });
-    expect(mapper.map(root, 'rename', 'd', noIgnore)).toEqual({
-      path: dir,
-      action: 'created',
-      kind: 'directory',
-    });
-  });
+  fail(code = 'EIO'): void {
+    this.errorListener?.(Object.assign(new Error('native watch failed'), { code }));
+  }
+}
 
-  it('maps change events to modified without consulting stat', () => {
-    const file = join(root, 'a.txt');
-    const mapper = mapperWith({});
-    expect(mapper.map(root, 'change', 'a.txt', noIgnore)).toEqual({
-      path: file,
-      action: 'modified',
-      kind: 'file',
-    });
-  });
+interface TestNativeAttempt {
+  readonly watcher: TestNativeWatcher;
+  emit(filename: string | null): void;
+}
 
-  it('treats null, empty and root-basename filenames as root events', () => {
-    const mapper = mapperWith({ [root]: 'directory' });
-    expect(mapper.map(root, 'rename', null, noIgnore)?.path).toBe(root);
-    expect(mapper.map(root, 'rename', '', noIgnore)?.path).toBe(root);
-    expect(mapper.map(root, 'rename', basename(root), noIgnore)?.path).toBe(root);
-  });
+interface TestRetry {
+  readonly delayMs: number;
+  readonly active: boolean;
+  run(): void;
+}
 
-  it('keeps a root-basename filename as a child when that child exists', () => {
-    const child = join(root, basename(root));
-    const mapper = mapperWith({ [child]: 'file' });
-    expect(mapper.map(root, 'rename', basename(root), noIgnore)?.path).toBe(child);
-  });
+function signalRig(options?: { readonly synchronousFailures?: number }): {
+  readonly service: IHostFsWatchService;
+  readonly attempts: TestNativeAttempt[];
+  readonly retries: TestRetry[];
+  attempt(index: number): TestNativeAttempt;
+  retry(index: number): TestRetry;
+} {
+  const attempts: TestNativeAttempt[] = [];
+  const retries: TestRetry[] = [];
+  let synchronousFailures = options?.synchronousFailures ?? 0;
+  const runtime: HostFsWatchRuntime = {
+    platform: 'darwin',
+    watchNative: (_root, listener) => {
+      if (synchronousFailures > 0) {
+        synchronousFailures -= 1;
+        throw Object.assign(new Error('native watch creation failed'), { code: 'EIO' });
+      }
+      const watcher = new TestNativeWatcher();
+      attempts.push({
+        watcher,
+        emit: (filename) => {
+          listener('rename', filename);
+        },
+      });
+      return watcher;
+    },
+    scheduleRetry: (callback, delayMs) => {
+      let active = true;
+      retries.push({
+        delayMs,
+        get active() {
+          return active;
+        },
+        run: () => {
+          if (!active) return;
+          active = false;
+          callback();
+        },
+      });
+      return {
+        dispose: () => {
+          active = false;
+        },
+      };
+    },
+  };
+  return {
+    service: new HostFsWatchService(runtime),
+    attempts,
+    retries,
+    attempt: (index) => requiredAt(attempts, index),
+    retry: (index) => requiredAt(retries, index),
+  };
+}
 
-  it('keeps absolute filenames inside the root and clamps outside ones to a root event', () => {
-    const file = join(root, 'a.txt');
-    const mapper = mapperWith({ [file]: 'file' });
-    expect(mapper.map(root, 'rename', file, noIgnore)?.path).toBe(file);
-    expect(mapper.map(root, 'rename', join(tmpdir(), 'elsewhere'), noIgnore)?.path).toBe(root);
-  });
+function requiredAt<T>(values: readonly T[], index: number): T {
+  const value = values[index];
+  if (value === undefined) throw new Error(`missing test value at index ${index}`);
+  return value;
+}
 
-  it('drops events whose path is ignored', () => {
-    const file = join(root, 'node_modules', 'x.js');
-    const mapper = mapperWith({ [file]: 'file' });
-    expect(
-      mapper.map(root, 'rename', join('node_modules', 'x.js'), (p) => p.includes('node_modules')),
-    ).toBeUndefined();
-  });
-});
-
-describe('HostFsWatchService', () => {
+describe('host filesystem change notifications', () => {
   let root: string;
   let handle: IHostFsWatchHandle | undefined;
+
+  beforeEach(() => {
+    setUnexpectedErrorHandler(() => undefined);
+  });
 
   afterEach(async () => {
     handle?.dispose();
     handle = undefined;
     if (root) await rm(root, { recursive: true, force: true });
+    root = '';
+    resetUnexpectedErrorHandler();
   });
 
   async function start(recursive = true): Promise<HostFsChange[]> {
@@ -131,6 +152,97 @@ describe('HostFsWatchService', () => {
     await wait(200);
     return events;
   }
+
+  it('emits a coarse root invalidation when a native signal path changes', () => {
+    const rig = signalRig();
+    const events: HostFsChange[] = [];
+    handle = rig.service.watch('/repo', { signal: true });
+    handle.onDidChange((event) => events.push(event));
+
+    rig.attempt(0).emit('skills/demo/SKILL.md');
+
+    expect(events).toEqual([{ path: '/repo', action: 'modified', kind: 'directory' }]);
+  });
+
+  it('does not invalidate when a native signal path is ignored', () => {
+    const rig = signalRig();
+    const events: HostFsChange[] = [];
+    handle = rig.service.watch('/repo', {
+      signal: true,
+      ignored: (path) => path.includes('node_modules'),
+    });
+    handle.onDidChange((event) => events.push(event));
+
+    rig.attempt(0).emit('node_modules/pkg/index.js');
+
+    expect(events).toEqual([]);
+  });
+
+  it('increases the retry delay after consecutive native failures', () => {
+    const rig = signalRig();
+    handle = rig.service.watch('/repo', { signal: true });
+
+    rig.attempt(0).watcher.fail();
+    rig.retry(0).run();
+    rig.attempt(1).watcher.fail();
+    rig.retry(1).run();
+    rig.attempt(2).watcher.fail();
+
+    expect(rig.retries.map((retry) => retry.delayMs)).toEqual([1000, 2000, 4000]);
+  });
+
+  it('invalidates again after a native watch is rearmed', () => {
+    const rig = signalRig();
+    const events: HostFsChange[] = [];
+    handle = rig.service.watch('/repo', { signal: true });
+    handle.onDidChange((event) => events.push(event));
+
+    rig.attempt(0).watcher.fail();
+    rig.retry(0).run();
+
+    expect(events).toEqual([
+      { path: '/repo', action: 'modified', kind: 'directory' },
+      { path: '/repo', action: 'modified', kind: 'directory' },
+    ]);
+  });
+
+  it('invalidates after recovering from a synchronous native-watch creation failure', () => {
+    const rig = signalRig({ synchronousFailures: 1 });
+    const events: HostFsChange[] = [];
+    handle = rig.service.watch('/repo', { signal: true });
+    handle.onDidChange((event) => events.push(event));
+
+    rig.retry(0).run();
+
+    expect(rig.attempts).toHaveLength(1);
+    expect(events).toEqual([{ path: '/repo', action: 'modified', kind: 'directory' }]);
+  });
+
+  it('resets the retry delay after the recovered native watch emits an event', () => {
+    const rig = signalRig();
+    handle = rig.service.watch('/repo', { signal: true });
+
+    rig.attempt(0).watcher.fail();
+    rig.retry(0).run();
+    rig.attempt(1).emit('skills/demo/SKILL.md');
+    rig.attempt(1).watcher.fail();
+
+    expect(rig.retries.map((retry) => retry.delayMs)).toEqual([1000, 1000]);
+  });
+
+  it('cancels a pending native retry when the watch handle is disposed', () => {
+    const rig = signalRig();
+    handle = rig.service.watch('/repo', { signal: true });
+    rig.attempt(0).watcher.fail();
+
+    handle.dispose();
+    handle = undefined;
+    rig.retry(0).run();
+
+    expect(rig.retry(0).active).toBe(false);
+    expect(rig.attempt(0).watcher.closed).toBe(true);
+    expect(rig.attempts).toHaveLength(1);
+  });
 
   it('reports create / modify / delete for a file', async () => {
     root = await mkdtemp(join(tmpdir(), 'hostfswatch-'));
@@ -184,37 +296,6 @@ describe('HostFsWatchService', () => {
     await wait(300);
 
     expect(events).toHaveLength(0);
-  });
-
-  it('signal mode reports create / modify / delete for a file', async () => {
-    root = await mkdtemp(join(tmpdir(), 'hostfswatch-signal-'));
-    const events = await startSignal();
-
-    const file = join(root, 'a.txt');
-    await writeFile(file, 'v1');
-    await wait(500);
-    await writeFile(file, 'v2');
-    await wait(500);
-    await rm(file);
-    await wait(500);
-
-    const actions = events.filter((e) => e.path === file).map((e) => e.action);
-    expect(actions).toContain('created');
-    expect(actions).toContain('modified');
-    expect(actions).toContain('deleted');
-  });
-
-  it('signal mode honors the ignored predicate', async () => {
-    root = await mkdtemp(join(tmpdir(), 'hostfswatch-signal-'));
-    const events = await startSignal((p) => p.includes('node_modules'));
-
-    await mkdir(join(root, 'node_modules', 'pkg'), { recursive: true });
-    await writeFile(join(root, 'node_modules', 'pkg', 'index.js'), 'x');
-    await writeFile(join(root, 'visible.txt'), 'x');
-    await wait(500);
-
-    expect(events.some((e) => e.path.includes('node_modules'))).toBe(false);
-    expect(events.some((e) => e.path === join(root, 'visible.txt'))).toBe(true);
   });
 
   it.skipIf(process.platform !== 'darwin')(

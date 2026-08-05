@@ -1,12 +1,16 @@
 /**
- * `_base/utils/paths` — unit tests for `subtreeWatchFilter`.
+ * Scenario: recursive watches constrained to selected candidate subtrees.
+ * Responsibilities: candidate ancestry, scan-depth bounds, and excluded-entry
+ * probing. Wiring: pure path predicates with no external collaborators.
+ * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/_base/utils/paths.test.ts`.
  */
 
 import { describe, expect, it } from 'vitest';
 
 import { subtreeWatchFilter } from '#/_base/utils/paths';
 
-describe('subtreeWatchFilter', () => {
+describe('subtree watch filtering', () => {
   const root = '/repo';
   const candidates = ['/repo/.kimi-code/skills', '/repo/.agents/skills'];
 
@@ -45,6 +49,16 @@ describe('subtreeWatchFilter', () => {
     expect(ignored('/repo/.agents/skills/demo/node_modules')).toBe(false);
     expect(ignored('/repo/.agents/skills/demo/node_modules/SKILL.md')).toBe(true);
     expect(ignored('/repo/.agents/skills/demo/node_modules/pkg')).toBe(true);
+  });
+
+  it('applies max depth before excluded-entry exceptions', () => {
+    const ignored = subtreeWatchFilter(root, candidates, {
+      maxDepth: 3,
+      skipEntry: (name) => name === 'node_modules',
+      keepEntryFile: 'SKILL.md',
+    });
+    expect(ignored('/repo/.agents/skills/demo/a/b/node_modules')).toBe(true);
+    expect(ignored('/repo/.agents/skills/demo/a/b/node_modules/SKILL.md')).toBe(true);
   });
 
   it('never prunes the candidate ancestor chain itself', () => {

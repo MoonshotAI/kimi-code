@@ -4,17 +4,9 @@
  *
  * Discovers project skills from the handler's workspace root
  * (`workspaceContext.cwd`) through `ISkillDiscovery`, contributing them at
- * priority 30 (above user / extra / plugin / builtin). Watches the project
- * skill-root candidates (`.kimi-code/skills`, `.agents/skills` under the
- * project root, watched whether or not they exist yet) through
- * `hostFsWatch` and re-fires `onDidChange` debounced, so the catalog
- * re-scans THIS source only when project skill files change. The watch
- * mirrors the scanner's own pruning — `node_modules` / dot entries gate
- * recursion but their direct SKILL.md stays watched, and the depth cap is
- * the scanner's plus two segments (the skill directory and its SKILL.md)
- * — and runs in `signal` mode, so a fat skill subtree (e.g. a skill
- * bundling a runtime environment) does not cost one fs-watch fd per file.
- * Bound at Workspace scope so every session of the handler shares one scan.
+ * priority 30. Watches project skill-root candidates through `hostFsWatch`
+ * and emits debounced invalidations for source reloads. Bound at Workspace
+ * scope so every session of the handler shares one scan.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
