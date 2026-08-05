@@ -14,7 +14,10 @@ import {
   createServices,
   type TestInstantiationService,
 } from '#/_base/di/test';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import {
+  IAgentContextInjectorService,
+  type SyncContextInjectionProvider,
+} from '#/agent/contextInjector/contextInjector';
 import { AgentContextInjectorService } from '#/agent/contextInjector/contextInjectorService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -26,6 +29,7 @@ import { IAgentSystemReminderService } from '#/agent/systemReminder/systemRemind
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import { IEventBus } from '#/app/event/eventBus';
 import { IWireService } from '#/wire/wire';
+import { registerLogServices } from '../../_base/log/stubs';
 import { registerContextMemoryServices, type StubContextMemory } from '../contextMemory/stubs';
 import {
   runWillBeginStepHooks,
@@ -76,7 +80,7 @@ describe('AgentContextInjectorService', () => {
     disposables = new DisposableStore();
     loop = stubLoopWithHooks();
     ix = createServices(disposables, {
-      base: [registerContextMemoryServices],
+      base: [registerContextMemoryServices, registerLogServices],
       strict: true,
       additionalServices: (reg) => {
         reg.defineInstance(IAgentLoopService, loop);
@@ -359,5 +363,38 @@ describe('AgentContextInjectorService', () => {
 
     expect(context.get()).toHaveLength(1);
     expect(lastText(context)).toContain('turn-start reminder');
+  });
+
+  it('skips a throwing turn-start provider and still runs the rest', () => {
+    injector(ix).registerAtTurnStart('turn_start_throwing', () => {
+      throw new Error('boom');
+    });
+    injector(ix).registerAtTurnStart('turn_start_surviving', () => 'surviving reminder');
+
+    ix.get(IEventBus).publish({
+      type: 'turn.started',
+      turnId: 0,
+      origin: { kind: 'user' },
+    });
+
+    expect(context.get()).toHaveLength(1);
+    expect(lastText(context)).toContain('surviving reminder');
+  });
+
+  it('skips a Promise-returning turn-start provider and still runs the rest', () => {
+    injector(ix).registerAtTurnStart(
+      'turn_start_async',
+      (() => Promise.resolve('async reminder')) as unknown as SyncContextInjectionProvider,
+    );
+    injector(ix).registerAtTurnStart('turn_start_surviving', () => 'surviving reminder');
+
+    ix.get(IEventBus).publish({
+      type: 'turn.started',
+      turnId: 0,
+      origin: { kind: 'user' },
+    });
+
+    expect(context.get()).toHaveLength(1);
+    expect(lastText(context)).toContain('surviving reminder');
   });
 });

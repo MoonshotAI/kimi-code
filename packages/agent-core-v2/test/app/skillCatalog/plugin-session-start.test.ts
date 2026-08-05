@@ -228,6 +228,21 @@ describe('plugin session-start dynamic injection', () => {
     );
   });
 
+  it('warns only once for a missing skill across repeated reconciliations', async () => {
+    const { ctx, warnings } = sessionStartRuntime({
+      sessionStarts: [{ pluginId: 'demo', skillName: 'missing' }],
+      skills: [],
+    });
+
+    await injectDynamic(ctx);
+    await injectDynamic(ctx);
+    await injectDynamic(ctx);
+
+    expect(
+      warnings.filter((warning) => warning.message === 'plugin sessionStart skill not found'),
+    ).toHaveLength(1);
+  });
+
   it('emits nothing when no sessionStart declarations are present', async () => {
     const { ctx } = sessionStartRuntime({ sessionStarts: [], skills: [] });
 

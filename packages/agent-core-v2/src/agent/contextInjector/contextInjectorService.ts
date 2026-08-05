@@ -13,8 +13,9 @@
  * disclosure recorded on it (`lastDisclosure`), so providers never read
  * context layout or position indexes themselves. Turn-start providers run
  * synchronously after `turn.started` — before the turn's first step request
- * materializes its prompt — and must stay synchronous (registration throws on
- * a Promise-returning provider); they are also reconciled at every later step
+ * materializes its prompt — and must stay synchronous (a provider that throws
+ * or returns a Promise is logged and skipped, so one bad provider cannot
+ * starve the rest); they are also reconciled at every later step
  * boundary as a fallback for facts that arrive after `turn.started` (for
  * example, a queued turn cancelled while another turn is already running).
  * The plain-data `isNewTurn` flag is registered
@@ -26,6 +27,7 @@
 import { Disposable, toDisposable, type IDisposable } from "#/_base/di/lifecycle";
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/_base/state/stateRegistry';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -66,6 +68,7 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     @IAgentLoopService loopService: IAgentLoopService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IEventBus private readonly eventBus: IEventBus,
+    @ILogService private readonly log: ILogService,
     @IWireService wire: IWireService,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
@@ -158,9 +161,21 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
   private injectAtTurnStart(): void {
     for (const entry of this.entries) {
       if (entry.boundary !== 'turn-start') continue;
-      const content = entry.provider(this.providerContext(entry, true));
+      let content: ReturnType<ContextInjectionProvider>;
+      try {
+        content = entry.provider(this.providerContext(entry, true));
+      } catch (error) {
+        this.log.error('turn-start context provider failed; skipping it', {
+          name: entry.name,
+          error,
+        });
+        continue;
+      }
       if (isThenable(content)) {
-        throw new TypeError(`Turn-start context provider "${entry.name}" returned a Promise`);
+        this.log.error('turn-start context provider returned a Promise; skipping it', {
+          name: entry.name,
+        });
+        continue;
       }
       if (!this.entries.has(entry)) continue;
       this.appendResult(entry, content);

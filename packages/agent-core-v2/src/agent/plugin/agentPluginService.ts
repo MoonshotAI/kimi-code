@@ -50,6 +50,7 @@ export const pluginSessionStartRefreshPendingKey = defineState<boolean>(
 
 export class AgentPluginService extends Disposable implements IAgentPluginService {
   declare readonly _serviceBrand: undefined;
+  private readonly warnedMissingSessionStartSkills = new Set<string>();
 
   constructor(
     @IAgentScopeContext scopeContext: IAgentScopeContext,
@@ -93,6 +94,7 @@ export class AgentPluginService extends Disposable implements IAgentPluginServic
       catalog: this.skillCatalog.catalog,
       log: this.log,
       sessionId: this.sessionContext.sessionId,
+      warnedSkills: this.warnedMissingSessionStartSkills,
     });
   }
 
@@ -132,22 +134,29 @@ interface RenderPluginSessionStartReminderInput {
   readonly catalog: SkillCatalog | undefined;
   readonly log?: { warn(message: string, payload?: unknown): void };
   readonly sessionId?: string;
+  readonly warnedSkills: Set<string>;
 }
 
 function renderPluginSessionStartReminder(
   input: RenderPluginSessionStartReminderInput,
 ): string | undefined {
-  const { sessionStarts, catalog, log, sessionId } = input;
+  const { sessionStarts, catalog, log, sessionId, warnedSkills } = input;
   if (sessionStarts.length === 0) return undefined;
   if (catalog === undefined) return undefined;
   const blocks: string[] = [];
   for (const sessionStart of sessionStarts) {
     const skill = catalog.getPluginSkill(sessionStart.pluginId, sessionStart.skillName);
     if (skill === undefined) {
-      log?.warn('plugin sessionStart skill not found', {
-        pluginId: sessionStart.pluginId,
-        skillName: sessionStart.skillName,
-      });
+      // The provider reconciles at every step boundary, so a missing skill
+      // would otherwise re-warn on every step.
+      const key = `${sessionStart.pluginId}:${sessionStart.skillName}`;
+      if (!warnedSkills.has(key)) {
+        warnedSkills.add(key);
+        log?.warn('plugin sessionStart skill not found', {
+          pluginId: sessionStart.pluginId,
+          skillName: sessionStart.skillName,
+        });
+      }
       continue;
     }
     blocks.push(
