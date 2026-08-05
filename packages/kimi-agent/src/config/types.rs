@@ -52,17 +52,37 @@ pub struct ProviderConfig {
     #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<ProviderType>,
 
-    #[serde(rename = "apiKey", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "apiKey",
+        alias = "api_key",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub api_key: Option<String>,
 
-    #[serde(rename = "baseUrl", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "baseUrl",
+        alias = "base_url",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub base_url: Option<String>,
 
     /// TS `defaultModel` — the provider's default model id.
-    #[serde(rename = "defaultModel", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "defaultModel",
+        alias = "default_model",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub model: Option<String>,
 
-    #[serde(rename = "maxTokens", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "maxTokens",
+        alias = "max_tokens",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub max_tokens: Option<u32>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -242,7 +262,14 @@ pub struct KimiConfig {
     pub model_aliases: Option<HashMap<String, ModelAlias>>,
 
     /// TS `defaultModel` — the alias id that the session uses by default.
-    #[serde(rename = "defaultModel", default, skip_serializing_if = "Option::is_none")]
+    /// Accepts both `defaultModel` (TS serialized shape) and `default_model`
+    /// (the snake_case TOML spelling) on deserialize.
+    #[serde(
+        rename = "defaultModel",
+        alias = "default_model",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub default_model: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -320,6 +347,36 @@ mod tests {
         let deserialized: ProviderConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(deserialized.provider, Some(ProviderType::OpenAI));
         assert_eq!(deserialized.api_key, Some("sk-test".into()));
+    }
+
+    #[test]
+    fn test_provider_config_accepts_snake_case_toml() {
+        // config.toml uses snake_case (`api_key`/`base_url`/`default_model`);
+        // the serde aliases must accept it so native_llm resolution works.
+        let toml_str = r#"
+type = "openai"
+api_key = "sk-snake"
+base_url = "https://api.example.com/v1"
+default_model = "model-x"
+max_tokens = 2048
+"#;
+        let deserialized: ProviderConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(deserialized.provider, Some(ProviderType::OpenAI));
+        assert_eq!(deserialized.api_key, Some("sk-snake".into()));
+        assert_eq!(deserialized.base_url, Some("https://api.example.com/v1".into()));
+        assert_eq!(deserialized.model, Some("model-x".into()));
+        assert_eq!(deserialized.max_tokens, Some(2048));
+    }
+
+    #[test]
+    fn test_kimi_config_accepts_snake_case_default_model() {
+        // config.toml writes `default_model` (snake); the KimiConfig alias
+        // must map it onto `defaultModel`.
+        let toml_str = r#"
+default_model = "deepseek-v4-flash"
+"#;
+        let config: KimiConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.default_model, Some("deepseek-v4-flash".into()));
     }
 
     #[test]
