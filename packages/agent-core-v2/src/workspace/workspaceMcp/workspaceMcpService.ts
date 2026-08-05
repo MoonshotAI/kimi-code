@@ -5,7 +5,10 @@
  * shared by every session of the workspace). This service drives the
  * initial connect from the config domain's snapshot, applies its reconciled
  * change events incrementally (serialized on a mutation tail, always after
- * the initial connect settles), feeds the manager's global timeout defaults
+ * the initial connect settles — removals tombstone the server via
+ * `markRemoved` so live sessions keep the tool registrations but fail calls
+ * with a removal notice, while new sessions never see them), feeds the
+ * manager's global timeout defaults
  * from the config domain's tunables at each (re)connect, and reports
  * connection telemetry for the initial load. It also builds per-session
  * overlays (`sessionOverlay`): a session-owned manager for a session's
@@ -162,7 +165,7 @@ export class WorkspaceMcpService extends Service implements IWorkspaceMcpService
 
   private async apply(change: McpServersChange): Promise<void> {
     for (const name of change.remove) {
-      await this.manager.remove(name);
+      await this.manager.markRemoved(name);
     }
     for (const [name, config] of Object.entries(change.upsert)) {
       await this.manager.connect(name, config);
