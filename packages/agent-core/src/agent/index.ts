@@ -450,7 +450,30 @@ export class Agent {
   ): void {
     this.setActiveProfile(profile, brandHome);
     this.updateSystemPromptFromProfile(profile, context, subagentNames);
-    this.tools.setActiveTools(profile.tools, profile.disallowedTools);
+    // Compose the global [tools].disabled denylist so a standalone Agent (no
+    // Session) honors the config at startup, not only on a later tool-selection
+    // RPC. #2534.
+    const toolsDisabled = this.configDisabledTools();
+    this.tools.setActiveTools(profile.tools, [
+      ...(profile.disallowedTools ?? []),
+      ...toolsDisabled,
+    ]);
+  }
+
+  /** Global [tools].disabled from options.config.raw, if provided. #2534. */
+  private configDisabledTools(): string[] {
+    const tools = this.kimiConfig?.raw?.['tools'];
+    if (
+      tools === undefined ||
+      typeof tools !== 'object' ||
+      tools === null ||
+      !Array.isArray((tools as Record<string, unknown>)['disabled'])
+    ) {
+      return [];
+    }
+    return ((tools as Record<string, unknown>)['disabled'] as string[]).filter(
+      (v): v is string => typeof v === 'string',
+    );
   }
 
   /** Push a refreshed session config snapshot and rebuild config-dependent builtin tools. */
@@ -652,17 +675,7 @@ export class Agent {
         // tool selection cannot reset disabledTools to empty. Without this,
         // a setActiveTools update that includes a disabled tool (e.g. Bash)
         // would reactivate it. #2534.
-        const tools = this.kimiConfig?.raw?.['tools'];
-        const globalDisabled =
-          tools !== undefined &&
-          typeof tools === 'object' &&
-          tools !== null &&
-          Array.isArray((tools as Record<string, unknown>)['disabled'])
-            ? ((tools as Record<string, unknown>)['disabled'] as string[]).filter(
-                (v): v is string => typeof v === 'string',
-              )
-            : [];
-        this.tools.setActiveTools(payload.names, globalDisabled);
+        this.tools.setActiveTools(payload.names, this.configDisabledTools());
       },
       stopBackground: (payload) => {
         void this.background.stop(payload.taskId, payload.reason);
