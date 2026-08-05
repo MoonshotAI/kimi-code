@@ -635,26 +635,43 @@ export function messagesToTurns(
   }
 
   function absorbContent(g: Group, content: AppMessage['content']): void {
+    // Coalesce only within this message's consecutive same-kind parts — matching
+    // the live stream path (`text += delta`). Inserting '\n' between streamed
+    // chunks made history reloads show one line per chunk (see #2505). A new
+    // message, or a tool/thinking boundary, still opens a fresh segment so
+    // textParts.join('\n') keeps cross-message / post-tool boundaries.
+    let coalesceText = false;
+    let coalesceThinking = false;
     for (const c of content) {
       if (c.type === 'text') {
         if (c.text) {
-          g.textParts.push(c.text);
-          // Append to a trailing text block, else open a new one — so a tool
-          // call between two text segments splits them into separate blocks.
           const last = g.blocks.at(-1);
-          if (last && last.kind === 'text') last.text += '\n' + c.text;
-          else g.blocks.push({ kind: 'text', text: c.text });
+          if (coalesceText && last?.kind === 'text') {
+            last.text += c.text;
+            g.textParts[g.textParts.length - 1] += c.text;
+          } else {
+            g.textParts.push(c.text);
+            g.blocks.push({ kind: 'text', text: c.text });
+          }
+          coalesceText = true;
+          coalesceThinking = false;
         }
       } else if (c.type === 'thinking') {
         if (c.thinking) {
-          g.thinkingParts.push(c.thinking);
-          // Ordered block too: thinking renders WHERE it happened in the turn,
-          // merging consecutive segments (same rule as text blocks above).
           const last = g.blocks.at(-1);
-          if (last && last.kind === 'thinking') last.thinking += '\n' + c.thinking;
-          else g.blocks.push({ kind: 'thinking', thinking: c.thinking });
+          if (coalesceThinking && last?.kind === 'thinking') {
+            last.thinking += c.thinking;
+            g.thinkingParts[g.thinkingParts.length - 1] += c.thinking;
+          } else {
+            g.thinkingParts.push(c.thinking);
+            g.blocks.push({ kind: 'thinking', thinking: c.thinking });
+          }
+          coalesceThinking = true;
+          coalesceText = false;
         }
       } else if (c.type === 'toolUse') {
+        coalesceText = false;
+        coalesceThinking = false;
         // Single `Agent` subagent spawns and all other tools render as a normal
         // tool card: the card shows the fixed args (prompt / description) plus
         // the final result when expanded, while a subagent's live progress
@@ -677,6 +694,8 @@ export function messagesToTurns(
           g.approvalId = pendingApproval.approvalId;
         }
       } else if (c.type === 'toolResult') {
+        coalesceText = false;
+        coalesceThinking = false;
         // Update the matching tool call status within this group (both the flat
         // tools[] and the ordered block that renders it).
         const idx = g.tools.findIndex((t) => t.id === c.toolCallId);
