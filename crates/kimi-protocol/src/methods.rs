@@ -17,6 +17,10 @@
     /// Unlike `session/destroy`, this removes the persisted record, not just
     /// the in-memory agent.
     pub const SESSION_DELETE: &str = "session/delete";
+    /// Mark a session as archived: set `metadata.archived = true`, persist it,
+    /// and drop the live agent (SDK `archiveSession`). The record is kept —
+    /// archive is a flag, not a delete.
+    pub const SESSION_ARCHIVE: &str = "session/archive";
     /// Fork a persisted session under a new id, dropping goal state (SDK
     /// `forkSession`).
     pub const SESSION_FORK: &str = "session/fork";
@@ -210,6 +214,12 @@
     pub const PLUGIN_REMOVE: &str = "plugin/remove";
     /// Reload plugins from disk — the engine side of SDK `reloadPlugins`.
     pub const PLUGIN_RELOAD: &str = "plugin/reload";
+    /// List a plugin's slash-style commands — the engine side of SDK
+    /// `listPluginCommands`.
+    pub const PLUGIN_LIST_COMMANDS: &str = "plugin/list_commands";
+    /// Activate a plugin command (expand args + send the body as a prompt) —
+    /// the engine side of SDK `activatePluginCommand`.
+    pub const PLUGIN_ACTIVATE_COMMAND: &str = "plugin/activate_command";
 
     // ── Task domain methods ─────────────────────────────────────────────────────
     /// List tracked tasks (live + restored ghosts) — the engine side of the

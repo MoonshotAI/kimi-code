@@ -131,6 +131,7 @@ mod tests {
             hooks: vec![],
             system_prompt: None,
             agents: vec![],
+            commands: vec![],
         }).unwrap();
 
         let injection = collect_plugin_injections(&store);
@@ -158,6 +159,7 @@ mod tests {
             hooks: vec![],
             system_prompt: None,
             agents: vec![],
+            commands: vec![],
         }).unwrap();
 
         let injection = collect_plugin_injections(&store);
@@ -183,6 +185,7 @@ mod tests {
                 name: "my-agents".into(),
                 path: "/tmp/plugin/agents".into(),
             }],
+            commands: vec![],
         })
         .unwrap();
 

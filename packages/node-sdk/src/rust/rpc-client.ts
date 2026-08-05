@@ -46,6 +46,7 @@ import type {
   KimiConfig,
   KimiHostIdentity,
   ListSessionsOptions,
+  PluginCommandDef,
   ResumedSessionSummary,
   SessionSummary,
   SkillSummary,
@@ -62,7 +63,6 @@ import {
   mapPluginSummary,
   mapSkill,
   mapUsage,
-  nativeUnavailable,
   promptText,
 } from './wire';
 import type {
@@ -158,6 +158,7 @@ export interface RustLoopApi {
   sessionSave(sessionId: string): Promise<{ ok: boolean } | null>;
   sessionLoad(sessionId: string): Promise<{ found: boolean } | null>;
   sessionDelete(sessionId: string): Promise<{ deleted: boolean } | null>;
+  sessionArchive(sessionId: string): Promise<{ archived: boolean } | null>;
   sessionExport(
     sessionId: string,
     homedir?: string,
@@ -182,6 +183,13 @@ export interface RustLoopApi {
   pluginSetMcpEnabled(id: string, server: string, enabled: boolean): Promise<unknown>;
   pluginRemove(id: string): Promise<{ removed: boolean } | null>;
   pluginReload(): Promise<{ ok: boolean } | null>;
+  pluginListCommands(id: string): Promise<{ commands: unknown[] } | null>;
+  pluginActivateCommand(input: {
+    sessionId: string;
+    pluginId: string;
+    commandName: string;
+    args?: string;
+  }): Promise<{ accepted: boolean } | null>;
   configGet(): Promise<unknown>;
   configSet(patch: unknown): Promise<unknown>;
 }
@@ -683,7 +691,15 @@ export class RustRpcClient extends SDKRpcClientBase {
           agents: { main: {} },
         } as never;
       },
-      archiveSession: async () => nativeUnavailable('archiveSession'),
+      archiveSession: async ({ sessionId }: any) => {
+        const result = await r.sessionArchive(sessionId);
+        if (!result || !result.archived) {
+          throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `Session not found: ${sessionId}`);
+        }
+        this.workDirs.delete(sessionId);
+        this.sessionSummaries.delete(sessionId);
+        this.clearSessionHandlers(sessionId);
+      },
       deleteSession: async ({ sessionId }: any) => {
         const result = await r.sessionDelete(sessionId);
         if (!result || !result.deleted) {
@@ -1121,8 +1137,34 @@ export class RustRpcClient extends SDKRpcClientBase {
         await r.pluginReload();
         return { added: 0, removed: 0, changed: 0, unchanged: 0 };
       },
-      listPluginCommands: async () => [],
-      activatePluginCommand: async () => nativeUnavailable('activatePluginCommand'),
+      listPluginCommands: async ({ sessionId: _sessionId }: any) => {
+        const all = await r.pluginList();
+        const plugins = all?.plugins ?? [];
+        const commands: PluginCommandDef[] = [];
+        for (const plugin of plugins) {
+          const pluginId = (plugin as { id?: string })?.id;
+          if (pluginId === undefined) continue;
+          const listed = await r.pluginListCommands(pluginId);
+          for (const cmd of listed?.commands ?? []) {
+            const c = cmd as {
+              name?: string;
+              description?: string;
+              body?: string;
+            };
+            commands.push({
+              pluginId,
+              name: c.name ?? '',
+              description: c.description ?? '',
+              body: c.body ?? '',
+              path: '',
+            });
+          }
+        }
+        return commands;
+      },
+      activatePluginCommand: async ({ sessionId, pluginId, commandName, args }: any) => {
+        await r.pluginActivateCommand({ sessionId, pluginId, commandName, args });
+      },
     };
     return impl as unknown as SdkRpcSurface;
   }

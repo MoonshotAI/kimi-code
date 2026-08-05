@@ -45,6 +45,8 @@ function fakeRustLoop(overrides: Partial<RustLoopApi> = {}): RustLoopApi & {
     sessionExport: async () => null,
     sessionSave: record('sessionSave'),
     sessionCancel: async () => ({ cancelled: true }),
+    sessionArchive: async () => ({ archived: true }),
+    sessionDelete: async () => ({ deleted: true }),
     sessionSetModel: async () => ({ ok: true }),
     sessionSetPlanMode: async () => ({ ok: true }),
     sessionListSkills: async () => ({ skills: [] }),
@@ -89,6 +91,8 @@ function fakeRustLoop(overrides: Partial<RustLoopApi> = {}): RustLoopApi & {
     pluginSetMcpEnabled: async () => ({}),
     pluginRemove: async () => ({ removed: true }),
     pluginReload: async () => ({ ok: true }),
+    pluginListCommands: async () => ({ commands: [] }),
+    pluginActivateCommand: async () => ({ accepted: true }),
     configGet: async () => ({ model: 'kimi-k2' }),
     configSet: async (patch) => patch,
     ...overrides,
@@ -176,13 +180,31 @@ describe('RustRpcClient', () => {
     await expect(rpc.reloadPlugins()).resolves.toMatchObject({ added: 0 });
   });
 
-  it('fails loud for capabilities the engine does not back', async () => {
-    const rust = fakeRustLoop();
+  it('lists and activates plugin commands through the engine', async () => {
+    const rust = fakeRustLoop({
+      pluginList: async () => ({
+        plugins: [{ id: 'p1' }, { id: 'p2' }],
+      }),
+      pluginListCommands: async (id: string) => ({
+        commands: id === 'p1'
+          ? [{ name: 'review', description: 'Review', body: 'review the diff' }]
+          : [],
+      }),
+    });
     const client = new RustRpcClient({ rustLoop: rust });
     const rpc = await client['getRpc']();
-    await expect(rpc.activatePluginCommand({} as never)).rejects.toThrow(
-      'not available under the native engine',
-    );
+    const commands = await rpc.listPluginCommands({ sessionId: 's' });
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toMatchObject({ pluginId: 'p1', name: 'review' });
+
+    await expect(
+      rpc.activatePluginCommand({
+        sessionId: 's',
+        pluginId: 'p1',
+        commandName: 'review',
+        args: 'focus',
+      } as never),
+    ).resolves.toBeUndefined();
   });
 
   it('fetches engine wire records for export; engine absence degrades to empty', async () => {
@@ -231,5 +253,13 @@ describe('RustRpcClient', () => {
     const client = new RustRpcClient({ rustLoop: rust });
     const rpc = await client['getRpc']();
     await expect(rpc.cancelCompaction({ sessionId: 'ses_1' } as never)).resolves.toBeUndefined();
+  });
+
+  it('archives a session through the engine', async () => {
+    const rust = fakeRustLoop();
+    const client = new RustRpcClient({ rustLoop: rust });
+    const rpc = await client['getRpc']() as unknown as Record<string, unknown>;
+    const archive = rpc['archiveSession'] as (input: unknown) => Promise<void>;
+    await expect(archive({ sessionId: 'ses_1' })).resolves.toBeUndefined();
   });
 });

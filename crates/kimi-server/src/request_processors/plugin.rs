@@ -25,6 +25,9 @@ fn plugins_dir() -> std::path::PathBuf {
 pub struct PluginProcessor {
     store: Arc<PluginStore>,
     dir: std::path::PathBuf,
+    /// Session manager — used by `plugin/activate_command` to send the
+    /// expanded command body as a prompt turn.
+    manager: Option<Arc<tokio::sync::Mutex<kimi_agent::session::manager::SessionManager>>>,
 }
 
 fn plugin_source_str(s: &kimi_agent::plugin::types::PluginSource) -> &'static str {
@@ -95,6 +98,15 @@ impl PluginProcessor {
     /// Create with the engine's plugin store (`$KIMI_AGENT_HOME/plugins.db`
     /// or in-memory), mirroring main.rs.
     pub fn new() -> anyhow::Result<Self> {
+        Self::with_manager(None)
+    }
+
+    /// Create with the engine's plugin store plus an optional session manager
+    /// (wired by `Server::with_state` so `plugin/activate_command` can drive a
+    /// prompt turn).
+    pub fn with_manager(
+        manager: Option<Arc<tokio::sync::Mutex<kimi_agent::session::manager::SessionManager>>>,
+    ) -> anyhow::Result<Self> {
         let store: Arc<PluginStore> = Arc::new(PluginStore::new(
             match std::env::var("KIMI_AGENT_HOME") {
                 Ok(dir) if !dir.trim().is_empty() => {
@@ -105,7 +117,7 @@ impl PluginProcessor {
             },
         ));
         let _ = store.init();
-        Ok(Self { store, dir: plugins_dir() })
+        Ok(Self { store, dir: plugins_dir(), manager })
     }
 }
 
@@ -272,7 +284,105 @@ impl Processor for PluginProcessor {
                     .map_err(|e| JsonRpcError::internal_error(format!("serialize failed: {e}")))
             })
         });
+
+        // `plugin/list_commands` — a plugin's slash-style commands (SDK
+        // `listPluginCommands` parity).
+        let ps = self.store.clone();
+        processor.register(kimi_protocol::methods::PLUGIN_LIST_COMMANDS, move |params| {
+            let ps = ps.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::PluginListCommandsParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let commands = match ps
+                    .get(&input.id)
+                    .map_err(|e| JsonRpcError::internal_error(format!("plugin get: {e}")))?
+                {
+                    Some(record) => record
+                        .commands
+                        .into_iter()
+                        .map(|c| kimi_protocol::wire_types::PluginCommandRpc {
+                            plugin_id: record.id.clone(),
+                            name: c.name,
+                            description: c.description,
+                            body: c.body,
+                        })
+                        .collect(),
+                    None => Vec::new(),
+                };
+                serde_json::to_value(kimi_protocol::wire_types::PluginListCommandsResult { commands })
+                    .map_err(|e| JsonRpcError::internal_error(format!("serialize failed: {e}")))
+            })
+        });
+
+        // `plugin/activate_command` — expand the command body with `$ARGUMENTS`
+        // and send it as a prompt turn on the session (SDK
+        // `activatePluginCommand` parity). Requires a session manager and a
+        // reachable LLM; unknown command/session error before any turn.
+        let ps = self.store.clone();
+        let manager = self.manager.clone();
+        processor.register(kimi_protocol::methods::PLUGIN_ACTIVATE_COMMAND, move |params| {
+            let ps = ps.clone();
+            let manager = manager.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::PluginActivateCommandParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let Some(mgr) = manager else {
+                    return Err(JsonRpcError::internal_error(
+                        "plugin/activate_command requires a session manager".to_string(),
+                    ));
+                };
+                let record = ps.get(&input.plugin_id).map_err(|e| {
+                    JsonRpcError::internal_error(format!("plugin get: {e}"))
+                })?
+                .ok_or_else(|| {
+                    let msg = format!("plugin not found: {}", input.plugin_id);
+                    JsonRpcError::invalid_params(&msg)
+                })?;
+                let command = record.commands.iter().find(|c| c.name == input.command_name).ok_or_else(
+                    || {
+                        let msg = format!(
+                            "plugin command {}:{} was not found",
+                            input.plugin_id, input.command_name
+                        );
+                        JsonRpcError::invalid_params(&msg)
+                    },
+                )?;
+                let args = input.args.clone().unwrap_or_default();
+                let body = expand_command_arguments(&command.body, &args);
+                let parts: Vec<kimi_agent::context::types::ContentPart> =
+                    vec![kimi_agent::context::types::ContentPart::Text { text: body }];
+                let mut m = mgr.lock().await;
+                let agent = m.get_agent(&input.session_id).ok_or_else(|| {
+                    JsonRpcError::internal_error(format!(
+                        "no agent for session: {}",
+                        input.session_id
+                    ))
+                })?;
+                let result = agent
+                    .run_prompt(parts)
+                    .await
+                    .map_err(|e| JsonRpcError::internal_error(format!("run_prompt failed: {e}")))?;
+                let _ = result;
+                serde_json::to_value(kimi_protocol::wire_types::PluginActivateCommandResult {
+                    accepted: true,
+                })
+                .map_err(|e| JsonRpcError::internal_error(format!("serialize failed: {e}")))
+            })
+        });
     }
+}
+
+/// Expand a plugin command body: replace `$ARGUMENTS` with `args`; when the
+/// body has no `$ARGUMENTS` marker and args are non-empty, append an
+/// `ARGUMENTS:` line (mirrors upstream `expandCommandArguments`).
+fn expand_command_arguments(body: &str, args: &str) -> String {
+    let replaced = body.replace("$ARGUMENTS", args);
+    if !body.contains("$ARGUMENTS") && !args.is_empty() {
+        return format!("{replaced}\n\nARGUMENTS: {args}");
+    }
+    replaced
 }
 
 /// Route a `plugin/install` source string to the right engine installer.
@@ -355,6 +465,7 @@ mod tests {
                 hooks: vec![],
                 system_prompt: None,
                 agents: vec![],
+                commands: vec![],
             })
             .expect("upsert");
 
@@ -610,5 +721,98 @@ mod tests {
             })
             .await;
         assert!(body.get("error").is_some(), "unknown plugin -> error: {body}");
+    }
+
+    /// Seed a plugin manifest with a commands directory on disk.
+    fn write_command_plugin(dir: &std::path::Path, id: &str) -> std::path::PathBuf {
+        let plugin_dir = dir.join(id);
+        let cmd_dir = plugin_dir.join("commands");
+        std::fs::create_dir_all(&cmd_dir).unwrap();
+        std::fs::write(
+            cmd_dir.join("review.md"),
+            "# Review code\nRun a thorough review of the current diff.\n\n$ARGUMENTS",
+        )
+        .unwrap();
+        let manifest = serde_json::json!({
+            "name": id,
+            "version": "1.0.0",
+            "description": "test plugin",
+            "commands": ["./commands"]
+        });
+        std::fs::write(plugin_dir.join("plugin.json"), serde_json::to_vec(&manifest).unwrap())
+            .unwrap();
+        plugin_dir
+    }
+
+    #[tokio::test]
+    async fn plugin_list_commands_returns_commands() {
+        let processor = PluginProcessor::new().expect("plugin processor");
+        let tmp = test_dir("listcmds");
+        let src = write_command_plugin(&tmp, "cmd-tools");
+        let plugin_id = format!("local:{}", src.display());
+
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "plugin/install".into(),
+                params: serde_json::json!({ "source": src.to_str().unwrap() }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "install: {body}");
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "plugin/list_commands".into(),
+                params: serde_json::json!({ "id": plugin_id }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "list_commands: {body}");
+        let commands = body["result"]["commands"].as_array().expect("commands");
+        assert!(commands.iter().any(|c| c["name"] == "review"), "review listed: {body}");
+        assert!(
+            commands.iter().any(|c| c["body"].as_str().unwrap_or("").contains("thorough")),
+            "body present: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn plugin_activate_command_unknown_command_errors() {
+        // Without a session manager wired, unknown-command still errors before
+        // reaching the manager.
+        let processor = PluginProcessor::new().expect("plugin processor");
+        let tmp = test_dir("actcmd");
+        let src = write_command_plugin(&tmp, "act-tools");
+        let plugin_id = format!("local:{}", src.display());
+
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "plugin/install".into(),
+                params: serde_json::json!({ "source": src.to_str().unwrap() }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "install: {body}");
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "plugin/activate_command".into(),
+                params: serde_json::json!({
+                    "session_id": "s",
+                    "plugin_id": plugin_id,
+                    "command_name": "does-not-exist",
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_some(), "unknown command -> error: {body}");
     }
 }

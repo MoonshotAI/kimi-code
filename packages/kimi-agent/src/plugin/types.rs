@@ -51,6 +51,19 @@ pub struct PluginHook {
     pub matcher: Option<String>,
 }
 
+/// A slash-style command contributed by a plugin (a Markdown body expanded
+/// with `$ARGUMENTS` and sent to the agent as a prompt). Mirrors the SDK's
+/// `PluginCommandDef`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginCommand {
+    /// Command name (from the Markdown file name).
+    pub name: String,
+    /// Short description (first non-empty line of the body).
+    pub description: String,
+    /// Command body; `$ARGUMENTS` is replaced with the invocation args.
+    pub body: String,
+}
+
 /// Agent directory contributed by a plugin (upstream #2365).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginAgent {
@@ -72,6 +85,9 @@ pub struct PluginRecord {
     pub skills: Vec<PluginSkill>,
     pub mcp_servers: Vec<PluginMcpServer>,
     pub hooks: Vec<PluginHook>,
+    /// Slash-style commands contributed by the plugin.
+    #[serde(default)]
+    pub commands: Vec<PluginCommand>,
     /// Plugin system-prompt contribution (upstream #2314).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,

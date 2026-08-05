@@ -385,3 +385,23 @@ async fn session_cron_lifecycle() {
     let list = tasks["result"]["tasks"].as_array().expect("tasks");
     assert!(!list.iter().any(|t| t["id"] == id), "task gone: {tasks}");
 }
+
+#[tokio::test]
+async fn session_archive_marks_metadata() {
+    let home = std::env::temp_dir().join(format!("kimi-sdk-archive-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).expect("mkdir");
+    std::env::set_var("KIMI_AGENT_HOME", &home);
+
+    let harness = Harness::embedded().expect("embedded engine");
+    let mut session = harness.create_session("s-arch").await.expect("create");
+
+    // Archive the session; the engine marks metadata.archived and keeps the
+    // persisted record.
+    assert!(session.archive().await.expect("archive"), "archived: true");
+    let sessions = harness.list_sessions(50).await.expect("list");
+    assert!(
+        sessions.iter().any(|s| s["id"] == "s-arch"),
+        "archived session still listed (record kept): {sessions:?}"
+    );
+}

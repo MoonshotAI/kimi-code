@@ -34,7 +34,8 @@ impl PluginStore {
                     mcp_servers TEXT NOT NULL DEFAULT '[]',
                     hooks TEXT NOT NULL DEFAULT '[]',
                     system_prompt TEXT DEFAULT NULL,
-                    agents TEXT NOT NULL DEFAULT '[]'
+                    agents TEXT NOT NULL DEFAULT '[]',
+                    commands TEXT NOT NULL DEFAULT '[]'
                 )"
             ).context("create plugins table")?;
             // Migrate pre-existing tables that predate the system-prompt and
@@ -42,7 +43,8 @@ impl PluginStore {
             // when the column already exists.
             let _ = c.execute_batch(
                 "ALTER TABLE plugins ADD COLUMN system_prompt TEXT DEFAULT NULL;
-                 ALTER TABLE plugins ADD COLUMN agents TEXT NOT NULL DEFAULT '[]';"
+                 ALTER TABLE plugins ADD COLUMN agents TEXT NOT NULL DEFAULT '[]';
+                 ALTER TABLE plugins ADD COLUMN commands TEXT NOT NULL DEFAULT '[]';"
             );
             Ok(())
         })
@@ -52,7 +54,7 @@ impl PluginStore {
     pub fn list(&self) -> Result<Vec<PluginRecord>> {
         self.store.with_conn(|c| {
             let mut stmt = c.prepare(
-                "SELECT id, name, version, description, source, source_detail, state, installed_at, skills, mcp_servers, hooks, system_prompt, agents FROM plugins ORDER BY id"
+                "SELECT id, name, version, description, source, source_detail, state, installed_at, skills, mcp_servers, hooks, system_prompt, agents, commands FROM plugins ORDER BY id"
             ).context("prepare list plugins")?;
             let rows = stmt.query_map([], |row| {
                 let source_str: String = row.get(4)?;
@@ -63,6 +65,7 @@ impl PluginStore {
                 let hooks_str: String = row.get(10)?;
                 let system_prompt: Option<String> = row.get(11)?;
                 let agents_str: String = row.get(12)?;
+                let commands_str: String = row.get(13)?;
                 Ok(PluginRecord {
                     id: row.get(0)?,
                     name: row.get(1)?,
@@ -79,6 +82,7 @@ impl PluginStore {
                     hooks: serde_json::from_str(&hooks_str).unwrap_or_default(),
                     system_prompt,
                     agents: serde_json::from_str(&agents_str).unwrap_or_default(),
+                    commands: serde_json::from_str(&commands_str).unwrap_or_default(),
                 })
             }).context("query plugins")?;
             rows.collect::<Result<Vec<_>, _>>()
@@ -90,7 +94,7 @@ impl PluginStore {
     pub fn get(&self, id: &str) -> Result<Option<PluginRecord>> {
         self.store.with_conn(|c| {
             let mut stmt = c.prepare(
-                "SELECT id, name, version, description, source, source_detail, state, installed_at, skills, mcp_servers, hooks, system_prompt, agents FROM plugins WHERE id = ?1"
+                "SELECT id, name, version, description, source, source_detail, state, installed_at, skills, mcp_servers, hooks, system_prompt, agents, commands FROM plugins WHERE id = ?1"
             ).context("prepare get plugin")?;
             let mut rows = stmt.query_map(rusqlite::params![id], |row| {
                 let source_str: String = row.get(4)?;
@@ -101,6 +105,7 @@ impl PluginStore {
                 let hooks_str: String = row.get(10)?;
                 let system_prompt: Option<String> = row.get(11)?;
                 let agents_str: String = row.get(12)?;
+                let commands_str: String = row.get(13)?;
                 Ok(PluginRecord {
                     id: row.get(0)?,
                     name: row.get(1)?,
@@ -117,6 +122,7 @@ impl PluginStore {
                     hooks: serde_json::from_str(&hooks_str).unwrap_or_default(),
                     system_prompt,
                     agents: serde_json::from_str(&agents_str).unwrap_or_default(),
+                    commands: serde_json::from_str(&commands_str).unwrap_or_default(),
                 })
             }).context("query plugin by id")?;
             rows.next().transpose().map_err(|e| anyhow::anyhow!("get plugin row: {e}"))
@@ -144,21 +150,23 @@ impl PluginStore {
         let mcp_json = serde_json::to_string(&record.mcp_servers).context("serialize mcp_servers")?;
         let hooks_json = serde_json::to_string(&record.hooks).context("serialize hooks")?;
         let agents_json = serde_json::to_string(&record.agents).context("serialize agents")?;
+        let commands_json = serde_json::to_string(&record.commands).context("serialize commands")?;
 
         let skills_json2 = skills_json.clone();
         let mcp_json2 = mcp_json.clone();
         let hooks_json2 = hooks_json.clone();
         let agents_json2 = agents_json.clone();
+        let commands_json2 = commands_json.clone();
 
         self.store.with_conn(|c| {
             c.execute(
-                "INSERT OR REPLACE INTO plugins (id, name, version, description, source, source_detail, state, installed_at, skills, mcp_servers, hooks, system_prompt, agents)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                "INSERT OR REPLACE INTO plugins (id, name, version, description, source, source_detail, state, installed_at, skills, mcp_servers, hooks, system_prompt, agents, commands)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 rusqlite::params![
                     record.id, record.name, record.version, record.description,
                     source_str, source_detail, state_str, record.installed_at,
                     skills_json2, mcp_json2, hooks_json2,
-                    record.system_prompt, agents_json2
+                    record.system_prompt, agents_json2, commands_json2
                 ],
             ).context("upsert plugin")?;
             Ok(())

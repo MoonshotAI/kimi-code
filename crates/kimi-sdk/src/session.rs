@@ -503,6 +503,23 @@ impl Session {
         self.simple_call(kimi_protocol::methods::SESSION_DESTROY).await
     }
 
+    /// Mark the session as archived (metadata flag, record kept on disk) and
+    /// drop the live agent. Mirrors the SDK's `Session.archive()`. Returns
+    /// whether the session existed.
+    pub async fn archive(&mut self) -> anyhow::Result<bool> {
+        let body = self
+            .client
+            .call(
+                kimi_protocol::methods::SESSION_ARCHIVE,
+                serde_json::json!({ "session_id": self.id }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("archive: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"]["archived"].as_bool().unwrap_or(false))
+    }
+
     /// Run the engine's AGENTS.md initialization for the session workspace.
     pub async fn init(&mut self) -> anyhow::Result<()> {
         let body = self

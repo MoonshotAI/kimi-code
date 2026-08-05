@@ -660,6 +660,26 @@ impl Processor for SessionProcessor {
             })
         });
 
+        // `session/archive` — mark a session archived (metadata flag, kept on
+        // disk) and drop the live agent. SDK `archiveSession` parity.
+        let mgr = self.state.manager.clone();
+        processor.register(kimi_protocol::methods::SESSION_ARCHIVE, move |params| {
+            let mgr = mgr.clone();
+            Box::pin(async move {
+                let input: kimi_protocol::wire_types::SessionIdParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                let mut manager = mgr.lock().await;
+                match manager
+                    .archive_session(&input.session_id)
+                    .map_err(|e| JsonRpcError::internal_error(e.to_string()))?
+                {
+                    Some(record) => Ok(serde_json::json!({ "archived": true, "metadata": record.metadata })),
+                    None => Ok(serde_json::json!({ "archived": false })),
+                }
+            })
+        });
+
         // `session/load` — rebuild an agent from its persisted record.
         let mgr = self.state.manager.clone();
         processor.register(kimi_protocol::methods::SESSION_LOAD, move |params| {
@@ -2630,5 +2650,49 @@ mod create_tests {
             .await;
         assert!(body.get("error").is_none(), "cancel_compact: {body}");
         assert_eq!(body["result"]["cancelled"], true, "cancelled: {body}");
+    }
+
+    #[tokio::test]
+    async fn archive_marks_metadata_and_keeps_record() {
+        let processor = SessionProcessor::new().expect("session processor");
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+
+        server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/create".into(),
+                params: serde_json::json!({ "session_id": "s-archive" }),
+            })
+            .await;
+
+        // Archive an existing session: metadata.archived = true, record kept.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/archive".into(),
+                params: serde_json::json!({ "session_id": "s-archive" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "archive: {body}");
+        assert_eq!(body["result"]["archived"], true, "archived: {body}");
+        assert_eq!(
+            body["result"]["metadata"]["archived"], true,
+            "metadata flag: {body}"
+        );
+
+        // An unknown session reports archived=false (not an error).
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(3),
+                method: "session/archive".into(),
+                params: serde_json::json!({ "session_id": "does-not-exist" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "archive unknown: {body}");
+        assert_eq!(body["result"]["archived"], false, "unknown archived: {body}");
     }
 }

@@ -189,6 +189,25 @@ impl SessionManager {
         Ok(Some(updated))
     }
 
+    /// Mark a session as archived: set `metadata.archived = true`, persist it,
+    /// and drop it from the live agent cache so it no longer lists as active
+    /// (SDK `archiveSession` parity). The record itself is kept — archive is
+    /// a flag, not a delete. Returns `None` when the session is unknown.
+    pub fn archive_session(&mut self, id: &str) -> anyhow::Result<Option<SessionRecord>> {
+        let Some(record) = self.sessions.get_mut(id) else {
+            return Ok(None);
+        };
+        let mut metadata = record.metadata.as_object().cloned().unwrap_or_default();
+        metadata.insert("archived".to_string(), serde_json::json!(true));
+        record.metadata = serde_json::Value::Object(metadata);
+        record.updated_at = Self::iso_now();
+        let updated = record.clone();
+        // Drop the live agent so the archived session is not resumed in-process.
+        self.agents.remove(id);
+        self.save_to_store(&updated)?;
+        Ok(Some(updated))
+    }
+
     // ── Session activation / switching ────────────────────────────────────
 
     /// Activate a session by id.  Loads from persistence if not in cache.

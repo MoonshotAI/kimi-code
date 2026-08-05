@@ -17,6 +17,11 @@ pub struct PluginManifest {
     pub mcp_servers: Vec<PluginManifestMcpServer>,
     #[serde(default)]
     pub hooks: Vec<PluginManifestHook>,
+    /// Slash-style commands: a Markdown file path, or a directory of Markdown
+    /// files (each file = one command; file name = command name, first line =
+    /// description, rest = body). Mirrors the upstream `commands` field.
+    #[serde(default)]
+    pub commands: Vec<String>,
     /// Inline system-prompt contribution (upstream #2314). Capped at 32 KiB.
     #[serde(default, rename = "systemPrompt")]
     pub system_prompt: Option<String>,
@@ -108,7 +113,59 @@ impl PluginManifest {
             }).collect(),
             system_prompt: self.resolve_system_prompt(),
             agents: self.resolve_agent_roots(),
+            commands: self.resolve_commands(),
         }
+    }
+
+    /// Resolve the plugin's slash-style commands: each `commands` entry is a
+    /// Markdown file path, or a directory of Markdown files (recursively).
+    /// The file name (minus `.md`) is the command name, the first non-empty
+    /// line is the description, and the rest is the body. Entries that do not
+    /// resolve are skipped.
+    fn resolve_commands(&self) -> Vec<PluginCommand> {
+        let Some(ref root) = self.root else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for entry in &self.commands {
+            let path = if entry.starts_with("./") {
+                root.join(&entry[2..])
+            } else {
+                root.join(entry)
+            };
+            let files = if path.is_dir() {
+                collect_markdown(&path)
+            } else if path.is_file() && entry.ends_with(".md") {
+                vec![path]
+            } else {
+                continue;
+            };
+            for file in files {
+                let Ok(content) = std::fs::read_to_string(&file) else {
+                    continue;
+                };
+                let name = file
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                if name.is_empty() {
+                    continue;
+                }
+                let mut lines = content.lines().map(str::trim);
+                let description = lines
+                    .find(|l| !l.is_empty())
+                    .unwrap_or("")
+                    .trim_start_matches("# ")
+                    .to_string();
+                out.push(PluginCommand {
+                    name,
+                    description,
+                    body: content.trim().to_string(),
+                });
+            }
+        }
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        out
     }
 
     /// Resolve the plugin's system-prompt contribution: the inline
@@ -170,6 +227,24 @@ impl PluginManifest {
         }
         out
     }
+}
+
+/// Recursively collect `.md` files under a directory (sorted).
+fn collect_markdown(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            out.extend(collect_markdown(&path));
+        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
+            out.push(path);
+        }
+    }
+    out.sort();
+    out
 }
 
 #[cfg(test)]
@@ -247,5 +322,38 @@ mod tests {
         assert_eq!(record.skills.len(), 1);
         assert_eq!(record.skills[0].name, "my-skill");
         assert_eq!(record.state, PluginState::Enabled);
+    }
+
+    #[test]
+    fn test_parse_commands_from_directory() {
+        let dir = std::env::temp_dir().join(format!(
+            "kimi-plugin-commands-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("review.md"),
+            "# Review code\nRun a thorough code review of the current diff.",
+        )
+        .unwrap();
+
+        let json = format!(
+            r#"{{
+                "name": "cmd-plugin",
+                "version": "1.0.0",
+                "description": "Has commands",
+                "commands": [{}]
+            }}"#,
+            serde_json::to_string(dir.to_str().unwrap()).unwrap()
+        );
+        let mut manifest = PluginManifest::from_json(&json).unwrap();
+        manifest.root = Some(dir.clone());
+        let record = manifest.to_record("cmd".into(), PluginSource::Local { path: "x".into() });
+        assert_eq!(record.commands.len(), 1);
+        assert_eq!(record.commands[0].name, "review");
+        assert_eq!(record.commands[0].description, "Review code");
+        assert!(record.commands[0].body.contains("Run a thorough"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -3127,6 +3127,29 @@ export async function pluginReload(): Promise<{ ok: boolean } | null> {
   return agentCall('plugin/reload', {});
 }
 
+/** List a plugin's slash-style commands (SDK `listPluginCommands` parity). */
+export async function pluginListCommands(
+  id: string,
+): Promise<{ commands: unknown[] } | null> {
+  return agentCall('plugin/list_commands', { id });
+}
+
+/** Activate a plugin command on a session (SDK `activatePluginCommand`
+ *  parity): expands `$ARGUMENTS` and sends the body as a prompt turn. */
+export async function pluginActivateCommand(input: {
+  sessionId: string;
+  pluginId: string;
+  commandName: string;
+  args?: string;
+}): Promise<{ accepted: boolean } | null> {
+  return agentCall('plugin/activate_command', {
+    session_id: input.sessionId,
+    plugin_id: input.pluginId,
+    command_name: input.commandName,
+    args: input.args,
+  });
+}
+
 /** Read the engine's parsed global config (stage 2a: kap-server Rust
  *  migration). Secrets are NOT redacted — the host projects + redacts for
  *  the wire. */
@@ -3157,6 +3180,13 @@ export async function sessionExport(
  *  for an unknown id (the host maps that to `session.not_found`). */
 export async function sessionDelete(sessionId: string): Promise<{ deleted: boolean } | null> {
   return agentCall('session/delete', { session_id: sessionId });
+}
+
+/** Mark a session as archived (metadata flag, record kept) — SDK
+ *  `archiveSession` parity. Resolves `{ archived: true }` when the session
+ *  existed, `{ archived: false }` for an unknown id. */
+export async function sessionArchive(sessionId: string): Promise<{ archived: boolean } | null> {
+  return agentCall('session/archive', { session_id: sessionId });
 }
 
 /** Fork a persisted session under a new id (SDK `forkSession` parity): copies

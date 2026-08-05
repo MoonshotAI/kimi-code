@@ -39,7 +39,7 @@ impl Server {
         CronProcessor::new().register(&mut processor);
         FsProcessor.register(&mut processor);
         GitProcessor.register(&mut processor);
-        PluginProcessor::new()?.register(&mut processor);
+        PluginProcessor::with_manager(Some(state.manager.clone()))?.register(&mut processor);
         SessionProcessor::with_state(state.clone()).register(&mut processor);
         ApprovalProcessor::with_state(state.clone()).register(&mut processor);
         BgProcessor::new()?.register(&mut processor);

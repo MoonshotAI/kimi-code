@@ -330,4 +330,54 @@ impl Harness {
         }
         Ok(())
     }
+
+    /// A plugin's slash-style commands — the engine side of node-sdk
+    /// `listPluginCommands`.
+    pub async fn list_plugin_commands(
+        &self,
+        plugin_id: &str,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        let body = self
+            .client
+            .call(
+                kimi_protocol::methods::PLUGIN_LIST_COMMANDS,
+                serde_json::json!({ "id": plugin_id }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!(
+                "list plugin commands: {}",
+                error["message"].as_str().unwrap_or("unknown")
+            );
+        }
+        Ok(body["result"]["commands"].as_array().cloned().unwrap_or_default())
+    }
+
+    /// Activate a plugin command on a session: expands `$ARGUMENTS` in the
+    /// command body and sends it as a prompt turn. Requires a reachable LLM.
+    /// The engine side of node-sdk `activatePluginCommand`.
+    pub async fn activate_plugin_command(
+        &self,
+        session_id: &str,
+        plugin_id: &str,
+        command_name: &str,
+        args: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let mut params =
+            serde_json::json!({ "session_id": session_id, "plugin_id": plugin_id, "command_name": command_name });
+        if let Some(args) = args {
+            params["args"] = serde_json::json!(args);
+        }
+        let body = self
+            .client
+            .call(kimi_protocol::methods::PLUGIN_ACTIVATE_COMMAND, params)
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!(
+                "activate plugin command: {}",
+                error["message"].as_str().unwrap_or("unknown")
+            );
+        }
+        Ok(())
+    }
 }

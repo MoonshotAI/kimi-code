@@ -274,6 +274,45 @@ pub struct PluginReloadResult {
     pub ok: bool,
 }
 
+/// One plugin slash-style command (engine-side of the SDK `PluginCommandDef`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginCommandRpc {
+    pub plugin_id: String,
+    pub name: String,
+    pub description: String,
+    /// Command body; `$ARGUMENTS` is replaced with the invocation args.
+    pub body: String,
+}
+
+/// Input for plugin/list_commands.
+#[derive(Debug, Deserialize)]
+pub struct PluginListCommandsParams {
+    pub id: String,
+}
+
+/// Result of plugin/list_commands.
+#[derive(Debug, Serialize)]
+pub struct PluginListCommandsResult {
+    pub commands: Vec<PluginCommandRpc>,
+}
+
+/// Input for plugin/activate_command — the plugin id, command name, and
+/// optional args (`$ARGUMENTS` in the command body is replaced with them).
+#[derive(Debug, Deserialize)]
+pub struct PluginActivateCommandParams {
+    pub session_id: String,
+    pub plugin_id: String,
+    pub command_name: String,
+    #[serde(default)]
+    pub args: Option<String>,
+}
+
+/// Result of plugin/activate_command.
+#[derive(Debug, Serialize)]
+pub struct PluginActivateCommandResult {
+    pub accepted: bool,
+}
+
 /// Input for session/export (stage 2c: kap-server Rust migration).
 #[derive(Debug, Deserialize)]
 pub struct SessionExportParams {    /// Session id to export.
