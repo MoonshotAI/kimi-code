@@ -91,14 +91,14 @@ async fn harness_exposes_engine_events() {
 
     // Mode controls reflect in the status snapshot.
     session.set_plan_mode(true).await.expect("plan mode on");
-    session.set_swarm_mode(true).await.expect("swarm mode on");
+    session.set_swarm_mode(true, None).await.expect("swarm mode on");
     session.set_thinking(Some("high")).await.expect("thinking");
     let status = session.get_status().await;
     assert_eq!(status["result"]["plan_mode"], true, "plan_mode: {status}");
     assert_eq!(status["result"]["swarm_mode"], true, "swarm_mode: {status}");
     assert!(session.steer(serde_json::json!([{ "type": "text", "text": "focus" }])).await.expect("steer"));
     // Undo on an empty history reports the engine's "nothing to undo" error.
-    let undo = session.undo_history().await;
+    let undo = session.undo_history(1).await;
     assert!(
         undo.is_err() && undo.unwrap_err().to_string().contains("Nothing to undo"),
         "empty-history undo errors cleanly"

@@ -371,7 +371,7 @@ async fn set_thinking_and_modes_reflect_in_status() {
 
     session.set_thinking(Some("high")).await.expect("set thinking");
     session.set_plan_mode(true).await.expect("plan mode");
-    session.set_swarm_mode(true).await.expect("swarm mode");
+    session.set_swarm_mode(true, Some("tool")).await.expect("swarm mode");
 
     let status = session.get_status().await;
     assert_eq!(status["result"]["plan_mode"], true, "plan: {status}");

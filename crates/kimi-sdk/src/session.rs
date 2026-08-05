@@ -194,9 +194,23 @@ impl Session {
         self.mode_toggle(kimi_protocol::methods::SESSION_SET_PLAN_MODE, enabled).await
     }
 
-    /// Toggle swarm mode on the session.
-    pub async fn set_swarm_mode(&mut self, enabled: bool) -> anyhow::Result<()> {
-        self.mode_toggle(kimi_protocol::methods::SESSION_SET_SWARM_MODE, enabled).await
+    /// Toggle swarm mode on the session. `trigger` is one of `manual` (the
+    /// persistent toggle, default), `task` (one-shot prompt), or `tool`
+    /// (silent); ignored on disable. Mirrors the SDK's
+    /// `Session.setSwarmMode(enabled, trigger)`.
+    pub async fn set_swarm_mode(&mut self, enabled: bool, trigger: Option<&str>) -> anyhow::Result<()> {
+        let mut params = serde_json::json!({ "session_id": self.id, "enabled": enabled });
+        if let Some(trigger) = trigger {
+            params["trigger"] = serde_json::json!(trigger);
+        }
+        let body = self
+            .client
+            .call(kimi_protocol::methods::SESSION_SET_SWARM_MODE, params)
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("set swarm mode: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(())
     }
 
     /// Set the thinking effort (`low` / `medium` / `high`, or `None` to clear).
@@ -228,13 +242,14 @@ impl Session {
         Ok(())
     }
 
-    /// Undo the last turn; returns the undo result body.
-    pub async fn undo_history(&mut self) -> anyhow::Result<serde_json::Value> {
+    /// Undo the last `count` turns (default 1); returns the undo result body.
+    /// Mirrors the SDK's `Session.undoHistory(count)`.
+    pub async fn undo_history(&mut self, count: u32) -> anyhow::Result<serde_json::Value> {
         let body = self
             .client
             .call(
                 kimi_protocol::methods::SESSION_UNDO_HISTORY,
-                serde_json::json!({ "session_id": self.id }),
+                serde_json::json!({ "session_id": self.id, "count": count }),
             )
             .await;
         if let Some(error) = body.get("error") {

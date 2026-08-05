@@ -404,7 +404,7 @@ impl App {
                 }
                 "/swarm" => {
                     let enabled = rest == "on" || rest.is_empty();
-                    self.session.as_mut().expect("session").set_swarm_mode(enabled).await?;
+                    self.session.as_mut().expect("session").set_swarm_mode(enabled, None).await?;
                     self.transcript.push(TranscriptLine::status(format!(
                         "swarm mode {}",
                         if enabled { "on" } else { "off" }
@@ -492,7 +492,7 @@ impl App {
                     )));
                 }
                 "/undo" => {
-                    let undone = self.session.as_mut().expect("session").undo_history().await?;
+                    let undone = self.session.as_mut().expect("session").undo_history(1).await?;
                     self.transcript.push(TranscriptLine::status(format!(
                         "undo: {}",
                         serde_json::to_string(&undone).unwrap_or_default()
