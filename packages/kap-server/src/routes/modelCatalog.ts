@@ -54,7 +54,6 @@ import {
   IModelsDevImportService,
   isError2,
   ModelsDevImportErrors,
-  SECONDARY_DERIVED_MODEL_ID,
   type ModelRecord,
   type ModelsSection,
   type ProviderConfig,
@@ -230,16 +229,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     },
     async (req, reply) => {
       const items = await (await loadCatalog(core)).listModels();
-      // Presentation filter: the secondary-model derived entry is synthesized
-      // runtime state, not a configured alias — keep it out of pickers (the
-      // catalog still resolves it by id, and the overlay's strip keeps any
-      // default-model pointer to it out of config.toml).
-      reply.send(
-        okEnvelope(
-          { items: items.filter((item) => item.model !== SECONDARY_DERIVED_MODEL_ID) },
-          req.id,
-        ),
-      );
+      reply.send(okEnvelope({ items }, req.id));
     },
   );
   app.get(

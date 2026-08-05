@@ -41,7 +41,7 @@ export interface TabbedModelSelectorOptions {
   readonly selectedValue?: string;
   readonly currentThinkingEffort: string;
   /** Forwarded to each inner selector; overrides the default ' Select a model'
-   * title line (e.g. the secondary-model picker). */
+   * title line. */
   readonly title?: string;
   /** When set, the tab for this provider id is initially active instead of the
    * tab derived from `currentValue`. */

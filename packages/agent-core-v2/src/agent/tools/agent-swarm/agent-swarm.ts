@@ -54,10 +54,10 @@ export const AgentSwarmToolInputSchema = z
         'Map of existing subagent agent_id to the prompt used to resume that subagent. These resumed subagents are launched before new item-based subagents.',
       ),
     model: z
-      .enum(['secondary', 'primary'])
+      .string()
       .optional()
       .describe(
-        'Which model to run the item-spawned subagents on: "secondary" = the configured secondary model; "primary" = the main model you are running on (for hard, quality-sensitive tasks). This explicit choice overrides the selected agent type\'s model_preference; without either, secondary is the default when configured. Only effective when a secondary model is configured; otherwise subagents inherit your model. Resumed subagents always keep their own model.',
+        'Which model to run the item-spawned subagents on: one of the aliases listed under "Available models" in this tool description, or "primary" for the main model you are running on (for hard, quality-sensitive tasks). When omitted, the configured default model is used. Resumed subagents always keep their own model.',
       ),
   })
   .strict();

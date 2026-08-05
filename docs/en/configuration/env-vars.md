@@ -153,7 +153,7 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | `KIMI_CODE_NO_AUTO_UPDATE` | Fully disable the update preflight — no check, background install, or prompt. Legacy alias `KIMI_CLI_NO_AUTO_UPDATE` is also honored | Truthy: `1`/`true`/`yes`/`on` |
 | `KIMI_DISABLE_CRON` | Disable the scheduled-task tool (`CronCreate` rejects new schedules; existing tasks do not fire) | `1` to disable |
 
-The three `KIMI_CODE_IDENTITY_*` / `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` variables are read by the `agent-core-v2` engine, which currently backs `kimi web` and the `KIMI_CODE_EXPERIMENTAL_FLAG` paths; the default `kimi` / `kimi -p` engine ignores them.
+The three `KIMI_CODE_IDENTITY_*` / `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` variables are read by the `agent-core-v2` engine, which currently backs `kimi web` and the `KIMI_CODE_EXPERIMENTAL_FLAG` paths; the default `kimi` / `kimi -p` engine ignores them. Conversely, `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL`, `KIMI_SECONDARY_MODEL`, and `KIMI_SECONDARY_EFFORT` are read by the default engine only, and the v2 engine ignores them.
 
 ## Diagnostic logs
 

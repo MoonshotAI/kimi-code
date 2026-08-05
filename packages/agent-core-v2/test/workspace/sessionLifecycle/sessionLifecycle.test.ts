@@ -40,7 +40,7 @@ import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions
 import { IWorkspaceMcpService, type ISessionMcpOverlay } from '#/workspace/workspaceMcp/workspaceMcp';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
-import { ISessionSecondaryModelWarningService } from '#/session/subagent/secondaryModelWarning';
+import { ISessionSubagentModelsValidationService } from '#/session/subagent/subagentModelsValidation';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
@@ -590,10 +590,9 @@ describe('SessionLifecycleService', () => {
       stubPair(IWorkspaceMcpService, workspaceMcpServiceStub()),
       stubPair(IConfigService, configStub()),
       stubPair(ISessionCronService, { _serviceBrand: undefined } as unknown as ISessionCronService),
-      stubPair(ISessionSecondaryModelWarningService, {
+      stubPair(ISessionSubagentModelsValidationService, {
         _serviceBrand: undefined,
-        getSecondaryModelWarning: () => undefined,
-      } as ISessionSecondaryModelWarningService),
+      } as ISessionSubagentModelsValidationService),
       stubPair(IProjectLocalConfigService, projectLocalConfigStub()),
       stubPair(IHostFsWatchService, {
         _serviceBrand: undefined,

@@ -7,7 +7,6 @@
  * Pure data; no scoped state.
  */
 
-import type { AgentModelPreference } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { SkippedAgentFile } from '#/app/agentProfileCatalog/agentProfileContribution';
 
 export type { SkippedAgentFile } from '#/app/agentProfileCatalog/agentProfileContribution';
@@ -27,7 +26,6 @@ export interface AgentFileDefinition {
   readonly tools?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];
-  readonly modelPreference?: AgentModelPreference;
   readonly prompt: string;
   readonly path: string;
   readonly source: AgentFileSource;

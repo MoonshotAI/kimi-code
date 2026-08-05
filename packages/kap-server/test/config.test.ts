@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -97,38 +97,5 @@ describe('server-v2 /api/v1/config', () => {
     const after = await getConfig();
     expect(after.default_permission_mode).toBe('auto');
     expect(after.yolo).toBe(false);
-  });
-
-  it('POST secondary_model persists [secondary_model] and echoes it on GET', async () => {
-    await boot();
-    const cfg = await patchConfig({
-      secondary_model: { model: 'k2-test', default_effort: 'high' },
-    });
-    expect(cfg.secondary_model).toEqual({ model: 'k2-test', defaultEffort: 'high' });
-
-    const after = await getConfig();
-    expect(after.secondary_model).toEqual({ model: 'k2-test', defaultEffort: 'high' });
-
-    const toml = await readFile(join(home as string, 'config.toml'), 'utf-8');
-    expect(toml).toContain('[secondary_model]');
-    expect(toml).toContain('model = "k2-test"');
-    expect(toml).toContain('default_effort = "high"');
-  });
-
-  it('GET hides the synthesized __secondary__ derived entry from models', async () => {
-    await boot('[models.k2-test]\nprovider = "example"\nmodel = "example-model"\n');
-    // `default_effort` is a patch field, so the overlay synthesizes the
-    // `__secondary__` derived entry into the effective `models` view.
-    const cfg = await patchConfig({
-      secondary_model: { model: 'k2-test', default_effort: 'high' },
-    });
-    const models = cfg.models as Record<string, unknown>;
-    expect(models['k2-test']).toBeDefined();
-    expect(models['__secondary__']).toBeUndefined();
-
-    const after = await getConfig();
-    const afterModels = after.models as Record<string, unknown>;
-    expect(afterModels['k2-test']).toBeDefined();
-    expect(afterModels['__secondary__']).toBeUndefined();
   });
 });

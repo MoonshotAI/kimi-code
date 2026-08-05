@@ -10,9 +10,9 @@
  * under TaskList/TaskOutput/TaskStop when `run_in_background=true` or after
  * detach), and terminal text formatting.
  *
- * Spawn bindings use an explicit tool choice first, then the target profile's
- * symbolic model preference, before `resolveSubagentBinding` falls back to the
- * configured secondary model or the caller's model. The selected alias is
+ * Spawn bindings use the explicit tool `model` choice first, before
+ * `resolveSubagentBinding` falls back to the configured `[subagent.models]`
+ * pool default or the caller's model. The selected alias is
  * resolved through the model catalog before lifecycle allocation. A resumed
  * agent keeps the model recorded in its own wire journal — with per-subagent
  * models there is no "child follows the parent's current model" invariant to
@@ -69,7 +69,6 @@ import {
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ILogService } from '#/_base/log/log';
 import { IConfigService } from '#/app/config/config';
-import { IFlagService } from '#/app/flag/flag';
 import { IModelCatalog } from '#/kosong/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { isSubagentMeta, subagentLabels, subagentParentAgentId } from '#/session/agentLifecycle/subagentMetadata';
@@ -83,11 +82,11 @@ import {
   buildSubagentModelDescriptions,
   formatSubagentTimeoutDescription,
   resolveSubagentBinding,
+  resolveSubagentModelPool,
   resolveSubagentTimeoutMs,
   stripSubagentModelParameter,
   wrapSubagentModelError,
 } from '#/session/subagent/configSection';
-import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import {
   BACKGROUND_AGENT_UNAVAILABLE,
   DEFAULT_PROFILE_NAME,
@@ -113,14 +112,14 @@ export class SubagentTool implements ISubagentTool {
   readonly name: string = 'Agent';
 
   /**
-   * The `model` choice only exists while the `secondary-model` experiment is
-   * on; off, the advertised schema drops it so the concept never enters the
-   * prompt. Read live per request (same as `description`).
+   * The `model` choice only exists while a `[subagent.models]` pool is
+   * configured; without one the advertised schema drops it so the concept
+   * never enters the prompt. Read live per request (same as `description`).
    */
   get parameters(): Record<string, unknown> {
-    return this.flags.enabled(SECONDARY_MODEL_FLAG_ID)
-      ? SUBAGENT_TOOL_PARAMETERS
-      : SUBAGENT_TOOL_PARAMETERS_NO_MODEL;
+    return resolveSubagentModelPool(this.config) === undefined
+      ? SUBAGENT_TOOL_PARAMETERS_NO_MODEL
+      : SUBAGENT_TOOL_PARAMETERS;
   }
 
   private readonly callerAgentId: string;
@@ -141,7 +140,6 @@ export class SubagentTool implements ISubagentTool {
     @ILogService private readonly log: ILogService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IConfigService private readonly config: IConfigService,
-    @IFlagService private readonly flags: IFlagService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {
     this.callerAgentId = scopeContext.agentId;
@@ -166,16 +164,13 @@ export class SubagentTool implements ISubagentTool {
       this.knownToolReferences(),
       (profile, name, source) =>
         this.toolPolicy.isToolActiveForProfile(profile, name, source),
-      this.flags.enabled(SECONDARY_MODEL_FLAG_ID),
     );
     if (typeLines) {
       description += `\n\nAvailable agent types (pass via subagent_type):\n${typeLines}`;
     }
     const modelLines = buildSubagentModelDescriptions(
       this.config,
-      this.flags,
       this.profile.data().modelAlias,
-      this.modelCatalog,
     );
     if (modelLines !== undefined) {
       description += `\n\n${modelLines}`;
@@ -293,9 +288,8 @@ export class SubagentTool implements ISubagentTool {
       }
       const binding = resolveSubagentBinding(
         this.config,
-        this.flags,
         { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
-        args.model ?? profile.modelPreference,
+        args.model,
       );
       let created: IAgentScopeHandle;
       try {
@@ -506,7 +500,6 @@ function buildProfileDescriptions(
     name: string,
     source: ToolReference['source'],
   ) => boolean,
-  showModelPreferences: boolean,
 ): string {
   return profiles
     .map((profile) => {
@@ -514,10 +507,6 @@ function buildProfileDescriptions(
         (part): part is string => part !== undefined && part.length > 0,
       );
       const header = details.length === 0 ? `- ${profile.name}` : `- ${profile.name}: ${details.join(' ')}`;
-      const headerLines =
-        !showModelPreferences || profile.modelPreference === undefined
-          ? header
-          : `${header}\n  Model preference: ${profile.modelPreference}`;
       const activeTools = resolveActiveToolNames(profile);
       const externallyRestricted = tools.some(
         (tool) =>
@@ -529,20 +518,20 @@ function buildProfileDescriptions(
           .filter((tool) => isToolActive(profile, tool.name, tool.source))
           .map((tool) => tool.name);
         if (effectiveTools.length === 0) {
-          return `${headerLines}\n  Tools: none`;
+          return `${header}\n  Tools: none`;
         }
-        return `${headerLines}\n  Tools: ${effectiveTools.join(', ')}`;
+        return `${header}\n  Tools: ${effectiveTools.join(', ')}`;
       }
       if (activeTools === undefined) {
         if ((profile.disallowedTools?.length ?? 0) > 0) {
-          return `${headerLines}\n  Tools: all except ${profile.disallowedTools!.join(', ')}`;
+          return `${header}\n  Tools: all except ${profile.disallowedTools!.join(', ')}`;
         }
-        return `${headerLines}\n  Tools: all`;
+        return `${header}\n  Tools: all`;
       }
       if (activeTools.length === 0) {
-        return `${headerLines}\n  Tools: none`;
+        return `${header}\n  Tools: none`;
       }
-      return `${headerLines}\n  Tools: ${activeTools.join(', ')}`;
+      return `${header}\n  Tools: ${activeTools.join(', ')}`;
     })
     .join('\n');
 }

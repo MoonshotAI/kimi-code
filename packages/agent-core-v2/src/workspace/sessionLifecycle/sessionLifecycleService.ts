@@ -56,7 +56,7 @@
  * background.
  * The session-level services whose subscriptions
  * must exist before the first agent / turn (external hooks, cron, the
- * secondary-model startup warning) opt into `OnScopeCreated` activation.
+ * subagent model-pool startup validation) opt into `OnScopeCreated` activation.
  */
 
 import { randomUUID } from 'node:crypto';

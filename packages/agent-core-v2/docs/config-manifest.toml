@@ -8,7 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (25 sections · 3 overlay(s))
+# Index (24 sections · 2 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/app/skillCatalog/configSection.ts
 #   cron                     src/app/cron/configSection.ts
@@ -27,7 +27,6 @@
 #   models                   src/app/kosongConfig/configSection.ts
 #   permission               src/agent/permissionRules/configSection.ts
 #   providers                src/app/kosongConfig/configSection.ts
-#   secondaryModel           src/app/kosongConfig/configSection.ts
 #   services                 src/app/auth/configSection.ts
 #   subagent                 src/session/subagent/configSection.ts
 #   task                     src/agent/task/configSection.ts
@@ -36,7 +35,6 @@
 #   tools                    src/agent/toolPolicy/configSection.ts
 #   (overlay) servicesCredentialEnvOverlay  src/app/auth/configSection.ts
 #   (overlay) kimiModelEnvOverlay  src/app/kosongConfig/envOverlay.ts
-#   (overlay) secondaryModelOverlay  src/app/kosongConfig/secondaryModelOverlay.ts
 
 # ##########################################################################
 # background
@@ -317,29 +315,6 @@ merge_all_available_skills = true
   # source: record<string, any>
 
 # ##########################################################################
-# secondaryModel (config.toml: secondary_model)
-#   owner: src/app/kosongConfig/configSection.ts
-#   scope: core
-#   hooks: stripEnv
-#   env:
-#     model <- KIMI_SECONDARY_MODEL (custom parse)
-#     default_effort <- KIMI_SECONDARY_EFFORT (custom parse)
-# ##########################################################################
-
-[secondary_model]
-# max_context_size: integer
-# max_input_size: integer
-# max_output_size: integer
-# capabilities: string[]
-# display_name: string
-# reasoning_key: string
-# adaptive_thinking: boolean
-# support_efforts: string[]
-# default_effort: string
-# off_effort: string
-# model: string
-
-# ##########################################################################
 # services
 #   owner: src/app/auth/configSection.ts
 #   scope: core
@@ -382,6 +357,8 @@ merge_all_available_skills = true
 
 [subagent]
 timeout_ms = 7200000
+# default_model: string
+# models: record<string, string>
 
 # ##########################################################################
 # task

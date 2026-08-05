@@ -6,19 +6,12 @@ import { Readable, type Writable } from 'node:stream';
 import { LifecycleScope, type IAgentScopeHandle } from '#/_base/di/scope';
 import { Event, type Event as KimiEvent } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import { IFlagService } from '#/app/flag/flag';
-import { MASTER_ENV } from '#/app/flag/flagService';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { createHooks } from '#/hooks';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { TokenUsage } from '#/kosong/contract/usage';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
-import { SECONDARY_DERIVED_MODEL_ID } from '#/app/kosongConfig/secondaryModelOverlay';
-import {
-  SECONDARY_MODEL_FLAG_ENV,
-  SECONDARY_MODEL_FLAG_ID,
-} from '#/session/subagent/flag';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
@@ -70,7 +63,6 @@ import {
   configServices,
   createCommandRunner,
   createTestAgent,
-  appService,
   execEnvServices,
   externalHookServices,
   homeDirServices,
@@ -82,16 +74,8 @@ import {
   type TestAgentServiceOverride,
 } from '../harness';
 import { executeTool } from '../tools/fixtures/execute-tool';
-import { stubFlag } from '../app/flag/stubs';
 
 const signal = new AbortController().signal;
-
-function secondaryModelFlags(enabled = true): TestAgentServiceOverride {
-  return appService(
-    IFlagService,
-    stubFlag((id) => enabled && id === SECONDARY_MODEL_FLAG_ID),
-  );
-}
 
 function agentSchemaProperties<T = unknown>(): Record<string, T> {
   return (
@@ -107,6 +91,16 @@ function agentSwarmSchemaProperties<T = unknown>(): Record<string, T> {
 
 const BACKGROUND_AGENT_NEXT_STEP =
   'next_step: The completion arrives automatically in a later turn — do NOT wait, poll, or call TaskOutput on it; continue with other work or hand back to the user. (If you have nothing to do until it finishes, run such tasks in the foreground next time.)';
+
+/**
+ * Model entries backing the `[subagent.models]` pools used below: the harness
+ * creates a real session scope, so the startup pool validation resolves every
+ * pool alias through the real catalog unless a stub catalog is injected.
+ */
+const POOL_MODEL_ENTRIES = {
+  'provider/fast': { provider: 'test-provider', model: 'fast-model', maxContextSize: 262_144 },
+  'provider/smart': { provider: 'test-provider', model: 'smart-model', maxContextSize: 262_144 },
+};
 
 function deferred<T>(): {
   readonly promise: Promise<T>;
@@ -162,34 +156,6 @@ function hookSlot<T>() {
 
 function noopDisposable() {
   return { dispose: () => {} };
-}
-
-function profileCatalogWithPreference(
-  profileName: string,
-  modelPreference: 'primary' | 'secondary',
-): ISessionAgentProfileCatalog {
-  const main: AgentProfile = normalizeAgentProfile({
-    name: 'agent',
-    description: 'Main agent',
-    systemPrompt: () => 'main',
-  });
-  const target: AgentProfile = normalizeAgentProfile({
-    name: profileName,
-    description: `${profileName} agent`,
-    modelPreference,
-    systemPrompt: () => profileName,
-  });
-  return {
-    _serviceBrand: undefined,
-    ready: Promise.resolve(),
-    onDidChange: Event.None as ISessionAgentProfileCatalog['onDidChange'],
-    get: (name) => [main, target].find((profile) => profile.name === name),
-    getDefault: () => main,
-    list: () => [target],
-    inspect: () => undefined,
-    load: async () => {},
-    reload: async () => {},
-  };
 }
 
 function modelCatalogResolving(...aliases: readonly string[]): IModelCatalog {
@@ -483,11 +449,12 @@ describe('SubagentToolInputSchema', () => {
     expect(properties).not.toHaveProperty('timeout');
   });
 
-  it('exposes the model choice parameter in the JSON schema', () => {
-    const properties = agentSchemaProperties<{ description?: string; enum?: string[] }>();
+  it('exposes the model parameter as a free-form string in the JSON schema', () => {
+    const properties = agentSchemaProperties<{ description?: string; type?: string; enum?: string[] }>();
 
-    expect(properties['model']?.enum).toEqual(['secondary', 'primary']);
-    expect(properties['model']?.description).toContain('secondary model');
+    expect(properties['model']?.type).toBe('string');
+    expect(properties['model']?.enum).toBeUndefined();
+    expect(properties['model']?.description).toContain('Available models');
   });
 
   it('normalizes the default subagent type into tool args', () => {
@@ -702,81 +669,66 @@ describe('Agent tool description', () => {
     );
   });
 
-  it('shows the model preference for an agent type when the experiment is enabled', () => {
-    ctx = createTestAgent(
-      secondaryModelFlags(),
-      sessionService(
-        ISessionAgentProfileCatalog,
-        profileCatalogWithPreference('coder', 'primary'),
-      ),
-    );
-
-    expect(agentDescription()).toContain('- coder: coder agent\n  Model preference: primary');
-  });
-
-  it('hides model preferences when the experiment is disabled', () => {
-    ctx = createTestAgent(
-      secondaryModelFlags(false),
-      sessionService(
-        ISessionAgentProfileCatalog,
-        profileCatalogWithPreference('coder', 'primary'),
-      ),
-    );
-
-    expect(agentDescription()).not.toContain('Model preference:');
-  });
-
-  it('omits the models section when no secondary model is configured', () => {
+  it('omits the models section when no [subagent.models] pool is configured', () => {
     ctx = createTestAgent();
 
     expect(agentDescription()).not.toContain('Available models');
   });
 
-  it('lists both selectable models when the secondary-model env flag is enabled', () => {
-    vi.stubEnv(MASTER_ENV, '0');
-    vi.stubEnv(SECONDARY_MODEL_FLAG_ENV, '1');
+  it('renders the pool in config order with the default first and a generic primary line', () => {
     ctx = createTestAgent({
-      initialConfig: { secondaryModel: { model: 'provider/secondary' } },
-    });
-
-    const description = agentDescription();
-
-    expect(description).toContain('Available models (pass via model):');
-    expect(description).toContain('- secondary: provider/secondary (default)');
-    expect(description).toContain('- primary: mock-model');
-  });
-
-  it('advertises the resolved capability flags for each selectable model', () => {
-    ctx = createTestAgent(secondaryModelFlags(), {
       initialConfig: {
-        secondaryModel: { model: 'secondary-model' },
-        models: {
-          'secondary-model': {
-            provider: 'test-provider',
-            model: 'secondary-model',
-            maxContextSize: 262_144,
-            capabilities: ['image_in', 'thinking'],
+        subagent: {
+          defaultModel: 'provider/fast',
+          models: {
+            'provider/fast': 'fast and cheap',
+            'provider/smart': 'hard tasks',
           },
         },
+        models: POOL_MODEL_ENTRIES,
       },
     });
 
     const description = agentDescription();
 
-    expect(description).toContain(
-      '- secondary: secondary-model (default) — the configured secondary model; prefer it for routine subagent tasks; capabilities: image_in, thinking',
+    expect(description).toContain('Available models (pass via model):');
+    // The caller's own model is not in the pool: generic primary hint last.
+    const defaultIndex = description.indexOf('- provider/fast [default]: fast and cheap');
+    const smartIndex = description.indexOf('- provider/smart: hard tasks');
+    const primaryIndex = description.indexOf(
+      '- primary: the main model you are running on; use it for hard, quality-sensitive subagent tasks',
     );
-    expect(description).toContain(
-      '- primary: mock-model — the main model you are running on; use it for hard, quality-sensitive subagent tasks; capabilities: none',
-    );
+    expect(defaultIndex).toBeGreaterThanOrEqual(0);
+    expect(smartIndex).toBeGreaterThan(defaultIndex);
+    expect(primaryIndex).toBeGreaterThan(smartIndex);
   });
 
-  it('omits the models section when configured but the experiment is disabled', () => {
-    ctx = createTestAgent(secondaryModelFlags(false), {
-      initialConfig: { secondaryModel: { model: 'provider/secondary' } },
+  it('folds the caller-in-pool alias into the primary line and renders empty descriptions bare', () => {
+    ctx = createTestAgent({
+      initialConfig: {
+        subagent: {
+          defaultModel: 'provider/fast',
+          models: {
+            'provider/fast': 'fast and cheap',
+            'mock-model': 'the main model, great at hard things',
+            'provider/smart': '',
+          },
+        },
+        models: POOL_MODEL_ENTRIES,
+      },
     });
 
-    expect(agentDescription()).not.toContain('Available models');
+    const description = agentDescription();
+
+    expect(description).toContain('- provider/fast [default]: fast and cheap');
+    // The caller's own alias is never listed on its own — it renders through
+    // the primary line with its pool description.
+    expect(description).not.toContain('- mock-model:');
+    expect(description).toContain(
+      '- primary (mock-model) [main model]: the main model, great at hard things',
+    );
+    // An empty-string description renders a bare alias line.
+    expect(description).toContain('- provider/smart\n');
   });
 
   function agentParameters(): Record<string, unknown> {
@@ -785,10 +737,8 @@ describe('Agent tool description', () => {
     return tool!.parameters!;
   }
 
-  it('strips the model parameter from the advertised schema when the experiment is disabled', () => {
-    ctx = createTestAgent(secondaryModelFlags(false), {
-      initialConfig: { secondaryModel: { model: 'provider/secondary' } },
-    });
+  it('strips the model parameter from the advertised schema when no pool is configured', () => {
+    ctx = createTestAgent();
 
     const properties = agentParameters()['properties'] as Record<string, unknown>;
 
@@ -796,14 +746,24 @@ describe('Agent tool description', () => {
     expect(properties).toHaveProperty('prompt');
   });
 
-  it('advertises the model parameter when the experiment is enabled', () => {
-    ctx = createTestAgent(secondaryModelFlags(), {
-      initialConfig: { secondaryModel: { model: 'provider/secondary' } },
+  it('advertises the model parameter when a pool is configured', () => {
+    ctx = createTestAgent({
+      initialConfig: {
+        subagent: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast and cheap' },
+        },
+        models: POOL_MODEL_ENTRIES,
+      },
     });
 
-    const properties = agentParameters()['properties'] as Record<string, { enum?: string[] }>;
+    const properties = agentParameters()['properties'] as Record<
+      string,
+      { type?: string; enum?: unknown }
+    >;
 
-    expect(properties['model']?.enum).toEqual(['secondary', 'primary']);
+    expect(properties['model']?.type).toBe('string');
+    expect(properties['model']?.enum).toBeUndefined();
   });
 });
 
@@ -825,7 +785,7 @@ describe('Agent tool execution contract', () => {
       sessionService(ISessionSubagentService, lifecycle),
       sessionService(ISessionCronService, cronStub),
       modelProviderServices(
-        modelCatalogResolving('mock-model', 'provider/secondary', SECONDARY_DERIVED_MODEL_ID),
+        modelCatalogResolving('mock-model', 'provider/fast', 'provider/smart'),
       ),
       ...extra,
     );
@@ -1009,37 +969,15 @@ describe('Agent tool execution contract', () => {
     expect(result.output).toContain('child result');
   });
 
-  it('spawns the subagent on the configured secondary model by default', async () => {
+  it('spawns the subagent on the pool default model when the tool call omits model', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
-    const context = createAgentToolContext(
-      lifecycle,
-      secondaryModelFlags(),
-      {
-        initialConfig: {
-          secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' },
+    const context = createAgentToolContext(lifecycle, {
+      initialConfig: {
+        subagent: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast and cheap', 'provider/smart': 'hard tasks' },
         },
       },
-    );
-
-    await executeAgentTool(context, {
-      prompt: 'Investigate',
-      description: 'Find cause',
-    });
-
-    expect(lifecycle.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        binding: expect.objectContaining({
-          model: SECONDARY_DERIVED_MODEL_ID,
-          thinking: 'low',
-        }),
-      }),
-    );
-  });
-
-  it('binds the pointed entry directly with natural thinking when the recipe has no patch', async () => {
-    const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
-    const context = createAgentToolContext(lifecycle, secondaryModelFlags(), {
-      initialConfig: { secondaryModel: { model: 'provider/secondary' } },
     });
 
     await executeAgentTool(context, {
@@ -1047,10 +985,12 @@ describe('Agent tool execution contract', () => {
       description: 'Find cause',
     });
 
+    // Pool bindings carry no explicit thinking: the subagent resolves thinking
+    // naturally instead of inheriting the caller's level.
     expect(lifecycle.create).toHaveBeenCalledWith(
       expect.objectContaining({
         binding: expect.objectContaining({
-          model: 'provider/secondary',
+          model: 'provider/fast',
           thinking: undefined,
         }),
       }),
@@ -1059,15 +999,14 @@ describe('Agent tool execution contract', () => {
 
   it('spawns on the caller model when the tool call opts into "primary"', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
-    const context = createAgentToolContext(
-      lifecycle,
-      secondaryModelFlags(),
-      {
-        initialConfig: {
-          secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' },
+    const context = createAgentToolContext(lifecycle, {
+      initialConfig: {
+        subagent: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast and cheap' },
         },
       },
-    );
+    });
 
     await executeAgentTool(context, {
       prompt: 'Investigate',
@@ -1085,73 +1024,64 @@ describe('Agent tool execution contract', () => {
     );
   });
 
-  it('uses the target profile model preference when the tool call omits model', async () => {
+  it('spawns on the pool alias chosen via the model parameter', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
-    const context = createAgentToolContext(
-      lifecycle,
-      sessionService(
-        ISessionAgentProfileCatalog,
-        profileCatalogWithPreference('coder', 'primary'),
-      ),
-      secondaryModelFlags(),
-      {
-        initialConfig: { secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' } },
+    const context = createAgentToolContext(lifecycle, {
+      initialConfig: {
+        subagent: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast and cheap', 'provider/smart': 'hard tasks' },
+        },
       },
-    );
+    });
 
     await executeAgentTool(context, {
       prompt: 'Investigate',
       description: 'Find cause',
+      model: 'provider/smart',
     });
 
     expect(lifecycle.create).toHaveBeenCalledWith(
       expect.objectContaining({
         binding: expect.objectContaining({
-          model: 'mock-model',
-          thinking: 'off',
+          model: 'provider/smart',
+          thinking: undefined,
         }),
       }),
     );
   });
 
-  it('lets an explicit model override the target profile preference', async () => {
+  it('rejects a model choice outside the pool, listing the available models', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
-    const context = createAgentToolContext(
-      lifecycle,
-      sessionService(
-        ISessionAgentProfileCatalog,
-        profileCatalogWithPreference('coder', 'primary'),
-      ),
-      secondaryModelFlags(),
-      {
-        initialConfig: { secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' } },
+    const context = createAgentToolContext(lifecycle, {
+      initialConfig: {
+        subagent: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast and cheap', 'provider/smart': 'hard tasks' },
+        },
       },
-    );
-
-    await executeAgentTool(context, {
-      prompt: 'Investigate',
-      description: 'Find cause',
-      model: 'secondary',
     });
 
-    expect(lifecycle.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        binding: expect.objectContaining({
-          model: SECONDARY_DERIVED_MODEL_ID,
-          thinking: 'low',
-        }),
-      }),
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      model: 'provider/typo',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain(
+      'Invalid model "provider/typo". Available models: provider/fast, provider/smart, primary.',
     );
+    expect(lifecycle.create).not.toHaveBeenCalled();
   });
 
-  it('inherits the caller model when no secondary model is configured', async () => {
+  it('inherits the caller model when no pool is configured', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
     const context = createAgentToolContext(lifecycle);
 
     await executeAgentTool(context, {
       prompt: 'Investigate',
       description: 'Find cause',
-      model: 'secondary',
     });
 
     expect(lifecycle.create).toHaveBeenCalledWith(
@@ -1164,11 +1094,25 @@ describe('Agent tool execution contract', () => {
     );
   });
 
-  it('points at the secondary model config when the configured alias is invalid', async () => {
-    const lifecycle = createAgentLifecycleStub();
-    const context = createAgentToolContext(lifecycle, secondaryModelFlags(), {
-      initialConfig: { secondaryModel: { model: 'provider/bad' } },
+  it('points at the [subagent.models] config when the bound alias stops resolving', async () => {
+    // The pool validates at session creation, but a later config edit (or a
+    // catalog refresh) can still leave the bound alias dangling at spawn time.
+    const lifecycle = createAgentLifecycleStub({
+      createError: new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        'Model "provider/bad" is not configured in config.toml.',
+        { details: { model: 'provider/bad' } },
+      ),
     });
+    const context = createAgentToolContext(
+      lifecycle,
+      modelProviderServices(modelCatalogResolving('mock-model', 'provider/bad')),
+      {
+        initialConfig: {
+          subagent: { defaultModel: 'provider/bad', models: { 'provider/bad': 'broken' } },
+        },
+      },
+    );
 
     const result = await executeAgentTool(context, {
       prompt: 'Investigate',
@@ -1177,8 +1121,7 @@ describe('Agent tool execution contract', () => {
 
     expect(result.isError).toBe(true);
     expect(result.output).toContain('Model "provider/bad" is not configured in config.toml.');
-    expect(result.output).toContain('comes from [secondary_model].model / KIMI_SECONDARY_MODEL');
-    expect(lifecycle.create).not.toHaveBeenCalled();
+    expect(result.output).toContain('comes from [subagent.models]');
   });
 
   it('does not rewrite spawn failures unrelated to the model config', async () => {
@@ -1186,7 +1129,9 @@ describe('Agent tool execution contract', () => {
       createError: new Error('MCP server failed to start'),
     });
     const context = createAgentToolContext(lifecycle, {
-      initialConfig: { secondaryModel: { model: 'provider/secondary' } },
+      initialConfig: {
+        subagent: { defaultModel: 'provider/fast', models: { 'provider/fast': 'fast and cheap' } },
+      },
     });
 
     const result = await executeAgentTool(context, {
@@ -1197,7 +1142,7 @@ describe('Agent tool execution contract', () => {
 
     expect(result.isError).toBe(true);
     expect(result.output).toContain('MCP server failed to start');
-    expect(result.output).not.toContain('KIMI_SECONDARY_MODEL');
+    expect(result.output).not.toContain('[subagent.models]');
   });
 
   it('mirrors v1-compatible subagent lifecycle event fields', async () => {
@@ -2043,7 +1988,7 @@ describe('AgentSwarmToolInputSchema', () => {
 
     expect(properties['subagent_type']?.description).toContain('defaults to coder');
     expect(properties['resume_agent_ids']?.description).toContain('Map of existing subagent');
-    expect(properties['model']?.description).toContain('secondary model');
+    expect(properties['model']?.description).toContain('Available models');
     expect(properties).not.toHaveProperty('run_in_background');
     expect(properties).not.toHaveProperty('timeout');
   });
@@ -2081,22 +2026,31 @@ describe('AgentSwarm tool description', () => {
     );
   });
 
-  it('omits the models section when no secondary model is configured', () => {
+  it('omits the models section when no [subagent.models] pool is configured', () => {
     ctx = createTestAgent();
 
     expect(agentSwarmDescription()).not.toContain('Available models');
   });
 
-  it('lists both selectable models when a secondary model is configured', () => {
-    ctx = createTestAgent(secondaryModelFlags(), {
-      initialConfig: { secondaryModel: { model: 'provider/secondary' } },
+  it('renders the configured pool with the default marker and a generic primary line', () => {
+    ctx = createTestAgent({
+      initialConfig: {
+        subagent: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast and cheap', 'provider/smart': 'hard tasks' },
+        },
+        models: POOL_MODEL_ENTRIES,
+      },
     });
 
     const description = agentSwarmDescription();
 
     expect(description).toContain('Available models (pass via model):');
-    expect(description).toContain('- secondary: provider/secondary (default)');
-    expect(description).toContain('- primary: mock-model');
+    expect(description).toContain('- provider/fast [default]: fast and cheap');
+    expect(description).toContain('- provider/smart: hard tasks');
+    expect(description).toContain(
+      '- primary: the main model you are running on; use it for hard, quality-sensitive subagent tasks',
+    );
   });
 
   function agentSwarmParameters(): Record<string, unknown> {
@@ -2105,10 +2059,8 @@ describe('AgentSwarm tool description', () => {
     return tool!.parameters!;
   }
 
-  it('strips the model parameter from the advertised schema when the experiment is disabled', () => {
-    ctx = createTestAgent(secondaryModelFlags(false), {
-      initialConfig: { secondaryModel: { model: 'provider/secondary' } },
-    });
+  it('strips the model parameter from the advertised schema when no pool is configured', () => {
+    ctx = createTestAgent();
 
     const properties = agentSwarmParameters()['properties'] as Record<string, unknown>;
 
@@ -2116,14 +2068,24 @@ describe('AgentSwarm tool description', () => {
     expect(properties).toHaveProperty('prompt_template');
   });
 
-  it('advertises the model parameter when the experiment is enabled', () => {
-    ctx = createTestAgent(secondaryModelFlags(), {
-      initialConfig: { secondaryModel: { model: 'provider/secondary' } },
+  it('advertises the model parameter when a pool is configured', () => {
+    ctx = createTestAgent({
+      initialConfig: {
+        subagent: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast and cheap' },
+        },
+        models: POOL_MODEL_ENTRIES,
+      },
     });
 
-    const properties = agentSwarmParameters()['properties'] as Record<string, { enum?: string[] }>;
+    const properties = agentSwarmParameters()['properties'] as Record<
+      string,
+      { type?: string; enum?: unknown }
+    >;
 
-    expect(properties['model']?.enum).toEqual(['secondary', 'primary']);
+    expect(properties['model']?.type).toBe('string');
+    expect(properties['model']?.enum).toBeUndefined();
   });
 });
 
@@ -2210,7 +2172,7 @@ describe('AgentSwarm tool execution contract', () => {
     expect(result.isError).toBeUndefined();
   });
 
-  it('threads the configured secondary model into spawn task bindings', async () => {
+  it('threads the pool default model into spawn task bindings', async () => {
     const runSwarm = vi.fn(
       async (
         args: SessionSwarmRunArgs,
@@ -2231,10 +2193,13 @@ describe('AgentSwarm tool execution contract', () => {
     };
     ctx = createTestAgent(
       swarmServices(swarmService),
-      secondaryModelFlags(),
       {
         initialConfig: {
-          secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' },
+          subagent: {
+            defaultModel: 'provider/fast',
+            models: { 'provider/fast': 'fast and cheap', 'provider/smart': 'hard tasks' },
+          },
+          models: POOL_MODEL_ENTRIES,
         },
       },
     );
@@ -2256,62 +2221,12 @@ describe('AgentSwarm tool execution contract', () => {
         tasks: [
           expect.objectContaining({
             kind: 'spawn',
-            binding: { model: SECONDARY_DERIVED_MODEL_ID, thinking: 'low' },
+            binding: { model: 'provider/fast', thinking: undefined },
           }),
           expect.objectContaining({
             kind: 'spawn',
-            binding: { model: SECONDARY_DERIVED_MODEL_ID, thinking: 'low' },
+            binding: { model: 'provider/fast', thinking: undefined },
           }),
-        ],
-      }),
-    );
-  });
-
-  it('uses the target profile model preference for item-based spawns', async () => {
-    const runSwarm = vi.fn(
-      async (args: SessionSwarmRunArgs): Promise<readonly SessionSwarmRunResult[]> =>
-        args.tasks.map((task, index) => ({
-          task,
-          agentId: `agent-explore-${String(index + 1)}`,
-          status: 'completed' as const,
-          result: 'ok',
-        })),
-    );
-    const swarmService: ISessionSwarmService = {
-      _serviceBrand: undefined,
-      getSwarmItem: async () => undefined,
-      run: runSwarm as ISessionSwarmService['run'],
-      cancel: () => {},
-    };
-    ctx = createTestAgent(
-      swarmServices(swarmService),
-      sessionService(
-        ISessionAgentProfileCatalog,
-        profileCatalogWithPreference('explore', 'primary'),
-      ),
-      secondaryModelFlags(),
-      {
-        initialConfig: { secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' } },
-      },
-    );
-
-    await executeTool(agentSwarmTool(ctx), {
-      turnId: 0,
-      toolCallId: 'call_swarm',
-      args: {
-        description: 'Review files',
-        prompt_template: 'Review {{item}}',
-        items: ['src/a.ts', 'src/b.ts'],
-        subagent_type: 'explore',
-      },
-      signal,
-    });
-
-    expect(runSwarm).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tasks: [
-          expect.objectContaining({ binding: { model: 'mock-model', thinking: 'off' } }),
-          expect.objectContaining({ binding: { model: 'mock-model', thinking: 'off' } }),
         ],
       }),
     );
@@ -2338,10 +2253,13 @@ describe('AgentSwarm tool execution contract', () => {
     };
     ctx = createTestAgent(
       swarmServices(swarmService),
-      secondaryModelFlags(),
       {
         initialConfig: {
-          secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' },
+          subagent: {
+            defaultModel: 'provider/fast',
+            models: { 'provider/fast': 'fast and cheap' },
+          },
+          models: POOL_MODEL_ENTRIES,
         },
       },
     );
