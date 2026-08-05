@@ -6,18 +6,16 @@
  * events drive the live phase/stream/retry detail, permission approval events
  * drive the pending-approval list, while task and full-compaction events drive
  * the background-work slice. The view seeds once from `IAgentLoopService`,
- * `IAgentTaskService`, and `IAgentFullCompactionService`, and folds the wire
- * `TurnModel`'s persisted `lastEnded` into `lastTurn` through the
- * `IWireService` `onDidRestore` hook — the journal is replayed only after the
- * agent scope (and this view) is constructed, so the restore-time fold is
- * what lets a cold-resumed agent still know how its last turn ended (reads,
+ * `IAgentTaskService`, and `IAgentFullCompactionService`, and recovers the
+ * last turn's outcome from the wire `TurnModel` through `IWireService`, so
+ * a cold-resumed agent still reports how its previous turn ended (reads,
  * never writes). Otherwise the view holds only derived state, so it can be
- * discarded and rebuilt at any time. The mutable view state (`lifecycle`, `turn`, `lastTurn`,
- * `background`, `current`) is registered into `agentState`
- * (`IAgentStateService`) and read/written through it; the event-bus
- * subscription handles stay mechanism held by the `Disposable` base, and
- * `MutableTurn`'s in-place-mutated Maps stay instance fields of that
- * per-turn class. Bound at Agent scope.
+ * discarded and rebuilt at any time. The mutable view state (`lifecycle`,
+ * `turn`, `lastTurn`, `background`, `current`) is registered into
+ * `agentState` (`IAgentStateService`) and read/written through it; the
+ * event-bus subscription handles stay mechanism held by the `Disposable`
+ * base, and `MutableTurn`'s in-place-mutated Maps stay instance fields of
+ * that per-turn class. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
