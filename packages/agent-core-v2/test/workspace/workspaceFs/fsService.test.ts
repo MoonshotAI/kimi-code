@@ -59,11 +59,11 @@ function workspaceGitStub(git: IGitService): IWorkspaceGitService {
 }
 
 function fakeFs(
-  files: Record<string, string>,
+  files: Record<string, string | Buffer>,
   symlinks: readonly string[] = [],
   symlinkTargets: Record<string, string> = {},
 ): IHostFileSystem {
-  const fileMap = new Map<string, string>();
+  const fileMap = new Map<string, string | Buffer>();
   const dirSet = new Set<string>([WORK_DIR]);
   const addAncestors = (rel: string): void => {
     const parts = rel.split('/');
@@ -116,14 +116,14 @@ function fakeFs(
     readText: async (p) => {
       const c = fileMap.get(p);
       if (c === undefined) throw enoent(p);
-      return c;
+      return typeof c === 'string' ? c : c.toString('utf8');
     },
     writeText: async () => {},
     appendText: async () => {},
     readBytes: async (p, n) => {
       const c = fileMap.get(p);
       if (c === undefined) throw enoent(p);
-      const buf = Buffer.from(c);
+      const buf = Buffer.isBuffer(c) ? c : Buffer.from(c);
       return buf.subarray(0, n ?? buf.length);
     },
     readLines: async function* (): AsyncGenerator<string> {
@@ -349,7 +349,7 @@ function defaultGitStub(): IGitService {
 }
 
 function makeSession(
-  files: Record<string, string>,
+  files: Record<string, string | Buffer>,
   handler: RunHandler,
   events: Array<{ event: string; properties: Record<string, unknown> }> = [],
   git: IGitService = defaultGitStub(),
@@ -721,6 +721,52 @@ describe('WorkspaceFsService.read', () => {
     await expect(
       fs.read({ path: 'bin.dat', offset: 0, length: 1024, encoding: 'utf-8' }),
     ).rejects.toMatchObject({ code: 'fs.is_binary' });
+  });
+
+  it('transcodes UTF-16 text with a BOM instead of throwing fs.is_binary', async () => {
+    const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('hello\nworld\n', 'utf16le')]);
+    const fs = makeSession({ 'notes.txt': utf16 }, emptyHandler);
+    const result = await fs.read({ path: 'notes.txt', offset: 0, length: 1024, encoding: 'utf-8' });
+    expect(result.content).toBe('hello\nworld\n');
+    expect(result.encoding).toBe('utf-8');
+    expect(result.is_binary).toBe(false);
+    expect(result.line_count).toBe(2);
+    expect(result.mime).toBe('text/plain');
+    expect(result.truncated).toBe(false);
+  });
+
+  it('transcodes BOM-less UTF-16 text in auto mode', async () => {
+    const fs = makeSession({ 'notes.txt': Buffer.from('hello\n', 'utf16le') }, emptyHandler);
+    const result = await fs.read({ path: 'notes.txt', offset: 0, length: 1024, encoding: 'auto' });
+    expect(result.content).toBe('hello\n');
+    expect(result.encoding).toBe('utf-8');
+    expect(result.is_binary).toBe(false);
+  });
+
+  it('transcodes BOM-marked UTF-16 content that never looks binary (CJK-only)', async () => {
+    const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('你好世界', 'utf16le')]);
+    const fs = makeSession({ 'notes.txt': utf16 }, emptyHandler);
+    const result = await fs.read({ path: 'notes.txt', offset: 0, length: 1024, encoding: 'utf-8' });
+    expect(result.content).toBe('你好世界');
+    expect(result.encoding).toBe('utf-8');
+    expect(result.is_binary).toBe(false);
+  });
+
+  it('windows the decoded UTF-8 bytes when transcoding', async () => {
+    const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('hello world', 'utf16le')]);
+    const fs = makeSession({ 'notes.txt': utf16 }, emptyHandler);
+    const result = await fs.read({ path: 'notes.txt', offset: 0, length: 5, encoding: 'utf-8' });
+    expect(result.content).toBe('hello');
+    expect(result.truncated).toBe(true);
+  });
+
+  it('keeps raw bytes for base64 requests on UTF-16 files', async () => {
+    const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('hi', 'utf16le')]);
+    const fs = makeSession({ 'notes.txt': utf16 }, emptyHandler);
+    const result = await fs.read({ path: 'notes.txt', offset: 0, length: 1024, encoding: 'base64' });
+    expect(result.encoding).toBe('base64');
+    expect(result.is_binary).toBe(true);
+    expect(result.content).toBe(utf16.toString('base64'));
   });
 
   it('throws fs.is_directory for a directory', async () => {
