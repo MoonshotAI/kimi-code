@@ -1,6 +1,6 @@
 # Plugins
 
-Plugins package reusable Kimi Code CLI capabilities into installable units — they can add [Agent Skills](./skills.md), custom [agents](./agents.md), automatically load a specified Skill at session start, contribute system-prompt instructions, and declare MCP servers to provide real tool capabilities. They are ideal for sharing workflows with a team, connecting to external services, or installing extensions from the official marketplace.
+Plugins package reusable Kimi Code CLI capabilities into installable units — they can add [Agent Skills](./skills.md), custom [agents](./agents.md), automatically load a specified Skill at session start, contribute system-prompt instructions, and declare MCP servers to provide real tool capabilities. They are ideal for sharing workflows with a team, connecting to external services, or installing extensions from the [official plugins](#official-plugins).
 
 ## Installation and Management
 
@@ -70,25 +70,36 @@ Pass a custom marketplace JSON path or URL to `/plugins marketplace <source>`, o
 }
 ```
 
-## Kimi Datasource
+## Official Plugins
 
-Kimi Datasource is the official Kimi Code data plugin. It lets you query financial market data, macroeconomic indicators, corporate registration records, academic literature, and Chinese laws and regulations in natural language — with professional finance sources such as Wind, IMF, Gildata, SEC EDGAR, and S&P Capital IQ built in, no manual API calls or data account registration required.
+Official plugins are plugins and built-in product capabilities maintained by Kimi. There are currently three:
 
-### Installation
+- **[Kimi Datasource](#kimi-datasource)**: Query financial market data, macroeconomic indicators, corporate registration records, academic literature, and Chinese laws and regulations in natural language
+- **[Kimi WebBridge](#kimi-webbridge)**: Let AI drive your own browser to get web tasks done
+- **[Kimi Computer Use](#kimi-computer-use)**: Let AI operate your desktop apps (macOS only for now)
 
-You must first complete OAuth login with a Kimi Code account via `/login`. The plugin relies on local credentials to access data services.
+### Installation and Upgrade
 
-1. Run `/plugins` and select **Official**
-2. Find **Kimi Datasource** and press `Enter` to install
-3. After installation completes, run `/reload` or `/new` to activate the plugin
+All official plugins share the same installation and upgrade flow:
 
-Using Kimi Datasource consumes your Kimi Code plan quota; the install result reminds you of this. The current latest version is v3.3.0. The plugin does not update automatically — to upgrade to a newer version, repeat the installation steps above.
+1. Run `/plugins` and press `Tab` to select **Official**
+2. Find the plugin you want and press `Enter` to install
+3. After installation completes, run `/reload` or `/new` to activate it
 
-### How to use
+Official plugins do not update automatically — when an update is available, you'll be prompted the next time you use the old version. To upgrade, repeat the installation steps above.
 
-Once installed, describe your need in natural language and Kimi Code will automatically invoke the data capabilities. You can also explicitly trigger the data query skill with `/skill:kimi-datasource`.
+### Kimi Datasource <Badge type="tip" text="v3.3.0" />
 
-### What you can do
+Kimi Datasource is the official Kimi Code data plugin, letting you query financial market data, macroeconomic indicators, corporate registration records, academic literature, and Chinese laws and regulations in natural language — no manual API calls or data accounts required.
+
+You must first complete OAuth login with a Kimi Code account via `/login`; data queries consume your Kimi Code plan quota.
+
+#### How to use
+
+1. Describe your need in natural language, and Kimi Code will automatically invoke the data capabilities
+2. Explicitly trigger the data query skill with `/skill:kimi-datasource`
+
+#### What you can do
 
 **Live market research**: Want to run a quantitative analysis on a stock? Pull three years of daily closing prices, MACD, and KDJ signals in a single query — no third-party data platforms needed.
 
@@ -100,29 +111,56 @@ Once installed, describe your need in natural language and Kimi Code will automa
 
 **On-the-spot legal lookup**: Stuck on which statute governs a residence-right contract dispute? Pinpoint the relevant Civil Code articles — full text, authority level, and validity — then pull a few comparable precedents to back them up, without digging through statute databases.
 
-**Institutional-grade US equity research**: Writing a deep dive on a US stock? Pull the 10-K filing, standardized XBRL metrics, top-50 holders, and consensus estimates in one go — SEC filings and S&P data without juggling multiple data terminals.
+**Institutional-grade US equity research**: Writing a deep dive on a US stock? Pull the annual report, standardized financial metrics, top-50 holders, and consensus estimates in one go — no more juggling multiple data terminals.
 
-### Coverage
+#### Coverage
 
 | Category | Scope |
 |---|---|
-| Stock market data | A-shares, HK, US, and major global markets — real-time/historical prices, technical indicators, financial statements, stock screening |
-| Macroeconomic data | World Bank data for 189 countries, 50+ years of time series (GDP, trade, population, climate, and more) |
+| Stocks & financial markets | Well-known databases such as Wind, S&P Capital IQ, and SEC EDGAR, covering prices, technical indicators, financials and valuation, and consensus estimates across A-shares, HK, US, and other major markets, plus official filings for 8,000+ US-listed companies (back to 2009) |
+| Macroeconomics | Well-known databases such as the World Bank and IMF, covering 50+ years of time series for 189 countries: GDP, trade, population, exchange rates, CPI, balance of payments, GDP forecasts, and more |
 | Corporate data | Business registration, equity chain, legal risk, and related-entity graph for mainland Chinese companies |
 | Academic literature | Millions of papers across physics, mathematics, CS, quantitative finance, economics — including preprints |
-| Legal | Chinese laws, regulations, and judicial cases — semantic/keyword search and detail lookup for statutes across all authority levels (constitution, laws, judicial interpretations, departmental rules), plus ordinary and authoritative case search |
-| Financial terminal (Wind) | A-share, fund, bond, and index quotes with financial indicators, company announcements and research reports, and macroeconomic data |
-| International macro (IMF) | Official IMF datasets (IFS, BOP, DOTS, WEO, and more): exchange rates, CPI, balance of payments, trade, and GDP forecasts |
-| Smart screening (Gildata) | Natural-language stock / fund / fund-manager screening, plus macro-industry data, research reports, announcements, and news |
-| US filings (SEC EDGAR) | 8,000+ US-listed companies — 10-K/10-Q statements, XBRL metrics, Form 4 insider trades, 13F institutional holdings, and 8-K material events (back to 2009) |
-| US fundamentals (S&P Capital IQ) | Standardized financial statements, valuation ratios, consensus estimates, holders and executives, competitor relationships, corporate events, and call transcripts |
+| Legal | Chinese laws, regulations, and judicial cases — statute search and detail lookup across all authority levels, plus ordinary and authoritative case search |
+| Smart screening | Well-known databases such as Gildata, covering natural-language screening for stocks, funds, and fund managers, plus macro-industry data, research reports, announcements, and news |
 
-### Billing and limitations
+#### Billing and limitations
 
 - Data queries are billed per call and consume Kimi Code account credits
 - The plugin provides read-only queries; no write or trading functionality is available
 - Technical indicators and real-time prices are only available during active trading hours
 - AI-generated output is for reference only and does not constitute investment or business advice
+
+### Kimi WebBridge
+
+Kimi WebBridge lets AI drive your browser directly — not an emulator, not a crawler, but the browser you use every day, with your login sessions and cookies. AI can open pages, read content, click buttons, fill in forms, and take screenshots just like you do, taking repetitive web operations off your hands. See the [Kimi WebBridge site](https://www.kimi.com/features/webbridge) for a product overview.
+
+#### What you can do
+
+- **Web automation**: Just say what you need — AI clicks through pages, fills in forms, reads content, and takes screenshots for you
+- **Social trending research**: Automatically browse trending topics on X (Twitter), Weibo, and Xiaohongshu, open the top-liked posts one by one to screenshot and extract key viewpoints, then organize everything into a research library with topic suggestions
+- **Job listing collection**: Filter positions on recruiting sites by keyword, city, and job type, and organize titles, links, companies, salaries, and application methods into a table
+- **Competitive analysis**: Batch-question multiple AI products and collect their answers to build side-by-side comparison reports
+- **Flight price comparison**: Query the same itinerary across multiple travel platforms, record airlines, departure/arrival times, and links sorted by price, and get recommended options
+
+### Kimi Computer Use
+
+Kimi Computer Use lets AI operate your Mac desktop apps directly — clicking, dragging, scrolling, and typing — all silently in the background without taking over your mouse (a few popup actions may still bring an app to the foreground). macOS only for now.
+
+#### Authorization
+
+The first time you use Kimi Computer Use after installation, it shows an authorization window — just follow the prompts:
+
+1. Click **Authorize** next to **Accessibility** and **Screen Recording**, and enable both permissions in System Settings — the former lets it perform clicks, typing, and scrolling; the latter lets it read screen content and locate UI elements
+2. Turn on the **Kimi Code** switch under "Connect local agents", then restart Kimi Code for it to take effect
+
+![Kimi Computer Use authorization window](../../media/kimi-computer-use-auth.jpeg)
+
+#### What you can do
+
+- **Desktop app control**: Drive macOS apps on your behalf; for example, ask AI to open NetEase Cloud Music and play a specific song
+- **Handle software that has no API**: Plenty of professional tools and internal systems have no CLI or API at all; what used to require your own clicking can now be handed to AI, like trimming the first three seconds off a clip in Final Cut Pro and exporting it
+- **Background execution**: AI completes clicks, typing, and other actions silently in the background while you keep using your computer
 
 ## Plugin Manifest
 
