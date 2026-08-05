@@ -4,14 +4,10 @@
  *
  * Owns the next available turn id, including cancelled queued reservations and
  * legacy loop-event observations. Also persists the terminal `turn.ended`
- * record (reason / error / durationMs) so downstream history rebuilds can
- * recover how a turn ended; the model folds the latest record into
- * `lastEnded` — kept across prompt/queued-cancel clock advances, cleared as
- * soon as a newer turn's loop events land — so cold-resumed read models
- * (e.g. the activity view) can seed the last ended turn's outcome without
- * replaying the journal. Consumed by the
- * Agent-scope `loopService`; the `interruptionReminder` domain projects
- * `turn.cancel` into its own model.
+ * record (reason / error / durationMs) so downstream history rebuilds and
+ * cold-resumed read models (e.g. the activity view) can recover how the last
+ * turn ended. Consumed by the Agent-scope `loopService`; the
+ * `interruptionReminder` domain projects `turn.cancel` into its own model.
  */
 
 import { z } from 'zod';
