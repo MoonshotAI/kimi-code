@@ -1051,8 +1051,8 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         // entry drops out, matching v1's "no warning" case.
         const agent = await ensureMainAgent(session);
         const agentsMdWarning = agent.accessor.get(IAgentProfileService).getAgentsMdWarning();
-        const warnings = [
-          ...(agentsMdWarning === undefined
+        const warnings =
+          agentsMdWarning === undefined
             ? []
             : [
                 {
@@ -1060,8 +1060,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
                   message: agentsMdWarning,
                   severity: 'warning' as const,
                 },
-              ]),
-        ];
+              ];
         reply.send(okEnvelope({ warnings }, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
@@ -1289,6 +1288,7 @@ function sendMappedError(
         return;
       case 'request.invalid':
       case 'validation.failed':
+      case ErrorCodes.CONFIG_INVALID:
         reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
         return;
     }

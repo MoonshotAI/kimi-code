@@ -12,21 +12,50 @@
  *
  * The model half of the spawn binding is the subagent model pool
  * (`[subagent.models]`: alias → description, with `[subagent].default_model`
- * naming the fallback): when a pool is configured, newly spawned subagents
+ * naming the fallback). When a pool is configured, newly spawned subagents
  * bind to the pool's default model unless the parent model picks a pool alias
- * (or `primary`, the caller's own model) per spawn via the `Agent` /
- * `AgentSwarm` tool `model` parameter. Pool bindings carry no explicit
- * thinking level, so the subagent resolves thinking naturally (global thinking
- * config → the bound model's default effort) rather than inheriting the
- * caller's level. Without a pool, spawning behavior is unchanged (subagents
- * inherit the caller's model) and the tools strip the no-op `model` parameter
- * from their advertised schemas via `stripSubagentModelParameter`. Both tools
- * resolve spawn bindings through `resolveSubagentBinding`, advertise the pool
- * via `buildSubagentModelDescriptions`, and wrap spawn failures with
- * `wrapSubagentModelError`. Cross-field pool validation (default_model
- * present / in-pool / every key resolvable) is NOT part of the schema — it is
- * enforced at session creation by the Session-scope validation service (see
- * `subagentModelsValidationService.ts`) via `assertValidSubagentModelPool`.
+ * — or `primary` (`PRIMARY_SUBAGENT_MODEL_CHOICE`), the always-available
+ * symbolic choice binding the caller's own model and thinking level — per
+ * spawn via the `Agent` / `AgentSwarm` tool `model` parameter. Pool bindings
+ * carry no explicit thinking level, so the subagent resolves thinking
+ * naturally (global thinking config → the bound model's default effort)
+ * rather than inheriting the caller's level. Without a pool, spawning
+ * behavior is unchanged (subagents inherit the caller's model) and the tools
+ * strip the no-op `model` parameter from their advertised schemas via
+ * `stripSubagentModelParameter`, so the concept never enters the prompt and a
+ * stray `model` argument is rejected instead of silently inheriting; the
+ * strip returns a shallow copy and never mutates the input, so callers can
+ * keep both schema variants as shared constants.
+ *
+ * Spawn bindings resolve through `resolveSubagentBinding`: `primary`
+ * short-circuits to the caller's own model+thinking; with no pool a stray
+ * non-`primary` request throws (defensive — the tools strip the parameter);
+ * with a pool the request must be a pool alias, an omitted request falls back
+ * to `default_model`, and anything else throws `CONFIG_INVALID` listing the
+ * available choices so the parent model can retry. The tools advertise the
+ * pool via `buildSubagentModelDescriptions`: the default model leads with a
+ * `[default]` marker, the remaining aliases follow in config order, and the
+ * caller's own alias is never listed on its own — it folds into the trailing
+ * `primary (alias) [main model]` line (which carries the pool description,
+ * plus a `[default]` marker when the caller IS the default) or, when the
+ * caller is outside the pool, a generic `primary` hint line; an empty-string
+ * description renders a bare `- alias` line. Spawn failures are wrapped by
+ * `wrapSubagentModelError`: when the bound model is not the caller's own and
+ * the catalog failed on exactly that alias, the parent model gets guidance
+ * toward `[subagent.models]` instead of a bare resolution error.
+ *
+ * Cross-field pool validation is NOT part of the schema — it is enforced as
+ * `Error2(CONFIG_INVALID)` by `assertValidSubagentModelPool` (run before
+ * session materialization by the session lifecycle, with the Session-scope
+ * validation service in `subagentModelsValidationService.ts` as backstop):
+ * the default must be present and name a pool key, every pool key must
+ * resolve through the model catalog, and the reserved `primary` alias is
+ * rejected outright — as a pool key it would be unreachable (explicit
+ * requests short-circuit to the caller's model) and would render a
+ * self-contradictory description. `resolveSubagentBinding` repeats the
+ * reserved-key check so a pool broken by a runtime config edit fails loudly
+ * at spawn instead of binding the wrong model; any other malformation the
+ * startup checks missed surfaces as the spawn-time errors above.
  * Self-registered at module load via `registerConfigSection`.
  */
 
@@ -84,29 +113,13 @@ export function resolveSubagentTimeoutMs(config: IConfigService): number {
   );
 }
 
-/**
- * The always-available tool `model` choice: bind the subagent to the caller's
- * own model instead of a pool alias.
- */
 export const PRIMARY_SUBAGENT_MODEL_CHOICE = 'primary';
 
-/**
- * The configured subagent model pool: the `[subagent.models]` alias →
- * description record plus the `[subagent].default_model` fallback. Cross-field
- * validity (default present, in-pool, resolvable keys) is enforced at session
- * creation by the validation service, so consumers may see a malformed pool
- * only when that service did not run (defensive paths throw below).
- */
 export interface SubagentModelPool {
   readonly defaultModel?: string;
   readonly models: Record<string, string>;
 }
 
-/**
- * Read the configured pool, or `undefined` when `[subagent.models]` is absent
- * (subagents then inherit the caller's model and the tools drop their `model`
- * parameter).
- */
 export function resolveSubagentModelPool(config: IConfigService): SubagentModelPool | undefined {
   const section = config.get<SubagentConfig | undefined>(SUBAGENT_SECTION);
   if (section?.models === undefined) return undefined;
@@ -116,16 +129,21 @@ export function resolveSubagentModelPool(config: IConfigService): SubagentModelP
 export const SUBAGENT_DEFAULT_MODEL_REQUIRED_MESSAGE =
   '[subagent].default_model is required when [subagent.models] is configured';
 
-/**
- * Cross-field pool validation, run at session creation by the validation
- * service: the default must be present and name a pool key, and every pool
- * key must resolve through the model catalog. Throws `Error2(CONFIG_INVALID)`
- * — a broken pool fails session creation instead of degrading silently.
- */
+export const SUBAGENT_PRIMARY_MODEL_RESERVED_MESSAGE = `[subagent.models] key "${PRIMARY_SUBAGENT_MODEL_CHOICE}" is reserved: it always binds the caller's own model. Rename the pool entry.`;
+
 export function assertValidSubagentModelPool(
   pool: SubagentModelPool,
   modelCatalog: IModelCatalog,
 ): void {
+  if (Object.hasOwn(pool.models, PRIMARY_SUBAGENT_MODEL_CHOICE)) {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, SUBAGENT_PRIMARY_MODEL_RESERVED_MESSAGE, {
+      details: {
+        section: SUBAGENT_SECTION,
+        field: 'models',
+        model: PRIMARY_SUBAGENT_MODEL_CHOICE,
+      },
+    });
+  }
   const aliases = Object.keys(pool.models);
   if (pool.defaultModel === undefined) {
     throw new Error2(ErrorCodes.CONFIG_INVALID, SUBAGENT_DEFAULT_MODEL_REQUIRED_MESSAGE, {
@@ -152,18 +170,6 @@ export function assertValidSubagentModelPool(
   }
 }
 
-/**
- * Resolve the model/thinking binding for a spawned subagent.
- *
- * - `requested === 'primary'` always binds the caller's own model.
- * - Without a configured pool the caller binding is inherited; a stray
- *   non-`primary` request (the tools strip the parameter when no pool exists,
- *   so this is defensive) throws `CONFIG_INVALID`.
- * - With a pool, `requested` must be a pool alias, and an omitted request
- *   falls back to `default_model`. Pool bindings carry no explicit thinking
- *   level. Anything else throws `CONFIG_INVALID` listing the available
- *   choices, so the parent model can retry with a valid alias.
- */
 export function resolveSubagentBinding(
   config: IConfigService,
   own: { modelAlias: string; thinkingLevel: string },
@@ -183,6 +189,15 @@ export function resolveSubagentBinding(
     }
     return { model: own.modelAlias, thinking: own.thinkingLevel };
   }
+  if (Object.hasOwn(pool.models, PRIMARY_SUBAGENT_MODEL_CHOICE)) {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, SUBAGENT_PRIMARY_MODEL_RESERVED_MESSAGE, {
+      details: {
+        section: SUBAGENT_SECTION,
+        field: 'models',
+        model: PRIMARY_SUBAGENT_MODEL_CHOICE,
+      },
+    });
+  }
   const choice = requested ?? pool.defaultModel;
   if (choice === undefined) {
     throw new Error2(ErrorCodes.CONFIG_INVALID, SUBAGENT_DEFAULT_MODEL_REQUIRED_MESSAGE, {
@@ -200,15 +215,6 @@ export function resolveSubagentBinding(
   return { model: choice };
 }
 
-/**
- * Render the pool as the tools' "Available models" description block, or
- * `undefined` when no pool is configured. The default model leads with a
- * `[default]` marker; the remaining pool aliases follow in config order; the
- * caller's own alias is never listed on its own — it renders through the
- * trailing `primary` line, which carries the pool description when the caller
- * is in the pool (`- primary (alias) [main model]: …`) and a generic hint
- * otherwise. An empty-string description renders a bare `- alias` line.
- */
 export function buildSubagentModelDescriptions(
   config: IConfigService,
   callerModelAlias: string | undefined,
@@ -229,9 +235,11 @@ export function buildSubagentModelDescriptions(
     lines.push(formatPoolLine(alias, description));
   }
   if (callerModelAlias !== undefined && Object.hasOwn(pool.models, callerModelAlias)) {
+    const markers =
+      callerModelAlias === defaultModel ? '[main model] [default]' : '[main model]';
     lines.push(
       formatPoolLine(
-        `${PRIMARY_SUBAGENT_MODEL_CHOICE} (${callerModelAlias}) [main model]`,
+        `${PRIMARY_SUBAGENT_MODEL_CHOICE} (${callerModelAlias}) ${markers}`,
         pool.models[callerModelAlias]!,
       ),
     );
@@ -247,17 +255,6 @@ function formatPoolLine(label: string, description: string): string {
   return description === '' ? `- ${label}` : `- ${label}: ${description}`;
 }
 
-/**
- * Strip the `model` property from a subagent collaboration tool's advertised
- * JSON schema. When no `[subagent.models]` pool is configured the parameter is
- * a silent no-op, so the schema the model sees (and the args validator
- * compiled from the same advertised schema) drops it entirely — the model-pool
- * concept never enters the prompt, and a stray `model` argument is rejected
- * instead of silently inheriting the caller's model. Returns the input
- * unchanged when there is no `model` property; otherwise a shallow copy — the
- * input is never mutated, so callers can keep both variants as shared
- * constants.
- */
 export function stripSubagentModelParameter(
   parameters: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -273,12 +270,6 @@ export function stripSubagentModelParameter(
   return next;
 }
 
-/**
- * Point a spawn-time "model not configured" failure at the pool config: when
- * the bound model is not the caller's own and the catalog failed on exactly
- * that alias, the parent model gets guidance toward `[subagent.models]`
- * instead of a bare resolution error. Anything else passes through unchanged.
- */
 export function wrapSubagentModelError(
   error: unknown,
   boundModel: string,

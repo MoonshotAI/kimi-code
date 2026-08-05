@@ -326,7 +326,7 @@ codex = "后端选它。擅长 API 设计、数据库建模、服务端架构、
 
 A spawn resolves the subagent's model in this order: an explicit tool-call `model` → `default_model`. The `model` parameter accepts any pool alias, or `"primary"` — the model the caller itself is running, always valid even when that model is not in the pool. When `[subagent.models]` is not configured at all, the parameter is not advertised and subagents inherit the caller's model. Binding a pool alias carries no explicit thinking effort — the subagent resolves it naturally (global `[thinking]` config → the bound model's default effort) instead of inheriting the caller's level, while `"primary"` inherits both the model and the level from the caller.
 
-Configuration errors fail loudly instead of falling back silently: session creation fails when `default_model` is missing, is not a pool key, or a pool key does not resolve to a configured `[models]` entry, and a spawn whose `model` is neither a pool alias nor `"primary"` fails with an error listing the available choices.
+Configuration errors fail loudly instead of falling back silently: session creation, resume, and fork all fail at startup when `default_model` is missing, is not a pool key, or a pool key does not resolve to a configured `[models]` entry. The alias `primary` is reserved — it always binds the caller's own model — and is rejected as a pool key. A spawn whose `model` is neither a pool alias nor `"primary"` fails with an error listing the available choices.
 
 The v2 engine ignores a leftover [`[secondary_model]`](#secondary-model) section; to carry its setup over, move the model alias into the pool and name it as the default:
 

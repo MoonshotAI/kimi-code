@@ -71,7 +71,10 @@ const ABORT_GRACE_MS = 2_000;
 const TOOL_OUTPUT_EMPTY = 'Tool output is empty.';
 const TOOL_OUTPUT_NON_TEXT = 'Tool returned non-text content.';
 
-const validators = new WeakMap<ExecutableTool, ToolArgsValidator>();
+const validators = new WeakMap<
+  ExecutableTool,
+  { schema: Record<string, unknown>; validator: ToolArgsValidator }
+>();
 
 export interface ToolExecutionTask {
   readonly accesses: ToolAccesses;
@@ -792,16 +795,17 @@ function preflightToolCall(
 }
 
 function validateExecutableToolArgs(tool: ExecutableTool, args: unknown): string | null {
-  let validator = validators.get(tool);
-  if (validator === undefined) {
+  const schema = tool.parameters;
+  let cached = validators.get(tool);
+  if (cached === undefined || cached.schema !== schema) {
     try {
-      validator = compileToolArgsValidator(tool.parameters);
-      validators.set(tool, validator);
+      cached = { schema, validator: compileToolArgsValidator(schema) };
+      validators.set(tool, cached);
     } catch (error) {
       return error instanceof Error ? error.message : String(error);
     }
   }
-  return validateToolArgs(validator, args as JsonType);
+  return validateToolArgs(cached.validator, args as JsonType);
 }
 
 function toolCallDisplayFieldsFromExecution(

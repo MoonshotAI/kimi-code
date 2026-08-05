@@ -41,6 +41,7 @@ import { IWorkspaceMcpService, type ISessionMcpOverlay } from '#/workspace/works
 import { IAgentPlanService } from '#/agent/plan/plan';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionSubagentModelsValidationService } from '#/session/subagent/subagentModelsValidation';
+import { IModelCatalog } from '#/kosong/model/catalog';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
@@ -414,6 +415,22 @@ function configStub(values: Record<string, unknown> = {}): IConfigService {
   } as unknown as IConfigService;
 }
 
+function modelCatalogStub(knownIds: readonly string[] = []): IModelCatalog {
+  return {
+    _serviceBrand: undefined,
+    get: (id: string) => {
+      if (!knownIds.includes(id)) {
+        throw new Error2(
+          ErrorCodes.CONFIG_INVALID,
+          `Model "${id}" is not configured in config.toml.`,
+          { details: { model: id } },
+        );
+      }
+      return { id };
+    },
+  } as unknown as IModelCatalog;
+}
+
 function agentLifecycleCapturingPlanSpy(opts: { mainPreexists?: boolean } = {}): {
   lifecycle: IAgentLifecycleService;
   enter: ReturnType<typeof vi.fn>;
@@ -589,6 +606,7 @@ describe('SessionLifecycleService', () => {
       stubPair(IAgentLifecycleService, agentLifecycleStub()),
       stubPair(IWorkspaceMcpService, workspaceMcpServiceStub()),
       stubPair(IConfigService, configStub()),
+      stubPair(IModelCatalog, modelCatalogStub()),
       stubPair(ISessionCronService, { _serviceBrand: undefined } as unknown as ISessionCronService),
       stubPair(ISessionSubagentModelsValidationService, {
         _serviceBrand: undefined,
@@ -654,6 +672,73 @@ describe('SessionLifecycleService', () => {
 
     await svc.create({ sessionId: 's2', workDir: '/tmp/proj' });
     expect(svc.get('s2')).toBeDefined();
+  });
+
+  it('rejects create with CONFIG_INVALID for a broken subagent model pool before registering anything', async () => {
+    const svc = await build([
+      stubPair(
+        IConfigService,
+        configStub({ subagent: { models: { 'provider/fast': 'fast and cheap' } } }),
+      ),
+      stubPair(IModelCatalog, modelCatalogStub(['provider/fast'])),
+    ]);
+
+    await expect(svc.create({ sessionId: 's-broken', workDir: '/tmp/proj' })).rejects.toMatchObject(
+      {
+        code: ErrorCodes.CONFIG_INVALID,
+        message: expect.stringContaining('[subagent].default_model is required'),
+      },
+    );
+    expect(svc.get('s-broken')).toBeUndefined();
+  });
+
+  it('creates a session when the subagent model pool is valid', async () => {
+    const svc = await build([
+      stubPair(
+        IConfigService,
+        configStub({
+          subagent: {
+            defaultModel: 'provider/fast',
+            models: { 'provider/fast': 'fast and cheap' },
+          },
+        }),
+      ),
+      stubPair(IModelCatalog, modelCatalogStub(['provider/fast'])),
+    ]);
+
+    const h = await svc.create({ sessionId: 's-pool', workDir: '/tmp/proj' });
+    expect(svc.get('s-pool')).toBe(h);
+  });
+
+  it('rejects fork with CONFIG_INVALID for a broken pool before copying any files', async () => {
+    const root = await makeTmpRoot();
+    const sections: Record<string, unknown> = {
+      subagent: {
+        defaultModel: 'provider/fast',
+        models: { 'provider/fast': 'fast and cheap' },
+      },
+    };
+    const svc = await build([
+      stubPair(IBootstrapService, tmpBootstrapStub(root)),
+      stubPair(IConfigService, {
+        get: (domain: string) => sections[domain],
+        getAll: () => ({ ...sections }),
+        onDidChangeConfiguration: () => ({ dispose: () => {} }),
+        onDidSectionChange: () => ({ dispose: () => {} }),
+      } as unknown as IConfigService),
+      stubPair(IModelCatalog, modelCatalogStub(['provider/fast'])),
+    ]);
+    await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+    const srcDir = join(root, 'sessions', 'wd_stub', 'src');
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(join(srcDir, 'marker'), 'src');
+    sections['subagent'] = { models: { 'provider/fast': 'fast and cheap' } };
+
+    await expect(svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' })).rejects.toMatchObject({
+      code: ErrorCodes.CONFIG_INVALID,
+    });
+    expect(svc.get('dst')).toBeUndefined();
+    await expect(stat(join(root, 'sessions', 'wd_stub', 'dst'))).rejects.toThrow();
   });
 
   it('create appends the session to the shared session_index.jsonl', async () => {

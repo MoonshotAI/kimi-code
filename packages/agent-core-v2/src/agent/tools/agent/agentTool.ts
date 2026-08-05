@@ -111,11 +111,6 @@ export class SubagentTool implements ISubagentTool {
   declare readonly _serviceBrand: undefined;
   readonly name: string = 'Agent';
 
-  /**
-   * The `model` choice only exists while a `[subagent.models]` pool is
-   * configured; without one the advertised schema drops it so the concept
-   * never enters the prompt. Read live per request (same as `description`).
-   */
   get parameters(): Record<string, unknown> {
     return resolveSubagentModelPool(this.config) === undefined
       ? SUBAGENT_TOOL_PARAMETERS_NO_MODEL

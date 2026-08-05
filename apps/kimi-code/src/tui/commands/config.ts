@@ -22,7 +22,7 @@ import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-
 import { DEFAULT_TUI_CONFIG, saveTuiConfig, type TuiConfig } from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
-import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+import { NO_ACTIVE_SESSION_MESSAGE, SECONDARY_DERIVED_MODEL_ALIAS } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
 import { showUsage } from './info';
@@ -403,14 +403,15 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
 
 /**
  * The models a picker may offer: the user's configured aliases with
- * host-effective provider resolution applied.
+ * host-effective provider resolution applied, minus the synthesized
+ * `__secondary__` derived entry — a runtime artifact of the v1 engine's
+ * `[secondary_model]` recipe that must never be selectable as a model.
  */
 function pickerModelsForHost(host: SlashCommandHost): Record<string, ModelAlias> {
   return Object.fromEntries(
-    Object.entries(host.state.appState.availableModels).map(([alias, model]) => [
-      alias,
-      effectiveModelForHost(host, model),
-    ]),
+    Object.entries(host.state.appState.availableModels)
+      .filter(([alias]) => alias !== SECONDARY_DERIVED_MODEL_ALIAS)
+      .map(([alias, model]) => [alias, effectiveModelForHost(host, model)]),
   );
 }
 

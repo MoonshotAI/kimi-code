@@ -1,15 +1,16 @@
 /**
  * `subagent` domain — `ISessionSubagentModelsValidationService` implementation.
  *
- * Validates the configured subagent model pool (`[subagent.models]` +
+ * Backstop for the session lifecycle's pre-materialization pool check:
+ * validates the configured subagent model pool (`[subagent.models]` +
  * `[subagent].default_model`) once per session at scope construction
  * (`ScopeActivation.OnScopeCreated`), so a broken pool fails session creation
- * with `Error2(CONFIG_INVALID)` — on the CLI that is a startup error; on
- * kap-server the session-create call returns the coded error. A session
- * without `[subagent.models]` is a no-op. The checks themselves live in
- * `assertValidSubagentModelPool` (configSection): default present, default in
- * the pool, every pool alias resolvable through the model catalog. Bound at
- * Session scope.
+ * with `Error2(CONFIG_INVALID)` even on paths that bypass the lifecycle
+ * service. Reads the pool through `config` and resolves aliases through the
+ * model catalog. A session without `[subagent.models]` is a no-op. The checks
+ * themselves live in `assertValidSubagentModelPool` (configSection): the
+ * reserved `primary` key rejected, default present, default in the pool,
+ * every pool alias resolvable. Bound at Session scope.
  */
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';

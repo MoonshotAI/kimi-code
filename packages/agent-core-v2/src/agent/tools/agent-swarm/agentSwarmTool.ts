@@ -92,11 +92,6 @@ export class AgentSwarmTool implements IAgentSwarmTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'AgentSwarm' as const;
 
-  /**
-   * The `model` choice only exists while a `[subagent.models]` pool is
-   * configured; without one the advertised schema drops it so the concept
-   * never enters the prompt. Read live per request (same as `description`).
-   */
   get parameters(): Record<string, unknown> {
     return resolveSubagentModelPool(this.config) === undefined
       ? AGENT_SWARM_PARAMETERS_NO_MODEL

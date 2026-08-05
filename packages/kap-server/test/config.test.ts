@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { configResponseSchema, type ConfigResponse } from '../src/protocol/rest-config';
+import { ErrorCode } from '../src/protocol/error-codes';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -97,5 +98,17 @@ describe('server-v2 /api/v1/config', () => {
     const after = await getConfig();
     expect(after.default_permission_mode).toBe('auto');
     expect(after.yolo).toBe(false);
+  });
+
+  it('session create with a broken subagent model pool fails with VALIDATION_FAILED', async () => {
+    await boot('[subagent.models]\n"provider/fast" = "fast and cheap"\n');
+    const res = await authedFetch(server as RunningServer, base, '/api/v1/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ metadata: { cwd: home as string } }),
+    });
+    const body = (await res.json()) as Envelope<null>;
+    expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
+    expect(body.msg).toContain('[subagent].default_model is required');
   });
 });

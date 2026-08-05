@@ -11,6 +11,7 @@ import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IModelCatalog } from '#/kosong/model/catalog';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { IEventService } from '#/app/event/event';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -317,6 +318,7 @@ describe('WorkspaceLifecycleService', () => {
       stubPair(IWorkspaceService, catalog.service),
       stubPair(ISessionIndex, sessionIndexStub()),
       stubPair(IConfigService, { get: () => undefined } as unknown as IConfigService),
+      stubPair(IModelCatalog, { _serviceBrand: undefined } as unknown as IModelCatalog),
       stubPair(IAppendLogStore, {
         _serviceBrand: undefined,
         append: () => {},

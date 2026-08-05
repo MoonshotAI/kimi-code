@@ -33,7 +33,7 @@ import {
   SubagentToolInputSchema,
   type SubagentToolInput,
 } from '#/agent/tools/agent/agent';
-import { DEFAULT_SUBAGENT_TIMEOUT_MS } from '#/session/subagent/configSection';
+import { DEFAULT_SUBAGENT_TIMEOUT_MS, SUBAGENT_SECTION } from '#/session/subagent/configSection';
 import { Error2, ErrorCodes } from '#/errors';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
@@ -46,6 +46,7 @@ import {
   type RunAgentOptions,
 } from '#/session/subagent/subagent';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
+import { IConfigService } from '#/app/config/config';
 import { normalizeAgentProfile, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
@@ -59,6 +60,7 @@ import type {
 import type { IProcess, ISessionProcessRunner } from '#/session/process/processRunner';
 import { IWireService } from '#/wire/wire';
 import { createFakeProcessRunner } from '../tools/fixtures/fake-exec';
+import { StubConfigService } from '../kosong/stubs';
 import {
   configServices,
   createCommandRunner,
@@ -731,6 +733,28 @@ describe('Agent tool description', () => {
     expect(description).toContain('- provider/smart\n');
   });
 
+  it('keeps the [default] marker on the folded primary line when the caller is the default', () => {
+    ctx = createTestAgent({
+      initialConfig: {
+        subagent: {
+          defaultModel: 'mock-model',
+          models: {
+            'mock-model': 'the main model, great at hard things',
+            'provider/fast': 'fast and cheap',
+          },
+        },
+        models: POOL_MODEL_ENTRIES,
+      },
+    });
+
+    const description = agentDescription();
+
+    expect(description).toContain('- provider/fast: fast and cheap');
+    expect(description).toContain(
+      '- primary (mock-model) [main model] [default]: the main model, great at hard things',
+    );
+  });
+
   function agentParameters(): Record<string, unknown> {
     const tool = ctx.toolsData().find((entry) => entry.name === 'Agent');
     expect(tool?.parameters).toBeDefined();
@@ -1092,6 +1116,32 @@ describe('Agent tool execution contract', () => {
         }),
       }),
     );
+  });
+
+  it('rejects a pool that gained the reserved "primary" key through a runtime config edit', async () => {
+    const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
+    const context = createAgentToolContext(lifecycle, {
+      initialConfig: {
+        subagent: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast and cheap' },
+        },
+      },
+    });
+    // The startup validation already passed; now the pool breaks at runtime.
+    await (context.get(IConfigService) as StubConfigService).replace(SUBAGENT_SECTION, {
+      defaultModel: 'primary',
+      models: { primary: 'reserved word' },
+    });
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('[subagent.models] key "primary" is reserved');
+    expect(lifecycle.create).not.toHaveBeenCalled();
   });
 
   it('points at the [subagent.models] config when the bound alias stops resolving', async () => {

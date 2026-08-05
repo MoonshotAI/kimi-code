@@ -110,6 +110,22 @@ describe('SessionSubagentModelsValidationService', () => {
     );
   });
 
+  it('fails session creation when a pool key uses the reserved "primary" alias', () => {
+    modelIds.add('primary').add('provider/fast');
+    setup({
+      [SUBAGENT_SECTION]: {
+        defaultModel: 'provider/fast',
+        models: { primary: 'looks like a model', 'provider/fast': 'fast and cheap' },
+      },
+    });
+    const error = resolve();
+    expect(isError2(error)).toBe(true);
+    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
+    expect((error as Error2).message).toContain(
+      '[subagent.models] key "primary" is reserved',
+    );
+  });
+
   it('fails session creation when a pool key does not resolve, naming the key', () => {
     modelIds.add('provider/fast');
     setup({
