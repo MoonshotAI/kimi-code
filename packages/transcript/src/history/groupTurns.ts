@@ -37,8 +37,8 @@ import type { TranscriptFrame } from '../model/frame';
 import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import type { TurnOrigin } from '../model/turn';
 import {
+  daemonFileRefFromPairingPart,
   pairMediaPathTagRefs,
-  parseKimiFileRefFileId,
 } from '../contract/mediaRef';
 
 export type HistoryMediaSource =
@@ -173,7 +173,7 @@ export function groupMessagesIntoSnapshot(
         ids.push(entity.attachmentId);
         return;
       }
-      const ref = daemonRefFromHistoryPart(part);
+      const ref = daemonFileRefFromPairingPart(part);
       if (ref !== undefined) {
         const path = pairing.claimedPathByRefIndex.get(index);
         const entity: TranscriptAttachment = {
@@ -229,13 +229,17 @@ export function groupMessagesIntoSnapshot(
       }
       const markerKey = originKind !== undefined ? MARKER_USER_ORIGINS[originKind] : undefined;
       if (markerKey !== undefined) {
-        pushMarker(markerKey, { text: textOf(message), origin: message.origin });
         // A user-slash skill/plugin command is a real user prompt (mirrors
         // the engine's `isRealUserPrompt`): it opened its own turn, so
         // advance the grouping instead of folding the response into the
         // previous turn. Other triggers are mid-turn context — marker only.
-        if (isUserSlashPrompt(message)) {
-          startTurn(mapOrigin(message), textOf(message));
+        // A slash turn-opening input folds like any other user's (upload
+        // tag+ref pair → attachment, claimed tag out of the text), mirroring
+        // the live `turnPromptText` / `turnPromptAttachments` projection.
+        const opening = isUserSlashPrompt(message) ? foldTurnOpeningInput(message) : undefined;
+        pushMarker(markerKey, { text: opening?.text ?? textOf(message), origin: message.origin });
+        if (opening !== undefined) {
+          startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
         }
         continue;
       }
@@ -370,26 +374,8 @@ function textOf(message: HistoryMessage): string {
 }
 
 /**
- * The daemon upload behind a kosong `image_url` / `video_url` part carrying a
- * `kimi-file://` reference — the persisted shape of an uploaded medium (the
- * structural `HistoryContentPart` union keeps these parts on its catch-all).
+ * Basename of a materialization path for an attachment's display name.
  */
-function daemonRefFromHistoryPart(
-  part: HistoryContentPart,
-): { kind: 'image' | 'video'; fileId: string } | undefined {
-  if (part.type !== 'image_url' && part.type !== 'video_url') return undefined;
-  const holder = (part as unknown as Record<string, unknown>)[
-    part.type === 'image_url' ? 'imageUrl' : 'videoUrl'
-  ];
-  if (holder === null || typeof holder !== 'object') return undefined;
-  const url = (holder as { url?: unknown }).url;
-  if (typeof url !== 'string') return undefined;
-  const fileId = parseKimiFileRefFileId(url);
-  return fileId === undefined
-    ? undefined
-    : { kind: part.type === 'image_url' ? 'image' : 'video', fileId };
-}
-
 function pathBaseName(path: string): string {
   const sep = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
   return sep === -1 ? path : path.slice(sep + 1);

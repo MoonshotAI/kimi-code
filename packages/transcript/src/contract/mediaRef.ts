@@ -97,6 +97,22 @@ export interface MediaRefPairingPart {
 }
 
 /**
+ * The daemon reference behind a pairing part, if any — the mirror of the
+ * engine's `daemonFileRefFromPart` (keep the two in sync), and the single
+ * part → ref extraction the pairing and read models share.
+ */
+export function daemonFileRefFromPairingPart(
+  part: MediaRefPairingPart,
+): { readonly kind: 'image' | 'video'; readonly fileId: string; readonly path?: string } | undefined {
+  if (part.type !== 'image_url' && part.type !== 'video_url') return undefined;
+  const url = part.type === 'image_url' ? part.imageUrl?.url : part.videoUrl?.url;
+  if (typeof url !== 'string') return undefined;
+  const ref = parseKimiFileRef(url);
+  if (ref === undefined) return undefined;
+  return { kind: part.type === 'image_url' ? 'image' : 'video', fileId: ref.fileId, path: ref.path };
+}
+
+/**
  * The claim analysis behind the tag + daemon-ref fold — the mirror of the
  * engine's algorithm (keep the two in sync).
  *
@@ -117,6 +133,8 @@ export interface MediaPathTagPairing {
   readonly claimedTagIndices: ReadonlySet<number>;
   /** The claiming tag's path per daemon-ref part index; absent for an unpaired ref. */
   readonly claimedPathByRefIndex: ReadonlyMap<number, string>;
+  /** The claiming reference per claimed tag index. */
+  readonly claimingRefByTagIndex: ReadonlyMap<number, number>;
 }
 
 export function pairMediaPathTagRefs(
@@ -130,16 +148,12 @@ export function pairMediaPathTagRefs(
       if (tag !== undefined) tagByIndex.set(index, tag);
       return;
     }
-    if (part.type !== 'image_url' && part.type !== 'video_url') return;
-    const url = part.type === 'image_url' ? part.imageUrl?.url : part.videoUrl?.url;
-    if (typeof url !== 'string') return;
-    const ref = parseKimiFileRef(url);
-    if (ref !== undefined) {
-      refByIndex.set(index, { kind: part.type === 'image_url' ? 'image' : 'video', path: ref.path });
-    }
+    const ref = daemonFileRefFromPairingPart(part);
+    if (ref !== undefined) refByIndex.set(index, { kind: ref.kind, path: ref.path });
   });
   const claimedTagIndices = new Set<number>();
   const claimedPathByRefIndex = new Map<number, string>();
+  const claimingRefByTagIndex = new Map<number, number>();
   for (const [refIndex, ref] of refByIndex) {
     if (ref.path === undefined) continue;
     for (const neighbor of [refIndex - 1, refIndex + 1]) {
@@ -149,8 +163,9 @@ export function pairMediaPathTagRefs(
       if (tag.path !== ref.path) continue;
       claimedTagIndices.add(neighbor);
       claimedPathByRefIndex.set(refIndex, tag.path);
+      claimingRefByTagIndex.set(neighbor, refIndex);
       break;
     }
   }
-  return { claimedTagIndices, claimedPathByRefIndex };
+  return { claimedTagIndices, claimedPathByRefIndex, claimingRefByTagIndex };
 }

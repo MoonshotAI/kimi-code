@@ -544,6 +544,47 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(imageTurn.prompt).toBe('what is this?');
   });
 
+  it('folds the upload pair in a user-slash turn-opening input like a plain user turn', () => {
+    // A user-slash skill command carrying an uploaded image persists the same
+    // tag+ref pair; the cold rebuild folds it exactly like a plain user turn
+    // (claimed tag out of the prompt text, one attachment on the turn),
+    // mirroring the live `turnPromptText` / `turnPromptAttachments` fold.
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '/gen-docs ' },
+          { type: 'text', text: '<image path="/cache/shot.png"></image>' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://file_4?path=%2Fcache%2Fshot.png' },
+          } as HistoryContentPart,
+        ],
+        toolCalls: [],
+        origin: { kind: 'skill_activation', trigger: 'user-slash', skillName: 'gen-docs' } as {
+          kind: string;
+        },
+      },
+    ]);
+
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'image/*',
+        name: 'shot.png',
+        source: { kind: 'file', fileId: 'file_4' },
+      },
+    ]);
+    expect(snapshot.items.map((item) => item.kind)).toEqual(['marker', 'turn']);
+    const marker = snapshot.items[0];
+    if (marker?.kind !== 'marker') throw new Error('expected marker');
+    expect((marker.payload as { text: string }).text).toBe('/gen-docs ');
+    const turn = snapshot.items[1];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.prompt).toBe('/gen-docs ');
+    expect(turn.attachmentIds).toEqual(['att_1']);
+  });
+
   it('keeps a bare kimi-file ref as a pathless attachment and inline tags as user text', () => {
     const snapshot = groupMessagesIntoSnapshot([
       {
