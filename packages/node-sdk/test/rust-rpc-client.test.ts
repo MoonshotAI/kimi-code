@@ -4,8 +4,11 @@
  * capability policy.
  */
 import { describe, expect, it } from 'vitest';
+import { tmpdir } from 'node:os';
+import { join } from 'pathe';
 
 import { RustRpcClient, type RustLoopApi } from '../src/rust/rpc-client.js';
+import { readConfigFile, writeConfigFile } from '../src/legacy/config.js';
 
 function fakeRustLoop(overrides: Partial<RustLoopApi> = {}): RustLoopApi & {
   calls: Record<string, unknown[]>;
@@ -199,5 +202,25 @@ describe('RustRpcClient', () => {
     await expect(
       client.prompt({ sessionId: 'ses_1', input: [{ type: 'text', text: 'say hi' }] }),
     ).resolves.toBeUndefined();
+  });
+
+  it('removes the kimi provider from the local config', async () => {
+    const rust = fakeRustLoop();
+    const configPath = join(
+      tmpdir(),
+      `kimi-sdk-remove-kimi-${process.pid}.toml`,
+    );
+    await writeConfigFile(configPath, {
+      providers: { kimi: { type: 'kimi', apiKey: 'sk-test' } },
+      defaultModel: 'kimi-k2',
+    } as never);
+
+    const client = new RustRpcClient({ rustLoop: rust, configPath });
+    const rpc = await client['getRpc']();
+    await rpc.removeKimiProvider();
+
+    const after = readConfigFile(configPath);
+    expect((after.providers as Record<string, unknown> | undefined)?.['kimi']).toBeUndefined();
+    expect(after.defaultModel).toBe('kimi-k2');
   });
 });

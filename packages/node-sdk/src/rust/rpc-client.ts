@@ -1041,7 +1041,19 @@ export class RustRpcClient extends SDKRpcClientBase {
         );
         return merged as KimiConfig;
       },
-      removeKimiProvider: async () => nativeUnavailable('removeKimiProvider'),
+      removeKimiProvider: async () => {
+        // Host config semantics (parity with setKimiConfig): drop the
+        // `providers.kimi` section from the SDK-owned config.toml.
+        const base = readConfigFile(this.configPath);
+        const providers = base.providers as Record<string, unknown> | undefined;
+        if (providers && typeof providers === 'object') {
+          delete providers['kimi'];
+          await writeConfigFile(
+            this.configPath,
+            base as unknown as Parameters<typeof writeConfigFile>[1],
+          );
+        }
+      },
       getConfigDiagnostics: async () => {
         const loaded = loadRuntimeConfigSafe(this.configPath);
         return {
