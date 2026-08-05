@@ -152,9 +152,9 @@ If you can't reach the stores, install manually:
 
    ![Load the unpacked extension](../../media/webbridge-load-unpacked.jpeg)
 
-Once installed, click the Kimi WebBridge extension icon in the browser toolbar; if it shows the browser assistant is ready, the installation is complete and AI can start working on web pages for you.
+Once installed, the Kimi WebBridge icon appears in the browser toolbar. Seeing the icon means the installation succeeded, and AI can start working on web pages for you.
 
-![Kimi WebBridge is ready](../../media/webbridge-ready.jpeg)
+![The Kimi WebBridge icon in the browser toolbar](../../media/webbridge-install-success.jpeg)
 
 #### What you can do
 
