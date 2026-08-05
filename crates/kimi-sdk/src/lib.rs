@@ -94,6 +94,34 @@ impl Harness {
         Ok(Session::new(session_id.to_string(), self.client.clone()))
     }
 
+    /// Close a session: persist it and release its handler state (node-sdk
+    /// `closeSession` parity — the record is kept on disk).
+    pub async fn close_session(&self, session_id: &str) -> anyhow::Result<()> {
+        let mut session = Session::new(session_id.to_string(), self.client.clone());
+        session.save().await
+    }
+
+    /// Fork a persisted session under a new id (node-sdk `forkSession`
+    /// parity) and return a typed handle to the fork. Optional `turn_index`
+    /// keeps only the conversation up to and including that 0-based turn.
+    pub async fn fork_session(
+        &self,
+        source_id: &str,
+        fork_id: &str,
+        turn_index: Option<i64>,
+    ) -> anyhow::Result<Session> {
+        let mut source = Session::new(source_id.to_string(), self.client.clone());
+        source.fork(fork_id, None, turn_index).await?;
+        Ok(Session::new(fork_id.to_string(), self.client.clone()))
+    }
+
+    /// Persist a new session title (node-sdk `renameSession` parity).
+    pub async fn rename_session(&self, session_id: &str, title: &str) -> anyhow::Result<()> {
+        let mut session = Session::new(session_id.to_string(), self.client.clone());
+        session.rename(title).await?;
+        Ok(())
+    }
+
     /// Persisted sessions (newest first), as their summary objects.
     pub async fn list_sessions(&self, limit: u32) -> anyhow::Result<Vec<serde_json::Value>> {
         let body = self.client.session_list(limit).await;

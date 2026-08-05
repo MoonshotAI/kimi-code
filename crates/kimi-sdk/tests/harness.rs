@@ -405,3 +405,38 @@ async fn session_archive_marks_metadata() {
         "archived session still listed (record kept): {sessions:?}"
     );
 }
+
+#[tokio::test]
+async fn harness_close_fork_rename_sessions() {
+    let home = std::env::temp_dir().join(format!("kimi-sdk-closefork-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).expect("mkdir");
+    std::env::set_var("KIMI_AGENT_HOME", &home);
+
+    let harness = Harness::embedded().expect("embedded engine");
+    let mut session = harness.create_session("s-cf").await.expect("create");
+
+    // Close persists the session (record kept).
+    harness.close_session("s-cf").await.expect("close");
+    let sessions = harness.list_sessions(50).await.expect("list");
+    assert!(sessions.iter().any(|s| s["id"] == "s-cf"), "closed still listed: {sessions:?}");
+
+    // Rename persists a new title.
+    harness.rename_session("s-cf", "Renamed").await.expect("rename");
+    let sessions = harness.list_sessions(50).await.expect("list");
+    let rec = sessions.iter().find(|s| s["id"] == "s-cf").expect("find");
+    assert_eq!(rec["title"], "Renamed", "title: {rec}");
+
+    // Fork copies the session under a new id.
+    let _ = session.save().await.expect("save for fork");
+    let mut fork = harness
+        .fork_session("s-cf", "s-fork", None)
+        .await
+        .expect("fork");
+    let sessions = harness.list_sessions(50).await.expect("list");
+    assert!(
+        sessions.iter().any(|s| s["id"] == "s-fork"),
+        "fork listed: {sessions:?}"
+    );
+    let _ = &mut fork;
+}
