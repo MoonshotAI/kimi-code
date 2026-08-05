@@ -63,6 +63,13 @@ export const sessionMetadataDataKey = defineState<SessionMeta | undefined>(
 
 export class SessionMetadata extends Disposable implements ISessionMetadata {
   declare readonly _serviceBrand: undefined;
+
+  private disposed = false;
+
+  override dispose(): void {
+    this.disposed = true;
+    super.dispose();
+  }
   readonly ready: Promise<void>;
   readonly onDidChangeMetadata: Event<SessionMetadataChangedEvent>;
 
@@ -108,10 +115,10 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
     // The update queue outlives its callers: a patch queued before scope
     // disposal must not write (or recreate files) once the session is being
     // torn down.
-    if (this.isDisposed) return;
+    if (this.disposed) return;
     this.data = { ...this.data, ...patch, updatedAt: Date.now() };
     await this.store.set(this.scope, META_KEY, this.data);
-    if (this.isDisposed) return;
+    if (this.disposed) return;
     this.mirrorToReadModel();
     this._onDidChangeMetadata.fire({
       changed: Object.keys(patch) as (keyof SessionMeta)[],
