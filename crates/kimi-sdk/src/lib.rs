@@ -21,6 +21,10 @@ pub struct Harness {
     client: Arc<AppServerClient>,
     /// Engine event stream (embedded EventBus / remote captured stderr).
     events: Arc<Mutex<Option<kimi_ui::EventSource>>>,
+    /// Whether to inject the engine's config native LLM into created sessions.
+    /// Disabled when an explicit llm step is supplied (tests/hosts override
+    /// the engine config).
+    config_llm: bool,
 }
 
 impl Harness {
@@ -35,6 +39,7 @@ impl Harness {
     pub fn embedded_with_llm_step(
         llm_step: Option<kimi_server::callbacks::LlmStep>,
     ) -> anyhow::Result<Self> {
+        let has_step = llm_step.is_some();
         let server = match llm_step {
             Some(step) => kimi_server::Server::build_with_llm_step(step)?,
             None => kimi_server::Server::build()?,
@@ -46,6 +51,7 @@ impl Harness {
             client: Arc::new(AppServerClient::InProcess(
                 kimi_server::in_process::spawn(server.processor),
             )),
+            config_llm: !has_step,
         })
     }
 
@@ -59,6 +65,7 @@ impl Harness {
                 stderr,
             )))),
             client: Arc::new(AppServerClient::Remote(Box::new(client))),
+            config_llm: true,
         })
     }
 
@@ -85,9 +92,21 @@ impl Harness {
         Ok(body["result"]["status"].as_str().unwrap_or("?").to_string())
     }
 
-    /// Create (or resume) a session by id and return a typed handle.
+    /// Create (or resume) a session by id and return a typed handle. The
+    /// engine's native LLM config (config.toml / KIMI_MODEL_* env) is
+    /// injected automatically when present and no explicit llm step was
+    /// supplied, so hosts that do not pass one explicitly still reach a real
+    /// LLM.
     pub async fn create_session(&self, session_id: &str) -> anyhow::Result<Session> {
-        let body = self.client.session_create(session_id).await;
+        let mut params = serde_json::json!({ "session_id": session_id });
+        if self.config_llm {
+            if let Some(nllm) = kimi_agent::config::native_llm::load_native_llm_from_config() {
+                if let Ok(value) = serde_json::to_value(&nllm) {
+                    params["native_llm"] = value;
+                }
+            }
+        }
+        let body = self.client.call(kimi_protocol::methods::SESSION_CREATE, params).await;
         if let Some(error) = body.get("error") {
             anyhow::bail!("create session: {}", error["message"].as_str().unwrap_or("unknown"));
         }
@@ -251,6 +270,26 @@ impl Harness {
     /// plus the delta sequence (for hosts that want chunk-granular updates,
     /// e.g. the ACP adapter's `agent_message_chunk` notifications).
     pub async fn run_prompt_stream(
+        &self,
+        session_id: &str,
+        text: &str,
+    ) -> anyhow::Result<(String, Vec<String>)> {
+        // Bound the whole turn so a stuck event-source consumer (e.g. a
+        // Remote harness whose stderr fan-out stalls) cannot hang the caller.
+        let fut = self.run_prompt_stream_inner(session_id, text);
+        tokio::pin!(fut);
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(3600),
+            &mut fut,
+        )
+        .await
+        {
+            Ok(res) => res,
+            Err(_) => anyhow::bail!("run_prompt_stream timed out after 1 hour"),
+        }
+    }
+
+    async fn run_prompt_stream_inner(
         &self,
         session_id: &str,
         text: &str,

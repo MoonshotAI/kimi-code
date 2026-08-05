@@ -1632,6 +1632,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
+ "kimi-agent",
  "kimi-protocol",
  "kimi-server",
  "kimi-server-client",
