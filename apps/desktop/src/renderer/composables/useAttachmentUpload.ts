@@ -3,6 +3,9 @@
 // upload machinery, the chip strip, and the preview lightbox. Images and
 // videos get media chips with thumbnails; any other file type attaches as a
 // generic file chip (an icon + name, no thumbnail) and is sent as a file part.
+// Dropped folders are the exception: they are never uploaded (the endpoint
+// rejects them) — the desktop bridge resolves their absolute paths and they
+// are inserted into the draft text instead (see nativeWorkspaceDrop.ts).
 //
 // Pending attachments are scoped per session (keyed by session id) so switching
 // sessions can't leak one session's unsent attachments into another session's
@@ -14,6 +17,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { getKimiWebApi } from '../api';
 import { track } from '../lib/track';
+import { partitionDroppedItems } from '../lib/nativeWorkspaceDrop';
 
 export interface Attachment {
   /** Unique local id (used as :key) */
@@ -47,10 +51,15 @@ export interface AttachmentUploadDeps {
   uploadImage: () => UploadImage | undefined;
   /** Active session id — scopes pending attachments (getter for reactivity). */
   sessionId: () => string | undefined;
+  /** Dropped folders are never uploaded (the endpoint rejects them) — the
+      desktop bridge resolves their absolute paths and the composer inserts
+      them into the draft text instead. Without the bridge (web) a dropped
+      folder resolves to no path and is simply ignored. */
+  insertFolderPaths?: (paths: string[]) => void;
 }
 
 export function useAttachmentUpload(deps: AttachmentUploadDeps) {
-  const { uploadImage, sessionId } = deps;
+  const { uploadImage, sessionId, insertFolderPaths } = deps;
 
   const attachmentsBySession = ref<Record<string, Attachment[]>>({});
   const attachments = computed(() => attachmentsBySession.value[sessionId() ?? ''] ?? []);
@@ -239,11 +248,18 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
   function handleDrop(e: DragEvent): void {
     windowDragDepth = 0;
     isDragOver.value = false;
+    const { files, folderPaths } = partitionDroppedItems(e);
+    if (folderPaths.length > 0) {
+      // Folders never hit the upload endpoint — their paths go into the draft.
+      insertFolderPaths?.(folderPaths);
+      // Keep the document-level drop handler from re-inserting the same paths.
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (!uploadImage()) return;
     // Stop the document-level drop handler from adding the same files twice.
     e.preventDefault();
     e.stopPropagation();
-    const files = Array.from(e.dataTransfer?.files ?? []);
     void addFiles(files, 'drop');
   }
 
@@ -277,9 +293,14 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
   function handleWindowDrop(e: DragEvent): void {
     windowDragDepth = 0;
     isDragOver.value = false;
+    const { files, folderPaths } = partitionDroppedItems(e);
+    if (folderPaths.length > 0) {
+      // Folders never hit the upload endpoint — their paths go into the draft.
+      insertFolderPaths?.(folderPaths);
+      e.preventDefault();
+    }
     if (!uploadImage()) return;
     e.preventDefault();
-    const files = Array.from(e.dataTransfer?.files ?? []);
     void addFiles(files, 'drop');
   }
 

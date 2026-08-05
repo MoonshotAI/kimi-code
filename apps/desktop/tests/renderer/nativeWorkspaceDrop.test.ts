@@ -4,6 +4,7 @@ import {
   canDropWorkspaceFolders,
   extractDroppedFolderPaths,
   looksLikeFolderDrag,
+  partitionDroppedItems,
 } from '../../src/renderer/lib/nativeWorkspaceDrop';
 
 // Renderer tests run in the node environment, so there is no real `window`;
@@ -129,5 +130,42 @@ describe('extractDroppedFolderPaths', () => {
       },
     });
     expect(extractDroppedFolderPaths(fakeDragEvent([fakeItem({ isDirectory: true })]))).toEqual([]);
+  });
+});
+
+describe('partitionDroppedItems', () => {
+  it('splits plain files from folders, resolving folder paths', () => {
+    const png = new File(['x'], 'a.png');
+    const dirFile = new File(['x'], 'dir');
+    const event = fakeDragEvent([
+      fakeItem({ isDirectory: false, type: 'image/png', file: png }),
+      fakeItem({ isDirectory: true, file: dirFile }),
+    ]);
+    const { files, folderPaths } = partitionDroppedItems(event, () => '/work/dir');
+    expect(files).toEqual([png]);
+    expect(folderPaths).toEqual(['/work/dir']);
+  });
+
+  it('drops unresolvable folders entirely instead of uploading them', () => {
+    // No bridge (web): the folder yields no path AND must not land in files.
+    const dir = fakeItem({ isDirectory: true });
+    const { files, folderPaths } = partitionDroppedItems(fakeDragEvent([dir]), () => null);
+    expect(files).toEqual([]);
+    expect(folderPaths).toEqual([]);
+  });
+
+  it('skips non-file items for both sides', () => {
+    const stringItem = fakeItem({ kind: 'string', type: 'text/plain' });
+    const { files, folderPaths } = partitionDroppedItems(fakeDragEvent([stringItem]), () => '/x');
+    expect(files).toEqual([]);
+    expect(folderPaths).toEqual([]);
+  });
+
+  it('falls back to dataTransfer.files when the item list is empty', () => {
+    const png = new File(['x'], 'a.png');
+    const event = { dataTransfer: { items: [], files: [png] } } as unknown as DragEvent;
+    const { files, folderPaths } = partitionDroppedItems(event, () => '/x');
+    expect(files).toEqual([png]);
+    expect(folderPaths).toEqual([]);
   });
 });

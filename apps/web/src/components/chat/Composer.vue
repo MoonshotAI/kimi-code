@@ -256,6 +256,35 @@ function handleInput(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Dropped folders → draft text (folders are never uploaded — the upload
+// endpoint rejects them; useAttachmentUpload routes their paths here).
+// ---------------------------------------------------------------------------
+function insertFolderPaths(paths: string[]): void {
+  // Quote paths containing whitespace so the draft tokenizes like typed input.
+  const insertion = paths.map((p) => (/\s/.test(p) ? `"${p}"` : p)).join(' ');
+  const el = textareaRef.value;
+  const val = text.value;
+  // A drop usually lands while the textarea is unfocused and its selection is
+  // stale — append at the end unless the caret is genuinely live.
+  const pos = el && document.activeElement === el ? el.selectionStart : val.length;
+  // Keep the inserted paths separated from the surrounding text.
+  const prefix = pos > 0 && !/\s/.test(val[pos - 1]!) ? ' ' : '';
+  const suffix = pos < val.length && !/\s/.test(val[pos]!) ? ' ' : '';
+  // The draft changed without typing — leave history-browsing mode like
+  // handleInput does, or the next ↑ would replace it with a history entry.
+  history.resetBrowsing();
+  text.value = val.slice(0, pos) + prefix + insertion + suffix + val.slice(pos);
+  void nextTick(() => {
+    const ta = textareaRef.value;
+    if (!ta) return;
+    const caret = pos + prefix.length + insertion.length;
+    ta.setSelectionRange(caret, caret);
+    ta.focus();
+    autosize();
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Attachments — see useAttachmentUpload. The composer keeps handleSubmit /
 // handleSteer (which read the attachments to build the payload) and the
 // `hasUpload` toolbar flag.
@@ -276,7 +305,11 @@ const {
   clearAfterSubmit,
   clearAttachments,
   loadAttachments,
-} = useAttachmentUpload({ uploadImage: () => props.uploadImage, sessionId: () => props.sessionId });
+} = useAttachmentUpload({
+  uploadImage: () => props.uploadImage,
+  sessionId: () => props.sessionId,
+  insertFolderPaths,
+});
 
 // Silence noUnusedLocals: fileInputRef is used as a template ref (ref="fileInputRef").
 void fileInputRef;
