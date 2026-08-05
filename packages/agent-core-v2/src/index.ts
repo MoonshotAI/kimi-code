@@ -549,7 +549,24 @@ export * from '#/mcpCore/config-schema';
 export * from '#/agent/media/mediaTools';
 export * from '#/agent/media/mediaToolsRegistrar';
 export * from '#/agent/media/registerMediaTools';
-export * from '#/agent/media/mediaRef';
+// mediaRef keeps a named export list: the module's remaining helpers (suffix
+// tables, tag escaping, session fs layout) are domain-internal, and external
+// consumers only need the reference/tag grammar below.
+export {
+  buildDaemonFileUrl,
+  buildMediaPathTag,
+  foldMediaPathTagRefs,
+  mediaExtensionForMime,
+  pairMediaPathTagRefs,
+  parseDaemonFileUrl,
+} from '#/agent/media/mediaRef';
+export type {
+  DaemonFileRef,
+  FoldedMediaRef,
+  MediaKind,
+  MediaPathTagFold,
+  MediaPathTagPairing,
+} from '#/agent/media/mediaRef';
 export * from '#/agent/media/sessionMediaStore';
 import '#/agent/media/sessionMediaStoreService';
 export * from '#/agent/media/kimiFileUrl';

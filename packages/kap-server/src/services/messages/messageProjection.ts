@@ -26,7 +26,7 @@
  * passes through verbatim.
  */
 
-import { foldMediaPathTagRefs, parseDaemonFileUrl, parseKimiFileUrl, type ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { foldMediaPathTagRefs, parseDaemonFileUrl, type ContextMessage } from '@moonshot-ai/agent-core-v2';
 
 import type { Message, MessageContent, MessageRole, ToolUseContent } from '../../protocol/message';
 
@@ -60,7 +60,7 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
     case 'audio_url':
       return { type: 'text', text: `[audio:${part.audioUrl.url}]` };
     case 'video_url': {
-      const ref = parseKimiFileUrl(part.videoUrl.url);
+      const ref = parseDaemonFileUrl(part.videoUrl.url);
       return ref !== undefined
         ? { type: 'video', source: { kind: 'file', file_id: ref.fileId } }
         : { type: 'video', source: { kind: 'url', url: part.videoUrl.url, id: part.videoUrl.id } };
