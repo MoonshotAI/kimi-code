@@ -5,6 +5,7 @@ import {
   parseFilePathLinkCandidate,
 } from '../src/lib/filePathLinks';
 import { parseDiff } from '../src/lib/parseDiff';
+import { configureMathRules } from '../src/lib/markdownMath';
 import { buildDiffLines } from '../src/lib/diffLines';
 import { buildEditDiffLines } from '../src/lib/toolDiff';
 import { createCoalescedAsyncRunner } from '../src/lib/snapshotSync';
@@ -861,5 +862,42 @@ describe('keepLiveSubagents', () => {
     const [merged] = keepLiveSubagents(rest, [live]);
     expect(merged?.outputPreview).toBe('final result');
     expect(merged?.outputBytes).toBe(200);
+  });
+});
+
+describe('configureMathRules', () => {
+  // Minimal markdown-it stand-in: records ruler enable/disable calls.
+  function fakeMd() {
+    const calls: { op: 'enable' | 'disable'; name: string }[] = [];
+    const md = {
+      inline: {
+        ruler: {
+          disable: (name: string) => {
+            calls.push({ op: 'disable' as const, name });
+            return md;
+          },
+          enable: (name: string) => {
+            calls.push({ op: 'enable' as const, name });
+            return md;
+          },
+        },
+      },
+    };
+    return { md, calls };
+  }
+
+  it('disables the inline `$…$` math rule when inline math is off (default)', () => {
+    const { md, calls } = fakeMd();
+    // Prices, env vars, and shell paths ($5, $PATH, $HOME/bin) must stay
+    // literal, so the default path disables the single-$ inline rule.
+    const out = configureMathRules(md as never, { inline: false });
+    expect(out).toBe(md);
+    expect(calls).toEqual([{ op: 'disable', name: 'math' }]);
+  });
+
+  it('enables the inline `$…$` math rule when the user opts in', () => {
+    const { md, calls } = fakeMd();
+    configureMathRules(md as never, { inline: true });
+    expect(calls).toEqual([{ op: 'enable', name: 'math' }]);
   });
 });

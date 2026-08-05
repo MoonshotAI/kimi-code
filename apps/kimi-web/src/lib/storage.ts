@@ -28,6 +28,10 @@ export const STORAGE_KEYS = {
   // users who explicitly turned it off while it was experimental keep their
   // preference after it became on-by-default.
   conversationToc: 'kimi-web.beta-toc',
+  // Inline `$…$` LaTeX rendering in chat markdown. Off by default — the
+  // single-`$` rule can misdetect prices, env vars, and shell paths
+  // ($5, $PATH, $HOME/bin) as math, so users opt in via Settings.
+  inlineMath: 'kimi-web.inline-math',
   notifyOnComplete: 'kimi-web.notify-on-complete',
   notifyOnQuestion: 'kimi-web.notify-on-question',
   notifyOnApproval: 'kimi-web.notify-on-approval',
