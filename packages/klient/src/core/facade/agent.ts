@@ -64,7 +64,6 @@ export interface AgentFacade {
   listCommands(): Promise<readonly AgentCommandInfo[]>;
   runCommand(input: { name: string; args?: string }): Promise<void>;
   listSkills(): Promise<readonly SkillSummary[]>;
-  activateSkill(input: { name: string; args?: string }): Promise<void>;
   getPlan(): Promise<PlanData>;
   enterPlan(): Promise<void>;
   clearPlan(): Promise<void>;
@@ -114,7 +113,6 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
     listCommands: () => rpc('listCommands', {}) as Promise<readonly AgentCommandInfo[]>,
     runCommand: (input) => rpc('runCommand', input) as Promise<void>,
     listSkills: () => rpc('listSkills', {}) as Promise<readonly SkillSummary[]>,
-    activateSkill: (input) => rpc('activateSkill', input) as Promise<void>,
     getPlan: () => call(scope, 'agentPlanService', 'status', []) as Promise<PlanData>,
     enterPlan: () => call(scope, 'agentPlanService', 'enter', []) as Promise<void>,
     clearPlan: () => call(scope, 'agentPlanService', 'clear', []) as Promise<void>,

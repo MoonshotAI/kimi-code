@@ -77,7 +77,6 @@ export type {
   SetModelResult,
   ShellCommandResult,
   ThinkingLevel,
-  SkillSummary,
   UsageStatus,
 } from './core/facade/agent.js';
 

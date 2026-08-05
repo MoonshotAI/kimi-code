@@ -164,7 +164,6 @@ import {
   cancelPayloadSchema,
   cancelPlanPayloadSchema,
   cancelShellCommandPayloadSchema,
-  activateSkillPayloadSchema,
   emptyPayloadSchema,
   getTaskOutputPayloadSchema,
   getTasksPayloadSchema,
@@ -182,7 +181,6 @@ import {
   shellCommandResultSchema,
   steerPayloadSchema,
   stopTaskPayloadSchema,
-  skillSummarySchema,
   tokenUsageSchema,
   usageStatusSchema,
   undoHistoryPayloadSchema,
@@ -541,8 +539,6 @@ type PromptLaunchResult = NonNullable<ReturnType<AgentAPI['prompt']>>;
 type SteerPayload = Parameters<AgentAPI['steer']>[0];
 type CancelPayload = Parameters<AgentAPI['cancel']>[0];
 type UndoHistoryPayload = Parameters<AgentAPI['undoHistory']>[0];
-type ActivateSkillPayload = Parameters<AgentAPI['activateSkill']>[0];
-type SkillSummary = ReturnType<AgentAPI['listSkills']>[number];
 type SetPermissionPayload = Parameters<AgentAPI['setPermission']>[0];
 type AgentCommandInfo = Awaited<ReturnType<AgentAPI['listCommands']>>[number];
 type RunCommandPayload = Parameters<AgentAPI['runCommand']>[0];
@@ -568,8 +564,6 @@ const _activateSkillPayload: AssertWire<typeof activateSkillPayloadSchema, Activ
 const _promptLaunchResult: AssertWire<typeof promptLaunchResultSchema, PromptLaunchResult> = true;
 const _cancelPayload: AssertWire<typeof cancelPayloadSchema, CancelPayload> = true;
 const _undoHistoryPayload: AssertWire<typeof undoHistoryPayloadSchema, UndoHistoryPayload> = true;
-const _activateSkillPayload: AssertWire<typeof activateSkillPayloadSchema, ActivateSkillPayload> = true;
-const _skillSummary: AssertWire<typeof skillSummarySchema, SkillSummary> = true;
 const _runShellCommandPayload: AssertWire<
   typeof runShellCommandPayloadSchema,
   RunShellCommandPayload

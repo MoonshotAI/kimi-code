@@ -13,6 +13,7 @@
 import { z } from 'zod';
 
 import { maybe, noResult } from '../helpers.js';
+import { skillSummarySchema } from '../session/skills.js';
 import type { ServiceContract } from '../types.js';
 
 // ── prompt parts ────────────────────────────────────────────────────────────
@@ -83,17 +84,7 @@ export const undoHistoryPayloadSchema = z.object({
   count: z.number(),
 });
 
-export const activateSkillPayloadSchema = promptSkillActivationSchema;
-
-export const skillSummarySchema = z.object({
-  name: z.string(),
-  description: z.string(),
-  path: z.string(),
-  source: z.enum(['builtin', 'user', 'extra', 'project']),
-  type: z.string().optional(),
-  disableModelInvocation: z.boolean().optional(),
-  isSubSkill: z.boolean().optional(),
-});
+export { skillSummarySchema };
 
 export const runShellCommandPayloadSchema = z.object({
   command: z.string(),
@@ -259,5 +250,4 @@ export const agentRpcContract = {
   },
   runCommand: { input: z.tuple([runCommandPayloadSchema]), output: noResult },
   listSkills: { input: z.tuple([emptyPayloadSchema]), output: z.array(skillSummarySchema) },
-  activateSkill: { input: z.tuple([activateSkillPayloadSchema]), output: noResult },
 } satisfies ServiceContract;
