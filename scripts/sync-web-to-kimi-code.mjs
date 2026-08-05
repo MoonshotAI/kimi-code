@@ -51,4 +51,4 @@ await rm(target, { recursive: true, force: true });
 await cp(source, target, { recursive: true });
 
 console.log(`已同步 web 产物到：${target}`);
-console.log('提醒：完成后在 kimi-code 仓提交 dist-web 变更并创建 PR（该仓 gitignore dist-web，需 `git add -f`）。');
+console.log('提醒：完成后在 kimi-code 仓提交 dist-web 变更并创建 PR。');
