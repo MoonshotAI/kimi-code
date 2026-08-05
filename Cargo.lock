@@ -1474,6 +1474,7 @@ dependencies = [
  "anyhow",
  "kimi-protocol",
  "kimi-sdk",
+ "kimi-server",
  "kimi-ui",
  "serde_json",
  "tokio",

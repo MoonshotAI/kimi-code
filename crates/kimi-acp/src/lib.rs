@@ -822,4 +822,51 @@ mod tests {
         assert!(body.get("error").is_none(), "get_config: {body}");
         assert_eq!(body["result"]["config"]["model"], "acp-test-model", "config: {body}");
     }
+
+    #[tokio::test]
+    async fn session_prompt_streams_update_notifications() {
+        let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = std::env::temp_dir().join(format!("kimi-acp-prompt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("mkdir");
+        std::env::set_var("KIMI_AGENT_HOME", &home);
+
+        // A fake LLM answers one shot (host-proxy: no llm.delta, so no chunk
+        // notifications; the response must carry the full text and no
+        // `_deltas` residue).
+        let step: kimi_server::callbacks::LlmStep = std::sync::Arc::new(
+            move |_req: kimi_protocol::wire_types::LlmChatRequest| {
+                Box::pin(async move {
+                    Ok(kimi_protocol::wire_types::LlmChatResponse {
+                        content: "acp streamed reply".into(),
+                        tool_calls: vec![],
+                        finish_reason: Some("stop".into()),
+                        usage: kimi_protocol::wire_types::TokenUsage {
+                            input_tokens: 4,
+                            output_tokens: 4,
+                            total_tokens: 8,
+                        },
+                    })
+                })
+            },
+        );
+        let harness = Harness::embedded_with_llm_step(Some(step)).expect("embedded with llm step");
+
+        let body = round_trip(
+            harness,
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"session/prompt\",\"params\":{\"sessionId\":\"acp-prompt\",\"prompt\":\"hi\"}}\n",
+        )
+        .await;
+        assert!(body.get("error").is_none(), "prompt: {body}");
+        // Host-proxy emits no deltas, so no preamble notifications; the wire
+        // response carries the full assistant text and no `_deltas` residue.
+        assert!(
+            body["result"]["_deltas"].is_null(),
+            "no _deltas residue: {body}"
+        );
+        assert_eq!(
+            body["result"]["messages"][0]["content"][0]["text"], "acp streamed reply",
+            "assistant text: {body}"
+        );
+    }
 }

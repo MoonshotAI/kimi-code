@@ -12,3 +12,6 @@ kimi-sdk = { path = "../kimi-sdk" }
 kimi-ui = { path = "../kimi-ui" }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "sync"] }
+
+[dev-dependencies]
+kimi-server = { path = "../kimi-server" }
