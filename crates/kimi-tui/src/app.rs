@@ -38,9 +38,11 @@ const SLASH_COMMANDS: &[&str] = &[
     "/model",
     "/models",
     "/plan",
+    "/plugins",
     "/quit",
     "/reload",
     "/resume",
+    "/session",
     "/sessions",
     "/skills",
     "/status",
@@ -223,6 +225,101 @@ fn interrupt_action(code: KeyCode, modifiers: event::KeyModifiers) -> Option<Int
     }
 }
 
+// ── Input editing primitives ──────────────────────────────────────────────
+// The input cursor is a char index (UTF-8 safe); byte offsets are computed
+// only at edit boundaries. Every function clamps an out-of-range cursor.
+
+/// Byte offset of the `cursor`-th char (0 = start, chars count = len).
+fn byte_of_char(input: &str, cursor: usize) -> usize {
+    input.char_indices().nth(cursor).map_or(input.len(), |(i, _)| i)
+}
+
+/// Insert `ch` at the char index `cursor`; returns the new input and cursor.
+fn insert_char(input: &str, cursor: usize, ch: char) -> (String, usize) {
+    let cursor = cursor.min(input.chars().count());
+    let at = byte_of_char(input, cursor);
+    let mut out = String::with_capacity(input.len() + ch.len_utf8());
+    out.push_str(&input[..at]);
+    out.push(ch);
+    out.push_str(&input[at..]);
+    (out, cursor + 1)
+}
+
+/// Delete the char before `cursor`; returns the new input and cursor.
+fn backspace(input: &str, cursor: usize) -> (String, usize) {
+    let cursor = cursor.min(input.chars().count());
+    if cursor == 0 {
+        return (input.to_string(), 0);
+    }
+    let start = byte_of_char(input, cursor - 1);
+    let end = byte_of_char(input, cursor);
+    let mut out = String::with_capacity(input.len());
+    out.push_str(&input[..start]);
+    out.push_str(&input[end..]);
+    (out, cursor - 1)
+}
+
+/// Delete the char at `cursor` (Delete key); unchanged at end of input.
+fn delete_forward(input: &str, cursor: usize) -> String {
+    let chars = input.chars().count();
+    let cursor = cursor.min(chars);
+    if cursor >= chars {
+        return input.to_string();
+    }
+    let start = byte_of_char(input, cursor);
+    let end = byte_of_char(input, cursor + 1);
+    let mut out = String::with_capacity(input.len());
+    out.push_str(&input[..start]);
+    out.push_str(&input[end..]);
+    out
+}
+
+/// Move the cursor left (`dir < 0`) or right (`dir > 0`), clamped to bounds.
+fn move_cursor(input: &str, cursor: usize, dir: i8) -> usize {
+    let chars = input.chars().count();
+    let cursor = cursor.min(chars);
+    match dir {
+        d if d < 0 => cursor.saturating_sub(1),
+        d if d > 0 => (cursor + 1).min(chars),
+        _ => cursor,
+    }
+}
+
+/// Ctrl-U: delete everything before the cursor; cursor jumps to the start.
+fn kill_to_start(input: &str, cursor: usize) -> (String, usize) {
+    let cursor = cursor.min(input.chars().count());
+    (input[byte_of_char(input, cursor)..].to_string(), 0)
+}
+
+/// Ctrl-K: delete everything from the cursor to the end of the input.
+fn kill_to_end(input: &str, cursor: usize) -> String {
+    let cursor = cursor.min(input.chars().count());
+    input[..byte_of_char(input, cursor)].to_string()
+}
+
+/// Ctrl-W: delete the word before the cursor (skipping intervening
+/// whitespace); returns the new input and cursor.
+fn kill_word(input: &str, cursor: usize) -> (String, usize) {
+    let chars: Vec<char> = input.chars().collect();
+    let cursor = cursor.min(chars.len());
+    if cursor == 0 {
+        return (input.to_string(), 0);
+    }
+    let mut i = cursor;
+    while i > 0 && chars[i - 1].is_whitespace() {
+        i -= 1;
+    }
+    while i > 0 && !chars[i - 1].is_whitespace() {
+        i -= 1;
+    }
+    let start = byte_of_char(input, i);
+    let end = byte_of_char(input, cursor);
+    let mut out = String::with_capacity(input.len());
+    out.push_str(&input[..start]);
+    out.push_str(&input[end..]);
+    (out, i)
+}
+
 /// The interactive chat application.
 pub struct App {
     harness: Harness,
@@ -230,6 +327,8 @@ pub struct App {
     transcript: Vec<TranscriptLine>,
     /// The user's current input line.
     input: String,
+    /// Char index of the input cursor (editing position).
+    cursor: usize,
     /// Prompt history (up/down).
     history: Vec<String>,
     history_idx: Option<usize>,
@@ -256,6 +355,7 @@ impl App {
             harness,
             transcript: Vec::new(),
             input: String::new(),
+            cursor: 0,
             history: Vec::new(),
             history_idx: None,
             session_id: session_id.to_string(),
@@ -309,16 +409,62 @@ impl App {
                     KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
                         return Ok(());
                     }
+                    KeyCode::Char(ch) if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                        self.tab = None;
+                        match ch {
+                            'a' => self.cursor = 0,
+                            'e' => self.cursor = self.input.chars().count(),
+                            'u' => {
+                                let (input, cursor) = kill_to_start(&self.input, self.cursor);
+                                self.input = input;
+                                self.cursor = cursor;
+                            }
+                            'k' => {
+                                self.input = kill_to_end(&self.input, self.cursor);
+                            }
+                            'w' => {
+                                let (input, cursor) = kill_word(&self.input, self.cursor);
+                                self.input = input;
+                                self.cursor = cursor;
+                            }
+                            _ => {}
+                        }
+                    }
                     KeyCode::Char(ch) => {
                         self.tab = None;
-                        self.input.push(ch);
+                        let (input, cursor) = insert_char(&self.input, self.cursor, ch);
+                        self.input = input;
+                        self.cursor = cursor;
                     }
                     KeyCode::Backspace => {
                         self.tab = None;
-                        self.input.pop();
+                        let (input, cursor) = backspace(&self.input, self.cursor);
+                        self.input = input;
+                        self.cursor = cursor;
+                    }
+                    KeyCode::Delete => {
+                        self.tab = None;
+                        self.input = delete_forward(&self.input, self.cursor);
+                    }
+                    KeyCode::Left => {
+                        self.tab = None;
+                        self.cursor = move_cursor(&self.input, self.cursor, -1);
+                    }
+                    KeyCode::Right => {
+                        self.tab = None;
+                        self.cursor = move_cursor(&self.input, self.cursor, 1);
+                    }
+                    KeyCode::Home => {
+                        self.tab = None;
+                        self.cursor = 0;
+                    }
+                    KeyCode::End => {
+                        self.tab = None;
+                        self.cursor = self.input.chars().count();
                     }
                     KeyCode::Enter => {
                         self.tab = None;
+                        self.cursor = 0;
                         let line = std::mem::take(&mut self.input);
                         if line.trim().is_empty() {
                             continue;
@@ -411,6 +557,92 @@ impl App {
                         Err(e) => self
                             .transcript
                             .push(TranscriptLine::error(format!("info failed: {e}"))),
+                    }
+                }
+                "/session" => {
+                    let parts: Vec<&str> = rest.split_whitespace().collect();
+                    match parts.first().copied() {
+                        Some("set") if parts.len() >= 2 => {
+                            let title = parts[1..].join(" ");
+                            match self.harness.rename_session(&self.session_id, &title).await {
+                                Ok(()) => self.transcript.push(TranscriptLine::status(format!(
+                                    "session {title}",
+                                ))),
+                                Err(e) => self
+                                    .transcript
+                                    .push(TranscriptLine::error(format!("rename failed: {e}"))),
+                            }
+                        }
+                        _ => {
+                            let msg = if parts.is_empty() {
+                                format!("session {}", self.session_id)
+                            } else {
+                                "usage: /session [set <title>]".to_string()
+                            };
+                            self.transcript.push(TranscriptLine::status(msg));
+                        }
+                    }
+                }
+                "/plugins" => {
+                    let parts: Vec<&str> = rest.split_whitespace().collect();
+                    match parts.first().copied() {
+                        None | Some("list") => {
+                            match self.harness.list_plugins().await {
+                                Ok(plugins) => {
+                                    if plugins.is_empty() {
+                                        self.transcript
+                                            .push(TranscriptLine::status("no plugins installed"));
+                                    } else {
+                                        let lines: Vec<String> = plugins
+                                            .iter()
+                                            .map(|p| {
+                                                let id = p["id"].as_str().unwrap_or("?");
+                                                let enabled = p["enabled"].as_bool().unwrap_or(false);
+                                                format!("{id} {}", if enabled { "[on]" } else { "[off]" })
+                                            })
+                                            .collect();
+                                        self.transcript.push(TranscriptLine::status(format!(
+                                            "plugins ({}): {}",
+                                            lines.len(),
+                                            lines.join(", ")
+                                        )));
+                                    }
+                                }
+                                Err(e) => self
+                                    .transcript
+                                    .push(TranscriptLine::error(format!("plugins failed: {e}"))),
+                            }
+                        }
+                        Some(action) => {
+                            let id = parts.get(1).copied().unwrap_or("");
+                            let result = match action {
+                                "enable" if !id.is_empty() => {
+                                    self.harness.set_plugin_enabled(id, true).await.map(|_| format!("enabled {id}"))
+                                }
+                                "disable" if !id.is_empty() => {
+                                    self.harness.set_plugin_enabled(id, false).await.map(|_| format!("disabled {id}"))
+                                }
+                                "remove" if !id.is_empty() => {
+                                    self.harness.remove_plugin(id).await.map(|removed| {
+                                        format!("removed {id}{}", if removed { "" } else { " (not found)" })
+                                    })
+                                }
+                                "reload" => {
+                                    self.harness.reload_plugins().await.map(|_| "plugins reloaded".to_string())
+                                }
+                                "install" if !id.is_empty() => {
+                                    let source = parts.get(1).copied().unwrap_or("").to_string();
+                                    self.harness.install_plugin(&source).await.map(|_| format!("installed {source}"))
+                                }
+                                _ => Err(anyhow::anyhow!("usage: /plugins [list|enable|disable|remove|reload|install <source>]")),
+                            };
+                            match result {
+                                Ok(msg) => self.transcript.push(TranscriptLine::status(msg)),
+                                Err(e) => self
+                                    .transcript
+                                    .push(TranscriptLine::error(format!("plugins: {e}"))),
+                            }
+                        }
                     }
                 }
                 "/config" => {
@@ -848,6 +1080,7 @@ impl App {
         match next {
             Some(i) => {
                 self.input = completed;
+                self.cursor = self.input.chars().count();
                 self.tab = Some(TabState { base, idx: i });
             }
             None => self.tab = None,
@@ -859,6 +1092,7 @@ impl App {
         if idx > 0 {
             self.history_idx = Some(idx - 1);
             self.input = self.history[idx - 1].clone();
+            self.cursor = self.input.chars().count();
         }
     }
 
@@ -871,6 +1105,7 @@ impl App {
                 self.history_idx = None;
                 self.input.clear();
             }
+            self.cursor = self.input.chars().count();
         }
     }
 
@@ -885,6 +1120,7 @@ impl App {
             frame,
             &self.transcript,
             &self.input,
+            self.cursor,
             &self.session_id,
             &self.status,
             self.scroll,
@@ -899,6 +1135,7 @@ fn render_frame(
     frame: &mut ratatui::Frame<'_>,
     transcript: &[TranscriptLine],
     input: &str,
+    cursor: usize,
     session_id: &str,
     status: &str,
     scroll: u16,
@@ -911,10 +1148,16 @@ fn render_frame(
     let chat = Paragraph::new(styled_lines(transcript, theme))
         .block(Block::default().borders(Borders::ALL).title("chat"))
         .scroll((scroll, 0));
-    let input = Paragraph::new(input)
+    let input_widget = Paragraph::new(input)
         .block(Block::default().borders(Borders::ALL).title(format!("input — {session_id} | {status}")));
     frame.render_widget(chat, chunks[0]);
-    frame.render_widget(input, chunks[1]);
+    frame.render_widget(input_widget, chunks[1]);
+    // Place the terminal cursor at the input editing position (inside the
+    // border). A cursor beyond the pane width is safe — it just stays hidden
+    // until horizontal scrolling lands (later batch).
+    let input_row = chunks[1].y + 1;
+    let input_col = chunks[1].x + 1 + cursor as u16;
+    frame.set_cursor_position((input_col, input_row));
 }
 
 /// Largest scroll offset that still keeps the last transcript line visible
@@ -1240,7 +1483,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(60, 12)).unwrap();
         terminal
             .draw(|frame| {
-                render_frame(frame, &transcript, "/help", "sess-1", "plan=off swarm=off", 0, crate::theme::Theme::dark());
+                render_frame(frame, &transcript, "/help", 2, "sess-1", "plan=off swarm=off", 0, crate::theme::Theme::dark());
             })
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
@@ -1263,6 +1506,9 @@ mod tests {
         assert!(user_cell.style().add_modifier.contains(Modifier::BOLD));
         let gear_cell = buffer.content.iter().find(|c| c.symbol() == "⚙").expect("⚙ cell");
         assert_eq!(gear_cell.style().fg, Some(Color::Blue));
+        // The terminal cursor sits at the input editing position: inside the
+        // input pane border (row 10 of 12; col = 1 border + 2 chars in).
+        assert_eq!(terminal.backend().get_cursor_position(), Some((3, 10)));
     }
 
     #[test]

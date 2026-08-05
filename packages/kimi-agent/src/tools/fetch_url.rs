@@ -199,9 +199,11 @@ mod tests {
 
     #[test]
     fn test_is_private_host_public() {
-        // This test relies on DNS resolution
-        let result = is_private_host("example.com");
-        assert!(!result);
+        // IP literals only — DNS resolution would make this test depend on the
+        // ambient network state (example.com here used to resolve through the
+        // live DNS and fail intermittently when it hiccupped).
+        assert!(!is_private_host("203.0.113.1"));
+        assert!(!is_private_host("8.8.8.8"));
     }
 
     #[test]

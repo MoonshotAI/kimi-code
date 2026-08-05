@@ -508,6 +508,8 @@ async fn handle_chat_command(
             println!("/export      export the session as <session_id>.zip");
             println!("/archive     archive the session (kept on disk, marked archived)");
             println!("/sessions    list persisted sessions");
+            println!("/session     show this session id, or `/session set <title>` to rename");
+            println!("/plugins     list plugins; subcommands: enable|disable|remove|reload|install <source>");
             println!("/undo        undo the last turn");
             println!("/fork <id>   fork this session under a new id");
             println!("/import <t>  import prior conversation text");
@@ -771,6 +773,83 @@ async fn handle_chat_command(
                 let title = session["title"].as_str().unwrap_or("");
                 let title = if title.is_empty() { "(untitled)" } else { title };
                 println!("{id}  {title}");
+            }
+            ChatCommand::Handled
+        }
+        "/session" => {
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            match parts.first().copied() {
+                Some("set") if parts.len() >= 2 => {
+                    let title = parts[1..].join(" ");
+                    let body = client
+                        .call(
+                            kimi_protocol::methods::SESSION_RENAME,
+                            serde_json::json!({ "session_id": *session_id, "title": title }),
+                        )
+                        .await;
+                    if let Some(error) = body.get("error") {
+                        return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+                    }
+                    println!("session renamed to {title}");
+                    ChatCommand::Handled
+                }
+                _ if parts.is_empty() => {
+                    println!("session {}", session_id);
+                    ChatCommand::Handled
+                }
+                _ => ChatCommand::Error("usage: /session [set <title>]".into()),
+            }
+        }
+        "/plugins" => {
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            let action = parts.first().copied().unwrap_or("list");
+            let id = parts.get(1).copied().unwrap_or("");
+            let body = match (action, id) {
+                ("list", _) => client
+                    .call(kimi_protocol::methods::PLUGIN_LIST, serde_json::Value::Null)
+                    .await,
+                ("enable", id) if !id.is_empty() => client
+                    .call(
+                        kimi_protocol::methods::PLUGIN_SET_ENABLED,
+                        serde_json::json!({ "id": id, "enabled": true }),
+                    )
+                    .await,
+                ("disable", id) if !id.is_empty() => client
+                    .call(
+                        kimi_protocol::methods::PLUGIN_SET_ENABLED,
+                        serde_json::json!({ "id": id, "enabled": false }),
+                    )
+                    .await,
+                ("remove", id) if !id.is_empty() => client
+                    .call(kimi_protocol::methods::PLUGIN_REMOVE, serde_json::json!({ "id": id }))
+                    .await,
+                ("reload", _) => client
+                    .call(kimi_protocol::methods::PLUGIN_RELOAD, serde_json::Value::Null)
+                    .await,
+                ("install", source) if !source.is_empty() => client
+                    .call(kimi_protocol::methods::PLUGIN_INSTALL, serde_json::json!({ "source": source }))
+                    .await,
+                _ => {
+                    return ChatCommand::Error(
+                        "usage: /plugins [list|enable <id>|disable <id>|remove <id>|reload|install <source>]".into(),
+                    );
+                }
+            };
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            if action == "list" {
+                let plugins = body["result"]["plugins"].as_array().cloned().unwrap_or_default();
+                if plugins.is_empty() {
+                    println!("no plugins installed");
+                }
+                for plugin in plugins {
+                    let id = plugin["id"].as_str().unwrap_or("?");
+                    let enabled = plugin["enabled"].as_bool().unwrap_or(false);
+                    println!("{id} {}", if enabled { "[on]" } else { "[off]" });
+                }
+            } else {
+                println!("{}", serde_json::to_string_pretty(&body["result"]).unwrap_or_default());
             }
             ChatCommand::Handled
         }

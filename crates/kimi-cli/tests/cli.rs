@@ -373,6 +373,61 @@ fn chat_sessions_lists_persisted() {
 }
 
 #[test]
+fn chat_session_shows_id_and_renames() {
+    // `/session` shows the active session id; `/session set <title>` renames
+    // it via session/rename (kimi-server processor).
+    let home = temp_dir("chat-session-rename");
+    let cwd = temp_dir("chat-session-rename-cwd");
+    let mut child = Command::new(binary())
+        .args(["chat", "-s", "s-rename-me"])
+        .current_dir(&cwd)
+        .env("KIMI_AGENT_HOME", &home)
+        .env("HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn kimi chat");
+    {
+        use std::io::Write;
+        let stdin = child.stdin.as_mut().expect("stdin");
+        stdin.write_all(b"/session\n/session set my title\n/quit\n").expect("write");
+    }
+    let output = child.wait_with_output().expect("wait");
+    assert!(output.status.success(), "chat exits 0: {}", output.status);
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(out.contains("s-rename-me"), "session id shown: {out}");
+    assert!(out.contains("my title"), "title shown after rename: {out}");
+}
+
+#[test]
+fn chat_plugins_empty_home_lists_none() {
+    // `/plugins` with an empty home lists no installed plugins (the engine
+    // reports an empty array rather than failing).
+    let home = temp_dir("chat-plugins");
+    let cwd = temp_dir("chat-plugins-cwd");
+    let mut child = Command::new(binary())
+        .args(["chat", "-s", "s-plugins"])
+        .current_dir(&cwd)
+        .env("KIMI_AGENT_HOME", &home)
+        .env("HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn kimi chat");
+    {
+        use std::io::Write;
+        let stdin = child.stdin.as_mut().expect("stdin");
+        stdin.write_all(b"/plugins\n/quit\n").expect("write");
+    }
+    let output = child.wait_with_output().expect("wait");
+    assert!(output.status.success(), "chat exits 0: {}", output.status);
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(out.contains("no plugins installed"), "empty plugins listed: {out}");
+}
+
+#[test]
 fn acp_initialize_handshake() {
     // `kimi acp` speaks ACP over stdio: initialize -> protocolVersion.
     let home = temp_dir("acp");

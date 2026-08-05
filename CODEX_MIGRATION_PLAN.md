@@ -434,3 +434,43 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 **离线边界更新（网络已恢复，2026-08）**：ratatui TUI、clap_complete、catalog（models.dev）、OAuth（kimi-oauth device flow）、npm 分发薄壳全部落地；剩余：ts-rs 绑定生成（可选）。
 
 **下一步建议**：① 阶段 E 剩余：kimi-sdk 测试平移（TS 425 用例，大项）按需；② 阶段 F 剩余：TS 宿主退役（kap-server/node-sdk/klient/acp-adapter/oauth/protocol/kaos → retired/，Rust 全绿后删除 TS 入口）；③ 真实 LLM 端点恢复后的 `kimi print`/TUI 流式端到端验证（含 ACP 逐 token 通知）。
+
+## 10. 当前缺失项 TODO 清单（2026-08-05 复核）
+
+> 依据：本节对照 §3 逐 crate 规格 / §6 阶段任务清单 / §8 状态，与工作区实际代码逐项核对（`crates/` 文件清单 + 测试基线 + git 状态）。`[ ]` = 缺失待补，`🔶` = 部分完成，`[x]` = 已定案关闭。
+
+### 阶段 D — TUI 功能面（当前最大缺失，kimi-tui 仅 4 文件 1784 行 vs 计划 ~200 文件）
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| D-1 `kimi-tui` 主循环 + 事件流 | ✅ | `app.rs`/`lib.rs`/`markdown.rs`/`theme.rs`，13 测试（ratatui 实时渲染/角色化转录/23+ 命令面 Tab 补全/审批 y-n/流式） |
+| D-2 chatwidget（transcript/streaming/tool_requests/slash） | 🔶 | 仅 markdown 渲染与转录线；**transcript 历史记录渲染、tool_requests 工具调用卡片、slash 命令面（现 kimi-cli REPL 36 命令）未平移**——TS `apps/kimi-code/src/tui/commands` 6k + `components/messages` 20k 仍待迁 |
+| D-3 bottom_pane（composer/textarea/footer/popup/mentions） | ❌ | 完全缺失：输入区/编辑器集成/vim 模式/弹窗/mentions 未平移 |
+| D-4 reverse_rpc（approval/question 反向 RPC 接线） | ❌ | 未接线；现审批走 y/n 本地交互，host 回调反向面缺 |
+| D-5 验证（TUI 冒烟 + 交互路径与 TS 版行为一致） | 🔶 | TestBackend 冒烟 ✅；全交互路径对拍未做 |
+
+### 阶段 E — SDK/ACP/OAuth/Config 收尾
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| E-2 ACP 兼容测试 | 🔶 | stdio 适配器 + 命令面 ✅（initialize/生命周期/set_mode/set_model/notification 回放）；**兼容矩阵持续测试**未做（依赖真实客户端） |
+| E-3 kimi-oauth 状态机细化 | 🔶 | device flow ✅（authorize/poll/refresh + 3 测试 + `kimi login`）；授权码流/状态机细节待续 |
+| E-4 config 面（TOML/env/diagnostics） | 🔶 | `kimi-sdk::catalog` ✅（models.dev）；**kimi-config 面**：`config get/set/replace` 协议层 ✅（kimi-server）+ `kimi config --set` ✅（kimi-cli），`doctor config` 文件级检查 ✅；env overlay / diagnostics 细化未做 |
+| E-5 SDK 测试平移（TS 425 用例） | [x] | **已定案关闭**（2026-08-05 测试策略：重写而非平移，TS 用例平移跳过） |
+
+### 阶段 F — 退役（前置依赖阶段 D/E 收尾）
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| F-3 TS 宿主退役（node-sdk/kap-server/acp-adapter/oauth/protocol/kaos → `retired/`） | 🔶 阻塞 | **前置未满足**：`apps/kimi-code` 是 TS 分发，依赖上述包（鸡生蛋闭环）。可行路径：① 先让 `apps/kimi-code` 消费面切 Rust（native-session 已接 plugin/cancelCompaction/archive，剩 auth/provider/telemetry 面）→ ② 逐步减少 node-sdk 宿主依赖 → ③ 最后移 `retired/`。klient 已退役 ✅ |
+| F-5 全链路 Rust 端到端验证 + 旧 TS 测试退役 | ❌ | CLI/TUI/web/API 全 Rust 端到端未跑；TS 旧测试删除/转 Rust 未做（依赖 D/E 完成） |
+
+### 验证类（横切）
+
+- [ ] 真实 LLM 端点恢复后 `kimi print`/TUI 流式端到端（含 ACP 逐 token 通知）——当前用 stub/fake LLM 验证，无真实端点回路
+
+### 文档/流程收尾
+
+- [x] 阶段 B-5 kap-server 测试平移（377 基线）→ 同 E-5，定案"重写而非平移"，关闭
+- [ ] §3 中未建 crate 标注：`kimi-core`/`kimi-state`（保留 `packages/kimi-agent` 未拆分）、`crates/utils/*`（并入 native-tools/kimi-shared）——计划与现状偏差已在 §10 记录，如需执行拆分再更新 §3
+- ✅ **2026-08-05 已提交**：`/session`（显示/重命名）与 `/plugins`（list/enable/disable/remove/reload/install）命令 TUI+REPL 落地；间歇性 DNS 依赖测试修复（kimi-native-tools fetch_url `example.com`→IP 字面量 + kimi-agent `is_private_host` 同修）——workspace 全绿稳定（连续 3 次无失败）

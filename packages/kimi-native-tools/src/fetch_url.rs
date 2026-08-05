@@ -436,7 +436,11 @@ mod tests {
 
     #[test]
     fn test_validate_url_allows_public() {
-        assert!(validate_url("https://example.com/page", false).is_ok());
+        // IP-literal public addresses: no DNS resolution, so the test is
+        // deterministic regardless of the ambient network/DNS state (resolving
+        // a hostname like example.com here used to fail intermittently when
+        // DNS hiccupped).
+        assert!(validate_url("http://203.0.113.1/page", false).is_ok());
         assert!(validate_url("http://8.8.8.8/dns", false).is_ok());
     }
 
