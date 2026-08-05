@@ -134,7 +134,7 @@ export function effortLabel(effort: string): string {
  * middle `support_efforts` entry, else `'on'` for boolean models, `'off'` when
  * thinking is unsupported.
  */
-function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
+export function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
   if (thinkingAvailability(model) === 'unsupported') return 'off';
   const efforts = effortsOf(model);
   if (efforts.length > 0) {

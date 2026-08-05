@@ -40,12 +40,14 @@ import type {
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
 import type { ToolCall } from '#/kosong/contract/message';
+import type { ModelCapability } from '#/kosong/contract/capability';
+import { IModelCatalog } from '#/kosong/model/catalog';
 import type { ExecutableToolContext } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IConfigService } from '#/app/config/config';
-import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { normalizeAgentProfile, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
@@ -123,23 +125,23 @@ function stubConfig(section?: {
   } as unknown as IConfigService;
 }
 
-const DEFAULT_CALLER_PROFILE: AgentProfile = {
+const DEFAULT_CALLER_PROFILE: AgentProfile = normalizeAgentProfile({
   name: 'agent',
   description: 'test caller',
   systemPrompt: () => 'caller',
-};
+});
 
 const DEFAULT_SWARM_TARGET_PROFILES: readonly AgentProfile[] = [
-  {
+  normalizeAgentProfile({
     name: 'coder',
     description: 'test coder',
     systemPrompt: () => 'coder',
-  },
-  {
+  }),
+  normalizeAgentProfile({
     name: 'explore',
     description: 'test explorer',
     systemPrompt: () => 'explore',
-  },
+  }),
 ];
 
 function stubSwarmCatalog(
@@ -167,6 +169,19 @@ function stubCallerProfile(
     _serviceBrand: undefined,
     data: () => data ?? { profileName: undefined },
   } as unknown as IAgentProfileService;
+}
+
+function stubModelCatalog(
+  capabilities: Readonly<Record<string, ModelCapability>> = {},
+): IModelCatalog {
+  return {
+    _serviceBrand: undefined,
+    get: (id: string) => {
+      const capability = capabilities[id];
+      if (capability === undefined) throw new Error(`Model "${id}" is not configured.`);
+      return { capabilities: capability };
+    },
+  } as unknown as IModelCatalog;
 }
 
 describe('AgentSwarmService', () => {
@@ -488,7 +503,7 @@ describe('AgentSwarmTool', () => {
       ]),
     });
     const swarmMode = mockSwarmMode();
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), swarmMode, stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile());
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), swarmMode, stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile(), stubModelCatalog());
     const input = {
       description: 'Review files',
       prompt_template: 'Review {{item}}',
@@ -585,7 +600,7 @@ describe('AgentSwarmTool', () => {
 
   it('does not expose permission rule argument matching', () => {
     const host = mockSwarmHost();
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile());
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile(), stubModelCatalog());
     const execution = tool.resolveExecution({
       description: 'Review files',
       prompt_template: 'Review {{item}}',
@@ -600,7 +615,7 @@ describe('AgentSwarmTool', () => {
 
   it('description states the enforced input requirements', () => {
     const host = mockSwarmHost();
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile());
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile(), stubModelCatalog());
     expect(tool.description).toContain('at least 2');
     expect(tool.description).toContain('{{item}}');
     expect(tool.description.toLowerCase()).toContain('distinct');
@@ -608,12 +623,12 @@ describe('AgentSwarmTool', () => {
 
   it('uses the persisted caller allowlist instead of the current catalog profile', async () => {
     const host = mockSwarmHost();
-    const caller: AgentProfile = {
+    const caller: AgentProfile = normalizeAgentProfile({
       name: 'orchestrator',
       description: 'Orchestrator',
       subagents: ['coder'],
       systemPrompt: () => 'orchestrator',
-    };
+    });
     const tool = new AgentSwarmTool(
       host.swarmService,
       makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }),
@@ -622,6 +637,7 @@ describe('AgentSwarmTool', () => {
       stubFlag(true),
       stubSwarmCatalog(caller),
       stubCallerProfile({ profileName: 'deleted-profile', subagents: ['explore'] }),
+      stubModelCatalog(),
     );
 
     const result = await executeTool(
@@ -685,7 +701,7 @@ describe('AgentSwarmTool', () => {
 
     for (const testCase of cases) {
       const host = mockSwarmHost();
-      const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile());
+      const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile(), stubModelCatalog());
 
       const result = await executeTool(tool, context(testCase.input));
 
@@ -718,7 +734,7 @@ describe('AgentSwarmTool', () => {
       async ({ agentId }: { readonly agentId: string }) => persistedItems[agentId],
     );
     const host = mockSwarmHost({ run, getSwarmItem });
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile());
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile(), stubModelCatalog());
     const input = {
       description: 'Finish review',
       subagent_type: 'explore',
@@ -838,7 +854,7 @@ describe('AgentSwarmTool', () => {
     );
     const getSwarmItem = vi.fn(async () => 'src/old-a.ts');
     const host = mockSwarmHost({ run, getSwarmItem });
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile());
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile(), stubModelCatalog());
     const input = {
       description: 'Resume review',
       resume_agent_ids: {
@@ -901,7 +917,7 @@ describe('AgentSwarmTool', () => {
         },
       ]),
     });
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile());
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile(), stubModelCatalog());
 
     const result = await executeTool(
       tool,
@@ -927,7 +943,7 @@ describe('AgentSwarmTool', () => {
 
   it('passes the configured subagent timeout to swarm tasks', async () => {
     const host = mockSwarmHost();
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ timeoutMs: 5_000 }), stubFlag(true), stubSwarmCatalog(), stubCallerProfile());
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ timeoutMs: 5_000 }), stubFlag(true), stubSwarmCatalog(), stubCallerProfile(), stubModelCatalog());
 
     await executeTool(
       tool,
@@ -950,7 +966,7 @@ describe('AgentSwarmTool', () => {
 
   it('resolves spawn task bindings from the configured secondary model', async () => {
     const host = mockSwarmHost();
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ model: 'provider/secondary', defaultEffort: 'low' }), stubFlag(true), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model', thinkingLevel: 'high' }));
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ model: 'provider/secondary', defaultEffort: 'low' }), stubFlag(true), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model', thinkingLevel: 'high' }), stubModelCatalog());
 
     await executeTool(
       tool,
@@ -973,13 +989,13 @@ describe('AgentSwarmTool', () => {
 
   it('lets the tool call opt back into the primary model', async () => {
     const host = mockSwarmHost();
-    const secondaryCoder: AgentProfile = {
+    const secondaryCoder: AgentProfile = normalizeAgentProfile({
       name: 'coder',
       description: 'test coder',
       modelPreference: 'secondary',
       systemPrompt: () => 'coder',
-    };
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ model: 'provider/secondary', defaultEffort: 'low' }), stubFlag(true), stubSwarmCatalog(DEFAULT_CALLER_PROFILE, [secondaryCoder]), stubCallerProfile({ modelAlias: 'main-model', thinkingLevel: 'high' }));
+    });
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ model: 'provider/secondary', defaultEffort: 'low' }), stubFlag(true), stubSwarmCatalog(DEFAULT_CALLER_PROFILE, [secondaryCoder]), stubCallerProfile({ modelAlias: 'main-model', thinkingLevel: 'high' }), stubModelCatalog());
 
     await executeTool(
       tool,
@@ -1003,15 +1019,44 @@ describe('AgentSwarmTool', () => {
 
   it('advertises both selectable models in the description only when configured', async () => {
     const host = mockSwarmHost();
-    const configured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ model: 'provider/secondary' }), stubFlag(true), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model' }));
+    const configured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ model: 'provider/secondary' }), stubFlag(true), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model' }), stubModelCatalog({
+      'provider/secondary': { image_in: true, video_in: false, audio_in: false, thinking: true, tool_use: true, max_context_tokens: 262_144 },
+      'main-model': { image_in: false, video_in: false, audio_in: false, thinking: false, tool_use: true, max_context_tokens: 262_144 },
+    }));
 
     expect(configured.description).toContain('Available models (pass via model):');
-    expect(configured.description).toContain('- secondary: provider/secondary (default)');
-    expect(configured.description).toContain('- primary: main-model');
+    expect(configured.description).toContain(
+      '- secondary: provider/secondary (default) — the configured secondary model; prefer it for routine subagent tasks; capabilities: image_in, thinking, tool_use',
+    );
+    expect(configured.description).toContain(
+      '- primary: main-model — the main model you are running on; use it for hard, quality-sensitive subagent tasks; capabilities: tool_use',
+    );
 
-    const unconfigured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model' }));
+    const unconfigured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model' }), stubModelCatalog());
 
     expect(unconfigured.description).not.toContain('Available models');
+  });
+
+  it('reads secondary capabilities from the derived entry when the recipe carries patch fields', async () => {
+    const host = mockSwarmHost();
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ model: 'provider/secondary', defaultEffort: 'low' }), stubFlag(true), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model' }), stubModelCatalog({
+      [SECONDARY_DERIVED_MODEL_ID]: { image_in: false, video_in: false, audio_in: false, thinking: true, tool_use: true, max_context_tokens: 131_072 },
+      'main-model': { image_in: true, video_in: false, audio_in: false, thinking: false, tool_use: true, max_context_tokens: 262_144 },
+    }));
+
+    expect(tool.description).toContain(
+      '- secondary: provider/secondary (default) — the configured secondary model; prefer it for routine subagent tasks; capabilities: thinking, tool_use',
+    );
+    expect(tool.description).toContain('capabilities: image_in, tool_use');
+  });
+
+  it('omits the capabilities suffix for models the catalog cannot resolve', async () => {
+    const host = mockSwarmHost();
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ model: 'provider/secondary' }), stubFlag(true), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model' }), stubModelCatalog());
+
+    expect(tool.description).toContain('- secondary: provider/secondary (default)');
+    expect(tool.description).toContain('- primary: main-model');
+    expect(tool.description).not.toContain('capabilities:');
   });
 
   it('omits resume hint when incomplete subagents have no agent ids', async () => {
@@ -1029,7 +1074,7 @@ describe('AgentSwarmTool', () => {
         },
       ]),
     });
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile());
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile(), stubModelCatalog());
 
     const result = await executeTool(
       tool,
@@ -1076,7 +1121,7 @@ describe('AgentSwarmTool', () => {
         },
       ]),
     });
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile());
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile(), stubModelCatalog());
 
     const result = await executeTool(
       tool,

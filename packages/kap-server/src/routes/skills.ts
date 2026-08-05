@@ -70,7 +70,8 @@
  */
 
 import {
-  BUILTIN_SKILLS,
+  builtinProductSkillsEnabled,
+  visibleBuiltinSkills,
   ErrorCodes,
   EXTRA_SKILL_DIRS_SECTION,
   IAgentSkillService,
@@ -367,7 +368,10 @@ async function listWorkspaceSkillsForRoot(
 
   const catalog = new InMemorySkillCatalog();
   const ordered = [
-    { skills: BUILTIN_SKILLS, priority: SKILL_SOURCE_PRIORITY.builtin },
+    {
+      skills: visibleBuiltinSkills(builtinProductSkillsEnabled(config)),
+      priority: SKILL_SOURCE_PRIORITY.builtin,
+    },
     { skills: plugin.skills, priority: SKILL_SOURCE_PRIORITY.plugin },
     { skills: extra.skills, priority: SKILL_SOURCE_PRIORITY.extra },
     { skills: user.skills, priority: SKILL_SOURCE_PRIORITY.user },

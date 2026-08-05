@@ -13,6 +13,17 @@
  * blocking, while the data methods `await ready` before reading or writing.
  * The provider does not open browsers or run servers — it is the
  * persistence + flow-state shim.
+ *
+ * `invalidateStaleRegistration` guards interactive flows: the callback
+ * listener binds a random port per flow while a DCR registration pins the
+ * redirect URIs of the flow that created it, so a reused registration whose
+ * URIs no longer cover the current callback would be rejected at the
+ * authorization endpoint ("invalid redirect URI", rendered only in the
+ * user's browser). Dropping it lets `auth()` re-register.
+ *
+ * `clientName` is the product token for the default label
+ * (`<clientName> (<serverName>)`), carrying the configured custom identity; it
+ * is ignored when `clientLabel` states the whole label explicitly.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -30,6 +41,7 @@ import type {
   OAuthTokens,
 } from '@modelcontextprotocol/sdk/shared/auth.js';
 
+import { KIMI_MCP_CLIENT_NAME } from '../client-shared';
 import { canonicalMcpOAuthResource, mcpOAuthStoreKey, type McpOAuthStore } from './store';
 
 const TOKENS_SUFFIX = '-tokens.json';
@@ -42,6 +54,7 @@ export interface McpOAuthProviderOptions {
   readonly serverUrl: string | URL;
   readonly store: McpOAuthStore;
   readonly clientLabel?: string;
+  readonly clientName?: string;
 }
 
 export class McpOAuthClientProvider implements OAuthClientProvider {
@@ -63,7 +76,9 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
     this.serverUrl = canonicalMcpOAuthResource(options.serverUrl);
     this.storeKey = mcpOAuthStoreKey(options.serverName, this.serverUrl);
     this.store = options.store;
-    this.clientLabel = options.clientLabel ?? `kimi-code (${options.serverName})`;
+    this.clientLabel =
+      options.clientLabel ??
+      `${options.clientName ?? KIMI_MCP_CLIENT_NAME} (${options.serverName})`;
     this.ready = this.load();
   }
 
@@ -161,6 +176,17 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
     await this.ready;
     return this.discoveryCache;
+  }
+
+  async invalidateStaleRegistration(redirectUri: string): Promise<boolean> {
+    await this.ready;
+    const info = this.clientCache;
+    if (info === undefined || !('redirect_uris' in info)) return false;
+    const uris = info.redirect_uris;
+    if (!Array.isArray(uris) || uris.length === 0) return false;
+    if (uris.includes(redirectUri)) return false;
+    await this.invalidateCredentials('client');
+    return true;
   }
 
   async invalidateCredentials(

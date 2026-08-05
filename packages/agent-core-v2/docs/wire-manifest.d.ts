@@ -86,6 +86,12 @@ interface ConfigUpdatePayload {
   /** ThinkingEffort */
   thinkingLevel?: 'off' | 'on' | (string & {});
   systemPrompt?: string;
+  /** EnvironmentDisclosureSnapshot */
+  environmentDisclosure?: {
+    cwd: string;
+    date: { disclosed: true, value: { localDate: string, timeZone: string } } | { disclosed: false };
+  };
+  renderGeneration?: number;
   agentsMdPaths?: string[];
   disallowedTools?: string[];
 }
@@ -455,6 +461,12 @@ interface ProfileBindPayload {
   /** ThinkingEffort */
   thinkingEffort: 'off' | 'on' | (string & {});
   systemPrompt: string;
+  /** EnvironmentDisclosureSnapshot */
+  environmentDisclosure?: {
+    cwd: string;
+    date: { disclosed: true, value: { localDate: string, timeZone: string } } | { disclosed: false };
+  };
+  renderGeneration?: number;
   agentsMdPaths?: string[];
   activeToolNames?: string[];
   disallowedTools: string[];

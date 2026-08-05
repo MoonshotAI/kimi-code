@@ -8,6 +8,8 @@ export const CTRL_D_HINT = 'Press Ctrl+D again to exit';
 export const CTRL_C_HINT = 'Press Ctrl+C again to exit';
 export const MAIN_AGENT_ID = 'main';
 export const OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE = 'OAuth login expired. Send /login to login.';
+export const SESSIONLESS_STARTUP_NOTICE =
+  'No session yet — one will be created on your first message.';
 export const EXIT_CONFIRM_WINDOW_MS = 1500;
 // Time window for treating two consecutive Esc presses as a double-Esc, which
 // opens the undo selector. Kept short (double-click feel) so two deliberate

@@ -15,6 +15,29 @@
  * This file is the single source of truth for the request/response shapes,
  * shared by the Service interface (`searchService.ts`) and the REST zod
  * schemas (`protocol/rest-search.ts`).
+ *
+ * Pagination & generation semantics (v2 page tokens):
+ *   - Tokens are keyset cursors: they carry the sort boundary of the last
+ *     returned hit — (time, key) for time sorts and literal mode, (score,
+ *     time, key) for score sort — never an offset, so a deep page costs
+ *     proportionally to pageSize, not to the full match set.
+ *   - Index-route tokens also pin the index generation they were issued by.
+ *     The generation changes when the published base is swapped (initial
+ *     open, a read-only full reopen, a reindex) or when a sync pass REPLACED
+ *     already-indexed documents (a shrunk/rebuilt wire file rescan, a title
+ *     overwrite). A token from an older generation fails with
+ *     `invalid_page_token` — the client's signal to restart the search.
+ *   - Weak consistency within one generation: additive indexing (new
+ *     sessions, appended wire bytes) and deletions do NOT change the
+ *     generation, and keyset pagination stays exact under them for time
+ *     sorts (a hit added after the cursor sorts behind it and is simply not
+ *     surfaced — snapshot-at-first-page semantics). Score sorts may drift
+ *     because IDF depends on corpus size; restart the search for a fresh
+ *     ranking.
+ *   - Legacy v1 offset tokens (pre-versioning, `{f, s}`) are still accepted
+ *     for a transition window and answered with offset semantics; the
+ *     response always issues a v2 keyset token back, so clients upgrade on
+ *     the next page.
  */
 
 // ---- request ---------------------------------------------------------------
@@ -87,16 +110,30 @@ export interface GlobalSearchHit {
 
 export interface GlobalSearchIndexState {
   /**
-   * building — the first full sync has not finished yet, results may be
-   * incomplete; ready — a full sync completed in this process;
+   * building — the first full sync has not finished yet, or the index base
+   * is (re)building after a no-generation fallback recovery — results may
+   * be incomplete; ready — a full sync completed in this process;
    * readonly — another process holds the index write lock, this process only
-   * reads (incrementally catching up from the WAL before each search).
+   * reads (catching up from the WAL in the background).
    */
   readonly state: 'building' | 'ready' | 'readonly';
   /** Progress counters behind `state`. */
   readonly indexedSessions: number;
   readonly totalSessions: number;
   readonly documents: number;
+  /**
+   * True when the served page comes from a generation the service already
+   * knows to be behind: a newer index version was detected on disk
+   * (read-only refresh pending) or a background sync is in flight/queued.
+   * The results are still valid — just potentially not the freshest.
+   */
+  readonly stale?: boolean;
+  /**
+   * Set when the last background refresh/sync/reindex FAILED and the page is
+   * served from the previous (stale) generation: the error message, for
+   * observability. Absent when the last refresh succeeded.
+   */
+  readonly degraded?: string;
 }
 
 /**
@@ -109,16 +146,26 @@ export interface GlobalSearchIndexState {
  */
 export type GlobalSearchSource = 'live' | 'index';
 
+/**
+ * Why a page may miss real hits (the query was bounded, never silently
+ * truncated):
+ *   - 'candidate_cap' — the candidate set exceeded the confirmation cap, so
+ *     confirmation stopped at the cap;
+ *   - 'postings_budget' — the postings-visit budget stopped the index-side
+ *     candidate scan early (hot term/n-gram), so candidates are a subset;
+ *   - 'deadline' — the query's work budget (wall-clock deadline or processed
+ *     text volume) ran out during matching/confirmation.
+ * A page token from a changed index generation is NOT reported here — it
+ * fails the request with `invalid_page_token` (see the file header).
+ */
+export type GlobalSearchIncomplete = 'candidate_cap' | 'postings_budget' | 'deadline';
+
 export interface GlobalSearchPage {
   readonly items: GlobalSearchHit[];
   readonly hasMore: boolean;
   /** Present iff `hasMore`. */
   readonly pageToken?: string;
-  /**
-   * 'candidate_cap' — the literal-mode candidate set exceeded the cap, so
-   * confirmation was truncated and the page may miss real hits.
-   */
-  readonly incomplete?: 'candidate_cap';
+  readonly incomplete?: GlobalSearchIncomplete;
   readonly indexState: GlobalSearchIndexState;
   /**
    * The route that produced this page. The page token's fingerprint covers

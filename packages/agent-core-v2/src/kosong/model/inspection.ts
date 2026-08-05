@@ -95,6 +95,8 @@ export const TRACE = {
   detectedCapability: 'detectedCapability',
   capabilitySource: 'capabilitySource',
   hostHeaders: 'hostHeaders',
+  thirdPartyHeaders: 'thirdPartyHeaders',
+  identitySlug: 'identitySlug',
 } as const;
 
 export class ResolutionTraceCollector implements ResolutionTrace {
@@ -468,6 +470,17 @@ function attributeCapabilities(
   );
 }
 
+function hostHeaderDetail(
+  forwardsAll: boolean,
+  key: string,
+  identitySlug: string | undefined,
+): string {
+  if (forwardsAll) return "host request headers (hostHeaders: 'full')";
+  return identitySlug !== undefined && key === 'User-Agent'
+    ? `host User-Agent, product token from [identity] (${identitySlug})`
+    : 'host User-Agent';
+}
+
 function attributeHeaders(
   sources: Map<string, InspectionSource>,
   model: ResolvedModelLike,
@@ -476,14 +489,13 @@ function attributeHeaders(
 ): void {
   const envLayer = parseKimiCodeCustomHeaders();
   const rawHost = trace.captured<Readonly<Record<string, string>>>(TRACE.hostHeaders) ?? {};
+  const identitySlug = trace.captured<string | undefined>(TRACE.identitySlug);
   const forwardsAll =
     providerConfig?.type !== undefined &&
     getProviderDefinition(providerConfig.type)?.hostHeaders === 'full';
   const hostLayer: Readonly<Record<string, string>> = forwardsAll
     ? rawHost
-    : rawHost['User-Agent'] === undefined
-      ? {}
-      : { 'User-Agent': rawHost['User-Agent'] };
+    : trace.captured<Readonly<Record<string, string>>>(TRACE.thirdPartyHeaders) ?? {};
   const customLayer = providerConfig?.customHeaders ?? {};
   for (const key of Object.keys(model.headers)) {
     const path = `resolved.headers.${key}`;
@@ -492,7 +504,7 @@ function attributeHeaders(
     } else if (key in hostLayer) {
       sources.set(path, {
         kind: 'builtin',
-        detail: forwardsAll ? "host request headers (hostHeaders: 'full')" : 'host User-Agent',
+        detail: hostHeaderDetail(forwardsAll, key, identitySlug),
       });
     } else if (key in envLayer) {
       sources.set(path, { kind: 'env', detail: 'KIMI_CODE_CUSTOM_HEADERS' });

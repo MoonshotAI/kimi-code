@@ -45,7 +45,7 @@ describe('activateSkill RPC', () => {
     // JSON.stringify escapes the block's attribute quotes — assert on the
     // quote-free fragments.
     const llmInput = JSON.stringify(ctx.llmInputs());
-    expect(llmInput).toContain('kimi-skill-loaded');
+    expect(llmInput).toContain('skill-loaded');
     expect(llmInput).toContain('# Commit body');
     expect(llmInput).toContain('ARGUMENTS: -m fix');
   });

@@ -164,3 +164,47 @@ function token(accessToken: string): OAuthTokens {
     token_type: 'Bearer',
   };
 }
+
+describe('McpOAuthClientProvider.invalidateStaleRegistration', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'kimi-mcp-oauth-stale-'));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  function makeProvider() {
+    return new McpOAuthClientProvider({
+      serverName: 'srv',
+      serverUrl: 'https://mcp.example.com/mcp',
+      store: new JsonFileStore(dir),
+    });
+  }
+
+  it('drops a registration whose redirect_uris miss the current callback', () => {
+    const provider = makeProvider();
+    provider.saveClientInformation({
+      client_id: 'c1',
+      redirect_uris: ['http://127.0.0.1:11111/callback'],
+    });
+    expect(provider.invalidateStaleRegistration('http://127.0.0.1:22222/callback')).toBe(true);
+    expect(provider.clientInformation()).toBeUndefined();
+  });
+
+  it('keeps a registration that still covers the callback URI', () => {
+    const provider = makeProvider();
+    provider.saveClientInformation({
+      client_id: 'c1',
+      redirect_uris: ['http://127.0.0.1:11111/callback'],
+    });
+    expect(provider.invalidateStaleRegistration('http://127.0.0.1:11111/callback')).toBe(false);
+    expect(provider.clientInformation()).toMatchObject({ client_id: 'c1' });
+  });
+
+  it('is a no-op without a stored registration', () => {
+    const provider = makeProvider();
+    expect(provider.invalidateStaleRegistration('http://127.0.0.1:11111/callback')).toBe(false);
+  });
+});

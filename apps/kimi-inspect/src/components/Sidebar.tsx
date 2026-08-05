@@ -66,7 +66,7 @@ export function Sidebar({
     queryFn: () =>
       klient
         .core(ISessionIndex)
-        .list({
+        .listRecent({
           workspaceIds: workspaceId === null ? undefined : [workspaceId],
           includeArchived: true,
           limit: 200,

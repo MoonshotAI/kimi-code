@@ -23,4 +23,5 @@ export const UPDATE_CONFIG_SKILL: SkillDefinition = {
     ...parsed.metadata,
     type: parsed.metadata.type ?? 'inline',
   },
+  productSpecific: true,
 };

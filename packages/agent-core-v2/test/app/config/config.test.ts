@@ -15,6 +15,7 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
+import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { Error2, ErrorCodes, toErrorPayload } from '#/errors';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import { createTestAgent, type TestAgentContext } from '../../harness';
@@ -30,6 +31,7 @@ import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import '#/app/cron/configSection';
 import type { CronConfig } from '#/app/cron/configSection';
 import '#/app/skillCatalog/configSection';
+import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/app/skillCatalog/configSection';
 import {
   EXTRA_SKILL_DIRS_SECTION,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
@@ -192,11 +194,11 @@ describe('Agent config', () => {
   });
 
   it('useProfile emits the rendered system prompt and active tools', async () => {
-    const resolvedProfile: ResolvedAgentProfile = {
+    const resolvedProfile: ResolvedAgentProfile = normalizeAgentProfile({
       name: 'test-profile',
       systemPrompt: () => 'Profile system prompt.',
       tools: ['Read'],
-    };
+    });
 
     profile.useProfile(resolvedProfile, {
       osEnv: TEST_OS_ENV,
@@ -204,19 +206,19 @@ describe('Agent config', () => {
     });
 
     expect(ctx.newEvents()).toMatchInlineSnapshot(`
-      [wire] config.update            { "profileName": "test-profile", "systemPrompt": "Profile system prompt.", "agentsMdPaths": [], "disallowedTools": [], "time": "<time>" }
+      [wire] config.update            { "profileName": "test-profile", "systemPrompt": "Profile system prompt.", "environmentDisclosure": { "cwd": "<cwd>", "date": { "disclosed": false } }, "agentsMdPaths": [], "disallowedTools": [], "time": "<time>" }
       [emit] agent.status.updated     { "model": "mock-model", "maxContextTokens": 1000000 }
       [wire] tools.set_active_tools   { "names": [ "Read" ], "time": "<time>" }
     `);
   });
 
   it('useProfile passes additionalDirsInfo to profile system prompts', async () => {
-    const resolvedProfile: ResolvedAgentProfile = {
+    const resolvedProfile: ResolvedAgentProfile = normalizeAgentProfile({
       name: 'context-profile',
       systemPrompt: (context) =>
         `Prompt with additional dirs: ${context['additionalDirsInfo'] ?? 'none'}`,
       tools: ['Read'],
-    };
+    });
 
     profile.useProfile(resolvedProfile, {
       osEnv: TEST_OS_ENV,
@@ -435,6 +437,64 @@ describe('ConfigService env overlay (live)', () => {
     expect(config.get<CronConfig>('cron').disabled).toBe(true);
     env['KIMI_DISABLE_CRON'] = '0';
     expect(config.get<CronConfig>('cron').disabled).toBe(false);
+
+    disposables.dispose();
+  });
+
+  // `builtinProductSkills` is a whole-section scalar rather than an object of
+  // fields, so it exercises the section-level env binding branch and needs its
+  // own strip — `stripEnvBoundFields` only walks object fields.
+  it('applies a scalar section env binding and keeps it out of the file', async () => {
+    const env: Record<string, string> = {};
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    expect(config.get(BUILTIN_PRODUCT_SKILLS_SECTION)).toBe(true);
+
+    env['KIMI_CODE_BUILTIN_PRODUCT_SKILLS'] = '0';
+    expect(config.get(BUILTIN_PRODUCT_SKILLS_SECTION)).toBe(false);
+
+    // A write while the env var is active must persist the file's own value,
+    // never the env override echoed back.
+    await config.replace(BUILTIN_PRODUCT_SKILLS_SECTION, true);
+    delete env['KIMI_CODE_BUILTIN_PRODUCT_SKILLS'];
+    expect(config.get(BUILTIN_PRODUCT_SKILLS_SECTION)).toBe(true);
+
+    disposables.dispose();
+  });
+
+  // Contract: "an env value that fails its binding's parse is ignored". Object
+  // fields already honored it; a whole-section scalar binding must too, or a
+  // blank / mistyped variable silently clears the configured value.
+  it('keeps the file value when a scalar section env value fails to parse', async () => {
+    const env: Record<string, string> = {};
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    await config.replace(BUILTIN_PRODUCT_SKILLS_SECTION, false);
+
+    for (const invalid of ['', '   ', 'maybe']) {
+      env['KIMI_CODE_BUILTIN_PRODUCT_SKILLS'] = invalid;
+      expect(config.get(BUILTIN_PRODUCT_SKILLS_SECTION)).toBe(false);
+    }
+
+    env['KIMI_CODE_BUILTIN_PRODUCT_SKILLS'] = 'on';
+    expect(config.get(BUILTIN_PRODUCT_SKILLS_SECTION)).toBe(true);
 
     disposables.dispose();
   });

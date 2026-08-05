@@ -24,4 +24,5 @@ export const MCP_CONFIG_SKILL: SkillDefinition = {
     type: parsed.metadata.type ?? 'inline',
     disableModelInvocation: true,
   },
+  productSpecific: true,
 };

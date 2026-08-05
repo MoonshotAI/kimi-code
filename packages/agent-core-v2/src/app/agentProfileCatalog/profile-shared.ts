@@ -17,18 +17,25 @@
  * work the same way: the context may carry overrides seeded by the embedding
  * host (e.g. a desktop app), and the table falls back to the CLI defaults
  * ({@link DEFAULT_PRODUCT_NAME}, {@link DEFAULT_REPLY_STYLE_GUIDE}) when it
- * does not. `renderPromptTemplate` renders a user-owned template (an
+ * does not. `renderPromptTemplateResult` renders a user-owned template (an
  * agent-file body or `SYSTEM.md`) against the table; `${base_prompt}` is
  * bound to the default profile's prompt when a `basePrompt` is given,
  * resolved lazily and only when the template actually references it. Also
  * shared: `skillActiveFor` (whether the Skill tool survives a profile's tool
  * list — drives skills injection) and the `subagents`-allowlist helpers
- * (`subagentAllowlistFor`, `subagentTypeNotAllowedMessage`).
+ * (`subagentAllowlistFor`, `subagentTypeNotAllowedMessage`). Structured
+ * renderers also carry disclosure metadata so runtime reminders never need to
+ * parse the rendered text.
  */
 
 import { renderPrompt } from '#/_base/utils/render-prompt';
 
-import type { AgentProfile, AgentProfileContext } from './agentProfileCatalog';
+import {
+  type AgentProfile,
+  type AgentProfileContext,
+  type EnvironmentDisclosureSnapshot,
+  type SystemPromptRenderResult,
+} from './agentProfileCatalog';
 
 import SYSTEM_PROMPT_TEMPLATE from './system.md?raw';
 
@@ -118,26 +125,86 @@ export function systemPromptVars(
   };
 }
 
-export function renderPromptTemplate(
+export function renderPromptTemplateResult(
   template: string,
   context: AgentProfileContext,
   options: { readonly skillActive: boolean },
-  basePrompt?: (context: AgentProfileContext) => string,
-): string {
+  basePrompt?: (context: AgentProfileContext) => SystemPromptRenderResult,
+): SystemPromptRenderResult {
   const vars = systemPromptVars(context, options);
+  let baseResult: SystemPromptRenderResult | undefined;
   if (basePrompt !== undefined && template.includes('${base_prompt}')) {
-    vars['base_prompt'] = basePrompt(context);
+    baseResult = basePrompt(context);
+    vars['base_prompt'] = baseResult.text;
   }
-  return renderPrompt(template, vars);
+  return {
+    text: renderPrompt(template, vars),
+    environment: mergeEnvironmentDisclosure(
+      environmentForTemplate(template, context),
+      baseResult?.environment,
+    ),
+  };
 }
 
-export function renderSystemPrompt(
+export function renderSystemPromptResult(
   roleAdditional: string,
   context: AgentProfileContext,
   options: { readonly skillActive: boolean },
-): string {
-  return renderPrompt(SYSTEM_PROMPT_TEMPLATE, {
-    ...systemPromptVars(context, options),
-    role_additional: roleAdditional,
-  });
+): SystemPromptRenderResult {
+  return {
+    text: renderPrompt(SYSTEM_PROMPT_TEMPLATE, {
+      ...systemPromptVars(context, options),
+      role_additional: roleAdditional,
+    }),
+    environment: environmentForTemplate(SYSTEM_PROMPT_TEMPLATE, context),
+  };
+}
+
+function environmentForTemplate(
+  template: string,
+  context: AgentProfileContext,
+): EnvironmentDisclosureSnapshot {
+  const usesNow = template.includes('${now}');
+  const timeZone = context.timeZone ?? localTimeZone();
+  return {
+    cwd: context.cwd ?? '',
+    date: usesNow
+      ? {
+          disclosed: true,
+          value: {
+            localDate: localDateKey(context.now, timeZone),
+            timeZone,
+          },
+        }
+      : { disclosed: false },
+  };
+}
+
+function mergeEnvironmentDisclosure(
+  direct: EnvironmentDisclosureSnapshot,
+  base: EnvironmentDisclosureSnapshot | undefined,
+): EnvironmentDisclosureSnapshot {
+  if (base === undefined) return direct;
+  return {
+    cwd: direct.cwd || base.cwd,
+    date: direct.date.disclosed ? direct.date : base.date,
+  };
+}
+
+function localDateKey(now: string | undefined, timeZone: string): string {
+  const date = now === undefined ? new Date() : new Date(now);
+  if (Number.isNaN(date.getTime())) return localDateKey(undefined, timeZone);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((candidate) => candidate.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function localTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 }

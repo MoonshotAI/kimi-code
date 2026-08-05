@@ -8,11 +8,17 @@
  * Kimi OAuth provider when it carries an `oauth` ref (the state after a
  * successful Kimi login), routing fetches through the Moonshot fetch service
  * (`${provider.baseUrl}/fetch`); and (3) the built-in `LocalFetchURLProvider`,
- * so `FetchURL` keeps working without any configuration. The first two use the
- * host's Kimi identity headers (`IBootstrapService.args.requestHeaders`) and
- * fall back to the local fetcher on failure. Reads config and the managed
- * provider lazily on each `getUrlFetcher()` call so it tracks edits and login
- * state. Bound at App scope.
+ * so `FetchURL` keeps working without any configuration. The first two fall
+ * back to the local fetcher on failure. Reads config and the managed provider
+ * lazily on each `getUrlFetcher()` call so it tracks edits and login state.
+ * Bound at App scope.
+ *
+ * Default headers split by who chose the endpoint: a `[services]` entry names
+ * its own, so that path sends `agentIdentity`'s frozen `requestHeaders` — the
+ * host header set with the `User-Agent` product token rewritten to the
+ * configured identity — while the managed OAuth path sends the host's own
+ * headers (`IBootstrapService.args.requestHeaders`) verbatim, being the
+ * endpoint the session authenticated against.
  */
 
 import {
@@ -23,6 +29,7 @@ import {
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
 import { SERVICES_SECTION, type ServicesConfig } from '#/app/auth/configSection';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IProviderService } from '#/kosong/provider/provider';
@@ -42,6 +49,7 @@ export class WebFetchService implements IWebFetchService {
     @IOAuthService private readonly oauth: IOAuthService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
+    @IAgentIdentity private readonly identity: IAgentIdentity,
   ) {
     this.localFetcher = new LocalFetchURLProvider();
   }
@@ -63,7 +71,7 @@ export class WebFetchService implements IWebFetchService {
       baseUrl: fetchConfig.baseUrl,
       tokenProvider,
       apiKey: nonEmptyString(fetchConfig.apiKey),
-      defaultHeaders: { ...this.bootstrap.args.requestHeaders },
+      defaultHeaders: { ...this.identity.current().requestHeaders },
       customHeaders: fetchConfig.customHeaders,
       localFallback: this.localFetcher,
     });

@@ -82,6 +82,11 @@ import type {
   ConfigInspectValue,
   ConfigTarget,
 } from '@moonshot-ai/agent-core-v2/app/config/config';
+import type {
+  CapabilityInstallProgress,
+  CapabilityStatus,
+  CapabilityStep,
+} from '@moonshot-ai/agent-core-v2/app/capability/types';
 import type { ExperimentalFeatureState } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import type {
   FsBrowseResponse,
@@ -240,6 +245,11 @@ import {
   configTargetSchema,
 } from '../src/contract/global/config.js';
 import {
+  capabilityInstallProgressSchema,
+  capabilityStatusSchema,
+  capabilityStepSchema,
+} from '../src/contract/global/capabilities.js';
+import {
   modelCatalogItemSchema,
   providerCatalogItemSchema,
   setDefaultModelResponseSchema,
@@ -325,6 +335,14 @@ const _configInspectValue: AssertEngineToWire<typeof configInspectValueSchema, C
   true;
 const _configDiagnostic: AssertWire<typeof configDiagnosticSchema, ConfigDiagnostic> = true;
 const _configTarget: AssertWire<typeof configTargetSchema, ConfigTargetValues> = true;
+
+// capabilities.ts
+const _capabilityStep: AssertWire<typeof capabilityStepSchema, CapabilityStep> = true;
+const _capabilityInstallProgress: AssertWire<
+  typeof capabilityInstallProgressSchema,
+  CapabilityInstallProgress
+> = true;
+const _capabilityStatus: AssertWire<typeof capabilityStatusSchema, CapabilityStatus> = true;
 
 // providers.ts
 const _providerConfig: AssertWire<typeof providerConfigSchema, ProviderConfig> = true;

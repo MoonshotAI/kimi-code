@@ -16,6 +16,8 @@ export type JsonObject = { readonly [key: string]: JsonValue };
 
 export type Unsubscribe = () => void;
 
+export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
+
 export type {
   AgentReplayRecord,
   AgentBackgroundTaskInfo,

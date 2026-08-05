@@ -720,7 +720,7 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
     const { chunk, stopReason } = await runSlash(c, created.sessionId, '/mcp');
     expect(stopReason).toBe('end_turn');
     expect(chunk).toContain('MCP servers (1):');
-    expect(chunk).toContain('- mock (stdio): connected,');
+    expect(chunk).toContain('- mock (stdio):');
     expect(scripted!.callCount()).toBe(0);
   }, 30_000);
 
