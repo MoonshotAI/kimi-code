@@ -1,6 +1,6 @@
 # Environment variables
 
-Kimi Code CLI uses environment variables to control a small number of runtime behaviors — relocating the data directory, turning off telemetry, and temporarily switching models without touching the config file.
+Kimi Code CLI uses environment variables to control a small number of runtime behaviors — relocating the data directory, turning off telemetry, selecting non-interactive output, and temporarily switching models without touching the config file.
 
 ::: warning Important: API keys are not configured here
 Credential variables such as `KIMI_API_KEY`, `ANTHROPIC_API_KEY`, and `OPENAI_API_KEY` are **not** read automatically from shell environment variables. Running `export KIMI_API_KEY=xxx` in the terminal does not give any provider its key — they must be written in `config.toml` under `[providers.<name>]` or the `[providers.<name>.env]` sub-table.
@@ -31,6 +31,17 @@ Set to `1` to turn off anonymous telemetry reporting (also accepts `true`, `yes`
 ```sh
 export KIMI_DISABLE_TELEMETRY=1
 ```
+
+### `KIMI_MODEL_OUTPUT_FORMAT`
+
+Sets the default output format for non-interactive `-p` / `--prompt` mode. Accepted values are `text` and `stream-json`:
+
+```sh
+export KIMI_MODEL_OUTPUT_FORMAT="stream-json"
+kimi -p "List changed files"
+```
+
+An explicit `--output-format` flag has higher priority. The variable is ignored outside prompt mode, and an invalid value causes startup to fail. Despite its name, it does not require `KIMI_MODEL_NAME`.
 
 ### `KIMI_MODEL_*` family
 
