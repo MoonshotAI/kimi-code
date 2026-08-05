@@ -4,7 +4,11 @@
  * Assigns prompt and message identities, serializes user prompts through an
  * active slot and FIFO, converts selected pending prompts into active-turn
  * steers, settles lifecycle handles, and keeps system input outside the prompt
- * resource model. The pure-data `launching` flag is registered into
+ * resource model. Every submission first passes the `media` domain's intake
+ * normalization (`materializePromptDaemonRefs` — daemon file references
+ * materialize into the session media store, read through `IFileService`),
+ * serialized in arrival order so the async file I/O cannot reorder the FIFO.
+ * The pure-data `launching` flag is registered into
  * `agentState` (`IAgentStateService`) and read/written through it; the
  * `active` / `pending` / `steered` records stay plain fields because their
  * `Record` values carry Deferred promise handles (the container only holds
@@ -16,6 +20,8 @@ import { IInstantiationService } from '#/_base/di/instantiation';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
+import { materializePromptDaemonRefs } from '#/agent/media/promptMediaIntake';
+import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { newMessageId } from '#/agent/contextMemory/messageId';
@@ -29,6 +35,7 @@ import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ContentPart } from '#/kosong/contract/message';
+import { IFileService } from '#/app/file/fileService';
 import { IEventBus } from '#/app/event/eventBus';
 import { ErrorCodes, Error2 } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
@@ -82,6 +89,8 @@ export class AgentPromptService implements IAgentPromptService {
     @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IFileService private readonly files: IFileService,
+    @ISessionMediaStore private readonly mediaStore: ISessionMediaStore,
   ) {
     this.states.register(promptLaunchingKey);
     toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
@@ -98,9 +107,20 @@ export class AgentPromptService implements IAgentPromptService {
     this.states.set(promptLaunchingKey, value);
   }
 
+  private mediaIntake: Promise<unknown> = Promise.resolve();
+
+  private serializeMediaIntake(content: readonly ContentPart[]): Promise<readonly ContentPart[]> {
+    const normalized = this.mediaIntake.then(() =>
+      materializePromptDaemonRefs(content, { files: this.files, mediaStore: this.mediaStore }),
+    );
+    this.mediaIntake = normalized.catch(() => undefined);
+    return normalized;
+  }
+
   async enqueue(input: PromptInput): Promise<PromptHandle> {
     const id = input.id ?? input.message.id ?? newMessageId();
-    const message = { ...input.message, id };
+    const content = await this.serializeMediaIntake(input.message.content);
+    const message = { ...input.message, id, content };
     const launchedDeferred = deferred<Turn | undefined>();
     const completionDeferred = deferred<PromptCompletion>();
     const record = {} as Record;

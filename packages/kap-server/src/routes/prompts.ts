@@ -35,6 +35,7 @@ import {
   type PromptHandle,
   type PromptQueueSnapshot,
   ISessionContext,
+  ISessionMediaStore,
   resumeSessionById,
   ITelemetryService,
   applyPromptMetadataUpdate,
@@ -47,6 +48,7 @@ import {
   Error2,
   ErrorCodes,
   isModelAcceptedImageMime,
+  mediaExtensionForMime,
   normalizeImageMime,
   persistOriginalImage,
   resolveEffectiveImageMime,
@@ -101,14 +103,6 @@ const sessionIdParamSchema = z.object({
 const validationDetailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 const authProviderDetailsSchema = z.object({ provider_id: z.string() });
 const authModelDetailsSchema = z.object({ model_id: z.string(), provider_id: z.string() }).partial();
-const VIDEO_EXT_BY_MIME: Record<string, string> = {
-  'video/mp4': '.mp4',
-  'video/quicktime': '.mov',
-  'video/webm': '.webm',
-  'video/x-msvideo': '.avi',
-  'video/x-matroska': '.mkv',
-  'video/mpeg': '.mpeg',
-};
 
 async function resolveSession(core: Scope, sessionId: string): Promise<ISessionScopeHandle> {
   // `resume` (not `get`) so a persisted-but-cold session — created by a previous
@@ -280,6 +274,10 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               const session = await resumeSessionById(core.accessor, session_id);
               if (session === undefined) return undefined;
               return join(session.accessor.get(ISessionContext).sessionDir, 'attachments');
+            },
+            resolveMediaStore: async () => {
+              const session = await resumeSessionById(core.accessor, session_id);
+              return session?.accessor.get(ISessionMediaStore);
             },
           },
         );
@@ -500,6 +498,13 @@ interface ResolvePromptMediaOptions {
    * the shared cache dir.
    */
   readonly resolveAttachmentsDir?: () => Promise<string | undefined>;
+  /**
+   * Lazily resolve the session's media store for materializing uploaded
+   * image / video bytes — the copy the model re-opens with ReadMediaFile
+   * when the media cannot reach the provider. Unavailable or failing
+   * materialization falls back to the shared cache dir.
+   */
+  readonly resolveMediaStore?: () => Promise<ISessionMediaStore | undefined>;
   /** Report an `image_compress` event per compressed prompt image. */
   readonly telemetry?: ITelemetryService;
 }
@@ -528,6 +533,15 @@ async function resolvePromptMediaFiles(
       attachmentsDir = await options.resolveAttachmentsDir?.().catch(() => undefined);
     }
     return attachmentsDir ?? cacheDir;
+  };
+  let mediaStore: ISessionMediaStore | undefined;
+  let mediaStoreResolved = false;
+  const resolveMediaStore = async (): Promise<ISessionMediaStore | undefined> => {
+    if (!mediaStoreResolved) {
+      mediaStoreResolved = true;
+      mediaStore = await options.resolveMediaStore?.().catch(() => undefined);
+    }
+    return mediaStore;
   };
   const telemetryFor = (source: string): ImageCompressionTelemetry | undefined =>
     options.telemetry === undefined ? undefined : { client: options.telemetry, source };
@@ -711,11 +725,11 @@ async function resolvePromptMediaFiles(
         );
         finalFile = await store.get(saved.id);
       }
-      const cachePath = await materializeUploadToCache(finalFile, cacheDir);
-      content.push({ type: 'text', text: buildMediaPathTag('image', cachePath) });
+      const mediaPath = await materializePromptMedia(finalFile, resolveMediaStore(), cacheDir);
+      content.push({ type: 'text', text: buildMediaPathTag('image', mediaPath) });
       content.push({
         type: 'image',
-        source: { kind: 'url', url: buildDaemonFileUrl(finalFile.meta.id, cachePath) },
+        source: { kind: 'url', url: buildDaemonFileUrl(finalFile.meta.id, mediaPath) },
       });
       changed = true;
       continue;
@@ -726,34 +740,52 @@ async function resolvePromptMediaFiles(
     // `kimi-file://<id>?path=<materialized path>` reference. The engine
     // resolves it to a provider form (upload / inline / `<video path>` tag) at
     // request time, so the edge never uploads and never blocks on the provider.
-    const cachePath = await materializeUploadToCache(file, cacheDir);
+    const mediaPath = await materializePromptMedia(file, resolveMediaStore(), cacheDir);
     content.push({
       type: 'video',
-      source: { kind: 'url', url: buildKimiFileUrl(file.meta.id, cachePath) },
+      source: { kind: 'url', url: buildKimiFileUrl(file.meta.id, mediaPath) },
     });
     changed = true;
   }
   return changed ? { ...body, content } : body;
 }
 
-async function materializeUploadToCache(file: GetResult, cacheDir: string): Promise<string> {
-  await mkdir(cacheDir, { recursive: true });
-  const ext = extname(file.meta.name) || cacheExtensionForMime(file.meta.media_type);
-  const target = join(cacheDir, `${file.meta.id}${ext}`);
+/**
+ * Materialize an upload for the prompt's media reference: the session's media
+ * store first (the session-canonical copy the fork carries along), the shared
+ * cache dir when the store is unavailable or its write fails — a read-only
+ * session dir must not reject an otherwise-submittable prompt.
+ */
+async function materializePromptMedia(
+  file: GetResult,
+  mediaStore: Promise<ISessionMediaStore | undefined>,
+  cacheDir: string,
+): Promise<string> {
+  const store = await mediaStore;
+  if (store !== undefined) {
+    const path = await store
+      .materialize({
+        fileId: file.meta.id,
+        size: file.meta.size,
+        name: file.meta.name,
+        mimeType: file.meta.media_type,
+        stream: () => file.stream(),
+      })
+      .catch(() => undefined);
+    if (path !== undefined) return path;
+  }
+  return materializeUploadToDir(file, cacheDir);
+}
+
+async function materializeUploadToDir(file: GetResult, dir: string): Promise<string> {
+  await mkdir(dir, { recursive: true });
+  const ext = extname(file.meta.name) || mediaExtensionForMime(file.meta.media_type) || '.bin';
+  const target = join(dir, `${file.meta.id}${ext}`);
   const info = await stat(target).catch(() => undefined);
   if (info?.size === file.meta.size) return target;
 
   await pipeline(file.stream(), createWriteStream(target));
   return target;
-}
-
-/** MIME → cache-file extension fallback for an upload whose name has none. */
-function cacheExtensionForMime(mediaType: string): string {
-  const mime = mediaType.toLowerCase();
-  const videoExt = VIDEO_EXT_BY_MIME[mime];
-  if (videoExt !== undefined) return videoExt;
-  if (mime.startsWith('image/')) return `.${imageExtensionForMime(mime)}`;
-  return '.bin';
 }
 
 /**

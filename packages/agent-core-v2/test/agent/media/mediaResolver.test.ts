@@ -1,3 +1,6 @@
+import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { extname, join } from 'node:path';
 import { Readable } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +16,7 @@ import { createScopedTestHost, createServices, stubPair } from '#/_base/di/test'
 import { buildKimiFileUrl, parseKimiFileUrl } from '#/agent/media/kimiFileUrl';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { AgentMediaResolverService } from '#/agent/media/mediaResolverService';
+import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentVideoResolverService } from '#/agent/media/videoResolver';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -105,6 +109,28 @@ function blobStore(): IBlobStore {
 
 const telemetry = { track2: () => {} } as unknown as ITelemetryService;
 
+/**
+ * Store stub over a plain dir: the canonical copy exists only when a test
+ * plants it (mirrors the real store's canonical-vs-hint rule without
+ * materialization).
+ */
+function stubMediaStore(sessionDir = '/nonexistent-session'): ISessionMediaStore {
+  return {
+    _serviceBrand: undefined,
+    pathFor: (fileId, ext) => join(sessionDir, 'media', `${fileId}${ext}`),
+    resolveDisplayPath: async (fileId, hint) => {
+      if (hint === undefined || hint.length === 0) return undefined;
+      const canonical = join(sessionDir, 'media', `${fileId}${extname(hint)}`);
+      if (canonical === hint) return hint;
+      const own = await stat(canonical).catch(() => undefined);
+      return own === undefined ? hint : canonical;
+    },
+    materialize: async () => {
+      throw new Error('unused');
+    },
+  };
+}
+
 function requester(opts: {
   videoIn?: boolean;
   imageIn?: boolean;
@@ -148,13 +174,17 @@ beforeEach(() => {
 
 afterEach(() => disposables.dispose());
 
-function resolver(files: Map<string, { name: string; bytes: Buffer }>): IAgentMediaResolverService {
+function resolver(
+  files: Map<string, { name: string; bytes: Buffer }>,
+  sessionDir?: string,
+): IAgentMediaResolverService {
   const ix = createServices(disposables, {
     base: [registerStateServices],
     additionalServices: (reg) => {
       reg.defineInstance(IFileService, fileService(files));
       reg.defineInstance(IBlobStore, blobStore());
       reg.defineInstance(ITelemetryService, telemetry);
+      reg.defineInstance(ISessionMediaStore, stubMediaStore(sessionDir));
       reg.define(IAgentMediaResolverService, AgentMediaResolverService);
     },
   });
@@ -206,13 +236,13 @@ describe('AgentMediaResolverService video strategy', () => {
     // never run — direct construction is di-testing.md's two-instance
     // exception.
     const upload1 = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
-    await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService()).resolve(
+    await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore()).resolve(
       [message],
       requester({ uploadVideo: upload1 }),
     );
 
     const upload2 = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-2'));
-    const out = await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService()).resolve(
+    const out = await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore()).resolve(
       [message],
       requester({ uploadVideo: upload2 }),
     );
@@ -534,6 +564,102 @@ describe('AgentMediaResolverService image strategy', () => {
   });
 });
 
+describe('AgentMediaResolverService session-canonical display path', () => {
+  let sessionDir: string;
+
+  beforeEach(async () => {
+    sessionDir = await mkdtemp(join(tmpdir(), 'media-resolver-'));
+  });
+
+  afterEach(async () => {
+    await rm(sessionDir, { recursive: true, force: true });
+  });
+
+  async function plantCanonical(fileId: string, ext: string, bytes: Buffer): Promise<string> {
+    const canonical = join(sessionDir, 'media', `${fileId}${ext}`);
+    await mkdir(join(sessionDir, 'media'), { recursive: true });
+    await writeFile(canonical, bytes);
+    return canonical;
+  }
+
+  it('tags with the session-canonical path when it exists and the persisted path is stale', async () => {
+    const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
+    const out = await resolver(new Map(), sessionDir).resolve(
+      [videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH))],
+      requester({ videoIn: false }),
+    );
+    expect(firstPart(out)).toEqual({ type: 'text', text: `<video path="${canonical}"></video>` });
+  });
+
+  it('keeps the persisted path when no canonical file exists (legacy cache records)', async () => {
+    const out = await resolver(new Map(), sessionDir).resolve(
+      [videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH))],
+      requester({ videoIn: false }),
+    );
+    expect(firstPart(out)).toEqual({ type: 'text', text: `<video path="${FALLBACK_PATH}"></video>` });
+  });
+
+  it('refreshes a claimed persisted tag to the canonical path and drops the reference', async () => {
+    const canonical = await plantCanonical(FILE_ID, '.png', PNG_BYTES);
+    const message = imageMessage(
+      buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH),
+      imagePathTagPart(IMAGE_FALLBACK_PATH),
+    );
+    const out = await resolver(new Map(), sessionDir).resolve(
+      [message],
+      requester({ imageIn: false }),
+    );
+    expect(out[0]!.content).toEqual([{ type: 'text', text: `<image path="${canonical}"></image>` }]);
+  });
+
+  it('leaves a claimed persisted tag untouched when no canonical file exists', async () => {
+    const message = imageMessage(
+      buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH),
+      imagePathTagPart(IMAGE_FALLBACK_PATH),
+    );
+    const out = await resolver(new Map(), sessionDir).resolve(
+      [message],
+      requester({ imageIn: false }),
+    );
+    expect(out[0]!.content).toEqual([imagePathTagPart(IMAGE_FALLBACK_PATH)]);
+  });
+
+  it('refreshes a memoized video tag path when the canonical copy appears', async () => {
+    const res = resolver(new Map(), sessionDir);
+    const message = videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH));
+    const req = requester({ videoIn: false });
+
+    const first = await res.resolve([message], req);
+    expect(firstPart(first)).toEqual({
+      type: 'text',
+      text: `<video path="${FALLBACK_PATH}"></video>`,
+    });
+
+    const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
+    const second = await res.resolve([message], req);
+    expect(firstPart(second)).toEqual({ type: 'text', text: `<video path="${canonical}"></video>` });
+  });
+
+  it('drops a claimed video reference, refreshing its tag instead of emitting a second one', async () => {
+    const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
+    const message: Message = {
+      role: 'user',
+      toolCalls: [],
+      content: [
+        { type: 'text', text: `<video path="${FALLBACK_PATH}"></video>` },
+        { type: 'video_url', videoUrl: { url: buildKimiFileUrl(FILE_ID, FALLBACK_PATH) } },
+      ],
+    };
+    const out = await resolver(new Map(), sessionDir).resolve(
+      [message],
+      requester({ videoIn: false }),
+    );
+    expect(out[0]!.content).toEqual([
+      { type: 'text', text: `<video path="${canonical}"></video>` },
+    ]);
+  });
+});
+
 describe('AgentMediaResolverService scoped registration', () => {
   let host: ReturnType<typeof createScopedTestHost>;
 
@@ -558,6 +684,7 @@ describe('AgentMediaResolverService scoped registration', () => {
     ]);
     return host.child(LifecycleScope.Agent, 'main', [
       stubPair(IAgentStateService, new AgentStateService()),
+      stubPair(ISessionMediaStore, stubMediaStore()),
     ]);
   }
 

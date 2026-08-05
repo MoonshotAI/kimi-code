@@ -9,6 +9,7 @@ import {
   IAgentProfileService,
   IAgentToolPolicyService,
   IFileService,
+  ISessionContext,
   closeSessionById,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
@@ -127,6 +128,12 @@ function pngDimensions(bytes: Buffer): { width: number; height: number } {
     width: bytes.readUInt32BE(16),
     height: bytes.readUInt32BE(20),
   };
+}
+
+/** The session's own media dir, where prompt media materializes now. */
+function sessionMediaDir(server: RunningServer, sessionId: string): string {
+  const session = getLiveSessionById(server.core.accessor, sessionId);
+  return join(session!.accessor.get(ISessionContext).sessionDir, 'media');
 }
 
 describe('server-v2 /api/v1 prompts', () => {
@@ -295,9 +302,9 @@ describe('server-v2 /api/v1 prompts', () => {
     });
 
     // The `?path=` of that reference points at a materialized copy of the bytes
-    // (written during the submit), which the engine resolver falls back to when
-    // it cannot upload or inline the video.
-    const materialized = join(home as string, 'cache', `${uploaded.data.id}.mp4`);
+    // in the session's own media dir (written during the submit), which the
+    // engine resolver falls back to when it cannot upload or inline the video.
+    const materialized = join(sessionMediaDir(server!, id), `${uploaded.data.id}.mp4`);
     expect(await readFile(materialized)).toEqual(videoBytes);
   });
 
@@ -343,12 +350,13 @@ describe('server-v2 /api/v1 prompts', () => {
     const finalFileId = image.source.file_id;
     expect(finalFileId).not.toBe(uploaded.data.id);
 
-    // The folded-away <image path> tag named the materialized cache copy of
-    // the FINAL (compressed) bytes, named by the final upload id — the copy
-    // still lands on disk for the engine, but its path never reaches the wire.
-    const cachePath = join(home as string, 'cache', `${finalFileId}.png`);
-    expect(pngDimensions(await readFile(cachePath))).toEqual({ width: 2000, height: 1000 });
-    expect(JSON.stringify(content)).not.toContain(cachePath);
+    // The folded-away <image path> tag named the materialized session-media
+    // copy of the FINAL (compressed) bytes, named by the final upload id — the
+    // copy still lands on disk for the engine, but its path never reaches the
+    // wire.
+    const mediaPath = join(sessionMediaDir(server!, id), `${finalFileId}.png`);
+    expect(pngDimensions(await readFile(mediaPath))).toEqual({ width: 2000, height: 1000 });
+    expect(JSON.stringify(content)).not.toContain(mediaPath);
 
     // The original client upload stays untouched.
     const original = await server!.core.accessor.get(IFileService).get(uploaded.data.id);
@@ -366,10 +374,10 @@ describe('server-v2 /api/v1 prompts', () => {
     const memory = main.accessor.get(IAgentContextMemoryService).get();
     const userMessage = memory.find((m) => m.role === 'user' && m.origin?.kind === 'user');
     expect(userMessage?.content).toEqual([
-      { type: 'text', text: `<image path="${cachePath}"></image>` },
+      { type: 'text', text: `<image path="${mediaPath}"></image>` },
       {
         type: 'image_url',
-        imageUrl: { url: `kimi-file://${finalFileId}?path=${encodeURIComponent(cachePath)}` },
+        imageUrl: { url: `kimi-file://${finalFileId}?path=${encodeURIComponent(mediaPath)}` },
       },
     ]);
     const reminder = memory.find((m) => m.origin?.kind === 'injection');
@@ -401,16 +409,16 @@ describe('server-v2 /api/v1 prompts', () => {
     // No compression caption when the bytes pass through unchanged, and the
     // reference addresses the client's original upload — no new upload. The
     // `<image path>` tag folded into the media part instead of reaching the
-    // wire, so the cache path never leaks to the client.
+    // wire, so the media path never leaks to the client.
     const content = submitted.body.data.content as Array<Record<string, unknown>>;
-    const cachePath = join(home as string, 'cache', `${uploaded.data.id}.png`);
+    const mediaPath = join(sessionMediaDir(server!, id), `${uploaded.data.id}.png`);
     expect(content).toEqual([
       { type: 'image', source: { kind: 'file', file_id: uploaded.data.id } },
     ]);
-    expect(JSON.stringify(content)).not.toContain(cachePath);
+    expect(JSON.stringify(content)).not.toContain(mediaPath);
 
-    // The cache copy holds the original bytes, named by the original upload id.
-    expect(await readFile(cachePath)).toEqual(smallPng);
+    // The session-media copy holds the original bytes, named by the original upload id.
+    expect(await readFile(mediaPath)).toEqual(smallPng);
 
     // The internal reference never leaks to the wire.
     expect(JSON.stringify(content)).not.toContain('kimi-file://');
@@ -423,10 +431,10 @@ describe('server-v2 /api/v1 prompts', () => {
       .get()
       .find((m) => m.role === 'user' && m.origin?.kind === 'user');
     expect(userMessage?.content).toEqual([
-      { type: 'text', text: `<image path="${cachePath}"></image>` },
+      { type: 'text', text: `<image path="${mediaPath}"></image>` },
       {
         type: 'image_url',
-        imageUrl: { url: `kimi-file://${uploaded.data.id}?path=${encodeURIComponent(cachePath)}` },
+        imageUrl: { url: `kimi-file://${uploaded.data.id}?path=${encodeURIComponent(mediaPath)}` },
       },
     ]);
   });

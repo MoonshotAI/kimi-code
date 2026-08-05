@@ -15,7 +15,7 @@
  * mapping through the `blobStore` access-pattern store so the upload happens
  * once across a turn's steps, retries, and media-recovery reprojections.
  * Falls back to an inline base64 `video_url` (protocols that carry it) or a
- * `<video path>` text tag (the model then opens the edge-materialized copy
+ * `<video path>` text tag (the model then opens the session-materialized copy
  * with `ReadMediaFile`); auth failures surface so they drive credential
  * refresh instead of masking a bad token, and an upload interrupted by the
  * step's aborted signal re-throws — shape-agnostic, since abort rejections
@@ -42,6 +42,16 @@
  * unavailable placeholder text. A message left with no parts at all keeps
  * one placeholder so its content never goes empty.
  *
+ * The path offered to the model in any degrade form — a persisted claimed
+ * tag refreshed in place, or a synthesized tag — is resolved through the
+ * session media store (`ISessionMediaStore`): the session-canonical copy
+ * wins when it exists, the reference's persisted snapshot path is the
+ * fallback, so a fork or a home relocation never hands the model a dead
+ * path. A reference claimed by a persisted tag leaves only that refreshed
+ * tag behind (video degrades included — a claimed reference never produces
+ * a second tag), and a memoized video tag has its path refreshed on every
+ * hit for the same reason.
+ *
  * The plain-data state (`resolved`, the video memo) is registered into
  * `agentState` (`IAgentStateService`) and read/written through it. Bound at
  * Agent scope.
@@ -62,10 +72,14 @@ import { detectFileType, MEDIA_SNIFF_BYTES } from './file-type';
 import { isModelAcceptedImageMime, normalizeImageMime } from './image-format-policy';
 import {
   buildMediaPathTag,
+  claimingRefIndex,
   type DaemonFileRef,
   daemonFileRefFromPart,
+  type MediaPathTagPairing,
+  matchSingleMediaPathTag,
   pairMediaPathTagRefs,
 } from './mediaRef';
+import { ISessionMediaStore } from './sessionMediaStore';
 import { IAgentMediaResolverService } from './mediaResolver';
 import { createVideoUploader } from './registerMediaTools';
 import {
@@ -98,6 +112,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     @IBlobStore private readonly blobs: IBlobStore,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @ISessionMediaStore private readonly mediaStore: ISessionMediaStore,
   ) {
     this.states.register(mediaResolvedKey);
   }
@@ -128,25 +143,46 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       // synthesized from its path.
       const pairing = pairMediaPathTagRefs(message.content);
       for (const [index, part] of message.content.entries()) {
+        if (part.type === 'text' && pairing.claimedTagIndices.has(index)) {
+          content.push(await this.refreshClaimedTag(message.content, pairing, index));
+          continue;
+        }
         const daemonPart = daemonFileRefFromPart(part);
         if (daemonPart === undefined) {
           content.push(part);
           continue;
         }
+        const claimed = pairing.claimedPathByRefIndex.has(index);
         const resolved =
           daemonPart.kind === 'video'
-            ? await this.resolveVideoPart(daemonPart.ref, requester, signal)
-            : await this.resolveImagePart(
-                daemonPart.ref,
-                requester,
-                pairing.claimedPathByRefIndex.has(index),
-              );
+            ? await this.resolveVideoPart(daemonPart.ref, requester, signal, claimed)
+            : await this.resolveImagePart(daemonPart.ref, requester, claimed);
         if (resolved !== undefined) content.push(resolved);
       }
       out.push({ ...message, content: content.length > 0 ? content : [unavailableImageText()] });
       changed = true;
     }
     return changed ? out : messages;
+  }
+
+  private displayPath(ref: DaemonFileRef): Promise<string | undefined> {
+    return this.mediaStore.resolveDisplayPath(ref.fileId, ref.path);
+  }
+
+  private async refreshClaimedTag(
+    parts: readonly ContentPart[],
+    pairing: MediaPathTagPairing,
+    tagIndex: number,
+  ): Promise<ContentPart> {
+    const part = parts[tagIndex]!;
+    if (part.type !== 'text') return part;
+    const tag = matchSingleMediaPathTag(part.text);
+    const refIndex = tag === undefined ? undefined : claimingRefIndex(parts, pairing, tagIndex);
+    const daemonPart = refIndex === undefined ? undefined : daemonFileRefFromPart(parts[refIndex]!);
+    if (tag === undefined || daemonPart === undefined) return part;
+    const path = await this.displayPath(daemonPart.ref);
+    if (path === undefined || path === tag.path) return part;
+    return { type: 'text', text: buildMediaPathTag(tag.kind, path) };
   }
 
   // -------------------------------------------------------------------------
@@ -158,7 +194,8 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     requester: ModelRequester,
     hasAdjacentPathTag: boolean,
   ): Promise<ContentPart | undefined> {
-    if (!requester.model.capabilities.image_in) return degradedImage(ref, hasAdjacentPathTag);
+    const path = await this.displayPath(ref);
+    if (!requester.model.capabilities.image_in) return degradedImage(hasAdjacentPathTag, path);
 
     let bytes: Buffer;
     let filename: string;
@@ -167,12 +204,12 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       bytes = await readStream(file.stream());
       filename = file.meta.name;
     } catch {
-      return degradedImage(ref, hasAdjacentPathTag);
+      return degradedImage(hasAdjacentPathTag, path);
     }
 
     const fileType = detectFileType(filename, bytes.subarray(0, MEDIA_SNIFF_BYTES), 'media');
-    if (fileType.kind !== 'image') return degradedImage(ref, hasAdjacentPathTag);
-    if (!isModelAcceptedImageMime(fileType.mimeType)) return degradedImage(ref, hasAdjacentPathTag);
+    if (fileType.kind !== 'image') return degradedImage(hasAdjacentPathTag, path);
+    if (!isModelAcceptedImageMime(fileType.mimeType)) return degradedImage(hasAdjacentPathTag, path);
 
     return {
       type: 'image_url',
@@ -190,17 +227,33 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     ref: DaemonFileRef,
     requester: ModelRequester,
     signal: AbortSignal | undefined,
-  ): Promise<ContentPart> {
+    claimed: boolean,
+  ): Promise<ContentPart | undefined> {
     const model = requester.model;
     const providerKey = model.providerType ?? model.protocol;
     const cacheKey = `${ref.fileId}\0${providerKey}`;
 
     const memoed = this.resolved.get(cacheKey);
-    if (memoed !== undefined) return memoed;
+    if (memoed !== undefined) return this.memoedOutcome(ref, memoed, claimed);
 
     const { part, memoize } = await this.resolveVideoUncached(ref, requester, cacheKey, signal);
+    if (part.type === 'text' && claimed) return undefined;
     if (memoize) this.resolved.set(cacheKey, part);
     return part;
+  }
+
+  private async memoedOutcome(
+    ref: DaemonFileRef,
+    memoed: ContentPart,
+    claimed: boolean,
+  ): Promise<ContentPart | undefined> {
+    if (memoed.type !== 'text') return memoed;
+    if (claimed) return undefined;
+    const tag = matchSingleMediaPathTag(memoed.text);
+    if (tag === undefined) return memoed;
+    const path = await this.displayPath(ref);
+    if (path === undefined || path === tag.path) return memoed;
+    return { type: 'text', text: buildMediaPathTag(tag.kind, path) };
   }
 
   private async resolveVideoUncached(
@@ -216,6 +269,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         memoize: true,
       };
     }
+    const tagPath = await this.displayPath(ref);
 
     let bytes: Buffer;
     let filename: string;
@@ -224,15 +278,15 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       bytes = await readStream(file.stream());
       filename = file.meta.name;
     } catch {
-      return { part: videoTag(ref), memoize: true };
+      return { part: videoTag(tagPath), memoize: true };
     }
 
     const fileType = detectFileType(filename, bytes.subarray(0, MEDIA_SNIFF_BYTES), 'media');
-    if (fileType.kind !== 'video') return { part: videoTag(ref), memoize: true };
+    if (fileType.kind !== 'video') return { part: videoTag(tagPath), memoize: true };
     const mimeType = fileType.mimeType;
 
     const model = requester.model;
-    if (!model.capabilities.video_in) return { part: videoTag(ref), memoize: true };
+    if (!model.capabilities.video_in) return { part: videoTag(tagPath), memoize: true };
     const inlineSupported = inlineVideoSupportedForProtocol(model.protocol);
 
     const uploader = createVideoUploader(requester, {
@@ -245,7 +299,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     });
     if (uploader === undefined) {
       return {
-        part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(ref),
+        part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(tagPath),
         memoize: true,
       };
     }
@@ -260,11 +314,11 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       if (isVideoUploadAuthError(error)) throw error;
       if (isVideoUploadUnsupportedError(error)) {
         return {
-          part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(ref),
+          part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(tagPath),
           memoize: true,
         };
       }
-      return { part: videoTag(ref), memoize: false };
+      return { part: videoTag(tagPath), memoize: false };
     }
   }
 
@@ -287,29 +341,21 @@ function hasDaemonFileMediaPart(message: Message): boolean {
   return message.content.some((part) => daemonFileRefFromPart(part) !== undefined);
 }
 
-/**
- * The degrade form of an unresolvable image reference: `undefined` (drop the
- * part) only when the fold's pairing claims this exact reference (an adjacent
- * standalone `<image path>` tag for the same path stays to convey it),
- * otherwise the tag synthesized from the reference path — so a bare reference
- * still leaves the model the path to re-open — or, when the reference carries
- * no path, the unavailable placeholder.
- */
-function degradedImage(ref: DaemonFileRef, hasAdjacentPathTag: boolean): ContentPart | undefined {
-  if (ref.path === undefined || ref.path.length === 0) return unavailableImageText();
+function degradedImage(hasAdjacentPathTag: boolean, path: string | undefined): ContentPart | undefined {
+  if (path === undefined) return unavailableImageText();
   if (hasAdjacentPathTag) return undefined;
-  return { type: 'text', text: buildMediaPathTag('image', ref.path) };
+  return { type: 'text', text: buildMediaPathTag('image', path) };
 }
 
 function unavailableImageText(): ContentPart {
   return { type: 'text', text: IMAGE_UNAVAILABLE_TEXT };
 }
 
-function videoTag(ref: DaemonFileRef): ContentPart {
-  if (ref.path === undefined || ref.path.length === 0) {
+function videoTag(path: string | undefined): ContentPart {
+  if (path === undefined) {
     return { type: 'text', text: VIDEO_UNAVAILABLE_TEXT };
   }
-  return { type: 'text', text: `<video path="${escapeAttribute(ref.path)}"></video>` };
+  return { type: 'text', text: buildMediaPathTag('video', path) };
 }
 
 function msFileIdFromUrl(url: string): string | undefined {
@@ -328,14 +374,6 @@ async function readStream(stream: NodeJS.ReadableStream): Promise<Buffer> {
     chunks.push(Buffer.from(chunk as string | Uint8Array));
   }
   return Buffer.concat(chunks);
-}
-
-function escapeAttribute(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('"', '&quot;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
 }
 
 registerScopedService(
