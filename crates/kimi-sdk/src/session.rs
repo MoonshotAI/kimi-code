@@ -543,6 +543,39 @@ impl Session {
             .await
     }
 
+    /// Scheduled cron tasks (snapshot view). Mirrors node-sdk
+    /// `Session.getCronTasks`.
+    pub async fn list_cron_tasks(&mut self) -> serde_json::Value {
+        self.client
+            .call(kimi_protocol::methods::CRON_LIST, serde_json::Value::Null)
+            .await
+    }
+
+    /// Create a scheduled cron task; returns its id.
+    pub async fn create_cron_task(
+        &mut self,
+        cron: &str,
+        prompt: &str,
+        recurring: bool,
+    ) -> serde_json::Value {
+        self.client
+            .call(
+                kimi_protocol::methods::CRON_CREATE,
+                serde_json::json!({ "cron": cron, "prompt": prompt, "recurring": recurring }),
+            )
+            .await
+    }
+
+    /// Delete cron tasks by id; returns how many were removed.
+    pub async fn delete_cron_tasks(&mut self, ids: Vec<String>) -> serde_json::Value {
+        self.client
+            .call(
+                kimi_protocol::methods::CRON_DELETE,
+                serde_json::json!({ "ids": ids }),
+            )
+            .await
+    }
+
     async fn simple_call(&mut self, method: &str) -> anyhow::Result<serde_json::Value> {
         let body = self
             .client

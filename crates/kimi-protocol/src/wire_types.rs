@@ -234,6 +234,46 @@ pub struct PluginGetParams {
     pub id: String,
 }
 
+/// Input for plugin/install — a `source` string (github `owner/repo[@tag]`,
+/// a zip URL, or a local filesystem path).
+#[derive(Debug, Deserialize)]
+pub struct PluginInstallParams {
+    pub source: String,
+}
+
+/// Input for plugin/set_enabled.
+#[derive(Debug, Deserialize)]
+pub struct PluginSetEnabledParams {
+    pub id: String,
+    pub enabled: bool,
+}
+
+/// Input for plugin/set_mcp_enabled.
+#[derive(Debug, Deserialize)]
+pub struct PluginSetMcpEnabledParams {
+    pub id: String,
+    pub server: String,
+    pub enabled: bool,
+}
+
+/// Input for plugin/remove.
+#[derive(Debug, Deserialize)]
+pub struct PluginRemoveParams {
+    pub id: String,
+}
+
+/// Result of plugin/remove (engine-side `removePlugin`).
+#[derive(Debug, Serialize)]
+pub struct PluginRemoveResult {
+    pub removed: bool,
+}
+
+/// Result of plugin/reload (engine-side `reloadPlugins`).
+#[derive(Debug, Serialize)]
+pub struct PluginReloadResult {
+    pub ok: bool,
+}
+
 /// Input for session/export (stage 2c: kap-server Rust migration).
 #[derive(Debug, Deserialize)]
 pub struct SessionExportParams {    /// Session id to export.

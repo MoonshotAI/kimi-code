@@ -53,6 +53,37 @@ function fakeRustLoop(overrides: Partial<RustLoopApi> = {}): RustLoopApi & {
     cronList: async () => ({ tasks: [] }),
     bgList: async () => ({ tasks: [] }),
     pluginList: async () => ({ plugins: [] }),
+    pluginInstall: async (source: string) => ({
+      id: `local:${source}`,
+      display_name: 'test',
+      version: '1.0.0',
+      enabled: true,
+      state: 'ok',
+      skill_count: 0,
+      mcp_server_count: 0,
+      enabled_mcp_server_count: 0,
+      hook_count: 0,
+      command_count: 0,
+      has_errors: false,
+      source: 'local-path',
+    }),
+    pluginSetEnabled: async (id: string, enabled: boolean) => ({
+      id,
+      display_name: 'test',
+      version: '1.0.0',
+      enabled,
+      state: 'ok',
+      skill_count: 0,
+      mcp_server_count: 0,
+      enabled_mcp_server_count: 0,
+      hook_count: 0,
+      command_count: 0,
+      has_errors: false,
+      source: 'local-path',
+    }),
+    pluginSetMcpEnabled: async () => ({}),
+    pluginRemove: async () => ({ removed: true }),
+    pluginReload: async () => ({ ok: true }),
     configGet: async () => ({ model: 'kimi-k2' }),
     configSet: async (patch) => patch,
     ...overrides,
@@ -127,11 +158,24 @@ describe('RustRpcClient', () => {
     unsubscribe();
   });
 
+  it('routes plugin lifecycle methods to the engine', async () => {
+    const rust = fakeRustLoop();
+    const client = new RustRpcClient({ rustLoop: rust });
+    const rpc = await client['getRpc']();
+
+    const summary = await rpc.installPlugin({ source: '/tmp/p' } as never);
+    expect(summary).toMatchObject({ id: 'local:/tmp/p', enabled: true });
+
+    await expect(rpc.setPluginEnabled({ id: 'x', enabled: false } as never)).resolves.toBeUndefined();
+    await expect(rpc.removePlugin({ id: 'x' } as never)).resolves.toBeUndefined();
+    await expect(rpc.reloadPlugins()).resolves.toMatchObject({ added: 0 });
+  });
+
   it('fails loud for capabilities the engine does not back', async () => {
     const rust = fakeRustLoop();
     const client = new RustRpcClient({ rustLoop: rust });
     const rpc = await client['getRpc']();
-    await expect(rpc.installPlugin({ source: 'x' } as never)).rejects.toThrow(
+    await expect(rpc.activatePluginCommand({} as never)).rejects.toThrow(
       'not available under the native engine',
     );
   });

@@ -192,6 +192,19 @@
     /// Get one installed plugin's detail — the engine side of SDK
     /// `getPluginInfo`.
     pub const PLUGIN_GET: &str = "plugin/get";
+    /// Install a plugin from a source (github repo / zip URL / local path) —
+    /// the engine side of SDK `installPlugin`.
+    pub const PLUGIN_INSTALL: &str = "plugin/install";
+    /// Enable or disable an installed plugin — the engine side of SDK
+    /// `setPluginEnabled`.
+    pub const PLUGIN_SET_ENABLED: &str = "plugin/set_enabled";
+    /// Toggle one of a plugin's MCP servers — the engine side of SDK
+    /// `setPluginMcpServerEnabled`.
+    pub const PLUGIN_SET_MCP_ENABLED: &str = "plugin/set_mcp_enabled";
+    /// Remove an installed plugin — the engine side of SDK `removePlugin`.
+    pub const PLUGIN_REMOVE: &str = "plugin/remove";
+    /// Reload plugins from disk — the engine side of SDK `reloadPlugins`.
+    pub const PLUGIN_RELOAD: &str = "plugin/reload";
 
     // ── Task domain methods ─────────────────────────────────────────────────────
     /// List tracked tasks (live + restored ghosts) — the engine side of the

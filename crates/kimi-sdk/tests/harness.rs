@@ -292,3 +292,96 @@ async fn fake_llm_step_drives_an_offline_turn() {
     assert!(saw_start, "turn.started observed");
     assert!(saw_end, "turn.ended observed");
 }
+
+#[tokio::test]
+async fn harness_plugin_lifecycle_local_install() {
+    let home = std::env::temp_dir().join(format!("kimi-sdk-plugin-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).expect("mkdir");
+    std::env::set_var("KIMI_AGENT_HOME", &home);
+
+    let harness = Harness::embedded().expect("embedded engine");
+
+    // Empty plugin list initially.
+    let plugins = harness.list_plugins().await.expect("list");
+    assert!(plugins.is_empty(), "no plugins yet: {plugins:?}");
+
+    // Install from a local manifest.
+    let plugin_dir = home.join("plugin-src");
+    std::fs::create_dir_all(&plugin_dir).expect("mkdir");
+    let manifest = serde_json::json!({
+        "name": "sdk-tools",
+        "version": "1.0.0",
+        "description": "sdk test plugin"
+    });
+    std::fs::write(plugin_dir.join("plugin.json"), serde_json::to_vec(&manifest).unwrap())
+        .expect("write manifest");
+    let summary = harness
+        .install_plugin(plugin_dir.to_str().unwrap())
+        .await
+        .expect("install local");
+    assert_eq!(summary["display_name"], "sdk-tools", "installed: {summary}");
+    let plugin_id = summary["id"].as_str().expect("id").to_string();
+
+    // Listed + fetchable.
+    let plugins = harness.list_plugins().await.expect("list");
+    assert!(plugins.iter().any(|p| p["id"] == plugin_id), "listed: {plugins:?}");
+    let detail = harness.get_plugin(&plugin_id).await.expect("get").expect("some");
+    assert_eq!(detail["display_name"], "sdk-tools", "detail: {detail}");
+
+    // Disable, verify, re-enable.
+    harness.set_plugin_enabled(&plugin_id, false).await.expect("disable");
+    let detail = harness.get_plugin(&plugin_id).await.expect("get").expect("some");
+    assert_eq!(detail["enabled"], false, "disabled: {detail}");
+    harness.set_plugin_enabled(&plugin_id, true).await.expect("enable");
+    let detail = harness.get_plugin(&plugin_id).await.expect("get").expect("some");
+    assert_eq!(detail["enabled"], true, "enabled: {detail}");
+
+    // Reload reports ok; unknown-plugin ops error.
+    harness.reload_plugins().await.expect("reload");
+    assert!(harness.get_plugin("does-not-exist").await.expect("get").is_none());
+    assert!(harness.set_plugin_enabled("does-not-exist", true).await.is_err());
+
+    // Remove; a second remove reports false.
+    assert!(harness.remove_plugin(&plugin_id).await.expect("remove"));
+    assert!(!harness.remove_plugin(&plugin_id).await.expect("remove again"));
+    assert!(harness.get_plugin(&plugin_id).await.expect("get").is_none());
+}
+
+#[tokio::test]
+async fn session_cron_lifecycle() {
+    let home = std::env::temp_dir().join(format!("kimi-sdk-cron-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).expect("mkdir");
+    std::env::set_var("KIMI_AGENT_HOME", &home);
+
+    let harness = Harness::embedded().expect("embedded engine");
+    let mut session = harness.create_session("s-cron").await.expect("create");
+
+    // Empty initially.
+    let tasks = session.list_cron_tasks().await;
+    assert!(tasks.get("error").is_none(), "cron/list: {tasks}");
+    assert!(tasks["result"]["tasks"].as_array().is_some(), "tasks array: {tasks}");
+
+    // Create, list, delete.
+    let created = session
+        .create_cron_task("0 9 * * *", "morning digest", true)
+        .await;
+    assert!(created.get("error").is_none(), "cron/create: {created}");
+    let id = created["result"]["id"].as_str().expect("id").to_string();
+
+    let tasks = session.list_cron_tasks().await;
+    let list = tasks["result"]["tasks"].as_array().expect("tasks");
+    assert!(list.iter().any(|t| t["id"] == id), "created task listed: {tasks}");
+
+    let deleted = session.delete_cron_tasks(vec![id.clone()]).await;
+    assert!(deleted.get("error").is_none(), "cron/delete: {deleted}");
+    assert!(
+        deleted["result"]["removed"].as_array().map(|a| a.len() == 1).unwrap_or(false),
+        "one removed: {deleted}"
+    );
+
+    let tasks = session.list_cron_tasks().await;
+    let list = tasks["result"]["tasks"].as_array().expect("tasks");
+    assert!(!list.iter().any(|t| t["id"] == id), "task gone: {tasks}");
+}

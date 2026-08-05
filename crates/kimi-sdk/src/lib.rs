@@ -217,4 +217,117 @@ impl Harness {
             .await?
             .unwrap_or_else(|| result.to_string()))
     }
+
+    /// Installed plugins (summary objects) — the engine side of node-sdk
+    /// `listPlugins`.
+    pub async fn list_plugins(&self) -> anyhow::Result<Vec<serde_json::Value>> {
+        let body = self
+            .client
+            .call(kimi_protocol::methods::PLUGIN_LIST, serde_json::Value::Null)
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("list plugins: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"]["plugins"].as_array().cloned().unwrap_or_default())
+    }
+
+    /// One plugin's detail, or `None` when not installed — the engine side of
+    /// node-sdk `getPluginInfo`.
+    pub async fn get_plugin(&self, id: &str) -> anyhow::Result<Option<serde_json::Value>> {
+        let body = self
+            .client
+            .call(
+                kimi_protocol::methods::PLUGIN_GET,
+                serde_json::json!({ "id": id }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("get plugin: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok((!body["result"].is_null()).then(|| body["result"].clone()))
+    }
+
+    /// Install a plugin from a github repo (`owner/repo[@tag]`), a zip URL, or
+    /// a local path — the engine side of node-sdk `installPlugin`. Returns the
+    /// installed plugin summary.
+    pub async fn install_plugin(&self, source: &str) -> anyhow::Result<serde_json::Value> {
+        let body = self
+            .client
+            .call(
+                kimi_protocol::methods::PLUGIN_INSTALL,
+                serde_json::json!({ "source": source }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("install plugin: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"].clone())
+    }
+
+    /// Enable or disable an installed plugin — the engine side of node-sdk
+    /// `setPluginEnabled`.
+    pub async fn set_plugin_enabled(&self, id: &str, enabled: bool) -> anyhow::Result<()> {
+        let body = self
+            .client
+            .call(
+                kimi_protocol::methods::PLUGIN_SET_ENABLED,
+                serde_json::json!({ "id": id, "enabled": enabled }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("set plugin enabled: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(())
+    }
+
+    /// Toggle one of a plugin's MCP servers — the engine side of node-sdk
+    /// `setPluginMcpServerEnabled`.
+    pub async fn set_plugin_mcp_enabled(
+        &self,
+        id: &str,
+        server: &str,
+        enabled: bool,
+    ) -> anyhow::Result<()> {
+        let body = self
+            .client
+            .call(
+                kimi_protocol::methods::PLUGIN_SET_MCP_ENABLED,
+                serde_json::json!({ "id": id, "server": server, "enabled": enabled }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!(
+                "set plugin mcp enabled: {}",
+                error["message"].as_str().unwrap_or("unknown")
+            );
+        }
+        Ok(())
+    }
+
+    /// Remove an installed plugin — the engine side of node-sdk `removePlugin`.
+    pub async fn remove_plugin(&self, id: &str) -> anyhow::Result<bool> {
+        let body = self
+            .client
+            .call(
+                kimi_protocol::methods::PLUGIN_REMOVE,
+                serde_json::json!({ "id": id }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("remove plugin: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"]["removed"].as_bool().unwrap_or(false))
+    }
+
+    /// Reload plugins from disk — the engine side of node-sdk `reloadPlugins`.
+    pub async fn reload_plugins(&self) -> anyhow::Result<()> {
+        let body = self
+            .client
+            .call(kimi_protocol::methods::PLUGIN_RELOAD, serde_json::json!({}))
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("reload plugins: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(())
+    }
 }

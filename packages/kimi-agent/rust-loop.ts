@@ -3084,6 +3084,40 @@ export async function pluginGet(id: string): Promise<EnginePluginInfo | null> {
   return agentCall('plugin/get', { id });
 }
 
+/** Install a plugin from a github repo / zip URL / local path (SDK
+ *  `installPlugin` parity). Resolves with the installed plugin summary. */
+export async function pluginInstall(source: string): Promise<EnginePluginSummary | null> {
+  return agentCall('plugin/install', { source });
+}
+
+/** Enable or disable an installed plugin (SDK `setPluginEnabled` parity). */
+export async function pluginSetEnabled(
+  id: string,
+  enabled: boolean,
+): Promise<EnginePluginSummary | null> {
+  return agentCall('plugin/set_enabled', { id, enabled });
+}
+
+/** Toggle one of a plugin's MCP servers (SDK `setPluginMcpServerEnabled`
+ *  parity). */
+export async function pluginSetMcpEnabled(
+  id: string,
+  server: string,
+  enabled: boolean,
+): Promise<EnginePluginInfo | null> {
+  return agentCall('plugin/set_mcp_enabled', { id, server, enabled });
+}
+
+/** Remove an installed plugin (SDK `removePlugin` parity). */
+export async function pluginRemove(id: string): Promise<{ removed: boolean } | null> {
+  return agentCall('plugin/remove', { id });
+}
+
+/** Reload plugins from disk (SDK `reloadPlugins` parity). */
+export async function pluginReload(): Promise<{ ok: boolean } | null> {
+  return agentCall('plugin/reload', {});
+}
+
 /** Read the engine's parsed global config (stage 2a: kap-server Rust
  *  migration). Secrets are NOT redacted — the host projects + redacts for
  *  the wire. */

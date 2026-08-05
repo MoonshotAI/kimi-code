@@ -176,6 +176,11 @@ export interface RustLoopApi {
   bgDetach(taskId: string): Promise<unknown>;
   pluginList(): Promise<{ plugins: unknown[] } | null>;
   pluginGet(id: string): Promise<unknown>;
+  pluginInstall(source: string): Promise<unknown>;
+  pluginSetEnabled(id: string, enabled: boolean): Promise<unknown>;
+  pluginSetMcpEnabled(id: string, server: string, enabled: boolean): Promise<unknown>;
+  pluginRemove(id: string): Promise<{ removed: boolean } | null>;
+  pluginReload(): Promise<{ ok: boolean } | null>;
   configGet(): Promise<unknown>;
   configSet(patch: unknown): Promise<unknown>;
 }
@@ -1084,11 +1089,23 @@ export class RustRpcClient extends SDKRpcClientBase {
       getPluginInfo: async ({ id }: any) => {
         return mapPluginInfo((await r.pluginGet(id)) as never) as never;
       },
-      installPlugin: async () => nativeUnavailable('installPlugin'),
-      setPluginEnabled: async () => nativeUnavailable('setPluginEnabled'),
-      setPluginMcpServerEnabled: async () => nativeUnavailable('setPluginMcpServerEnabled'),
-      removePlugin: async () => nativeUnavailable('removePlugin'),
-      reloadPlugins: async () => nativeUnavailable('reloadPlugins'),
+      installPlugin: async ({ source }: any) => {
+        const summary = await r.pluginInstall(source);
+        return mapPluginSummary(summary as never) as never;
+      },
+      setPluginEnabled: async ({ id, enabled }: any) => {
+        await r.pluginSetEnabled(id, enabled);
+      },
+      setPluginMcpServerEnabled: async ({ id, server, enabled }: any) => {
+        await r.pluginSetMcpEnabled(id, server, enabled);
+      },
+      removePlugin: async ({ id }: any) => {
+        await r.pluginRemove(id);
+      },
+      reloadPlugins: async () => {
+        await r.pluginReload();
+        return { added: 0, removed: 0, changed: 0, unchanged: 0 };
+      },
       listPluginCommands: async () => [],
       activatePluginCommand: async () => nativeUnavailable('activatePluginCommand'),
     };
