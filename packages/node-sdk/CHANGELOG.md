@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.15.2
+
+### Patch Changes
+
+- [#2601](https://github.com/MoonshotAI/kimi-code/pull/2601) [`75fe068`](https://github.com/MoonshotAI/kimi-code/commit/75fe068a01261ff6b34f176530b338ec6a24918e) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Fix built-in capability availability and installed status in `/plugins`, preserve legacy WebBridge skills as backups during updates, and prevent Computer Use updates from duplicating or disconnecting MCP servers.
+
 ## 0.15.1
 
 ### Patch Changes

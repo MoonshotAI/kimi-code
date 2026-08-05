@@ -131,7 +131,7 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
       const marketplaceSource = rest.join(' ').trim() || undefined;
       await showPluginsPicker(host, {
         // Custom marketplaces often omit `tier`, so their entries land on the
-        // Third-party tab (entry.tier !== 'official'). Open there when a custom
+        // Curated tab (entry.tier !== 'official'). Open there when a custom
         // source is supplied; otherwise the default catalog's official entries
         // make Official the right landing tab.
         initialTab: marketplaceSource === undefined ? 'official' : 'third-party',
@@ -282,7 +282,7 @@ async function showPluginsPicker(
     onCancel: () => {
       host.restoreEditor();
     },
-    // Every tab except Custom needs the catalog: Official/Third-party list it,
+    // Every tab except Custom needs the catalog: Official/Curated list it,
     // and Installed uses it to show update badges. The Installed/Custom tabs
     // keep working even when the marketplace is unreachable (badges simply stay
     // hidden until data arrives).
@@ -292,7 +292,7 @@ async function showPluginsPicker(
   });
   host.mountEditorReplacement(panel);
   // Kick off the catalog fetch for any tab that needs it: Installed uses it for
-  // update badges, Official/Third-party list it. Custom never reads the catalog,
+  // update badges, Official/Curated list it. Custom never reads the catalog,
   // so skip the fetch there. Done here (after `panel` is initialized) rather
   // than inside the component constructor, because the callback above closes
   // over `panel`.

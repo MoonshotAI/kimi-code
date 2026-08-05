@@ -4,16 +4,16 @@ Plugins package reusable Kimi Code CLI capabilities into installable units — t
 
 ## Installation and Management
 
-Run `/plugins` in the TUI to open the plugin manager. It is a single panel with four tabs — **Installed** (manage what you have), **Official** (Kimi-maintained marketplace plugins), **Third-party** (marketplace plugins from other publishers), and **Custom** (install from a URL) — switched with `Tab` / `Shift-Tab`. Common keys:
+Run `/plugins` in the TUI to open the plugin manager. It is a single panel with four tabs — **Installed** (manage what you have), **Official** (Kimi-maintained marketplace plugins), **Curated** (third-party plugins from Kimi partners in the default marketplace), and **Custom** (install from a URL) — switched with `Tab` / `Shift-Tab`. Common keys:
 
 | Key | Action |
 | --- | --- |
-| `Tab` / `Shift-Tab` | Switch between the Installed / Official / Third-party / Custom tabs |
+| `Tab` / `Shift-Tab` | Switch between the Installed / Official / Curated / Custom tabs |
 | `Space` | Enable or disable the selected installed plugin (Installed tab) |
 | `D` | Remove the selected installed plugin (Installed tab) |
 | `M` | Manage MCP servers for the selected plugin (Installed tab) |
 | `R` | Reload `installed.json` and all manifests (Installed tab) |
-| `Enter` | Installed tab: install the available update, or view details if up to date · Official/Third-party tab: install or update · Custom tab: install |
+| `Enter` | Installed tab: install the available update, or view details if up to date · Official/Curated tab: install or update · Custom tab: install |
 | `I` | View plugin details (Installed tab) |
 | `Esc` | Go back or cancel |
 
@@ -33,7 +33,7 @@ You can also use slash commands directly:
 | `/plugins mcp enable <id> <server>` | Enable an MCP server declared by a plugin |
 | `/plugins mcp disable <id> <server>` | Disable an MCP server declared by a plugin |
 
-The **Installed** tab lists your installed plugins and shows an update badge when a newer version is available in the marketplace. When a turn that used an outdated plugin (its MCP tool or a `/<plugin>:<command>` slash command) ends, a one-time notice also points you to `/plugins` for the update; each new marketplace version is announced once. The **Official** and **Third-party** tabs list marketplace plugins by tier; the **Custom** tab installs from a URL. On the v2 engine, the Official tab also lists the built-in product capabilities (Kimi Computer Use — macOS only — and Kimi WebBridge). Their identity and install action come from the client, while the marketplace may supply a version for the normal `install` / `installed` / `update` status. Detailed runtime checks and install progress go to the log instead of changing the installed state. Pressing Enter for an install or update refreshes the binary runtime and wiring plugin together. When Kimi WebBridge is installed or updated, legacy standalone copies of its Skill are moved to `$KIMI_CODE_HOME/backups/kimi-webbridge-skills/` before the managed plugin takes over; the old files are backed up, not deleted. Marketplace catalogs load automatically when needed. Each install shows a trust badge: `kimi-official` (from an official address), `curated` (from a curated address), or `third-party` (everything else). Installing a third-party plugin (anything not from the official address, including Custom installs) first shows a confirmation prompt that defaults to cancelling, so it is only installed if you choose to trust the source.
+The **Installed** tab lists your installed plugins and shows an update badge when a newer version is available in the marketplace. When a turn that used an outdated plugin (its MCP tool or a `/<plugin>:<command>` slash command) ends, a one-time notice also points you to `/plugins` for the update; each new marketplace version is announced once. In the default marketplace, the **Official** and **Curated** tabs list Kimi-maintained and partner plugins; custom marketplaces also place their non-official entries under **Curated** without presenting them as Kimi partners. The **Custom** tab installs from a URL. On the v2 engine, the Official tab also lists the built-in product capabilities (Kimi Computer Use — macOS only — and Kimi WebBridge). Their identity and install action come from the client, while the marketplace may supply a version for the normal `install` / `installed` / `update` status. Detailed runtime checks and install progress go to the log instead of changing the installed state. Pressing Enter for an install or update refreshes the binary runtime and wiring plugin together. When Kimi WebBridge is installed or updated, legacy standalone copies of its Skill are moved to `$KIMI_CODE_HOME/backups/kimi-webbridge-skills/` before the managed plugin takes over; the old files are backed up, not deleted. Marketplace catalogs load automatically when needed. Each install shows a trust badge: `kimi-official` (from an official address), `curated` (from a curated address), or `third-party` (everything else). Installing a third-party plugin (anything not from the official address, including Custom installs) first shows a confirmation prompt that defaults to cancelling, so it is only installed if you choose to trust the source.
 
 ### Installing from GitHub
 
