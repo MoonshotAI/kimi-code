@@ -159,8 +159,10 @@
     "coverage/",
     "node_modules/",
     "apps/*/scripts/",
+    "scripts/",
     "docs/smoke-archive/",
     "packages/pi-tui/",
+    "retired/",
     "*.generated.ts",
     "参考目录/"
   ]

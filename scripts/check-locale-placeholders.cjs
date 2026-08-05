@@ -145,6 +145,13 @@ for (const pair of LOCALE_PAIRS) {
   const enPath = path.resolve(ROOT, pair.en);
   const zhPath = path.resolve(ROOT, pair.zh);
 
+  // Skip sources whose files no longer exist (e.g. a retired package),
+  // mirroring the other check scripts' `existsSync` tolerance.
+  if (!fs.existsSync(enPath) || !fs.existsSync(zhPath)) {
+    console.log(`⚠ ${pair.en.replace(/\/en\.ts$/, '')}: locale files not found — skipping`);
+    continue;
+  }
+
   // Individual placeholder format checks
   const enErrors = checkPlaceholders(enPath);
   const zhErrors = checkPlaceholders(zhPath);

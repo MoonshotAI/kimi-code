@@ -69,7 +69,6 @@
         ./packages/kaos
         ./packages/kimi-native-tools
         ./packages/kimi-agent
-        ./packages/klient
         ./packages/kosong
         ./packages/migration-legacy
         ./packages/node-sdk
@@ -101,7 +100,6 @@
         "@moonshot-ai/kimi-code-oauth"
         "@moonshot-ai/kimi-native-tools"
         "@moonshot-ai/kimi-agent"
-        "@moonshot-ai/klient"
         "@moonshot-ai/pi-tui"
         "@moonshot-ai/protocol"
         "@moonshot-ai/server"

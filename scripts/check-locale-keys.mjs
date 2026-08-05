@@ -9,6 +9,7 @@
  */
 
 import { pathToFileURL } from 'node:url';
+import { existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { register } from 'node:module';
@@ -134,6 +135,13 @@ for (const source of LOCALE_SOURCES) {
         throw new Error('Cannot extract en/zh from module');
       }
     } else {
+      // Skip sources whose files no longer exist (e.g. a retired package),
+      // mirroring the other check scripts' `existsSync` tolerance — a missing
+      // source is not a key-consistency failure.
+      if (!existsSync(resolve(ROOT, source.en)) || !existsSync(resolve(ROOT, source.zh))) {
+        console.warn(`⚠ ${source.name}: locale files not found — skipping`);
+        continue;
+      }
       enData = await loadModule(source.en);
       zhData = await loadModule(source.zh);
     }

@@ -395,6 +395,13 @@ async function main() {
     }
 
     console.log(`\n=== Scanning ${mod.name} (${mod.srcDir}) ===`);
+    // A retired package (e.g. moved to `retired/`) has no source dir left to
+    // scan; skip it instead of crashing on ENOENT, mirroring the other check
+    // scripts' tolerance.
+    if (!existsSync(srcDir)) {
+      console.log(`  (skipped: ${srcDir} not found)`);
+      continue;
+    }
     const findings = walkDir(srcDir, mod, valueToKeys);
     console.log(`  Found ${findings.length} issues`);
 
