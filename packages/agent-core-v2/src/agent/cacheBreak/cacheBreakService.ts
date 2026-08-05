@@ -1,20 +1,13 @@
 /**
  * `cacheBreak` domain — `IAgentCacheBreakService` implementation.
  *
- * Self-wiring plugin: its constructor subscribes to `usage`'s `onDidRecord`
- * event and keeps the previous turn record's model, usage, and record time as
- * the per-agent baseline. `operation` records (e.g. compaction) clear the
- * baseline because a cache-read drop after them is expected; records without
- * a turn source are ignored entirely, all-zero records from streams without
- * usage reporting are skipped without touching the baseline, and a model
- * change resets the comparison since caches are per-model. When a turn
- * record's `inputCacheRead`
- * falls below 95% of the baseline by more than `MIN_CACHE_BREAK_DROP_TOKENS`,
- * the service writes a debug entry through `log` and reports
- * `cache_break_detected` through `telemetry`. The baseline is registered into
- * `agentState` (`IAgentStateService`) and read/written through it.
- * Constructed eagerly at Agent scope so the subscription is installed without
- * any other service injecting it. Bound at Agent scope.
+ * Self-wiring plugin: subscribes to `usage`'s `onDidRecord` event and keeps
+ * the per-agent comparison baseline in `agentState` (`IAgentStateService`).
+ * A turn record whose cache-read count drops sharply below the baseline is
+ * reported as `cache_break_detected` through `telemetry` and logged through
+ * `log`; records that make a comparison meaningless (operation requests,
+ * sourceless or unmeasured all-zero usage, model changes) reset or bypass
+ * the baseline instead of reporting. Constructed eagerly at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -75,9 +68,6 @@ export class AgentCacheBreakService extends Disposable implements IAgentCacheBre
       return;
     }
     if (source?.type !== 'turn') return;
-    // Streams without usage reporting record all-zero usage — there is no
-    // cache measurement to compare, so skip the record entirely and keep the
-    // last measured baseline instead of treating zeros as a full cache drop.
     const curr = ctx.usage;
     if (
       curr.inputOther === 0 &&
@@ -90,8 +80,6 @@ export class AgentCacheBreakService extends Disposable implements IAgentCacheBre
 
     const prev = this.baseline;
     const now = Date.now();
-    // Caches are per-model: a model change makes cache reads incomparable,
-    // so only judge records against a same-model baseline.
     if (prev !== undefined && prev.model === ctx.model) {
       const prevCacheRead = prev.usage.inputCacheRead;
       const currCacheRead = ctx.usage.inputCacheRead;
