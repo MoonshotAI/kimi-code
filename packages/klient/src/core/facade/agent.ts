@@ -62,7 +62,11 @@ export interface AgentFacade {
   getTasks(input?: { activeOnly?: boolean; limit?: number }): Promise<readonly AgentTaskInfo[]>;
   stopTask(input: { taskId: string; reason?: string }): Promise<void>;
   getTaskOutput(input: { taskId: string; tail?: number }): Promise<string>;
-  /** Session-merged MCP server entries (workspace set + ephemeral session overlay). */
+  /**
+   * Session-merged MCP server entries (workspace set + ephemeral session
+   * overlay). This is a live snapshot, so entries may still be pending while
+   * the initial connection attempt runs.
+   */
   getMcpServers(): Promise<readonly McpServerEntry[]>;
   /**
    * Trigger a manual full compaction. Async: `true` means the compaction was

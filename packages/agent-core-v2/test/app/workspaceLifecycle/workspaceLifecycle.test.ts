@@ -106,9 +106,11 @@ function catalogStub() {
 function sessionIndexStub(): ISessionIndex {
   return {
     _serviceBrand: undefined,
-    list: () => Promise.resolve({ items: [], total: 0, hasMore: false }),
+    prepare: () => Promise.resolve({ state: 'ready', generation: 0, degradedCount: 0 }),
+    status: () => ({ state: 'ready', generation: 0, degradedCount: 0 }),
     get: () => Promise.resolve(undefined),
-    countActive: () => Promise.resolve(0),
+    listRecent: () => Promise.resolve({ items: [] }),
+    count: () => Promise.resolve(0),
     remove: () => Promise.resolve(),
   };
 }

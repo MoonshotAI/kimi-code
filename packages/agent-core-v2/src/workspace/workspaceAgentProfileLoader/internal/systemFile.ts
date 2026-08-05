@@ -19,10 +19,11 @@ import { join } from 'pathe';
 
 import {
   DEFAULT_AGENT_PROFILE_NAME,
+  normalizeAgentProfile,
   type AgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
-  renderPromptTemplate,
+  renderPromptTemplateResult,
   skillActiveFor,
 } from '#/app/agentProfileCatalog/profile-shared';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -57,16 +58,16 @@ export async function loadSystemMdProfile(
   const skillActive =
     (builtinDefault.tools === undefined || skillActiveFor(builtinDefault.tools)) &&
     !(builtinDefault.disallowedTools ?? []).includes('Skill');
-  return {
+  return normalizeAgentProfile({
     name: DEFAULT_AGENT_PROFILE_NAME,
     description: builtinDefault.description,
     override: true,
     tools: builtinDefault.tools,
     disallowedTools: builtinDefault.disallowedTools,
     subagents: builtinDefault.subagents,
-    systemPrompt: (context) =>
-      renderPromptTemplate(text, context, { skillActive }, (ctx) =>
-        builtinDefault.systemPrompt(ctx),
+    renderSystemPrompt: (context) =>
+      renderPromptTemplateResult(text, context, { skillActive }, (ctx) =>
+        builtinDefault.renderSystemPrompt(ctx),
       ),
-  };
+  });
 }

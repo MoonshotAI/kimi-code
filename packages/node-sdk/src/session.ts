@@ -11,6 +11,7 @@ import type { SDKRpcClientBase } from '#/rpc';
 import type {
   AddAdditionalDirOptions,
   AddAdditionalDirResult,
+  CapabilityStatus,
   BackgroundTaskInfo,
   CompactOptions,
   CreateGoalInput,
@@ -47,6 +48,30 @@ export interface SessionOptions {
   readonly resumeState?: ResumedSessionState | undefined;
   readonly rpc: SDKRpcClientBase;
   readonly onClose?: (() => void | Promise<void>) | undefined;
+}
+
+/**
+ * The capability surface (built-in product capabilities: kimi-cu,
+ * kimi-webbridge) exists only on the v2 engine — v1 has no capability
+ * domain. Feature-detect structurally so a Session backed by v1 fails with
+ * a clear message instead of a confusing missing-method error.
+ */
+interface CapabilityRpcSurface {
+  listCapabilities(): Promise<readonly CapabilityStatus[]>;
+  getCapability(id: string): Promise<CapabilityStatus>;
+  installCapability(id: string): Promise<CapabilityStatus>;
+}
+
+function capabilityRpc(rpc: SDKRpcClientBase): CapabilityRpcSurface {
+  const candidate = rpc as Partial<CapabilityRpcSurface>;
+  if (
+    typeof candidate.listCapabilities !== 'function' ||
+    typeof candidate.getCapability !== 'function' ||
+    typeof candidate.installCapability !== 'function'
+  ) {
+    throw new TypeError('The capability surface is unavailable on this engine (requires v2).');
+  }
+  return candidate as CapabilityRpcSurface;
 }
 
 export class Session {
@@ -522,6 +547,27 @@ export class Session {
   async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
     this.ensureOpen();
     await this.rpc.setPluginEnabled(id, enabled);
+  }
+
+  /** Built-in capabilities with layered readiness (v2 engine only). */
+  async listCapabilities(): Promise<readonly CapabilityStatus[]> {
+    this.ensureOpen();
+    return capabilityRpc(this.rpc).listCapabilities();
+  }
+
+  /** One capability's layered readiness + live install progress. */
+  async getCapability(id: string): Promise<CapabilityStatus> {
+    this.ensureOpen();
+    return capabilityRpc(this.rpc).getCapability(id);
+  }
+
+  /**
+   * Start an idempotent capability install (binary runtime + wiring) in the
+   * background; poll `getCapability` for progress.
+   */
+  async installCapability(id: string): Promise<CapabilityStatus> {
+    this.ensureOpen();
+    return capabilityRpc(this.rpc).installCapability(id);
   }
 
   async setPluginMcpServerEnabled(

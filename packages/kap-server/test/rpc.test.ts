@@ -190,7 +190,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
   it('lists sessions via GET', async () => {
     const { body } = await call<{ items: unknown[]; has_more: boolean }>(
       'GET',
-      rpc('core', ISessionIndex, 'list'),
+      rpc('core', ISessionIndex, 'listRecent'),
       {},
     );
     expect(body.code).toBe(0);
@@ -257,8 +257,8 @@ describe('server-v2 /api/v1/debug RPC', () => {
     await createSession(cwd);
     const { body } = await call<number>(
       'POST',
-      rpc('core', ISessionIndex, 'countActive'),
-      [[created.body.data.id]],
+      rpc('core', ISessionIndex, 'count'),
+      [{ workspaceIds: [created.body.data.id] }],
     );
     expect(body.code).toBe(0);
     expect(body.data).toBeGreaterThanOrEqual(1);
@@ -558,7 +558,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
     const cwd = home as string;
     await createSession(cwd);
 
-    const listed = await call<{ items: { id: string }[] }>('POST', rpc('core', ISessionIndex, 'list'), {});
+    const listed = await call<{ items: { id: string }[] }>('POST', rpc('core', ISessionIndex, 'listRecent'), {});
     expect(listed.body.code).toBe(0);
     expect(listed.body.data.items.length).toBeGreaterThanOrEqual(1);
 
@@ -601,7 +601,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
     let rejected = false;
     let code: number | undefined;
     try {
-      const res = await fetch(`${base}${rpc('core', ISessionIndex, 'list')}`, {
+      const res = await fetch(`${base}${rpc('core', ISessionIndex, 'listRecent')}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
         body: JSON.stringify({ big: huge }),
@@ -657,14 +657,14 @@ describe('server-v2 /api/v1/debug RPC auth', () => {
   });
 
   it('rejects calls without a token (40101)', async () => {
-    const res = await fetch(`${base}${rpc('core', ISessionIndex, 'list')}`, { method: 'POST' });
+    const res = await fetch(`${base}${rpc('core', ISessionIndex, 'listRecent')}`, { method: 'POST' });
     expect(res.status).toBe(401);
     const body = (await res.json()) as Envelope<null>;
     expect(body.code).toBe(40101);
   });
 
   it('accepts calls with the correct rpcToken', async () => {
-    const res = await fetch(`${base}${rpc('core', ISessionIndex, 'list')}`, {
+    const res = await fetch(`${base}${rpc('core', ISessionIndex, 'listRecent')}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({}),
@@ -675,7 +675,7 @@ describe('server-v2 /api/v1/debug RPC auth', () => {
 
   it('accepts the persistent token on /api/v1/debug', async () => {
     const persistent = (server as RunningServer).authTokenService.getToken();
-    const res = await fetch(`${base}${rpc('core', ISessionIndex, 'list')}`, {
+    const res = await fetch(`${base}${rpc('core', ISessionIndex, 'listRecent')}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${persistent}`, 'content-type': 'application/json' },
       body: JSON.stringify({}),
@@ -685,7 +685,7 @@ describe('server-v2 /api/v1/debug RPC auth', () => {
   });
 
   it('rejects a wrong token (40101)', async () => {
-    const res = await fetch(`${base}${rpc('core', ISessionIndex, 'list')}`, {
+    const res = await fetch(`${base}${rpc('core', ISessionIndex, 'listRecent')}`, {
       method: 'POST',
       headers: { authorization: 'Bearer wrong' },
     });
@@ -774,7 +774,7 @@ describe('server-v2 /api/v1/debug RPC (dev-only, whitelist-free)', () => {
   it('also reaches whitelisted Services by the same wire names', async () => {
     const { body } = await call<{ items: unknown[] }>(
       'POST',
-      `/api/v1/debug/${String(ISessionIndex)}/list`,
+      `/api/v1/debug/${String(ISessionIndex)}/listRecent`,
       [{ limit: 1 }],
     );
     expect(body.code).toBe(0);

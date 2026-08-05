@@ -192,7 +192,7 @@ describe('acp-server skills / available commands', () => {
     // The model received the rendered skill activation (content + args), not
     // the raw slash text.
     const history = JSON.stringify(scripted!.callHistory()[0]);
-    expect(history).toContain('kimi-skill-loaded');
+    expect(history).toContain('skill-loaded');
     expect(history).toContain('Always answer with the word FIXTURE');
     expect(history).toContain('ARGUMENTS: some args');
     expect(history).not.toContain('/skill:acp-fixture');
@@ -211,7 +211,7 @@ describe('acp-server skills / available commands', () => {
     expect(scripted!.callCount()).toBe(1);
 
     const history = JSON.stringify(scripted!.callHistory()[0]);
-    expect(history).toContain('kimi-skill-loaded');
+    expect(history).toContain('skill-loaded');
     expect(history).toContain('write-goal');
   }, 30_000);
 

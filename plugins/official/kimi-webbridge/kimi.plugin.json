@@ -1,0 +1,24 @@
+{
+  "$schema": "https://kimi.com/schemas/kimi.plugin.schema.json",
+  "name": "kimi-webbridge",
+  "version": "1.11.3",
+  "description": "Control your real browser (with your login sessions) from Kimi Code via the local Kimi WebBridge daemon — navigate, click, type, read pages, and screenshot any website.",
+  "keywords": [
+    "browser",
+    "webbridge",
+    "cdp",
+    "automation",
+    "web",
+    "scraping"
+  ],
+  "author": "Moonshot AI",
+  "license": "Proprietary",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Kimi WebBridge",
+    "shortDescription": "Control your real browser from Kimi Code — navigate, click, type, and screenshot",
+    "longDescription": "Kimi WebBridge lets AI control the user's real browser — navigate, click, type, read, screenshot, and interact with any website using the user's actual login sessions. The skill talks to the local WebBridge daemon (http://127.0.0.1:10086), which drives Chrome/Edge through a browser extension over CDP. Everything runs locally; login state and page content never leave the device.\n\nRequires the Kimi WebBridge daemon and browser extension: https://www.kimi.com/features/webbridge",
+    "developerName": "Moonshot AI",
+    "websiteURL": "https://www.kimi.com/features/webbridge"
+  }
+}

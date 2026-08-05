@@ -5,6 +5,7 @@ import {
   type KimiHarness,
   type OAuthRef,
   type Session,
+  type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { createKimiCodeUserAgent } from '#/cli/version';
@@ -32,6 +33,7 @@ export interface AuthFlowHost {
   session: Session | undefined;
   readonly harness: KimiHarness;
   readonly options: KimiTUIOptions;
+  readonly engineV2: boolean;
 
   setAppState(patch: Partial<AppState>): void;
   setStartupReady(): void;
@@ -40,6 +42,7 @@ export interface AuthFlowHost {
   syncRuntimeState(session?: Session): Promise<void>;
   closeSession(reason: string): Promise<void>;
   appendStartupNotice(extra: string): void;
+  hydrateLazyConfigDefaults(): Promise<void>;
   readonly sessionEventHandler: SessionEventHandler;
   fetchSessions(): Promise<void>;
   updateTerminalTitle(): void;
@@ -80,6 +83,20 @@ export class AuthFlowController {
       if (effort !== undefined) {
         await host.session.setThinking(effort);
       }
+      return;
+    }
+
+    if (host.engineV2) {
+      // Lazy session creation (v2 engine): configure the model only; the
+      // session is created on the first message. The effort is carried as the
+      // first session's thinking override so a session-only choice (Alt+S)
+      // made before any session exists is applied on creation.
+      const patch: Partial<AppState> = { model };
+      if (effort !== undefined) {
+        patch.thinkingEffort = effort as ThinkingEffort;
+        patch.lazySessionThinking = effort as ThinkingEffort;
+      }
+      host.setAppState(patch);
       return;
     }
 
@@ -138,11 +155,23 @@ export class AuthFlowController {
     const selected = defaultModel !== undefined ? availableModels[defaultModel] : undefined;
 
     if (defaultModel === undefined || selected === undefined) {
+      if (host.session === undefined && host.engineV2) {
+        // Session-less v2: hydrate permission/plan defaults even without a
+        // default model.
+        await host.hydrateLazyConfigDefaults();
+      }
       host.setAppState({ availableModels, availableProviders });
       return;
     }
 
     await this.activateModelAfterLogin(defaultModel, thinkingEffortFromConfig(config.thinking));
+    if (host.session === undefined && host.engineV2) {
+      // Session-less v2: also hydrate permission/plan defaults from the
+      // refreshed config, same as startup.
+      await host.hydrateLazyConfigDefaults();
+      host.setAppState({ availableModels, availableProviders });
+      return;
+    }
     const appStatePatch: Partial<AppState> = {
       availableModels,
       availableProviders,

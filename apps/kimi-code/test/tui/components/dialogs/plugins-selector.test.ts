@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import chalk from 'chalk';
+import type { CapabilityStatus, PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 
 import {
   PluginInstallTrustConfirmComponent,
@@ -69,7 +70,9 @@ const thirdPartyEntries = [
 const marketplaceEntries = [...officialEntries, ...thirdPartyEntries];
 
 function makePanel(opts: {
-  installed?: readonly (typeof superpowers)[];
+  installed?: readonly PluginSummary[];
+  capabilities?: readonly CapabilityStatus[];
+  catalogIsDefault?: boolean;
   initialTab?: 'installed' | 'official' | 'third-party' | 'custom';
   selectedId?: string;
   pluginHint?: { id: string; text: string };
@@ -80,6 +83,8 @@ function makePanel(opts: {
   const panel = new PluginsPanelComponent({
     installed,
     installedIds: new Set(installed.map((p) => p.id)),
+    capabilities: opts.capabilities,
+    catalogIsDefault: opts.catalogIsDefault,
     initialTab: opts.initialTab,
     selectedId: opts.selectedId,
     pluginHint: opts.pluginHint,
@@ -88,6 +93,24 @@ function makePanel(opts: {
     onRequestMarketplace,
   });
   return { panel, onSelect, onRequestMarketplace };
+}
+
+function makeCapability(overrides: Partial<CapabilityStatus> = {}): CapabilityStatus {
+  return {
+    id: 'kimi-cu',
+    displayName: 'Kimi Computer Use',
+    description: 'Background GUI automation',
+    supported: true,
+    state: 'partial',
+    steps: [
+      { id: 'plugin', state: 'ok' },
+      { id: 'app', state: 'ok' },
+      { id: 'service', state: 'ok' },
+      { id: 'permissions', state: 'missing', detail: 'screenRecording' },
+    ],
+    install: { running: false },
+    ...overrides,
+  };
 }
 
 describe('plugins selector dialogs', () => {
@@ -120,6 +143,20 @@ describe('plugins selector dialogs', () => {
       source: 'zip-url',
       originalSource: 'https://code.kimi.com/kimi-code/plugins/curated/superpowers.zip',
     })).toBe('curated');
+    expect(pluginTrustLabel({
+      id: 'kimi-cu',
+      displayName: 'Kimi Computer Use',
+      enabled: true,
+      state: 'ok',
+      skillCount: 1,
+      mcpServerCount: 1,
+      enabledMcpServerCount: 1,
+      hookCount: 0,
+      commandCount: 0,
+      hasErrors: false,
+      source: 'zip-url',
+      originalSource: 'https://cdn.kimi.com/kimi-computer-use/latest/kimi-cu-plugin.zip',
+    })).toBe('official');
     expect(pluginTrustLabel({
       id: 'demo',
       displayName: 'Demo',
@@ -169,6 +206,13 @@ describe('plugins selector dialogs', () => {
       source: 'zip-url',
       originalSource: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
     })).toBe(true);
+    expect(isOfficialPluginInstall({
+      ...base,
+      id: 'kimi-cu',
+      displayName: 'Kimi Computer Use',
+      source: 'zip-url',
+      originalSource: 'https://cdn.kimi.com/kimi-computer-use/latest/kimi-cu-plugin.zip',
+    })).toBe(true);
     // Same manifest id from a local path, GitHub, a loopback URL, or a
     // third-party URL is not the official build.
     expect(isOfficialPluginInstall({ ...base, source: 'local-path' })).toBe(false);
@@ -185,11 +229,40 @@ describe('plugins selector dialogs', () => {
     })).toBe(false);
   });
 
+  it('shows installed Kimi Computer Use and WebBridge plugins as official', () => {
+    const installed: PluginSummary[] = [
+      {
+        ...superpowers,
+        id: 'kimi-cu',
+        displayName: 'Kimi Computer Use',
+        source: 'zip-url',
+        originalSource: 'https://cdn.kimi.com/kimi-computer-use/latest/kimi-cu-plugin.zip',
+      },
+      {
+        ...superpowers,
+        id: 'kimi-webbridge',
+        displayName: 'Kimi WebBridge',
+        source: 'zip-url',
+        originalSource: 'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip',
+      },
+    ];
+
+    const { panel } = makePanel({ installed });
+    const out = strip(renderRaw(panel));
+
+    expect(out).toContain('id kimi-cu');
+    expect(out).toContain('via cdn.kimi.com · official');
+    expect(out).toContain('id kimi-webbridge');
+    expect(out).toContain('via code.kimi.com · official');
+  });
+
   it('treats only the official Kimi CDN path as a trusted install source', () => {
     expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip')).toBe(true);
+    expect(isOfficialPluginSource('https://cdn.kimi.com/kimi-computer-use/latest/kimi-cu-plugin.zip')).toBe(true);
     // Curated and other Kimi CDN paths are not "official" for the install gate.
     expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/curated/superpowers.zip')).toBe(false);
     expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/foo.zip')).toBe(false);
+    expect(isOfficialPluginSource('https://cdn.kimi.com/unrelated/plugin.zip')).toBe(false);
     // Non-Kimi hosts (loopback included), non-https schemes, local paths, and
     // GitHub sources are unofficial.
     expect(isOfficialPluginSource('https://example.test/kimi-code/plugins/official/x.zip')).toBe(false);
@@ -343,6 +416,79 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain('Marketplace unavailable: fetch failed');
   });
 
+  it('renders a same-id custom catalog row as a normal plugin, without capability state', () => {
+    // A custom marketplace may legitimately list an entry reusing the
+    // kimi-webbridge id: without the capability: marker it must render and
+    // install as a plain plugin, not borrow capability status.
+    const capabilities = [makeCapability({ id: 'kimi-webbridge', displayName: 'Kimi WebBridge' })];
+    const entries = [
+      {
+        id: 'kimi-webbridge',
+        tier: 'official' as const,
+        displayName: 'Kimi WebBridge (fork)',
+        source: 'https://x/fork.zip',
+      },
+    ];
+    const { panel, onSelect } = makePanel({ initialTab: 'official', capabilities });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Kimi WebBridge (fork)  install');
+    expect(out).not.toContain('finish setup');
+
+    panel.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: 'install',
+      entry: expect.objectContaining({ id: 'kimi-webbridge', source: 'https://x/fork.zip' }),
+    });
+  });
+
+  it('renders capability rows from the engine while the catalog is still loading', () => {
+    const capabilities = [
+      makeCapability(),
+      makeCapability({
+        id: 'kimi-webbridge',
+        displayName: 'Kimi WebBridge',
+        state: 'not_installed',
+        steps: [],
+      }),
+    ];
+    const { panel, onSelect } = makePanel({ initialTab: 'official', capabilities });
+
+    // No setMarketplace yet — built-in runtime setup must not wait on the
+    // remote catalog: the engine-known rows render (and the promo is
+    // suppressed by the real webbridge row).
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Kimi Computer Use  finish setup');
+    expect(out).toContain('Kimi WebBridge  install');
+    expect(out).not.toContain('open in browser');
+    expect(out).toContain('Loading marketplace');
+
+    panel.handleInput('\r'); // index 0 → kimi-cu routes to capability install
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: 'install',
+      entry: expect.objectContaining({ id: 'kimi-cu', source: 'capability:kimi-cu' }),
+    });
+    panel.handleInput('[B');
+    panel.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: 'install',
+      entry: expect.objectContaining({ id: 'kimi-webbridge', source: 'capability:kimi-webbridge' }),
+    });
+  });
+
+  it('keeps built-in rows out while the overridden marketplace is loading', () => {
+    // /plugins marketplace <url> or the env override must be able to fully
+    // replace the Official tab — fallback capability rows stay out too.
+    const capabilities = [makeCapability()];
+    const { panel } = makePanel({ initialTab: 'official', capabilities, catalogIsDefault: false });
+
+    const out = strip(renderRaw(panel));
+    expect(out).not.toContain('Kimi Computer Use');
+    expect(out).toContain('Kimi WebBridge  open in browser');
+    expect(out).toContain('Loading marketplace');
+  });
+
   it('opens the Web Bridge webpage on Enter instead of installing', () => {
     const { panel, onSelect } = makePanel({ initialTab: 'official' });
     panel.setMarketplace(marketplaceEntries, '/tmp/marketplace.json');
@@ -366,22 +512,28 @@ describe('plugins selector dialogs', () => {
     });
   });
 
-  it('does not duplicate Web Bridge when the catalog also lists it', () => {
+  it('lets the real catalog entry win over the pinned Web Bridge promo', () => {
     const entries = [
       {
         id: 'kimi-webbridge',
         tier: 'official' as const,
         displayName: 'Kimi WebBridge',
-        source: 'https://x/w.zip',
+        source: 'capability:kimi-webbridge',
       },
       ...officialEntries,
     ];
-    const { panel } = makePanel({ initialTab: 'official' });
+    const { panel, onSelect } = makePanel({ initialTab: 'official' });
     panel.setMarketplace(entries, '/tmp/marketplace.json');
     const out = strip(renderRaw(panel));
-    // The label should appear exactly once — the hardcoded row wins, the
-    // catalog copy is filtered out.
+    // Exactly one row, and it is the installable catalog copy — the hardcoded
+    // open-in-browser promo is suppressed.
     expect(out.split('Kimi WebBridge').length - 1).toBe(1);
+    expect(out).not.toContain('open in browser');
+    panel.handleInput('\r'); // index 0 → the real entry installs
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: 'install',
+      entry: expect.objectContaining({ id: 'kimi-webbridge', source: 'capability:kimi-webbridge' }),
+    });
   });
 
   it('installs a Third-party entry whose id matches the pinned WebBridge', () => {
@@ -393,7 +545,7 @@ describe('plugins selector dialogs', () => {
         id: 'kimi-webbridge',
         tier: 'curated' as const,
         displayName: 'Kimi WebBridge',
-        source: 'https://x/w.zip',
+        source: 'capability:kimi-webbridge',
       },
     ];
     const { panel, onSelect } = makePanel({ initialTab: 'third-party' });
@@ -403,7 +555,7 @@ describe('plugins selector dialogs', () => {
     panel.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({
       kind: 'install',
-      entry: expect.objectContaining({ id: 'kimi-webbridge', source: 'https://x/w.zip' }),
+      entry: expect.objectContaining({ id: 'kimi-webbridge', source: 'capability:kimi-webbridge' }),
     });
   });
 
@@ -479,6 +631,120 @@ describe('plugins selector dialogs', () => {
     panel.setMarketplace(entries, '/tmp/marketplace.json');
     const out = strip(renderRaw(panel));
     expect(out).toContain('Superpowers  enabled  update 4.0.0 → 5.0.0');
+  });
+
+  it('shows incomplete capability setup on installed and official rows', () => {
+    const installed = [
+      { ...superpowers, id: 'kimi-cu', displayName: 'Kimi Computer Use', version: '0.5.4' },
+    ];
+    const capabilities = [makeCapability()];
+    const entries = [
+      {
+        id: 'kimi-cu',
+        tier: 'official' as const,
+        displayName: 'Kimi Computer Use',
+        version: '0.5.4',
+        source: 'capability:kimi-cu',
+        builtIn: true,
+      },
+    ];
+    const { panel } = makePanel({ installed, capabilities });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+
+    const installedOut = strip(renderRaw(panel));
+    expect(installedOut).toContain('Kimi Computer Use  enabled  setup incomplete');
+    expect(installedOut).toContain('needs permissions (screen recording)');
+
+    panel.handleInput('\t');
+    const officialOut = strip(renderRaw(panel));
+    expect(officialOut).toContain('Kimi Computer Use  finish setup');
+    expect(officialOut).toContain('needs permissions (screen recording)');
+  });
+
+  it('continues incomplete capability setup from the Installed tab on Enter', () => {
+    const installed = [
+      { ...superpowers, id: 'kimi-cu', displayName: 'Kimi Computer Use', version: '0.5.4' },
+    ];
+    const { panel, onSelect } = makePanel({ installed, capabilities: [makeCapability()] });
+
+    panel.handleInput('\r');
+
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: 'install',
+      entry: expect.objectContaining({ id: 'kimi-cu', source: 'capability:kimi-cu' }),
+    });
+  });
+
+  it('renders an unsupported capability as a fact, not a setup action', () => {
+    // e.g. the kimi-cu plugin installed on Linux (shared home / v1 path):
+    // Enter can only end in the service rejecting the install, so the row
+    // must not offer "finish setup".
+    const installed = [
+      { ...superpowers, id: 'kimi-cu', displayName: 'Kimi Computer Use', version: '0.5.4' },
+    ];
+    const capabilities = [
+      makeCapability({ supported: false, state: 'unsupported', steps: [] }),
+    ];
+    const { panel, onSelect } = makePanel({ installed, capabilities });
+
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Kimi Computer Use  enabled  unsupported');
+    expect(out).not.toContain('setup incomplete');
+    expect(out).not.toContain('finish setup');
+
+    panel.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'details', id: 'kimi-cu' });
+  });
+
+  it('does not duplicate a daemon version prefix', () => {
+    const capabilities = [
+      makeCapability({
+        id: 'kimi-webbridge',
+        displayName: 'Kimi WebBridge',
+        state: 'ready',
+        version: 'v1.11.5',
+        steps: [
+          { id: 'daemon-binary', state: 'ok' },
+          { id: 'daemon', state: 'ok' },
+          { id: 'skill', state: 'ok' },
+          { id: 'extension', state: 'missing', optional: true },
+        ],
+      }),
+    ];
+    const { panel } = makePanel({ capabilities, initialTab: 'official' });
+    panel.setMarketplace(
+      [{ id: 'kimi-webbridge', displayName: 'Kimi WebBridge', source: 'capability:kimi-webbridge', tier: 'official', builtIn: true }],
+      '/tmp/marketplace.json',
+    );
+
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('ready · v1.11.5');
+    expect(out).not.toContain('vv1.11.5');
+  });
+
+  it('shows manual cleanup when a user skill shadows the managed plugin', () => {
+    const capabilities = [
+      makeCapability({
+        id: 'kimi-webbridge',
+        displayName: 'Kimi WebBridge',
+        state: 'partial',
+        steps: [
+          { id: 'daemon-binary', state: 'ok' },
+          { id: 'daemon', state: 'ok' },
+          { id: 'skill', state: 'missing' },
+          { id: 'skill-shadow', state: 'failed', optional: true },
+        ],
+      }),
+    ];
+    const { panel } = makePanel({ capabilities, initialTab: 'official' });
+    panel.setMarketplace(
+      [{ id: 'kimi-webbridge', displayName: 'Kimi WebBridge', source: 'capability:kimi-webbridge', tier: 'official', builtIn: true }],
+      '/tmp/marketplace.json',
+    );
+
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('needs agent skill');
+    expect(out).toContain('user skill shadows managed plugin');
   });
 
   it('does not show an update badge on the Installed tab before the marketplace loads', () => {

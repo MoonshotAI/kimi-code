@@ -45,12 +45,15 @@
  * with a fire-and-forget `reload()` so a fixed agent file unblocks later
  * creates
  * (the workspace skill catalog, by contrast, is kicked fire-and-forget).
- * The handler's shared MCP manager is awaited before create/resume returns;
- * a session created with ephemeral `mcpServers` additionally gets a session
- * overlay from `workspaceMcp` (session-owned connections, seeded as a merged
- * view, shut down when the session handle disposes — with a backstop in the
- * service's own dispose for teardown paths that bypass the handle wrapper),
- * whose initial connect is awaited here too.
+ * The handler's shared MCP manager is NOT awaited before create/resume
+ * returns — it connects fire-and-forget at Workspace scope, and the seeded
+ * handle's `ready` promise lets the agent's LLM steps wait on it instead
+ * (see `AgentMcpService`). A session created with ephemeral `mcpServers`
+ * additionally gets a session overlay from `workspaceMcp` (session-owned
+ * connections, seeded as a merged view, shut down when the session handle
+ * disposes — with a backstop in the service's own dispose for teardown
+ * paths that bypass the handle wrapper), likewise connected in the
+ * background.
  * The session-level services whose subscriptions
  * must exist before the first agent / turn (external hooks, cron, the
  * secondary-model startup warning) opt into `OnScopeCreated` activation.
@@ -332,8 +335,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         this.userAgentProfileLoader.ready,
         this.pluginAgentProfileLoader.ready,
       ]);
-      await this.mcp.ready;
-      await mcpOverlay?.handle.ready;
     } catch (error) {
       handle.dispose();
       void this.explicitAgentProfileLoader.reload().catch(() => undefined);

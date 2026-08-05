@@ -299,9 +299,9 @@ describe('InMemorySkillCatalog prompt rendering', () => {
     );
 
     expect(rendered).toBe(
-      '<kimi-plugin-instructions plugin="superpowers">\n' +
+      '<plugin-instructions plugin="superpowers">\n' +
         'Use AskUserQuestion for clarifying questions.\n' +
-        '</kimi-plugin-instructions>\n\nBrainstorm body.',
+        '</plugin-instructions>\n\nBrainstorm body.',
     );
   });
 

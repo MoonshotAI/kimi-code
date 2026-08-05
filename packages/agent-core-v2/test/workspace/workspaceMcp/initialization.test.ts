@@ -43,6 +43,7 @@ import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { WorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcpService';
 
 import { stubLog } from '../../_base/log/stubs';
+import { registerAgentIdentityStub } from '../../app/agentIdentity/stubs';
 import {
   createMemoryMcpOAuthStore,
   slowToolStdioFixture,
@@ -102,6 +103,7 @@ describe('Workspace MCP initialization', () => {
           onDidChange: Event.None as IWorkspaceTrust['onDidChange'],
         });
         reg.define(IWorkspaceMcpConfigService, WorkspaceMcpConfigService);
+        registerAgentIdentityStub(reg);
         reg.define(IWorkspaceMcpService, WorkspaceMcpService);
       },
     });

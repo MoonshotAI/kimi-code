@@ -95,6 +95,32 @@ describe('facade routing', () => {
     });
   });
 
+  it('routes capability calls through the registered app service contract', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const status = {
+      id: 'kimi-cu',
+      displayName: 'Kimi Computer Use',
+      description: 'Background GUI automation',
+      supported: true,
+      state: 'partial',
+      steps: [{ id: 'permissions', state: 'missing' }],
+      install: { running: false },
+    };
+    channel.result = [status];
+
+    await expect(klient.global.capabilities.list()).resolves.toEqual([status]);
+    channel.result = status;
+    await expect(klient.global.capabilities.get('kimi-cu')).resolves.toEqual(status);
+    await expect(klient.global.capabilities.install('kimi-cu')).resolves.toEqual(status);
+
+    expect(channel.calls).toEqual([
+      { scope: {}, service: 'capabilityService', method: 'listCapabilities', args: [] },
+      { scope: {}, service: 'capabilityService', method: 'getCapability', args: ['kimi-cu'] },
+      { scope: {}, service: 'capabilityService', method: 'installCapability', args: ['kimi-cu'] },
+    ]);
+  });
+
   it('env() fans out property reads and merges them', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
@@ -214,15 +240,16 @@ describe('session skills routing', () => {
   });
 });
 
-describe('agent mcp / compaction routing', () => {  it('getMcpServers routes to agentMcpService.list with the agent scope', async () => {
+describe('agent mcp / compaction routing', () => {
+  it('getMcpServers returns the live snapshot with the agent scope', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
     const agent = klient.session('s1').agent('main');
 
     const entries = [
-      { name: 'mock', transport: 'stdio', status: 'connected', toolCount: 2 },
+      { name: 'mock', transport: 'stdio', status: 'pending', toolCount: 0 },
     ];
-    channel.result = entries;
+    channel.results.set('agentMcpService.list', entries);
     await expect(agent.getMcpServers()).resolves.toEqual(entries);
     expect(channel.calls[0]).toEqual({
       scope: { sessionId: 's1', agentId: 'main' },
@@ -230,6 +257,7 @@ describe('agent mcp / compaction routing', () => {  it('getMcpServers routes to 
       method: 'list',
       args: [],
     });
+    expect(channel.calls).toHaveLength(1);
   });
 
   it('compact issues a manual begin with the optional instruction', async () => {

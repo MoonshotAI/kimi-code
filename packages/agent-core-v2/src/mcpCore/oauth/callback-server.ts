@@ -27,14 +27,14 @@ const SUCCESS_HTML =
   '<!doctype html><html><head><meta charset="utf-8"><title>Authorized</title></head>' +
   '<body style="font-family:system-ui,sans-serif;padding:2rem;">' +
   '<h1>Sign-in complete</h1>' +
-  '<p>You can close this tab and return to kimi-code.</p>' +
+  '<p>You can close this tab and return to the application.</p>' +
   '</body></html>';
 
 const ERROR_HTML =
   '<!doctype html><html><head><meta charset="utf-8"><title>OAuth error</title></head>' +
   '<body style="font-family:system-ui,sans-serif;padding:2rem;">' +
   '<h1>Sign-in failed</h1>' +
-  '<p>The authorization server reported an error. Return to kimi-code for details.</p>' +
+  '<p>The authorization server reported an error. Return to the application for details.</p>' +
   '</body></html>';
 
 export async function startCallbackServer(): Promise<CallbackServer> {

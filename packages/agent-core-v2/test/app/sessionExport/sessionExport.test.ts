@@ -893,9 +893,11 @@ function registerSessionExportServices(
   reg.defineInstance(ILogService, options.appLog ?? stubLog());
   reg.defineInstance(ISessionIndex, {
     _serviceBrand: undefined,
-    list: async () => ({ items: options.summary === undefined ? [] : [options.summary] }),
+    prepare: async () => ({ state: 'uninitialized' as const, degradedCount: 0 }),
+    status: () => ({ state: 'uninitialized' as const, degradedCount: 0 }),
+    listRecent: async () => ({ items: options.summary === undefined ? [] : [options.summary] }),
     get: async () => options.summary,
-    countActive: async () => (options.summary === undefined || options.summary.archived ? 0 : 1),
+    count: async () => (options.summary === undefined || options.summary.archived ? 0 : 1),
     remove: async () => {},
   });
   reg.defineInstance(IWorkspaceLifecycleService, {

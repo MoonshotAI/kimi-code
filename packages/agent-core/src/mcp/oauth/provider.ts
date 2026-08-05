@@ -153,6 +153,29 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
     return this.store.read<OAuthDiscoveryState>(`${this.storeKey}${DISCOVERY_SUFFIX}`);
   }
 
+  /**
+   * Drop the persisted DCR client registration when its `redirect_uris` no
+   * longer cover `redirectUri`. Returns true when a stale registration was
+   * dropped.
+   *
+   * The callback listener binds a random port per flow, while a DCR
+   * registration pins the redirect URIs of the flow that created it. Reusing
+   * a registration whose URIs no longer match guarantees an
+   * "invalid redirect URI" rejection at the authorization endpoint — rendered
+   * only in the user's browser, while this client waits for a callback that
+   * never comes. Dropping the registration lets the next `auth()` call
+   * re-register with the current callback URI.
+   */
+  invalidateStaleRegistration(redirectUri: string): boolean {
+    const info = this.clientInformation();
+    if (info === undefined || !('redirect_uris' in info)) return false;
+    const uris = info.redirect_uris;
+    if (!Array.isArray(uris) || uris.length === 0) return false;
+    if (uris.includes(redirectUri)) return false;
+    this.invalidateCredentials('client');
+    return true;
+  }
+
   invalidateCredentials(scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery'): void {
     if (scope === 'verifier') {
       this._codeVerifier = undefined;

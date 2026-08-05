@@ -115,7 +115,12 @@ describe('StdioMcpClient', () => {
     try {
       await client.connect();
       const tools = await client.listTools();
-      expect(tools.map((t) => t.name).toSorted()).toEqual(['boom', 'echo', 'read_env']);
+      expect(tools.map((t) => t.name).toSorted()).toEqual([
+        'boom',
+        'echo',
+        'read_env',
+        'whoami',
+      ]);
       const echo = tools.find((t) => t.name === 'echo');
       expect(echo?.description).toBe('Echoes input text');
       expect(echo?.inputSchema).toMatchObject({ type: 'object' });

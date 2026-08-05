@@ -9,9 +9,13 @@
 
 import {
   bootstrap,
+  drainQueryStoreDisposals,
+  drainSessionIndexMirror,
   IConfigService,
   IEventService,
   IProviderDiscoveryService,
+  ISessionIndex,
+  ISessionIndexMirror,
   IWorkspaceService,
   logSeed,
   resolveConfigPath,
@@ -308,6 +312,20 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     );
   }
 
+  // Prepare the session read model before serving traffic (flag-gated; a
+  // no-op when `persistence_minidb_readmodel` is off): opens the query store,
+  // restores the published generation — running the initial projection when
+  // none exists — and starts background reconciliation, so the first request
+  // never pays the open/rebuild cost.
+  try {
+    await core.accessor.get(ISessionIndex).prepare();
+  } catch (error) {
+    logger.warn(
+      { err: error instanceof Error ? error.message : String(error) },
+      'session index prepare failed; falling back to on-demand reads',
+    );
+  }
+
   const app = Fastify({
     loggerInstance: logger,
     // Fastify's default access log records `res.statusCode`, but every
@@ -366,11 +384,18 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       );
     }
     try {
+      // Drain the session-index mirror while the query store is still open:
+      // requests have stopped, so no new summaries arrive and the queue just
+      // needs its final flush to land in the read model.
+      await core.accessor.get(ISessionIndexMirror).drain();
       core.dispose();
-      // `core.dispose()` triggers the search service's synchronous `dispose()`,
-      // whose minidb close is asynchronous — await it before releasing the
-      // instance registration (and before embedding hosts tear down homeDir).
+      // `core.dispose()` runs the mirror's, the search service's and the query
+      // store's synchronous `dispose()`, whose drains/closes are asynchronous —
+      // await them before releasing the instance registration (and before
+      // embedding hosts tear down homeDir).
+      await drainSessionIndexMirror();
       await drainGlobalSearchDisposals();
+      await drainQueryStoreDisposals();
     } finally {
       await registration.release();
     }

@@ -115,6 +115,7 @@ Drop SDK-only and provider-internal detail. This changelog serves `@moonshot-ai/
 
 - Drop sentences about how the SDK maps a capability, builds model aliases, or exposes a flag through an API such as `getExperimentalFeatures()` — that belongs in the SDK changelog, not here.
 - Drop provider / wire-format implementation mechanics (XML markers like `<tools_added>`, protocol field explanations, "the wire protocol is unchanged", cache-hit mechanics) unless they are the behavior a user perceives.
+- Drop hook/event payload mechanics — clauses about what extra fields an event payload carries or what an event reports in a specific case (for example "enrich hook payloads with the session title and client type", "`SessionEnd` reports `archive` when a session is archived"). Keep the new events or capability itself and how to configure it.
 - Keep the user-facing effect and any constraints users must follow (for example "question texts must be unique").
 
 Do not change facts or drop a real user-facing behavior — only trim the internal-only scaffolding. For over-long, internal-heavy entries, this trim applies on the English page too, not only in translation.
@@ -229,6 +230,8 @@ Example:
 - Update the native release workflow to use current GitHub artifact actions.
 ```
 
+Doc links: an entry that changes a documented config surface may end with a pointer to the docs page — `see [X](...) for details` (Chinese: `详见 [X](...)。`). Keep it a real Markdown link into the docs tree with a relative path (for example `../configuration/config-files.md#loop-control`). When the link text is a config key or another identifier, code-style the text inside the brackets: [`loop_control`](../configuration/config-files.md#loop-control). Never wrap the whole link in backticks — `` `[loop_control](...)` `` renders as raw inline code that exposes the relative path instead of a clickable link.
+
 ### 6. Translate The Increment Into Chinese
 
 After updating the English page, translate only the newly added English content into `docs/zh/release-notes/changelog.md`.
@@ -322,6 +325,7 @@ Check:
 - PR links and commit hashes were stripped.
 - No `Thanks ...!` credit remains (remove it every time).
 - Real internal identifiers were replaced with neutral placeholders.
+- Doc links are real Markdown links (code-styled text inside the brackets when needed), never wrapped in backticks.
 - There are no empty sections.
 - Markdown indentation and blank lines are intact.
 
@@ -454,6 +458,8 @@ Return the PR URL to the user when done.
 | Leaving empty sections | Delete sections with no entries |
 | Putting everything under Other for convenience | Classify what can be classified first |
 | Translating tool names, command names, or config keys | Keep them as written |
+| Wrapping a whole doc link in backticks | Code-style the link text inside the brackets instead, so the link stays clickable: [`loop_control`](...) |
+| Keeping hook/event payload-mechanics clauses | Drop what an event reports or carries; keep the new capability and how to configure it |
 | Creating a changeset for docs sync | Do not create one |
 | Committing or pushing directly on `main` | Create `docs/changelog-sync-<version>`, commit there, then open a PR |
 | Committing or opening a PR before the user skips review or confirms review is done | Wait at the human review checkpoint |
