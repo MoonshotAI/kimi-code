@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import { getCacheDir } from '../utils/paths';
 
@@ -64,7 +64,8 @@ async function createArchivePath(filename: string): Promise<string> {
   const root = join(getCacheDir(), 'feedback-uploads');
   await mkdir(root, { recursive: true });
   const dir = await mkdtemp(join(root, 'upload-'));
-  return join(dir, filename);
+  const safeFilename = basename(filename).replace(/[^a-zA-Z0-9._-]/g, '');
+  return join(dir, safeFilename);
 }
 
 function archivePathCleanupDir(archivePath: string): string {
