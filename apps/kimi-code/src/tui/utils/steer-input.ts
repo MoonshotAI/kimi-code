@@ -20,15 +20,21 @@ import type { SteerInputItem } from '../types';
  * adjacent text part. The one exception is two touching media parts: a
  * standalone `{type:'text',text:'\n\n'}` between them would be rejected
  * by `normalizePromptInput` as an empty text part, so the separator is
- * dropped there (media parts are self-delimiting anyway).
+ * dropped there (media parts are self-delimiting anyway). An item whose
+ * FIRST part is a standalone `<media path>` tag counts as media for this:
+ * the tag stays atomic (never merges with the separator), so a separator
+ * inserted before it would strand exactly that illegal whitespace-only
+ * text part between the previous media part and the tag.
  */
 export function combineSteerInput(items: readonly SteerInputItem[]): string | PromptPart[] {
   const hasMedia = items.some((item) => item.parts !== undefined && item.parts.length > 0);
   if (!hasMedia) return items.map((item) => item.text).join('\n\n');
   const parts: PromptPart[] = [];
   for (const item of items) {
+    const first = item.parts?.[0];
     const startsWithMedia =
-      item.parts !== undefined && item.parts.length > 0 && item.parts[0]?.type !== 'text';
+      first !== undefined &&
+      (first.type !== 'text' || matchSingleMediaPathTag(first.text) !== undefined);
     const lastIsMedia = parts.length > 0 && parts.at(-1)?.type !== 'text';
     if (parts.length > 0 && !(lastIsMedia && startsWithMedia)) {
       appendSteerText(parts, '\n\n');

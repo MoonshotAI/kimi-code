@@ -58,6 +58,40 @@ describe('combineSteerInput', () => {
     ]);
   });
 
+  it('drops the separator between a trailing media part and a leading standalone tag', () => {
+    // Two queued pure-image messages: each item's parts open with the tag.
+    // Inserting '\n\n' there would strand a whitespace-only text part between
+    // the media part and the atomic tag, which `normalizePromptInput` rejects.
+    const tag2 = '<image path="/cache/f_2.png"></image>';
+    const refPart2 = {
+      type: 'image_url',
+      imageUrl: { url: 'kimi-file://f_2?path=%2Fcache%2Ff_2.png' },
+    } as const;
+    const result = combineSteerInput([
+      { text: '', parts: [{ type: 'text', text: tag }, refPart] },
+      { text: '', parts: [{ type: 'text', text: tag2 }, refPart2] },
+    ]);
+    expect(result).toEqual([{ type: 'text', text: tag }, refPart, { type: 'text', text: tag2 }, refPart2]);
+    // Both pairs still fold: two claimed tags, two media refs, no cross-claim.
+    const folded = foldMediaPathTagRefs(result as never);
+    expect(folded.media).toHaveLength(2);
+    expect(folded.parts).toHaveLength(2);
+  });
+
+  it('drops the separator when a media-ending item is followed by a tag-first item', () => {
+    const result = combineSteerInput([
+      { text: 'a', parts: [{ type: 'text', text: 'a ' }, { type: 'text', text: tag }, refPart] },
+      { text: '', parts: [{ type: 'text', text: tag }, refPart] },
+    ]);
+    expect(result).toEqual([
+      { type: 'text', text: 'a ' },
+      { type: 'text', text: tag },
+      refPart,
+      { type: 'text', text: tag },
+      refPart,
+    ]);
+  });
+
   it('joins text-only items with the historical separator', () => {
     expect(combineSteerInput([{ text: 'one' }, { text: 'two' }])).toBe('one\n\ntwo');
   });
