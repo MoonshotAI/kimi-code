@@ -5,7 +5,7 @@
  * host processes, fake plugins).
  */
 
-import { mkdir, mkdtemp, rm, writeFile, chmod } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
@@ -76,6 +76,7 @@ function fakeHostProcess(
 
 function fakePlugins(
   installed: Array<{ id: string; enabled: boolean; state: string; version?: string; enabledMcp?: number }>,
+  onInstall?: () => void | Promise<void>,
 ): {
   service: IPluginService;
   installs: string[];
@@ -116,21 +117,22 @@ function fakePlugins(
         ],
       } as never);
     },
-    installPlugin: (input: { source: string }) => {
+    installPlugin: async (input: { source: string }) => {
       installs.push(input.source);
+      await onInstall?.();
       // Upsert semantics of the real manager: a new id installs enabled, an
       // existing record keeps its (possibly disabled) enabled flag.
       const existing = installed.find((p) => p.id === 'kimi-cu');
       if (existing === undefined) {
         installed.push({ id: 'kimi-cu', enabled: true, state: 'ok' });
-        return Promise.resolve({ enabled: true, mcpServerCount: 1, enabledMcpServerCount: 1 } as never);
+        return { enabled: true, mcpServerCount: 1, enabledMcpServerCount: 1 } as never;
       }
       existing.state = 'ok';
-      return Promise.resolve({
+      return {
         enabled: existing.enabled,
         mcpServerCount: 1,
         enabledMcpServerCount: existing.enabledMcp ?? 1,
-      } as never);
+      } as never;
     },
     setPluginEnabled: (input: { id: string; enabled: boolean }) => {
       enabledCalls.push(input);
@@ -314,6 +316,119 @@ describe('kimi-cu entry', () => {
     expect(host.calls.every((call) => call.includes('service-status') || call.includes('xpc-ping'))).toBe(true);
   });
 
+  it('migrates the exact legacy standalone MCP registration after installing the plugin', async () => {
+    const applicationsDir = await fakeAppBundle();
+    const appBin = path.join(applicationsDir, 'KimiCU.app', 'Contents', 'MacOS', 'kimi-cu');
+    const kimiHomeDir = path.join(root, 'kimi-home');
+    await mkdir(kimiHomeDir, { recursive: true });
+    await writeFile(
+      path.join(kimiHomeDir, 'mcp.json'),
+      `${JSON.stringify({
+        mcpServers: {
+          'kimi-cu': { command: appBin, args: ['mcp', '-s', 'user'] },
+          custom: { command: 'custom-mcp', args: [] },
+        },
+      })}\n`,
+    );
+    const plugins = fakePlugins([]);
+    const host = fakeHostProcess([
+      { match: 'service-status', code: 0, stdout: 'SMAppService status=1' },
+      { match: 'xpc-ping', code: 0, stdout: 'permissionStatus: accessibility=true screenRecording=true' },
+    ]);
+    const entry = createKimiCuEntry(
+      makeCtx({
+        applicationsDir,
+        kimiHomeDir,
+        plugins: plugins.service,
+        hostProcess: host.service,
+      }),
+    );
+
+    expect((await entry.detect()).steps).toContainEqual({
+      id: 'legacy-mcp',
+      state: 'missing',
+      detail: 'duplicate standalone kimi-cu MCP registration',
+      optional: true,
+    });
+    const reports: string[] = [];
+    await entry.install((step) => reports.push(step));
+
+    const migrated = JSON.parse(await readFile(path.join(kimiHomeDir, 'mcp.json'), 'utf8')) as {
+      mcpServers: Record<string, unknown>;
+    };
+    expect(migrated.mcpServers['kimi-cu']).toBeUndefined();
+    expect(migrated.mcpServers['custom']).toEqual({ command: 'custom-mcp', args: [] });
+    expect(reports).toEqual(['plugin', 'mcp-config']);
+  });
+
+  it('leaves the legacy MCP config untouched when it changes during setup', async () => {
+    const applicationsDir = await fakeAppBundle();
+    const appBin = path.join(applicationsDir, 'KimiCU.app', 'Contents', 'MacOS', 'kimi-cu');
+    const kimiHomeDir = path.join(root, 'kimi-home');
+    await mkdir(kimiHomeDir, { recursive: true });
+    const configPath = path.join(kimiHomeDir, 'mcp.json');
+    const legacy = { command: appBin, args: ['mcp', '-s', 'user'] };
+    await writeFile(configPath, `${JSON.stringify({ mcpServers: { 'kimi-cu': legacy } })}\n`);
+    const concurrentConfig = {
+      mcpServers: {
+        'kimi-cu': legacy,
+        addedDuringSetup: { command: 'another-mcp', args: [] },
+      },
+    };
+    const plugins = fakePlugins([], async () => {
+      await writeFile(configPath, `${JSON.stringify(concurrentConfig, null, 2)}\n`);
+    });
+    const host = fakeHostProcess([
+      { match: 'service-status', code: 0, stdout: 'SMAppService status=1' },
+      { match: 'xpc-ping', code: 0, stdout: 'permissionStatus: accessibility=true screenRecording=true' },
+    ]);
+    const entry = createKimiCuEntry(
+      makeCtx({
+        applicationsDir,
+        kimiHomeDir,
+        plugins: plugins.service,
+        hostProcess: host.service,
+      }),
+    );
+    const reports: string[] = [];
+
+    await entry.install((step) => reports.push(step));
+
+    expect(JSON.parse(await readFile(configPath, 'utf8'))).toEqual(concurrentConfig);
+    expect(reports).toEqual(['plugin']);
+  });
+
+  it('does not migrate a customized standalone MCP registration', async () => {
+    const applicationsDir = await fakeAppBundle();
+    const appBin = path.join(applicationsDir, 'KimiCU.app', 'Contents', 'MacOS', 'kimi-cu');
+    const kimiHomeDir = path.join(root, 'kimi-home');
+    await mkdir(kimiHomeDir, { recursive: true });
+    const configPath = path.join(kimiHomeDir, 'mcp.json');
+    const custom = {
+      mcpServers: {
+        'kimi-cu': { command: appBin, args: ['mcp', '-s', 'user'], env: { CUSTOM: '1' } },
+      },
+    };
+    await writeFile(configPath, `${JSON.stringify(custom)}\n`);
+    const plugins = fakePlugins([]);
+    const host = fakeHostProcess([
+      { match: 'service-status', code: 0, stdout: 'SMAppService status=1' },
+      { match: 'xpc-ping', code: 0, stdout: 'permissionStatus: accessibility=true screenRecording=true' },
+    ]);
+    const entry = createKimiCuEntry(
+      makeCtx({
+        applicationsDir,
+        kimiHomeDir,
+        plugins: plugins.service,
+        hostProcess: host.service,
+      }),
+    );
+
+    await entry.install(() => {});
+
+    expect(JSON.parse(await readFile(configPath, 'utf8'))).toEqual(custom);
+  });
+
   it('marks probe steps failed instead of throwing when the binary is wedged', async () => {
     const applicationsDir = await fakeAppBundle();
     const plugins = fakePlugins([]);
@@ -366,6 +481,30 @@ describe('kimi-cu entry', () => {
     expect(plugins.enabledCalls).toEqual([{ id: 'kimi-cu', enabled: true }]);
   });
 
+  it('refreshes the wiring plugin when permissions are the only missing layer', async () => {
+    const applicationsDir = await fakeAppBundle();
+    const plugins = fakePlugins([
+      { id: 'kimi-cu', enabled: true, state: 'ok', version: '0.5.4' },
+    ]);
+    const host = fakeHostProcess([
+      { match: 'service-status', code: 0, stdout: 'SMAppService status=1' },
+      {
+        match: 'xpc-ping',
+        code: 0,
+        stdout: 'permissionStatus: accessibility=true screenRecording=false',
+      },
+    ]);
+    const entry = createKimiCuEntry(
+      makeCtx({ applicationsDir, plugins: plugins.service, hostProcess: host.service }),
+    );
+
+    await entry.install(() => {});
+
+    expect(plugins.installs).toEqual([
+      'https://cdn.kimi.com/kimi-computer-use/latest/kimi-cu-plugin.zip',
+    ]);
+  });
+
   it('continues the replacement when the old-binary cleanup hangs', async () => {
     const applicationsDir = await fakeAppBundle();
     const plugins = fakePlugins([{ id: 'kimi-cu', enabled: true, state: 'ok', version: '0.5.4' }]);
@@ -412,6 +551,8 @@ describe('kimi-cu entry', () => {
     // Fully ready → explicit reinstall exercises the cleanup path.
     await entry.install(() => {});
     expect(host.calls.some((call) => call.includes('ditto'))).toBe(true);
+    expect(host.calls.some((call) => call.includes('pkill') && call.includes('+mcp'))).toBe(false);
+    expect(host.calls.some((call) => call.includes('pkill') && call.includes('+service'))).toBe(true);
   });
 
   it('reports the plugin layer missing when its MCP server is disabled', async () => {

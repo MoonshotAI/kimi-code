@@ -295,9 +295,6 @@ function marketplaceStatusStyle(status: string, colors: ColorPalette): (text: st
   // warning — the two used to share near-identical green-ish treatments in
   // the same column and read as interchangeable.
   if (status.startsWith('update')) return chalk.hex(colors.warning);
-  if (status === 'finish setup' || status === 'installing…' || status === 'unsupported') {
-    return chalk.hex(colors.warning);
-  }
   if (status.startsWith('installed')) return chalk.hex(colors.textDim);
   return chalk.hex(colors.primary);
 }
@@ -570,11 +567,6 @@ export class PluginsPanelComponent extends Container implements Focusable {
     }
     if (matchesKey(data, Key.enter)) {
       if (plugin === undefined) return;
-      const capability = this.capabilityFor(plugin.id);
-      if (capability !== undefined && capabilityNeedsSetup(capability)) {
-        this.opts.onSelect({ kind: 'install', entry: capabilityMarketplaceEntry(capability) });
-        return;
-      }
       const update = this.installedUpdateStatus(plugin);
       if (update !== undefined) {
         this.opts.onSelect({ kind: 'install', entry: update.entry });
@@ -667,10 +659,8 @@ export class PluginsPanelComponent extends Container implements Focusable {
 
   private installedHint(): string {
     const plugin = this.opts.installed[this.selectedIndex];
-    const capability = plugin === undefined ? undefined : this.capabilityFor(plugin.id);
-    const needsSetup = capability !== undefined && capabilityNeedsSetup(capability);
     const hasUpdate = plugin !== undefined && this.installedUpdateStatus(plugin) !== undefined;
-    const enter = needsSetup ? 'Enter finish setup' : hasUpdate ? 'Enter update' : 'Enter details';
+    const enter = hasUpdate ? 'Enter update' : 'Enter details';
     return ` Tab switch · Space toggle · D remove · M MCP · ${enter} · I details · R reload · Esc cancel`;
   }
 
@@ -692,7 +682,6 @@ export class PluginsPanelComponent extends Container implements Focusable {
     const prefix = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `);
     const status = pluginStatus(plugin);
     const update = this.installedUpdateStatus(plugin);
-    const capability = this.capabilityFor(plugin.id);
     let line = prefix + labelStyle(plugin.displayName);
     if (status !== undefined) {
       line += '  ' + statusStyle({ kind: 'plugin', value: '', label: '', description: '', status }, colors)(status);
@@ -701,31 +690,12 @@ export class PluginsPanelComponent extends Container implements Focusable {
       const badge = `update ${update.local} → ${update.latest}`;
       line += '  ' + marketplaceStatusStyle(badge, colors)(badge);
     }
-    if (capability !== undefined && capability.state !== 'ready') {
-      const badge = capability.install.running
-        ? 'installing…'
-        : capabilityNeedsSetup(capability)
-          ? 'setup incomplete'
-          : capability.state === 'unsupported'
-            ? 'unsupported'
-            : undefined;
-      if (badge !== undefined) {
-        // Unsupported is a fact, not a problem: dim it; actionable setup
-        // states keep the warning tone.
-        line += '  ' + (badge === 'unsupported' ? chalk.hex(colors.textDim)(badge) : chalk.hex(colors.warning)(badge));
-      }
-    }
     if (this.opts.pluginHint?.id === plugin.id) {
       line += '  ' + chalk.hex(colors.warning)(this.opts.pluginHint.text);
     }
     const descWidth = Math.max(1, width - 4);
     const out = [line];
-    const capabilityIssues = capability === undefined ? '' : describeCapabilityIssues(capability);
-    const description =
-      capabilityIssues.length === 0
-        ? overviewPluginDescription(plugin)
-        : `${overviewPluginDescription(plugin)} · ${capabilityIssues}`;
-    for (const descLine of wrapOverviewDescription(description, descWidth)) {
+    for (const descLine of wrapOverviewDescription(overviewPluginDescription(plugin), descWidth)) {
       out.push(mutedHintLine(`    ${descLine}`, colors));
     }
     return out;
@@ -798,18 +768,17 @@ export class PluginsPanelComponent extends Container implements Focusable {
     const capability = this.capabilityForEntry(entry);
     const status = isPinnedWebBridgeEntry(entry)
       ? 'open in browser'
-      : capability === undefined
-        ? marketplaceEntryStatus(entry, this.installedVersions)
-        : capabilityRowStatus(capability, entry);
+      : capability?.install.running === true
+        ? 'installing…'
+        : marketplaceEntryStatus(entry, this.installedVersions);
     const line =
       prefix + labelStyle(entry.displayName) + '  ' + marketplaceStatusStyle(status, colors)(status);
     const descWidth = Math.max(1, width - 4);
     const out = [line];
-    const capabilityIssues = capability === undefined ? '' : describeCapabilityIssues(capability);
     const description =
-      capabilityIssues.length === 0
-        ? marketplaceEntryDescription(entry)
-        : `${marketplaceEntryDescription(entry)} · ${capabilityIssues}`;
+      this.activeTab.id === 'official'
+        ? officialMarketplaceEntryDescription(entry)
+        : marketplaceEntryDescription(entry);
     for (const descLine of wrapOverviewDescription(description, descWidth)) {
       out.push(mutedHintLine(`    ${descLine}`, colors));
     }
@@ -829,7 +798,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(' Plugins'),
       '',
-      chalk.hex(colors.textMuted)(`  Installing ${this.installing} from marketplace…`),
+      chalk.hex(colors.textMuted)(`  Installing ${this.installing}…`),
       '',
       chalk.hex(colors.primary)('─'.repeat(width)),
     ];
@@ -882,6 +851,10 @@ function marketplaceEntryDescription(entry: PluginMarketplaceEntry): string {
   return `${description} · id ${entry.id}${version}${tierSuffix}${keywords}`;
 }
 
+function officialMarketplaceEntryDescription(entry: PluginMarketplaceEntry): string {
+  return entry.description ?? '';
+}
+
 function marketplaceTierLabel(tier: PluginMarketplaceEntry['tier']): string {
   if (tier === 'official') return 'Official plugin';
   if (tier === 'curated') return 'Curated plugin';
@@ -897,75 +870,6 @@ function capabilityMarketplaceEntry(capability: CapabilityStatus): PluginMarketp
     description: capability.description,
     builtIn: true,
   };
-}
-
-/**
- * Setup is actionable only for these states. An `unsupported` capability
- * (wrong OS/arch) can only fail — the service rejects its install — so the
- * panel must not offer a "finish setup" action that ends in an error; it
- * renders as unsupported instead.
- */
-function capabilityNeedsSetup(capability: CapabilityStatus): boolean {
-  return (
-    (capability.state === 'not_installed' || capability.state === 'partial') &&
-    !capability.install.running
-  );
-}
-
-function capabilityRowStatus(
-  capability: CapabilityStatus,
-  entry: PluginMarketplaceEntry,
-): string {
-  if (capability.install.running) return 'installing…';
-  switch (capability.state) {
-    case 'ready':
-      return capability.version === undefined
-        ? 'ready'
-        : `ready · ${formatCapabilityVersion(capability.version)}`;
-    case 'partial':
-      return 'finish setup';
-    case 'not_installed':
-      return installStatus(entry);
-    case 'unsupported':
-      return 'unsupported';
-  }
-}
-
-export function formatCapabilityVersion(version: string): string {
-  return version.startsWith('v') ? version : `v${version}`;
-}
-
-export function describeCapabilityIssues(capability: CapabilityStatus): string {
-  const issues: string[] = [];
-  const required = capability.steps.filter(
-    (step) => step.optional !== true && step.state !== 'ok',
-  );
-  if (required.length > 0) {
-    issues.push(`needs ${required.map(formatCapabilityStep).join(', ')}`);
-  }
-  const extension = capability.steps.find(
-    (step) => step.id === 'extension' && step.state !== 'ok',
-  );
-  if (extension !== undefined) issues.push('browser extension not connected');
-  const skillShadow = capability.steps.find(
-    (step) => step.id === 'skill-shadow' && step.state !== 'ok',
-  );
-  if (skillShadow !== undefined) issues.push('user skill shadows managed plugin');
-  return issues.join(', ');
-}
-
-function formatCapabilityStep(step: CapabilityStatus['steps'][number]): string {
-  const label =
-    step.id === 'daemon-binary'
-      ? 'daemon binary'
-      : step.id === 'skill'
-        ? 'agent skill'
-        : step.id;
-  if (step.detail === undefined || step.detail.length === 0) return label;
-  const detail = step.detail
-    .replaceAll('screenRecording', 'screen recording')
-    .replaceAll(',', ', ');
-  return `${label} (${detail})`;
 }
 
 function installStatus(entry: PluginMarketplaceEntry): string {

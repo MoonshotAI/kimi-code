@@ -11,8 +11,9 @@
  * request permissions) with structured progress and errors instead of a
  * shell pipe. Elevation when /Applications is not writable goes through
  * `osascript ... with administrator privileges` (native auth dialog).
- * Installs are detect-first and idempotent: only unsatisfied layers are
- * redone, setup re-enables a previously disabled wiring plugin (and its
+ * Installs are detect-first and idempotent: setup always refreshes the wiring
+ * plugin, only unsatisfied runtime layers are redone, and setup re-enables a
+ * previously disabled wiring plugin (and its
  * MCP servers), the app step requires an executable binary with bundle
  * metadata, the archive is staged and unpacked before the old service is
  * stopped, and cleanup of old processes is best-effort — a wedged old
@@ -21,7 +22,7 @@
  */
 
 import { constants } from 'node:fs';
-import { mkdtemp, readFile, rm, access } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -46,6 +47,12 @@ const DETECT_PROBE_TIMEOUT_MS = 3_000;
 interface PermissionStatus {
   readonly accessibility: boolean;
   readonly screenRecording: boolean;
+}
+
+interface LegacyMcpFile {
+  readonly raw: string;
+  readonly value: Record<string, unknown>;
+  readonly servers: Record<string, unknown>;
 }
 
 export function parsePermissionStatus(output: string): PermissionStatus | undefined {
@@ -75,6 +82,36 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function objectRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function parseLegacyMcpFile(raw: string, appBin: string): LegacyMcpFile | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  const root = objectRecord(value);
+  const servers = objectRecord(root?.['mcpServers']);
+  const legacy = objectRecord(servers?.['kimi-cu']);
+  if (root === undefined || servers === undefined || legacy === undefined) return undefined;
+  if (legacy['command'] !== appBin) return undefined;
+  if (legacy['enabled'] === false) return undefined;
+  const args = legacy['args'];
+  if (!Array.isArray(args) || !args.every((arg) => typeof arg === 'string')) return undefined;
+  const isKnownArgs =
+    (args.length === 1 && args[0] === 'mcp') ||
+    (args.length === 3 && args[0] === 'mcp' && args[1] === '-s' && args[2] === 'user');
+  if (!isKnownArgs) return undefined;
+  const knownKeys = new Set(['args', 'command']);
+  if (Object.keys(legacy).some((key) => !knownKeys.has(key))) return undefined;
+  return { raw, value: root, servers };
+}
+
 function shQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
@@ -91,6 +128,7 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
   const probeTimeoutMs = ctx.detectProbeTimeoutMs ?? DETECT_PROBE_TIMEOUT_MS;
   const commandTimeoutMs = ctx.commandTimeoutMs ?? COMMAND_TIMEOUT_MS;
   const supported = ctx.platform === 'darwin';
+  const userMcpConfigPath = path.join(ctx.kimiHomeDir, 'mcp.json');
 
   async function exists(p: string): Promise<boolean> {
     return access(p).then(
@@ -122,6 +160,38 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     return parsePermissionStatus(result.stdout);
   }
 
+  async function legacyMcpFile(): Promise<LegacyMcpFile | undefined> {
+    try {
+      return parseLegacyMcpFile(await readFile(userMcpConfigPath, 'utf8'), appBin);
+    } catch {
+      return undefined;
+    }
+  }
+
+  async function removeLegacyMcpRegistration(
+    legacy: LegacyMcpFile | undefined,
+  ): Promise<boolean> {
+    if (legacy === undefined) return false;
+
+    const nextServers = { ...legacy.servers };
+    delete nextServers['kimi-cu'];
+    const next = { ...legacy.value, mcpServers: nextServers };
+    const mode = (await stat(userMcpConfigPath)).mode & 0o777;
+    const tempPath = `${userMcpConfigPath}.kimi-cu-migration-${process.pid}-${Date.now()}`;
+    try {
+      await writeFile(tempPath, `${JSON.stringify(next, null, 2)}\n`, {
+        encoding: 'utf8',
+        flag: 'wx',
+        mode,
+      });
+      if ((await readFile(userMcpConfigPath, 'utf8')) !== legacy.raw) return false;
+      await rename(tempPath, userMcpConfigPath);
+    } finally {
+      await rm(tempPath, { force: true }).catch(() => undefined);
+    }
+    return true;
+  }
+
   async function detect(): Promise<CapabilityDetectResult> {
     const steps: CapabilityStep[] = [];
 
@@ -141,6 +211,15 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
       state: pluginOk ? 'ok' : 'missing',
       detail: mcpGap ?? plugin?.version,
     });
+
+    if ((await legacyMcpFile()) !== undefined) {
+      steps.push({
+        id: 'legacy-mcp',
+        state: 'missing',
+        detail: 'duplicate standalone kimi-cu MCP registration',
+        optional: true,
+      });
+    }
 
     const version = await readAppBundleVersion(infoPlist);
     const appExists = await exists(appBin);
@@ -203,7 +282,10 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
       await bestEffort(appBin, ['uninstall']);
     }
     await bestEffort('launchctl', ['bootout', `gui/${uid}/${LAUNCHD_LABEL}`]);
-    for (const mode of ['mcp', 'service', 'overlay']) {
+    // Keep connected MCP frontends alive while the app bundle is replaced.
+    // Their work is delegated to the service below; killing them makes the
+    // client report an installation-driven restart as an unexpected failure.
+    for (const mode of ['service', 'overlay']) {
       await bestEffort('pkill', ['-f', `${APP_BUNDLE}/Contents/MacOS/kimi-cu[[:space:]]+${mode}`]);
     }
     await new Promise((resolve) => {
@@ -238,29 +320,35 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     }
 
     const before = await detect();
+    const legacyMcpBefore = await legacyMcpFile();
     const stepStates = new Map(before.steps.map((step) => [step.id, step.state]));
     const readyBefore = before.steps
       .filter((step) => step.optional !== true)
       .every((step) => step.state === 'ok');
 
-    if (stepStates.get('plugin') !== 'ok' || readyBefore) {
-      report('plugin');
-      const summary = await ctx.plugins.installPlugin({ source: PLUGIN_ZIP_URL });
-      if (!summary.enabled) {
-        await ctx.plugins.setPluginEnabled({ id: PLUGIN_ID, enabled: true });
-      }
-      if (summary.enabledMcpServerCount < summary.mcpServerCount) {
-        const info = await ctx.plugins.getPluginInfo({ id: PLUGIN_ID });
-        for (const server of info.mcpServers) {
-          if (!server.enabled) {
-            await ctx.plugins.setPluginMcpServerEnabled({
-              id: PLUGIN_ID,
-              server: server.name,
-              enabled: true,
-            });
-          }
+    report('plugin');
+    const summary = await ctx.plugins.installPlugin({ source: PLUGIN_ZIP_URL });
+    if (!summary.enabled) {
+      await ctx.plugins.setPluginEnabled({ id: PLUGIN_ID, enabled: true });
+    }
+    if (summary.enabledMcpServerCount < summary.mcpServerCount) {
+      const info = await ctx.plugins.getPluginInfo({ id: PLUGIN_ID });
+      for (const server of info.mcpServers) {
+        if (!server.enabled) {
+          await ctx.plugins.setPluginMcpServerEnabled({
+            id: PLUGIN_ID,
+            server: server.name,
+            enabled: true,
+          });
         }
       }
+    }
+
+    // A read-only or concurrently edited user config must not block the app
+    // installation. Detection keeps the duplicate as an optional warning so
+    // clients can record it in logs and a later install can retry migration.
+    if (await removeLegacyMcpRegistration(legacyMcpBefore).catch(() => false)) {
+      report('mcp-config');
     }
 
     const installApp = stepStates.get('app') !== 'ok' || readyBefore;

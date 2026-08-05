@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { log } from '@moonshot-ai/kimi-code-sdk';
 
 import { __pluginsCommandInternals } from '#/tui/commands/plugins';
 
@@ -69,6 +70,8 @@ function fakePanel() {
 describe('plugins command capability surface', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.spyOn(log, 'info').mockImplementation(() => undefined);
+    vi.spyOn(log, 'warn').mockImplementation(() => undefined);
   });
 
   it('routes built-in entries through capabilities only on v2', () => {
@@ -97,7 +100,7 @@ describe('plugins command capability surface', () => {
     ).toBe(false);
   });
 
-  it('polls progress into the panel until the install settles', async () => {
+  it('logs progress without replacing the generic installing label', async () => {
     let calls = 0;
     const { host } = fakeHost({
       engineV2: true,
@@ -109,12 +112,14 @@ describe('plugins command capability surface', () => {
         return Promise.resolve({ install: { running: false } });
       },
     });
-    const { panel, lines } = fakePanel();
-
-    const result = await pollCapabilityInstall(host, panel, 'kimi-cu', 'Kimi Computer Use');
+    const result = await pollCapabilityInstall(host, 'kimi-cu');
 
     expect(result?.install.running).toBe(false);
-    expect(lines).toContain('Kimi Computer Use — download 40%');
+    expect(log.info).toHaveBeenCalledWith('capability install progress', {
+      capabilityId: 'kimi-cu',
+      step: 'download',
+      percent: 40,
+    });
   });
 
   it('removePlugin notes that capability runtimes are left untouched', async () => {
@@ -184,6 +189,34 @@ describe('plugins command capability surface', () => {
     // install must be followed via polling, never reported as a failure.
     expect(installCapability).not.toHaveBeenCalled();
     expect(statuses.some((s) => s.includes('Failed to install'))).toBe(false);
-    expect(statuses.some((s) => s.includes('is ready'))).toBe(true);
+    expect(statuses.some((s) => s.includes('is installed'))).toBe(true);
+  });
+
+  it('shows required permissions once after installation instead of exposing step details', async () => {
+    const { host, statuses } = fakeHost({
+      engineV2: true,
+      capabilityStatus: () => Promise.resolve({
+        id: 'kimi-cu',
+        state: 'partial',
+        steps: [{ id: 'permissions', state: 'missing', detail: 'screenRecording' }],
+        install: { running: false },
+      }),
+    });
+
+    await installCapabilityFromPanel(
+      host,
+      fakePanel().panel,
+      { id: 'kimi-cu', displayName: 'Kimi Computer Use', source: 'capability:kimi-cu' } as never,
+    );
+
+    expect(statuses.some((s) => s.includes('Grant Accessibility and Screen Recording'))).toBe(true);
+    expect(statuses.some((s) => s.includes('screenRecording'))).toBe(false);
+    expect(log.warn).toHaveBeenCalledWith(
+      'capability needs attention',
+      expect.objectContaining({
+        capabilityId: 'kimi-cu',
+        steps: [expect.objectContaining({ detail: 'screenRecording' })],
+      }),
+    );
   });
 });
