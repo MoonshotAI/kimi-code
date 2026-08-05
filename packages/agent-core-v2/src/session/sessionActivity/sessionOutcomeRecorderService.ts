@@ -42,6 +42,13 @@ export class SessionOutcomeRecorder extends Disposable implements ISessionOutcom
     this._register(this.agents.onDidCreate((handle) => {
       if (handle.id === MAIN_AGENT_ID) this.attachMain();
     }));
+    this._register(this.agents.onDidDispose((agentId) => {
+      // A failed bootstrap still fired onDidCreate; drop the dead bus so a
+      // later main creation reattaches.
+      if (agentId !== MAIN_AGENT_ID) return;
+      this.mainSubscription?.dispose();
+      this.mainSubscription = undefined;
+    }));
     this._register({
       dispose: () => {
         this.mainSubscription?.dispose();

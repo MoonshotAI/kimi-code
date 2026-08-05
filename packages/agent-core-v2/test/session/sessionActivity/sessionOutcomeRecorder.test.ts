@@ -38,10 +38,12 @@ describe('SessionOutcomeRecorder', () => {
       accessor: { get: (token: unknown) => (token === IEventBus ? bus : undefined) },
     } as unknown as IAgentScopeHandle;
     const onDidCreate = new Emitter<IAgentScopeHandle>();
+    const onDidDispose = new Emitter<string>();
     let mainPresent = true;
     const agents = {
       get: (id: string) => (id === MAIN_AGENT_ID && mainPresent ? mainHandle : undefined),
       onDidCreate: onDidCreate.event,
+      onDidDispose: onDidDispose.event,
     } as unknown as IAgentLifecycleService;
     const writes: (SessionMeta['lastTurnOutcome'])[] = [];
     let failNextWrite = false;
@@ -70,6 +72,10 @@ describe('SessionOutcomeRecorder', () => {
       },
       hideMain: () => {
         mainPresent = false;
+      },
+      disposeMain: () => {
+        mainPresent = false;
+        onDidDispose.fire(MAIN_AGENT_ID);
       },
       dispose: () => {
         recorder.dispose();
@@ -106,6 +112,18 @@ describe('SessionOutcomeRecorder', () => {
     expect(writes).toEqual([undefined]);
     started();
     expect(writes).toEqual([undefined]);
+    dispose();
+  });
+
+  it('reattaches when the main agent is disposed and recreated', async () => {
+    const { writes, ended, disposeMain, arriveMain, dispose } = harness();
+    await tick();
+    ended('failed');
+    expect(writes).toEqual(['failed']);
+    disposeMain();
+    arriveMain();
+    ended('completed');
+    expect(writes).toEqual(['failed', 'completed']);
     dispose();
   });
 
