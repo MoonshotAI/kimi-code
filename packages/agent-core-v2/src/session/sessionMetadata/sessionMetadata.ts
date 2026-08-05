@@ -3,7 +3,8 @@
  *
  * Defines the `SessionMeta` model and the `ISessionMetadata` used by upper
  * layers to read and update the session's durable metadata (title, timestamps,
- * archived flag, fork provenance). Owns the in-memory copy, persists it as a
+ * archived flag, fork provenance, the latest main turn's terminal outcome).
+ * Owns the in-memory copy, persists it as a
  * single atomic document through `storage`, and notifies changes via
  * `onDidChangeMetadata`. Session-scoped — one instance per session. The initial
  * document is materialized when the session is created.
@@ -36,6 +37,7 @@ export interface SessionMeta {
   readonly forkedFrom?: string;
   readonly agents?: Readonly<Record<string, AgentMeta>>;
   readonly custom?: Record<string, unknown>;
+  readonly lastTurnOutcome?: 'completed' | 'cancelled' | 'failed';
 }
 
 export type SessionMetaPatch = Partial<Omit<SessionMeta, 'id' | 'createdAt'>>;

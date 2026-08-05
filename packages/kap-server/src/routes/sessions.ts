@@ -1109,6 +1109,7 @@ export interface SessionWireFields {
   readonly updatedAt: number;
   readonly archived: boolean;
   readonly custom?: Record<string, unknown>;
+  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
 export function toWireSession(
@@ -1125,7 +1126,9 @@ export function toWireSession(
     busy: facts.busy,
     main_turn_active: facts.mainTurnActive,
     pending_interaction: facts.pendingInteraction,
-    last_turn_reason: facts.lastTurnReason,
+    // Live facts win for warm sessions; cold sessions (no live handle) fall
+    // back to the outcome persisted in the session metadata/summary.
+    last_turn_reason: facts.lastTurnReason ?? fields.lastTurnReason,
     archived: fields.archived,
     last_prompt: fields.lastPrompt,
     metadata: buildWireMetadata(fields.custom, cwd),
