@@ -108,16 +108,16 @@ const NUMERIC_STRUCTURE_KEYS = new Set([
 ]);
 
 /**
- * Return a deep-cloned JSON Schema with missing `type` fields filled in for
- * Kimi tool compatibility.
+ * Return a deep-cloned JSON Schema with missing `type` fields and object
+ * `required` arrays filled in for Kimi tool compatibility.
  *
  * Moonshot's tool validator rejects some valid JSON Schema shapes when nested
  * property schemas omit `type` (for example enum-only MCP properties). This is
  * a provider-compatibility normalizer, not a complete JSON Schema compiler:
  * it resolves local refs, preserves combinator nodes, infers obvious
  * scalar/object/array types, and falls back to `string` only for nested
- * typeless property schemas. The root schema object is treated as a container
- * and is not itself normalized.
+ * typeless property schemas. The root schema is not type-inferred, but an
+ * explicitly typed root object receives the same `required` normalization.
  */
 export function normalizeKimiToolSchema(schema: Record<string, unknown>): Record<string, unknown> {
   return ensureKimiPropertyTypes(derefJsonSchema(schema));
@@ -250,6 +250,10 @@ function parseJsonPointerArrayIndex(part: string): number | null {
 function recurseSchema(node: unknown): void {
   if (!isRecord(node)) {
     return;
+  }
+
+  if (node['type'] === 'object' && !hasOwn(node, 'required')) {
+    node['required'] = [];
   }
 
   visitChildSchemas(node, normalizeProperty);
