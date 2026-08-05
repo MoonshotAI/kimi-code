@@ -156,7 +156,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         const resolved =
           daemonPart.kind === 'video'
             ? await this.resolveVideoPart(daemonPart.ref, requester, signal, claimed)
-            : await this.resolveImagePart(daemonPart.ref, requester, claimed);
+            : await this.resolveImagePart(daemonPart.ref, requester, signal, claimed);
         if (resolved !== undefined) content.push(resolved);
       }
       out.push({ ...message, content: content.length > 0 ? content : [unavailableImageText()] });
@@ -192,29 +192,32 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
   private async resolveImagePart(
     ref: DaemonFileRef,
     requester: ModelRequester,
+    signal: AbortSignal | undefined,
     hasAdjacentPathTag: boolean,
   ): Promise<ContentPart | undefined> {
     const path = await this.displayPath(ref);
     if (!requester.model.capabilities.image_in) return degradedImage(hasAdjacentPathTag, path);
 
-    let bytes: Buffer;
-    let filename: string;
+    let source: { readonly bytes: Buffer; readonly filename: string };
     try {
-      const file = await this.files.get(ref.fileId);
-      bytes = await readStream(file.stream());
-      filename = file.meta.name;
+      source = await this.readMedia(ref, signal);
     } catch {
+      signal?.throwIfAborted();
       return degradedImage(hasAdjacentPathTag, path);
     }
 
-    const fileType = detectFileType(filename, bytes.subarray(0, MEDIA_SNIFF_BYTES), 'media');
+    const fileType = detectFileType(
+      source.filename,
+      source.bytes.subarray(0, MEDIA_SNIFF_BYTES),
+      'media',
+    );
     if (fileType.kind !== 'image') return degradedImage(hasAdjacentPathTag, path);
     if (!isModelAcceptedImageMime(fileType.mimeType)) return degradedImage(hasAdjacentPathTag, path);
 
     return {
       type: 'image_url',
       imageUrl: {
-        url: `data:${normalizeImageMime(fileType.mimeType)};base64,${bytes.toString('base64')}`,
+        url: `data:${normalizeImageMime(fileType.mimeType)};base64,${source.bytes.toString('base64')}`,
       },
     };
   }
@@ -271,16 +274,15 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     }
     const tagPath = await this.displayPath(ref);
 
-    let bytes: Buffer;
-    let filename: string;
+    let source: { readonly bytes: Buffer; readonly filename: string };
     try {
-      const file = await this.files.get(ref.fileId);
-      bytes = await readStream(file.stream());
-      filename = file.meta.name;
+      source = await this.readMedia(ref, signal);
     } catch {
+      signal?.throwIfAborted();
       return { part: videoTag(tagPath), memoize: true };
     }
 
+    const { bytes, filename } = source;
     const fileType = detectFileType(filename, bytes.subarray(0, MEDIA_SNIFF_BYTES), 'media');
     if (fileType.kind !== 'video') return { part: videoTag(tagPath), memoize: true };
     const mimeType = fileType.mimeType;
@@ -319,6 +321,23 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         };
       }
       return { part: videoTag(tagPath), memoize: false };
+    }
+  }
+
+  private async readMedia(
+    ref: DaemonFileRef,
+    signal: AbortSignal | undefined,
+  ): Promise<{ readonly bytes: Buffer; readonly filename: string }> {
+    try {
+      signal?.throwIfAborted();
+      const file = await this.files.get(ref.fileId);
+      const bytes = await readStream(file.stream(), signal);
+      return { bytes, filename: file.meta.name };
+    } catch {
+      signal?.throwIfAborted();
+      const canonical = await this.mediaStore.read(ref.fileId, ref.path);
+      if (canonical === undefined) throw new Error(`media ${ref.fileId} is unavailable`);
+      return { bytes: Buffer.from(canonical.data), filename: canonical.name };
     }
   }
 
@@ -368,12 +387,23 @@ function blobKey(cacheKey: string): string {
   return createHash('sha256').update(cacheKey).digest('hex');
 }
 
-async function readStream(stream: NodeJS.ReadableStream): Promise<Buffer> {
+async function readStream(stream: NodeJS.ReadableStream, signal?: AbortSignal): Promise<Buffer> {
+  const onAbort = (): void => {
+    const reason = signal?.reason instanceof Error ? signal.reason : undefined;
+    (stream as NodeJS.ReadableStream & { destroy?(error?: Error): void }).destroy?.(reason);
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
   const chunks: Buffer[] = [];
-  for await (const chunk of stream) {
-    chunks.push(Buffer.from(chunk as string | Uint8Array));
+  try {
+    signal?.throwIfAborted();
+    for await (const chunk of stream) {
+      signal?.throwIfAborted();
+      chunks.push(Buffer.from(chunk as string | Uint8Array));
+    }
+    return Buffer.concat(chunks);
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
   }
-  return Buffer.concat(chunks);
 }
 
 registerScopedService(

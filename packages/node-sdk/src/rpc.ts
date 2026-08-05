@@ -319,6 +319,13 @@ export abstract class SDKRpcClientBase {
     );
   }
 
+  deleteFile(_fileId: string): Promise<void> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support file deletion.',
+    );
+  }
+
   async listGlobalMcpServers(): Promise<readonly McpServerConfig[]> {
     const rpc = await this.getRpc();
     return rpc.listGlobalMcpServers({});

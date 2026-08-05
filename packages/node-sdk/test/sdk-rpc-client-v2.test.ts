@@ -86,12 +86,17 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
     const { harness } = await makeHarness();
     try {
       const bytes = new Uint8Array([137, 80, 78, 71]);
-      const meta = await harness.uploadFile(bytes, { name: 'pixel.png', mimeType: 'image/png' });
+      const meta = await harness.uploadFile(bytes, {
+        name: 'pixel.png',
+        mimeType: 'image/png',
+        expiresInSec: 60,
+      });
       expect(meta.id.startsWith('f_')).toBe(true);
       expect(meta.name).toBe('pixel.png');
       expect(meta.media_type).toBe('image/png');
       expect(meta.size).toBe(bytes.length);
       expect(typeof meta.created_at).toBe('string');
+      expect(typeof meta.expires_at).toBe('string');
 
       // The re-exported daemon-file helpers round-trip the returned meta.
       const url = buildDaemonFileUrl(meta.id, '/tmp/pixel.png');
@@ -100,6 +105,8 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
       expect(buildMediaPathTag('image', '/tmp/pixel.png')).toBe(
         '<image path="/tmp/pixel.png"></image>',
       );
+      await harness.deleteFile(meta.id);
+      await expect(harness.deleteFile(meta.id)).rejects.toThrow(/file not found/);
     } finally {
       await harness.close();
     }

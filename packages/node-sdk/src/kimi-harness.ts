@@ -350,6 +350,11 @@ export class KimiHarness {
     return this.rpc.uploadFile(data, options);
   }
 
+  /** Delete a daemon upload owned by a client-side staging operation. */
+  async deleteFile(fileId: string): Promise<void> {
+    return this.rpc.deleteFile(fileId);
+  }
+
   async ensureConfigFile(): Promise<void> {
     await this.ensureConfigFileImpl();
   }

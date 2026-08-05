@@ -14,6 +14,7 @@
  */
 
 import type { IFileService } from '#/app/file/fileService';
+import { abortable } from '#/_base/utils/abort';
 import type { ContentPart } from '#/kosong/contract/message';
 
 import {
@@ -29,6 +30,7 @@ import { ISessionMediaStore } from './sessionMediaStore';
 export interface PromptMediaIntakeDeps {
   readonly files: IFileService;
   readonly mediaStore: ISessionMediaStore;
+  readonly signal?: AbortSignal;
 }
 
 export async function materializePromptDaemonRefs(
@@ -43,13 +45,17 @@ export async function materializePromptDaemonRefs(
   const pathByRefIndex = new Map<number, string>();
 
   for (const [index, part] of content.entries()) {
+    deps.signal?.throwIfAborted();
     const daemonPart = daemonFileRefFromPart(part);
     if (daemonPart === undefined) {
       out.push(part);
       continue;
     }
     const path = await materializeRef(deps, daemonPart.ref.fileId, daemonPart.ref.path).catch(
-      () => undefined,
+      (_error: unknown) => {
+        deps.signal?.throwIfAborted();
+        return undefined;
+      },
     );
     if (path === undefined || path === daemonPart.ref.path) {
       if (path !== undefined) pathByRefIndex.set(index, path);
@@ -80,8 +86,11 @@ async function materializeRef(
   deps: PromptMediaIntakeDeps,
   fileId: string,
   hintPath: string | undefined,
-): Promise<string> {
-  const file = await deps.files.get(fileId);
+): Promise<string | undefined> {
+  const file =
+    deps.signal === undefined
+      ? await deps.files.get(fileId)
+      : await abortable(deps.files.get(fileId), deps.signal);
   return deps.mediaStore.materialize({
     fileId,
     size: file.meta.size,
@@ -89,6 +98,7 @@ async function materializeRef(
     mimeType: file.meta.media_type,
     hintPath,
     stream: () => file.stream(),
+    signal: deps.signal,
   });
 }
 

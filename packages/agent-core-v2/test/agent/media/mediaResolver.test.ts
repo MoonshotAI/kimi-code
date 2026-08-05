@@ -125,6 +125,7 @@ function stubMediaStore(sessionDir = '/nonexistent-session'): ISessionMediaStore
       const own = await stat(canonical).catch(() => undefined);
       return own === undefined ? hint : canonical;
     },
+    read: async () => undefined,
     materialize: async () => {
       throw new Error('unused');
     },
@@ -177,6 +178,7 @@ afterEach(() => disposables.dispose());
 function resolver(
   files: Map<string, { name: string; bytes: Buffer }>,
   sessionDir?: string,
+  mediaStore: ISessionMediaStore = stubMediaStore(sessionDir),
 ): IAgentMediaResolverService {
   const ix = createServices(disposables, {
     base: [registerStateServices],
@@ -184,7 +186,7 @@ function resolver(
       reg.defineInstance(IFileService, fileService(files));
       reg.defineInstance(IBlobStore, blobStore());
       reg.defineInstance(ITelemetryService, telemetry);
-      reg.defineInstance(ISessionMediaStore, stubMediaStore(sessionDir));
+      reg.defineInstance(ISessionMediaStore, mediaStore);
       reg.define(IAgentMediaResolverService, AgentMediaResolverService);
     },
   });
@@ -400,6 +402,22 @@ describe('AgentMediaResolverService image strategy', () => {
         imageUrl: { url: `data:image/png;base64,${PNG_BYTES.toString('base64')}` },
       },
     ]);
+  });
+
+  it('inlines canonical session bytes after the transient upload is deleted', async () => {
+    const mediaStore = stubMediaStore();
+    mediaStore.read = async () => ({ data: PNG_BYTES, name: `${FILE_ID}.png` });
+    const res = resolver(new Map(), undefined, mediaStore);
+
+    const out = await res.resolve(
+      [imageMessage(buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH))],
+      requester({}),
+    );
+
+    expect(firstPart(out)).toEqual({
+      type: 'image_url',
+      imageUrl: { url: `data:image/png;base64,${PNG_BYTES.toString('base64')}` },
+    });
   });
 
   it('drops the part when the model cannot ingest images and the reference carries a path', async () => {

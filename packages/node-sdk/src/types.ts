@@ -94,6 +94,8 @@ export type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
 export interface UploadFileOptions {
   readonly name: string;
   readonly mimeType?: string;
+  /** Optional daemon-side TTL for staging uploads. */
+  readonly expiresInSec?: number;
 }
 
 export interface CreateGoalInput {

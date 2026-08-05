@@ -1,12 +1,22 @@
+/**
+ * Scenario: session-canonical media persists through the byte-storage boundary.
+ */
+
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { createServices, type TestInstantiationService } from '#/_base/di/test';
+import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
-import { makeSessionContext } from '#/session/sessionContext/sessionContext';
+import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 
 const BYTES = Buffer.from('media bytes');
 
@@ -15,27 +25,37 @@ function streamOf(bytes: Buffer): () => NodeJS.ReadableStream {
 }
 
 describe('SessionMediaStoreService', () => {
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
   let sessionDir: string;
-  let store: SessionMediaStoreService;
+  let store: ISessionMediaStore;
 
   beforeEach(async () => {
+    disposables = new DisposableStore();
     sessionDir = await mkdtemp(join(tmpdir(), 'session-media-store-'));
-    store = new SessionMediaStoreService(
-      makeSessionContext({
-        sessionId: 's1',
-        workspaceId: 'w1',
-        sessionDir,
-        sessionScope: 'sessions/w1/s1',
-        cwd: '/tmp',
-      }),
-    );
+    ix = createServices(disposables, {
+      strict: true,
+      additionalServices: (reg) => {
+        reg.defineInstance(ISessionContext, makeSessionContext({
+          sessionId: 's1',
+          workspaceId: 'w1',
+          sessionDir,
+          sessionScope: basename(sessionDir),
+          cwd: '/tmp',
+        }));
+        reg.defineInstance(IFileSystemStorageService, new FileStorageService(dirname(sessionDir)));
+        reg.define(ISessionMediaStore, SessionMediaStoreService);
+      },
+    });
+    store = ix.get(ISessionMediaStore);
   });
 
   afterEach(async () => {
+    disposables.dispose();
     await rm(sessionDir, { recursive: true, force: true });
   });
 
-  function input(overrides: Partial<Parameters<SessionMediaStoreService['materialize']>[0]> = {}) {
+  function input(overrides: Partial<Parameters<ISessionMediaStore['materialize']>[0]> = {}) {
     return {
       fileId: 'f_1',
       size: BYTES.length,
@@ -46,11 +66,17 @@ describe('SessionMediaStoreService', () => {
     };
   }
 
-  it('materializes at the canonical path and reports it from pathFor', async () => {
+  function pathFor(fileId: string, ext: string): string {
+    const path = store.pathFor(fileId, ext);
+    expect(path).toBeDefined();
+    return path!;
+  }
+
+  it('materializes at the storage-backed canonical path', async () => {
     const target = await store.materialize(input());
-    expect(target).toBe(store.pathFor('f_1', '.mp4'));
+    expect(target).toBe(pathFor('f_1', '.mp4'));
     expect(target).toBe(join(sessionDir, 'media', 'f_1.mp4'));
-    expect(await readFile(target)).toEqual(BYTES);
+    expect(await readFile(target!)).toEqual(BYTES);
   });
 
   it('keeps a same-size copy without re-reading the stream', async () => {
@@ -62,18 +88,18 @@ describe('SessionMediaStoreService', () => {
         },
       }),
     );
-    expect(again).toBe(store.pathFor('f_1', '.mp4'));
-    expect(await readFile(again)).toEqual(BYTES);
+    expect(again).toBe(pathFor('f_1', '.mp4'));
+    expect(await readFile(again!)).toEqual(BYTES);
   });
 
   it('overwrites a wrong-size copy', async () => {
     const target = await store.materialize(input());
-    await writeFile(target, 'xx');
+    await writeFile(target!, 'xx');
     await store.materialize(input());
-    expect(await readFile(target)).toEqual(BYTES);
+    expect(await readFile(target!)).toEqual(BYTES);
   });
 
-  it('leaves no tmp file behind when the stream fails', async () => {
+  it('leaves no temporary storage entry when the stream fails', async () => {
     await expect(
       store.materialize(
         input({
@@ -86,22 +112,30 @@ describe('SessionMediaStoreService', () => {
             ),
         }),
       ),
-    ).rejects.toThrow('stream broke');
+    ).rejects.toMatchObject({ code: 'storage.io_failed' });
     const entries = await readdir(join(sessionDir, 'media')).catch(() => [] as string[]);
-    expect(entries.filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    expect(entries.filter((name) => name.includes('.tmp.'))).toEqual([]);
     expect(entries).not.toContain('f_1.mp4');
   });
 
   it('derives the extension from the hint, then the name, then the MIME fallback', async () => {
     expect(await store.materialize(input({ hintPath: '/elsewhere/x.mov' }))).toBe(
-      store.pathFor('f_1', '.mov'),
+      pathFor('f_1', '.mov'),
     );
     expect(await store.materialize(input({ fileId: 'f_2', name: 'noext' }))).toBe(
-      store.pathFor('f_2', '.mp4'),
+      pathFor('f_2', '.mp4'),
     );
     expect(await store.materialize(input({ fileId: 'f_3', name: 'noext', mimeType: 'odd/type' }))).toBe(
-      store.pathFor('f_3', '.bin'),
+      pathFor('f_3', '.bin'),
     );
+  });
+
+  it('reads canonical bytes independently from the daemon file store', async () => {
+    const target = await store.materialize(input());
+    await expect(store.read('f_1', target)).resolves.toEqual({
+      data: BYTES,
+      name: 'f_1.mp4',
+    });
   });
 
   it('resolves the display path to the canonical copy, else the hint, else undefined', async () => {
@@ -114,16 +148,46 @@ describe('SessionMediaStoreService', () => {
 
   it('probes the extensionless canonical location for an extensionless hint', async () => {
     const target = await store.materialize(input({ name: 'noext', mimeType: 'odd/type' }));
-    expect(target).toBe(store.pathFor('f_1', '.bin'));
-    const extless = store.pathFor('f_1', '');
-    await rm(target);
+    expect(target).toBe(pathFor('f_1', '.bin'));
+    const extless = pathFor('f_1', '');
+    await rm(target!);
     await writeFile(extless, BYTES);
     await expect(store.resolveDisplayPath('f_1', '/stale/noext')).resolves.toBe(extless);
   });
 
   it('treats a hint already equal to the canonical path as-is', async () => {
-    const canonical = store.pathFor('f_1', '.mp4');
+    const canonical = pathFor('f_1', '.mp4');
     await expect(store.resolveDisplayPath('f_1', canonical)).resolves.toBe(canonical);
     await expect(stat(canonical)).rejects.toThrow();
   });
+});
+
+it('retains canonical bytes without inventing a path for a non-filesystem backend', async () => {
+  const disposables = new DisposableStore();
+  const ix = createServices(disposables, {
+    strict: true,
+    additionalServices: (reg) => {
+      reg.defineInstance(ISessionContext, makeSessionContext({
+        sessionId: 's1',
+        workspaceId: 'w1',
+        sessionDir: '/unused',
+        sessionScope: 'sessions/w1/s1',
+        cwd: '/tmp',
+      }));
+      reg.defineInstance(IFileSystemStorageService, new InMemoryStorageService());
+      reg.define(ISessionMediaStore, SessionMediaStoreService);
+    },
+  });
+  const store = ix.get(ISessionMediaStore);
+  await expect(store.materialize({
+    fileId: 'f_1',
+    size: BYTES.length,
+    name: 'clip.mp4',
+    mimeType: 'video/mp4',
+    stream: streamOf(BYTES),
+  })).resolves.toBeUndefined();
+  const canonical = await store.read('f_1');
+  expect(canonical?.name).toBe('f_1.mp4');
+  expect(canonical === undefined ? undefined : Buffer.from(canonical.data)).toEqual(BYTES);
+  disposables.dispose();
 });

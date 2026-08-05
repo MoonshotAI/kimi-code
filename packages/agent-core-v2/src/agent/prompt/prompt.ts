@@ -12,6 +12,8 @@ export interface PromptSubmitContext {
 export interface PromptInput {
   readonly id?: string;
   readonly message: ContextMessage;
+  /** Release edge-owned staging resources after intake has reached a terminal state. */
+  readonly release?: () => Promise<void> | void;
 }
 
 export type PromptState =
@@ -53,6 +55,7 @@ export interface IAgentPromptService {
   list(): PromptQueueSnapshot;
   steer(promptIds: readonly string[]): Promise<readonly PromptHandle[]>;
   abort(promptId: string, reason?: Error): boolean;
+  drain(reason?: Error): Promise<void>;
   inject(message: ContextMessage): Promise<Turn | undefined>;
   retry(): Promise<Turn | undefined>;
   clear(): void;

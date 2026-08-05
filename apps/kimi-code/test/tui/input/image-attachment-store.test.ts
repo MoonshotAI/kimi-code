@@ -63,10 +63,10 @@ describe('ImageAttachmentStore', () => {
 
   it('clear() resets ids and empties storage', () => {
     const s = new ImageAttachmentStore();
-    s.addImage(new Uint8Array(), 'image/png', 10, 10);
+    s.addImage(new Uint8Array(), 'image/png', 10, 10, undefined, 'file-1');
     s.addImage(new Uint8Array(), 'image/png', 10, 10);
     expect(s.size()).toBe(2);
-    s.clear();
+    expect(s.clear()).toEqual(['file-1']);
     expect(s.size()).toBe(0);
     const next = s.addImage(new Uint8Array(), 'image/png', 10, 10);
     expect(next.id).toBe(1);
@@ -96,5 +96,28 @@ describe('ImageAttachmentStore', () => {
     expect(s.get(b.id)).toBe(b);
     expect(s.get(a.id)).toBeUndefined();
     expect(s.get(c.id)).toBeUndefined();
+  });
+
+  it('transfers staging file ownership without dropping thumbnail bytes', () => {
+    const s = new ImageAttachmentStore();
+    const bytes = new Uint8Array([1, 2, 3]);
+    const att = s.addImage(bytes, 'image/png', 10, 10, undefined, 'file-1');
+
+    expect(s.takeFileIds([att.id])).toEqual(['file-1']);
+    expect(att.fileId).toBeUndefined();
+    expect(att.bytes).toBe(bytes);
+    expect(s.takeFileIds([att.id])).toEqual([]);
+  });
+
+  it('keeps a daemon upload until every extracted message releases it', () => {
+    const s = new ImageAttachmentStore();
+    const att = s.addImage(new Uint8Array([1]), 'image/png', 10, 10, undefined, 'file-1');
+
+    s.retainFileIds([att.id]);
+    s.retainFileIds([att.id]);
+    expect(s.takeFileIds([att.id])).toEqual([]);
+    expect(att.fileId).toBe('file-1');
+    expect(s.takeFileIds([att.id])).toEqual(['file-1']);
+    expect(att.fileId).toBeUndefined();
   });
 });

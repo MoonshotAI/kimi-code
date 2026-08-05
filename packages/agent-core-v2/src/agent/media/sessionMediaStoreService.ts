@@ -1,42 +1,53 @@
 /**
  * `media` domain — `ISessionMediaStore` implementation.
  *
- * The one place the media domain touches the host filesystem for the
- * session's `media/` dir (node:fs is confined here, as in the persistence
- * backends): materialization writes to a unique tmp sibling and atomically
- * renames it into place, so a concurrent or crashed writer can never leave a
- * partial canonical file, and a same-size existing copy is reused. Reads
- * (`resolveDisplayPath`) trust the canonical location only when it exists.
- * Bound at Session scope.
+ * Materializes and reads session-canonical media through the `storage` byte
+ * backend, addressed by `sessionContext`. Filesystem deployments expose an
+ * absolute host path for model readback; non-filesystem deployments retain
+ * the canonical bytes without inventing one. Bound at Session scope.
  */
 
-import { randomUUID } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
-import { mkdir, rename, rm, stat } from 'node:fs/promises';
-import { dirname, extname } from 'node:path';
-import { pipeline } from 'node:stream/promises';
+import { extname } from 'node:path';
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 
-import { mediaExtensionForMime, sessionMediaFilePath } from './mediaRef';
+import { mediaExtensionForMime } from './mediaRef';
 import { ISessionMediaStore } from './sessionMediaStore';
 
 export class SessionMediaStoreService implements ISessionMediaStore {
   declare readonly _serviceBrand: undefined;
+  private readonly scope: string;
 
-  constructor(@ISessionContext private readonly sessionContext: ISessionContext) {}
+  constructor(
+    @ISessionContext sessionContext: ISessionContext,
+    @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
+  ) {
+    this.scope = sessionContext.scope('media');
+  }
 
-  pathFor(fileId: string, ext: string): string {
-    return sessionMediaFilePath(this.sessionContext.sessionDir, fileId, ext);
+  pathFor(fileId: string, ext: string): string | undefined {
+    return this.storage.pathFor(this.scope, this.keyFor(fileId, ext));
   }
 
   async resolveDisplayPath(fileId: string, hint: string | undefined): Promise<string | undefined> {
     if (hint === undefined || hint.length === 0) return undefined;
-    const canonical = this.pathFor(fileId, extname(hint));
-    if (canonical === hint) return hint;
-    const own = await stat(canonical).catch(() => undefined);
-    return own === undefined ? hint : canonical;
+    const ext = extname(hint);
+    const canonical = this.pathFor(fileId, ext);
+    if (canonical === undefined || canonical === hint) return hint;
+    const size = await this.storage.size(this.scope, this.keyFor(fileId, ext));
+    return size === undefined ? hint : canonical;
+  }
+
+  async read(
+    fileId: string,
+    hintPath?: string,
+  ): Promise<{ readonly data: Uint8Array; readonly name: string } | undefined> {
+    const key = await this.findKey(fileId, hintPath);
+    if (key === undefined) return undefined;
+    const data = await this.storage.read(this.scope, key);
+    return data === undefined ? undefined : { data, name: key };
   }
 
   async materialize(input: {
@@ -46,26 +57,36 @@ export class SessionMediaStoreService implements ISessionMediaStore {
     readonly mimeType: string;
     readonly hintPath?: string;
     readonly stream: () => NodeJS.ReadableStream;
-  }): Promise<string> {
+    readonly signal?: AbortSignal;
+  }): Promise<string | undefined> {
     const ext =
       (input.hintPath === undefined ? '' : extname(input.hintPath)) ||
       extname(input.name) ||
       mediaExtensionForMime(input.mimeType) ||
       '.bin';
-    const target = this.pathFor(input.fileId, ext);
-    const existing = await stat(target).catch(() => undefined);
-    if (existing?.size === input.size) return target;
-
-    await mkdir(dirname(target), { recursive: true });
-    const tmp = `${target}.${randomUUID()}.tmp`;
-    try {
-      await pipeline(input.stream(), createWriteStream(tmp));
-      await rename(tmp, target);
-    } catch (error) {
-      await rm(tmp, { force: true }).catch(() => undefined);
-      throw error;
+    const key = this.keyFor(input.fileId, ext);
+    const existingSize = await this.storage.size(this.scope, key);
+    if (existingSize !== input.size) {
+      const source = input.stream() as NodeJS.ReadableStream & AsyncIterable<Uint8Array>;
+      await this.storage.writeStream(this.scope, key, source, {
+        atomic: true,
+        signal: input.signal,
+      });
     }
-    return target;
+    return this.storage.pathFor(this.scope, key);
+  }
+
+  private keyFor(fileId: string, ext: string): string {
+    return `${fileId}${ext}`;
+  }
+
+  private async findKey(fileId: string, hintPath: string | undefined): Promise<string | undefined> {
+    if (hintPath !== undefined) {
+      const hinted = this.keyFor(fileId, extname(hintPath));
+      if ((await this.storage.size(this.scope, hinted)) !== undefined) return hinted;
+    }
+    const keys = await this.storage.list(this.scope, fileId);
+    return keys.find((key) => key === fileId || key.startsWith(`${fileId}.`));
   }
 }
 

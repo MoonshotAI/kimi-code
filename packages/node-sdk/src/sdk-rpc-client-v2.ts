@@ -545,7 +545,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       data,
       filename: options.name,
       mimeType: options.mimeType,
+      expiresInSec: options.expiresInSec,
     });
+  }
+
+  override async deleteFile(fileId: string): Promise<void> {
+    return this.klient.global.files.delete(fileId);
   }
 
   /**

@@ -16,6 +16,7 @@
  */
 
 import { IInstantiationService } from '#/_base/di/instantiation';
+import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
@@ -67,18 +68,28 @@ interface Record extends PromptSnapshot {
   message: ContextMessage;
   readonly launchedDeferred: Deferred<Turn | undefined>;
   readonly completionDeferred: Deferred<PromptCompletion>;
-  intake: Promise<unknown>;
+  readonly intakeController: AbortController;
+  intake: Promise<void>;
+  readonly release?: () => Promise<void> | void;
   handle: PromptHandle;
+}
+
+interface SteeringReservation {
+  readonly item: Record;
+  readonly active: Record & { turn: Turn };
 }
 
 export const promptLaunchingKey = defineState<boolean>('prompt.launching', () => false);
 
-export class AgentPromptService implements IAgentPromptService {
+export class AgentPromptService extends Disposable implements IAgentPromptService {
   declare readonly _serviceBrand: undefined;
   private active: (Record & { turn: Turn }) | undefined;
   private readonly pending: Record[] = [];
   private launchingItem: Record | undefined;
   private readonly steered = new Map<string, Record[]>();
+  private readonly steering = new Map<string, SteeringReservation>();
+  private readonly intakes = new Set<Promise<void>>();
+  private readonly intakeControllers = new Set<AbortController>();
   private fullCompactionService: IAgentFullCompactionService | undefined;
   readonly hooks = { onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>() };
 
@@ -94,11 +105,14 @@ export class AgentPromptService implements IAgentPromptService {
     @IFileService private readonly files: IFileService,
     @ISessionMediaStore private readonly mediaStore: ISessionMediaStore,
   ) {
+    super();
     this.states.register(promptLaunchingKey);
-    toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
-      await this.deliverToolResult(ctx);
-      await next();
-    });
+    this._register(
+      toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
+        await this.deliverToolResult(ctx);
+        await next();
+      }),
+    );
   }
 
   private get launching(): boolean {
@@ -109,14 +123,26 @@ export class AgentPromptService implements IAgentPromptService {
     this.states.set(promptLaunchingKey, value);
   }
 
-  private mediaIntakeOf(record: Record): Promise<unknown> {
+  private mediaIntakeOf(record: Record): Promise<void> {
     const intake = materializePromptDaemonRefs(record.message.content, {
       files: this.files,
       mediaStore: this.mediaStore,
+      signal: record.intakeController.signal,
     }).then((content) => {
+      if (record.intakeController.signal.aborted) return;
       record.message = { ...record.message, content: [...content] };
     });
-    return intake.catch(() => undefined);
+    let tracked!: Promise<void>;
+    tracked = intake
+      .catch(() => undefined)
+      .then(async () => {
+        await Promise.resolve(record.release?.()).catch(() => undefined);
+        this.intakes.delete(tracked);
+        this.intakeControllers.delete(record.intakeController);
+      });
+    this.intakes.add(tracked);
+    this.intakeControllers.add(record.intakeController);
+    return tracked;
   }
 
   async enqueue(input: PromptInput): Promise<PromptHandle> {
@@ -124,11 +150,11 @@ export class AgentPromptService implements IAgentPromptService {
     const message = { ...input.message, id };
     const launchedDeferred = deferred<Turn | undefined>();
     const completionDeferred = deferred<PromptCompletion>();
-    const record = {} as Record;
-    Object.assign(record, {
+    const record = {
       id, userMessageId: id, createdAt: new Date().toISOString(), state: 'pending', message,
-      launchedDeferred, completionDeferred,
-    });
+      launchedDeferred, completionDeferred, intakeController: new AbortController(),
+      release: input.release,
+    } as Record;
     record.intake = this.mediaIntakeOf(record);
     record.handle = {
       get id() { return record.id; }, get userMessageId() { return record.userMessageId; },
@@ -156,49 +182,78 @@ export class AgentPromptService implements IAgentPromptService {
 
   async steer(promptIds: readonly string[]): Promise<readonly PromptHandle[]> {
     if (promptIds.length === 0) throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_ids must not be empty');
-    if (this.active === undefined) throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active prompt to steer into');
+    const active = this.active;
+    if (active === undefined) throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active prompt to steer into');
     const ids = new Set(promptIds);
     if (ids.size !== promptIds.length || this.pending.filter((item) => ids.has(item.id)).length !== ids.size) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
     }
     const selected = this.pending.filter((item) => ids.has(item.id));
-    await Promise.all(selected.map((item) => item.intake));
-    if (this.active === undefined) throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active prompt to steer into');
-    if (this.pending.filter((item) => ids.has(item.id)).length !== ids.size) {
-      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
+    for (const item of selected) {
+      this.pending.splice(this.pending.indexOf(item), 1);
+      this.steering.set(item.id, { item, active });
     }
-    for (const item of selected) this.pending.splice(this.pending.indexOf(item), 1);
-    const message: ContextMessage = {
-      role: 'user', content: selected.flatMap((item) => item.message.content), toolCalls: [], origin: USER_PROMPT_ORIGIN,
-    };
-    const { message: rerouted, captions } = this.extractCompressionCaptions(message);
-    const request = new SteerStepRequest(rerouted, captions, this.reminders, (materialized) => {
-      this.wire.dispatch(steerTurn({ input: materialized.content, origin: materialized.origin ?? USER_PROMPT_ORIGIN }));
-    }, () => {});
-    const turn = (await this.loop.enqueue(request).assigned).turn;
-    if (turn === undefined) throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active turn to steer into');
-    for (const item of selected) { item.state = 'steered'; item.launchedDeferred.resolve(turn); }
-    this.steered.set(this.active.id, [...(this.steered.get(this.active.id) ?? []), ...selected]);
-    this.eventBus.publish({ type: 'prompt.steered', activePromptId: this.active.id, promptIds: selected.map((x) => x.id), content: rerouted.content as ContentPart[], steeredAt: new Date().toISOString() });
-    return selected.map((item) => item.handle);
+    try {
+      await Promise.all(selected.map((item) => item.intake));
+      if (!this.reservationsMatch(selected, active)) {
+        throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'prompt steer was cancelled');
+      }
+      if (this.active !== active) {
+        this.cancelSteering(selected);
+        throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'active prompt finished before steer');
+      }
+      const message: ContextMessage = {
+        role: 'user', content: selected.flatMap((item) => item.message.content), toolCalls: [], origin: USER_PROMPT_ORIGIN,
+      };
+      const { message: rerouted, captions } = this.extractCompressionCaptions(message);
+      const request = new SteerStepRequest(rerouted, captions, this.reminders, (materialized) => {
+        this.wire.dispatch(steerTurn({ input: materialized.content, origin: materialized.origin ?? USER_PROMPT_ORIGIN }));
+      }, () => {});
+      const turn = (await this.loop.enqueue(request).assigned).turn;
+      if (turn === undefined || this.active !== active || turn.id !== active.turn.id) {
+        this.cancelSteering(selected);
+        throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active turn to steer into');
+      }
+      for (const item of selected) {
+        this.steering.delete(item.id);
+        item.state = 'steered';
+        item.launchedDeferred.resolve(turn);
+      }
+      this.steered.set(active.id, [...(this.steered.get(active.id) ?? []), ...selected]);
+      this.eventBus.publish({ type: 'prompt.steered', activePromptId: active.id, promptIds: selected.map((x) => x.id), content: rerouted.content, steeredAt: new Date().toISOString() });
+      return selected.map((item) => item.handle);
+    } catch (error) {
+      this.cancelSteering(selected);
+      throw error;
+    }
   }
 
   abort(promptId: string, reason: Error = userCancellationReason()): boolean {
     if (this.active?.id === promptId) { this.loop.cancel(this.active.turn.id, reason); return true; }
     if (this.launchingItem?.id === promptId) {
       const item = this.launchingItem;
-      item.state = 'cancelled'; item.launchedDeferred.resolve(undefined);
-      item.completionDeferred.resolve({ promptId, result: undefined, state: 'cancelled' });
-      this.publishAborted(promptId);
+      this.cancelRecord(item, reason);
+      return true;
+    }
+    const reservation = this.steering.get(promptId);
+    if (reservation !== undefined) {
+      this.steering.delete(promptId);
+      this.cancelRecord(reservation.item, reason);
       return true;
     }
     const index = this.pending.findIndex((item) => item.id === promptId);
     if (index < 0) throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, `prompt ${promptId} not found`);
     const [item] = this.pending.splice(index, 1) as [Record];
-    item.state = 'cancelled'; item.launchedDeferred.resolve(undefined);
-    item.completionDeferred.resolve({ promptId, result: undefined, state: 'cancelled' });
-    this.publishAborted(promptId);
+    this.cancelRecord(item, reason);
     return true;
+  }
+
+  async drain(reason: Error = userCancellationReason()): Promise<void> {
+    for (const item of this.pending.slice()) this.abort(item.id, reason);
+    for (const item of this.steering.values()) this.abort(item.item.id, reason);
+    if (this.launchingItem !== undefined) this.abort(this.launchingItem.id, reason);
+    for (const controller of this.intakeControllers) controller.abort(reason);
+    await Promise.allSettled(this.intakes);
   }
 
   async inject(message: ContextMessage): Promise<Turn | undefined> {
@@ -213,9 +268,43 @@ export class AgentPromptService implements IAgentPromptService {
 
   clear(): void {
     for (const item of this.pending.slice()) this.abort(item.id);
+    for (const item of this.steering.values()) this.abort(item.item.id);
     if (this.launchingItem !== undefined) this.abort(this.launchingItem.id);
     if (this.active !== undefined) this.abort(this.active.id);
     this.context.clear();
+  }
+
+  override dispose(): void {
+    for (const controller of this.intakeControllers) controller.abort(userCancellationReason());
+    super.dispose();
+  }
+
+  private reservationsMatch(
+    selected: readonly Record[],
+    active: Record & { turn: Turn },
+  ): boolean {
+    return selected.every((item) => {
+      const reservation = this.steering.get(item.id);
+      return reservation?.item === item && reservation.active === active;
+    });
+  }
+
+  private cancelSteering(selected: readonly Record[], reason = userCancellationReason()): void {
+    for (const item of selected) {
+      const reservation = this.steering.get(item.id);
+      if (reservation?.item !== item) continue;
+      this.steering.delete(item.id);
+      this.cancelRecord(item, reason);
+    }
+  }
+
+  private cancelRecord(item: Record, reason: Error): void {
+    if (cancelled(item)) return;
+    item.intakeController.abort(reason);
+    item.state = 'cancelled';
+    item.launchedDeferred.resolve(undefined);
+    item.completionDeferred.resolve({ promptId: item.id, result: undefined, state: 'cancelled' });
+    this.publishAborted(item.id);
   }
 
   private async startNext(): Promise<void> {
@@ -244,7 +333,9 @@ export class AgentPromptService implements IAgentPromptService {
       if (turn === undefined) { if (!cancelled(item)) this.pending.unshift(item); return; }
       if (cancelled(item)) { this.loop.cancel(turn.id); return; }
       item.state = 'running'; item.launchedDeferred.resolve(turn); this.active = Object.assign(item, { turn });
-      void turn.result.then((result) => this.settle(item, result));
+      void turn.result.then((result) => {
+        this.settle(item, result);
+      });
     } catch {
       if (cancelled(item)) return;
       item.state = 'failed';
@@ -261,6 +352,11 @@ export class AgentPromptService implements IAgentPromptService {
   private settle(item: Record, result: TurnResult): void {
     if (this.active?.id !== item.id) return;
     this.active = undefined;
+    this.cancelSteering(
+      [...this.steering.values()]
+        .filter((reservation) => reservation.active === item)
+        .map((reservation) => reservation.item),
+    );
     const state = result.type === 'cancelled' ? 'cancelled' : result.type === 'failed' ? 'failed' : 'completed';
     item.state = state; item.completionDeferred.resolve({ promptId: item.id, result, state });
     for (const child of this.steered.get(item.id) ?? []) { child.state = state; child.completionDeferred.resolve({ promptId: child.id, result, state }); }

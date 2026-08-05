@@ -99,4 +99,18 @@ describe('KimiHarness uploadFile', () => {
       await harness.close();
     }
   });
+
+  it('rejects file deletion as not implemented on the v1 harness', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-harness-'));
+    tempDirs.push(homeDir);
+
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    try {
+      await expect(harness.deleteFile('f_example')).rejects.toThrow(
+        /does not support file deletion/,
+      );
+    } finally {
+      await harness.close();
+    }
+  });
 });

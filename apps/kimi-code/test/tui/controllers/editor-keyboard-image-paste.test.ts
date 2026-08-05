@@ -52,7 +52,7 @@ function createPasteHarness(
     engineV2?: boolean;
     uploadFile?: (
       data: Uint8Array,
-      opts: { name: string; mimeType?: string },
+      opts: { name: string; mimeType?: string; expiresInSec?: number },
     ) => Promise<{ id: string }>;
   } = {},
 ): PasteHarness {
@@ -115,7 +115,10 @@ async function solidJpeg(width: number, height: number): Promise<Uint8Array> {
 
 /** Typed `uploadFile` stub so `mock.calls` keeps the (data, options) tuple. */
 function uploadFileMock(id: string) {
-  return vi.fn(async (_data: Uint8Array, _opts: { name: string; mimeType?: string }) => ({ id }));
+  return vi.fn(async (
+    _data: Uint8Array,
+    _opts: { name: string; mimeType?: string; expiresInSec?: number },
+  ) => ({ id }));
 }
 
 /**
@@ -331,7 +334,11 @@ describe('clipboard image paste compression', () => {
     expect(uploadFile).toHaveBeenCalledTimes(1);
     const [data, opts] = uploadFile.mock.calls[0]!;
     expect(new Uint8Array(data)).toEqual(small);
-    expect(opts).toEqual({ name: 'pasted-image.png', mimeType: 'image/png' });
+    expect(opts).toEqual({
+      name: 'pasted-image.png',
+      mimeType: 'image/png',
+      expiresInSec: 60 * 60,
+    });
     // The bytes stay on the attachment for the inline fallback / cache copy.
     expect(att.bytes).toBe(small);
   });
@@ -359,7 +366,10 @@ describe('clipboard image paste compression', () => {
     const small = await solidPng(80, 80);
     readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: small, mimeType: 'image/png' });
     const uploadFile = vi.fn(
-      async (_data: Uint8Array, _opts: { name: string; mimeType?: string }): Promise<{ id: string }> => {
+      async (
+        _data: Uint8Array,
+        _opts: { name: string; mimeType?: string; expiresInSec?: number },
+      ): Promise<{ id: string }> => {
         throw new Error('daemon down');
       },
     );

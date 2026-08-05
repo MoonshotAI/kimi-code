@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -342,6 +342,26 @@ describe('extractMediaAttachments', () => {
       ]);
     } finally {
       cleanup();
+    }
+  });
+
+  it('rolls back cache copies when a later attachment cannot be materialized', () => {
+    const { cleanup } = setupTempCache();
+    const srcDir = makeTempDir();
+    try {
+      const firstPath = join(srcDir, 'first.mp4');
+      writeFileSync(firstPath, 'video-bytes');
+      const store = new ImageAttachmentStore();
+      const first = store.addVideo('video/mp4', firstPath);
+      const missing = store.addVideo('video/mp4', join(srcDir, 'missing.mp4'));
+
+      expect(() =>
+        extractMediaAttachments(`${first.placeholder} ${missing.placeholder}`, store),
+      ).toThrow();
+      expect(readdirSync(getCacheDir())).toEqual([]);
+    } finally {
+      cleanup();
+      rmSync(srcDir, { recursive: true, force: true });
     }
   });
 });

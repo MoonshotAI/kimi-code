@@ -149,6 +149,7 @@ export function toStorageIoError(error: unknown, ctx: { path: string; op: string
 
 export interface StorageWriteOptions {
   readonly atomic?: boolean;
+  readonly signal?: AbortSignal;
 }
 
 export interface StorageAppendOptions {
@@ -175,6 +176,8 @@ export interface IFileSystemStorageService {
   append(scope: string, key: string, data: Uint8Array, options?: StorageAppendOptions): Promise<void>;
   list(scope: string, prefix?: string): Promise<readonly string[]>;
   delete(scope: string, key: string): Promise<void>;
+  size(scope: string, key: string): Promise<number | undefined>;
+  pathFor(scope: string, key: string): string | undefined;
   watch?(scope: string, key: string): Event<void>;
   flush(): Promise<void>;
   close(): Promise<void>;

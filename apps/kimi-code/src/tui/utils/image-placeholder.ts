@@ -36,7 +36,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -69,6 +69,8 @@ export interface ExtractionResult {
   imageAttachmentIds: number[];
   /** Video attachment ids matched, in the order they appeared. */
   videoAttachmentIds: number[];
+  /** Cache copies owned by this submission until prompt intake returns. */
+  stagingPaths: string[];
 }
 
 export function extractMediaAttachments(
@@ -78,74 +80,84 @@ export function extractMediaAttachments(
   const parts: PromptPart[] = [];
   const imageAttachmentIds: number[] = [];
   const videoAttachmentIds: number[] = [];
+  const stagingPaths: string[] = [];
   let cursor = 0;
   let hasMedia = false;
 
-  PLACEHOLDER_REGEX.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = PLACEHOLDER_REGEX.exec(text)) !== null) {
-    const [literal, kind, idStr] = match;
-    if (kind !== 'image' && kind !== 'video') continue;
-    if (idStr === undefined) continue;
-    const id = Number.parseInt(idStr, 10);
-    const attachment = store.get(id);
-    if (attachment === undefined) continue; // stale / user-typed — leave as text
-    if (attachment.kind !== kind) continue;
-    const before = text.slice(cursor, match.index);
-    pushText(parts, before);
-    if (attachment.kind === 'video') {
-      // Copy the paste into the shared cache and reference it by a `file://`
-      // url; the engine resolves (uploads or degrades) it inside the turn.
-      const cachePath = materializeVideoToCache(attachment);
-      parts.push(videoPartForCachePath(cachePath));
-      videoAttachmentIds.push(id);
-    } else {
-      // Paste-time compression is announced next to the image so the model
-      // knows it received a downsampled copy and where the original lives.
-      if (attachment.original !== undefined) {
-        pushText(parts, captionForCompressedImage(attachment));
-      }
-      if (attachment.fileId !== undefined) {
-        // The bytes were uploaded to the daemon file store at paste time
-        // (v2): reference them by a `kimi-file://` url the engine resolves
-        // at request time, preceded by the `<image path>` tag text so the
-        // model always has a path it can re-open. The tag's path is a cache
-        // copy of the same (already-compressed) bytes.
-        try {
-          const cachePath = materializeImageToCache(attachment);
-          parts.push({ type: 'text', text: buildMediaPathTag('image', cachePath) });
-          parts.push({
-            type: 'image_url',
-            imageUrl: { url: buildDaemonFileUrl(attachment.fileId, cachePath) },
-          });
-        } catch {
-          // The cache copy failed (unwritable cache dir…): fall back to the
-          // inline base64 form for this attachment — the same shape a
-          // paste-time upload failure produces — so the message still goes
-          // out instead of being cancelled.
+  try {
+    PLACEHOLDER_REGEX.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = PLACEHOLDER_REGEX.exec(text)) !== null) {
+      const [literal, kind, idStr] = match;
+      if (kind !== 'image' && kind !== 'video') continue;
+      if (idStr === undefined) continue;
+      const id = Number.parseInt(idStr, 10);
+      const attachment = store.get(id);
+      if (attachment === undefined) continue; // stale / user-typed — leave as text
+      if (attachment.kind !== kind) continue;
+      const before = text.slice(cursor, match.index);
+      pushText(parts, before);
+      if (attachment.kind === 'video') {
+        // Copy the paste into the shared cache and reference it by a `file://`
+        // url; the engine resolves (uploads or degrades) it inside the turn.
+        const cachePath = materializeVideoToCache(attachment);
+        stagingPaths.push(cachePath);
+        parts.push(videoPartForCachePath(cachePath));
+        videoAttachmentIds.push(id);
+      } else {
+        // Paste-time compression is announced next to the image so the model
+        // knows it received a downsampled copy and where the original lives.
+        if (attachment.original !== undefined) {
+          pushText(parts, captionForCompressedImage(attachment));
+        }
+        if (attachment.fileId !== undefined) {
+          // The bytes were uploaded to the daemon file store at paste time
+          // (v2): reference them by a `kimi-file://` url the engine resolves
+          // at request time, preceded by the `<image path>` tag text so the
+          // model always has a path it can re-open. The tag's path is a cache
+          // copy of the same (already-compressed) bytes.
+          try {
+            const cachePath = materializeImageToCache(attachment);
+            stagingPaths.push(cachePath);
+            parts.push({ type: 'text', text: buildMediaPathTag('image', cachePath) });
+            parts.push({
+              type: 'image_url',
+              imageUrl: { url: buildDaemonFileUrl(attachment.fileId, cachePath) },
+            });
+          } catch {
+            // The cache copy failed (unwritable cache dir…): fall back to the
+            // inline base64 form for this attachment — the same shape a
+            // paste-time upload failure produces — so the message still goes
+            // out instead of being cancelled.
+            parts.push(imagePartForAttachment(attachment));
+          }
+        } else {
           parts.push(imagePartForAttachment(attachment));
         }
-      } else {
-        parts.push(imagePartForAttachment(attachment));
+        imageAttachmentIds.push(id);
       }
-      imageAttachmentIds.push(id);
+      hasMedia = true;
+      cursor = match.index + literal.length;
     }
-    hasMedia = true;
-    cursor = match.index + literal.length;
-  }
-  const tail = text.slice(cursor);
-  pushText(parts, tail);
+    const tail = text.slice(cursor);
+    pushText(parts, tail);
 
-  return {
-    // Text-only submissions drop the synthesised parts array — the
-    // caller's contract is "parts is meaningful iff hasMedia", and
-    // emitting a stray TextPart confuses consumers that branch on
-    // `parts.length > 0`.
-    parts: hasMedia ? parts : [],
-    hasMedia,
-    imageAttachmentIds,
-    videoAttachmentIds,
-  };
+    store.retainFileIds(imageAttachmentIds);
+    return {
+      // Text-only submissions drop the synthesised parts array — the
+      // caller's contract is "parts is meaningful iff hasMedia", and
+      // emitting a stray TextPart confuses consumers that branch on
+      // `parts.length > 0`.
+      parts: hasMedia ? parts : [],
+      hasMedia,
+      imageAttachmentIds,
+      videoAttachmentIds,
+      stagingPaths,
+    };
+  } catch (error) {
+    cleanupStagingPaths(stagingPaths);
+    throw error;
+  }
 }
 
 export interface MediaTagRewriteResult {
@@ -154,6 +166,7 @@ export interface MediaTagRewriteResult {
   hasMedia: boolean;
   imageAttachmentIds: number[];
   videoAttachmentIds: number[];
+  stagingPaths: string[];
 }
 
 /**
@@ -185,39 +198,65 @@ export function rewriteMediaPlaceholders(
 ): MediaTagRewriteResult {
   const imageAttachmentIds: number[] = [];
   const videoAttachmentIds: number[] = [];
+  const stagingPaths: string[] = [];
   let cursor = 0;
   let out = '';
 
-  PLACEHOLDER_REGEX.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = PLACEHOLDER_REGEX.exec(text)) !== null) {
-    const [literal, kind, idStr] = match;
-    if (kind !== 'image' && kind !== 'video') continue;
-    if (idStr === undefined) continue;
-    const id = Number.parseInt(idStr, 10);
-    const attachment = store.get(id);
-    if (attachment === undefined) continue; // stale / user-typed — leave as text
-    if (attachment.kind !== kind) continue;
-    out += text.slice(cursor, match.index);
-    if (attachment.kind === 'video') {
-      const path = materializeVideoToCache(attachment, style === 'plain');
-      out += style === 'plain' ? formatMediaReference('video', path) : formatMediaTag('video', path);
-      videoAttachmentIds.push(id);
-    } else {
-      const path = materializeImageToCache(attachment);
-      out += style === 'plain' ? formatMediaReference('image', path) : formatMediaTag('image', path);
-      imageAttachmentIds.push(id);
+  try {
+    PLACEHOLDER_REGEX.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = PLACEHOLDER_REGEX.exec(text)) !== null) {
+      const [literal, kind, idStr] = match;
+      if (kind !== 'image' && kind !== 'video') continue;
+      if (idStr === undefined) continue;
+      const id = Number.parseInt(idStr, 10);
+      const attachment = store.get(id);
+      if (attachment === undefined) continue; // stale / user-typed — leave as text
+      if (attachment.kind !== kind) continue;
+      out += text.slice(cursor, match.index);
+      if (attachment.kind === 'video') {
+        const path = materializeVideoToCache(attachment, style === 'plain');
+        stagingPaths.push(path);
+        out +=
+          style === 'plain'
+            ? formatMediaReference('video', path)
+            : formatMediaTag('video', path);
+        videoAttachmentIds.push(id);
+      } else {
+        const path = materializeImageToCache(attachment);
+        stagingPaths.push(path);
+        out +=
+          style === 'plain'
+            ? formatMediaReference('image', path)
+            : formatMediaTag('image', path);
+        imageAttachmentIds.push(id);
+      }
+      cursor = match.index + literal.length;
     }
-    cursor = match.index + literal.length;
-  }
 
-  const hasMedia = imageAttachmentIds.length + videoAttachmentIds.length > 0;
-  return {
-    text: hasMedia ? out + text.slice(cursor) : text,
-    hasMedia,
-    imageAttachmentIds,
-    videoAttachmentIds,
-  };
+    const hasMedia = imageAttachmentIds.length + videoAttachmentIds.length > 0;
+    store.retainFileIds(imageAttachmentIds);
+    return {
+      text: hasMedia ? out + text.slice(cursor) : text,
+      hasMedia,
+      imageAttachmentIds,
+      videoAttachmentIds,
+      stagingPaths,
+    };
+  } catch (error) {
+    cleanupStagingPaths(stagingPaths);
+    throw error;
+  }
+}
+
+function cleanupStagingPaths(paths: readonly string[]): void {
+  for (const path of paths) {
+    try {
+      unlinkSync(path);
+    } catch {
+      // Best effort: a failed copy may not have created the target.
+    }
+  }
 }
 
 function pushText(parts: PromptPart[], segment: string): void {
