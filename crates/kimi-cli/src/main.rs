@@ -943,6 +943,9 @@ async fn main() -> anyhow::Result<()> {
             )
             .await;
             if let Some(renderer) = renderer {
+                // Drain a short window so a fast-failing prompt still lets
+                // events already on the pipe be rendered before we abort.
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 renderer.abort();
             }
             // Persist the session (context + goal) so a later `kimi resume`
