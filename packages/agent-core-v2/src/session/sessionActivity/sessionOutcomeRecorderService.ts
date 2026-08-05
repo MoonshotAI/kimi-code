@@ -3,12 +3,12 @@
  *
  * Persists the main agent's terminal turn outcomes through `ISessionMetadata`
  * (observed via `agentLifecycle` and the main agent's `eventBus`), so the
- * session index keeps reporting them across restarts. Programmatic aborts —
- * including scope-teardown cancels — are deliberately not persisted. Bound at
- * Session scope.
+ * session index keeps reporting them across restarts. A new turn start clears
+ * the stored outcome, and programmatic aborts — including scope-teardown
+ * cancels — are deliberately never persisted. Bound at Session scope.
  */
 
-import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
+import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IEventBus } from '#/app/event/eventBus';
 import {
@@ -24,13 +24,20 @@ export class SessionOutcomeRecorder extends Disposable implements ISessionOutcom
   declare readonly _serviceBrand: undefined;
 
   private lastPersisted: SessionTurnOutcome | undefined;
-  private mainSubscription: IDisposable | undefined;
+  private adopted = false;
+  private mainSubscription: DisposableStore | undefined;
 
   constructor(
     @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
   ) {
     super();
+    void this.metadata
+      .read()
+      .then((meta) => {
+        if (!this.adopted) this.lastPersisted = meta.lastTurnOutcome;
+      })
+      .catch(() => {});
     this.attachMain();
     this._register(this.agents.onDidCreate((handle) => {
       if (handle.id === MAIN_AGENT_ID) this.attachMain();
@@ -47,30 +54,41 @@ export class SessionOutcomeRecorder extends Disposable implements ISessionOutcom
     if (this.mainSubscription !== undefined) return;
     const bus = this.agents.get(MAIN_AGENT_ID)?.accessor.get(IEventBus) as IEventBus | undefined;
     if (bus === undefined) return;
-    this.mainSubscription = bus.subscribe('turn.ended', (event) => {
-      if (event.type !== 'turn.ended') return;
-      const reason = (event as { reason?: unknown }).reason;
-      const interruptReason = (event as { interruptReason?: unknown }).interruptReason;
-      if (reason === 'completed') {
-        this.persist('completed');
-        return;
-      }
-      if (reason === 'failed' || reason === 'blocked') {
-        this.persist('failed');
-        return;
-      }
-      if (reason === 'cancelled' && interruptReason === 'user_cancelled') {
-        this.persist('cancelled');
-      }
-    });
+    const subscription = new DisposableStore();
+    this.mainSubscription = subscription;
+    subscription.add(
+      bus.subscribe('turn.ended', (event) => {
+        if (event.type !== 'turn.ended') return;
+        const reason = (event as { reason?: unknown }).reason;
+        const interruptReason = (event as { interruptReason?: unknown }).interruptReason;
+        if (reason === 'completed') {
+          this.write('completed');
+          return;
+        }
+        if (reason === 'failed' || reason === 'blocked') {
+          this.write('failed');
+          return;
+        }
+        if (reason === 'cancelled' && interruptReason === 'user_cancelled') {
+          this.write('cancelled');
+        }
+      }),
+    );
+    subscription.add(
+      bus.subscribe('turn.started', () => {
+        if (this.lastPersisted !== undefined) this.write(undefined);
+      }),
+    );
   }
 
-  private persist(outcome: SessionTurnOutcome): void {
+  private write(outcome: SessionTurnOutcome | undefined): void {
     if (outcome === this.lastPersisted) return;
+    this.adopted = true;
+    const previous = this.lastPersisted;
     this.lastPersisted = outcome;
-    void this.metadata
-      .update({ lastTurnOutcome: outcome })
-      .catch(() => {});
+    void this.metadata.update({ lastTurnOutcome: outcome }).catch(() => {
+      if (this.lastPersisted === outcome) this.lastPersisted = previous;
+    });
   }
 }
 

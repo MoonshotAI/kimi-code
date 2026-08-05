@@ -10,6 +10,7 @@
 import {
   bootstrap,
   drainQueryStoreDisposals,
+  drainSessionMetadataWrites,
   drainSessionIndexMirror,
   IConfigService,
   IEventService,
@@ -397,6 +398,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await drainSessionIndexMirror();
       await drainGlobalSearchDisposals();
       await drainQueryStoreDisposals();
+      await drainSessionMetadataWrites();
     } finally {
       await registration.release();
     }

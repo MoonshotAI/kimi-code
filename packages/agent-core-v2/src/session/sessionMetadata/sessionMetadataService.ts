@@ -48,6 +48,14 @@ import {
 
 const META_KEY = 'state.json';
 
+const pendingWrites = new Set<Promise<void>>();
+
+/** Await every queued metadata write — hosts call this before the sessions
+ *  root may be removed, mirroring the query-store/mirror drain pattern. */
+export async function drainSessionMetadataWrites(): Promise<void> {
+  await Promise.all([...pendingWrites]);
+}
+
 export const sessionMetadataDataKey = defineState<SessionMeta | undefined>(
   'sessionMetadata.data',
   () => undefined,
@@ -97,8 +105,13 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
 
   private async applyUpdate(patch: SessionMetaPatch): Promise<void> {
     await this.ready;
+    // The update queue outlives its callers: a patch queued before scope
+    // disposal must not write (or recreate files) once the session is being
+    // torn down.
+    if (this.isDisposed) return;
     this.data = { ...this.data, ...patch, updatedAt: Date.now() };
     await this.store.set(this.scope, META_KEY, this.data);
+    if (this.isDisposed) return;
     this.mirrorToReadModel();
     this._onDidChangeMetadata.fire({
       changed: Object.keys(patch) as (keyof SessionMeta)[],
@@ -125,7 +138,10 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
 
   private enqueueUpdate(work: () => Promise<void>): Promise<void> {
     const run = this.updateQueue.then(work, work);
-    this.updateQueue = run.catch(() => {});
+    const tracked = run.catch(() => {});
+    this.updateQueue = tracked;
+    pendingWrites.add(tracked);
+    void tracked.finally(() => pendingWrites.delete(tracked));
     return run;
   }
 

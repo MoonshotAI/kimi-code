@@ -28,34 +28,48 @@ class FakeBus {
   }
 }
 
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
 describe('SessionOutcomeRecorder', () => {
-  function harness(opts?: { withMain?: boolean }) {
-    const withMain = opts?.withMain ?? true;
+  function harness(opts?: { persisted?: SessionMeta['lastTurnOutcome'] }) {
     const bus = new FakeBus();
     const mainHandle = {
       id: MAIN_AGENT_ID,
       accessor: { get: (token: unknown) => (token === IEventBus ? bus : undefined) },
     } as unknown as IAgentScopeHandle;
     const onDidCreate = new Emitter<IAgentScopeHandle>();
-    let mainPresent = withMain;
+    let mainPresent = true;
     const agents = {
       get: (id: string) => (id === MAIN_AGENT_ID && mainPresent ? mainHandle : undefined),
       onDidCreate: onDidCreate.event,
     } as unknown as IAgentLifecycleService;
-    const writes: SessionMeta['lastTurnOutcome'][] = [];
+    const writes: (SessionMeta['lastTurnOutcome'])[] = [];
+    let failNextWrite = false;
     const metadata = {
+      read: async () => ({ lastTurnOutcome: opts?.persisted }) as SessionMeta,
       update: async (patch: { lastTurnOutcome?: SessionMeta['lastTurnOutcome'] }) => {
+        if (failNextWrite) {
+          failNextWrite = false;
+          throw new Error('write failed');
+        }
         writes.push(patch.lastTurnOutcome);
       },
     } as unknown as ISessionMetadata;
     const recorder = new SessionOutcomeRecorder(agents, metadata);
     return {
       writes,
+      failNext: () => {
+        failNextWrite = true;
+      },
+      started: () => bus.publish({ type: 'turn.started', turnId: 1 } as unknown as DomainEvent),
       ended: (reason: string, interruptReason?: string) =>
         bus.publish({ type: 'turn.ended', reason, interruptReason } as unknown as DomainEvent),
       arriveMain: () => {
         mainPresent = true;
         onDidCreate.fire(mainHandle);
+      },
+      hideMain: () => {
+        mainPresent = false;
       },
       dispose: () => {
         recorder.dispose();
@@ -63,37 +77,44 @@ describe('SessionOutcomeRecorder', () => {
     };
   }
 
-  it('persists completed and failed outcomes from the main agent', () => {
+  it('persists completed/failed/user-cancelled, never programmatic aborts', async () => {
     const { writes, ended, dispose } = harness();
+    await tick();
     ended('completed');
     ended('failed');
-    ended('blocked'); // folds to 'failed', which the dedup then collapses
-    expect(writes).toEqual(['completed', 'failed']);
-    dispose();
-  });
-
-  it('persists a user stop but never a programmatic abort', () => {
-    const { writes, ended, dispose } = harness();
+    ended('blocked');
     ended('cancelled', 'user_cancelled');
     ended('cancelled', 'aborted');
-    ended('cancelled', undefined);
-    expect(writes).toEqual(['cancelled']);
+    expect(writes).toEqual(['completed', 'failed', 'cancelled']);
     dispose();
   });
 
-  it('dedupes repeated outcomes within the process', () => {
-    const { writes, ended, dispose } = harness();
-    ended('failed');
-    ended('failed');
-    expect(writes).toEqual(['failed']);
-    dispose();
-  });
-
-  it('subscribes when the main agent appears after construction', () => {
-    const { writes, ended, arriveMain, dispose } = harness({ withMain: false });
+  it('dedupes against the durable value adopted at startup', async () => {
+    const { writes, ended, dispose } = harness({ persisted: 'failed' });
+    await tick();
     ended('failed');
     expect(writes).toEqual([]);
-    arriveMain();
+    ended('completed');
+    expect(writes).toEqual(['completed']);
+    dispose();
+  });
+
+  it('clears the stored outcome when a new turn starts', async () => {
+    const { writes, started, dispose } = harness({ persisted: 'failed' });
+    await tick();
+    started();
+    expect(writes).toEqual([undefined]);
+    started();
+    expect(writes).toEqual([undefined]);
+    dispose();
+  });
+
+  it('retries the write when a persist fails', async () => {
+    const { writes, failNext, ended, dispose } = harness();
+    await tick();
+    failNext();
+    ended('failed');
+    await tick();
     ended('failed');
     expect(writes).toEqual(['failed']);
     dispose();
