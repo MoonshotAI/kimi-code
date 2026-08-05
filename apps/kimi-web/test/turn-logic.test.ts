@@ -102,6 +102,28 @@ describe('messagesToTurns', () => {
     expect(turns.map((turn) => turn.text)).toEqual(['one', 'two']);
   });
 
+  it('preserves whitespace when merging streamed text around empty thinking parts', () => {
+    const turns = messagesToTurns(
+      [
+        message('a1', 'assistant', [
+          { type: 'text', text: 'one' },
+          { type: 'thinking', thinking: '' },
+          { type: 'text', text: ' ' },
+          { type: 'thinking', thinking: '' },
+          { type: 'text', text: 'two' },
+          { type: 'thinking', thinking: '' },
+          { type: 'text', text: ' ' },
+          { type: 'text', text: 'three' },
+        ]),
+      ],
+      [],
+      undefined,
+      false,
+    );
+
+    expect(turns[0]?.blocks).toEqual([{ kind: 'text', text: 'one two three' }]);
+  });
+
   it('renders compaction summaries as divider turns', () => {
     const turns = messagesToTurns(
       [

@@ -641,8 +641,11 @@ export function messagesToTurns(
           g.textParts.push(c.text);
           // Append to a trailing text block, else open a new one — so a tool
           // call between two text segments splits them into separate blocks.
+          // Stream chunks already contain the model's whitespace (including
+          // paragraph breaks). Inserting a newline here turns token-sized
+          // chunks into one line per word, especially for Chinese output.
           const last = g.blocks.at(-1);
-          if (last && last.kind === 'text') last.text += '\n' + c.text;
+          if (last && last.kind === 'text') last.text += c.text;
           else g.blocks.push({ kind: 'text', text: c.text });
         }
       } else if (c.type === 'thinking') {
@@ -651,7 +654,7 @@ export function messagesToTurns(
           // Ordered block too: thinking renders WHERE it happened in the turn,
           // merging consecutive segments (same rule as text blocks above).
           const last = g.blocks.at(-1);
-          if (last && last.kind === 'thinking') last.thinking += '\n' + c.thinking;
+          if (last && last.kind === 'thinking') last.thinking += c.thinking;
           else g.blocks.push({ kind: 'thinking', thinking: c.thinking });
         }
       } else if (c.type === 'toolUse') {
