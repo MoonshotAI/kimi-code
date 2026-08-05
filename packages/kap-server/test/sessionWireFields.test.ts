@@ -14,6 +14,7 @@ const coldFacts: SessionFacts = {
   busy: false,
   mainTurnActive: false,
   pendingInteraction: 'none',
+  live: false,
 };
 
 describe('toWireSession last_turn_reason', () => {
@@ -32,5 +33,20 @@ describe('toWireSession last_turn_reason', () => {
 
   it('omits the outcome when neither side has one', () => {
     expect(toWireSession(fields, '/tmp/ws', coldFacts).last_turn_reason).toBeUndefined();
+  });
+
+  it('never falls back for a live session mid-turn (no stale outcome)', () => {
+    const busyFacts: SessionFacts = { busy: true, mainTurnActive: true, pendingInteraction: 'none', live: true };
+    const wire = toWireSession({ ...fields, lastTurnReason: 'failed' }, '/tmp/ws', busyFacts);
+    expect(wire.last_turn_reason).toBeUndefined();
+  });
+
+  it('a warm session without a live outcome does not read the persisted one', () => {
+    const wire = toWireSession(
+      { ...fields, lastTurnReason: 'failed' },
+      '/tmp/ws',
+      { ...coldFacts, live: true },
+    );
+    expect(wire.last_turn_reason).toBeUndefined();
   });
 });
