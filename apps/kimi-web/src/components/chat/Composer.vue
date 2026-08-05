@@ -1106,6 +1106,7 @@ function selectModel(modelId: string): void {
             v-if="status"
             class="model-pill"
             :class="{ open: dropdownOpen }"
+            :title="status.model"
             role="button"
             tabindex="0"
             @click.stop="toggleDropdown"
@@ -1146,6 +1147,7 @@ function selectModel(modelId: string): void {
             :key="m.id"
             class="md-row"
             :class="{ 'is-current': m.id === status.modelId }"
+            :title="`${m.displayName ?? m.model} (${m.provider})`"
             role="menuitem"
             @click="selectModel(m.id)"
           >
@@ -1164,6 +1166,7 @@ function selectModel(modelId: string): void {
             :key="m.id"
             class="md-row"
             :class="{ 'is-current': m.id === status.modelId }"
+            :title="m.displayName ?? m.model"
             role="menuitem"
             @click="selectModel(m.id)"
           >
@@ -1661,6 +1664,10 @@ function selectModel(modelId: string): void {
   right: 10px;
   z-index: var(--z-dropdown);
   min-width: 200px;
+  max-width: min(380px, calc(100vw - 32px));
+  max-height: min(440px, calc(100vh - 120px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--color-surface-raised);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
@@ -1686,6 +1693,7 @@ function selectModel(modelId: string): void {
   align-items: center;
   gap: 7px;
   width: 100%;
+  min-width: 0;
   background: none;
   border: none;
   cursor: pointer;
@@ -1729,11 +1737,19 @@ function selectModel(modelId: string): void {
 
 .md-name {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .md-provider {
   color: var(--muted);
   font-size: var(--ui-font-size-xs);
-  flex: none;
+  flex: 0 1 auto;
+  max-width: 35%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .md-star {
   color: var(--star);
