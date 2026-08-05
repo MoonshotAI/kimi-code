@@ -164,6 +164,31 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     ).toEqual(['hello', 'world']);
   });
 
+  it('restores chained submits instead of sending when the dialog is dismissed', async () => {
+    getMock.mockResolvedValue(CONFIG);
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+
+    expect(controller.maybeInterceptOnSubmit('hello')).toBe(true);
+    expect(controller.maybeInterceptOnSubmit('world')).toBe(true);
+    await vi.waitFor(() => {
+      expect(host.mountEditorReplacement).toHaveBeenCalled();
+    });
+    vi.restoreAllMocks();
+
+    const dialog = (host.mountEditorReplacement as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      handleInput: (data: string) => void;
+    };
+    dialog.handleInput('\u001B'); // dismiss the first dialog
+    await flush();
+
+    // Nothing was sent; both inputs are back in the editor, newline-joined.
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+    expect(host.restoreInputText).toHaveBeenLastCalledWith('hello\nworld');
+  });
+
   it('hands the stashed input back when the session switched during the fetch', async () => {
     const { host } = makeHost();
     const controller = new CacheHintController(host);

@@ -53,6 +53,11 @@ export class CacheHintController {
   private interceptionTail: Promise<void> = Promise.resolve();
   /** Set while a stashed message is being released back into the send path. */
   private releasingStashed = false;
+  /** Whether the idle dialog's triggering message was restored, not sent. */
+  private lastDialogRestored = false;
+  /** Inputs restored this cycle — chained restores append (newline-joined)
+   *  instead of overwriting the editor. */
+  private restoredTexts: string[] = [];
   /** Resume scenario fires at most once per session per TUI instance. */
   private readonly resumedSessions = new Set<string>();
 
@@ -67,6 +72,8 @@ export class CacheHintController {
     this.recordActivity();
     this.idlePrompted = false;
     this.triggerFetchAttempted = false;
+    this.lastDialogRestored = false;
+    this.restoredTexts = [];
   }
 
   /** Session switch / create: the new session has no in-process baseline. */
@@ -74,6 +81,8 @@ export class CacheHintController {
     this.lastActivityAt = undefined;
     this.idlePrompted = false;
     this.triggerFetchAttempted = false;
+    this.lastDialogRestored = false;
+    this.restoredTexts = [];
   }
 
   /** Background warm-up on session creation; never blocks, never throws. */
@@ -172,9 +181,16 @@ export class CacheHintController {
   /** Cold-cache path: fetch the config, then show the dialog or release. */
   private async interceptAfterFetch(text: string, sessionId: string): Promise<void> {
     const { host } = this;
-    // A dialog already shown for this idle cycle releases straight to send.
+    // A dialog already ran for this idle cycle: chained submits follow the
+    // fate of the message that opened it. If that message was restored
+    // (dismissed or its action failed), restore these too — sending them now
+    // would reorder the conversation.
     if (this.idlePrompted) {
-      await this.releaseStashed(text);
+      if (this.lastDialogRestored) {
+        this.restoreStashedInput(text);
+      } else {
+        await this.releaseStashed(text);
+      }
       return;
     }
     const config = await this.resolveConfig();
@@ -182,7 +198,7 @@ export class CacheHintController {
     // meanwhile, never send the stashed text into the wrong session — hand it
     // back to the editor instead.
     if (host.session?.id !== sessionId) {
-      host.restoreInputText(text);
+      this.restoreStashedInput(text);
       return;
     }
     if (config !== undefined) {
@@ -215,6 +231,14 @@ export class CacheHintController {
     } finally {
       this.releasingStashed = false;
     }
+  }
+
+  /** Restore a stashed input to the editor, appending to anything already
+   *  restored this cycle so earlier text is not overwritten. */
+  private restoreStashedInput(text: string | undefined): void {
+    if (text === undefined) return;
+    this.restoredTexts.push(text);
+    this.host.restoreInputText(this.restoredTexts.join('\n'));
   }
 
   private upstreamModelId(): string | undefined {
@@ -279,7 +303,8 @@ export class CacheHintController {
   ): Promise<void> {
     const { host } = this;
     const restoreInput = () => {
-      if (stashedInput !== undefined) host.restoreInputText(stashedInput);
+      this.lastDialogRestored = true;
+      this.restoreStashedInput(stashedInput);
     };
     switch (action) {
       case 'dismiss':
@@ -329,6 +354,7 @@ export class CacheHintController {
       case 'continue':
         break;
     }
+    this.lastDialogRestored = false;
     if (stashedInput !== undefined) await host.sendNormalUserInput(stashedInput);
   }
 
