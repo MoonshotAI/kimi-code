@@ -344,6 +344,24 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 1. ✅ **入口切换 wrapper（已落代码）**：apps/kimi-code `bin: {kimi: bin/kimi.mjs}`——wrapper 优先平台 Rust 二进制（候选命名对齐 rust-bin pack.mjs：`kimi-<platform>-<arch>[.exe]` + 通用名，Windows 需 .exe；`KIMI_RUST_BIN` 显式覆盖），找不到回退 TS `dist/main.mjs`；spawn + SIGINT/SIGTERM/SIGHUP 转发 + 退出码/信号镜像（参考 codex-cli bin 模式）；`KIMI_ENTRY_DEBUG=1` 打印命中路径。迁移期双轨并存，Rust 全绿后删除 TS 入口（`smoke:entry` 冒烟覆盖两条路径）
 2. ✅ **klient 退役（2026-08-05）**：`packages/klient` → `retired/klient`（99 文件 rename + Dockerfile 删），flake.nix workspacePaths/workspaceNames 移除；`.oxlintrc` 增 `retired/` + `scripts/` ignorePatterns（退役代码冻结 + 脚本有专项 CI 检查）；locale 脚本适配跳过 retired
 3. 🔶 **包退役评估（2026-08-05，阻塞确认）**：kap-server/node-sdk/acp-adapter/oauth/protocol/kaos 移 `retired/` —— **暂不可执行**。实测消费图：`apps/kimi-code` src 仍真实 import `oauth`（auth/provider/telemetry/tui 15+ 文件）、`kaos`（rust-engine.ts）、`node-sdk`（harness/rpc/session）；`apps/vscode` 依赖 `node-sdk`。这些 TS 宿主按阶段 5 保持 TS 至 Rust 前端就绪，故包退役的**前置条件未满足**。退役顺序应为：先完成 kimi-sdk（Rust）对 node-sdk auth/harness/oauth 面的替代 → 再切 apps 消费 → 最后移 retired/。`kimi-cli` 36 集成测试全绿（`server_mode_verbose_emits_events` 预存失败已修复，见 commit 7cf9ee6cd）
+>
+> **✅ 2026-08-05 退役消费图全量复核（commit 5edb85fdc 后续）**：逐包源码 import + 包级依赖双维交叉验证——**全部候选包均不可退役**（闭环依赖：apps/kimi-code 本身是 TS 分发，依赖这些包，而这些包服务 apps/kimi-code）：
+> | 包 | 源码 refs | 依赖方 | 结论 |
+> |---|---|---|---|
+> | node-sdk | 221 | kimi-code/vscode/acp-adapter | 🔴 活跃 |
+> | kosong | 21 | vis-server/acp-adapter/kimi-agent/node-sdk/oauth | 🔴 活跃 |
+> | oauth | 30 | kimi-code/node-sdk | 🔴 活跃 |
+> | kaos | 17 | kimi-code/acp-adapter/migration-legacy/node-sdk | 🔴 活跃 |
+> | transcript | 11 | kimi-inspect/kap-server | 🔴 活跃 |
+> | migration-legacy | 9 | kimi-code/vscode | 🔴 活跃 |
+> | protocol | 8 | vis-server/node-sdk | 🔴 活跃 |
+> | kap-server | 7 | kimi-code(web 子命令)/kimi-inspect | 🔴 活跃 |
+> | i18n | 7 | 多宿主 | 🔴 活跃 |
+> | i18n-shared | 0 refs | i18n 内部依赖 | 🔴 保留（i18n 用） |
+> | telemetry | 6（kimi-telemetry） | kimi-code | 🔴 活跃 |
+> | acp-adapter | 2 | kimi-code | 🔴 活跃 |
+> | minidb | 0 | 无 | ✅ 已在 retired/ |
+> **结论**：退役的真正前置是 **apps/kimi-code 切 Rust 入口**，但它是 TS 分发且依赖这些包——鸡生蛋闭环。当前唯一可执行的是**增量替代**（kimi-sdk 已对齐 harness/session 面，native-session 已接入 Rust plugin/cancelCompaction/archive），逐步减少对 node-sdk 宿主面的依赖。
 4. npm 分发薄壳（参考 codex-cli：bin → 包装 Rust 二进制）
 5. **验证**：CLI/TUI/web/API 全链路 Rust 端到端；旧 TS 测试删除或转 Rust
 
