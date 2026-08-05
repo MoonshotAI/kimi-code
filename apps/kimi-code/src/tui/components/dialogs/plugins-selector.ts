@@ -321,7 +321,7 @@ function renderUrlInputBox(
 }
 
 // ===========================================================================
-// Unified /plugins panel: Installed / Official / Third-party / Custom tabs.
+// Unified /plugins panel: Installed / Official / Curated / Custom tabs.
 // ===========================================================================
 
 export type PluginsPanelTabId = 'installed' | 'official' | 'third-party' | 'custom';
@@ -351,7 +351,7 @@ export interface PluginsPanelOptions {
   readonly pluginHint?: { readonly id: string; readonly text: string };
   readonly onSelect: (selection: PluginsPanelSelection) => void;
   readonly onCancel: () => void;
-  /** Called the first time the Official or Third-party tab needs its catalog.
+  /** Called the first time the Official or Curated tab needs its catalog.
    * The host fetches the marketplace and calls setMarketplace / setMarketplaceError. */
   readonly onRequestMarketplace?: () => void;
 }
@@ -365,7 +365,7 @@ type MarketState =
 const PLUGINS_PANEL_TABS: readonly { id: PluginsPanelTabId; label: string }[] = [
   { id: 'installed', label: 'Installed' },
   { id: 'official', label: 'Official' },
-  { id: 'third-party', label: 'Third-party' },
+  { id: 'third-party', label: 'Curated' },
   { id: 'custom', label: 'Custom' },
 ];
 
@@ -756,6 +756,11 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   private renderThirdParty(lines: string[], width: number): void {
+    if (this.opts.catalogIsDefault !== false) {
+      const colors = currentTheme.palette;
+      lines.push(mutedHintLine(' Third-party plugins from our partners.', colors));
+      lines.push('');
+    }
     this.renderMarketplaceTab(lines, width, this.thirdPartyEntries);
   }
 

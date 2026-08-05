@@ -288,7 +288,7 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain('Plugins');
     expect(out).toContain('Installed');
     expect(out).toContain('Official');
-    expect(out).toContain('Third-party');
+    expect(out).toContain('Curated');
     expect(out).toContain('Custom');
     expect(out).toContain('? Superpowers  enabled');
     expect(out).toContain('Space toggle');
@@ -551,9 +551,9 @@ describe('plugins selector dialogs', () => {
     });
   });
 
-  it('installs a Third-party entry whose id matches the pinned WebBridge', () => {
+  it('installs a Curated entry whose id matches the pinned WebBridge', () => {
     // A curated/custom marketplace entry can legitimately reuse the
-    // kimi-webbridge id; on the Third-party tab it must install normally, not
+    // kimi-webbridge id; on the Curated tab it must install normally, not
     // open the WebBridge page (that shortcut is reserved for the pinned row).
     const entries = [
       {
@@ -566,6 +566,8 @@ describe('plugins selector dialogs', () => {
     const { panel, onSelect } = makePanel({ initialTab: 'third-party' });
     panel.setMarketplace(entries, '/tmp/marketplace.json');
     const out = strip(renderRaw(panel));
+    expect(out).toContain('Curated');
+    expect(out).toContain('Third-party plugins from our partners.');
     expect(out).toContain('Kimi WebBridge  install');
     panel.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({
@@ -574,7 +576,7 @@ describe('plugins selector dialogs', () => {
     });
   });
 
-  it('installs the selected Third-party entry on Enter', () => {
+  it('installs the selected Curated entry on Enter', () => {
     const { panel, onSelect } = makePanel({ installed: [superpowers], initialTab: 'third-party' });
     panel.setMarketplace(marketplaceEntries, '/tmp/marketplace.json');
     panel.handleInput('\r');
@@ -604,14 +606,15 @@ describe('plugins selector dialogs', () => {
     });
   });
 
-  it('shows untiered marketplace entries on the Third-party tab', () => {
+  it('shows untiered custom marketplace entries without the partner description', () => {
     const untiered = [
       { id: 'custom-plugin', displayName: 'Custom Plugin', source: 'https://x/c.zip' },
     ];
-    const { panel } = makePanel({ initialTab: 'third-party' });
+    const { panel } = makePanel({ initialTab: 'third-party', catalogIsDefault: false });
     panel.setMarketplace(untiered, '/tmp/marketplace.json');
     const out = strip(renderRaw(panel));
     expect(out).toContain('Custom Plugin  install');
+    expect(out).not.toContain('Third-party plugins from our partners.');
   });
 
   it('shows an update badge when the marketplace version is newer than installed', () => {
