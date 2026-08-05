@@ -74,19 +74,20 @@ function harness(
   opts: {
     sessionDir?: string;
     files?: Map<string, { name: string; bytes: Buffer; stream?: () => Readable }>;
+    fullCompaction?: IAgentFullCompactionService;
   } = {},
 ) {
   const disposables = new DisposableStore();
   onTestFinished(() => disposables.dispose());
   const context = stubContextMemory();
   const loop = stubLoopWithHooks({ pendingTurnResult: true });
-  const fullCompaction = {
+  const fullCompaction = opts.fullCompaction ?? ({
     _serviceBrand: undefined,
     compacting: null,
     begin: () => false,
     hooks: createHooks(['onWillCompact']),
     onDidFinishCompaction: Event.None,
-  } as unknown as IAgentFullCompactionService;
+  } as unknown as IAgentFullCompactionService);
   const ix = createServices(disposables, {
     strict: true, additionalServices: (reg) => {
       registerStateServices(reg);
@@ -352,7 +353,7 @@ describe('AgentPromptService daemon media intake', () => {
     expect(handle.message.content).toEqual([{ type: 'image_url', imageUrl: { url } }]);
   });
 
-  it('keeps arrival order while a slow media intake holds up the queue', async () => {
+  it('keeps arrival order without making a queued text prompt wait for a slow media intake', async () => {
     const sessionDir = await tmpSessionDir();
     let open!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -380,11 +381,235 @@ describe('AgentPromptService daemon media intake', () => {
       },
     });
     const textHandle = prompt.enqueue({ id: 'text-second', message: message('plain') });
+    const textRecord = await textHandle;
+    expect(textRecord.state).toBe('pending');
+    expect(prompt.list().pending.map((item) => item.id)).toEqual(['text-second']);
     open();
 
     await mediaHandle;
-    await textHandle;
     expect(prompt.list().active?.id).toBe('media-first');
     expect(prompt.list().pending.map((item) => item.id)).toEqual(['text-second']);
+  });
+
+  it('settles an abort that lands while the media intake is still running', async () => {
+    const sessionDir = await tmpSessionDir();
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const slowStream = () =>
+      Readable.from(
+        (async function* () {
+          await gate;
+          yield PNG_BYTES;
+        })(),
+      );
+    const files = new Map([
+      ['f_slow', { name: 'slow.png', bytes: PNG_BYTES, stream: slowStream }],
+    ]);
+    const { prompt } = harness({ sessionDir, files });
+
+    const handlePromise = prompt.enqueue({
+      id: 'media-abort',
+      message: {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_slow') } }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+    expect(prompt.abort('media-abort')).toBe(true);
+    const handle = await handlePromise;
+    expect(handle.state).toBe('cancelled');
+    await expect(handle.launched).resolves.toBeUndefined();
+    await expect(handle.completion).resolves.toMatchObject({ state: 'cancelled' });
+    open();
+    await vi.waitFor(async () => {
+      await expect(readFile(join(sessionDir, 'media', 'f_slow.png'))).resolves.toEqual(PNG_BYTES);
+    });
+    expect(prompt.list()).toEqual({ active: undefined, pending: [] });
+  });
+
+  it('normalizes a queued daemon reference before a steer consumes it', async () => {
+    const sessionDir = await tmpSessionDir();
+    const files = new Map([['f_1', { name: 'pic.png', bytes: PNG_BYTES }]]);
+    const { prompt, context, loop } = harness({ sessionDir, files });
+
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const queued = await prompt.enqueue({
+      id: 'prompt-steer-media',
+      message: {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1') } }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+    await prompt.steer([queued.id]);
+    loop.drainNextBatch(context);
+
+    const target = join(sessionDir, 'media', 'f_1.png');
+    const parts = context.get().flatMap((entry) => entry.content);
+    const images = parts.filter((part) => part.type === 'image_url');
+    expect(images).toEqual([
+      { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1', target) } },
+    ]);
+  });
+
+  it('does not write context or launch when an abort lands during the before-submit hook', async () => {
+    const { prompt, context, loop, eventBus } = harness();
+    let hookEntered!: () => void;
+    let releaseHook!: () => void;
+    const hookRunning = new Promise<void>((resolve) => { hookEntered = resolve; });
+    const hookGate = new Promise<void>((resolve) => { releaseHook = resolve; });
+    prompt.hooks.onBeforeSubmitPrompt.register('gate', async (_ctx, next) => {
+      hookEntered();
+      await hookGate;
+      await next();
+    });
+    const events: string[] = [];
+    eventBus.subscribe('prompt.completed', () => events.push('completed'));
+    eventBus.subscribe('prompt.aborted', () => events.push('aborted'));
+
+    const handlePromise = prompt.enqueue({ id: 'hooked', message: message('hi') });
+    await hookRunning;
+    expect(prompt.abort('hooked')).toBe(true);
+    releaseHook();
+
+    const handle = await handlePromise;
+    expect(handle.state).toBe('cancelled');
+    await expect(handle.completion).resolves.toMatchObject({ state: 'cancelled' });
+    expect(loop.launches).toEqual([]);
+    expect(context.get()).toEqual([]);
+    expect(events).toEqual(['aborted']);
+    expect(prompt.list()).toEqual({ active: undefined, pending: [] });
+  });
+
+  it('requeues once while compaction runs and launches when compaction finishes', async () => {
+    const sessionDir = await tmpSessionDir();
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => { open = resolve; });
+    const slowStream = () =>
+      Readable.from(
+        (async function* () {
+          await gate;
+          yield PNG_BYTES;
+        })(),
+      );
+    const files = new Map([
+      ['f_slow', { name: 'slow.png', bytes: PNG_BYTES, stream: slowStream }],
+    ]);
+    const finishListeners: Array<() => void> = [];
+    const compactionState: { current: unknown } = { current: null };
+    const compaction = {
+      _serviceBrand: undefined,
+      get compacting() { return compactionState.current; },
+      begin: () => false,
+      hooks: createHooks(['onWillCompact']),
+      onDidFinishCompaction: (listener: () => void) => {
+        finishListeners.push(listener);
+        return { dispose: () => undefined };
+      },
+    } as unknown as IAgentFullCompactionService;
+    const { prompt, loop } = harness({ sessionDir, files, fullCompaction: compaction });
+
+    const handlePromise = prompt.enqueue({
+      id: 'media-compacted',
+      message: {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_slow') } }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+    compactionState.current = { pass: 'manual' };
+    open();
+    await vi.waitFor(() => {
+      expect(prompt.list().pending.map((item) => item.id)).toEqual(['media-compacted']);
+    });
+    expect(loop.launches).toEqual([]);
+
+    compactionState.current = null;
+    for (const listener of finishListeners) listener();
+    const handle = await handlePromise;
+    expect(handle.state).toBe('running');
+    expect(prompt.list().active?.id).toBe('media-compacted');
+  });
+
+  it('frees the launch slot for the next prompt when an abort lands during a hung intake', async () => {
+    const sessionDir = await tmpSessionDir();
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => { open = resolve; });
+    const hungStream = () =>
+      Readable.from(
+        (async function* () {
+          await gate;
+          yield PNG_BYTES;
+        })(),
+      );
+    const files = new Map([
+      ['f_hung', { name: 'hung.png', bytes: PNG_BYTES, stream: hungStream }],
+    ]);
+    const { prompt } = harness({ sessionDir, files });
+
+    const mediaPromise = prompt.enqueue({
+      id: 'media-hung',
+      message: {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_hung') } }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+    expect(prompt.abort('media-hung')).toBe(true);
+    await mediaPromise;
+
+    const textHandle = await prompt.enqueue({ id: 'text-after', message: message('plain') });
+    await textHandle.launched;
+    expect(textHandle.state).toBe('running');
+    expect(prompt.list().active?.id).toBe('text-after');
+
+    open();
+    await vi.waitFor(async () => {
+      await expect(readFile(join(sessionDir, 'media', 'f_hung.png'))).resolves.toEqual(PNG_BYTES);
+    });
+  });
+
+  it('rejects a steer whose prompt was cleared while its intake was still running', async () => {
+    const sessionDir = await tmpSessionDir();
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => { open = resolve; });
+    const slowStream = () =>
+      Readable.from(
+        (async function* () {
+          await gate;
+          yield PNG_BYTES;
+        })(),
+      );
+    const files = new Map([
+      ['f_slow', { name: 'slow.png', bytes: PNG_BYTES, stream: slowStream }],
+    ]);
+    const { prompt } = harness({ sessionDir, files });
+
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const queued = await prompt.enqueue({
+      id: 'steered-away',
+      message: {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_slow') } }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+    const steerPromise = prompt.steer([queued.id]);
+    void steerPromise.catch(() => undefined);
+    prompt.clear();
+    open();
+
+    await expect(steerPromise).rejects.toThrow(/not pending/);
+    expect(queued.state).toBe('cancelled');
+    await expect(queued.completion).resolves.toMatchObject({ state: 'cancelled' });
   });
 });

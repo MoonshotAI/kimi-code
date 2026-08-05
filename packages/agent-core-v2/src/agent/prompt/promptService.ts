@@ -4,11 +4,10 @@
  * Assigns prompt and message identities, serializes user prompts through an
  * active slot and FIFO, converts selected pending prompts into active-turn
  * steers, settles lifecycle handles, and keeps system input outside the prompt
- * resource model. Every submission first passes the `media` domain's intake
- * normalization (`materializePromptDaemonRefs` — daemon file references
- * materialize into the session media store, read through `IFileService`),
- * serialized in arrival order so the async file I/O cannot reorder the FIFO.
- * The pure-data `launching` flag is registered into
+ * resource model. Daemon file references in submissions are normalized through
+ * the `media` domain's intake (`materializePromptDaemonRefs` — materialize
+ * into the session media store, read through `IFileService`). The pure-data
+ * `launching` flag is registered into
  * `agentState` (`IAgentStateService`) and read/written through it; the
  * `active` / `pending` / `steered` records stay plain fields because their
  * `Record` values carry Deferred promise handles (the container only holds
@@ -65,8 +64,10 @@ declare module '#/app/event/eventBus' {
 interface Deferred<T> { readonly promise: Promise<T>; resolve(value: T): void; reject(reason: unknown): void }
 interface Record extends PromptSnapshot {
   state: PromptState;
+  message: ContextMessage;
   readonly launchedDeferred: Deferred<Turn | undefined>;
   readonly completionDeferred: Deferred<PromptCompletion>;
+  intake: Promise<unknown>;
   handle: PromptHandle;
 }
 
@@ -76,6 +77,7 @@ export class AgentPromptService implements IAgentPromptService {
   declare readonly _serviceBrand: undefined;
   private active: (Record & { turn: Turn }) | undefined;
   private readonly pending: Record[] = [];
+  private launchingItem: Record | undefined;
   private readonly steered = new Map<string, Record[]>();
   private fullCompactionService: IAgentFullCompactionService | undefined;
   readonly hooks = { onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>() };
@@ -107,20 +109,19 @@ export class AgentPromptService implements IAgentPromptService {
     this.states.set(promptLaunchingKey, value);
   }
 
-  private mediaIntake: Promise<unknown> = Promise.resolve();
-
-  private serializeMediaIntake(content: readonly ContentPart[]): Promise<readonly ContentPart[]> {
-    const normalized = this.mediaIntake.then(() =>
-      materializePromptDaemonRefs(content, { files: this.files, mediaStore: this.mediaStore }),
-    );
-    this.mediaIntake = normalized.catch(() => undefined);
-    return normalized;
+  private mediaIntakeOf(record: Record): Promise<unknown> {
+    const intake = materializePromptDaemonRefs(record.message.content, {
+      files: this.files,
+      mediaStore: this.mediaStore,
+    }).then((content) => {
+      record.message = { ...record.message, content: [...content] };
+    });
+    return intake.catch(() => undefined);
   }
 
   async enqueue(input: PromptInput): Promise<PromptHandle> {
     const id = input.id ?? input.message.id ?? newMessageId();
-    const content = await this.serializeMediaIntake(input.message.content);
-    const message = { ...input.message, id, content };
+    const message = { ...input.message, id };
     const launchedDeferred = deferred<Turn | undefined>();
     const completionDeferred = deferred<PromptCompletion>();
     const record = {} as Record;
@@ -128,6 +129,7 @@ export class AgentPromptService implements IAgentPromptService {
       id, userMessageId: id, createdAt: new Date().toISOString(), state: 'pending', message,
       launchedDeferred, completionDeferred,
     });
+    record.intake = this.mediaIntakeOf(record);
     record.handle = {
       get id() { return record.id; }, get userMessageId() { return record.userMessageId; },
       get createdAt() { return record.createdAt; }, get state() { return record.state; },
@@ -160,6 +162,11 @@ export class AgentPromptService implements IAgentPromptService {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
     }
     const selected = this.pending.filter((item) => ids.has(item.id));
+    await Promise.all(selected.map((item) => item.intake));
+    if (this.active === undefined) throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active prompt to steer into');
+    if (this.pending.filter((item) => ids.has(item.id)).length !== ids.size) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
+    }
     for (const item of selected) this.pending.splice(this.pending.indexOf(item), 1);
     const message: ContextMessage = {
       role: 'user', content: selected.flatMap((item) => item.message.content), toolCalls: [], origin: USER_PROMPT_ORIGIN,
@@ -178,6 +185,13 @@ export class AgentPromptService implements IAgentPromptService {
 
   abort(promptId: string, reason: Error = userCancellationReason()): boolean {
     if (this.active?.id === promptId) { this.loop.cancel(this.active.turn.id, reason); return true; }
+    if (this.launchingItem?.id === promptId) {
+      const item = this.launchingItem;
+      item.state = 'cancelled'; item.launchedDeferred.resolve(undefined);
+      item.completionDeferred.resolve({ promptId, result: undefined, state: 'cancelled' });
+      this.publishAborted(promptId);
+      return true;
+    }
     const index = this.pending.findIndex((item) => item.id === promptId);
     if (index < 0) throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, `prompt ${promptId} not found`);
     const [item] = this.pending.splice(index, 1) as [Record];
@@ -199,6 +213,7 @@ export class AgentPromptService implements IAgentPromptService {
 
   clear(): void {
     for (const item of this.pending.slice()) this.abort(item.id);
+    if (this.launchingItem !== undefined) this.abort(this.launchingItem.id);
     if (this.active !== undefined) this.abort(this.active.id);
     this.context.clear();
   }
@@ -207,26 +222,39 @@ export class AgentPromptService implements IAgentPromptService {
     if (this.active !== undefined || this.launching) return;
     const item = this.pending.shift(); if (item === undefined) return;
     this.launching = true;
+    this.launchingItem = item;
+    let requeued = false;
     try {
-      if (this.fullCompaction.compacting !== null && this.loop.status().state !== 'running') { this.pending.unshift(item); return; }
+      await Promise.race([item.intake, item.launchedDeferred.promise]);
+      if (cancelled(item)) return;
+      if (this.fullCompaction.compacting !== null && this.loop.status().state !== 'running') {
+        this.pending.unshift(item);
+        requeued = true;
+        return;
+      }
       const { message, captions } = this.extractCompressionCaptions(item.message);
-      if (await this.blockedByHook(message, false)) {
+      const blocked = await this.blockedByHook(message, false);
+      if (cancelled(item)) return;
+      if (blocked) {
         this.appendPrompt(message, captions); item.state = 'blocked'; item.launchedDeferred.resolve(undefined);
         item.completionDeferred.resolve({ promptId: item.id, result: undefined, state: 'blocked' });
         this.publishCompleted(item.id, 'blocked'); return;
       }
       const turn = (await this.loop.enqueue(new PromptStepRequest(message, captions, this.reminders)).assigned).turn;
-      if (turn === undefined) { this.pending.unshift(item); return; }
+      if (turn === undefined) { if (!cancelled(item)) this.pending.unshift(item); return; }
+      if (cancelled(item)) { this.loop.cancel(turn.id); return; }
       item.state = 'running'; item.launchedDeferred.resolve(turn); this.active = Object.assign(item, { turn });
       void turn.result.then((result) => this.settle(item, result));
     } catch {
+      if (cancelled(item)) return;
       item.state = 'failed';
       item.launchedDeferred.resolve(undefined);
       item.completionDeferred.resolve({ promptId: item.id, result: undefined, state: 'failed' });
       this.publishCompleted(item.id, 'failed');
     } finally {
+      this.launchingItem = undefined;
       this.launching = false;
-      if (this.active === undefined) void this.startNext();
+      if (!requeued && this.active === undefined) void this.startNext();
     }
   }
 
@@ -286,6 +314,7 @@ export class AgentPromptService implements IAgentPromptService {
 }
 
 function snapshot(item: Record): PromptSnapshot { return { id: item.id, userMessageId: item.userMessageId, createdAt: item.createdAt, state: item.state, message: item.message }; }
+function cancelled(item: Record): boolean { return item.state === 'cancelled'; }
 function deferred<T>(): Deferred<T> { let resolve!: (value: T) => void; let reject!: (reason: unknown) => void; const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; }
 
 registerScopedService(
