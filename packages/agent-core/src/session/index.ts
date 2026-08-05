@@ -1352,19 +1352,26 @@ export class Session {
     // restoreAgentProfileHandle only calls setActiveProfile - which does not
     // re-apply the tool denylist. Without this, a persisted agent resumed
     // after [tools].disabled was added keeps its old tools active. #2534.
+    // Only re-apply when disabled tools exist - agent.resume() has already
+    // replayed persisted tool state, and unconditionally calling
+    // setActiveTools would reset the replayed enabled set. #2534.
     const toolsDisabled = this.readToolsDisabled();
-    const effectiveProfile =
-      toolsDisabled.length > 0
-        ? {
-            ...profile,
-            disallowedTools: [
-              ...(profile.disallowedTools ?? []),
-              ...toolsDisabled,
-            ],
-          }
-        : profile;
-    agent.setActiveProfile(effectiveProfile, this.options.kimiHomeDir);
-    agent.tools.setActiveTools(effectiveProfile.tools, effectiveProfile.disallowedTools);
+    if (toolsDisabled.length > 0) {
+      const effectiveProfile = {
+        ...profile,
+        disallowedTools: [
+          ...(profile.disallowedTools ?? []),
+          ...toolsDisabled,
+        ],
+      };
+      agent.setActiveProfile(effectiveProfile, this.options.kimiHomeDir);
+      agent.tools.setActiveTools(
+        effectiveProfile.tools,
+        effectiveProfile.disallowedTools,
+      );
+    } else {
+      agent.setActiveProfile(profile, this.options.kimiHomeDir);
+    }
   }
 
   private resolvePersistedProfile(
