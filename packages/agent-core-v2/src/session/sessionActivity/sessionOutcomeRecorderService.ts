@@ -1,15 +1,11 @@
 /**
  * `sessionActivity` domain — `ISessionOutcomeRecorder` implementation.
  *
- * Subscribes to the main agent's `turn.ended` facts (through `agentLifecycle`
- * creation and the agent's `eventBus`) and persists the terminal outcome
- * through `ISessionMetadata`, so the session index (and therefore cold
- * listings) keeps the latest outcome across restarts. A programmatic abort —
- * including the cancel every in-flight turn suffers during scope disposal —
- * is never written, since a metadata write mid-teardown races the host's
- * home-dir removal; user stops ('user_cancelled') are persisted like any
- * other terminal state. Writes are deduped against the last value this
- * process persisted. Bound at Session scope.
+ * Persists the main agent's terminal turn outcomes through `ISessionMetadata`
+ * (observed via `agentLifecycle` and the main agent's `eventBus`), so the
+ * session index keeps reporting them across restarts. Programmatic aborts —
+ * including scope-teardown cancels — are deliberately not persisted. Bound at
+ * Session scope.
  */
 
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
