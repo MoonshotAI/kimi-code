@@ -1141,6 +1141,35 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('preserves context.overflow when auto compaction exceeds the model window', async () => {
+    const generate: GenerateFn = async () => {
+      throw new APIContextOverflowError(401, 'example-256k supports only 256K context.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: { ...CATALOGUED_MODEL_CAPABILITIES, max_context_tokens: 14 },
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 1);
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'x'.repeat(40) }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: expect.objectContaining({
+          reason: 'failed',
+          error: expect.objectContaining({
+            code: 'context.overflow',
+            message: 'example-256k supports only 256K context.',
+          }),
+        }),
+      }),
+    );
+    await ctx.expectResumeMatches();
+  });
+
   it('aborts an in-flight compaction when the agent is disposed', async () => {
     const started = deferred<void>();
     let signal: AbortSignal | undefined;

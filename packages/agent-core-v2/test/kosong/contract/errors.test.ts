@@ -172,6 +172,9 @@ describe('classifyApiError', () => {
   it('classifies status errors by status code', () => {
     expect(classifyApiError(new APIStatusError(401, 'Unauthorized')).kind).toBe('auth');
     expect(classifyApiError(new APIStatusError(403, 'Forbidden')).kind).toBe('auth');
+    expect(
+      classifyApiError(new APIStatusError(401, 'example-256k supports only 256K context.')).kind,
+    ).toBe('context_overflow');
     expect(classifyApiError(new APIStatusError(500, 'Internal')).kind).toBe('5xx_server');
     expect(classifyApiError(new APIStatusError(422, 'Nope')).kind).toBe('4xx_client');
     // A 413 phrased as token overflow routes to compaction, not 4xx.

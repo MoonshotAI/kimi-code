@@ -12,10 +12,10 @@ import {
   type GenerateResult,
   type Message,
   type TokenUsage,
-  APIContextOverflowError,
   APIRequestTooLargeError,
   APIStatusError,
   createUserMessage,
+  isContextOverflowStatusError,
   isImageFormatError,
 } from '@moonshot-ai/kosong';
 
@@ -142,7 +142,7 @@ export class FullCompaction {
     error: unknown,
     estimatedRequestTokens = this.estimateCurrentRequestTokens(),
   ): boolean {
-    if (error instanceof APIContextOverflowError) return true;
+    if (isContextOverflowStatus(error)) return true;
     if (!(error instanceof APIStatusError) || error.statusCode !== 413) return false;
     const effectiveMax = this.getEffectiveMaxContextTokens();
     return (
@@ -658,6 +658,22 @@ export class FullCompaction {
         error_type: error instanceof Error ? error.name : 'Unknown',
         trace_id: this.lastTraceId,
       });
+      if (isContextOverflowStatus(error)) {
+        throw new KimiError(ErrorCodes.CONTEXT_OVERFLOW, error.message, {
+          cause: error,
+          details: {
+            reason: 'compaction_context_overflow',
+            statusCode: error.statusCode,
+            requestId: error.requestId,
+          },
+        });
+      }
+      if (isKimiError(error) && error.code === ErrorCodes.CONTEXT_OVERFLOW) {
+        throw new KimiError(ErrorCodes.CONTEXT_OVERFLOW, error.message, {
+          cause: error,
+          details: { ...error.details, reason: 'compaction_context_overflow' },
+        });
+      }
       if (
         isKimiError(error) &&
         (error.code === ErrorCodes.AUTH_LOGIN_REQUIRED ||
@@ -697,6 +713,13 @@ export class FullCompaction {
       },
     });
   }
+}
+
+function isContextOverflowStatus(error: unknown): error is APIStatusError {
+  return (
+    error instanceof APIStatusError &&
+    isContextOverflowStatusError(error.statusCode, error.message)
+  );
 }
 
 const MAX_COMPACTION_OVERFLOW_SHRINK_ATTEMPTS = 3;
