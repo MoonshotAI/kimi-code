@@ -39,6 +39,7 @@ const SLASH_COMMANDS: &[&str] = &[
     "/quit",
     "/resume",
     "/sessions",
+    "/skills",
     "/status",
     "/steer",
     "/swarm",
@@ -408,6 +409,32 @@ impl App {
                         Err(e) => self
                             .transcript
                             .push(TranscriptLine::error(format!("config failed: {e}"))),
+                    }
+                }
+                "/skills" => {
+                    let skills = self.session.as_mut().expect("session").list_skills().await;
+                    match skills {
+                        Ok(skills) => {
+                            let names: Vec<&str> = skills["skills"]
+                                .as_array()
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|s| s["name"].as_str())
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            if names.is_empty() {
+                                self.transcript.push(TranscriptLine::status("no skills registered"));
+                            } else {
+                                self.transcript.push(TranscriptLine::status(format!(
+                                    "skills: {}",
+                                    names.join(", ")
+                                )));
+                            }
+                        }
+                        Err(e) => self
+                            .transcript
+                            .push(TranscriptLine::error(format!("skills failed: {e}"))),
                     }
                 }
                 "/plan" => {
