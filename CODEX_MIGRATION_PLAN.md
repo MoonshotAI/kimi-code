@@ -322,8 +322,10 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 > - **removeKimiProvider**：宿主 config 语义（读 config.toml 删 `providers.kimi` 写回），替代 nativeUnavailable
 > - **set_swarm_mode trigger + undo_history count**：kimi-sdk 签名对齐 node-sdk（engine 已支持 trigger/count），更新 kimi-tui/测试调用点
 > - **session/cancel_compact**：引擎 compact 同步（无在途异步可取消）→ no-op 成功（`{cancelled:true}`），替代 nativeUnavailable；node-sdk 桥接接线
-> - **保留 nativeUnavailable（引擎无此概念/死接口，诚实报错）**：`archiveSession`（node-sdk 无上层调用）、`activatePluginCommand`/`listPluginCommands`（引擎无 plugin command，宿主 native-session 主动 naError）
-> - **基线**：kimi-server/sdk/protocol 9 套件全绿；node-sdk 34 文件 428 测试全绿；clippy 0 新 warning
+> - **✅ 2026-08-05 archiveSession 补全（commit 232a829c4）**：`session/archive` 协议方法——manager `archive_session`（metadata.archived 标记 + 保留记录 + 丢弃 live agent），kimi-sdk `Session::archive`，node-sdk 桥接接线
+> - **✅ 2026-08-05 plugin commands 补全（commit 232a829c4）**：引擎 manifest 支持 `commands` 字段（Markdown 文件/目录；文件名=命令名，首行=描述）；`plugin/list_commands` + `plugin/activate_command`（展开 `$ARGUMENTS` 后作为 prompt turn 发送）；kimi-sdk Harness `list_plugin_commands`/`activate_plugin_command`；node-sdk 桥接（listPluginCommands 聚合所有插件，activatePluginCommand 转发）
+> - **✅ node-sdk Rust 桥接 nativeUnavailable 全部消除**：`archiveSession`/`cancelCompaction`/`activatePluginCommand`/`listPluginCommands` 及此前的 plugin 写面全部接线为真实引擎调用——**零 nativeUnavailable 调用残留**
+> - **基线**：kimi-agent 2045（+1 manifest commands 测试）、kimi-server/sdk/protocol 全绿、node-sdk 34 文件 429 测试全绿；clippy 0 新 warning
 
 ### 阶段 F — 退役
 0. ✅ **npm 分发薄壳**（kimi-code-rust-bin：bin 包装 + pack.mjs CI 打包 + KIMI_RUST_BIN 覆盖）
