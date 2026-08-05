@@ -11,7 +11,7 @@
  */
 
 import type { DomainEvent } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
-import type { MessageContent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
+import type { MessageContent } from '../../../protocol/message';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import type { AgentPhase } from '../../../services/legacyStatus/legacyStatus';
@@ -96,6 +96,23 @@ export interface ConfigChangedEvent {
   readonly config: ConfigResponse;
 }
 
+export interface ConfigWarningItem {
+  readonly domain?: string;
+  readonly message: string;
+}
+
+/**
+ * Global config warnings (deprecated keys / env vars in use, invalid
+ * sections). Pushed live to every connection whenever the config service's
+ * warning set changes; an empty `warnings` array means the last warning
+ * cleared. Late joiners are not replayed — pull current warnings via the
+ * config diagnostics RPC surface instead.
+ */
+export interface ConfigWarningEvent {
+  readonly type: 'event.config.warning';
+  readonly warnings: readonly ConfigWarningItem[];
+}
+
 export interface PromptSubmittedEvent {
   readonly type: 'prompt.submitted';
   readonly promptId: string;
@@ -178,6 +195,7 @@ export type AgentEvent =
   | SessionWorkChangedEvent
   | SessionStatusChangedEvent
   | ConfigChangedEvent
+  | ConfigWarningEvent
   | PromptSubmittedEvent
   | BackgroundTaskStartedEvent
   | BackgroundTaskTerminatedEvent;

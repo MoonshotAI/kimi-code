@@ -6,6 +6,8 @@
  * fake transport without pulling in the MCP SDK type graph.
  */
 
+import { ErrorCodes, Error2 } from '#/errors';
+
 /**
  * Inline resource contents nested under an EmbeddedResource block.
  * Exactly one of `text` or `blob` is populated, per the MCP schema's
@@ -32,7 +34,8 @@ export interface MCPContentBlock {
 export interface MCPToolResult {
   content: MCPContentBlock[];
   isError: boolean;
-  structuredContent?: Record<string, unknown>;
+  structuredContent?: unknown;
+  _meta?: Record<string, unknown>;
 }
 
 export interface MCPToolDefinition {
@@ -58,5 +61,8 @@ export function assertMcpInputSchema(
   if (typeof inputSchema === 'object' && inputSchema !== null && !Array.isArray(inputSchema)) {
     return inputSchema as Record<string, unknown>;
   }
-  throw new Error(`Invalid inputSchema for MCP tool "${toolName}": schema must be a JSON object`);
+  throw new Error2(
+    ErrorCodes.MCP_STARTUP_FAILED,
+    `Invalid inputSchema for MCP tool "${toolName}": schema must be a JSON object`,
+  );
 }

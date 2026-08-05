@@ -40,6 +40,7 @@ export const MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE = 'mcp.oauth.authorization_
 export interface McpOAuthAuthorizationUrlUpdateData {
   readonly serverName: string;
   readonly authorizationUrl: string;
+  readonly expiresAt?: number;
 }
 
 const DEFAULT_AUTH_TIMEOUT_MS = 15 * 60 * 1000;
@@ -54,10 +55,10 @@ This server requires an OAuth login that has not yet been completed. ` +
 
   1. The tool prints an authorization URL.
   2. **You must show that URL to the user verbatim** and ask them to open it
-     in a browser, sign in, and approve the kimi-code client.
+     in a browser, sign in, and approve the client.
   3. The tool blocks (up to 15 minutes) until the browser redirects back to
      the local callback listener.
-  4. On success, kimi-code reconnects the MCP server and the real tools
+  4. On success, the client reconnects the MCP server and the real tools
      replace this synthetic tool.
 
 Take no arguments. Treat the URL as sensitive — do not modify it or strip
@@ -103,9 +104,11 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
     }
 
     const urlText = flow.authorizationUrl.toString();
+    const waitTimeoutMs = timeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS;
     const customData: McpOAuthAuthorizationUrlUpdateData = {
       serverName,
       authorizationUrl: urlText,
+      expiresAt: Date.now() + waitTimeoutMs,
     };
     onUpdate?.({
       kind: 'custom',
@@ -122,7 +125,7 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
     });
 
     try {
-      await flow.complete({ signal, timeoutMs: timeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS });
+      await flow.complete({ signal, timeoutMs: waitTimeoutMs });
     } catch (error) {
       return errorResult(serverName, error, urlText);
     }

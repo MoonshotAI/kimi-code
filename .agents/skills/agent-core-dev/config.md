@@ -152,15 +152,18 @@ registerSection('providers', ProvidersSectionSchema, {
 ```
 
 Each field is an `EnvBinding` — a string (env var name) or
-`{ env, parse?, default? }`. IConfig resolves every field by
+`{ env, deprecatedEnv?, parse?, default? }`. IConfig resolves every field by
 `env > config.toml > default`, sets it on the effective value, and validates the
 section. Empty nested entries (no field resolved) are omitted, so a synthetic
 entry like `__kimi_env__` only appears when at least one of its env vars is set.
+When `deprecatedEnv` is set and `env` itself is absent or fails `parse`, the
+deprecated var still supplies the value and a warning diagnostic is reported —
+use it to rename an env var without breaking existing setups.
 
 `stripEnv(value, raw?, getEnv?)` removes env-derived fields before `set`/`replace`
 persists, so env overrides never leak into `config.toml`. `raw` is the section's
-env-free camelCase base (already `fromToml`-normalized, so legacy key renames
-are honored), and `getEnv` reads the live env bag. For fields that are **both
+env-free camelCase base (already `fromToml`-normalized), and `getEnv` reads the
+live env bag. For fields that are **both
 user-persistable and env-overridable**, register
 `stripEnv: stripEnvBoundFields(sectionEnvBindings)` (from `#/app/config/config`)
 — it derives the guard from the same bindings the read path uses: while a
@@ -231,7 +234,7 @@ This means registration order is never a correctness concern — you do not need
 
 `config.toml` stores keys in **snake_case**; in-memory values are **camelCase**. `ConfigService` converts both ways by dispatching to each section's registered transform:
 
-- **Read**: `transformTomlData(fileData, registry)` maps each top-level key to a domain and applies that domain's `fromToml` hook (or a plain key-casing pass when none is registered). Owner domains register their own normalization — e.g. provider `oauth`/`env`/`customHeaders`, permission `deny/allow/ask` → `rules`, `loop_control.max_steps_per_run` → `maxStepsPerTurn`, `experimental` keys preserved verbatim. When a section registers after the initial load, `ConfigService` re-applies its `fromToml` against the preserved snake_case raw value (see "Late registration"), so registration order is never a correctness concern.
+- **Read**: `transformTomlData(fileData, registry)` maps each top-level key to a domain and applies that domain's `fromToml` hook (or a plain key-casing pass when none is registered). Owner domains register their own normalization — e.g. provider `oauth`/`env`/`customHeaders`, permission `deny/allow/ask` → `rules`, `experimental` keys preserved verbatim. When a section registers after the initial load, `ConfigService` re-applies its `fromToml` against the preserved snake_case raw value (see "Late registration"), so registration order is never a correctness concern.
 - **Write**: `applySectionToToml(rawSnake, domain, value, registry)` applies the domain's `toToml` hook (or a plain camelCase→snake_case mapping) into a raw clone of the file, preserving unknown top-level keys and unknown sub-fields (lossless round-trip).
 
 `ConfigService` keeps four views:
@@ -240,6 +243,23 @@ This means registration order is never a correctness concern — you do not need
 - `raw` — camelCase, env-free; the read/set/replace base.
 - `validated` — validated `raw`, env-free; the base every live env re-application starts from, so a degraded or removed env value falls back to the file instead of a stale overlay.
 - `effective` — `validated` plus the env overlay, recomputed on load/set; `get()`/`getAll()` re-apply the overlay on a fresh `validated` copy per read rather than caching it.
+
+### Renaming config keys and env vars (deprecations)
+
+Renames are declared once on the section, never hand-rolled in `fromToml`:
+
+```ts
+registerSection(MY_SECTION, MySectionSchema, {
+  deprecations: [{ key: 'old_key', replacement: 'new_key' }], // snake_case, on-disk
+  env: envBindings(MySectionSchema, {
+    newKey: { env: 'KIMI_NEW_KEY', deprecatedEnv: 'KIMI_OLD_KEY', parse },
+  }),
+});
+```
+
+- A deprecated TOML key is **ignored** (its value no longer applies — the schema only knows the new key) and reports a warning `ConfigDiagnostic` while present; the file is never rewritten, so the warning is the migration guide. Diagnostics are recomputed on every load/reload and surface to clients via `IConfigService.diagnostics()` and `onDidChangeDiagnostics` (kap-server republishes them as the global `event.config.warning` WS event).
+- A deprecated env var still **resolves** as a fallback (new var first), with the same warning treatment, and `stripEnvBoundFields` treats it as env-owned for writes.
+- See `src/agent/loop/configSection.ts` for a worked example (`max_retries_per_step` → `max_attempts_per_step`).
 
 ### `KIMI_MODEL_*` env overlay
 

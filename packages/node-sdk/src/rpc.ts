@@ -654,6 +654,15 @@ export abstract class SDKRpcClientBase {
     return rpc.listPluginCommands({ sessionId: input.sessionId });
   }
 
+  /**
+   * App-global plugin command list, no session required. The v1 engine only
+   * exposes plugin commands through a live session, so the base returns an
+   * empty list; the v2 client overrides with the app-global live view.
+   */
+  async listPluginCommandsGlobal(): Promise<readonly PluginCommandDef[]> {
+    return [];
+  }
+
   async listBackgroundTasks(
     input: SessionIdRpcInput & { activeOnly?: boolean; limit?: number },
   ): Promise<readonly BackgroundTaskInfo[]> {
@@ -758,6 +767,17 @@ export abstract class SDKRpcClientBase {
   async listMcpServers(input: SessionIdRpcInput): Promise<readonly McpServerInfo[]> {
     const rpc = await this.getRpc();
     return rpc.listMcpServers({ sessionId: input.sessionId });
+  }
+
+  /**
+   * Workspace-level MCP server list, no session required. The v2 engine owns
+   * one shared connection set per workspace handler, so `/mcp` is inspectable
+   * before the first session exists; the v1 engine only exposes MCP through
+   * a live session and the base returns an empty list.
+   */
+  async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]> {
+    void workDir;
+    return [];
   }
 
   async getMcpStartupMetrics(input: SessionIdRpcInput): Promise<McpStartupMetrics> {

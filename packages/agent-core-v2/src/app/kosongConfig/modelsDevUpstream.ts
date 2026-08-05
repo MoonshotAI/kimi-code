@@ -2,9 +2,16 @@
  * `kosongConfig` domain — models.dev upstream: fetch the third-party
  * directory, in-memory cache, built-in snapshot fallback, and the pruned
  * item mapping behind the import service's browse methods.
+ *
+ * The caller states the outbound `User-Agent`: this module is plain
+ * module-level state with no container access, and the value depends on the
+ * host and the configured identity, which only the calling service can see.
+ * The cached catalog does not vary by caller, so a later call with a different
+ * value still reuses it.
  */
 
-import { Error2 } from '#/_base/errors/errors';
+import { CoreErrors } from '#/_base/errors/codes';
+import { BugIndicatingError, Error2 } from '#/_base/errors/errors';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ModelRecord } from '#/kosong/model/model';
 
@@ -63,26 +70,30 @@ export function upstreamFetch(): typeof fetch {
   return fetchImpl;
 }
 
-export async function getModelsDevCatalog(): Promise<ModelsDevCatalog> {
+export async function getModelsDevCatalog(userAgent: string): Promise<ModelsDevCatalog> {
   const now = nowImpl();
   if (cache !== undefined && now - cache.fetchedAt < CACHE_TTL_MS) return cache.catalog;
-  inFlight ??= fetchAndCache().finally(() => {
+  inFlight ??= fetchAndCache(userAgent).finally(() => {
     inFlight = undefined;
   });
   return inFlight;
 }
 
-async function fetchAndCache(): Promise<ModelsDevCatalog> {
+async function fetchAndCache(userAgent: string): Promise<ModelsDevCatalog> {
   const now = nowImpl();
   try {
     const res = await fetchImpl(MODELS_DEV_URL, {
-      headers: { Accept: 'application/json', 'User-Agent': 'kimi-code-kap-server' },
+      headers: { Accept: 'application/json', 'User-Agent': userAgent },
       signal: AbortSignal.timeout(UPSTREAM_FETCH_TIMEOUT_MS),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      throw new Error2(CoreErrors.codes.INTERNAL, `HTTP ${res.status}`, {
+        details: { status: res.status },
+      });
+    }
     const payload: unknown = await res.json();
     if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-      throw new Error('unexpected catalog payload shape');
+      throw new Error2(CoreErrors.codes.INTERNAL, 'unexpected catalog payload shape');
     }
     cache = { catalog: payload as ModelsDevCatalog, fetchedAt: now };
     return cache.catalog;
@@ -176,7 +187,9 @@ export function toModelsDevProviderItem(
         reject_reason: resolution.reason,
       };
   }
-  throw new Error(`unhandled models.dev import resolution: ${JSON.stringify(resolution)}`);
+  throw new BugIndicatingError(
+    `unhandled models.dev import resolution: ${JSON.stringify(resolution)}`,
+  );
 }
 
 

@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_AGENT_PROFILE_NAME,
+  normalizeAgentProfile,
   type AgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { BUILTIN_AGENT_PROFILE_SOURCE_ID } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
@@ -28,11 +29,11 @@ import { stubLog } from '../../_base/log/stubs';
 const WORKSPACE_KEY = 'wd_a';
 
 function profile(name: string, options?: { readonly override?: boolean }): AgentProfile {
-  return {
+  return normalizeAgentProfile({
     name,
     override: options?.override,
     systemPrompt: () => `prompt:${name}`,
-  };
+  });
 }
 
 function makeCatalog(workspaceKey: string = WORKSPACE_KEY) {

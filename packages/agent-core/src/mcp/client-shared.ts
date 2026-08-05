@@ -63,19 +63,27 @@ export function toMcpToolDefinition(tool: SdkListedTool): MCPToolDefinition {
  * Normalise the SDK's `callTool` return into kosong's {@link MCPToolResult}.
  * The SDK can return either the modern `{ content, isError }` shape or a
  * legacy `{ toolResult }` shape; we collapse the legacy shape to a single
- * text content block. `structuredContent` rides along untouched — dropping
- * it would leave the model with only the human-oriented `content` summary.
+ * text content block. `structuredContent` and `_meta` ride along untouched —
+ * dropping them would leave the model with only the human-oriented `content`
+ * summary.
  */
 export function toMcpToolResult(result: unknown): MCPToolResult {
   if (typeof result === 'object' && result !== null && 'content' in result) {
-    const typed = result as { content: unknown; isError?: unknown; structuredContent?: unknown };
+    const typed = result as {
+      content: unknown;
+      isError?: unknown;
+      structuredContent?: unknown;
+      _meta?: unknown;
+    };
     if (Array.isArray(typed.content)) {
       return {
         content: typed.content as MCPToolResult['content'],
         isError: typed.isError === true,
-        structuredContent: isStructuredContent(typed.structuredContent)
-          ? typed.structuredContent
-          : undefined,
+        structuredContent: typed.structuredContent,
+        _meta:
+          typeof typed._meta === 'object' && typed._meta !== null
+            ? (typed._meta as Record<string, unknown>)
+            : undefined,
       };
     }
   }
@@ -92,12 +100,4 @@ export function toMcpToolResult(result: unknown): MCPToolResult {
     };
   }
   return { content: [], isError: false };
-}
-
-/**
- * Per the MCP spec `structuredContent` is a JSON object; ignore anything else
- * a non-conforming server might send under that key.
- */
-function isStructuredContent(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

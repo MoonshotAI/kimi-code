@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Fix MCP tool results silently dropping `structuredContent`. Tools that declare an `outputSchema` return a machine-readable payload next to a human-oriented summary, and the model only received the summary (e.g. "returned 6 item(s)") with the actual data lost. The structured payload is now forwarded as JSON, unless the server already serialized it verbatim into a text content block.
+Avoid double-forwarding MCP `structuredContent` in tool results. Servers that follow the spec's fallback guidance already serialize the structured payload into a text content block; the `<mcp-structured-result>` block now detects such duplicates semantically (JSON parse + deep-equal, so serializer spacing and key order do not matter) and skips the `structuredContent` section instead of sending the same payload twice.

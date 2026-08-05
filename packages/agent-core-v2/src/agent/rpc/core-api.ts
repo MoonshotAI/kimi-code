@@ -301,7 +301,7 @@ export interface AgentAPI {
   undoHistory: (payload: UndoHistoryPayload) => Promise<number>;
   setPermission: (payload: SetPermissionPayload) => void;
   cancelCompaction: (payload: EmptyPayload) => void;
-  activateSkill: (payload: ActivateSkillPayload) => void;
+  activateSkill: (payload: ActivateSkillPayload) => PromptLaunchResult | undefined;
   activatePluginCommand: (payload: ActivatePluginCommandPayload) => void;
   getContext: (payload: EmptyPayload) => AgentContextData;
   getTools: (payload: EmptyPayload) => readonly ToolInfo[];

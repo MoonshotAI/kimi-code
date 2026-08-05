@@ -6,13 +6,14 @@
  * `IAgentProfileRegistry`. Register-after-construction is not supported: like
  * `IAgentToolRegistryService`, contributions are expected to accumulate at
  * import time before the container resolves the service. `getDefault()`
- * throws a plain `Error` when the builtin default profile is missing — a
+ * throws a `BugIndicatingError` when the builtin default profile is missing — a
  * programming-time invariant violation, not a request failure. Bound at App
  * scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { BugIndicatingError } from '#/errors';
 
 import type { AgentProfile } from './agentProfileCatalog';
 import { DEFAULT_AGENT_PROFILE_NAME } from './agentProfileCatalog';
@@ -54,7 +55,7 @@ export class BuiltinAgentProfileLoaderService
   getDefault(): AgentProfile {
     const profile = this.byName.get(DEFAULT_AGENT_PROFILE_NAME);
     if (profile === undefined) {
-      throw new Error(
+      throw new BugIndicatingError(
         `Default agent profile "${DEFAULT_AGENT_PROFILE_NAME}" is not registered`,
       );
     }

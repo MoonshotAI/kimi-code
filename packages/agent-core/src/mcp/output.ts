@@ -8,11 +8,12 @@
  *  2. Wrap media-only outputs in `<mcp_tool_result name="…">` tags so the
  *     model can attribute binary output when several tools return media.
  *     Mirrors the in-tree `ReadMediaFile` convention.
- *  2b. Append `structuredContent` (when present) as a compact JSON text part,
- *     so the machine-readable payload reaches the model — `content` blocks
- *     are only the human-oriented summary and can omit the actual data.
- *     Duplicates already serialized into a text block by the server are
- *     detected semantically (parse + deep-equal) and skipped.
+ *  2b. Append `structuredContent` and server `_meta` as a trailing
+ *     `<mcp-structured-result>` JSON text part, so the machine-readable
+ *     payload reaches the model — `content` blocks are only the
+ *     human-oriented summary and can omit the actual data. Duplicates
+ *     already serialized into a text block by the server are detected
+ *     semantically (parse + deep-equal) and skipped.
  *  3. Apply the 100K text/think character budget to the tool's own text.
  *     This runs BEFORE captions exist, so a chatty tool (page text + a
  *     screenshot) can never evict or slice the compression caption — that
@@ -192,13 +193,50 @@ export async function mcpResultToExecutableOutput(
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
-  // `structuredContent` is appended AFTER the media-only wrap so an image +
-  // structured-payload result still gets its attribution tags; the appended
-  // JSON text then counts against the text budget like any tool text.
-  const structured = structuredContentTextPart(result, converted);
-  if (structured !== null) {
-    wrapped.push(structured);
+  // Structured payloads (structuredContent per MCP spec, plus server metadata
+  // in _meta) carry machine-readable contracts such as browser-handoff URLs.
+  // Appended AFTER the media wrap so a media-only result keeps its
+  // <mcp_tool_result> attribution, and BEFORE the text budget so oversized
+  // payloads stay bounded. Literal closing tags inside the serialized
+  // payload are stripped so server data cannot fake an early end of the
+  // block. Protocol-reserved _meta keys are dropped first: those carry
+  // host/protocol plumbing, not model-facing data. Servers that follow the
+  // spec's fallback guidance already serialize the structured payload into
+  // a text block; duplicates are detected semantically (parse + deep-equal,
+  // so spacing and key order do not matter) and skipped rather than
+  // forwarded twice.
+  const structuredExtras: Record<string, unknown> = {};
+  if (
+    result.structuredContent !== undefined &&
+    !converted.some(
+      (part) =>
+        part.type === 'text' &&
+        textMatchesStructuredContent(part.text, result.structuredContent),
+    )
+  ) {
+    structuredExtras['structuredContent'] = result.structuredContent;
   }
+  if (result._meta !== undefined) {
+    const meta = stripReservedMetaKeys(result._meta);
+    if (meta !== undefined) {
+      structuredExtras['_meta'] = meta;
+    }
+  }
+  if (Object.keys(structuredExtras).length > 0) {
+    try {
+      const serialized = JSON.stringify(structuredExtras).replaceAll(
+        '</mcp-structured-result>',
+        '',
+      );
+      wrapped.push({
+        type: 'text',
+        text: `\n<mcp-structured-result>\n${serialized}\n</mcp-structured-result>`,
+      });
+    } catch {
+      // Non-serialisable payloads are dropped rather than failing the call.
+    }
+  }
+
   // Text budget FIRST, on the tool's own text only: captions produced by the
   // compression step below ride the `note` side channel and never compete
   // with a chatty tool's text for the budget — an evicted or mid-string-
@@ -238,6 +276,45 @@ export async function mcpResultToExecutableOutput(
     note: compressed.captions.length > 0 ? compressed.captions.join('\n') : undefined,
     truncated: truncated ? true : undefined,
   };
+}
+
+/**
+ * Drop protocol-reserved `_meta` keys before the payload reaches the model.
+ *
+ * Per the MCP spec's `_meta` key-name rules, a key may carry a dot-separated
+ * label prefix terminated by `/`; a prefix is reserved for protocol use when
+ * a `modelcontextprotocol` or `mcp` label is followed by at least one more
+ * label (e.g. `modelcontextprotocol.io/…`, `tools.mcp.com/…` — but not a
+ * vendor namespace like `com.example.mcp/…`). Reserved entries carry
+ * host/protocol plumbing — progress and task wiring, UI component payloads —
+ * that servers do not address to the model, so forwarding them would leak
+ * side-channel data into the conversation. Unprefixed and vendor-prefixed
+ * keys pass through untouched: their semantics belong to the server, and the
+ * host cannot know which of them the model is meant to see.
+ *
+ * Returns `undefined` when nothing survives, so callers can omit the `_meta`
+ * section entirely.
+ */
+function stripReservedMetaKeys(
+  meta: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(meta)) {
+    if (!isReservedMetaKey(key)) {
+      out[key] = value;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function isReservedMetaKey(key: string): boolean {
+  const slash = key.indexOf('/');
+  if (slash <= 0) return false;
+  const labels = key.slice(0, slash).split('.');
+  return labels.some(
+    (label, i) =>
+      (label === 'modelcontextprotocol' || label === 'mcp') && i < labels.length - 1,
+  );
 }
 
 /**
@@ -380,47 +457,11 @@ function collapseSingleText(parts: readonly ContentPart[]): string | ContentPart
 }
 
 /**
- * Serialize `structuredContent` into a text part so the machine-readable
- * payload reaches the model — `content` blocks are only the human-oriented
- * summary and can drop everything that matters ("returned 6 item(s)").
- *
- * Servers that follow the spec's fallback guidance already serialize the
- * structured payload into a text block; forwarding it again would double the
- * token cost, so duplicates are skipped. Comparison is semantic (parse +
- * deep-equal) rather than string-exact, because serializers differ in
- * spacing (Python's `json.dumps` emits `{"total": 2}`) and key order.
- * Pathological payloads (nesting deep enough to blow the stack) fail safe:
- * comparison errors count as non-duplicates, and an unserializable payload
- * is skipped entirely — the `content` blocks always reach the model.
- */
-function structuredContentTextPart(
-  result: MCPToolResult,
-  converted: readonly ContentPart[],
-): ContentPart | null {
-  const structured = result.structuredContent;
-  if (structured === undefined) return null;
-  let json: string;
-  try {
-    json = JSON.stringify(structured);
-  } catch {
-    return null;
-  }
-  const duplicated = converted.some(
-    (part) => part.type === 'text' && textMatchesStructuredContent(part.text, structured),
-  );
-  if (duplicated) return null;
-  return { type: 'text', text: json };
-}
-
-/**
  * Whether `text` is a JSON serialization of `structured`, regardless of
  * whitespace or key order. Non-JSON text and comparison failures (e.g.
  * stack depth on pathological nesting) never match.
  */
-function textMatchesStructuredContent(
-  text: string,
-  structured: Record<string, unknown>,
-): boolean {
+function textMatchesStructuredContent(text: string, structured: unknown): boolean {
   try {
     return deepJsonEqual(JSON.parse(text), structured);
   } catch {

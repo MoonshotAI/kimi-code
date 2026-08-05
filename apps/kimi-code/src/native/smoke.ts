@@ -1,14 +1,17 @@
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
-import { getEmbeddedNativeAssetManifest, getNativePackageRoot } from './native-assets';
+import { MiniDb } from '@moonshot-ai/minidb';
+
+import {
+  getEmbeddedNativeAssetManifest,
+  getNativeCacheBase,
+  getNativePackageRoot,
+} from './native-assets';
 
 const smokePackages = ['@mariozechner/clipboard', '@moonshot-ai/pi-tui'];
 
-// Verify pi-tui's native helper can actually be loaded through the module hook.
-// pi-tui computes native helper paths from process.execPath and require()s them;
-// those paths do not exist next to the SEA binary, so this only succeeds when
-// installNativeModuleHook() redirects the require into the native-asset cache.
 function smokePiTuiNativeLoad(): void {
   const platform = process.platform;
   const arch = process.arch;
@@ -18,42 +21,81 @@ function smokePiTuiNativeLoad(): void {
   } else if (platform === 'win32' && (arch === 'x64' || arch === 'arm64')) {
     rel = join('native', 'win32', 'prebuilds', `win32-${arch}`, 'win32-console-mode.node');
   }
-  if (rel === undefined) return; // Linux: no native helper, nothing to load.
+  if (rel === undefined) return;
 
   const req = createRequire(import.meta.url);
-  const bogusPath = join(dirname(process.execPath), rel);
-  const helper = req(bogusPath) as {
+  const helper = req(join(dirname(process.execPath), rel)) as {
     isModifierPressed?: unknown;
     enableVirtualTerminalInput?: unknown;
   };
-  const ok =
-    typeof helper.isModifierPressed === 'function' ||
-    typeof helper.enableVirtualTerminalInput === 'function';
-  if (!ok) {
-    throw new Error(`pi-tui native helper loaded but exports are unexpected: ${rel}`);
+  if (
+    typeof helper.isModifierPressed !== 'function' &&
+    typeof helper.enableVirtualTerminalInput !== 'function'
+  ) {
+    throw new TypeError(`pi-tui native helper exports are unexpected: ${rel}`);
   }
+}
+
+async function smokeMinidbWorker(): Promise<void> {
+  const cacheBase = getNativeCacheBase();
+  mkdirSync(cacheBase, { recursive: true });
+  const dir = mkdtempSync(join(cacheBase, 'sea-minidb-smoke-'));
+  let db: MiniDb<Record<string, unknown>> | null = null;
+  try {
+    db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    const total = 4_200;
+    for (let base = 0; base < total; base += 500) {
+      await db.batch(
+        Array.from({ length: Math.min(500, total - base) }, (_, offset) => {
+          const id = base + offset;
+          return {
+            op: 'set' as const,
+            key: `doc-${id}`,
+            value: { text: `sea worker searchable document ${id}` },
+          };
+        }),
+      );
+    }
+    await db.createTextIndex('smoke', { fields: ['text'] });
+    if (db.stats.textWorkerBuilds < 1) {
+      throw new Error(`MiniDb worker did not run: ${JSON.stringify(db.stats)}`);
+    }
+    if (db.stats.textWorkerFallbacks !== 0) {
+      throw new Error(
+        `MiniDb worker unexpectedly fell back: ${db.stats.lastTextWorkerFallback ?? 'unknown'}`,
+      );
+    }
+    if (!db.search('smoke', 'searchable').some((hit) => hit.key === 'doc-0')) {
+      throw new Error('MiniDb worker-built text index returned an incorrect search result');
+    }
+  } finally {
+    await db?.close().catch(() => {});
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function runSmoke(): Promise<void> {
+  const manifest = getEmbeddedNativeAssetManifest();
+  if (manifest === null) throw new Error('Native asset manifest is not available.');
+  for (const packageName of smokePackages) {
+    if (getNativePackageRoot(packageName, { manifest }) === null) {
+      throw new Error(`Native package is not available: ${packageName}`);
+    }
+  }
+  smokePiTuiNativeLoad();
+  await smokeMinidbWorker();
+  process.stdout.write(`Native asset smoke passed: ${manifest.target}; MiniDb worker build passed\n`);
 }
 
 export function runNativeAssetSmokeIfRequested(): boolean {
   if (process.env['KIMI_CODE_NATIVE_ASSET_SMOKE'] !== '1') return false;
-
-  try {
-    const manifest = getEmbeddedNativeAssetManifest();
-    if (manifest === null) {
-      throw new Error('Native asset manifest is not available.');
-    }
-    for (const packageName of smokePackages) {
-      const packageRoot = getNativePackageRoot(packageName, { manifest });
-      if (packageRoot === null) {
-        throw new Error(`Native package is not available: ${packageName}`);
-      }
-    }
-    smokePiTuiNativeLoad();
-    process.stdout.write(`Native asset smoke passed: ${manifest.target}\n`);
-    process.exit(0);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`Native asset smoke failed: ${message}\n`);
-    process.exit(1);
-  }
+  void runSmoke().then(
+    () => process.exit(0),
+    (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`Native asset smoke failed: ${message}\n`);
+      process.exit(1);
+    },
+  );
+  return true;
 }

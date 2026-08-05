@@ -55,9 +55,9 @@ Read = `GET`, write = `POST`. `sid` = `session_id`, `aid` = `agent_id`.
 
 | resource | action | Service.method | verb |
 |---|---|---|---|
-| `sessions` | `list` | ISessionIndex.list | GET |
+| `sessions` | `listRecent` | ISessionIndex.listRecent | GET |
 | `sessions` | `get` | ISessionIndex.get | GET |
-| `sessions` | `countActive` | ISessionIndex.countActive | GET |
+| `sessions` | `count` | ISessionIndex.count | GET |
 | `workspaces` | `list` | IWorkspaceService.list | GET |
 | `workspaces` | `get` | IWorkspaceService.get | GET |
 | `workspaces` | `createOrTouch` | IWorkspaceService.createOrTouch | POST |
@@ -105,7 +105,7 @@ Read = `GET`, write = `POST`. `sid` = `session_id`, `aid` = `agent_id`.
 | `tasks` | `list` / `get` / `readOutput` | IBackgroundService.* | GET |
 | `tasks` | `stop` / `detach` | IBackgroundService.* | POST |
 | `usage` | `status` | IUsageService.status | GET |
-| `context` | `status` | IAgentContextSizeService.get | GET |
+| `context` | `status` | IAgentTokenCountingService.get | GET |
 | `swarm` | `isActive` | ISwarmService.isActive | GET |
 | `swarm` | `enter` / `exit` | ISwarmService.* | POST |
 | `permission` | `getMode` | IPermissionModeService.mode | GET |

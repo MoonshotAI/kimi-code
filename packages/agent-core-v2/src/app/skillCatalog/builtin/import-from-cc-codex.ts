@@ -24,4 +24,5 @@ export const IMPORT_FROM_CC_CODEX_SKILL: SkillDefinition = {
     type: parsed.metadata.type ?? 'inline',
     disableModelInvocation: true,
   },
+  productSpecific: true,
 };

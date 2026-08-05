@@ -44,12 +44,14 @@ export const searchMessagesResponseSchema = z.object({
   items: z.array(searchMessageHitSchema),
   has_more: z.boolean(),
   page_token: z.string().optional(),
-  incomplete: z.enum(['candidate_cap']).optional(),
+  incomplete: z.enum(['candidate_cap', 'postings_budget', 'deadline']).optional(),
   index_state: z.object({
     state: z.enum(['building', 'ready', 'readonly']),
     indexed_sessions: z.number(),
     total_sessions: z.number(),
     documents: z.number(),
+    stale: z.boolean().optional(),
+    degraded: z.string().optional(),
   }),
   source: z.enum(['live', 'index']),
 });

@@ -8,6 +8,10 @@
  * kosong's in-memory registries), and publishes `event.model_catalog.changed`
  * on change. Bound at App scope.
  *
+ * Custom registries are third-party endpoints, so the refresh User-Agent
+ * carries the configured custom identity's product token, matching what chat
+ * requests send.
+ *
  * `modelSource: 'static'` short-circuits refresh: a provider whose effective
  * model source is `static` (config-declared, or declared by its vendor
  * definition) serves its models from the static `[models.*]` section, so
@@ -46,7 +50,8 @@ import {
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 import { IOAuthService } from '#/app/auth/auth';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { AuthErrors } from '#/app/auth/errors';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
 import { ModelCatalogErrors } from '#/kosong/model/errors';
@@ -90,7 +95,7 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     @IConfigService private readonly config: IConfigService,
     @IOAuthService private readonly oauth: IOAuthService,
     @IEventService private readonly events: IEventService,
-    @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IAgentIdentity private readonly identity: IAgentIdentity,
   ) {}
 
   refreshProviderModels(
@@ -122,7 +127,8 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     }
 
     const exclusion = this.computeStaticExclusion();
-    const result = await refreshProviderModels(this.buildRefreshHost(exclusion), {
+    const { outboundUserAgent } = await this.identity.resolved();
+    const result = await refreshProviderModels(this.buildRefreshHost(exclusion, outboundUserAgent), {
       scope: options.scope,
       providerId: options.providerId,
     });
@@ -175,13 +181,13 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     };
   }
 
-  private buildRefreshHost(exclusion: StaticExclusion): RefreshProviderHost {
+  private buildRefreshHost(exclusion: StaticExclusion, userAgent: string): RefreshProviderHost {
     return {
       getConfig: async () => this.readUserConfigShape(exclusion),
       removeProvider: (providerId) => this.shapeWithoutProvider(providerId),
       setConfig: (patch) => this.applyRefreshPatch(patch, exclusion),
       resolveOAuthToken: (providerName, oauthRef) => this.resolveOAuthToken(providerName, oauthRef),
-      userAgent: this.bootstrap.args.requestHeaders['User-Agent'],
+      userAgent,
     };
   }
 
@@ -282,7 +288,9 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
       oauthRef as unknown as OAuthRef | undefined,
     );
     if (tokenProvider === undefined) {
-      throw new Error('OAuth token provider is not configured.');
+      throw new Error2(AuthErrors.codes.AUTH_TOKEN_MISSING, 'OAuth token provider is not configured.', {
+        details: { provider_id: providerName },
+      });
     }
     return tokenProvider.getAccessToken();
   }

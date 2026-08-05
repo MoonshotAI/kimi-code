@@ -19,6 +19,7 @@
 
 import { join } from 'pathe';
 
+import { BugIndicatingError } from '#/errors';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import type { IFileSystemStorageService } from '#/persistence/interface/storage';
 
@@ -62,7 +63,7 @@ interface TaskOutputData {
 
 function validateTaskId(taskId: string): void {
   if (!VALID_TASK_ID.test(taskId)) {
-    throw new Error(`Invalid task id: "${taskId}"`);
+    throw new BugIndicatingError(`Invalid task id: "${taskId}"`);
   }
 }
 

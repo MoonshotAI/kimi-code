@@ -25,6 +25,7 @@ import {
   OpenAIError,
 } from 'openai';
 
+import { BugIndicatingError } from '#/_base/errors/errors';
 import {
   APIConnectionError,
   APIProviderQuotaExhaustedError,
@@ -81,7 +82,7 @@ export function convertContentPart(part: ContentPart): OpenAIContentPart | null 
             : { url: part.videoUrl.url, id: part.videoUrl.id },
       };
     default:
-      throw new Error(`Unknown content part type: ${(part as ContentPart).type}`);
+      throw new BugIndicatingError(`Unknown content part type: ${(part as ContentPart).type}`);
   }
 }
 

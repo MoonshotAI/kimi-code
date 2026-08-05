@@ -25,14 +25,16 @@ export class WorkspaceSessionsService implements IWorkspaceSessions {
 
   async listRecent(workspaceId: string): Promise<readonly SessionSummary[]> {
     const workspaceIds = await this.aliases.resolveAliasIds(workspaceId);
-    const page = await this.index.list({ workspaceIds, limit: RECENT_SESSIONS_LIMIT });
+    const page = await this.index.listRecent({ workspaceIds, limit: RECENT_SESSIONS_LIMIT });
     return page.items;
   }
 
   async count(workspaceId: string): Promise<number> {
+    // One set-query over the alias set (legacy split buckets): a single merged
+    // count cannot double-count, and a singleton set behaves exactly as
+    // before.
     const workspaceIds = await this.aliases.resolveAliasIds(workspaceId);
-    const page = await this.index.list({ workspaceIds, includeArchived: true });
-    return page.items.length;
+    return this.index.count({ workspaceIds, includeArchived: true });
   }
 }
 

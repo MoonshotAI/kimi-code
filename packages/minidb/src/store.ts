@@ -31,6 +31,17 @@ export interface StoreEntry {
 
 export type ValueReader = (loc: ValueLoc) => Buffer;
 
+/** Internal raw-record view used by derived-index rebuilds: the canonical
+ *  (byte-string) key, the dt metadata, and a lazy value reader. Nothing is
+ *  materialized unless readValue() is called, so a rebuild that only needs
+ *  metadata never copies a buffer (memory mode) or issues a positioned read
+ *  (disk mode). */
+export interface RawRecord {
+  kstr: string;
+  dt: Record<string, number> | null;
+  readValue: () => Buffer;
+}
+
 const toKStr = (key: string | Buffer): string =>
   typeof key === 'string' ? key : Buffer.from(key).toString('binary');
 const fromKStr = (kstr: string): Buffer => Buffer.from(kstr, 'binary');
@@ -106,7 +117,7 @@ export interface StoreOptions {
 
 export class Store {
   readonly map = new Map<string, StoreRecord>(); // kstr -> record
-  private readonly order = new SkipList<string, string>({ compareKey: cmpString }); // kstr ordered
+  private order = new SkipList<string, string>({ compareKey: cmpString }); // kstr ordered
   private readonly heap = new MinHeap();
   private seq = 0;
   /** Approximate bytes held by live + expired-not-yet-reaped records. In
@@ -291,6 +302,31 @@ export class Store {
     }
   }
 
+  /** Walk live records without materializing values: yields the canonical key,
+   *  dt metadata, and a lazy value reader. Expired records are skipped (not
+   *  reaped) exactly as in entries(). Internal to the package — derived-index
+   *  rebuilds use it to share a single walk and a single decode per record. */
+  *rawRecords(): Generator<RawRecord> {
+    const now = Date.now();
+    for (const [k, r] of this.map) {
+      if (r.expireAt && r.expireAt <= now) continue;
+      yield { kstr: k, dt: r.dt, readValue: () => this.materialize(r.ref) };
+    }
+  }
+
+  /** Walk live records with their RAW value ref (never materialized): the
+   *  stage-6 snapshot writer reads disk-backed values through its own async
+   *  path (grouped, bounded-concurrency) instead of one synchronous
+   *  positioned read per record. Expired records are skipped exactly as in
+   *  entries(). Internal to the package. */
+  *rawRefRecords(): Generator<{ kstr: string; ref: ValueRef; expireAt: number; dt: Record<string, number> | null }> {
+    const now = Date.now();
+    for (const [k, r] of this.map) {
+      if (r.expireAt && r.expireAt <= now) continue;
+      yield { kstr: k, ref: r.ref, expireAt: r.expireAt, dt: r.dt };
+    }
+  }
+
   /** Ordered scan over keys. */
   *scan(opts: RangeOptions<string> = {}): Generator<StoreEntry> {
     for (const n of this.order.range(opts) as Iterable<RangeEntry<string, string>>) {
@@ -324,6 +360,33 @@ export class Store {
       const next = remap(k, r.ref.loc, r);
       if (next) r.ref = { kind: 'disk', loc: { ...next } };
     }
+  }
+
+  /** Stage-5 generation load: populate the store wholesale from a recovered
+   *  generation store image. `records` must be expiry-filtered by the caller
+   *  (expired-past records dropped) and sorted by canonical key ascending (the
+   *  image's write order), so the ordered index is bulk-built in O(N) instead
+   *  of per-record inserts.
+   *
+   *  OWNERSHIP: the records' refs are adopted as-is (no defensive clone) —
+   *  the image parser produced fresh buffers for exactly this purpose.
+   *  `metaBytes` is the precomputed dt accounting value (0 = none), so the
+   *  load never re-stringifies per record. */
+  bulkLoadRefs(
+    records: Iterable<{ kstr: string; ref: ValueRef; expireAt: number; dt: Record<string, number> | null; metaBytes?: number }>,
+  ): void {
+    const orderEntries: RangeEntry<string, string>[] = [];
+    for (const { kstr, ref, expireAt, dt, metaBytes } of records) {
+      const seq = ++this.seq;
+      this.map.set(kstr, { ref, expireAt: expireAt || 0, seq, dt });
+      this.bytes += Buffer.byteLength(kstr, 'binary') + this.refBytes(ref) + (metaBytes ?? 0);
+      if (expireAt) {
+        this.expiring++;
+        this.heap.push({ t: expireAt, k: kstr, seq });
+      }
+      orderEntries.push({ key: kstr, val: kstr });
+    }
+    this.order = SkipList.bulkLoad(orderEntries, { compareKey: cmpString });
   }
 
   private activeExpire(): void {
@@ -361,6 +424,27 @@ export class Store {
         n++;
       }
     }
+    return n;
+  }
+
+  /** Reap already-expired records via the TTL min-heap: O(due + stale heap
+   *  entries) instead of the O(store) full scan of reapExpired(), so callers
+   *  on the write hot path do not pay a full-store sweep per call. Falls back
+   *  to the full scan only when the heap provably diverged from the map (live
+   *  TTL records remain but the heap is empty — an invariant no code path may
+   *  produce), resyncing instead of leaking expired bytes. */
+  reapExpiredDue(): number {
+    const now = Date.now();
+    let n = 0;
+    while (this.heap.size && this.heap.peek()!.t <= now) {
+      const e = this.heap.pop()!;
+      const r = this.map.get(e.k);
+      if (r && r.seq === e.seq && r.expireAt && r.expireAt <= now) {
+        this.expireKey(e.k, r);
+        n++;
+      }
+    }
+    if (this.expiring > 0 && this.heap.size === 0) return n + this.reapExpired();
     return n;
   }
 

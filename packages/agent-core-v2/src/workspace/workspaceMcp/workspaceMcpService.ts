@@ -7,12 +7,24 @@
  * change events incrementally (serialized on a mutation tail, always after
  * the initial connect settles), feeds the manager's global timeout defaults
  * from the config domain's tunables at each (re)connect, and reports
- * connection telemetry for the initial load.
+ * connection telemetry for the initial load. It also builds per-session
+ * overlays (`sessionOverlay`): a session-owned manager for a session's
+ * ephemeral (caller-injected, never persisted) servers, presented through a
+ * `MergedMcpConnectionView` over the shared manager and shut down by the
+ * session lifecycle when the session scope tears down.
  * An outright initial-load or change-apply failure is logged (per-server
  * failures are status entries). The manager (and its stdio child processes,
  * whose cwd is the handler root) lives as long as the handler — i.e. the
  * process — so a stateful stdio server is shared by concurrent sessions of
  * the workspace rather than owned by one session. Bound at Workspace scope.
+ *
+ * The client name announced to MCP servers — on initialize and on OAuth
+ * dynamic registration — is the identity snapshot's slug. Every manager it
+ * builds, the shared one and each session overlay, gates its connects on
+ * `identity.resolved()`, so the callback handed to the managers always reads
+ * the frozen snapshot: a connection (and the OAuth provider a remote server
+ * materializes, cached on the shared service) can never carry a pre-config
+ * name.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -20,9 +32,12 @@ import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/
 import { ILogService } from '#/_base/log/log';
 
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import type { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import {
@@ -30,14 +45,21 @@ import {
   type McpServersChange,
 } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 
-import { IWorkspaceMcpService } from './workspaceMcp';
+import {
+  IWorkspaceMcpService,
+  type ISessionMcpOverlay,
+  type SessionMcpOverlayOptions,
+} from './workspaceMcp';
 
 export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpService {
   declare readonly _serviceBrand: undefined;
 
   private readonly manager: McpConnectionManager;
+  private readonly oauthService: McpOAuthService;
+  private readonly stdioCwd: string;
   readonly ready: Promise<void>;
   private mutationTail: Promise<void> = Promise.resolve();
+  private readonly resolveClientName = (): string | undefined => this.identity.current().slug;
 
   constructor(
     @IWorkspaceContext workspace: IWorkspaceContext,
@@ -45,14 +67,20 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     @IMcpOAuthStore oauthStore: IMcpOAuthStore,
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IAgentIdentity private readonly identity: IAgentIdentity,
   ) {
     super();
-    const oauthService = new McpOAuthService({ store: oauthStore });
+    this.stdioCwd = workspace.cwd;
+    this.oauthService = new McpOAuthService({
+      store: oauthStore,
+      resolveClientName: this.resolveClientName,
+    });
     this.manager = new McpConnectionManager({
       log: this.log,
-      oauthService,
-      stdioCwd: workspace.cwd,
+      oauthService: this.oauthService,
+      stdioCwd: this.stdioCwd,
       resolveDefaultTimeouts: () => this.mcpConfig.tunables(),
+      resolveClientName: this.resolveClientName,
     });
     this._register({ dispose: () => void this.manager.shutdown() });
     this._register(
@@ -77,6 +105,37 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     };
   }
 
+  sessionOverlay(
+    servers: Readonly<Record<string, McpServerConfig>>,
+    opts?: SessionMcpOverlayOptions,
+  ): ISessionMcpOverlay {
+    const sessionManager = new McpConnectionManager({
+      log: this.log,
+      oauthService: this.oauthService,
+      stdioCwd: opts?.stdioCwd ?? this.stdioCwd,
+      resolveDefaultTimeouts: () => this.mcpConfig.tunables(),
+      resolveClientName: this.resolveClientName,
+    });
+    const connect = Promise.all([this.mcpConfig.ready, this.identity.resolved()])
+      .then(() => sessionManager.connectAll({ ...servers }))
+      .catch((error: unknown) => {
+        this.log.error('session mcp overlay initial load failed', { error });
+      });
+    const view = new MergedMcpConnectionView(
+      this.manager,
+      sessionManager,
+      new Set(Object.keys(servers)),
+    );
+    return {
+      handle: {
+        _serviceBrand: undefined,
+        ready: Promise.all([this.ready, connect]).then(() => undefined),
+        connectionManager: view,
+      },
+      shutdown: () => sessionManager.shutdown(),
+    };
+  }
+
   private mutate(work: () => Promise<void>): Promise<void> {
     const tail = this.mutationTail.catch(() => undefined).then(work);
     this.mutationTail = tail;
@@ -85,6 +144,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
 
   private async initialize(): Promise<void> {
     await this.mcpConfig.ready;
+    await this.identity.resolved();
     const servers = this.mcpConfig.servers();
     if (Object.keys(servers).length === 0) return;
     await this.manager.connectAll(servers);

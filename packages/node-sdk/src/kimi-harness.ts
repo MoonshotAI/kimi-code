@@ -23,7 +23,12 @@ import type {
   KimiHostIdentity,
   ListSessionsOptions,
   McpServerConfig,
+  McpServerInfo,
   McpTestResult,
+  PluginCommandDef,
+  PluginInfo,
+  PluginSummary,
+  ReloadSummary,
   RenameSessionInput,
   ResumeSessionInput,
   ReloadSessionInput,
@@ -254,6 +259,57 @@ export class KimiHarness {
   /** Skills visible to a new session in `workDir`, without creating that session. */
   async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
     return this.rpc.listWorkspaceSkills(workDir);
+  }
+
+  /**
+   * App-global plugin command list, no session required. Empty on the v1
+   * engine, which only exposes plugin commands through a live session.
+   */
+  async listPluginCommands(): Promise<readonly PluginCommandDef[]> {
+    return this.rpc.listPluginCommandsGlobal();
+  }
+
+  /**
+   * App-global plugin management, no session required. The v2 engine keeps
+   * plugin state app-global (these calls are routed through the klient
+   * `global.plugins` facade), so `/plugins` works before the first session
+   * exists; the v1 engine only exposes plugins through a live session.
+   */
+  async listPlugins(): Promise<readonly PluginSummary[]> {
+    return this.rpc.listPlugins();
+  }
+
+  /**
+   * Workspace-level MCP server list, no session required. The v2 engine owns
+   * one shared connection set per workspace handler, so `/mcp` is inspectable
+   * before the first session exists; empty on the v1 engine.
+   */
+  async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]> {
+    return this.rpc.listWorkspaceMcpServers(workDir);
+  }
+
+  async installPlugin(source: string): Promise<PluginSummary> {
+    return this.rpc.installPlugin(source);
+  }
+
+  async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
+    return this.rpc.setPluginEnabled(id, enabled);
+  }
+
+  async setPluginMcpServerEnabled(id: string, server: string, enabled: boolean): Promise<void> {
+    return this.rpc.setPluginMcpServerEnabled(id, server, enabled);
+  }
+
+  async removePlugin(id: string): Promise<void> {
+    return this.rpc.removePlugin(id);
+  }
+
+  async reloadPlugins(): Promise<ReloadSummary> {
+    return this.rpc.reloadPlugins();
+  }
+
+  async getPluginInfo(id: string): Promise<PluginInfo> {
+    return this.rpc.getPluginInfo(id);
   }
 
   /**

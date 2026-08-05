@@ -1,9 +1,9 @@
 /**
  * `mcpCore` domain tests — `toMcpToolResult` result conversion scenarios.
  *
- * Covers `structuredContent` handling at the SDK boundary: a JSON-object
- * payload rides through to the model untouched, while an absent or
- * non-object value is dropped. Run with
+ * Covers `structuredContent` / `_meta` handling at the SDK boundary: both
+ * ride through to the model untouched whenever the server sends them. Run
+ * with
  * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/mcpCore/client-shared.test.ts`.
  */
 
@@ -35,12 +35,21 @@ describe('toMcpToolResult', () => {
     expect(result.structuredContent).toBeUndefined();
   });
 
-  test('ignores a non-object structuredContent from a non-conforming server', () => {
+  test('passes a non-object structuredContent through untouched', () => {
     const result = toMcpToolResult({
       content: [{ type: 'text', text: 'ok' }],
       structuredContent: 'not-an-object',
     });
 
-    expect(result.structuredContent).toBeUndefined();
+    expect(result.structuredContent).toBe('not-an-object');
+  });
+
+  test('passes _meta through alongside the content blocks', () => {
+    const result = toMcpToolResult({
+      content: [{ type: 'text', text: 'ok' }],
+      _meta: { 'example.com/trace': 'abc' },
+    });
+
+    expect(result._meta).toEqual({ 'example.com/trace': 'abc' });
   });
 });

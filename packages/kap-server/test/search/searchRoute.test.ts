@@ -47,9 +47,12 @@ const WS = 'ws_route';
 function stubSessionIndex(summaries: SessionSummary[]): ISessionIndex {
   return {
     _serviceBrand: undefined,
-    list: async () => ({ items: summaries, nextCursor: undefined }),
+    prepare: async () => ({ state: 'uninitialized', degradedCount: 0 }),
+    status: () => ({ state: 'uninitialized', degradedCount: 0 }),
+    listRecent: async () => ({ items: summaries, nextCursor: undefined }),
     get: async () => undefined,
-    countActive: async () => summaries.length,
+    count: async () => summaries.length,
+    remove: async () => {},
   };
 }
 

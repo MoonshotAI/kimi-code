@@ -113,3 +113,46 @@ function token(accessToken: string): OAuthTokens {
     token_type: 'Bearer',
   };
 }
+
+describe('McpOAuthClientProvider.invalidateStaleRegistration', () => {
+  function makeProvider() {
+    return new McpOAuthClientProvider({
+      serverName: 'srv',
+      serverUrl: 'https://mcp.example.com/mcp',
+      store: createMemoryMcpOAuthStore(),
+    });
+  }
+
+  const registration: OAuthClientInformationFull = {
+    client_id: 'c1',
+    redirect_uris: ['http://127.0.0.1:11111/callback'],
+  };
+
+  it('drops a registration whose redirect_uris miss the current callback', async () => {
+    const provider = makeProvider();
+    await provider.ready;
+    await provider.saveClientInformation(registration);
+    await expect(
+      provider.invalidateStaleRegistration('http://127.0.0.1:22222/callback'),
+    ).resolves.toBe(true);
+    await expect(provider.clientInformation()).resolves.toBeUndefined();
+  });
+
+  it('keeps a registration that still covers the callback URI', async () => {
+    const provider = makeProvider();
+    await provider.ready;
+    await provider.saveClientInformation(registration);
+    await expect(
+      provider.invalidateStaleRegistration('http://127.0.0.1:11111/callback'),
+    ).resolves.toBe(false);
+    await expect(provider.clientInformation()).resolves.toMatchObject({ client_id: 'c1' });
+  });
+
+  it('is a no-op without a stored registration', async () => {
+    const provider = makeProvider();
+    await provider.ready;
+    await expect(
+      provider.invalidateStaleRegistration('http://127.0.0.1:11111/callback'),
+    ).resolves.toBe(false);
+  });
+});

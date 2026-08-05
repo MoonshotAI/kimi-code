@@ -19,6 +19,8 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { ErrorCodes, Error2 } from '#/errors';
+
 export type RgResolutionSource = 'system-path' | 'share-bin-cached';
 
 export interface RgResolution {
@@ -75,7 +77,7 @@ export async function ensureRgPath(
     }
   }
 
-  throw new Error('ripgrep (rg) is not available on PATH');
+  throw new Error2(ErrorCodes.OS_FS_UNAVAILABLE, 'ripgrep (rg) is not available on PATH');
 }
 
 export function rgUnavailableMessage(cause: unknown): string {

@@ -33,17 +33,15 @@ import type {
   ToolInputDisplay,
 } from '@moonshot-ai/agent-core';
 import {
-  ContextSizeModel,
-  IAgentContextSizeService,
   IAgentLifecycleService,
   IAgentProfileService,
+  IAgentTokenCountingService,
   IAgentUsageService,
   IEventBus,
   IModelCatalog,
   ISessionApprovalService,
   ISessionInteractionService,
   ISessionQuestionService,
-  IWireService,
   MAIN_AGENT_ID,
   SECONDARY_DERIVED_MODEL_ID,
   type DomainEvent,
@@ -275,20 +273,15 @@ export class SessionEventWiring {
 function withStatusSnapshot(agent: IAgentScopeHandle, event: DomainEvent): DomainEvent {
   const profile = agent.accessor.get(IAgentProfileService) as IAgentProfileService | undefined;
   const usageService = agent.accessor.get(IAgentUsageService) as IAgentUsageService | undefined;
-  const contextSize = agent.accessor.get(IAgentContextSizeService) as
-    | IAgentContextSizeService
+  const tokenCounting = agent.accessor.get(IAgentTokenCountingService) as
+    | IAgentTokenCountingService
     | undefined;
-  const wire = agent.accessor.get(IWireService) as IWireService | undefined;
-  if (
-    profile === undefined ||
-    usageService === undefined ||
-    contextSize === undefined ||
-    wire === undefined
-  ) {
+  if (profile === undefined || usageService === undefined || tokenCounting === undefined) {
     return event;
   }
-  const measured = wire.getModel(ContextSizeModel);
-  const contextTokens = Math.max(contextSize.get().size, measured.tokens);
+  // Externally reported context size, resolved by the `[token_counting]`
+  // strategy inside the service (`IAgentTokenCountingService.statusSize`).
+  const contextTokens = tokenCounting.statusSize();
   const capabilities = profile.getModelCapabilities();
   const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
   return {

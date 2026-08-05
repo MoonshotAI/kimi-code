@@ -229,7 +229,7 @@ async function resolveEffectiveAgent(core: Scope, sessionId: string | undefined)
 
 /** Pick the most-recently-created session id, mirroring v1's fallback. */
 async function mostRecentSessionId(core: Scope): Promise<string | undefined> {
-  const page = await core.accessor.get(ISessionIndex).list({});
+  const page = await core.accessor.get(ISessionIndex).listRecent({});
   const [first, ...rest] = page.items;
   if (first === undefined) return undefined;
   let newest = first;

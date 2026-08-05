@@ -127,7 +127,7 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
     this.failedAttempts += 1;
 
     const maxAttempts = Math.max(
-      this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxRetriesPerStep ??
+      this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxAttemptsPerStep ??
         DEFAULT_MAX_RETRY_ATTEMPTS,
       1,
     );

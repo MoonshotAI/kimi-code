@@ -7,31 +7,38 @@
  *     (dropping unsupported shapes).
  *  2. Wrap media-only outputs in `<mcp_tool_result name="…">` tags so the
  *     model can attribute binary output when several tools return media.
- *  2b. Append `structuredContent` (when present) as a compact JSON text part,
- *     so the machine-readable payload reaches the model — `content` blocks
- *     are only the human-oriented summary and can omit the actual data. The
- *     append happens after the media-only wrap so an image + structured-
- *     payload result keeps its attribution tags, and the JSON counts against
- *     the text budget like any tool text. Servers that follow the spec's
- *     fallback guidance already serialize the payload into a text block;
+ *  3. Serialize `structuredContent` and server `_meta` into a trailing
+ *     `<mcp-structured-result>` text part — appended after the media wrap so
+ *     a media-only result keeps its attribution tags, and before the text
+ *     budget so oversized payloads stay bounded. Literal closing tags inside
+ *     the serialized payload are stripped so server data cannot fake an
+ *     early end of the block. `_meta` keys with a protocol-reserved prefix
+ *     (per the spec's key-name rules: a `modelcontextprotocol` or `mcp`
+ *     label followed by at least one more label, as in
+ *     `modelcontextprotocol.io/…` or `tools.mcp.com/…`, but not a vendor
+ *     namespace like `com.example.mcp/…`) are dropped first: they carry
+ *     host/protocol plumbing rather than model-facing data, while unprefixed
+ *     and vendor-prefixed keys pass through because their semantics belong
+ *     to the server. Non-serialisable payloads drop the whole block rather
+ *     than failing the call. Servers that follow the spec's fallback
+ *     guidance already serialize the structured payload into a text block;
  *     duplicates are detected semantically (parse + deep-equal, so spacing
- *     and key order do not matter) and skipped rather than forwarded twice.
- *     Pathological payloads fail safe: comparison errors count as non-
- *     duplicates and unserializable payloads are skipped, so the `content`
- *     blocks always reach the model.
- *  3. Apply the 100K text/think character budget to the tool's own text.
+ *     and key order do not matter) and the `structuredContent` section is
+ *     skipped rather than forwarded twice — comparison errors count as
+ *     non-duplicates, so the payload always reaches the model.
+ *  4. Apply the 100K text/think character budget to the tool's own text.
  *     This runs BEFORE captions exist, so a chatty tool (page text + a
  *     screenshot) can never evict or slice the compression caption — that
  *     would silently reintroduce the very degradation the caption reports.
- *  4. Compress oversized inline images, announcing each compression with a
+ *  5. Compress oversized inline images, announcing each compression with a
  *     caption (original vs. sent size, readback path to the persisted
  *     original) so downsampling is never silent. The captions ride the
  *     result's `note` side channel — projected to the model at fold time, but
  *     kept out of `output` so UIs never render them.
- *  5. Apply the per-part 10 MB binary cap: oversized binary parts
+ *  6. Apply the per-part 10 MB binary cap: oversized binary parts
  *     (image/audio/video URLs) collapse to a notice, so a single
  *     screenshot cannot evict every text part.
- *  6. Collapse a single-text-part result to a plain string output; otherwise
+ *  7. Collapse a single-text-part result to a plain string output; otherwise
  *     emit the `ContentPart[]` as-is.
  *
  * `mcpResultToExecutableOutput` is the single entry point; the per-step
@@ -158,10 +165,33 @@ export async function mcpResultToExecutableOutput(
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
-  const structured = structuredContentTextPart(result, converted);
-  if (structured !== null) {
-    wrapped.push(structured);
+  const structuredExtras: Record<string, unknown> = {};
+  if (
+    result.structuredContent !== undefined &&
+    !converted.some(
+      (part) =>
+        part.type === 'text' &&
+        textMatchesStructuredContent(part.text, result.structuredContent),
+    )
+  ) {
+    structuredExtras['structuredContent'] = result.structuredContent;
   }
+  if (result._meta !== undefined) {
+    const meta = stripReservedMetaKeys(result._meta);
+    if (meta !== undefined) {
+      structuredExtras['_meta'] = meta;
+    }
+  }
+  if (Object.keys(structuredExtras).length > 0) {
+    const serialized = serializeStructuredExtras(structuredExtras);
+    if (serialized !== undefined) {
+      wrapped.push({
+        type: 'text',
+        text: `\n<mcp-structured-result>\n${serialized}\n</mcp-structured-result>`,
+      });
+    }
+  }
+
   const budgeted = applyTextBudget(wrapped);
   const compressed = await compressImageContentParts(budgeted.parts, {
     telemetry:
@@ -187,6 +217,36 @@ export async function mcpResultToExecutableOutput(
     note,
     truncated: truncated ? true : undefined,
   };
+}
+
+function serializeStructuredExtras(extras: Record<string, unknown>): string | undefined {
+  try {
+    return JSON.stringify(extras).replaceAll('</mcp-structured-result>', '');
+  } catch {
+    return undefined;
+  }
+}
+
+function stripReservedMetaKeys(
+  meta: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(meta)) {
+    if (!isReservedMetaKey(key)) {
+      out[key] = value;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function isReservedMetaKey(key: string): boolean {
+  const slash = key.indexOf('/');
+  if (slash <= 0) return false;
+  const labels = key.slice(0, slash).split('.');
+  return labels.some(
+    (label, i) =>
+      (label === 'modelcontextprotocol' || label === 'mcp') && i < labels.length - 1,
+  );
 }
 
 function wrapMediaOnly(parts: readonly ContentPart[], qualifiedToolName: string): ContentPart[] {
@@ -303,29 +363,7 @@ function collapseSingleText(parts: readonly ContentPart[]): string | ContentPart
   return [...parts];
 }
 
-function structuredContentTextPart(
-  result: MCPToolResult,
-  converted: readonly ContentPart[],
-): ContentPart | null {
-  const structured = result.structuredContent;
-  if (structured === undefined) return null;
-  let json: string;
-  try {
-    json = JSON.stringify(structured);
-  } catch {
-    return null;
-  }
-  const duplicated = converted.some(
-    (part) => part.type === 'text' && textMatchesStructuredContent(part.text, structured),
-  );
-  if (duplicated) return null;
-  return { type: 'text', text: json };
-}
-
-function textMatchesStructuredContent(
-  text: string,
-  structured: Record<string, unknown>,
-): boolean {
+function textMatchesStructuredContent(text: string, structured: unknown): boolean {
   try {
     return deepJsonEqual(JSON.parse(text), structured);
   } catch {

@@ -41,6 +41,8 @@ export const StorageErrors = {
     STORAGE_CORRUPTED: 'storage.corrupted',
     STORAGE_IO_FAILED: 'storage.io_failed',
     STORAGE_LOCKED: 'storage.locked',
+    STORAGE_PERMISSION_DENIED: 'storage.permission_denied',
+    STORAGE_DISK_FULL: 'storage.disk_full',
   },
   retryable: ['storage.io_failed', 'storage.locked'],
   info: {
@@ -72,6 +74,18 @@ export const StorageErrors = {
       public: true,
       action: 'Another process holds the store; close it or retry later.',
     },
+    'storage.permission_denied': {
+      title: 'Storage permission denied',
+      retryable: false,
+      public: true,
+      action: 'Check the permissions of the storage directory.',
+    },
+    'storage.disk_full': {
+      title: 'Storage disk full',
+      retryable: false,
+      public: true,
+      action: 'Free up disk space and retry.',
+    },
   },
 } as const satisfies ErrorDomain;
 
@@ -96,16 +110,41 @@ function readErrno(error: unknown): string | undefined {
   return typeof code === 'string' ? code : undefined;
 }
 
+type StorageIoErrorCode =
+  | typeof StorageErrors.codes.STORAGE_NOT_FOUND
+  | typeof StorageErrors.codes.STORAGE_IO_FAILED
+  | typeof StorageErrors.codes.STORAGE_PERMISSION_DENIED
+  | typeof StorageErrors.codes.STORAGE_DISK_FULL;
+
+const REASONS: Record<StorageIoErrorCode, string> = {
+  'storage.not_found': 'path does not exist',
+  'storage.io_failed': 'unrecognized I/O error',
+  'storage.permission_denied': 'permission denied',
+  'storage.disk_full': 'no space left on device',
+};
+
+function mapErrno(errno: string | undefined): StorageIoErrorCode {
+  switch (errno) {
+    case 'ENOENT':
+      return StorageErrors.codes.STORAGE_NOT_FOUND;
+    case 'EACCES':
+    case 'EPERM':
+      return StorageErrors.codes.STORAGE_PERMISSION_DENIED;
+    case 'ENOSPC':
+      return StorageErrors.codes.STORAGE_DISK_FULL;
+    default:
+      return StorageErrors.codes.STORAGE_IO_FAILED;
+  }
+}
+
 export function toStorageIoError(error: unknown, ctx: { path: string; op: string }): StorageError {
   if (error instanceof StorageError) return error;
-  return new StorageError(
-    StorageErrors.codes.STORAGE_IO_FAILED,
-    `storage ${ctx.op} failed`,
-    {
-      details: { path: ctx.path, op: ctx.op, errno: readErrno(error) },
-      cause: error,
-    },
-  );
+  const errno = readErrno(error);
+  const code = mapErrno(errno);
+  return new StorageError(code, `storage ${ctx.op} failed: ${REASONS[code]}`, {
+    details: { path: ctx.path, op: ctx.op, errno },
+    cause: error,
+  });
 }
 
 export interface StorageWriteOptions {

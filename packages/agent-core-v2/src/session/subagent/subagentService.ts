@@ -10,6 +10,7 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
+import { Error2, ErrorCodes } from '#/errors';
 import {
   type IAgentScopeHandle,
   LifecycleScope,
@@ -54,7 +55,11 @@ export class SessionSubagentService extends Disposable implements ISessionSubage
 
   run(agentId: string, request: AgentRunRequest, opts: RunAgentOptions): Promise<AgentRunHandle> {
     const handle = this.agentLifecycle.get(agentId);
-    if (handle === undefined) throw new Error(`Agent "${agentId}" does not exist`);
+    if (handle === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agentId}" does not exist`, {
+        details: { agentId },
+      });
+    }
     return runAgentTurn(handle, request, {
       summaryPolicy: opts.summaryPolicy ?? this.summaryPolicyFor(handle),
       signal: opts.signal,

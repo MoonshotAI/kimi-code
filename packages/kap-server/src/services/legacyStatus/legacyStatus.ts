@@ -4,7 +4,7 @@
  *
  * v1 emits a single `agent.status.updated` carrying usage + contextTokens +
  * maxContextTokens + model together. v2 splits those into independent Models /
- * Ops (`usage.record`, `context_size.measured`, `config.update` …), so the
+ * Ops (`usage.record`, `token_counting.measured`, `config.update` …), so the
  * partial events reach clients separately and a usage-only event can overwrite
  * a previously-known contextTokens with a stale zero. The v1 edge re-reads the
  * authoritative services when a native status or context change arrives, so it
@@ -16,16 +16,15 @@
  */
 
 import {
-  IAgentContextSizeService,
   IAgentProfileService,
+  IAgentTokenCountingService,
   IAgentUsageService,
   IModelCatalog,
-  IWireService,
+  IModelService,
   SECONDARY_DERIVED_MODEL_ID,
   type IAgentScopeHandle,
   type UsageStatus,
 } from '@moonshot-ai/agent-core-v2';
-import { ContextSizeModel } from '@moonshot-ai/agent-core-v2';
 import type { AgentActivityState } from '@moonshot-ai/agent-core-v2';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 
@@ -100,7 +99,8 @@ export type AgentPhase =
 export interface LegacyStatusSnapshot {
   readonly usage?: UsageStatus;
   readonly contextTokens: number;
-  readonly maxContextTokens: number;
+  /** Omitted when the context limit is unknown — 0 is never pushed (0 is the engine's "unknown" marker, not a real limit). */
+  readonly maxContextTokens?: number;
   readonly model: string;
 }
 
@@ -112,33 +112,52 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
   const usageService = agent.accessor.get(IAgentUsageService) as
     | IAgentUsageService
     | undefined;
-  const contextSize = agent.accessor.get(IAgentContextSizeService) as
-    | IAgentContextSizeService
+  const tokenCounting = agent.accessor.get(IAgentTokenCountingService) as
+    | IAgentTokenCountingService
     | undefined;
-  const wire = agent.accessor.get(IWireService) as IWireService | undefined;
-  if (
-    profile === undefined ||
-    usageService === undefined ||
-    contextSize === undefined ||
-    wire === undefined
-  ) {
+  if (profile === undefined || usageService === undefined || tokenCounting === undefined) {
     return undefined;
   }
   const usage = usageService.status();
-  // Live (measured + estimated) context size — mirrors the REST status rollup
-  // (`ISessionLegacyService.status`) and v1's `context.tokenCount`, which
-  // reflect the context even before the first measured exchange completes.
-  // `size` alone can transiently dip below the last measured total while a
-  // post-step fold/rewrite leaves the context shorter than the measured
-  // prefix (the estimate then excludes the system prompt); the measured total
-  // is the better reading there. Every REAL shrink (undo / clear / compaction)
-  // rebases the measured model first, so the max only wins in that window.
-  const measured = wire.getModel(ContextSizeModel);
-  const contextTokens = Math.max(contextSize.get().size, measured.tokens);
+  // Externally reported context size, resolved by the `[token_counting]`
+  // strategy inside the service (`IAgentTokenCountingService.statusSize`) —
+  // mirrors the REST status rollup (`ISessionLegacyService.status`) and v1's
+  // `context.tokenCount`.
+  const contextTokens = tokenCounting.statusSize();
   const capabilities = profile.getModelCapabilities();
-  const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
+  let maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
+  if (maxContextTokens === 0 && profile.getModel() === '') {
+    // No model bound yet (e.g. a draft session): fall back to the configured
+    // default model's limit, mirroring the REST status rollup
+    // (`ISessionLegacyService.status`), so the push and REST agree.
+    maxContextTokens = defaultModelContextTokens(agent) ?? 0;
+  }
   const model = displayModelAlias(agent, profile.getModel());
-  return { usage, contextTokens, maxContextTokens, model };
+  return {
+    usage,
+    contextTokens,
+    maxContextTokens: maxContextTokens > 0 ? maxContextTokens : undefined,
+    model,
+  };
+}
+
+/**
+ * Context limit of the configured default model, or `undefined` when no
+ * default model is configured or it does not resolve.
+ */
+function defaultModelContextTokens(agent: IAgentScopeHandle): number | undefined {
+  const models = agent.accessor.get(IModelService) as IModelService | undefined;
+  const catalog = agent.accessor.get(IModelCatalog) as IModelCatalog | undefined;
+  const defaultModel = models?.getDefaultModel();
+  if (defaultModel === undefined || defaultModel.length === 0 || catalog === undefined) {
+    return undefined;
+  }
+  try {
+    const capabilities = catalog.get(defaultModel).capabilities;
+    return capabilities.max_input_tokens ?? capabilities.max_context_tokens;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
