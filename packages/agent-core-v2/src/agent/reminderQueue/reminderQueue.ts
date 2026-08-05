@@ -15,7 +15,7 @@ export interface OnceReminderInput {
 export interface IAgentReminderQueueService {
   readonly _serviceBrand: undefined;
 
-  enqueue(input: OnceReminderInput): string;
+  enqueue(input: OnceReminderInput): void;
 
   drain(): void;
 }

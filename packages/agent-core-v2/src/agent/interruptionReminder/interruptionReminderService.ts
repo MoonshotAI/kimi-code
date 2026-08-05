@@ -18,11 +18,16 @@ import { IWireService } from '#/wire/wire';
 
 import { IAgentInterruptionReminderService } from './interruptionReminder';
 import {
-  INTERRUPTION_REMINDER,
   INTERRUPTION_REMINDER_VARIANT,
   interruptionReminderRecorded,
   InterruptionReminderModel,
 } from './interruptionReminderOps';
+
+const INTERRUPTION_REMINDER = [
+  'The previous turn was interrupted by the user before completion;',
+  'any partial output shown above is incomplete.',
+  "The user's next message continues the conversation.",
+].join(' ');
 
 export class AgentInterruptionReminderService
   extends Disposable

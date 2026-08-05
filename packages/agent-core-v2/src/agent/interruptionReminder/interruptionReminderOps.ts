@@ -16,12 +16,6 @@ import {
 
 export const INTERRUPTION_REMINDER_VARIANT = 'interruption';
 
-export const INTERRUPTION_REMINDER = [
-  'The previous turn was interrupted by the user before completion;',
-  'any partial output shown above is incomplete.',
-  "The user's next message continues the conversation.",
-].join(' ');
-
 export type InterruptionReminderState = Checkpointed<readonly number[]>;
 
 export const InterruptionReminderModel = defineCheckpointedModel<readonly number[]>(

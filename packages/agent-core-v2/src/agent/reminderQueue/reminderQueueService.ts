@@ -37,10 +37,9 @@ export class AgentReminderQueueService extends Disposable implements IAgentRemin
     super();
   }
 
-  enqueue(input: OnceReminderInput): string {
+  enqueue(input: OnceReminderInput): void {
     const entry: ReminderQueueEntry = { id: randomUUID(), ...input };
     this.wire.dispatch(reminderQueueEnqueue({ entry }));
-    return entry.id;
   }
 
   drain(): void {
