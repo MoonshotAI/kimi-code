@@ -135,6 +135,15 @@ You must first complete OAuth login with a Kimi Code account via `/login`; data 
 
 Kimi WebBridge lets AI drive your browser directly — not an emulator, not a crawler, but the browser you use every day, with your login sessions and cookies. AI can open pages, read content, click buttons, fill in forms, and take screenshots just like you do, taking repetitive web operations off your hands. See the [Kimi WebBridge site](https://www.kimi.com/features/webbridge) for a product overview.
 
+#### Install the browser extension
+
+After installing via `/plugins`, you also need the Kimi WebBridge extension in your browser before AI can drive it:
+
+- **Install from a store (recommended)**: Open the [Chrome Web Store](https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc) or [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg) page and click Add
+- **Install manually**: If you can't reach the stores, [download the extension package](https://kimi-web-img.moonshot.cn/webbridge/latest/extension/kimi-webbridge-extension.zip) and unzip it, then type `chrome://extensions/` in the address bar to open the extensions page, turn on **Developer mode** in the top-right corner, click **Load unpacked**, and select the folder you just unzipped
+
+Once installed, ask AI to open a web page for you; if the page opens, everything is working.
+
 #### What you can do
 
 - **Web automation**: Just say what you need — AI clicks through pages, fills in forms, reads content, and takes screenshots for you

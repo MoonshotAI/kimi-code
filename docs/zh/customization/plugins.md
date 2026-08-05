@@ -135,6 +135,15 @@ Kimi Datasource 是 Kimi Code 官方数据插件，让你用自然语言直接�
 
 Kimi WebBridge 让 AI 直接操控你的浏览器，带着你的登录状态和 Cookie，AI 可以像你一样打开网页、阅读内容、点击按钮、填写表单、截图保存，把重复繁琐的网页操作交给它完成。产品介绍见 [Kimi WebBridge 官网](https://www.kimi.com/zh-cn/features/webbridge)。
 
+#### 安装浏览器扩展
+
+通过 `/plugins` 安装后，还需要在浏览器中安装 Kimi WebBridge 扩展，AI 才能操控你的浏览器：
+
+- **应用商店安装（推荐）**：打开 [Chrome 应用商店](https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc)或 [Edge 应用商店](https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg)，点击添加即可
+- **手动安装**：无法访问应用商店时，先[下载扩展安装包](https://kimi-web-img.moonshot.cn/webbridge/latest/extension/kimi-webbridge-extension.zip)并解压，然后在浏览器地址栏输入 `chrome://extensions/` 打开扩展管理页，开启右上角的**开发者模式**，点击**加载已解压的扩展程序**，选择刚才解压的文件夹
+
+装好后让 AI 帮你打开一个网页，能打开就说明已经生效。
+
 #### 能做什么
 
 - **网页操作自动化**：你说话，AI 帮你点网页、填表单、读内容、截图，重复性的网页操作交给它就好
