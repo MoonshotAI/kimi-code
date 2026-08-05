@@ -315,6 +315,7 @@ describe('nativeEngineOpsFromRustLoop', () => {
       sessionGetWarnings: record('sessionGetWarnings', { warnings: [] }),
       sessionGetUsage: record('sessionGetUsage', { total: { input_tokens: 5, output_tokens: 2, total_tokens: 7 } }),
       sessionCompact: record('sessionCompact', { compacted: true, summary: 's' }),
+      sessionCancelCompaction: record('sessionCancelCompaction', { cancelled: true }),
       sessionGetContext: record('sessionGetContext', { history: [], token_count: 0 }),
       sessionClearContext: record('sessionClearContext', { cleared: true }),
       sessionImportContext: record('sessionImportContext', { imported: true }),
@@ -365,6 +366,7 @@ describe('nativeEngineOpsFromRustLoop', () => {
     await ops.getWarnings?.('S');
     await ops.getUsage?.('S');
     await ops.compact?.('S', 'focus on the bug');
+    await ops.cancelCompaction?.('S');
     await ops.getContext?.('S');
     await ops.clearContext?.('S');
     await ops.importContext?.('S', 'txt', 'src');
@@ -414,6 +416,7 @@ describe('nativeEngineOpsFromRustLoop', () => {
       ['sessionGetWarnings', ['S']],
       ['sessionGetUsage', ['S']],
       ['sessionCompact', ['S', 'focus on the bug']],
+      ['sessionCancelCompaction', ['S']],
       ['sessionGetContext', ['S']],
       ['sessionClearContext', ['S']],
       ['sessionImportContext', ['S', 'txt', 'src']],

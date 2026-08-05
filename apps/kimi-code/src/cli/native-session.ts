@@ -362,7 +362,9 @@ export class NativeSession implements TuiSession {
     await this.adapter.compact(options.instruction);
   }
 
-  async cancelCompaction(): Promise<void> {}
+  async cancelCompaction(): Promise<void> {
+    await this.adapter.cancelCompaction();
+  }
 
   async undoHistory(count: number = 1): Promise<void> {
     // Rejects (propagates) when the engine cannot satisfy the count in full,

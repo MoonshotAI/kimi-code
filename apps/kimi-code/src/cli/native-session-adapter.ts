@@ -107,6 +107,9 @@ export interface SessionEngineOps {
     sessionId: string,
     instruction?: string,
   ) => Promise<{ compacted: boolean; summary?: string; tokens_before?: number; tokens_after?: number } | null>;
+  /** Cancel an in-flight compaction (SDK `cancelCompaction` parity; the
+   *  engine's compaction is synchronous, so this is a no-op success). */
+  cancelCompaction?: (sessionId: string) => Promise<unknown>;
   getContext?: (sessionId: string) => Promise<EngineContextData | null>;
   clearContext?: (sessionId: string) => Promise<{ cleared: boolean } | null>;
   importContext?: (
@@ -589,6 +592,13 @@ export class NativeSessionAdapter {
     return this.options.engine.compact(id, instruction);
   }
 
+  /** Cancel an in-flight compaction (SDK `cancelCompaction` parity). */
+  async cancelCompaction(): Promise<void> {
+    const id = this.controller.sessionId;
+    if (this.options.engine?.cancelCompaction === undefined || id === undefined) return;
+    await this.options.engine.cancelCompaction(id);
+  }
+
   /** Full context snapshot (SDK `getContext` parity); null when unavailable. */
   async getContext(): Promise<EngineContextData | null> {
     const id = this.controller.sessionId;
@@ -826,6 +836,7 @@ export interface RustLoopSessionApi {
     sessionId: string,
     instruction?: string,
   ): Promise<{ compacted: boolean; summary?: string; tokens_before?: number; tokens_after?: number } | null>;
+  sessionCancelCompaction(sessionId: string): Promise<{ cancelled: boolean } | null>;
   sessionGetContext(sessionId: string): Promise<EngineContextData | null>;
   sessionClearContext(sessionId: string): Promise<{ cleared: boolean } | null>;
   sessionImportContext(
@@ -910,6 +921,7 @@ export function nativeEngineOpsFromRustLoop(rustLoop: RustLoopSessionApi): Sessi
     getWarnings: (sessionId) => rustLoop.sessionGetWarnings(sessionId),
     getUsage: (sessionId) => rustLoop.sessionGetUsage(sessionId),
     compact: (sessionId, instruction) => rustLoop.sessionCompact(sessionId, instruction),
+    cancelCompaction: (sessionId) => rustLoop.sessionCancelCompaction(sessionId),
     getContext: (sessionId) => rustLoop.sessionGetContext(sessionId),
     clearContext: (sessionId) => rustLoop.sessionClearContext(sessionId),
     importContext: (sessionId, content, source) =>
