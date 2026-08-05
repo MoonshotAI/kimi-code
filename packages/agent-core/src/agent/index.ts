@@ -648,7 +648,21 @@ export class Agent {
         this.tools.unregisterUserTool(payload.name);
       },
       setActiveTools: (payload) => {
-        this.tools.setActiveTools(payload.names);
+        // Compose the global [tools].disabled denylist here so a runtime
+        // tool selection cannot reset disabledTools to empty. Without this,
+        // a setActiveTools update that includes a disabled tool (e.g. Bash)
+        // would reactivate it. #2534.
+        const tools = this.kimiConfig?.raw?.['tools'];
+        const globalDisabled =
+          tools !== undefined &&
+          typeof tools === 'object' &&
+          tools !== null &&
+          Array.isArray((tools as Record<string, unknown>)['disabled'])
+            ? ((tools as Record<string, unknown>)['disabled'] as string[]).filter(
+                (v): v is string => typeof v === 'string',
+              )
+            : [];
+        this.tools.setActiveTools(payload.names, globalDisabled);
       },
       stopBackground: (payload) => {
         void this.background.stop(payload.taskId, payload.reason);
