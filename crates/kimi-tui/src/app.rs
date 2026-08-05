@@ -16,6 +16,7 @@ use kimi_sdk::Harness;
 
 /// All slash commands the chat surface understands (shared with `/help`).
 const SLASH_COMMANDS: &[&str] = &[
+    "/add-dir",
     "/approvals",
     "/approve",
     "/archive",
@@ -518,6 +519,16 @@ impl App {
                     self.session.as_mut().expect("session").resume_goal(Some(rest)).await?;
                     self.transcript.push(TranscriptLine::status("goal resumed"));
                 }
+                "/add-dir" => {
+                    if rest.is_empty() {
+                        self.transcript.push(TranscriptLine::status("usage: /add-dir <path>"));
+                    } else {
+                        match self.session.as_mut().expect("session").add_additional_dir(rest).await {
+                            Ok(_) => self.transcript.push(TranscriptLine::status(format!("added dir {rest}"))),
+                            Err(e) => self.transcript.push(TranscriptLine::error(format!("add-dir failed: {e}"))),
+                        }
+                    }
+                }
                 "/clear" => {
                     self.session.as_mut().expect("session").clear_context().await?;
                     self.transcript.push(TranscriptLine::status("context cleared"));
@@ -1010,8 +1021,8 @@ mod tests {
 
     #[test]
     fn completes_command_names_and_cycles() {
-        assert_eq!(complete_line("/", &[], None), ("/approvals".to_string(), Some(0)));
-        assert_eq!(complete_line("/", &[], Some(0)), ("/approve".to_string(), Some(1)));
+        assert_eq!(complete_line("/", &[], None), ("/add-dir".to_string(), Some(0)));
+        assert_eq!(complete_line("/", &[], Some(0)), ("/approvals".to_string(), Some(1)));
         assert_eq!(complete_line("/go", &[], None), ("/goal".to_string(), Some(0)));
         assert_eq!(complete_line("/mod", &[], None), ("/model".to_string(), Some(0)));
         assert_eq!(complete_line("/zzz", &[], None), ("/zzz".to_string(), None));
