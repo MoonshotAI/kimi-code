@@ -18,6 +18,7 @@ use kimi_sdk::Harness;
 const SLASH_COMMANDS: &[&str] = &[
     "/approvals",
     "/approve",
+    "/archive",
     "/clear",
     "/compact",
     "/deny",
@@ -563,6 +564,23 @@ impl App {
                             }
                         }
                         Err(e) => self.transcript.push(TranscriptLine::error(format!("export failed: {e}"))),
+                    }
+                }
+                "/archive" => {
+                    let Some(session) = self.session.as_mut() else {
+                        self.transcript.push(TranscriptLine::error("archive: no active session"));
+                        return Ok(false);
+                    };
+                    match session.archive().await {
+                        Ok(true) => self
+                            .transcript
+                            .push(TranscriptLine::status("session archived")),
+                        Ok(false) => self
+                            .transcript
+                            .push(TranscriptLine::error("archive: session not found")),
+                        Err(e) => self
+                            .transcript
+                            .push(TranscriptLine::error(format!("archive failed: {e}"))),
                     }
                 }
                 other => self
