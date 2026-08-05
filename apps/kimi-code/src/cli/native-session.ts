@@ -127,12 +127,6 @@ export function isNativeTuiEngineEnabled(): boolean {
   return process.env['KIMI_SESSION_ENGINE_TUI'] !== '0';
 }
 
-function naError(feature: string): never {
-  throw new Error(
-    `${feature} is a JS-host capability and is not available under the native engine yet.`,
-  );
-}
-
 /** Non-terminal background-task statuses (for the `activeOnly` filter). */
 const ACTIVE_BG_STATUSES = new Set(['running', 'queued', 'starting']);
 
@@ -419,12 +413,31 @@ export class NativeSession implements TuiSession {
   }
 
   // ── Plugin commands (model-facing) ─────────────────────────────────────────
-  listPluginCommands(): Promise<readonly PluginCommandDef[]> {
-    return Promise.resolve([]);
+  async listPluginCommands(): Promise<readonly PluginCommandDef[]> {
+    // Aggregate command defs across installed plugins.
+    const plugins = await this.adapter.listPlugins();
+    const out: PluginCommandDef[] = [];
+    for (const plugin of plugins) {
+      const commands = await this.adapter.listPluginCommands(plugin.id);
+      for (const command of commands) {
+        out.push({
+          pluginId: plugin.id,
+          name: command.name,
+          description: command.description,
+          body: command.body,
+          path: '',
+        });
+      }
+    }
+    return out;
   }
 
-  activatePluginCommand(): Promise<void> {
-    return naError('Plugin commands');
+  async activatePluginCommand(
+    pluginId: string,
+    commandName: string,
+    args?: string,
+  ): Promise<void> {
+    await this.adapter.activatePluginCommand(this.id, pluginId, commandName, args);
   }
 
   // ── Goal lifecycle ──────────────────────────────────────────────────────────
@@ -497,24 +510,33 @@ export class NativeSession implements TuiSession {
     return plugins.map(mapPluginSummary);
   }
 
-  installPlugin(_source: string): Promise<PluginSummary> {
-    return naError('Installing a plugin');
+  async installPlugin(source: string): Promise<PluginSummary> {
+    const summary = await this.adapter.installPlugin(source);
+    if (summary === null) {
+      throw new Error('Plugin installation is unavailable');
+    }
+    return mapPluginSummary(summary);
   }
 
-  setPluginEnabled(): Promise<void> {
-    return naError('Enabling a plugin');
+  async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
+    await this.adapter.setPluginEnabled(id, enabled);
   }
 
-  setPluginMcpServerEnabled(): Promise<void> {
-    return naError("Toggling a plugin's MCP server");
+  async setPluginMcpServerEnabled(
+    id: string,
+    server: string,
+    enabled: boolean,
+  ): Promise<void> {
+    await this.adapter.setPluginMcpServerEnabled(id, server, enabled);
   }
 
-  removePlugin(): Promise<void> {
-    return naError('Removing a plugin');
+  async removePlugin(id: string): Promise<void> {
+    await this.adapter.removePlugin(id);
   }
 
-  reloadPlugins(): Promise<ReloadSummary> {
-    return naError('Reloading plugins');
+  async reloadPlugins(): Promise<ReloadSummary> {
+    await this.adapter.reloadPlugins();
+    return { added: [], removed: [], errors: [] };
   }
 
   async getPluginInfo(id: string): Promise<PluginInfo> {

@@ -333,6 +333,13 @@ describe('nativeEngineOpsFromRustLoop', () => {
       sessionList: record('sessionList', { sessions: [] }),
       pluginList: record('pluginList', { plugins: [] }),
       pluginGet: record('pluginGet', null),
+      pluginInstall: record('pluginInstall', { id: 'p1', display_name: 'p', version: '1', enabled: true }),
+      pluginSetEnabled: record('pluginSetEnabled', { id: 'p1', enabled: true }),
+      pluginSetMcpEnabled: record('pluginSetMcpEnabled', null),
+      pluginRemove: record('pluginRemove', { removed: true }),
+      pluginReload: record('pluginReload', { ok: true }),
+      pluginListCommands: record('pluginListCommands', { commands: [] }),
+      pluginActivateCommand: record('pluginActivateCommand', { accepted: true }),
       bgDetach: record('bgDetach', null),
       permissionSetMode: record('permissionSetMode'),
     };
@@ -376,6 +383,13 @@ describe('nativeEngineOpsFromRustLoop', () => {
     await ops.listSessions?.(10, 0);
     await ops.listPlugins?.();
     await ops.getPluginInfo?.('p1');
+    await ops.installPlugin?.('/tmp/p');
+    await ops.setPluginEnabled?.('p1', false);
+    await ops.setPluginMcpServerEnabled?.('p1', 'srv', false);
+    await ops.removePlugin?.('p1');
+    await ops.reloadPlugins?.();
+    await ops.listPluginCommands?.('p1');
+    await ops.activatePluginCommand?.('S', 'p1', 'review', 'focus');
     await ops.detachBackgroundTask?.('t1');
     await ops.setPermissionMode?.('S', 'manual');
 
@@ -418,6 +432,13 @@ describe('nativeEngineOpsFromRustLoop', () => {
       ['sessionList', [10, 0]],
       ['pluginList', []],
       ['pluginGet', ['p1']],
+      ['pluginInstall', ['/tmp/p']],
+      ['pluginSetEnabled', ['p1', false]],
+      ['pluginSetMcpEnabled', ['p1', 'srv', false]],
+      ['pluginRemove', ['p1']],
+      ['pluginReload', []],
+      ['pluginListCommands', ['p1']],
+      ['pluginActivateCommand', [{ sessionId: 'S', pluginId: 'p1', commandName: 'review', args: 'focus' }]],
       ['bgDetach', ['t1']],
       // permission is process-wide: session id dropped, only the mode forwarded.
       ['permissionSetMode', ['manual']],

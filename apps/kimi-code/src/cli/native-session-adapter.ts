@@ -150,6 +150,29 @@ export interface SessionEngineOps {
   listPlugins?: () => Promise<{ plugins: EnginePluginSummary[] } | null>;
   /** One installed plugin's detail (SDK `getPluginInfo`). */
   getPluginInfo?: (id: string) => Promise<EnginePluginInfo | null>;
+  /** Install a plugin from a source (SDK `installPlugin`). */
+  installPlugin?: (source: string) => Promise<EnginePluginSummary | null>;
+  /** Enable or disable an installed plugin (SDK `setPluginEnabled`). */
+  setPluginEnabled?: (id: string, enabled: boolean) => Promise<EnginePluginSummary | null>;
+  /** Toggle one of a plugin's MCP servers (SDK `setPluginMcpServerEnabled`). */
+  setPluginMcpServerEnabled?: (
+    id: string,
+    server: string,
+    enabled: boolean,
+  ) => Promise<EnginePluginInfo | null>;
+  /** Remove an installed plugin (SDK `removePlugin`). */
+  removePlugin?: (id: string) => Promise<{ removed: boolean } | null>;
+  /** Reload plugins from disk (SDK `reloadPlugins`). */
+  reloadPlugins?: () => Promise<{ ok: boolean } | null>;
+  /** List a plugin's slash-style commands (SDK `listPluginCommands`). */
+  listPluginCommands?: (pluginId: string) => Promise<EnginePluginCommand[]>;
+  /** Activate a plugin command (SDK `activatePluginCommand`). */
+  activatePluginCommand?: (
+    sessionId: string,
+    pluginId: string,
+    commandName: string,
+    args?: string,
+  ) => Promise<unknown>;
   /** Detach a background task from its foreground tool call (SDK
    *  `detachBackgroundTask`); returns the raw engine wire record or null. */
   detachBackgroundTask?: (taskId: string) => Promise<Record<string, unknown> | null>;
@@ -170,6 +193,14 @@ export interface EnginePlanInfo {
   id: string;
   content: string;
   path: string;
+}
+
+/** Engine plugin slash-style command wire shape (SDK `PluginCommandDef` parity). */
+export interface EnginePluginCommand {
+  plugin_id: string;
+  name: string;
+  description: string;
+  body: string;
 }
 
 /** Engine context snapshot wire shape (serde snake_case; messages stay
@@ -684,6 +715,53 @@ export class NativeSessionAdapter {
     return this.options.engine.getPluginInfo(id);
   }
 
+  /** Install a plugin from a source (SDK `installPlugin` parity). */
+  async installPlugin(source: string): Promise<EnginePluginSummary | null> {
+    if (this.options.engine?.installPlugin === undefined) return null;
+    return this.options.engine.installPlugin(source);
+  }
+
+  /** Enable or disable an installed plugin (SDK `setPluginEnabled` parity). */
+  async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
+    if (this.options.engine?.setPluginEnabled === undefined) return;
+    await this.options.engine.setPluginEnabled(id, enabled);
+  }
+
+  /** Toggle one of a plugin's MCP servers (SDK `setPluginMcpServerEnabled` parity). */
+  async setPluginMcpServerEnabled(id: string, server: string, enabled: boolean): Promise<void> {
+    if (this.options.engine?.setPluginMcpServerEnabled === undefined) return;
+    await this.options.engine.setPluginMcpServerEnabled(id, server, enabled);
+  }
+
+  /** Remove an installed plugin (SDK `removePlugin` parity). */
+  async removePlugin(id: string): Promise<boolean> {
+    if (this.options.engine?.removePlugin === undefined) return false;
+    return (await this.options.engine.removePlugin(id))?.removed ?? false;
+  }
+
+  /** Reload plugins from disk (SDK `reloadPlugins` parity). */
+  async reloadPlugins(): Promise<void> {
+    if (this.options.engine?.reloadPlugins === undefined) return;
+    await this.options.engine.reloadPlugins();
+  }
+
+  /** List a plugin's slash-style commands (SDK `listPluginCommands` parity). */
+  async listPluginCommands(pluginId: string): Promise<EnginePluginCommand[]> {
+    if (this.options.engine?.listPluginCommands === undefined) return [];
+    return this.options.engine.listPluginCommands(pluginId);
+  }
+
+  /** Activate a plugin command (SDK `activatePluginCommand` parity). */
+  async activatePluginCommand(
+    sessionId: string,
+    pluginId: string,
+    commandName: string,
+    args?: string,
+  ): Promise<void> {
+    if (this.options.engine?.activatePluginCommand === undefined) return;
+    await this.options.engine.activatePluginCommand(sessionId, pluginId, commandName, args);
+  }
+
   /** Detach a background task (SDK `detachBackgroundTask` parity); returns the
    *  raw engine wire record (mapped by `NativeSession`) or null. */
   async detachBackgroundTask(taskId: string): Promise<Record<string, unknown> | null> {
@@ -780,6 +858,22 @@ export interface RustLoopSessionApi {
   sessionList(limit?: number, offset?: number): Promise<{ sessions: EngineSessionRecord[] } | null>;
   pluginList(): Promise<{ plugins: EnginePluginSummary[] } | null>;
   pluginGet(id: string): Promise<EnginePluginInfo | null>;
+  pluginInstall(source: string): Promise<EnginePluginSummary | null>;
+  pluginSetEnabled(id: string, enabled: boolean): Promise<EnginePluginSummary | null>;
+  pluginSetMcpEnabled(
+    id: string,
+    server: string,
+    enabled: boolean,
+  ): Promise<EnginePluginInfo | null>;
+  pluginRemove(id: string): Promise<{ removed: boolean } | null>;
+  pluginReload(): Promise<{ ok: boolean } | null>;
+  pluginListCommands(id: string): Promise<{ commands: EnginePluginCommand[] } | null>;
+  pluginActivateCommand(input: {
+    sessionId: string;
+    pluginId: string;
+    commandName: string;
+    args?: string;
+  }): Promise<{ accepted: boolean } | null>;
   bgDetach(taskId: string): Promise<Record<string, unknown> | null>;
   permissionSetMode(mode: NativePermissionMode): Promise<unknown>;
 }
@@ -836,6 +930,16 @@ export function nativeEngineOpsFromRustLoop(rustLoop: RustLoopSessionApi): Sessi
     listSessions: (limit, offset) => rustLoop.sessionList(limit, offset),
     listPlugins: () => rustLoop.pluginList(),
     getPluginInfo: (id) => rustLoop.pluginGet(id),
+    installPlugin: (source) => rustLoop.pluginInstall(source),
+    setPluginEnabled: (id, enabled) => rustLoop.pluginSetEnabled(id, enabled),
+    setPluginMcpServerEnabled: (id, server, enabled) =>
+      rustLoop.pluginSetMcpEnabled(id, server, enabled),
+    removePlugin: (id) => rustLoop.pluginRemove(id),
+    reloadPlugins: () => rustLoop.pluginReload(),
+    listPluginCommands: (pluginId) =>
+      rustLoop.pluginListCommands(pluginId).then((r) => r?.commands ?? []),
+    activatePluginCommand: (sessionId, pluginId, commandName, args) =>
+      rustLoop.pluginActivateCommand({ sessionId, pluginId, commandName, args }),
     detachBackgroundTask: (taskId) => rustLoop.bgDetach(taskId),
     // Permission mode is a process-wide gate; the session id is not part of the
     // engine RPC, so it is ignored here.
