@@ -17,13 +17,13 @@ import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IEventBus } from '#/app/event/eventBus';
 import { IPluginService } from '#/app/plugin/plugin';
-import type { EnabledPluginSessionStart, ReloadSummary } from '#/app/plugin/types';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import { summarizeSkill } from '#/app/skillCatalog/types';
 import type { SkillDefinition } from '#/app/skillCatalog/types';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 
 import { agentService, appService, createTestAgent, skillServices, type TestAgentContext } from '../../harness';
+import { stubPluginService } from '../../app/plugin/stubs';
 
 function pluginSkill(): SkillDefinition {
   return {
@@ -35,36 +35,6 @@ function pluginSkill(): SkillDefinition {
     metadata: {},
     source: 'extra',
     plugin: { id: 'demo', instructions: 'Always be helpful.' },
-  };
-}
-
-interface PluginServiceStubOptions {
-  readonly sessionStarts: readonly EnabledPluginSessionStart[];
-  readonly reloadEmitter?: Emitter<ReloadSummary>;
-}
-
-function pluginServiceStub(options: PluginServiceStubOptions): IPluginService {
-  const reloadEmitter = options.reloadEmitter;
-  return {
-    _serviceBrand: undefined,
-    onDidReload: reloadEmitter !== undefined ? reloadEmitter.event : () => ({ dispose: () => {} }),
-    listPlugins: async () => [],
-    installPlugin: async () => ({ id: '' }) as never,
-    setPluginEnabled: async () => {},
-    setPluginMcpServerEnabled: async () => {},
-    removePlugin: async () => {},
-    reloadPlugins: async (): Promise<ReloadSummary> => ({ added: [], removed: [], errors: [] }),
-    getPluginInfo: async () => {
-      throw new Error('getPluginInfo is not used by these tests');
-    },
-    listPluginCommands: async () => [],
-    checkUpdates: async () => [],
-    pluginSkillRoots: async () => [],
-    pluginAgentRoots: async () => [],
-    enabledSessionStarts: async () => options.sessionStarts,
-    enabledSystemPrompts: async () => [],
-    enabledMcpServers: async () => ({}),
-    enabledHooks: async () => [],
   };
 }
 
@@ -103,7 +73,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
       { autoConfigure: true },
       appService(
         IPluginService,
-        pluginServiceStub({ sessionStarts: [{ pluginId: 'demo', skillName: 'demo-skill' }] }),
+        stubPluginService({ sessionStarts: [{ pluginId: 'demo', skillName: 'demo-skill' }] }),
       ),
       skillServices(catalog),
       agentService(
@@ -132,7 +102,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
       { autoConfigure: true },
       appService(
         IPluginService,
-        pluginServiceStub({ sessionStarts: [{ pluginId: 'demo', skillName: 'demo-skill' }] }),
+        stubPluginService({ sessionStarts: [{ pluginId: 'demo', skillName: 'demo-skill' }] }),
       ),
       skillServices(catalog),
       agentService(
@@ -160,7 +130,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
 
     ctx = createTestAgent(
       { autoConfigure: true },
-      appService(IPluginService, pluginServiceStub({ sessionStarts: [] })),
+      appService(IPluginService, stubPluginService({ sessionStarts: [] })),
       skillServices(catalog),
       agentService(
         IAgentPluginService,
@@ -193,7 +163,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
       { autoConfigure: true },
       appService(
         IPluginService,
-        pluginServiceStub({
+        stubPluginService({
           sessionStarts: [{ pluginId: 'demo', skillName: 'demo-skill' }],
         }),
       ),
@@ -240,7 +210,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
       { autoConfigure: true },
       appService(
         IPluginService,
-        pluginServiceStub({
+        stubPluginService({
           sessionStarts: [{ pluginId: 'demo', skillName: 'demo-skill' }],
         }),
       ),
@@ -282,7 +252,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
       { autoConfigure: true },
       appService(
         IPluginService,
-        pluginServiceStub({
+        stubPluginService({
           sessionStarts: [{ pluginId: 'demo', skillName: 'demo-skill' }],
         }),
       ),
