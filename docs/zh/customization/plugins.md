@@ -88,6 +88,8 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元——可以
 
 官方插件更新后会在使用旧版时提示更新，不会自动更新，要升级到新版本，重复上述安装步骤即可。
 
+例外：Kimi WebBridge 分两步安装，按上述步骤安装 plugin 后，还需要[安装浏览器扩展](#安装浏览器扩展)才能使用。
+
 ### Kimi Datasource <Badge type="tip" text="v3.3.0" />
 
 Kimi Datasource 是 Kimi Code 官方数据插件，让你用自然语言直接查询金融行情、宏观经济、企业工商、学术文献和中国法律法规，无需手动调用接口或申请数据账号。

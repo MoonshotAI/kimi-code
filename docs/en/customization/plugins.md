@@ -88,6 +88,8 @@ All official plugins share the same installation and upgrade flow:
 
 Official plugins do not update automatically — when an update is available, you'll be prompted the next time you use the old version. To upgrade, repeat the installation steps above.
 
+One exception: Kimi WebBridge installs in two parts. After the steps above, you also need to [install the browser extension](#install-the-browser-extension) before it works.
+
 ### Kimi Datasource <Badge type="tip" text="v3.3.0" />
 
 Kimi Datasource is the official Kimi Code data plugin, letting you query financial market data, macroeconomic indicators, corporate registration records, academic literature, and Chinese laws and regulations in natural language — no manual API calls or data accounts required.
