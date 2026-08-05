@@ -19,9 +19,10 @@
  */
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = import.meta.dirname;
 const TS_ENTRY = resolve(HERE, '..', 'dist', 'main.mjs');
 
 const DEBUG = process.env.KIMI_ENTRY_DEBUG === '1';

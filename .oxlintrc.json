@@ -110,6 +110,14 @@
     },
     {
       "files": [
+        "apps/kimi-code/bin/**/*.mjs"
+      ],
+      "rules": {
+        "eslint/no-unused-vars": "off"
+      }
+    },
+    {
+      "files": [
         "**/*.test.ts",
         "**/*.test.tsx",
         "**/*.spec.ts",
