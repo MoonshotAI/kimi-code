@@ -573,6 +573,25 @@ fn config_delete_removes_section_entry() {
 }
 
 #[test]
+fn provider_remove_deletes_config_entry() {
+    // `kimi provider remove <id>` null-patches providers.<id> out of the
+    // engine config (offline-safe; an absent provider is a no-op deletion).
+    let home = temp_dir("provider-remove");
+    let out = run(&home, &["config", "--set", "providers.acme.apiKey=sk-test"]);
+    assert!(out.status.success(), "set: {}", out.status);
+    let out = run(&home, &["provider", "remove", "acme"]);
+    assert!(out.status.success(), "remove: {}", out.status);
+    assert!(stdout(&out).contains("removed"), "remove output: {}", stdout(&out));
+    let out = run(&home, &["config"]);
+    let config: serde_json::Value = serde_json::from_str(stdout(&out).trim()).expect("config JSON");
+    assert!(
+        config["providers"].get("acme").is_none(),
+        "provider removed: {}",
+        config["providers"]
+    );
+}
+
+#[test]
 fn chat_undo_and_fork_offline() {
     // /undo (empty history errors cleanly) + /fork (creates a new session)
     // are pure state ops — no LLM needed.

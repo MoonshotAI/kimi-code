@@ -301,6 +301,11 @@ enum ProviderCmd {
         #[arg(long)]
         default_model: Option<String>,
     },
+    /// Remove a provider from the engine config.
+    Remove {
+        /// Provider id (e.g. `openai`, `anthropic`, `kimi`).
+        id: String,
+    },
 }
 
 /// Sub-targets of `kimi doctor`.
@@ -1617,6 +1622,28 @@ async fn main() -> anyhow::Result<()> {
                         std::process::exit(1);
                     }
                     println!("provider {id} added (baseUrl {base_url})");
+                }
+                ProviderCmd::Remove { id } => {
+                    // Drop providers.<id> via a null patch (the engine's
+                    // strip_null_deletes semantics; same lever as `kimi logout`).
+                    let id = id.as_str();
+                    let patch = serde_json::json!({
+                        "providers": {
+                            id: null,
+                        }
+                    });
+                    let client = connect(&server)?;
+                    let body = client
+                        .call(
+                            kimi_protocol::methods::CONFIG_SET,
+                            serde_json::json!({ "patch": patch }),
+                        )
+                        .await;
+                    if let Some(error) = body.get("error") {
+                        eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
+                        std::process::exit(1);
+                    }
+                    println!("provider {id} removed");
                 }
             }
         }
