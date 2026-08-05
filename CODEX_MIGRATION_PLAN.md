@@ -362,6 +362,12 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 > | acp-adapter | 2 | kimi-code | 🔴 活跃 |
 > | minidb | 0 | 无 | ✅ 已在 retired/ |
 > **结论**：退役的真正前置是 **apps/kimi-code 切 Rust 入口**，但它是 TS 分发且依赖这些包——鸡生蛋闭环。当前唯一可执行的是**增量替代**（kimi-sdk 已对齐 harness/session 面，native-session 已接入 Rust plugin/cancelCompaction/archive），逐步减少对 node-sdk 宿主面的依赖。
+>
+> **✅ 2026-08-05 宿主面缺口复核（三域全量对比，结论：协议/工具/CLI 均无实质缺口）**：
+> - **协议方法**：TS 调用的 83 个 RPC 方法（`packages/kimi-agent/rust-loop.ts` 唯一桥接层）在 `crates/kimi-protocol/src/methods.rs`（91 常量）全部存在——**TS 有 Rust 缺 = 0**。Rust 独有 8 个（`agent/health`、`agent/shutdown`、`session/destroy`、`session/rename`、`git/status`、`git/diff`、`cron/fired`、`bg/event`）为新增能力，非缺口；`session/rename` 已被 kimi-sdk `rename_session` 覆盖。
+> - **工具**：TS 旧引擎（retired/agent-core）工具 vs Rust `NativeToolset`（read/write/edit/grep/glob/bash/todolist/fs_search/web_search/fetch_url/read_media）+ 引擎级（goal/task/swarm/swarm_discussion/knowledge/memory/ask_user/skill/plan/mcp）。**真正缺口仅 2 个**：GitHub 工具族（30 个，含 GitHubSearchCode，`kimi-native-tools/src/github.rs` 已有 HTTP 基础层，中期建议聚合 1-2 个工具而非 30 个）+ `Workflow`（agent-core-v2 编排，Rust background+Swarm 已覆盖，不建议补）。其余为改名/合并（Agent→Task、GetGoal/SetGoalBudget→GoalStatus）或宿主注册类（Plan/Task/Cron 引擎侧已有基础设施）。用户关注领域全覆盖：网页搜索（WebSearch/FetchUrl）、本地代码搜索（Grep/Glob/FsSearch）、图像处理（ReadMediaFile）均 Rust 原生。
+> - **CLI 子命令**：Rust 12+ 子命令（print/sessions/resume/config/doctor/export/acp/completions/provider/login/logout/upgrade/web/vis）vs TS 10 个（acp/doctor/export/login/login-flow/plugin-run-node/provider/upgrade/vis/web）——login-flow 由 `acp --login` 覆盖；`plugin-run-node` 是 Node 插件宿主（Rust 迁移版不需要）；upgrade/web/vis 为分发说明 stub（符合 Rust-first 方向）。
+> - **TUI 命令**：kimi-tui 36 + REPL 31 命令，TS 26+ 全命令面覆盖（本批次补 /reload）。
 4. npm 分发薄壳（参考 codex-cli：bin → 包装 Rust 二进制）
 5. **验证**：CLI/TUI/web/API 全链路 Rust 端到端；旧 TS 测试删除或转 Rust
 
