@@ -1,15 +1,25 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { DisposableStore } from '#/_base/di/lifecycle';
+import {
+  _clearScopedRegistryForTests,
+  LifecycleScope,
+  ScopeActivation,
+  registerScopedService,
+  type IAgentScopeHandle,
+  type Scope,
+} from '#/_base/di/scope';
+import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import type { DomainEvent } from '#/app/event/eventBus';
 import { IEventBus } from '#/app/event/eventBus';
-import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
 } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionOutcomeRecorder } from '#/session/sessionActivity/sessionOutcomeRecorder';
 import { SessionOutcomeRecorder } from '#/session/sessionActivity/sessionOutcomeRecorderService';
 
 class FakeBus {
@@ -28,27 +38,71 @@ class FakeBus {
   }
 }
 
+class FakeAgentLifecycle implements IAgentLifecycleService {
+  declare readonly _serviceBrand: undefined;
+  readonly bus = new FakeBus();
+  private readonly createEmitter = new Emitter<IAgentScopeHandle>();
+  private readonly disposeEmitter = new Emitter<string>();
+  readonly onDidCreate = this.createEmitter.event;
+  readonly onDidDispose = this.disposeEmitter.event;
+  private mainPresent = false;
+
+  private readonly mainHandle = {
+    id: MAIN_AGENT_ID,
+    accessor: { get: (token: unknown) => (token === IEventBus ? this.bus : undefined) },
+  } as unknown as IAgentScopeHandle;
+
+  get(agentId: string): IAgentScopeHandle | undefined {
+    return agentId === MAIN_AGENT_ID && this.mainPresent ? this.mainHandle : undefined;
+  }
+
+  list(): readonly IAgentScopeHandle[] {
+    return this.mainPresent ? [this.mainHandle] : [];
+  }
+
+  addMain(): void {
+    this.mainPresent = true;
+    this.createEmitter.fire(this.mainHandle);
+  }
+
+  removeMain(): void {
+    this.mainPresent = false;
+    this.disposeEmitter.fire(MAIN_AGENT_ID);
+  }
+
+  create(): Promise<IAgentScopeHandle> {
+    throw new Error('not implemented');
+  }
+  fork(): Promise<IAgentScopeHandle> {
+    throw new Error('not implemented');
+  }
+  remove(): Promise<void> {
+    throw new Error('not implemented');
+  }
+  broadcastPermissionMode(): void {
+    throw new Error('not implemented');
+  }
+}
+
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
-describe('SessionOutcomeRecorder', () => {
-  function harness(opts?: { persisted?: SessionMeta['lastTurnOutcome'] }) {
-    const bus = new FakeBus();
-    const mainHandle = {
-      id: MAIN_AGENT_ID,
-      accessor: { get: (token: unknown) => (token === IEventBus ? bus : undefined) },
-    } as unknown as IAgentScopeHandle;
-    const onDidCreate = new Emitter<IAgentScopeHandle>();
-    const onDidDispose = new Emitter<string>();
-    let mainPresent = true;
-    const agents = {
-      get: (id: string) => (id === MAIN_AGENT_ID && mainPresent ? mainHandle : undefined),
-      onDidCreate: onDidCreate.event,
-      onDidDispose: onDidDispose.event,
-    } as unknown as IAgentLifecycleService;
-    const writes: (SessionMeta['lastTurnOutcome'])[] = [];
-    let failNextWrite = false;
+describe('SessionOutcomeRecorder (Session scope)', () => {
+  let disposables: DisposableStore;
+  let host: ScopedTestHost;
+  let session: Scope;
+  let lifecycle: FakeAgentLifecycle;
+  let writes: (SessionMeta['lastTurnOutcome'])[];
+  let failNextWrite: boolean;
+
+  beforeEach(() => {
+    _clearScopedRegistryForTests();
+    registerScopedService(LifecycleScope.Session, IAgentLifecycleService, FakeAgentLifecycle, ScopeActivation.OnDemand, 'agentLifecycle');
+    registerScopedService(LifecycleScope.Session, ISessionOutcomeRecorder, SessionOutcomeRecorder, ScopeActivation.OnScopeCreated, 'sessionActivity');
+
+    writes = [];
+    failNextWrite = false;
     const metadata = {
-      read: async () => ({ lastTurnOutcome: opts?.persisted }) as SessionMeta,
+      read: async () => ({ lastTurnOutcome: writes.at(-1) }) as SessionMeta,
       update: async (patch: { lastTurnOutcome?: SessionMeta['lastTurnOutcome'] }) => {
         if (failNextWrite) {
           failNextWrite = false;
@@ -56,35 +110,30 @@ describe('SessionOutcomeRecorder', () => {
         }
         writes.push(patch.lastTurnOutcome);
       },
-    } as unknown as ISessionMetadata;
-    const recorder = new SessionOutcomeRecorder(agents, metadata);
-    return {
-      writes,
-      failNext: () => {
-        failNextWrite = true;
-      },
-      started: () => bus.publish({ type: 'turn.started', turnId: 1 } as unknown as DomainEvent),
-      ended: (reason: string, interruptReason?: string) =>
-        bus.publish({ type: 'turn.ended', reason, interruptReason } as unknown as DomainEvent),
-      arriveMain: () => {
-        mainPresent = true;
-        onDidCreate.fire(mainHandle);
-      },
-      hideMain: () => {
-        mainPresent = false;
-      },
-      disposeMain: () => {
-        mainPresent = false;
-        onDidDispose.fire(MAIN_AGENT_ID);
-      },
-      dispose: () => {
-        recorder.dispose();
-      },
     };
-  }
+
+    disposables = new DisposableStore();
+    host = createScopedTestHost();
+    session = host.child(LifecycleScope.Session, 'session-a', [
+      stubPair(ISessionMetadata, metadata as unknown as ISessionMetadata),
+    ]);
+    lifecycle = session.accessor.get(IAgentLifecycleService) as unknown as FakeAgentLifecycle;
+    // Construct the scope-created recorder.
+    session.accessor.get(ISessionOutcomeRecorder);
+  });
+
+  afterEach(() => {
+    disposables.dispose();
+    host.dispose();
+  });
+
+  const started = () =>
+    lifecycle.bus.publish({ type: 'turn.started', turnId: 1 } as unknown as DomainEvent);
+  const ended = (reason: string, interruptReason?: string) =>
+    lifecycle.bus.publish({ type: 'turn.ended', reason, interruptReason } as unknown as DomainEvent);
 
   it('persists completed/failed/user-cancelled, never programmatic aborts', async () => {
-    const { writes, ended, dispose } = harness();
+    lifecycle.addMain();
     await tick();
     ended('completed');
     ended('failed');
@@ -92,49 +141,62 @@ describe('SessionOutcomeRecorder', () => {
     ended('cancelled', 'user_cancelled');
     ended('cancelled', 'aborted');
     expect(writes).toEqual(['completed', 'failed', 'cancelled']);
-    dispose();
-  });
-
-  it('dedupes against the durable value adopted at startup', async () => {
-    const { writes, ended, dispose } = harness({ persisted: 'failed' });
-    await tick();
-    ended('failed');
-    expect(writes).toEqual([]);
-    ended('completed');
-    expect(writes).toEqual(['completed']);
-    dispose();
   });
 
   it('clears the stored outcome when a new turn starts', async () => {
-    const { writes, started, dispose } = harness({ persisted: 'failed' });
-    await tick();
-    started();
-    expect(writes).toEqual([undefined]);
-    started();
-    expect(writes).toEqual([undefined]);
-    dispose();
-  });
-
-  it('reattaches when the main agent is disposed and recreated', async () => {
-    const { writes, ended, disposeMain, arriveMain, dispose } = harness();
+    lifecycle.addMain();
     await tick();
     ended('failed');
     expect(writes).toEqual(['failed']);
-    disposeMain();
-    arriveMain();
-    ended('completed');
-    expect(writes).toEqual(['failed', 'completed']);
-    dispose();
+    started();
+    expect(writes).toEqual(['failed', undefined]);
+    started();
+    expect(writes).toEqual(['failed', undefined]);
   });
 
   it('retries the write when a persist fails', async () => {
-    const { writes, failNext, ended, dispose } = harness();
+    lifecycle.addMain();
     await tick();
-    failNext();
+    failNextWrite = true;
     ended('failed');
     await tick();
     ended('failed');
     expect(writes).toEqual(['failed']);
-    dispose();
+  });
+
+  it('dedupes against the durable value adopted at startup', async () => {
+    lifecycle.addMain();
+    await tick();
+    ended('failed');
+    expect(writes).toEqual(['failed']);
+    // A second session scope (same metadata stub) adopts the persisted value
+    // and skips the duplicate write.
+    const second = host.child(LifecycleScope.Session, 'session-b', [
+      stubPair(ISessionMetadata, {
+        read: async () => ({ lastTurnOutcome: 'failed' }) as SessionMeta,
+        update: async (patch: { lastTurnOutcome?: SessionMeta['lastTurnOutcome'] }) => {
+          writes.push(patch.lastTurnOutcome);
+        },
+      } as unknown as ISessionMetadata),
+    ]);
+    const secondLifecycle = second.accessor.get(IAgentLifecycleService) as unknown as FakeAgentLifecycle;
+    second.accessor.get(ISessionOutcomeRecorder);
+    secondLifecycle.addMain();
+    await tick();
+    secondLifecycle.bus.publish({ type: 'turn.ended', turnId: 1, reason: 'failed' } as unknown as DomainEvent);
+    expect(writes).toEqual(['failed']);
+    secondLifecycle.bus.publish({ type: 'turn.ended', turnId: 2, reason: 'completed' } as unknown as DomainEvent);
+    expect(writes).toEqual(['failed', 'completed']);
+  });
+
+  it('reattaches when the main agent is disposed and recreated', async () => {
+    lifecycle.addMain();
+    await tick();
+    ended('failed');
+    expect(writes).toEqual(['failed']);
+    lifecycle.removeMain();
+    lifecycle.addMain();
+    ended('completed');
+    expect(writes).toEqual(['failed', 'completed']);
   });
 });
