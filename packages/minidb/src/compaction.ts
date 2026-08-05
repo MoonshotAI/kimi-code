@@ -33,8 +33,11 @@
 //                     finishes; the pause scales with the tail the pre-copy did
 //                     not drain — the same bounded end-of-rewrite pause Redis
 //                     accepts for its AOF diff flush.
-//   4. bookkeeping  — stats + awaiting onCompacted() (rebuild derived text
-//                     postings — yields to the event loop, writers unaffected).
+//   4. bookkeeping  — stats + awaiting onCompacted() (stage 5: build and
+//                     publish the new index generation — store image, index
+//                     images, text postings — as one transaction with the
+//                     rotated snapshot/WAL; legacy mode rebuilds derived text
+//                     postings instead).
 //
 // Crash safety: recovery is `load db.snapshot` + `replay db.wal`, last-writer
 // wins. We rename the snapshot BEFORE the WAL. If a crash lands between the two
@@ -42,7 +45,12 @@
 // whole old WAL on top of the new snapshot is idempotent for pre-fence frames
 // and correct for post-fence frames, so the state is still consistent. The
 // reverse order (WAL first) would pair an old snapshot with a truncated new WAL
-// and lose pre-fence data.
+// and lose pre-fence data. The argument only holds when each rename is durable
+// before the next one lands, so the rotation's directory fsyncs are STRICT: a
+// failed dir fsync aborts the rotation (rolling back through the catch in
+// runCompaction) rather than silently weakening the invariant. Platforms that
+// cannot fsync a directory degrade explicitly instead — a one-time warning and
+// stats.dirFsyncUnsupported = true.
 
 import fs from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
@@ -51,13 +59,15 @@ import { WAL } from './wal.js';
 import { renameReplace } from './rename-replace.js';
 import { writeSnapshot } from './snapshot.js';
 import type { Store, ValueLoc } from './store.js';
-import type { FsyncPolicy } from './wal.js';
+import type { FsyncPolicy, WalStats } from './wal.js';
 
 /** Structural interface of the bits compaction needs from a MiniDb. */
 export interface CompactionTarget {
   dir: string;
   walPath: string;
   fsyncPolicy: FsyncPolicy;
+  /** Background-sync interval the replacement WALs inherit (see WALOptions). */
+  syncIntervalMs?: number;
   store: Store;
   wal: WAL;
   compactThresholdBytes: number;
@@ -67,15 +77,39 @@ export interface CompactionTarget {
    *  Null outside rotation, so the snapshot phase is fully non-blocking. */
   _rotateLock: Promise<void> | null;
   lastCompactError: unknown;
-  stats: { compactions: number; walBytesWritten: number; walFsyncs: number; snapshotBytesWritten: number; compactErrors?: number };
+  stats: WalStats & {
+    compactions: number;
+    snapshotBytesWritten: number;
+    compactErrors?: number;
+    /** Cumulative phase timings (wall-clock ms). Optional so structural test
+     *  doubles need not carry them; MiniDb always provides them. */
+    compactionDurationMs?: number;
+    compactionSnapshotDurationMs?: number;
+    compactionRotationDurationMs?: number;
+    /** Set (once) when a directory fsync reported EINVAL/ENOTSUP: this
+     *  platform cannot make renames durable via the directory, so rotation
+     *  durability is knowingly degraded (warned once) rather than aborted. */
+    dirFsyncUnsupported?: boolean;
+  };
   /** Reader for disk-backed values; reopened after snapshot/WAL rotation so
    *  remapped value pointers read from the new files. On Windows it is also
-   *  closed before the rotation renames (see rotateReplace). */
-  valueReader?: { reopenBoth(): void; close?(): void };
+   *  closed before the rotation renames (see rotateReplace). The optional
+   *  readAsync powers the stage-6 grouped async snapshot reads. */
+  valueReader?: {
+    reopenBoth(): void;
+    close?(): void;
+    readAsync?(loc: ValueLoc): Promise<Buffer>;
+  };
   /** Optional hook invoked (and awaited) after the snapshot + WAL rotation
-   *  succeeds, so the owner can rewrite derived on-disk state (e.g. text
-   *  postings) against the new live set. */
+   *  succeeds, so the owner can publish derived on-disk state (stage 5's
+   *  index generation; legacy mode: text postings) against the new live set. */
   onCompacted?: () => void | Promise<void>;
+  /** Stage 6 maintenance integration: the rotation critical section is the
+   *  compaction's "publishing" phase — the scheduler WAITS for it on
+   *  shutdown instead of cancelling mid-rotation. Called with 'publishing'
+   *  as the rotation starts and 'running' as it ends (both in the failure
+   *  path and the success path). */
+  onMaintenancePhase?: (phase: 'running' | 'publishing') => void;
 }
 
 export function shouldCompact(db: CompactionTarget): boolean {
@@ -98,13 +132,34 @@ const rotateReplace = (src: string, dst: string): Promise<void> => renameReplace
 const MAX_PRECOPY_PASSES = 5;
 const CONVERGE_RATIO = 0.7;
 
-export async function fsyncDir(dir: string): Promise<void> {
+export function isUnsupportedDirectoryFsyncError(
+  code: string | undefined,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return code === 'EINVAL' || code === 'ENOTSUP' || (platform === 'win32' && code === 'EPERM');
+}
+
+export async function fsyncDir(
+  dir: string,
+  opts: { strict?: boolean; stats?: { dirFsyncUnsupported?: boolean } } = {},
+): Promise<void> {
   let fh: FileHandle | null = null;
   try {
     fh = await fs.open(dir, 'r');
     await fh.sync();
-  } catch {
-    /* best-effort */
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    // Some platforms cannot fsync a directory at all. That is a permanent
+    // environment property, not a rotation fault: mark the degraded durability
+    // state and continue without directory fsync in both modes.
+    if (isUnsupportedDirectoryFsyncError(code)) {
+      if (opts.stats) opts.stats.dirFsyncUnsupported = true;
+      return;
+    }
+    // Strict mode (the rotation path): a failed directory fsync breaks the
+    // rename-durability invariant, so the caller must abort — never swallow.
+    if (opts.strict) throw e;
+    /* best-effort otherwise */
   } finally {
     if (fh) await fh.close().catch(() => {});
   }
@@ -158,12 +213,14 @@ export async function compact(db: CompactionTarget): Promise<void> {
 
   db.compacting = true;
   db._compactDone = (async () => {
+    const t0 = performance.now();
     try {
       await runCompaction(db);
       // The onCompacted hook is part of the compaction: a run whose hook
       // throws is counted as a compactError, not a successful compaction.
       await db.onCompacted?.();
       db.stats.compactions++;
+      db.stats.compactionDurationMs = (db.stats.compactionDurationMs ?? 0) + (performance.now() - t0);
       db.lastCompactError = null;
     } catch (err) {
       db.stats.compactErrors = (db.stats.compactErrors ?? 0) + 1;
@@ -191,8 +248,15 @@ async function runCompaction(db: CompactionTarget): Promise<void> {
 
   // Phase 2: snapshot. NON-BLOCKING — writers keep appending to the WAL and
   // mutating the store while we iterate. Fuzziness is repaired by the tail.
-  const snapRes = await writeSnapshot(db.store, tmp);
+  // Stage 6: in disk valueMode the snapshot's value reads run through the
+  // async grouped reader (bounded concurrency, slice budget) instead of one
+  // synchronous positioned read per record on the event loop.
+  const snapT0 = performance.now();
+  const snapRes = await writeSnapshot(db.store, tmp, {
+    readValueAsync: db.valueReader?.readAsync ? (loc) => db.valueReader!.readAsync!(loc) : undefined,
+  });
   db.stats.snapshotBytesWritten += snapRes.bytes;
+  db.stats.compactionSnapshotDurationMs = (db.stats.compactionSnapshotDurationMs ?? 0) + (performance.now() - snapT0);
 
   // Phase 2.5: pre-copy the post-fence WAL tail into db.wal.tmp. NON-BLOCKING.
   // Each pass flushes to get a stable `head`, then copies the bytes that landed
@@ -246,6 +310,10 @@ async function runCompaction(db: CompactionTarget): Promise<void> {
   db._rotateLock = new Promise<void>((resolve) => {
     releaseRotation = resolve;
   });
+  const rotateT0 = performance.now();
+  // Stage 6: from here to the remap/reader reopen, a shutdown must wait for
+  // the rotation rather than cancelling it mid-flight.
+  db.onMaintenancePhase?.('publishing');
   let rotated = false;
   let remapped = false;
   // Remap disk-backed value pointers to the new snapshot/WAL files. Guarded
@@ -284,13 +352,17 @@ async function runCompaction(db: CompactionTarget): Promise<void> {
     if (process.platform === 'win32') db.valueReader?.close?.();
 
     // Snapshot first, then WAL — see the crash-safety note in the file header.
+    // That argument assumes each rename is durable before the next one lands,
+    // so the directory fsyncs here are STRICT: a failure aborts the rotation
+    // (the catch below rolls back) instead of silently weakening the
+    // invariant. Platforms without directory fsync degrade via fsyncDir itself.
     await rotateReplace(tmp, snap);
-    await fsyncDir(db.dir);
+    await fsyncDir(db.dir, { strict: true, stats: db.stats });
     await rotateReplace(walTmp, db.walPath);
     rotated = true;
-    await fsyncDir(db.dir);
+    await fsyncDir(db.dir, { strict: true, stats: db.stats });
 
-    const fresh = new WAL(db.walPath, { fsyncPolicy: db.fsyncPolicy, stats: db.stats });
+    const fresh = new WAL(db.walPath, { fsyncPolicy: db.fsyncPolicy, syncIntervalMs: db.syncIntervalMs, stats: db.stats });
     db.wal = fresh;
     await fresh.open();
 
@@ -305,7 +377,7 @@ async function runCompaction(db: CompactionTarget): Promise<void> {
       // comes first: it both restores appendability and stops late in-flight
       // writers from publishing old-file value pointers against the fresh WAL.
       await db.wal.close().catch(() => {});
-      const fresh = new WAL(db.walPath, { fsyncPolicy: db.fsyncPolicy, stats: db.stats });
+      const fresh = new WAL(db.walPath, { fsyncPolicy: db.fsyncPolicy, syncIntervalMs: db.syncIntervalMs, stats: db.stats });
       await fresh.open();
       db.wal = fresh;
       if (rotated) {
@@ -319,5 +391,10 @@ async function runCompaction(db: CompactionTarget): Promise<void> {
   } finally {
     releaseRotation();
     db._rotateLock = null;
+    db.onMaintenancePhase?.('running');
+    // Wall time of the rotation critical section — the window writers were
+    // parked (their per-op waits accumulate separately in MiniDb's
+    // compactionRotationPauseMs).
+    db.stats.compactionRotationDurationMs = (db.stats.compactionRotationDurationMs ?? 0) + (performance.now() - rotateT0);
   }
 }

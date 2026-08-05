@@ -295,10 +295,11 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
 
   return {
     sessions: {
-      list: (query) => call('sessionIndex', 'list', [query]) as Promise<Page<SessionSummary>>,
+      list: (query) =>
+        call('sessionIndex', 'listRecent', [query]) as Promise<Page<SessionSummary>>,
       get: (id) => call('sessionIndex', 'get', [id]) as Promise<SessionSummary | undefined>,
       countActive: (workspaceIds) =>
-        call('sessionIndex', 'countActive', [workspaceIds]) as Promise<number>,
+        call('sessionIndex', 'count', [{ workspaceIds }]) as Promise<number>,
       create: async ({ workDir, additionalDirs, title, mcpServers }) => {
         // The workspace handler owns session creation: materialize (or reuse)
         // the handler for the root, then create under it.

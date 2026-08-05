@@ -4,6 +4,12 @@
  * Owns the `McpServerConfig` schema and its transport variants. These describe
  * the shape of MCP server entries as they appear in configuration (whether in
  * `config.toml` or an MCP-specific config file).
+ *
+ * Remote variants accept `auth: "oauth"`, mirroring v1: OAuth is still
+ * discovered from a remote server's 401 response; the flag records that the
+ * user explicitly chose OAuth, so static `headers` on the same entry are
+ * treated as plain request headers (capability/identity declarations) rather
+ * than as the server's credentials.
  */
 
 import { z } from 'zod';
@@ -37,6 +43,7 @@ export const McpServerHttpConfigSchema = z.object({
   transport: z.literal('http'),
   url: z.string().url(),
   headers: StringRecordSchema.optional(),
+  auth: z.literal('oauth').optional(),
   bearerTokenEnvVar: z.string().min(1).optional(),
   ...McpServerCommonFields,
 });
@@ -47,6 +54,7 @@ export const McpServerSseConfigSchema = z.object({
   transport: z.literal('sse'),
   url: z.string().url(),
   headers: StringRecordSchema.optional(),
+  auth: z.literal('oauth').optional(),
   bearerTokenEnvVar: z.string().min(1).optional(),
   ...McpServerCommonFields,
 });

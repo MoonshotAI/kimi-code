@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { MiniDb } from '../src/index.js';
 import { WAL } from '../src/wal.js';
+import { barrier } from './helpers.js';
 
 async function tmpDir() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'minidb-fix-'));
@@ -18,13 +19,19 @@ test('WAL.flush() drains frames queued behind an in-flight batch', async () => {
   try {
     const wal = new WAL(path.join(dir, 'a.wal'), { fsyncPolicy: 'always' });
     await wal.open();
-    const big = Buffer.alloc(1024 * 1024, 0x61);
-    const pA = wal.append(big);
-    await new Promise((r) => setImmediate(r));
-    await new Promise((r) => setImmediate(r));
-    const pB = wal.append(Buffer.from('B'));
-    await wal.flush();
+    // Deterministic barrier instead of the old two-setImmediate guess (review
+    // #28): the first writev parks, so batch A is PROVABLY in flight when B
+    // is appended behind it.
+    const fh = (wal as unknown as { fh: { writev: (...a: unknown[]) => Promise<unknown> } }).fh;
+    const gate = barrier(fh, 'writev', 1);
+    const pA = wal.append(Buffer.alloc(1024 * 1024, 0x61));
+    await gate.entered; // batch A is inside writev now
+    const pB = wal.append(Buffer.from('B')); // queued behind the in-flight batch
+    const flushing = wal.flush(); // must await A AND then drain B
+    gate.release();
+    await flushing;
     const pending = (wal as unknown as { queue: unknown[] }).queue.length;
+    gate.restore();
     await wal.close();
     await pA;
     await pB;
