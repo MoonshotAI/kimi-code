@@ -255,6 +255,13 @@ fn run_turn_with_host_callbacks() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        // Host-callback scenario: isolate the engine from any ambient config
+        // (project + user level) so it uses the host LLM proxy, not a
+        // self-read native LLM.
+        .env("KIMI_AGENT_HOME", std::env::temp_dir().join("kimi-acp-empty-home"))
+        .env("KIMI_CONFIG_PATH", std::env::temp_dir().join("kimi-acp-nonexistent-config.toml"))
+        .env("USERPROFILE", std::env::temp_dir().join("kimi-acp-empty-profile"))
+        .env("HOME", std::env::temp_dir().join("kimi-acp-empty-home"))
         .spawn()
         .expect("failed to spawn kimi-agent");
 
@@ -5148,6 +5155,22 @@ fn approval_rpc_resolves_pending_write() {
 
     let mut env: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
     env.insert("KIMI_PERMISSION_MODE", "manual".to_string());
+    // Isolate from any ambient config (project + user level) so the
+    // host-callback turn uses the host LLM proxy rather than a self-read
+    // native LLM.
+    env.insert("KIMI_AGENT_HOME", home.to_string_lossy().into_owned());
+    env.insert(
+        "KIMI_CONFIG_PATH",
+        std::env::temp_dir().join("kimi-acp-nonexistent-config.toml").to_string_lossy().into_owned(),
+    );
+    env.insert(
+        "USERPROFILE",
+        std::env::temp_dir().join("kimi-acp-empty-profile").to_string_lossy().into_owned(),
+    );
+    env.insert(
+        "HOME",
+        std::env::temp_dir().join("kimi-acp-empty-home").to_string_lossy().into_owned(),
+    );
     let mut child = Command::new(&binary)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
