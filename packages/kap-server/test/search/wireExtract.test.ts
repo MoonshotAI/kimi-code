@@ -92,6 +92,64 @@ describe('extractFromWireLine', () => {
     expect(out).toEqual([]);
   });
 
+  it('does not index an upload-only user message (the paired <media path> tag folds away)', () => {
+    // An uploaded image persists as `<image path>` tag text + a `kimi-file://`
+    // image part; the tag is machine markup paired with the ref, so the
+    // message stays text-less for the index — and the materialization path
+    // must never become searchable.
+    const out = extractFromWireLine(
+      line({
+        type: 'context.append_message',
+        time: 1_700_000_000_000,
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: '<image path="/Users/alice/media/f_1.png"></image>' },
+            {
+              type: 'image_url',
+              imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
+            },
+          ],
+          origin: { kind: 'user' },
+        },
+      }),
+    );
+    expect(out).toEqual([]);
+  });
+
+  it('indexes only the real text of an upload-carrying user message', () => {
+    const out = extractFromWireLine(
+      line({
+        type: 'context.append_message',
+        time: 1_700_000_000_000,
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'what is this? ' },
+            { type: 'text', text: '<image path="/Users/alice/media/f_1.png"></image>' },
+            {
+              type: 'image_url',
+              imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
+            },
+          ],
+          origin: { kind: 'user' },
+        },
+      }),
+    );
+    expect(out).toEqual([{ role: 'user', text: 'what is this?', time: 1_700_000_000_000 }]);
+  });
+
+  it('keeps an unpaired standalone <media path> tag as user text', () => {
+    // Without an adjacent path-matching daemon ref the tag is user content,
+    // not markup the index may eat.
+    const out = extractFromWireLine(
+      userRecord('<image path="/tmp/shot.png">', 1_700_000_000_000, { kind: 'user' }),
+    );
+    expect(out).toEqual([
+      { role: 'user', text: '<image path="/tmp/shot.png">', time: 1_700_000_000_000 },
+    ]);
+  });
+
   it('extracts assistant text content parts from loop events', () => {
     const out = extractFromWireLine(
       line({

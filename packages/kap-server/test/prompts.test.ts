@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
@@ -8,6 +8,7 @@ import {
   IAgentLifecycleService,
   IAgentProfileService,
   IAgentToolPolicyService,
+  IBootstrapService,
   IFileService,
   ISessionContext,
   closeSessionById,
@@ -437,6 +438,57 @@ describe('server-v2 /api/v1 prompts', () => {
         imageUrl: { url: `kimi-file://${uploaded.data.id}?path=${encodeURIComponent(mediaPath)}` },
       },
     ]);
+  });
+
+  it('falls back to the shared cache dir when the session media dir is not writable', async () => {
+    // Root bypasses permission checks, so the read-only dir never triggers.
+    if (process.getuid?.() === 0) return;
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const smallPng = solidPng(10, 10);
+    const form = new FormData();
+    form.set('file', new Blob([smallPng], { type: 'image/png' }), 'small.png');
+    const uploadRes = await fetch(`${base}/api/v1/files`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer),
+      body: form,
+    } as never);
+    const uploaded = (await uploadRes.json()) as Envelope<{ id: string; size: number }>;
+    expect(uploaded.code).toBe(0);
+
+    // A read-only session media dir must not reject an otherwise-submittable
+    // prompt: the materialized copy falls back to the shared cache dir.
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const mediaDir = sessionMediaDir(server!, id);
+    await mkdir(mediaDir, { recursive: true });
+    await chmod(mediaDir, 0o555);
+    try {
+      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.data.id } }],
+      });
+      expect(submitted.body.code).toBe(0);
+
+      const cacheDir = server!.core.accessor.get(IBootstrapService).cacheDir;
+      const mediaPath = join(cacheDir, `${uploaded.data.id}.png`);
+      expect(await readFile(mediaPath)).toEqual(smallPng);
+
+      // The engine's prompt intake cannot repair the reference either (same
+      // read-only dir), so context memory keeps the cache-dir path.
+      const main = session.accessor.get(IAgentLifecycleService).get('main')!;
+      const userMessage = main.accessor
+        .get(IAgentContextMemoryService)
+        .get()
+        .find((m) => m.role === 'user' && m.origin?.kind === 'user');
+      expect(userMessage?.content).toEqual([
+        { type: 'text', text: `<image path="${mediaPath}"></image>` },
+        {
+          type: 'image_url',
+          imageUrl: { url: `kimi-file://${uploaded.data.id}?path=${encodeURIComponent(mediaPath)}` },
+        },
+      ]);
+    } finally {
+      await chmod(mediaDir, 0o755);
+    }
   });
 
   it('compresses inline base64 image prompts into session media-originals', async () => {
