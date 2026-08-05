@@ -38,6 +38,7 @@ import { transformOpenApiDocument } from './openapi/transforms';
 import { registerRequestLogging } from './requestLogging';
 import { resolveRequestId } from './request-id';
 import { registerApiV1Routes } from './routes/registerApiV1Routes';
+import { registerApiV2Routes } from './routes/registerApiV2Routes';
 import { registerWebAssetRoutes } from './routes/webAssets';
 import {
   createServerLogger,
@@ -462,6 +463,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           { name: 'models', description: 'Configured model aliases' },
           { name: 'providers', description: 'Configured providers' },
           { name: 'sessions', description: 'Session lifecycle' },
+          { name: 'v2-sessions', description: 'Session list query (API v2, envelope-free)' },
           { name: 'workspaces', description: 'Workspace registry + folder picker' },
           { name: 'messages', description: 'Message history' },
           { name: 'search', description: 'Global message search' },
@@ -504,6 +506,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     transcriptService,
     dangerousBypassAuth: opts.disableAuth === true,
   });
+
+  // `/api/v2` — envelope-free surface (raw payloads, real HTTP statuses).
+  // Mounted after v1; the root auth/host/origin hooks cover it identically.
+  await registerApiV2Routes(app, core);
 
   const wssV1 = registerWsV1(core, {
     validateCredential,
