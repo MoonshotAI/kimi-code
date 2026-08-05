@@ -1490,38 +1490,42 @@ function selectModel(modelId: string): void {
           @click.stop
           @keydown="onModelDropdownKeydown"
         >
-          <!-- Starred models from other providers -->
-          <div v-if="starredOtherModels.length > 0" class="md-section">{{ t('status.starredModels') }}</div>
-          <button
-            v-for="m in starredOtherModels"
-            :key="m.id"
-            class="md-row"
-            :class="{ 'is-current': m.id === status.modelId }"
-            role="menuitem"
-            @click="selectModel(m.id)"
-          >
-            <span class="md-check"><Icon v-if="m.id === status.modelId" name="check" size="sm" /></span>
-            <span class="md-name">{{ m.displayName ?? m.model }}</span>
-            <span class="md-provider">{{ m.provider }}</span>
-            <Icon class="md-star" name="star" size="sm" />
-          </button>
+          <!-- Scrollable model list — capped so a large provider catalog
+               can't push the controls below out of the viewport. -->
+          <div class="md-list">
+            <!-- Starred models from other providers -->
+            <div v-if="starredOtherModels.length > 0" class="md-section">{{ t('status.starredModels') }}</div>
+            <button
+              v-for="m in starredOtherModels"
+              :key="m.id"
+              class="md-row"
+              :class="{ 'is-current': m.id === status.modelId }"
+              role="menuitem"
+              @click="selectModel(m.id)"
+            >
+              <span class="md-check"><Icon v-if="m.id === status.modelId" name="check" size="sm" /></span>
+              <span class="md-name">{{ m.displayName ?? m.model }}</span>
+              <span class="md-provider">{{ m.provider }}</span>
+              <Icon class="md-star" name="star" size="sm" />
+            </button>
 
-          <div v-if="starredOtherModels.length > 0" class="md-divider" />
+            <div v-if="starredOtherModels.length > 0" class="md-divider" />
 
-          <!-- Current provider models -->
-          <div v-if="providerModels.length > 0" class="md-section">{{ currentProvider }}</div>
-          <button
-            v-for="m in providerModels"
-            :key="m.id"
-            class="md-row"
-            :class="{ 'is-current': m.id === status.modelId }"
-            role="menuitem"
-            @click="selectModel(m.id)"
-          >
-            <span class="md-check"><Icon v-if="m.id === status.modelId" name="check" size="sm" /></span>
-            <span class="md-name">{{ m.displayName ?? m.model }}</span>
-            <Icon v-if="isStarred(m.id)" class="md-star" name="star" size="sm" />
-          </button>
+            <!-- Current provider models -->
+            <div v-if="providerModels.length > 0" class="md-section">{{ currentProvider }}</div>
+            <button
+              v-for="m in providerModels"
+              :key="m.id"
+              class="md-row"
+              :class="{ 'is-current': m.id === status.modelId }"
+              role="menuitem"
+              @click="selectModel(m.id)"
+            >
+              <span class="md-check"><Icon v-if="m.id === status.modelId" name="check" size="sm" /></span>
+              <span class="md-name">{{ m.displayName ?? m.model }}</span>
+              <Icon v-if="isStarred(m.id)" class="md-star" name="star" size="sm" />
+            </button>
+          </div>
 
           <div v-if="providerModels.length > 0" class="md-divider" />
 
@@ -2149,6 +2153,17 @@ function selectModel(modelId: string): void {
 .composer-menu-pop-leave-to {
   opacity: 0;
   transform: scale(0.97) translateY(2px);
+}
+
+/* Model rows live in this capped scroll container; the controls below
+   (thinking, cache note, more models) stay pinned outside it. */
+.md-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: min(320px, 40vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .md-section {
