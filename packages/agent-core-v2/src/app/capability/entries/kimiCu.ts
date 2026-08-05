@@ -1,12 +1,11 @@
 /**
- * `kimi-cu` capability entry (macOS only).
+ * `kimi-cu` capability entry (macOS and Windows).
  *
- * Layers: the official `kimi-cu` plugin (stdio MCP wrapper + skill) +
- * KimiCU.app (`/Applications`, launchd background service) + TCC
- * permissions (accessibility + screen recording — the user must grant
- * these; they can never be set programmatically).
+ * Both platforms share the same product capability and plugin wiring flow.
+ * macOS adds KimiCU.app + launchd + TCC permissions; Windows uses the
+ * official signed runtime installer and its built-in `doctor` command.
  *
- * The install replicates the official `setup_macos.sh` step-for-step
+ * The macOS path replicates the official `setup_macos.sh` step-for-step
  * (stop old processes → ditto into /Applications → register service →
  * request permissions) with structured progress and errors instead of a
  * shell pipe. Elevation when /Applications is not writable goes through
@@ -19,6 +18,8 @@
  * stopped, and cleanup of old processes is best-effort — a wedged old
  * binary turns CLI probes into failed steps or is skipped past, never
  * blocking the replacement.
+ * The Windows path downloads and runs the official `setup_windows.ps1`, so
+ * its signature verification, rollback, and agent autostart stay upstream.
  */
 
 import { constants } from 'node:fs';
@@ -35,14 +36,37 @@ import type {
 } from '../types';
 import type { CapabilityEntryContext } from './context';
 
-const PLUGIN_ID = 'kimi-cu';
-const PLUGIN_ZIP_URL = 'https://cdn.kimi.com/kimi-computer-use/latest/kimi-cu-plugin.zip';
+const MAC_PLUGIN = {
+  id: 'kimi-cu',
+  zipUrl: 'https://cdn.kimi.com/kimi-computer-use/latest/kimi-cu-plugin.zip',
+} as const;
+const WINDOWS_PLUGIN = {
+  id: 'kimi-cu-win',
+  zipUrl:
+    'https://cdn.kimi.com/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip',
+} as const;
 const APP_ZIP_URL = 'https://cdn.kimi.com/kimi-computer-use/latest/KimiCU.app.zip';
+const WINDOWS_SETUP_URL =
+  'https://cdn.kimi.com/kimi-computer-use-windows/latest/setup_windows.ps1';
 const APP_BUNDLE = 'KimiCU.app';
 const LAUNCHD_LABEL = 'ai.kimi.cu.service';
 const COMMAND_TIMEOUT_MS = 30_000;
 const PERMISSIONS_TIMEOUT_MS = 15_000;
 const DETECT_PROBE_TIMEOUT_MS = 3_000;
+const WINDOWS_INSTALL_TIMEOUT_MS = 180_000;
+const DEFAULT_WINDOWS_SYSTEM_ROOT = 'C:\\Windows';
+const WINDOWS_DOCTOR_SCRIPT =
+  '$candidates = @($env:KIMI_CU_WINDOWS_EXE); ' +
+  "if ($env:KIMI_CU_WINDOWS_HOME) { $candidates += (Join-Path $env:KIMI_CU_WINDOWS_HOME 'kimi-cu.exe') }; " +
+  "if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA 'KimiCU\\kimi-cu.exe') }; " +
+  "if ($env:ProgramFiles) { $candidates += (Join-Path $env:ProgramFiles 'KimiCU\\kimi-cu.exe') }; " +
+  "$exe = $candidates | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1; " +
+  'if (-not $exe) { exit 3 }; & $exe doctor; exit $LASTEXITCODE';
+
+interface PluginLayerConfig {
+  readonly id: string;
+  readonly zipUrl: string;
+}
 
 interface PermissionStatus {
   readonly accessibility: boolean;
@@ -64,6 +88,33 @@ export function parsePermissionStatus(output: string): PermissionStatus | undefi
   return { accessibility: match[1] === 'true', screenRecording: match[2] === 'true' };
 }
 
+export function parseWindowsDoctorOutput(
+  output: string,
+): { readonly version?: string } | undefined {
+  const fields = new Map<string, string>();
+  for (const line of output.split(/\r?\n/)) {
+    const separator = line.indexOf('=');
+    if (separator <= 0) continue;
+    fields.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
+  }
+  if (fields.get('mcp') !== 'true' || fields.get('helper') !== 'embedded') return undefined;
+  const version = fields.get('version');
+  return version === undefined ? {} : { version };
+}
+
+export function windowsPowerShellPath(
+  systemRoot = process.env['SystemRoot'] ?? DEFAULT_WINDOWS_SYSTEM_ROOT,
+): string {
+  const root = path.win32.isAbsolute(systemRoot) ? systemRoot : DEFAULT_WINDOWS_SYSTEM_ROOT;
+  return path.win32.join(
+    root,
+    'System32',
+    'WindowsPowerShell',
+    'v1.0',
+    'powershell.exe',
+  );
+}
+
 export async function readAppBundleVersion(infoPlistPath: string): Promise<string | undefined> {
   try {
     const xml = await readFile(infoPlistPath, 'utf-8');
@@ -80,6 +131,52 @@ function appleScriptQuote(script: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function detectPluginLayer(
+  ctx: CapabilityEntryContext,
+  config: PluginLayerConfig,
+): Promise<{ readonly step: CapabilityStep; readonly version?: string }> {
+  const installed = await ctx.plugins.listPlugins();
+  const plugin = installed.find((candidate) => candidate.id === config.id);
+  const mcpGap =
+    plugin !== undefined && plugin.enabledMcpServerCount < plugin.mcpServerCount
+      ? `mcp ${plugin.enabledMcpServerCount}/${plugin.mcpServerCount} enabled`
+      : undefined;
+  const pluginOk =
+    plugin !== undefined &&
+    plugin.enabled &&
+    plugin.state === 'ok' &&
+    plugin.enabledMcpServerCount === plugin.mcpServerCount;
+  return {
+    step: {
+      id: 'plugin',
+      state: pluginOk ? 'ok' : 'missing',
+      detail: mcpGap ?? plugin?.version,
+    },
+    version: plugin?.version,
+  };
+}
+
+async function installPluginLayer(
+  ctx: CapabilityEntryContext,
+  config: PluginLayerConfig,
+): Promise<void> {
+  const summary = await ctx.plugins.installPlugin({ source: config.zipUrl });
+  if (!summary.enabled) {
+    await ctx.plugins.setPluginEnabled({ id: config.id, enabled: true });
+  }
+  if (summary.enabledMcpServerCount >= summary.mcpServerCount) return;
+  const info = await ctx.plugins.getPluginInfo({ id: config.id });
+  for (const server of info.mcpServers) {
+    if (!server.enabled) {
+      await ctx.plugins.setPluginMcpServerEnabled({
+        id: config.id,
+        server: server.name,
+        enabled: true,
+      });
+    }
+  }
 }
 
 function objectRecord(value: unknown): Record<string, unknown> | undefined {
@@ -120,7 +217,7 @@ export function elevatedDittoScript(from: string, to: string): string {
   return `/usr/bin/ditto ${shQuote(from)} ${shQuote(to)}`;
 }
 
-export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
+function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
   const applicationsDir = ctx.applicationsDir ?? '/Applications';
   const appPath = path.join(applicationsDir, APP_BUNDLE);
   const appBin = path.join(appPath, 'Contents', 'MacOS', 'kimi-cu');
@@ -195,22 +292,8 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
   async function detect(): Promise<CapabilityDetectResult> {
     const steps: CapabilityStep[] = [];
 
-    const installed = await ctx.plugins.listPlugins();
-    const plugin = installed.find((p) => p.id === PLUGIN_ID);
-    const mcpGap =
-      plugin !== undefined && plugin.enabledMcpServerCount < plugin.mcpServerCount
-        ? `mcp ${plugin.enabledMcpServerCount}/${plugin.mcpServerCount} enabled`
-        : undefined;
-    const pluginOk =
-      plugin !== undefined &&
-      plugin.enabled &&
-      plugin.state === 'ok' &&
-      plugin.enabledMcpServerCount === plugin.mcpServerCount;
-    steps.push({
-      id: 'plugin',
-      state: pluginOk ? 'ok' : 'missing',
-      detail: mcpGap ?? plugin?.version,
-    });
+    const plugin = await detectPluginLayer(ctx, MAC_PLUGIN);
+    steps.push(plugin.step);
 
     if ((await legacyMcpFile()) !== undefined) {
       steps.push({
@@ -266,7 +349,7 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
 
     return {
       steps,
-      version: version ?? plugin?.version,
+      version: version ?? plugin.version,
     };
   }
 
@@ -327,22 +410,7 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
       .every((step) => step.state === 'ok');
 
     report('plugin');
-    const summary = await ctx.plugins.installPlugin({ source: PLUGIN_ZIP_URL });
-    if (!summary.enabled) {
-      await ctx.plugins.setPluginEnabled({ id: PLUGIN_ID, enabled: true });
-    }
-    if (summary.enabledMcpServerCount < summary.mcpServerCount) {
-      const info = await ctx.plugins.getPluginInfo({ id: PLUGIN_ID });
-      for (const server of info.mcpServers) {
-        if (!server.enabled) {
-          await ctx.plugins.setPluginMcpServerEnabled({
-            id: PLUGIN_ID,
-            server: server.name,
-            enabled: true,
-          });
-        }
-      }
-    }
+    await installPluginLayer(ctx, MAC_PLUGIN);
 
     // A read-only or concurrently edited user config must not block the app
     // installation. Detection keeps the duplicate as an optional warning so
@@ -414,6 +482,7 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
 
   return {
     id: 'kimi-cu',
+    pluginId: MAC_PLUGIN.id,
     displayName: 'Kimi Computer Use',
     description:
       'macOS GUI automation in the background — read app UIs and click, type, scroll, and drag without taking over your mouse or foregrounding apps.',
@@ -421,4 +490,141 @@ export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     detect,
     install,
   };
+}
+
+function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
+  const supported = ctx.platform === 'win32' && ctx.arch === 'x64';
+  const probeTimeoutMs = ctx.detectProbeTimeoutMs ?? DETECT_PROBE_TIMEOUT_MS;
+  const installTimeoutMs = ctx.commandTimeoutMs ?? WINDOWS_INSTALL_TIMEOUT_MS;
+  const powershellPath = windowsPowerShellPath();
+
+  async function runtimeStep(): Promise<{
+    readonly step: CapabilityStep;
+    readonly version?: string;
+  }> {
+    let result: Awaited<ReturnType<typeof runCommand>>;
+    try {
+      result = await runCommand(
+        ctx.hostProcess,
+        powershellPath,
+        ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_DOCTOR_SCRIPT],
+        { timeout: probeTimeoutMs },
+      );
+    } catch (error) {
+      return { step: { id: 'runtime', state: 'failed', detail: errorMessage(error) } };
+    }
+    if (result.code === 3) {
+      return { step: { id: 'runtime', state: 'missing' } };
+    }
+    if (result.code !== 0) {
+      return {
+        step: {
+          id: 'runtime',
+          state: 'failed',
+          detail: result.stderr.trim() || result.stdout.trim() || `exit code ${result.code}`,
+        },
+      };
+    }
+    const doctor = parseWindowsDoctorOutput(result.stdout);
+    if (doctor === undefined) {
+      return {
+        step: {
+          id: 'runtime',
+          state: 'failed',
+          detail: 'doctor returned unexpected output',
+        },
+      };
+    }
+    return doctor.version === undefined
+      ? { step: { id: 'runtime', state: 'ok' } }
+      : { step: { id: 'runtime', state: 'ok', detail: doctor.version }, version: doctor.version };
+  }
+
+  async function detect(): Promise<CapabilityDetectResult> {
+    const [plugin, runtime] = await Promise.all([
+      detectPluginLayer(ctx, WINDOWS_PLUGIN),
+      runtimeStep(),
+    ]);
+    return {
+      steps: [plugin.step, runtime.step],
+      version: runtime.version ?? plugin.version,
+    };
+  }
+
+  async function install(report: CapabilityInstallReporter): Promise<void> {
+    if (!supported) {
+      throw new Error(
+        `kimi-cu is only supported on macOS or Windows x64 (current: ${ctx.platform}/${ctx.arch})`,
+      );
+    }
+
+    const before = await detect();
+    const stepStates = new Map(before.steps.map((step) => [step.id, step.state]));
+    const readyBefore = before.steps.every((step) => step.state === 'ok');
+
+    report('plugin');
+    await installPluginLayer(ctx, WINDOWS_PLUGIN);
+
+    if (stepStates.get('runtime') !== 'ok' || readyBefore) {
+      const workDir = await mkdtemp(path.join(tmpdir(), 'kimi-cu-windows-install-'));
+      try {
+        const setupPath = path.join(workDir, 'setup_windows.ps1');
+        report('download', 0);
+        await downloadToFile(
+          WINDOWS_SETUP_URL,
+          setupPath,
+          (percent) => {
+            report('download', percent);
+          },
+          ctx.fetchImpl,
+        );
+
+        report('runtime');
+        const installed = await runCommand(
+          ctx.hostProcess,
+          powershellPath,
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            setupPath,
+          ],
+          { timeout: installTimeoutMs },
+        );
+        if (installed.code !== 0) {
+          throw new Error(
+            `kimi-cu Windows runtime install failed: ${
+              installed.stderr.trim() || installed.stdout.trim() || `exit code ${installed.code}`
+            }`,
+          );
+        }
+      } finally {
+        await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
+      }
+
+      const runtime = await runtimeStep();
+      if (runtime.step.state !== 'ok') {
+        throw new Error(
+          `kimi-cu Windows runtime is not ready after install: ${runtime.step.detail ?? runtime.step.state}`,
+        );
+      }
+    }
+  }
+
+  return {
+    id: 'kimi-cu',
+    pluginId: WINDOWS_PLUGIN.id,
+    displayName: 'Kimi Computer Use',
+    description:
+      'Windows GUI automation — read app UIs and click, type, scroll, and drag in desktop apps.',
+    supported,
+    detect,
+    install,
+  };
+}
+
+export function createKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
+  return ctx.platform === 'win32' ? createWindowsKimiCuEntry(ctx) : createMacKimiCuEntry(ctx);
 }
