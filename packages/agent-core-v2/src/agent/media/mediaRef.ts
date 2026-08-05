@@ -284,6 +284,7 @@ export interface MediaPathTagFold {
 export interface MediaPathTagPairing {
   readonly claimedTagIndices: ReadonlySet<number>;
   readonly claimedPathByRefIndex: ReadonlyMap<number, string>;
+  readonly claimingRefByTagIndex: ReadonlyMap<number, number>;
 }
 
 export function pairMediaPathTagRefs(parts: readonly ContentPart[]): MediaPathTagPairing {
@@ -300,6 +301,7 @@ export function pairMediaPathTagRefs(parts: readonly ContentPart[]): MediaPathTa
   });
   const claimedTagIndices = new Set<number>();
   const claimedPathByRefIndex = new Map<number, string>();
+  const claimingRefByTagIndex = new Map<number, number>();
   for (const [refIndex, ref] of refByIndex) {
     if (ref.path === undefined) continue;
     for (const neighbor of [refIndex - 1, refIndex + 1]) {
@@ -309,10 +311,11 @@ export function pairMediaPathTagRefs(parts: readonly ContentPart[]): MediaPathTa
       if (tag.path !== ref.path) continue;
       claimedTagIndices.add(neighbor);
       claimedPathByRefIndex.set(refIndex, tag.path);
+      claimingRefByTagIndex.set(neighbor, refIndex);
       break;
     }
   }
-  return { claimedTagIndices, claimedPathByRefIndex };
+  return { claimedTagIndices, claimedPathByRefIndex, claimingRefByTagIndex };
 }
 
 export function foldMediaPathTagRefs(parts: readonly ContentPart[]): MediaPathTagFold {
@@ -334,16 +337,8 @@ export function foldMediaPathTagRefs(parts: readonly ContentPart[]): MediaPathTa
 }
 
 export function claimingRefIndex(
-  parts: readonly ContentPart[],
   pairing: MediaPathTagPairing,
   tagIndex: number,
 ): number | undefined {
-  const tagPart = parts[tagIndex];
-  if (tagPart?.type !== 'text') return undefined;
-  const tag = matchSingleMediaPathTag(tagPart.text);
-  if (tag === undefined) return undefined;
-  for (const neighbor of [tagIndex - 1, tagIndex + 1]) {
-    if (pairing.claimedPathByRefIndex.get(neighbor) === tag.path) return neighbor;
-  }
-  return undefined;
+  return pairing.claimingRefByTagIndex.get(tagIndex);
 }

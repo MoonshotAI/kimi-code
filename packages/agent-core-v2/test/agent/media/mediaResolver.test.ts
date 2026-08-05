@@ -658,6 +658,36 @@ describe('AgentMediaResolverService session-canonical display path', () => {
       { type: 'text', text: `<video path="${canonical}"></video>` },
     ]);
   });
+
+  it('drops a claimed video reference whose degrade was memoized from an earlier bare resolve', async () => {
+    const res = resolver(new Map(), sessionDir);
+    const req = requester({ videoIn: false });
+    const bare: Message = {
+      role: 'user',
+      toolCalls: [],
+      content: [
+        { type: 'video_url', videoUrl: { url: buildKimiFileUrl(FILE_ID, FALLBACK_PATH) } },
+      ],
+    };
+    const first = await res.resolve([bare], req);
+    expect(firstPart(first)).toEqual({
+      type: 'text',
+      text: `<video path="${FALLBACK_PATH}"></video>`,
+    });
+
+    const paired: Message = {
+      role: 'user',
+      toolCalls: [],
+      content: [
+        { type: 'text', text: `<video path="${FALLBACK_PATH}"></video>` },
+        { type: 'video_url', videoUrl: { url: buildKimiFileUrl(FILE_ID, FALLBACK_PATH) } },
+      ],
+    };
+    const second = await res.resolve([paired], req);
+    expect(second[0]!.content).toEqual([
+      { type: 'text', text: `<video path="${FALLBACK_PATH}"></video>` },
+    ]);
+  });
 });
 
 describe('AgentMediaResolverService scoped registration', () => {

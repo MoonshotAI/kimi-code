@@ -62,7 +62,7 @@ export async function materializePromptDaemonRefs(
   }
 
   for (const tagIndex of pairing.claimedTagIndices) {
-    const refIndex = claimingRefIndex(content, pairing, tagIndex);
+    const refIndex = claimingRefIndex(pairing, tagIndex);
     if (refIndex === undefined) continue;
     const path = pathByRefIndex.get(refIndex);
     const tagPart = content[tagIndex];

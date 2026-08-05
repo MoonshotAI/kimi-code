@@ -177,7 +177,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     const part = parts[tagIndex]!;
     if (part.type !== 'text') return part;
     const tag = matchSingleMediaPathTag(part.text);
-    const refIndex = tag === undefined ? undefined : claimingRefIndex(parts, pairing, tagIndex);
+    const refIndex = tag === undefined ? undefined : claimingRefIndex(pairing, tagIndex);
     const daemonPart = refIndex === undefined ? undefined : daemonFileRefFromPart(parts[refIndex]!);
     if (tag === undefined || daemonPart === undefined) return part;
     const path = await this.displayPath(daemonPart.ref);
