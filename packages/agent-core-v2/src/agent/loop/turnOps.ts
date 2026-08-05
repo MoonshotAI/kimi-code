@@ -6,8 +6,10 @@
  * legacy loop-event observations. Also persists the terminal `turn.ended`
  * record (reason / error / durationMs) so downstream history rebuilds can
  * recover how a turn ended; the model folds the latest record into
- * `lastEnded` so cold-resumed read models (e.g. the activity view) can seed
- * the last turn's outcome without replaying the journal. Consumed by the
+ * `lastEnded` — kept across prompt/queued-cancel clock advances, cleared as
+ * soon as a newer turn's loop events land — so cold-resumed read models
+ * (e.g. the activity view) can seed the last ended turn's outcome without
+ * replaying the journal. Consumed by the
  * Agent-scope `loopService`; the `interruptionReminder` domain projects
  * `turn.cancel` into its own model.
  */
@@ -40,9 +42,13 @@ export const TurnModel = defineModel<TurnModelState>(
         }
 
         const turnId = Number.parseInt(event.turnId, 10);
-        return Number.isInteger(turnId) && turnId >= state.nextTurnId
-          ? advanceTurnClock(state, turnId + 1)
-          : state;
+        if (!Number.isInteger(turnId)) return state;
+        let next = state;
+        if (turnId >= state.nextTurnId) next = advanceTurnClock(state, turnId + 1);
+        if (next.lastEnded !== undefined && turnId > next.lastEnded.turnId) {
+          next = { ...next, lastEnded: undefined };
+        }
+        return next;
       },
     },
   },
