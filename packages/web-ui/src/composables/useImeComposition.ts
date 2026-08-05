@@ -8,8 +8,12 @@ import { onUnmounted } from 'vue';
  *
  * Safari fires `compositionend` *before* the confirming `keydown` and reports
  * `isComposing === false` on that event, so a plain `e.isComposing` check is
- * not enough — the composition-end flag is held for one macrotask to cover
- * the trailing keydown. `keyCode === 229` catches browsers that only mark the
+ * not enough — the composition-ended state is held for a short wall-clock
+ * window to cover the trailing keydown. A window (not just one macrotask) is
+ * required because Electron attaches the macOS native IME in the browser
+ * process and forwards composition events to the renderer over IPC, so the
+ * confirming keydown can arrive several tasks — a few milliseconds — after
+ * `compositionend`. `keyCode === 229` catches browsers that only mark the
  * event through the legacy keyCode.
  *
  * Self-healing: browsers may never deliver `compositionend` when the composing
@@ -22,6 +26,13 @@ import { onUnmounted } from 'vue';
  * Usage: wire `@compositionstart` / `@compositionend` on the input and bail
  * out of the Enter handler when `isComposingKeyEvent(e)` returns true.
  */
+
+/** How long after `compositionend` a keydown is still treated as part of the
+    composition. Far above the browser-process → renderer IPC jitter described
+    above, far below the fastest human "confirm candidate, then commit the
+    field" double-Enter. */
+const COMPOSITION_END_GUARD_MS = 100;
+
 export function useImeComposition(): {
   handleCompositionStart: () => void;
   handleCompositionEnd: () => void;
@@ -29,35 +40,31 @@ export function useImeComposition(): {
   isComposingKeyEvent: (e: KeyboardEvent) => boolean;
 } {
   let isComposingText = false;
-  let compositionEndTimer: ReturnType<typeof setTimeout> | null = null;
-
-  function clearCompositionEndTimer(): void {
-    if (compositionEndTimer !== null) {
-      clearTimeout(compositionEndTimer);
-      compositionEndTimer = null;
-    }
-  }
+  /** Timestamp of the last `compositionend`; 0 = no recent composition. */
+  let compositionEndedAt = 0;
 
   function handleCompositionStart(): void {
-    clearCompositionEndTimer();
     isComposingText = true;
+    compositionEndedAt = 0;
   }
 
   function handleCompositionEnd(): void {
-    clearCompositionEndTimer();
-    compositionEndTimer = setTimeout(() => {
-      compositionEndTimer = null;
-      isComposingText = false;
-    }, 0);
+    isComposingText = false;
+    compositionEndedAt = Date.now();
   }
 
   function resetComposition(): void {
-    clearCompositionEndTimer();
     isComposingText = false;
+    compositionEndedAt = 0;
   }
 
   function isComposingKeyEvent(e: KeyboardEvent): boolean {
-    return isComposingText || e.isComposing || e.keyCode === 229;
+    return (
+      isComposingText ||
+      e.isComposing ||
+      e.keyCode === 229 ||
+      Date.now() - compositionEndedAt < COMPOSITION_END_GUARD_MS
+    );
   }
 
   // Capture phase, so a stopPropagation lower in the tree can't hide the focus
@@ -68,7 +75,6 @@ export function useImeComposition(): {
   }
 
   onUnmounted(() => {
-    clearCompositionEndTimer();
     if (typeof window !== 'undefined') {
       window.removeEventListener('focusin', resetComposition, true);
       window.removeEventListener('focusout', resetComposition, true);

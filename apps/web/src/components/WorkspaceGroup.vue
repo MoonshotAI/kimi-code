@@ -139,6 +139,17 @@ function onRenameEnter(e: KeyboardEvent): void {
   if (isComposingKeyEvent(e)) return;
   emit('confirmRename');
 }
+function onRenameEscape(e: KeyboardEvent): void {
+  // An Escape that only dismisses the IME candidate panel must not cancel the rename.
+  if (isComposingKeyEvent(e)) return;
+  emit('cancelRename');
+}
+
+// A session row reports its rename-mode transitions so the draggable row /
+// header containers can suspend dragging while a text edit is in flight —
+// otherwise the drag gesture over the input moves the row instead of
+// selecting text (same treatment as the workspace header below).
+const renamingSessionId = ref<string | null>(null);
 
 // Right-click over the open rename input belongs to the native text-editing
 // menu (same exception as SessionRow): don't open the workspace menu there.
@@ -185,7 +196,7 @@ function onSessionDragStart(id: string, event: DragEvent): void {
     <div
       class="gh"
       :class="{ on: group.workspace.id === activeWorkspaceId && activeId === '', collapsed: isCollapsed(group.workspace.id) }"
-      draggable="true"
+      :draggable="renamingId !== group.workspace.id"
       @click.stop="emit('groupClick', group.workspace.id, $event)"
       @contextmenu="onHeaderContextMenu"
       @dragstart="onHeaderDragStart"
@@ -207,7 +218,7 @@ function onSessionDragStart(id: string, event: DragEvent): void {
           class="gh-rename"
           type="text"
           @keydown.enter="onRenameEnter"
-          @keydown.esc="emit('cancelRename')"
+          @keydown.esc="onRenameEscape"
           @compositionstart="handleCompositionStart"
           @compositionend="handleCompositionEnd"
           @blur="emit('cancelRename')"
@@ -258,8 +269,9 @@ function onSessionDragStart(id: string, event: DragEvent): void {
         :approval-count="pendingBySession[s.id]?.approvals ?? 0"
         :question-count="pendingBySession[s.id]?.questions ?? 0"
         :unread="unreadBySession[s.id] ?? false"
-        draggable="true"
+        :draggable="renamingSessionId !== s.id"
         @dragstart="onSessionDragStart(s.id, $event)"
+        @rename-state-change="renamingSessionId = $event ? s.id : null"
         @select="emit('selectSession', $event)"
         @rename="(id, title) => emit('renameSession', id, title)"
         @archive="emit('archiveSession', $event)"

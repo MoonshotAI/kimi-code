@@ -74,6 +74,10 @@ function tooltipFor(s: Session): string {
 const draggingId = ref<string | null>(null);
 const dragOver = ref<{ id: string; position: DropPosition } | null>(null);
 
+// A row in inline-rename mode suspends dragging on its drop-target wrapper,
+// so a drag gesture over the input selects text instead of moving the row.
+const renamingSessionId = ref<string | null>(null);
+
 function onDragStart(id: string, event: DragEvent): void {
   if (!event.dataTransfer) return;
   event.dataTransfer.effectAllowed = 'move';
@@ -204,7 +208,7 @@ function onContainerDragLeave(event: DragEvent): void {
           'drop-before': dragOver?.id === s.id && dragOver.position === 'before',
           'drop-after': dragOver?.id === s.id && dragOver.position === 'after',
         }"
-        draggable="true"
+        :draggable="renamingSessionId !== s.id"
         @dragstart="onDragStart(s.id, $event)"
         @dragend="onDragEnd"
         @dragover.stop="onDragOver($event, s.id)"
@@ -217,6 +221,7 @@ function onContainerDragLeave(event: DragEvent): void {
             :approval-count="pendingBySession[s.id]?.approvals ?? 0"
             :question-count="pendingBySession[s.id]?.questions ?? 0"
             :unread="unreadBySession[s.id] ?? false"
+            @rename-state-change="renamingSessionId = $event ? s.id : null"
             @select="emit('selectSession', $event)"
             @rename="(id, title) => emit('renameSession', id, title)"
             @archive="emit('archiveSession', $event)"

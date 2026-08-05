@@ -40,8 +40,34 @@ describe('useImeComposition', () => {
     // isComposing === false on it — the guard must outlive that one keydown.
     handleCompositionEnd();
     expect(isComposingKeyEvent(keyEvent({ isComposing: false, keyCode: 13 }))).toBe(true);
-    // One macrotask later the guard lifts and the next real Enter commits.
-    vi.advanceTimersByTime(1);
+  });
+
+  it('blocks a confirming keydown arriving several tasks after compositionend', () => {
+    const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } =
+      useImeComposition();
+    handleCompositionStart();
+    handleCompositionEnd();
+    // Electron forwards the native macOS IME's events to the renderer over
+    // IPC, so the confirming Enter can land many macrotasks after
+    // compositionend — a one-macrotask hold is not enough there.
+    vi.advanceTimersByTime(50);
+    expect(isComposingKeyEvent(keyEvent({ isComposing: false, keyCode: 13 }))).toBe(true);
+  });
+
+  it('lifts the post-composition guard after the window so a real Enter commits', () => {
+    const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } =
+      useImeComposition();
+    handleCompositionStart();
+    handleCompositionEnd();
+    expect(isComposingKeyEvent(keyEvent({ isComposing: false, keyCode: 13 }))).toBe(true);
+    // Once the guard window passes, an unflagged Enter is a real commit again.
+    vi.advanceTimersByTime(150);
+    expect(isComposingKeyEvent(keyEvent({ isComposing: false, keyCode: 13 }))).toBe(false);
+  });
+
+  it('does not guard keys without a recent composition', () => {
+    const { isComposingKeyEvent } = useImeComposition();
+    // The guard window must not leak into unrelated later typing.
     expect(isComposingKeyEvent(keyEvent({ isComposing: false, keyCode: 13 }))).toBe(false);
   });
 

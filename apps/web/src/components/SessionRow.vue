@@ -5,7 +5,7 @@
 <!-- Inline rename (dblclick) and the emoji icon affordance (hover wash + -->
 <!-- picker, see SessionEmojiPicker) live here. -->
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '../types';
 import { copyTextToClipboard } from '../lib/clipboard';
@@ -32,6 +32,9 @@ const props = withDefaults(
 const emit = defineEmits<{
   select: [id: string];
   rename: [id: string, title: string];
+  /** Rename-mode transitions — parents disable row dragging while editing so
+      a drag gesture over the input selects text instead of moving the row. */
+  renameStateChange: [editing: boolean];
   archive: [id: string];
   fork: [id: string];
   export: [id: string];
@@ -246,9 +249,20 @@ function onRenameEnter(e: KeyboardEvent): void {
   if (isComposingKeyEvent(e)) return;
   commitRename();
 }
+function onRenameEscape(e: KeyboardEvent): void {
+  // An Escape that only dismisses the IME candidate panel must not cancel
+  // the rename (same guard as the emoji picker's Escape handling).
+  if (isComposingKeyEvent(e)) return;
+  cancelRename();
+}
 function cancelRename(): void {
   renaming.value = false;
 }
+
+// Row dragging (pin / reorder) hijacks the drag gesture over the rename
+// input — the parents' draggable containers turn off `draggable` for the
+// duration so drag-selecting text works while editing.
+watch(renaming, (editing) => emit('renameStateChange', editing));
 
 // Right-click opens the same menu anchored to the cursor (the workspace
 // row's contextmenu vocabulary) — except over the inline rename input,
@@ -354,7 +368,7 @@ defineExpose({ closeMenu });
           class="rename-input"
           @click.stop
           @keydown.enter.stop="onRenameEnter"
-          @keydown.esc.stop="cancelRename"
+          @keydown.esc.stop="onRenameEscape"
           @compositionstart="handleCompositionStart"
           @compositionend="handleCompositionEnd"
           @blur="commitRename"
