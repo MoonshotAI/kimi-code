@@ -495,6 +495,8 @@ async fn handle_chat_command(
             println!("/model <id>  set the session model");
             println!("/models      list configured model aliases");
             println!("/status      session status snapshot");
+            println!("/config      show the engine config");
+            println!("/skills      list registered skills");
             println!("/usage       token usage");
             println!("/clear       clear the session context");
             println!("/compact     compact the session context");
@@ -593,6 +595,35 @@ async fn handle_chat_command(
                 "{}",
                 serde_json::to_string_pretty(&body["result"]).unwrap_or_default()
             );
+            ChatCommand::Handled
+        }
+        "/config" => {
+            let body = client.config_get().await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            println!("{}", serde_json::to_string_pretty(&body["result"]).unwrap_or_default());
+            ChatCommand::Handled
+        }
+        "/skills" => {
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_LIST_SKILLS,
+                    serde_json::json!({ "session_id": *session_id }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            let names: Vec<&str> = body["result"]["skills"]
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|s| s["name"].as_str()).collect())
+                .unwrap_or_default();
+            if names.is_empty() {
+                println!("no skills registered");
+            } else {
+                println!("skills: {}", names.join(", "));
+            }
             ChatCommand::Handled
         }
         "/usage" => {
