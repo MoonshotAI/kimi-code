@@ -108,6 +108,7 @@ function advanceTurnClock(
   );
   while (pendingCancellations.delete(nextTurnId)) nextTurnId += 1;
   return {
+    ...state,
     nextTurnId,
     cancelledTurnIds: [...pendingCancellations].toSorted((a, b) => a - b),
   };
