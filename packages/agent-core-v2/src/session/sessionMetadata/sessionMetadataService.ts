@@ -53,7 +53,7 @@ const pendingWrites = new Set<Promise<void>>();
 /** Await every queued metadata write — hosts call this before the sessions
  *  root may be removed, mirroring the query-store/mirror drain pattern. */
 export async function drainSessionMetadataWrites(): Promise<void> {
-  await Promise.all([...pendingWrites]);
+  await Promise.all(pendingWrites);
 }
 
 export const sessionMetadataDataKey = defineState<SessionMeta | undefined>(
@@ -65,11 +65,6 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
   declare readonly _serviceBrand: undefined;
 
   private disposed = false;
-
-  override dispose(): void {
-    this.disposed = true;
-    super.dispose();
-  }
   readonly ready: Promise<void>;
   readonly onDidChangeMetadata: Event<SessionMetadataChangedEvent>;
 
@@ -87,6 +82,11 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
     @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
   ) {
     super();
+    this._register({
+      dispose: () => {
+        this.disposed = true;
+      },
+    });
     this.states.register(sessionMetadataDataKey);
     this.scope = ctx.metaScope;
     this.onDidChangeMetadata = this._onDidChangeMetadata.event;
