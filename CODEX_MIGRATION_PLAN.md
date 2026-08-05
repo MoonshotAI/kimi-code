@@ -332,6 +332,12 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 > - TUI 宿主 `native-session` plugin 写面接线（install/enable/mcp/remove/reload/list_commands/activate 全部替代 naError stub，commit f56c75ae6）+ `cancelCompaction` 接线（commit baf37445e）
 > - TUI `/archive` + REPL `/archive`、`/steer` 命令（commit 600cb1ae6/dbb23e9e4/3eb3448e5），SLASH_COMMANDS 29
 > - 测试策略：**重写而非平移**（用户定案）——TS 用例平移跳过
+>
+> **✅ 2026-08-05 CLI 收尾（2 个真实补全）**：
+> - `kimi login` 自动打开浏览器（commit 33fbdc654）：std-only 跨平台 opener（start/open/xdg-open），优先 verification_uri_complete 深链；打印 URL+code 保留为手动兜底（TS login-flow parity）
+> - `kimi provider remove <id>`（commit 64a93b383）：null-patch 删除 `providers.<id>`（strip_null_deletes，同 logout 杠杆），对齐 node-sdk removeProvider；集成测试覆盖往返
+> - **退役评估复核**：apps/kimi-code 仍真实 import `oauth` 13 处（auth/provider/telemetry/TUI）+ `kaos` 1 处（rust-engine LocalKaos）——退役仍被宿主 OAuth/provider 编排阻塞，非引擎能力可替代
+> - **阶段 F 入口可行性验证**：release 版 kimi-cli 构建成功，`--version`/`health`/`doctor`/`sessions`/`acp` 全链路可用——Rust 入口切换核心功能已验证
 
 ### 阶段 F — 退役
 0. ✅ **npm 分发薄壳**（kimi-code-rust-bin：bin 包装 + pack.mjs CI 打包 + KIMI_RUST_BIN 覆盖）
