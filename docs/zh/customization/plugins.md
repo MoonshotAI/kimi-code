@@ -150,7 +150,9 @@ Kimi WebBridge 让 AI 直接操控你的浏览器，带着你的登录状态和 
 
    ![加载未打包的扩展程序](../../media/webbridge-load-unpacked.jpeg)
 
-装好后让 AI 帮你打开一个网页，能打开就说明已经生效。
+装好后点击浏览器工具栏的 Kimi WebBridge 扩展图标，显示**浏览器助手已就绪**即安装成功，之后就可以让 AI 帮你操作网页了。
+
+![Kimi WebBridge 已就绪](../../media/webbridge-ready.jpeg)
 
 #### 能做什么
 
