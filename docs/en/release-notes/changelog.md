@@ -10,9 +10,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Features
 
-- Run the CLI surfaces (interactive TUI, `kimi -p`, `kimi acp`, `kimi export`, `kimi provider`) on the agent-core-v2 engine by default. Set `KIMI_CODE_LEGACY_FLAG=1` to fall back to the legacy engine.
 - Add Kimi Computer Use and Kimi WebBridge as built-in official marketplace entries in the v2 CLI. Installing from `/plugins` sets up the latest managed runtime and plugin together, reports incomplete manual steps, and supports retrying interrupted setup.
-- Ask whether to trust the current folder on startup.
 - web: Add and manage custom providers in settings.
 - web: Pin sessions to the top of the sidebar.
 - web: Set an emoji for the session title.
@@ -21,6 +19,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Polish
 
+- Ask whether to trust the current folder on startup.
 - `/fork` no longer switches to the forked session: the current session stays active and its background tasks keep running. Find the fork in `/sessions`.
 - web: Overhaul the UI/UX and fix known issues.
 - Start the interactive TUI without creating a session.
@@ -33,6 +32,10 @@ This page documents the changes in each Kimi Code CLI release.
 - Ensure the first request waits for MCP startup to finish while the interface still opens immediately.
 - MCP tool results now surface the spec-defined `structuredContent` field and `_meta` server metadata to the model instead of silently dropping them, so servers that return their machine-readable contract in these fields work the same as on other MCP hosts.
 - Fix built-in capability availability and installed status in `/plugins`, preserve legacy WebBridge skills as backups during updates, and prevent Computer Use updates from duplicating or disconnecting MCP servers.
+
+### Refactors
+
+- Run the CLI surfaces (interactive TUI, `kimi -p`, `kimi acp`, `kimi export`, `kimi provider`) on the agent-core-v2 engine by default. Set `KIMI_CODE_LEGACY_FLAG=1` to fall back to the legacy engine.
 
 ## 0.32.0 (2026-08-04)
 
