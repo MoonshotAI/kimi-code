@@ -219,6 +219,7 @@ async function resolveCapabilityApi(host: SlashCommandHost): Promise<CapabilityA
 function logCapabilityStatus(capability: CapabilityStatus, installed?: boolean): void {
   const payload = {
     capabilityId: capability.id,
+    pluginId: capability.pluginId,
     installed,
     supported: capability.supported,
     state: capability.state,
@@ -260,7 +261,7 @@ async function showPluginsPicker(
 
   const installedIds = new Set(plugins.map((plugin) => plugin.id));
   for (const capability of capabilities) {
-    logCapabilityStatus(capability, installedIds.has(capability.id));
+    logCapabilityStatus(capability, installedIds.has(capability.pluginId ?? capability.id));
   }
 
   const panel = new PluginsPanelComponent({
@@ -444,15 +445,15 @@ function isCapabilityEntry(host: SlashCommandHost, entry: PluginMarketplaceEntry
 }
 
 /**
- * Closed-set id check for the post-remove note. The capability ids are part
- * of the client/engine CONTRACT (mirrored in the klient zod enum), not
- * product data that drifts — so they may be named here. What must not
- * happen is the alternative: answering set membership by running
- * `listCapabilities()`, which fires every entry's detector (seconds of
- * probes) just to decide whether to print one hint line.
+ * Closed-set plugin id check for the post-remove note. What must not happen
+ * is answering membership by running `listCapabilities()`, which fires every
+ * entry's detector (seconds of probes) just to print one hint line.
  */
-function isCapabilityId(host: SlashCommandHost, id: string): boolean {
-  return host.engineV2 && (id === 'kimi-cu' || id === 'kimi-webbridge');
+function isCapabilityPluginId(host: SlashCommandHost, id: string): boolean {
+  return (
+    host.engineV2 &&
+    (id === 'kimi-cu' || id === 'kimi-cu-win' || id === 'kimi-webbridge')
+  );
 }
 
 /** Poll a background capability install until it settles (or we run out of budget). */
@@ -719,7 +720,7 @@ async function handlePluginMcpSelection(
 async function removePlugin(host: SlashCommandHost, id: string): Promise<void> {
   await (await resolvePluginApi(host)).removePlugin(id);
   host.showStatus(`Removed ${id}.`);
-  if (isCapabilityId(host, id)) {
+  if (isCapabilityPluginId(host, id)) {
     host.showStatus(
       'Note: the runtime binaries were left untouched, but Kimi Code plugin wiring is disabled for new sessions. Reinstall any time from the Official tab.',
     );

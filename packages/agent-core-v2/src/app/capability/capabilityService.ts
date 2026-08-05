@@ -126,6 +126,7 @@ export class CapabilityService implements ICapabilityService {
     const install = this.installProgress.get(entry.id) ?? IDLE_PROGRESS;
     const base = {
       id: entry.id,
+      pluginId: entry.pluginId,
       displayName: entry.displayName,
       description: entry.description,
       install,
@@ -155,6 +156,7 @@ export class CapabilityService implements ICapabilityService {
       const detail = error instanceof Error ? error.message : String(error);
       const base = {
         id: entry.id,
+        pluginId: entry.pluginId,
         displayName: entry.displayName,
         description: entry.description,
         install,
