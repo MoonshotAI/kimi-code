@@ -368,6 +368,8 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 > - **工具**：TS 旧引擎（retired/agent-core）工具 vs Rust `NativeToolset`（read/write/edit/grep/glob/bash/todolist/fs_search/web_search/fetch_url/read_media）+ 引擎级（goal/task/swarm/swarm_discussion/knowledge/memory/ask_user/skill/plan/mcp）。**真正缺口仅 2 个**：GitHub 工具族（30 个，含 GitHubSearchCode，`kimi-native-tools/src/github.rs` 已有 HTTP 基础层，中期建议聚合 1-2 个工具而非 30 个）+ `Workflow`（agent-core-v2 编排，Rust background+Swarm 已覆盖，不建议补）。其余为改名/合并（Agent→Task、GetGoal/SetGoalBudget→GoalStatus）或宿主注册类（Plan/Task/Cron 引擎侧已有基础设施）。用户关注领域全覆盖：网页搜索（WebSearch/FetchUrl）、本地代码搜索（Grep/Glob/FsSearch）、图像处理（ReadMediaFile）均 Rust 原生。
 > - **CLI 子命令**：Rust 12+ 子命令（print/sessions/resume/config/doctor/export/acp/completions/provider/login/logout/upgrade/web/vis）vs TS 10 个（acp/doctor/export/login/login-flow/plugin-run-node/provider/upgrade/vis/web）——login-flow 由 `acp --login` 覆盖；`plugin-run-node` 是 Node 插件宿主（Rust 迁移版不需要）；upgrade/web/vis 为分发说明 stub（符合 Rust-first 方向）。
 > - **TUI 命令**：kimi-tui 36 + REPL 31 命令，TS 26+ 全命令面覆盖（本批次补 /reload）。
+>
+> **✅ 2026-08-05 GitHub 工具族移植（commit c6f82e52c）**：对比结论中的唯一实质工具缺口（GitHub 29 工具）已补全——`packages/kimi-agent/src/tools/github.rs`：表驱动 specs + reqwest 执行（GITHUB_TOKEN/GH_TOKEN auth、GITHUB_API_URL 企业 base、Link 分页 MAX_PAGES 上限）+ `GitHubToolInterceptor`（HostCallbacks 装饰器，同 MemoryToolInterceptor 模式）+ `GITHUB_READONLY_TOOL_NAMES` 白名单（mutating 工具 manual 模式仍提示审批）；agent.rs 接线（tool_defs + 装饰链）。17 测试（spec 完备性 vs TS 29 工具/读写分类/schema/path/query/body/分页/approval subject + 4 个 loopback server 集成：GET auth+path、POST JSON body、分页聚合、404 传播）。kimi-agent lib 2047→**2064**；TS 侧 `Workflow` 工具评估后不补（Rust background+Swarm 已覆盖）。
 4. npm 分发薄壳（参考 codex-cli：bin → 包装 Rust 二进制）
 5. **验证**：CLI/TUI/web/API 全链路 Rust 端到端；旧 TS 测试删除或转 Rust
 
