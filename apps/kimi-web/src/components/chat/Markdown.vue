@@ -726,6 +726,7 @@ function copyDiff(code: string, idx: number) {
   border: 1px solid var(--color-line);
   padding: 4px 10px;
   text-align: left;
+  overflow-wrap: anywhere;
 }
 .md :deep(table:not(.table-node) th) {
   background: var(--color-surface);
@@ -786,6 +787,13 @@ function copyDiff(code: string, idx: number) {
   display: inline-block;
   max-width: var(--p-table-cell-max);
   vertical-align: top;
+  /* break-word handles most prose, but long unbroken runs (URLs, base64,
+     tokens) still expand the column past --p-table-cell-max under
+     table-layout:auto because Chromium treats them as a single min-content
+     unit. `overflow-wrap: anywhere` (CSS Text 4) breaks anywhere needed, so
+     the column stops at the cap and the text wraps inside the cell instead
+     of stretching the table past the chat container (#2560). */
+  overflow-wrap: anywhere;
 }
 
 /* Drop markstream-vue's default table-row hover background — the conversation
