@@ -30,7 +30,13 @@ import { drainQueryStoreDisposals, MiniDbQueryStore } from '#/persistence/backen
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { IQueryStore, type WriteOp } from '#/persistence/interface/queryStore';
+import {
+  IQueryStore,
+  type ColumnPageQuery,
+  type IQuery,
+  type Page,
+  type WriteOp,
+} from '#/persistence/interface/queryStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 import { stubSessionIndexMirror } from './stubs';
@@ -336,8 +342,9 @@ describe('FileSessionIndex (read model)', () => {
     await fsp.rm(homeDir, { recursive: true, force: true });
   });
 
-  function build(): FileSessionIndex {
-    const fileStorage = new FileStorageService(homeDir);
+  function build(
+    fileStorage: FileStorageService = new FileStorageService(homeDir),
+  ): FileSessionIndex {
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
@@ -390,6 +397,106 @@ describe('FileSessionIndex (read model)', () => {
     return ids;
   }
 
+  // Count `list` calls on the byte layer: once the model is ready, the warm
+  // read paths must not enumerate a single session directory.
+  class CountingStorage extends FileStorageService {
+    listCalls = 0;
+    override async list(scope: string, prefix?: string): Promise<readonly string[]> {
+      this.listCalls += 1;
+      return super.list(scope, prefix);
+    }
+  }
+
+  interface OpCounts {
+    calls: number;
+    rows: number;
+  }
+
+  // Records, per `method:collection`, how many calls served a read and how
+  // many rows came back — the behavioral complexity signal the performance
+  // baseline gates on in place of wall-clock budgets.
+  class CountingQueryStore extends MiniDbQueryStore {
+    private readonly counts = new Map<string, OpCounts>();
+
+    resetCounts(): void {
+      this.counts.clear();
+    }
+
+    snapshotCounts(): Record<string, OpCounts> {
+      return Object.fromEntries([...this.counts.entries()].toSorted(([a], [b]) => (a < b ? -1 : 1)));
+    }
+
+    private record(method: string, collection: string, rows: number): void {
+      const key = `${method}:${collection}`;
+      const entry = this.counts.get(key) ?? { calls: 0, rows: 0 };
+      entry.calls += 1;
+      entry.rows += rows;
+      this.counts.set(key, entry);
+    }
+
+    override async get<T>(collection: string, key: string): Promise<T | undefined> {
+      const value = await super.get<T>(collection, key);
+      this.record('get', collection, value === undefined ? 0 : 1);
+      return value;
+    }
+
+    override async getMany<T>(
+      collection: string,
+      keys: readonly string[],
+    ): Promise<Map<string, T>> {
+      const values = await super.getMany<T>(collection, keys);
+      this.record('getMany', collection, values.size);
+      return values;
+    }
+
+    override async pageByColumn<T>(
+      collection: string,
+      query: ColumnPageQuery,
+    ): Promise<Page<T>> {
+      const page = await super.pageByColumn<T>(collection, query);
+      this.record('pageByColumn', collection, page.items.length);
+      return page;
+    }
+
+    override query<T>(collection: string): IQuery<T> {
+      const inner = super.query<T>(collection);
+      const wrapper: IQuery<T> = {
+        where: (filter) => {
+          inner.where(filter);
+          return wrapper;
+        },
+        whereColumn: (column, bounds) => {
+          inner.whereColumn(column, bounds);
+          return wrapper;
+        },
+        orderBy: (field, dir) => {
+          inner.orderBy(field, dir);
+          return wrapper;
+        },
+        limit: (n) => {
+          inner.limit(n);
+          return wrapper;
+        },
+        cursor: (cursor) => {
+          inner.cursor(cursor);
+          return wrapper;
+        },
+        execute: async () => {
+          const page = await inner.execute();
+          this.record('query', collection, page.items.length);
+          return page;
+        },
+      };
+      return wrapper;
+    }
+
+    override async listKeys(collection: string): Promise<readonly string[]> {
+      const keys = await super.listKeys(collection);
+      this.record('listKeys', collection, keys.length);
+      return keys;
+    }
+  }
+
   it('prepare projects the persisted sessions and publishes a generation', async () => {
     await seedSession('active', { title: 'hello', createdAt: 1, updatedAt: 2 });
     await seedSession('archived', { archived: true });
@@ -412,29 +519,8 @@ describe('FileSessionIndex (read model)', () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
     await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
 
-    // Count `list` calls on the byte layer: once the model is ready, the warm
-    // read paths must not enumerate a single session directory.
-    class CountingStorage extends FileStorageService {
-      listCalls = 0;
-      override async list(scope: string, prefix?: string): Promise<readonly string[]> {
-        this.listCalls += 1;
-        return super.list(scope, prefix);
-      }
-    }
     const fileStorage = new CountingStorage(homeDir);
-    const host = createScopedTestHost([
-      stubPair(IFileSystemStorageService, fileStorage),
-      stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
-      stubPair(IBootstrapService, stubBootstrap(homeDir)),
-      stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
-    ]);
-    disposeHost = () => {
-      host.dispose();
-    };
-    queryStore = host.app.accessor.get(IQueryStore);
-    mirror = host.app.accessor.get(ISessionIndexMirror);
-    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+    const store = build(fileStorage);
     await store.prepare();
 
     fileStorage.listCalls = 0;
@@ -795,16 +881,28 @@ describe('FileSessionIndex (read model)', () => {
   });
 
   // -- stage-3 performance baselines ------------------------------------------
-  // Not tight CI thresholds: numbers are logged as JSON for phase-to-phase
-  // comparison, and only loose complexity budgets are asserted so an
-  // accidental linear regression trips the test anywhere. Shared-runner load
-  // can still inflate a wall-clock median past any fixed budget, so the test
-  // retries once: a transient spike passes on the rerun, a genuine regression
-  // fails every attempt.
+  // Medians are logged as JSON for phase-to-phase comparison, but no
+  // wall-clock budget gates CI: shared-runner load can inflate any fixed
+  // threshold past itself (list medians of 100-140ms were observed on
+  // otherwise green builds). The asserted guard is behavioral complexity:
+  // every warm read must touch a bounded number of store rows and zero
+  // session directories, and that work must be identical at 1k, 10k, and 50k
+  // sessions — a linear regression changes the counts deterministically, on
+  // any runner. The single retry absorbs a background reconcile tick (60s
+  // interval) landing inside a counting window.
   const baseline = { retry: 1, timeout: 120_000 };
 
   it('baseline: warm listRecent(limit=20) at 1k vs 10k vs 50k sessions', baseline, async () => {
-    const store = build();
+    registerScopedService(
+      LifecycleScope.App,
+      IQueryStore,
+      CountingQueryStore,
+      ScopeActivation.OnDemand,
+      'storage',
+    );
+    const fileStorage = new CountingStorage(homeDir);
+    const store = build(fileStorage);
+    const countingStore = queryStore as CountingQueryStore;
     // A small on-disk seed publishes generation 1; scale rows are written
     // directly into the generation (the mirror path is covered elsewhere).
     await seedSession('seed', { createdAt: 0, updatedAt: 0 });
@@ -839,14 +937,34 @@ describe('FileSessionIndex (read model)', () => {
       runs.sort((a, b) => a - b);
       return runs[(runs.length / 2) | 0]!;
     };
-    const measure = async (): Promise<{ list: number; get: number; count: number }> => {
-      const list = await median(async () => {
-        const page = await store.listRecent({ workspaceIds: [workspaceId], limit: 20 });
-        expect(page.items).toHaveLength(20);
-      });
-      const get = await median(() => store.get('s0'));
-      const count = await median(() => store.count({ workspaceIds: [workspaceId] }));
-      return { list, get, count };
+
+    const LIST_LIMIT = 20;
+    const listPage = async () => {
+      const page = await store.listRecent({ workspaceIds: [workspaceId], limit: LIST_LIMIT });
+      expect(page.items).toHaveLength(LIST_LIMIT);
+    };
+    const getOne = () => store.get('s0');
+    const countAll = () => store.count({ workspaceIds: [workspaceId] });
+
+    // One counted run per op (which store methods served it, how many rows
+    // they returned, how many directory listings happened underneath), then
+    // the timed repeats that feed the log line.
+    const measure = async () => {
+      const countOp = async (op: () => Promise<unknown>) => {
+        countingStore.resetCounts();
+        const listed = fileStorage.listCalls;
+        await op();
+        return { counts: countingStore.snapshotCounts(), fsLists: fileStorage.listCalls - listed };
+      };
+      const ops = {
+        list: await countOp(listPage),
+        get: await countOp(getOne),
+        count: await countOp(countAll),
+      };
+      const list = await median(listPage);
+      const get = await median(getOne);
+      const count = await median(countAll);
+      return { ops, list, get, count };
     };
 
     await seedRows(0, 1_000);
@@ -859,15 +977,27 @@ describe('FileSessionIndex (read model)', () => {
       `[baseline] sessionIndex read-model ${JSON.stringify({ sessions: [1000, 10000, 50000], list: [at1k.list, at10k.list, at50k.list], get: [at1k.get, at10k.get, at50k.get], count: [at1k.count, at10k.count, at50k.count] })}`,
     );
 
-    // The acceptance budgets (p95) are list < 100ms, get < 50ms, count < 50ms,
-    // but shared CI runners inflate wall-clock medians under load (list medians
-    // of 100-140ms were observed on otherwise green builds), so the absolute
-    // tripwire keeps 3x headroom. get/count stay at 50ms: they measure ~1ms
-    // even at 50k rows. The complexity check is the real guard: 50x the rows
-    // must not cost ~50x the time.
-    expect(at50k.list).toBeLessThan(300);
-    expect(at50k.get).toBeLessThan(50);
-    expect(at50k.count).toBeLessThan(50);
-    expect(at50k.list).toBeLessThan(at1k.list * 10 + 50);
+    const sessionOps = (counts: Record<string, OpCounts>): string[] =>
+      Object.keys(counts).filter((key) => key.endsWith(`:${collection}`));
+    const sessionRows = (counts: Record<string, OpCounts>): number =>
+      sessionOps(counts).reduce((total, key) => total + counts[key]!.rows, 0);
+
+    for (const measured of [at1k, at10k, at50k]) {
+      // No warm read falls back to the authoritative directory scan.
+      for (const op of Object.values(measured.ops)) expect(op.fsLists).toBe(0);
+      // list is served by bounded ordered-column fetches only — no full
+      // scans, no per-row point reads; the rows touched stay within the page
+      // window plus its tie-repair fetch.
+      expect(sessionOps(measured.ops.list.counts)).toEqual([`pageByColumn:${collection}`]);
+      expect(sessionRows(measured.ops.list.counts)).toBeLessThanOrEqual(2 * (LIST_LIMIT + 1));
+      // get is a single point lookup.
+      expect(measured.ops.get.counts[`get:${collection}`]).toEqual({ calls: 1, rows: 1 });
+      expect(sessionOps(measured.ops.get.counts)).toEqual([`get:${collection}`]);
+      // count reads the materialized counters, never the sessions themselves.
+      expect(sessionOps(measured.ops.count.counts)).toEqual([]);
+    }
+    // The complexity gate: 50x the rows must not change the work at all.
+    expect(at10k.ops).toEqual(at1k.ops);
+    expect(at50k.ops).toEqual(at1k.ops);
   });
 });
