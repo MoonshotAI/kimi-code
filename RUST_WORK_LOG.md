@@ -4,6 +4,21 @@
 > - `resume_agent_ids_is_accepted_and_renders_agent_ids`（swarm_tool.rs）：同域（agent/swarm），独立运行即挂起。
 > - 两测试均独立挂起（非并行竞态），`cargo test -p kimi-agent --lib -- --skip <两个>` 其余 2042 全绿。
 
+> **✅ 2026-08-05 挂起测试已修复（commit 5b1ae85bb，根因：HostLlmProxy 重试语义）**：
+> - **根因**：`HostLlmProxy::is_retryable_error` 恒返回 `true`——child subagent 经 host-proxy 调 NoopHost 的 `llm_chat` 返回确定性错误（"llm_chat must not be reached"），被当作瞬时错误做 **10 次指数退避重试（~2.5min）**，表现为"挂起"。非死循环，是重试预算耗尽前的长退避。
+> - **修复**：`proxy.rs` 复用 `turn_loop::retry::classify_error`——仅 RateLimit/Overload/Transient 可重试，确定性错误立即失败。
+> - **验证**：kimi-agent --lib **2044 passed**（此前 2 个挂起），`cargo test --workspace` 解锁。
+
+> **✅ 2026-08-05 CLI Remote 事件渲染竞态修复（commit 7cf9ee6cd，修复 server_mode_verbose_emits_events 预存失败）**：
+> - **根因**：`kimi print --server --verbose` 在 run_prompt 返回后立即 `renderer.abort()`。prompt 快速失败（无 LLM 端点）时，server 的 `session.turn.started`/`goal.updated` 事件仍在 stdio 管道中传输，abort 抢在事件到达前——进度行从不渲染。内嵌模式 EventBus 同步广播故无此竞态。
+> - **修复**：abort 前 `sleep(200ms)` drain 窗口，让已在管道上的事件落地。
+> - **验证**：kimi-cli 集成 **36/36**（此前 35+1 环境依赖失败清零）；临时探测测试确认 `StdioClient::spawn_captured` + `EventSource::from_lines` 链路本身正常（事件流 OK，问题仅在 abort 时机）。
+
+> **✅ 2026-08-05 入口 wrapper bug 修复（commit 84ceb2801）**：
+> - **根因**：lint 修复误删 `bin/kimi.mjs` 的 `dirname`/`fileURLToPath` import（line 24 实际使用），入口 ReferenceError 崩溃。原始 lint 报告 "unused" 是 **oxlint type-aware 对 `./apps/...` 相对路径 + bin/ 不在 tsconfig include 的误报**。
+> - **修复**：恢复 import + tsconfig include 加 `bin/`/`scripts/` + `.oxlintrc` 对 `apps/kimi-code/bin/*.mjs` 关 no-unused-vars。
+> - **验证**：`smoke-entry` 两条路径（TS fallback + Rust binary）通过。
+
 > **✅ 2026-08-05 集成验证收口（goal 会话，未提交）**：
 > - **全量验证结果**：`cargo check --workspace --all-targets` 0 errors/0 warnings；`cargo test -p kimi-agent --lib`（除 2 个外部挂起测试）= **2042 passed, 0 failed**（30.3s）
 > - **⚠️ 外部会话测试挂起（与本会话无关，需外部会话修复）**：`agent::agent::tests::task_tool_tracks_and_settles_a_detached_task`、`agent::swarm_tool::tests::resume_agent_ids_is_accepted_and_renders_agent_ids`——均独立运行即挂起（60s+ 无完成，timeout kill），属 agent.rs/swarm_tool.rs 的 task/settle、swarm resume 改动区（另一会话进行中工作）。此前 `cargo test --workspace` 卡 30min+ 即此二测试所致
