@@ -523,6 +523,7 @@ async fn handle_chat_command(
             println!("/plan on|off toggle plan mode");
             println!("/swarm on|off toggle swarm mode");
             println!("/thinking <e> set thinking effort (low/medium/high)");
+            println!("/reload      reload the persisted session state");
             ChatCommand::Handled
         }
         "/resume" => {
@@ -549,6 +550,29 @@ async fn handle_chat_command(
             *session_id = rest.to_string();
             println!("switched to session {session_id}");
             ChatCommand::Handled
+        }
+        "/reload" => {
+            if session_id.is_empty() {
+                return ChatCommand::Error("no active session; create one with /new or /resume <id>".into());
+            }
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_LOAD,
+                    serde_json::json!({ "session_id": session_id }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(format!(
+                    "reload failed: {}",
+                    error["message"].as_str().unwrap_or("unknown")
+                ));
+            }
+            if body["found"].as_bool().unwrap_or(false) {
+                println!("session {session_id} reloaded");
+                ChatCommand::Handled
+            } else {
+                ChatCommand::Error("reload failed: session not found".into())
+            }
         }
         "/model" => {
             if rest.is_empty() {

@@ -39,6 +39,7 @@ const SLASH_COMMANDS: &[&str] = &[
     "/models",
     "/plan",
     "/quit",
+    "/reload",
     "/resume",
     "/sessions",
     "/skills",
@@ -494,6 +495,14 @@ impl App {
                     } else {
                         self.session.as_mut().expect("session").set_model(rest).await?;
                         self.transcript.push(TranscriptLine::status(format!("model set to {rest}")));
+                    }
+                }
+                "/reload" => {
+                    // Re-load the persisted session state into the live agent
+                    // (create already happened; load restores context + goal).
+                    match self.session.as_mut().expect("session").load().await {
+                        Ok(()) => self.transcript.push(TranscriptLine::status("session reloaded")),
+                        Err(e) => self.transcript.push(TranscriptLine::error(format!("reload failed: {e}"))),
                     }
                 }
                 "/resume" => {
