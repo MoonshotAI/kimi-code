@@ -353,8 +353,9 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - **SDK 补齐**：`Session::fork` turn_index（TS `fork({turnIndex})`）、`set_permission`、background task 四方法、`session.renamed` 事件（EventBus::emit + rename handler）、import markup 断言
 - **核对关闭（9 项）**：llm.delta 设计、catalog 写面（kimi-cli Provider::Add 覆盖）、MCP 合并（McpManager::list 完备）、KIMI_CODE_HOME 技能解析（宿主面）、list workDir 过滤（TS 死选项）、config 深合并/KIMI_CONFIG_PATH/无效 patch（与 TS 对齐/设计差异）、bg stop 面
 - **阶段 F**：`klient` 退役 ✅（retired/klient + flake.nix 两处移除，零包级消费者复核）
-- **测试基线（实测）**：kimi-server **63**、kimi-sdk runtime **19** + harness 6 + catalog 2 + probe 1、kimi-server-transport lib 4 + 集成 6、kimi-server-client 6、kimi-cli 36、kimi-acp 7、kimi-agent http 9（全量 2042/2044 绿，2 个外部会话挂起测试除外）；`cargo check --workspace --all-targets` 0 errors/0 warnings
-- **⚠️ 外部会话**：2 个 kimi-agent 测试独立挂起（`task_tool_tracks_and_settles_a_detached_task`、`resume_agent_ids_is_accepted_and_renders_agent_ids`，agent.rs/swarm_tool.rs 改动区），阻塞 `cargo test --workspace`；另多次回滚 export.rs、cargo clean 拒绝访问——并行会话注意隔离。
+- **测试基线（实测）**：kimi-server **63**、kimi-sdk runtime **19** + harness 6 + catalog 2 + probe 1、kimi-server-transport lib 4 + 集成 6、kimi-server-client 6、kimi-cli 36、kimi-acp 7、kimi-agent http 9（全量 **2044 绿，0 挂起**）；`cargo check --workspace --all-targets` 0 errors/0 warnings
+- **✅ 2026-08-05 挂起测试根因修复（commit 5b1ae85bb）**：`HostLlmProxy::is_retryable_error` 恒 true → 确定性 host llm_chat 错误被指数退避重试（10 次 ~2.5min，表现为挂起）。修复为仅 RateLimit/Overload/Transient 可重试。`cargo test -p kimi-agent --lib` = **2044 passed**，`cargo test --workspace` 解锁。
+- **✅ 2026-08-05 CLI Remote 事件竞态修复（commit 7cf9ee6cd）**：print renderer.abort() 抢在 Remote stdio 管道事件到达前 → `server_mode_verbose_emits_events` 预存失败清零（abort 前 200ms drain），kimi-cli 集成 **36/36**。
 
 
 **范围**：本会话在阶段 A/B/C ✅ 之上，完成阶段 D 全部（TUI 聊天组件 + 流式）与阶段 E 大部分（ACP/传输/SDK/config 面），并全面加固测试。
