@@ -1307,6 +1307,11 @@ impl Agent {
                 session_id,
             });
         }
+        // GitHub interceptor (native `GitHub*` tools): authenticated GitHub
+        // REST calls resolved via reqwest in-process.
+        callbacks = Arc::new(crate::tools::github::GitHubToolInterceptor {
+            inner: callbacks,
+        });
         // Intercept goal tools locally.
         let goal_interceptor = Arc::new(GoalToolInterceptor::new(callbacks));
         let goal_temp = self.goal.take();
@@ -1419,6 +1424,14 @@ impl Agent {
                 input_schema: td.tool.input_schema.unwrap_or(serde_json::Value::Null),
             });
         }
+        // GitHub tools (read GitHub state, open/update issues, PRs, releases).
+        tool_defs.extend(crate::tools::github::tool_definitions().into_iter().map(|td| {
+            loop_types::ToolInfo {
+                name: td.name,
+                description: td.description,
+                input_schema: td.input_schema.unwrap_or(serde_json::Value::Null),
+            }
+        }));
         // Skills carry no tool schemas (SkillMetadata is name/description
         // metadata only); activation goes through the host's Skill tool, so
         // there are no per-skill tool definitions to register here.

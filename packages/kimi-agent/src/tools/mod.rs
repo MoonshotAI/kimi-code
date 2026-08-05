@@ -10,6 +10,7 @@
 pub mod bash;
 pub mod fetch_url;
 pub mod fs_search;
+pub mod github;
 pub mod manager;
 pub mod todo;
 pub mod web_search;
