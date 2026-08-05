@@ -14,6 +14,10 @@ struct Cli {
     /// instead of an embedded in-process server.
     #[arg(long, global = true)]
     server: Option<String>,
+    /// Resume an existing session (TS `-r/--resume` parity): with no
+    /// subcommand, enters the interactive TUI bound to that session.
+    #[arg(short = 'r', long, global = true)]
+    resume: Option<String>,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -1005,13 +1009,14 @@ async fn handle_chat_command(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     use clap::CommandFactory;
-    let Cli { server, command } = Cli::parse();
+    let Cli { server, resume, command } = Cli::parse();
     let Some(command) = command else {
         // No subcommand: enter the interactive TUI (stage D) when the
         // terminal supports it; otherwise fall back to help + a hint.
         if std::io::stdin().is_terminal() {
             let harness = connect_harness(&server)?;
-            let session_id = format!("kimi-{}", std::process::id());
+            // `-r <id>` resumes the named session; otherwise a fresh id.
+            let session_id = resume.unwrap_or_else(|| format!("kimi-{}", std::process::id()));
             let mut app = kimi_tui::App::new(harness, &session_id);
             return app.run().await;
         }
