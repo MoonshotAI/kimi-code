@@ -316,11 +316,20 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 4. `kimi-config`：TOML/env/diagnostics——`kimi-sdk::catalog` 已落地 ✅（models.dev 拉取 + 类型 + live 测试），`kimi provider` 命令面完整；config 面继续
 5. **验证**：SDK 测试平移（425 用例）；ACP 兼容测试；node-sdk/klient 转薄壳 re-export
 
+> **✅ 2026-08-05 宿主面补全批次（缩小 node-sdk Rust 桥接 nativeUnavailable 缺口，commit a7d390c4f/ea1349f30/048516139）**：
+> - **plugin 写面**：kimi-server 新增 `plugin/install`（github/url/local 三源路由）、`plugin/set_enabled`、`plugin/set_mcp_enabled`（server 校验 + 整体开关近似）、`plugin/remove`、`plugin/reload`；kimi-sdk Harness 暴露 7 个 plugin 方法；node-sdk 桥接 5 个 `nativeUnavailable` → 真实引擎调用（6 单测 + 2 集成）
+> - **cron 面**：kimi-sdk Session 暴露 `list/create/delete_cron_tasks`（cron/list 协议层已存在）
+> - **removeKimiProvider**：宿主 config 语义（读 config.toml 删 `providers.kimi` 写回），替代 nativeUnavailable
+> - **set_swarm_mode trigger + undo_history count**：kimi-sdk 签名对齐 node-sdk（engine 已支持 trigger/count），更新 kimi-tui/测试调用点
+> - **session/cancel_compact**：引擎 compact 同步（无在途异步可取消）→ no-op 成功（`{cancelled:true}`），替代 nativeUnavailable；node-sdk 桥接接线
+> - **保留 nativeUnavailable（引擎无此概念/死接口，诚实报错）**：`archiveSession`（node-sdk 无上层调用）、`activatePluginCommand`/`listPluginCommands`（引擎无 plugin command，宿主 native-session 主动 naError）
+> - **基线**：kimi-server/sdk/protocol 9 套件全绿；node-sdk 34 文件 428 测试全绿；clippy 0 新 warning
+
 ### 阶段 F — 退役
 0. ✅ **npm 分发薄壳**（kimi-code-rust-bin：bin 包装 + pack.mjs CI 打包 + KIMI_RUST_BIN 覆盖）
 1. ✅ **入口切换 wrapper（已落代码）**：apps/kimi-code `bin: {kimi: bin/kimi.mjs}`——wrapper 优先平台 Rust 二进制（候选命名对齐 rust-bin pack.mjs：`kimi-<platform>-<arch>[.exe]` + 通用名，Windows 需 .exe；`KIMI_RUST_BIN` 显式覆盖），找不到回退 TS `dist/main.mjs`；spawn + SIGINT/SIGTERM/SIGHUP 转发 + 退出码/信号镜像（参考 codex-cli bin 模式）；`KIMI_ENTRY_DEBUG=1` 打印命中路径。迁移期双轨并存，Rust 全绿后删除 TS 入口（`smoke:entry` 冒烟覆盖两条路径）
 2. ✅ **klient 退役（2026-08-05）**：`packages/klient` → `retired/klient`（99 文件 rename + Dockerfile 删），flake.nix workspacePaths/workspaceNames 移除；`.oxlintrc` 增 `retired/` + `scripts/` ignorePatterns（退役代码冻结 + 脚本有专项 CI 检查）；locale 脚本适配跳过 retired
-3. 🔶 **包退役评估（2026-08-05，阻塞确认）**：kap-server/node-sdk/acp-adapter/oauth/protocol/kaos 移 `retired/` —— **暂不可执行**。实测消费图：`apps/kimi-code` src 仍真实 import `oauth`（auth/provider/telemetry/tui 15+ 文件）、`kaos`（rust-engine.ts）、`node-sdk`（harness/rpc/session）；`apps/vscode` 依赖 `node-sdk`。这些 TS 宿主按阶段 5 保持 TS 至 Rust 前端就绪，故包退役的**前置条件未满足**。退役顺序应为：先完成 kimi-sdk（Rust）对 node-sdk auth/harness/oauth 面的替代 → 再切 apps 消费 → 最后移 retired/。`kimi-cli` 36 集成测试中 `server_mode_verbose_emits_events` 为**环境依赖预存失败**（无可达 LLM 端点），非退役阻塞
+3. 🔶 **包退役评估（2026-08-05，阻塞确认）**：kap-server/node-sdk/acp-adapter/oauth/protocol/kaos 移 `retired/` —— **暂不可执行**。实测消费图：`apps/kimi-code` src 仍真实 import `oauth`（auth/provider/telemetry/tui 15+ 文件）、`kaos`（rust-engine.ts）、`node-sdk`（harness/rpc/session）；`apps/vscode` 依赖 `node-sdk`。这些 TS 宿主按阶段 5 保持 TS 至 Rust 前端就绪，故包退役的**前置条件未满足**。退役顺序应为：先完成 kimi-sdk（Rust）对 node-sdk auth/harness/oauth 面的替代 → 再切 apps 消费 → 最后移 retired/。`kimi-cli` 36 集成测试全绿（`server_mode_verbose_emits_events` 预存失败已修复，见 commit 7cf9ee6cd）
 4. npm 分发薄壳（参考 codex-cli：bin → 包装 Rust 二进制）
 5. **验证**：CLI/TUI/web/API 全链路 Rust 端到端；旧 TS 测试删除或转 Rust
 
