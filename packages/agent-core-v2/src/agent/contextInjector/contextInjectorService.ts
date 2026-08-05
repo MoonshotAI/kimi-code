@@ -63,8 +63,6 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     );
     this._register(
       this.eventBus.subscribe('turn.started', () => {
-        // Draining here lands once-reminders ahead of the next prompt, which
-        // only materializes later (in the turn's first step).
         this.reminderQueue.drain();
         this.isNewTurn = true;
       }),
@@ -76,9 +74,6 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     );
     this._register(
       wire.hooks.onDidRestore.register('context-injector', async (_ctx, next) => {
-        // Replay rebuilds the pending ledger; deliver what was left pending
-        // before the loop resumes, then fold the fresh messages into
-        // position tracking.
         this.reminderQueue.drain();
         this.resyncPositions();
         await next();
@@ -116,9 +111,6 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
   }
 
   private async inject(): Promise<void> {
-    // Once-reminders (past-tense events) drain ahead of the reconcile pass so
-    // state reminders never wedge themselves between an event and the message
-    // it annotates.
     this.reminderQueue.drain();
     const isNewTurn = this.isNewTurn;
     this.isNewTurn = false;

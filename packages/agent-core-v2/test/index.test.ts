@@ -88,6 +88,7 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'interaction.request',
   'interaction.resolved',
   'plan.revision',
+  'interruptionReminder.recorded',
   'reminderQueue.enqueue',
   'reminderQueue.delivered',
   'turn.ended',

@@ -1,3 +1,13 @@
+/**
+ * Scenario: swarm service policy, context reconciliation, persistence, and
+ * tool execution.
+ *
+ * Exercises the Agent-scoped service through DI and public loop boundaries,
+ * with storage, session swarm execution, and approvals stubbed. Run:
+ * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/agent/swarm/swarm.test.ts`.
+ */
+
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 
@@ -53,8 +63,13 @@ import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../.
 import { stubLoopWithHooks } from '../loop/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { stubFlag } from '../../app/flag/stubs';
+import { createTestAgent } from '../../harness';
 
 const signal = new AbortController().signal;
+
+async function runInjectionBoundary(loop: IAgentLoopService): Promise<void> {
+  await loop.hooks.onWillBeginStep.run({ turnId: 0, step: 1, signal });
+}
 
 function context<Input>(
   args: Input,
@@ -221,8 +236,6 @@ describe('AgentSwarmService', () => {
     swarm.exit();
     expect(swarm.isActive).toBe(false);
 
-    // Exit no longer pops the enter reminder out of the context — reminders
-    // are pure state renders through the injector, so no splice is emitted.
     expect(events).toEqual([
       { type: 'agent.status.updated', swarmMode: true },
       { type: 'agent.status.updated', swarmMode: false },
@@ -232,45 +245,36 @@ describe('AgentSwarmService', () => {
   it('renders the enter guidance on enter and the exit guidance on exit through the injector', async () => {
     const swarm = ix.get(IAgentSwarmService);
     const context = ix.get(IAgentContextMemoryService);
-    const injector = ix.get(IAgentContextInjectorService) as unknown as {
-      inject(): Promise<void>;
-    };
     const textOf = (message: ContextMessage | undefined): string =>
       message?.content.map((part) => (part.type === 'text' ? part.text : '')).join('') ?? '';
 
     swarm.enter('manual');
-    await injector.inject();
+    await runInjectionBoundary(ix.get(IAgentLoopService));
 
     let reminder = context.get().at(-1);
     expect(reminder?.origin).toEqual({ kind: 'injection', variant: 'swarm_mode' });
     expect(textOf(reminder)).toContain('You are now in "agent swarm" mode.');
 
-    // No transition and the guidance is still live: nothing re-renders.
-    await injector.inject();
+    await runInjectionBoundary(ix.get(IAgentLoopService));
     expect(context.get()).toHaveLength(1);
 
     swarm.exit();
-    await injector.inject();
+    await runInjectionBoundary(ix.get(IAgentLoopService));
 
     reminder = context.get().at(-1);
     expect(reminder?.origin).toEqual({ kind: 'injection', variant: 'swarm_mode' });
     expect(textOf(reminder)).toContain('Swarm Mode has ended.');
-    // The exit render replaces, not appends to, the enter guidance — and the
-    // enter copy is never spliced out.
     expect(context.get()).toHaveLength(2);
   });
 
   it('renders no reminder at all for tool-triggered swarms', async () => {
     const swarm = ix.get(IAgentSwarmService);
     const context = ix.get(IAgentContextMemoryService);
-    const injector = ix.get(IAgentContextInjectorService) as unknown as {
-      inject(): Promise<void>;
-    };
 
     swarm.enter('tool');
-    await injector.inject();
+    await runInjectionBoundary(ix.get(IAgentLoopService));
     swarm.exit();
-    await injector.inject();
+    await runInjectionBoundary(ix.get(IAgentLoopService));
 
     expect(context.get()).toHaveLength(0);
   });
@@ -278,12 +282,6 @@ describe('AgentSwarmService', () => {
   it('does not duplicate the enter guidance on resume while it is still live in history', async () => {
     const swarm = ix.get(IAgentSwarmService);
     const context = ix.get(IAgentContextMemoryService);
-    const injector = ix.get(IAgentContextInjectorService) as unknown as {
-      inject(): Promise<void>;
-    };
-
-    // A previous process rendered the guidance; replay rebuilds the trigger
-    // and the restore seed recovers the rendered flag from the history.
     ix.get(IAgentSystemReminderService).appendSystemReminder(SWARM_MODE_ENTER_REMINDER, {
       kind: 'injection',
       variant: 'swarm_mode',
@@ -295,7 +293,7 @@ describe('AgentSwarmService', () => {
       [{ type: 'swarm_mode.enter', trigger: 'manual' }],
     );
 
-    await injector.inject();
+    await runInjectionBoundary(ix.get(IAgentLoopService));
 
     expect(swarm.isActive).toBe(true);
     expect(context.get()).toHaveLength(1);
@@ -304,10 +302,6 @@ describe('AgentSwarmService', () => {
   it('renders a corrective exit reminder when resume finds live enter guidance but swarm is off', async () => {
     const swarm = ix.get(IAgentSwarmService);
     const context = ix.get(IAgentContextMemoryService);
-    const injector = ix.get(IAgentContextInjectorService) as unknown as {
-      inject(): Promise<void>;
-    };
-
     ix.get(IAgentSystemReminderService).appendSystemReminder(SWARM_MODE_ENTER_REMINDER, {
       kind: 'injection',
       variant: 'swarm_mode',
@@ -319,7 +313,7 @@ describe('AgentSwarmService', () => {
       [{ type: 'swarm_mode.enter', trigger: 'manual' }, { type: 'swarm_mode.exit' }],
     );
 
-    await injector.inject();
+    await runInjectionBoundary(ix.get(IAgentLoopService));
 
     expect(swarm.isActive).toBe(false);
     const reminder = context.get().at(-1);
@@ -411,6 +405,41 @@ describe('AgentSwarmService', () => {
     expect(decision).toBeUndefined();
     expect(permissionGateRan).toBe(true);
     expect(formatDenyMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('swarm context reconciliation', () => {
+  it('renders the corrective exit again when undo removes the latest exit render', async () => {
+    const ctx = createTestAgent();
+    try {
+      const swarm = ctx.get(IAgentSwarmService);
+      swarm.enter('manual');
+      ctx.mockNextResponse({ type: 'text', text: 'first answer' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'first prompt' }] });
+      await ctx.untilTurnEnd();
+
+      swarm.exit();
+      ctx.mockNextResponse({ type: 'text', text: 'second answer' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'second prompt' }] });
+      await ctx.untilTurnEnd();
+
+      await ctx.undoHistory(1);
+      ctx.mockNextResponse({ type: 'text', text: 'third answer' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'third prompt' }] });
+      await ctx.untilTurnEnd();
+
+      const reminders = ctx.contextData().history.filter(
+        (message) =>
+          message.origin?.kind === 'injection' && message.origin.variant === 'swarm_mode',
+      );
+      const latest = reminders.at(-1);
+      const text = latest?.content
+        .map((part) => (part.type === 'text' ? part.text : ''))
+        .join('');
+      expect(text).toContain('Swarm Mode has ended.');
+    } finally {
+      await ctx.dispose();
+    }
   });
 });
 

@@ -20,14 +20,12 @@ export interface ReminderQueueEntry {
   readonly id: string;
   readonly variant: string;
   readonly content: string;
-  readonly ownerPromptId?: string;
 }
 
 const reminderQueueEntrySchema = z.object({
   id: z.string().min(1),
   variant: z.string().min(1),
   content: z.string(),
-  ownerPromptId: z.string().optional(),
 });
 
 export const ReminderQueueModel = defineModel<readonly ReminderQueueEntry[]>(

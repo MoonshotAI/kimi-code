@@ -45,15 +45,10 @@ export class AgentReminderQueueService extends Disposable implements IAgentRemin
 
   drain(): void {
     for (const entry of this.wire.getModel(ReminderQueueModel)) {
-      // Exactly-once dedup: a crash between the reminder append (persisted as
-      // `context.append_message`) and the delivered record leaves the entry
-      // pending with its reminder already at the conversation tail — reconcile
-      // by clearing the ledger instead of appending a duplicate.
       if (!this.alreadyDeliveredAtTail(entry)) {
         this.reminders.appendSystemReminder(entry.content, {
           kind: 'injection',
           variant: entry.variant,
-          ownerPromptId: entry.ownerPromptId,
         });
       }
       this.wire.dispatch(reminderQueueDelivered({ id: entry.id }));

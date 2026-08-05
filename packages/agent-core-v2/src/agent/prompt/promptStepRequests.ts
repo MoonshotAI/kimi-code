@@ -5,9 +5,8 @@
  * `PromptStepRequest` / `SteerStepRequest` carry an already-built user
  * `ContextMessage` (image-compression captions pre-split), apply the image
  * format gate as the last funnel before the history, and materialize it
- * at pop time — captions are enqueued into the once-reminder queue with the
- * message's id as `ownerPromptId`, and the unified boundary scheduler
- * delivers them right after the message at the next step boundary.
+ * at pop time — caption reminders are appended before the host message,
+ * preserving the prompt-owned undo boundary.
  * `PromptStepRequest` uses `newTurn`, seeding the
  * `turn.prompt` record from its message. `SteerStepRequest` uses
  * `activeOrNewTurn`, is mergeable, and survives turn boundaries; it records
@@ -22,7 +21,7 @@ import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/t
 import { newMessageId } from '#/agent/contextMemory/messageId';
 import { StepRequest, type StepRequestOptions, type TurnSeed } from '#/agent/loop/stepRequest';
 import { gateImageFormatParts } from '#/agent/media/image-compress';
-import type { IAgentReminderQueueService } from '#/agent/reminderQueue/reminderQueue';
+import type { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 
 abstract class UserMessageStepRequest extends StepRequest {
   protected readonly message: ContextMessage;
@@ -31,7 +30,7 @@ abstract class UserMessageStepRequest extends StepRequest {
   constructor(
     message: ContextMessage,
     private readonly captions: readonly string[],
-    private readonly reminderQueue: IAgentReminderQueueService,
+    private readonly reminders: IAgentSystemReminderService,
     options?: StepRequestOptions,
   ) {
     super(options);
@@ -49,9 +48,9 @@ abstract class UserMessageStepRequest extends StepRequest {
 
   override onWillMaterialize(): void {
     for (const caption of this.captions) {
-      this.reminderQueue.enqueue({
+      this.reminders.appendSystemReminder(caption, {
+        kind: 'injection',
         variant: 'image_compression',
-        content: caption,
         ownerPromptId: this.ownerPromptId,
       });
     }
@@ -68,9 +67,9 @@ export class PromptStepRequest extends UserMessageStepRequest {
   constructor(
     message: ContextMessage,
     captions: readonly string[],
-    reminderQueue: IAgentReminderQueueService,
+    reminders: IAgentSystemReminderService,
   ) {
-    super(message, captions, reminderQueue, { admission: 'newTurn' });
+    super(message, captions, reminders, { admission: 'newTurn' });
   }
 
   override get turnSeed(): TurnSeed {
@@ -84,12 +83,12 @@ export class SteerStepRequest extends UserMessageStepRequest {
   constructor(
     message: ContextMessage,
     captions: readonly string[],
-    reminderQueue: IAgentReminderQueueService,
+    reminders: IAgentSystemReminderService,
     private readonly recordSteer: (message: ContextMessage) => void,
     private readonly forgetSteer: (request: SteerStepRequest) => void,
     admission: 'activeTurnOnly' | 'activeOrNewTurn' = 'activeTurnOnly',
   ) {
-    super(message, captions, reminderQueue, {
+    super(message, captions, reminders, {
       mergeable: true,
       turnScoped: false,
       admission,

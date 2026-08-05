@@ -39,7 +39,6 @@ export function isDynamicToolSchemaMessage(message: ContextMessage): boolean {
 export function isLoadableToolsAnnouncement(message: ContextMessage): boolean {
   const origin = message.origin;
   if (origin?.kind === 'injection') return origin.variant === LOADABLE_TOOLS_VARIANT;
-  // Legacy journals announced through `{kind: 'system_trigger'}`.
   return origin?.kind === 'system_trigger' && origin.name === LOADABLE_TOOLS_VARIANT;
 }
 

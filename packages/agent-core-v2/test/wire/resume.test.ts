@@ -65,7 +65,7 @@ describe('Agent resume', () => {
     expect(persistence.records.filter((record) => record.type === 'metadata')).toHaveLength(1);
   });
 
-  it('drains a pending once-reminder after restore (crash before delivery)', async () => {
+  it('reconciles a legacy user interruption after restore when delivery was missing', async () => {
     const persistence = new RecordingAgentPersistence([
       resumeConfigRecord(),
       {
@@ -98,21 +98,18 @@ describe('Agent resume', () => {
         },
       },
       { type: 'turn.cancel', turnId: 0, target: 'active', reason: 'user_cancelled' },
-      {
-        type: 'reminderQueue.enqueue',
-        entry: {
-          id: 'r1',
-          variant: 'interruption',
-          content:
-            "The previous turn was interrupted by the user before completion; any partial output shown above is incomplete. The user's next message continues the conversation.",
-        },
-      },
     ] as unknown as WireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
     try {
       await ctx.restorePersisted();
 
+      expect(ctx.context.get()).not.toContainEqual(
+        expect.objectContaining({ origin: { kind: 'injection', variant: 'interruption' } }),
+      );
+      ctx.mockNextResponse({ type: 'text', text: 'Fresh response after resume.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt after resume' }] });
+      await ctx.untilTurnEnd();
       expect(ctx.context.get()).toContainEqual(
         expect.objectContaining({
           role: 'user',
@@ -127,11 +124,44 @@ describe('Agent resume', () => {
           }),
         }),
       );
-      expect(persistence.appended).toContainEqual(
-        expect.objectContaining({ type: 'reminderQueue.delivered', id: 'r1' }),
-      );
 
       await ctx.expectResumeMatches();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('does not reconcile a legacy interruption whose delivery was recorded', async () => {
+    const persistence = new RecordingAgentPersistence([
+      resumeConfigRecord(),
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Hello' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'turn.prompt',
+        input: [{ type: 'text', text: 'Hello' }],
+        origin: { kind: 'user' },
+      },
+      { type: 'turn.cancel', turnId: 0, target: 'active', reason: 'user_cancelled' },
+      { type: 'interruptionReminder.recorded', turnId: 0 },
+    ] as unknown as WireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    try {
+      await ctx.restorePersisted();
+      ctx.mockNextResponse({ type: 'text', text: 'Fresh response after resume.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt after resume' }] });
+      await ctx.untilTurnEnd();
+
+      expect(ctx.context.get()).not.toContainEqual(
+        expect.objectContaining({ origin: { kind: 'injection', variant: 'interruption' } }),
+      );
     } finally {
       await ctx.dispose();
     }

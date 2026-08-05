@@ -73,7 +73,7 @@ describe('AgentReminderQueueService', () => {
       },
       {
         type: 'reminderQueue.enqueue',
-        entry: { id: 'e2', variant: 'init', content: 'second', ownerPromptId: 'p1' },
+        entry: { id: 'e2', variant: 'init', content: 'second' },
       },
     ] as unknown as WireRecord[];
 
@@ -85,12 +85,11 @@ describe('AgentReminderQueueService', () => {
       ['interruption', 'first'],
       ['init', 'second'],
     ]);
-    expect(pending[1]!.ownerPromptId).toBe('p1');
   });
 
   it('drains pending entries FIFO, wraps them as system reminders, and clears the ledger', () => {
     queue.enqueue({ variant: 'a', content: 'first' });
-    queue.enqueue({ variant: 'b', content: 'second', ownerPromptId: 'p1' });
+    queue.enqueue({ variant: 'b', content: 'second' });
 
     queue.drain();
 
@@ -103,7 +102,7 @@ describe('AgentReminderQueueService', () => {
     });
     expect(messages[1]).toMatchObject({
       content: [{ type: 'text', text: '<system-reminder>\nsecond\n</system-reminder>' }],
-      origin: { kind: 'injection', variant: 'b', ownerPromptId: 'p1' },
+      origin: { kind: 'injection', variant: 'b' },
     });
     expect(wire.getModel(ReminderQueueModel)).toEqual([]);
     expect(records.map((record) => record.type)).toEqual([
@@ -145,9 +144,6 @@ describe('AgentReminderQueueService', () => {
   });
 
   it('reconciles an appended-but-unrecorded delivery after restore without duplicating', async () => {
-    // The reminder append landed (persisted as context.append_message, so it
-    // sits at the conversation tail after the context replays), but the
-    // delivered record never reached the journal.
     reminders.appendSystemReminder('crash window', {
       kind: 'injection',
       variant: 'interruption',

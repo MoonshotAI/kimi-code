@@ -501,8 +501,6 @@ describe('AgentGoalService', () => {
       const removed = await goals.cancelGoal();
       expect(removed.status).toBe('active');
       expect(goals.getGoal()).toEqual({ goal: null });
-      // The cancellation reminder rides the once-reminder queue now; the
-      // boundary scheduler delivers it ahead of the next prompt.
       ctx.get(IAgentReminderQueueService).drain();
       const reminder = context.get().at(-1);
       expect(reminder?.origin).toEqual({ kind: 'injection', variant: 'goal_cancelled' });
@@ -2307,8 +2305,6 @@ describe('AgentGoalService fork boundaries', () => {
     ]);
 
     expect(goals.getGoal().goal).toBeNull();
-    // Enqueued during replay normalization; the boundary scheduler delivers
-    // it ahead of the next prompt.
     ctx.get(IAgentReminderQueueService).drain();
     const reminder = context.get().at(-1);
     expect(reminder?.origin).toEqual({ kind: 'injection', variant: 'goal_fork_cleared' });
@@ -2335,8 +2331,6 @@ describe('AgentGoalService fork boundaries', () => {
       },
     ]);
 
-    // The legacy reminder clears the pending flag during replay, so the
-    // normalization enqueues nothing and the drain delivers nothing.
     ctx.get(IAgentReminderQueueService).drain();
     expect(context.get()).toHaveLength(1);
     expect(context.get()[0]?.origin).toEqual({ kind: 'system_trigger', name: 'goal_fork_cleared' });

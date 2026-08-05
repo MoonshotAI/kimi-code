@@ -1006,8 +1006,6 @@ describe('interruption reminder', () => {
     await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
     subscription.dispose();
 
-    // Boundary delivery: the reminder is enqueued at turn.ended but only
-    // drained when the next turn starts.
     expect(ctx.contextData().history).toEqual([
       expect.objectContaining({ role: 'user', content: [{ type: 'text', text: 'Hello' }] }),
       {
@@ -1047,8 +1045,7 @@ describe('interruption reminder', () => {
         text: '<system-reminder>\nThe previous turn was interrupted by the user before completion; any partial output shown above is incomplete. The user\'s next message continues the conversation.\n</system-reminder>',
       },
     ]);
-    // The reminder lands ahead of the next user message.
-    expect(ctx.contextData().history.indexOf(interruptionReminders()[0]!)).toBe(2);
+    expect(ctx.contextData().history.indexOf(interruptionReminders()[0]!)).toBe(3);
   });
 
   it('writes one active cancellation when cancel repeats before the turn settles', async () => {
@@ -1063,29 +1060,16 @@ describe('interruption reminder', () => {
     const turn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
     await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
     subscription.dispose();
-    await ctx.wire.flush();
-
     expect(results).toEqual([true, true]);
     expect(
       ctx.allEvents.filter(
         (entry) => entry.type === '[wire]' && entry.event === 'turn.cancel',
       ),
     ).toHaveLength(1);
-    expect(
-      ctx.allEvents.filter(
-        (entry) => entry.type === '[wire]' && entry.event === 'reminderQueue.enqueue',
-      ),
-    ).toHaveLength(1);
-
     ctx.mockNextResponse({ type: 'text', text: 'second answer' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Next' }] });
     await ctx.untilTurnEnd();
     expect(interruptionReminders()).toHaveLength(1);
-    expect(
-      ctx.allEvents.filter(
-        (entry) => entry.type === '[wire]' && entry.event === 'reminderQueue.delivered',
-      ),
-    ).toHaveLength(1);
   });
 
   it('preserves the partial stream but appends no reminder on programmatic abort', async () => {
@@ -1123,7 +1107,6 @@ describe('interruption reminder', () => {
     subscription.dispose();
     expect(interruptionReminders()).toHaveLength(0);
 
-    // A duplicate enqueue for the same notice collapses at drain time.
     ctx.get(IEventBus).publish({
       type: 'turn.ended',
       turnId: 99,
@@ -1159,9 +1142,7 @@ describe('interruption reminder', () => {
     loop.cancel(active.id);
     await expect(active.result).resolves.toMatchObject({ type: 'cancelled' });
 
-    // Only the active turn's cancel enqueues a reminder; nothing is drained
-    // until the next turn boundary.
-    expect(interruptionReminders()).toHaveLength(0);
+    expect(interruptionReminders()).toHaveLength(1);
     const queuedCancel = ctx.allEvents.find(
       (entry) =>
         entry.type === '[wire]' &&
@@ -1176,7 +1157,7 @@ describe('interruption reminder', () => {
     expect(interruptionReminders()).toHaveLength(1);
   });
 
-  it('sends the partial output and reminder ahead of the next user message', async () => {
+  it('sends the partial output and reminder in the next atomic step', async () => {
     ctx.mockNextResponse({ type: 'text', text: 'partial answer' }, { type: 'text', text: ' more' });
     const subscription = cancelOnFirstDelta();
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
@@ -1192,30 +1173,27 @@ describe('interruption reminder', () => {
       messages:
         <last>
         assistant: text "partial answer"
-        user: text "<system-reminder>\\nThe previous turn was interrupted by the user before completion; any partial output shown above is incomplete. The user's next message continues the conversation.\\n</system-reminder>"
         user: text "Next"
+        user: text "<system-reminder>\\nThe previous turn was interrupted by the user before completion; any partial output shown above is incomplete. The user's next message continues the conversation.\\n</system-reminder>"
     `);
   });
 
-  it('keeps the pending once-entry across undo (delivery is a world fact)', async () => {
+  it('drops the pending interruption when its cancelled turn is undone', async () => {
     ctx.mockNextResponse({ type: 'text', text: 'partial answer' });
     const subscription = cancelOnFirstDelta();
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
     await ctx.untilTurnEnd();
     subscription.dispose();
-    // Enqueued but not yet drained: nothing in the history yet.
     expect(interruptionReminders()).toHaveLength(0);
 
     await ctx.undoHistory(1);
 
     expect(ctx.contextData().history).toEqual([]);
 
-    // The ledger is not checkpointed: undo does not revoke the pending
-    // delivery, which lands at the next boundary.
     ctx.mockNextResponse({ type: 'text', text: 'second answer' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Next' }] });
     await ctx.untilTurnEnd();
-    expect(interruptionReminders()).toHaveLength(1);
+    expect(interruptionReminders()).toHaveLength(0);
   });
 
   it('preserves partial thinking on user cancel', async () => {
@@ -1258,8 +1236,6 @@ describe('interruption reminder', () => {
     first.dispose();
     expect(interruptionReminders()).toHaveLength(0);
 
-    // The pending entry drains as the retry turn starts; the retry turn's own
-    // cancel enqueues a duplicate that collapses at the next drain.
     ctx.mockNextResponse({ type: 'text', text: 'retried answer' });
     const onStepStarted = ctx.get(IEventBus).subscribe('turn.step.started', () => {
       loop.cancel();
@@ -1273,6 +1249,30 @@ describe('interruption reminder', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Next' }] });
     await ctx.untilTurnEnd();
     expect(interruptionReminders()).toHaveLength(1);
+  });
+
+  it('renders a new interruption reminder after an intervening completed turn', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'first partial answer' });
+    const first = cancelOnFirstDelta();
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'first prompt' }] });
+    await ctx.untilTurnEnd();
+    first.dispose();
+
+    ctx.mockNextResponse({ type: 'text', text: 'completed answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'completed prompt' }] });
+    await ctx.untilTurnEnd();
+    expect(interruptionReminders()).toHaveLength(1);
+
+    ctx.mockNextResponse({ type: 'text', text: 'second partial answer' });
+    const second = cancelOnFirstDelta();
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'second prompt' }] });
+    await ctx.untilTurnEnd();
+    second.dispose();
+
+    ctx.mockNextResponse({ type: 'text', text: 'final answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'final prompt' }] });
+    await ctx.untilTurnEnd();
+    expect(interruptionReminders()).toHaveLength(2);
   });
 
   it('does not duplicate recorded content when cancelled during tool execution', async () => {
@@ -1294,8 +1294,6 @@ describe('interruption reminder', () => {
       await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
 
       expect(contentPartRecordsIn(local)).toBe(2);
-      // The reminder drains at the next turn boundary, ahead of the next
-      // user message.
       expect(remindersIn(local)).toHaveLength(0);
 
       local.mockNextResponse({ type: 'text', text: 'follow-up answer' });
@@ -1305,8 +1303,8 @@ describe('interruption reminder', () => {
       const history = local.contextData().history;
       expect(remindersIn(local)).toHaveLength(1);
       const reminderIndex = history.indexOf(remindersIn(local)[0]!);
-      expect(history[reminderIndex - 1]?.role).toBe('tool');
-      expect(history[reminderIndex + 1]).toMatchObject({
+      expect(history.slice(0, reminderIndex).some((message) => message.role === 'tool')).toBe(true);
+      expect(history[reminderIndex - 1]).toMatchObject({
         role: 'user',
         content: [{ type: 'text', text: 'again' }],
       });

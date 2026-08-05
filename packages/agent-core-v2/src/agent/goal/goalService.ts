@@ -219,7 +219,6 @@ const GoalForkNoticeModel = defineModel<GoalForkNoticeState>(
 function isGoalForkClearedReminder(message: ContextMessage | undefined): boolean {
   const origin = message?.origin;
   if (origin?.kind === 'injection') return origin.variant === GOAL_FORK_CLEARED_REMINDER_NAME;
-  // Legacy journals announced through `{kind: 'system_trigger'}`.
   return origin?.kind === 'system_trigger' && origin.name === GOAL_FORK_CLEARED_REMINDER_NAME;
 }
 

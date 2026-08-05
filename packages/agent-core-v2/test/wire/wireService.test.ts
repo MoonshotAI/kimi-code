@@ -16,6 +16,7 @@ import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { CycleError } from '#/wire/wireService';
+import '#/agent/interruptionReminder/interruptionReminderOps';
 
 import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from './stubs';
 
@@ -269,7 +270,7 @@ describe('WireService', () => {
     }
   });
 
-  it('skips retired record types during replay without reporting them', async () => {
+  it('replays legacy interruption records without reporting them', async () => {
     const unexpected: unknown[] = [];
     setUnexpectedErrorHandler((error) => unexpected.push(error));
     try {

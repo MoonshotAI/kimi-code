@@ -1,17 +1,13 @@
 /**
  * `agentPlugin` domain — `IAgentPluginService` implementation.
  *
- * Renders session-start skills from `plugin` and `sessionSkillCatalog` as a
- * pure state channel through `contextInjector`: the provider re-renders the
- * current session-start set whenever it is missing from the conversation
- * (compaction recovery) or when the plugin skill catalog changed (a dirty
- * flag forces one supersedes/neutralize render at the next boundary). Uses
- * `contextMemory` to detect stale guidance worth neutralizing. Main-agent-only
- * (v1 parity): the service self-gates on `agentId === 'main'`; Agent scope
- * creation instantiates it for every agent, so other agents construct it as a
- * no-op. Resolves session prompt context through `sessionContext` and reports
- * missing skills through `log`. The plain-data dirty flag is registered into
- * `agentState` (`IAgentStateService`). Bound at Agent scope.
+ * Renders session-start skills from `plugin` and `sessionSkillCatalog` through
+ * `contextInjector`, reconciling the desired instructions against the latest
+ * surviving render in `contextMemory`. Main-agent-only (v1 parity): the
+ * service self-gates on `agentId === 'main'`; Agent scope creation instantiates
+ * it for every agent, so other agents construct it as a no-op. Resolves session
+ * prompt context through `sessionContext` and reports missing skills through
+ * `log`; stores the refresh signal through `agentState`. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -21,6 +17,7 @@ import { defineState } from '#/_base/state/stateRegistry';
 import { escapeXmlAttr } from '#/_base/utils/xml-escape';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IPluginService } from '#/app/plugin/plugin';
@@ -39,8 +36,11 @@ const MAIN_AGENT_ID = 'main';
 const SUPERSEDES_SUFFIX =
   'This supersedes any earlier plugin_session_start reminder in this session.';
 
-export const pluginSessionStartDirtyKey = defineState<boolean>(
-  'agentPlugin.sessionStartDirty',
+const NO_ACTIVE_SESSION_STARTS =
+  `There are currently no active plugin session starts. ${SUPERSEDES_SUFFIX}`;
+
+export const pluginSessionStartRefreshPendingKey = defineState<boolean>(
+  'agentPlugin.sessionStartRefreshPending',
   () => false,
 );
 
@@ -59,32 +59,25 @@ export class AgentPluginService extends Disposable implements IAgentPluginServic
   ) {
     super();
     if (scopeContext.agentId !== MAIN_AGENT_ID) return;
-    this.states.register(pluginSessionStartDirtyKey);
+    this.states.register(pluginSessionStartRefreshPendingKey);
     this._register(
-      injector.register(SESSION_START_INJECTION_VARIANT, async ({ injectedPositions }) => {
-        if (this.dirty) {
-          this.dirty = false;
-          return this.renderSupersedingReminder();
-        }
-        if (injectedPositions.length > 0) return undefined;
-        return this.renderSessionStartReminder();
-      }),
+      injector.register(SESSION_START_INJECTION_VARIANT, () =>
+        this.reconcileSessionStartReminder(),
+      ),
     );
     this._register(
       this.skillCatalog.onDidChange((sourceId) => {
-        if (sourceId === PLUGIN_SKILL_SOURCE_ID) {
-          this.dirty = true;
-        }
+        if (sourceId === PLUGIN_SKILL_SOURCE_ID) this.refreshPending = true;
       }),
     );
   }
 
-  private get dirty(): boolean {
-    return this.states.get(pluginSessionStartDirtyKey);
+  private get refreshPending(): boolean {
+    return this.states.get(pluginSessionStartRefreshPendingKey);
   }
 
-  private set dirty(value: boolean) {
-    this.states.set(pluginSessionStartDirtyKey, value);
+  private set refreshPending(value: boolean) {
+    this.states.set(pluginSessionStartRefreshPendingKey, value);
   }
 
   private async renderSessionStartReminder(): Promise<string | undefined> {
@@ -99,16 +92,61 @@ export class AgentPluginService extends Disposable implements IAgentPluginServic
     });
   }
 
-  private async renderSupersedingReminder(): Promise<string | undefined> {
-    const reminder = await this.renderSessionStartReminder();
-    if (reminder !== undefined) {
-      return `${reminder}\n\n${SUPERSEDES_SUFFIX}`;
+  private async reconcileSessionStartReminder(): Promise<string | undefined> {
+    const forceRefresh = this.refreshPending;
+    this.refreshPending = false;
+    const desired = await this.renderSessionStartReminder();
+    const history = this.context.get();
+    const latest = lastPluginSessionStart(history);
+    if (desired === undefined) {
+      if (
+        latest === undefined &&
+        (!forceRefresh || !shouldNeutralizePluginSessionStart(history))
+      ) {
+        return undefined;
+      }
+      if (
+        latest !== undefined &&
+        messageText(latest) === systemReminderText(NO_ACTIVE_SESSION_STARTS)
+      ) {
+        return undefined;
+      }
+      return NO_ACTIVE_SESSION_STARTS;
     }
-    if (shouldNeutralizePluginSessionStart(this.context.get())) {
-      return `There are currently no active plugin session starts. ${SUPERSEDES_SUFFIX}`;
+    if (latest === undefined) return desired;
+    const rendered = messageText(latest);
+    if (
+      !forceRefresh &&
+      (
+        rendered === systemReminderText(desired) ||
+        rendered === systemReminderText(`${desired}\n\n${SUPERSEDES_SUFFIX}`)
+      )
+    ) {
+      return undefined;
     }
-    return undefined;
+    return `${desired}\n\n${SUPERSEDES_SUFFIX}`;
   }
+}
+
+function lastPluginSessionStart(history: readonly ContextMessage[]): ContextMessage | undefined {
+  for (let index = history.length - 1; index >= 0; index--) {
+    const message = history[index]!;
+    if (
+      message.origin?.kind === 'injection' &&
+      message.origin.variant === SESSION_START_INJECTION_VARIANT
+    ) {
+      return message;
+    }
+  }
+  return undefined;
+}
+
+function messageText(message: ContextMessage): string {
+  return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}
+
+function systemReminderText(content: string): string {
+  return `<system-reminder>\n${content.trim()}\n</system-reminder>`;
 }
 
 interface RenderPluginSessionStartReminderInput {

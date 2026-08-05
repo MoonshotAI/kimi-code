@@ -289,7 +289,6 @@ class FakeContextMemory implements IAgentContextMemoryService {
       role: 'user',
       content: [{ type: 'text', text: `<system-reminder>\n${content.trim()}\n</system-reminder>` }],
       toolCalls: [],
-      // v1 journal compat: older announcements carry the system_trigger origin.
       origin: { kind: 'system_trigger', name: LOADABLE_TOOLS_VARIANT },
     });
   }
@@ -1039,7 +1038,6 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
     expect(await announce(h, 2)).toBeUndefined();
 
     h.contextMemory.clear();
-    // The compaction pipeline re-arms per-turn providers through the injector.
     const reannounced = await announceAfterCompaction(h);
     expect(reannounced).toContain(`<tools_added>\n${MCP_ALPHA}\n${MCP_BETA}\n</tools_added>`);
   });

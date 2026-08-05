@@ -17,10 +17,6 @@ import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompacti
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { AgentPromptService } from '#/agent/prompt/promptService';
-import {
-  IAgentReminderQueueService,
-  type OnceReminderInput,
-} from '#/agent/reminderQueue/reminderQueue';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -36,34 +32,6 @@ import { registerStateServices } from '../../state/stubs';
 
 function message(text: string): ContextMessage {
   return { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } };
-}
-
-/**
- * In-memory once-reminder queue honoring the production contract: enqueue
- * collects pending entries, drain delivers them FIFO through the real
- * system-reminder write head. The stub wire behind this harness cannot back
- * the persisted `AgentReminderQueueService` ledger, so the fake mirrors it.
- */
-function createReminderQueueFake(reminders: IAgentSystemReminderService) {
-  const pending: Array<{ id: string } & OnceReminderInput> = [];
-  return {
-    _serviceBrand: undefined,
-    pending,
-    enqueue(input: OnceReminderInput): string {
-      const entry = { id: `reminder-${pending.length + 1}`, ...input };
-      pending.push(entry);
-      return entry.id;
-    },
-    drain(): void {
-      for (const entry of pending.splice(0)) {
-        reminders.appendSystemReminder(entry.content, {
-          kind: 'injection',
-          variant: entry.variant,
-          ownerPromptId: entry.ownerPromptId,
-        });
-      }
-    },
-  } satisfies IAgentReminderQueueService & { pending: Array<{ id: string } & OnceReminderInput> };
 }
 
 function harness() {
@@ -91,9 +59,7 @@ function harness() {
       reg.define(IAgentPromptService, AgentPromptService);
     }
   });
-  const reminderQueue = createReminderQueueFake(ix.get(IAgentSystemReminderService));
-  ix.set(IAgentReminderQueueService, reminderQueue);
-  return { prompt: ix.get(IAgentPromptService), loop, context, fullCompaction, eventBus: ix.get(IEventBus), reminderQueue };
+  return { prompt: ix.get(IAgentPromptService), loop, context, fullCompaction, eventBus: ix.get(IEventBus) };
 }
 
 describe('AgentPromptService', () => {
@@ -169,7 +135,7 @@ describe('AgentPromptService', () => {
   });
 
   it('delivers a blocked prompt’s compression captions right after their host message', async () => {
-    const { prompt, context, reminderQueue } = harness();
+    const { prompt, context } = harness();
     prompt.hooks.onBeforeSubmitPrompt.register('block', async (ctx, next) => { ctx.block = true; await next(); });
     const handle = await prompt.enqueue({
       id: 'prompt-caption',
@@ -179,19 +145,16 @@ describe('AgentPromptService', () => {
     });
     await expect(handle.completion).resolves.toMatchObject({ state: 'blocked' });
 
-    // A blocked prompt starts no turn, so the service enqueues the caption
-    // and drains immediately — the reminder lands after its host message.
-    expect(reminderQueue.pending).toEqual([]);
     const history = context.get();
     expect(history).toHaveLength(2);
-    expect(history[0]?.origin).toEqual({ kind: 'user' });
-    expect(history[0]?.content).toEqual([{ type: 'text', text: 'look at this' }]);
-    expect(history[1]?.origin).toEqual({
+    expect(history[0]?.origin).toEqual({
       kind: 'injection',
       variant: 'image_compression',
       ownerPromptId: 'prompt-caption',
     });
-    const captionPart = history[1]?.content[0];
+    expect(history[1]?.origin).toEqual({ kind: 'user' });
+    expect(history[1]?.content).toEqual([{ type: 'text', text: 'look at this' }]);
+    const captionPart = history[0]?.content[0];
     expect(captionPart?.type).toBe('text');
     expect((captionPart as { text: string }).text).toContain(
       'Image compressed to fit model limits: 800x600',
