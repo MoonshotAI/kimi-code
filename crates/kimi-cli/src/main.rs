@@ -473,6 +473,7 @@ async fn handle_chat_command(
             println!("/clear       clear the session context");
             println!("/compact     compact the session context");
             println!("/export      export the session as <session_id>.zip");
+            println!("/archive     archive the session (kept on disk, marked archived)");
             println!("/sessions    list persisted sessions");
             println!("/undo        undo the last turn");
             println!("/fork <id>   fork this session under a new id");
@@ -634,6 +635,23 @@ async fn handle_chat_command(
             }
             println!("exported to {path}");
             ChatCommand::Handled
+        }
+        "/archive" => {
+            let body = client
+                .call(
+                    kimi_protocol::methods::SESSION_ARCHIVE,
+                    serde_json::json!({ "session_id": *session_id }),
+                )
+                .await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            if body["result"]["archived"].as_bool().unwrap_or(false) {
+                println!("session archived");
+                ChatCommand::Handled
+            } else {
+                ChatCommand::Error("archive: session not found".into())
+            }
         }
         "/sessions" => {
             let body = client
