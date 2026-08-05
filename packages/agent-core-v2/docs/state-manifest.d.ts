@@ -23,7 +23,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 69 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 70 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -60,6 +60,7 @@
 //     agentsMdReminder.cwd                            src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.known                          src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
+//     cacheBreak.baseline                             src/agent/cacheBreak/cacheBreakService.ts
 //     contextInjector.isNewTurn                       src/agent/contextInjector/contextInjectorService.ts
 //     contextProjector.lastRepairSignature            src/agent/contextProjector/contextProjectorService.ts
 //     externalHooks.stopHookContinuationUsed          src/agent/externalHooks/externalHooksService.ts
@@ -976,6 +977,16 @@ export interface AgentStateSnapshot {
   'agentsMdReminder.cwd': string | undefined;
   'agentsMdReminder.known': Set<string>;
   'agentsMdReminder.seeded': boolean;
+  // src/agent/cacheBreak/cacheBreakService.ts
+  'cacheBreak.baseline': /* CacheBreakBaseline — packages/agent-core-v2/src/agent/cacheBreak/cacheBreakService.ts */ {
+    readonly usage: /* TokenUsage — packages/agent-core-v2/src/kosong/contract/usage.ts */ {
+      inputOther: number;
+      output: number;
+      inputCacheRead: number;
+      inputCacheCreation: number;
+    };
+    readonly time: number;
+  } | undefined;
   // src/agent/contextInjector/contextInjectorService.ts
   'contextInjector.isNewTurn': boolean;
   // src/agent/contextProjector/contextProjectorService.ts
