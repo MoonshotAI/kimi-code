@@ -55,6 +55,23 @@ async fn latest_session_id(client: &mut kimi_server_client::AppServerClient) -> 
         .map(str::to_string)
 }
 
+/// Best-effort open a URL in the platform browser (Windows `start`, macOS
+/// `open`, Linux `xdg-open`). Never fails the caller — the printed URL + code
+/// remain the manual fallback.
+fn open_browser(url: &str) {
+    let (program, args) = if cfg!(windows) {
+        ("cmd", vec!["/c", "start", "", url])
+    } else if cfg!(target_os = "macos") {
+        ("open", vec![url])
+    } else {
+        ("xdg-open", vec![url])
+    };
+    let _ = std::process::Command::new(program)
+        .args(&args)
+        .spawn()
+        .map(|_| ());
+}
+
 /// Run the kimi OAuth device-code login flow and persist the granted token
 /// as `providers.kimi.apiKey` (shared by `kimi login` and `kimi acp --login`).
 async fn run_kimi_login(
@@ -74,6 +91,10 @@ async fn run_kimi_login(
     println!("Enter code: {}", auth.user_code);
     if let Some(complete) = auth.verification_uri_complete {
         println!("(or open: {complete})");
+        // Best effort: open the deep link so the user can approve directly.
+        open_browser(&complete);
+    } else {
+        open_browser(&auth.verification_uri);
     }
     // Poll until the user approves (or the code expires/denies).
     let interval = auth.interval.unwrap_or(5).max(1);
