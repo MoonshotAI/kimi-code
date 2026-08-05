@@ -140,7 +140,7 @@ describe('host filesystem change notifications', () => {
     const svc = new HostFsWatchService();
     handle = svc.watch(root, { recursive });
     handle.onDidChange((e) => events.push(e));
-    await wait(200);
+    await handle.ready;
     return events;
   }
 
@@ -149,7 +149,7 @@ describe('host filesystem change notifications', () => {
     const svc = new HostFsWatchService();
     handle = svc.watch(root, { recursive: true, signal: true, ignored });
     handle.onDidChange((e) => events.push(e));
-    await wait(200);
+    await handle.ready;
     return events;
   }
 

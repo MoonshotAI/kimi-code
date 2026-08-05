@@ -68,6 +68,7 @@ function fakeHostFsWatch(): FakeWatch {
   let listener: ((e: HostFsChange) => void) | undefined;
   let disposedCount = 0;
   const handle: IHostFsWatchHandle = {
+    ready: Promise.resolve(),
     onDidChange: (l) => {
       listener = l;
       return { dispose: () => (listener = undefined) };

@@ -8,7 +8,9 @@
  * "something changed" signal (ignoring action/kind); the backend may then
  * pick a cheaper implementation (one native recursive watch instead of
  * per-node watchers). Signal events may use the watched root as their path
- * and report coarse action/kind values. App-scoped — one shared instance.
+ * and report coarse action/kind values. A handle's `ready` promise resolves
+ * after its backend has installed the initial subscription and rejects when
+ * initialization fails. App-scoped — one shared instance.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -31,6 +33,7 @@ export interface HostFsWatchOptions {
 }
 
 export interface IHostFsWatchHandle extends IDisposable {
+  readonly ready: Promise<void>;
   readonly onDidChange: Event<HostFsChange>;
 }
 

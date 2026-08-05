@@ -58,14 +58,47 @@ const NODE_HOST_FS_WATCH_RUNTIME: HostFsWatchRuntime = {
   },
 };
 
+interface WatchReadiness {
+  readonly promise: Promise<void>;
+  resolve(): void;
+  reject(error: unknown): void;
+}
+
+function createWatchReadiness(): WatchReadiness {
+  let resolvePromise!: () => void;
+  let rejectPromise!: (error: unknown) => void;
+  let settled = false;
+  const promise = new Promise<void>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  void promise.catch(() => undefined);
+  return {
+    promise,
+    resolve: () => {
+      if (settled) return;
+      settled = true;
+      resolvePromise();
+    },
+    reject: (error) => {
+      if (settled) return;
+      settled = true;
+      rejectPromise(error);
+    },
+  };
+}
+
 class HostFsWatchHandle implements IHostFsWatchHandle {
+  readonly ready: Promise<void>;
   readonly onDidChange: Event<HostFsChange>;
 
+  private readonly readiness = createWatchReadiness();
   private readonly emitter: Emitter<HostFsChange>;
   private readonly watcher: FSWatcher;
   private disposed = false;
 
   constructor(path: string, options: HostFsWatchOptions | undefined) {
+    this.ready = this.readiness.promise;
     this.emitter = new Emitter<HostFsChange>();
     this.onDidChange = this.emitter.event;
     this.watcher = new FSWatcher({
@@ -80,22 +113,27 @@ class HostFsWatchHandle implements IHostFsWatchHandle {
       if (mapped !== undefined) this.emitter.fire(mapped);
     });
     this.watcher.on('error', (error: unknown) => {
+      this.readiness.reject(error);
       onUnexpectedError(error);
     });
+    this.watcher.once('ready', () => this.readiness.resolve());
     this.watcher.add(path);
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.readiness.resolve();
     void this.watcher.close().catch(() => undefined);
     this.emitter.dispose();
   }
 }
 
 class SignalWatchHandle implements IHostFsWatchHandle {
+  readonly ready: Promise<void>;
   readonly onDidChange: Event<HostFsChange>;
 
+  private readonly readiness = createWatchReadiness();
   private readonly emitter: Emitter<HostFsChange>;
   private readonly ignored: (path: string) => boolean;
   private nativeWatcher: NativeFsWatcher | undefined;
@@ -110,6 +148,7 @@ class SignalWatchHandle implements IHostFsWatchHandle {
     options: HostFsWatchOptions | undefined,
     private readonly runtime: HostFsWatchRuntime,
   ) {
+    this.ready = this.readiness.promise;
     this.emitter = new Emitter<HostFsChange>();
     this.onDidChange = this.emitter.event;
     this.ignored = options?.ignored ?? DEFAULT_IGNORED;
@@ -130,6 +169,7 @@ class SignalWatchHandle implements IHostFsWatchHandle {
         this.onNativeError(watcher, error);
       });
       this.nativeWatcher = watcher;
+      this.readiness.resolve();
       if (this.recovering) {
         this.recovering = false;
         this.fireInvalidation();
@@ -168,6 +208,10 @@ class SignalWatchHandle implements IHostFsWatchHandle {
     leg.onDidChange((event) => {
       if (!this.disposed) this.emitter.fire(event);
     });
+    void leg.ready.then(
+      () => this.readiness.resolve(),
+      (error: unknown) => this.readiness.reject(error),
+    );
     this.chokidarLeg = leg;
   }
 
@@ -178,6 +222,7 @@ class SignalWatchHandle implements IHostFsWatchHandle {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.readiness.resolve();
     this.retry?.dispose();
     this.nativeWatcher?.close();
     this.chokidarLeg?.dispose();

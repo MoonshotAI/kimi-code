@@ -52,6 +52,7 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
   private readonly watchDebounce = this._register(new TimeoutTimer());
   private readonly watchResources = this._register(new DisposableStore());
   private readonly watchReady: Promise<void>;
+  private activeWatchResources: DisposableStore | undefined;
   private watchSignature: string | undefined;
 
   constructor(
@@ -67,7 +68,7 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
         if (event.domain === MERGE_ALL_AVAILABLE_SKILLS_SECTION) this.onDidChangeEmitter.fire();
       }),
     );
-    this.watchReady = this.updateProjectSkillRootWatch([]);
+    this.watchReady = this.updateProjectSkillRootWatch([]).then(() => undefined);
   }
 
   async load(): Promise<SkillContribution> {
@@ -78,19 +79,24 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
     await this.config.ready;
     const mergeAllAvailableSkills =
       this.config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
-    const contribution = await this.discovery.discover(
-      await projectRoots(this.workspace.cwd, { mergeAllAvailableSkills }),
-    );
-    await this.updateProjectSkillRootWatch(contribution.scannedDirectories);
+    const discover = async () =>
+      this.discovery.discover(
+        await projectRoots(this.workspace.cwd, { mergeAllAvailableSkills }),
+      );
+    let contribution = await discover();
+    while (await this.updateProjectSkillRootWatch(contribution.scannedDirectories)) {
+      contribution = await discover();
+    }
     return contribution;
   }
 
   private async updateProjectSkillRootWatch(
     scannedDirectories: readonly string[],
-  ): Promise<void> {
+  ): Promise<boolean> {
     const { projectRoot, candidates } = await projectSkillRootCandidates(this.workspace.cwd);
     const signature = [...scannedDirectories].toSorted().join('\0');
-    if (signature === this.watchSignature) return;
+    if (signature === this.watchSignature) return false;
+    const resources = this.watchResources.add(new DisposableStore());
     const handle = this.fsWatch.watch(projectRoot, {
       ignored: subtreeWatchFilter(projectRoot, candidates, {
         scannedDirectories,
@@ -98,13 +104,24 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
       }),
       signal: true,
     });
-    const subscription = handle.onDidChange(() => {
-      this.watchDebounce.cancelAndSet(() => this.onDidChangeEmitter.fire(), WATCH_DEBOUNCE_MS);
-    });
-    this.watchResources.clear();
-    this.watchResources.add(handle);
-    this.watchResources.add(subscription);
+    resources.add(handle);
+    resources.add(
+      handle.onDidChange(() => {
+        this.watchDebounce.cancelAndSet(() => this.onDidChangeEmitter.fire(), WATCH_DEBOUNCE_MS);
+      }),
+    );
+    try {
+      await handle.ready;
+    } catch (error) {
+      this.watchResources.delete(resources);
+      throw error;
+    }
+    if (this.watchResources.isDisposed) return false;
+    const previous = this.activeWatchResources;
+    this.activeWatchResources = resources;
     this.watchSignature = signature;
+    if (previous !== undefined) this.watchResources.delete(previous);
+    return true;
   }
 }
 

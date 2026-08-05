@@ -162,6 +162,7 @@ function fsWatchStub(
     watch: (_path, options): IHostFsWatchHandle => {
       onWatch?.(options);
       return {
+        ready: Promise.resolve(),
         onDidChange: Event.None as Event<HostFsChange>,
         dispose: () => {},
       };
@@ -805,6 +806,99 @@ describe('WorkspaceSkillCatalogService', () => {
       await rm(homeDir, { recursive: true, force: true });
     }
   });
+
+  it('keeps the old watch active until a ready replacement converges on post-scan changes', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'skill-watch-handoff-'));
+    const skillRoot = join(workDir, '.agents', 'skills');
+    await mkdir(join(skillRoot, 'demo'), { recursive: true });
+    await writeFile(
+      join(skillRoot, 'demo', 'SKILL.md'),
+      '---\nname: demo\ndescription: initial\n---\nbody',
+      'utf8',
+    );
+    const scannedDirectory = await realpath(skillRoot);
+    const replacementReady = deferred<void>();
+    const replacementStarted = deferred<void>();
+
+    class TestWatchHandle implements IHostFsWatchHandle {
+      readonly changes = new Emitter<HostFsChange>();
+      readonly onDidChange = this.changes.event;
+      disposed = false;
+
+      constructor(readonly ready: Promise<void>) {}
+
+      dispose(): void {
+        this.disposed = true;
+        this.changes.dispose();
+      }
+    }
+
+    const handles: TestWatchHandle[] = [];
+    const watchService: IHostFsWatchService = {
+      _serviceBrand: undefined,
+      watch: () => {
+        const handle = new TestWatchHandle(
+          handles.length === 0 ? Promise.resolve() : replacementReady.promise,
+        );
+        handles.push(handle);
+        if (handles.length === 2) replacementStarted.resolve(undefined);
+        return handle;
+      },
+    };
+    let scans = 0;
+    const discovery: ISkillDiscovery = {
+      _serviceBrand: undefined,
+      discover: async () => {
+        scans += 1;
+        return {
+          skills: [stubSkill('demo', { description: scans === 1 ? 'stale' : 'fresh' })],
+          skipped: [],
+          scannedRoots: [scannedDirectory],
+          scannedDirectories: [scannedDirectory],
+        };
+      },
+    };
+
+    _clearScopedRegistryForTests();
+    registerScopedService(
+      LifecycleScope.Workspace,
+      IWorkspaceRootSkillSource,
+      WorkspaceRootSkillSource,
+    );
+    const host = createScopedTestHost([
+      stubPair(ISkillDiscovery, discovery),
+      stubPair(IBootstrapService, bootstrapStub),
+      stubPair(IConfigService, configStub()),
+      stubPair(IHostFsWatchService, watchService),
+    ]);
+    const workspace = host.child(LifecycleScope.Workspace, 'w1', [
+      stubPair(IWorkspaceContext, workspaceContextStub(workDir)),
+    ]);
+
+    try {
+      const loading = workspace.accessor.get(IWorkspaceRootSkillSource).load();
+      await replacementStarted.promise;
+      const initialHandle = handles[0];
+      const replacementHandle = handles[1];
+      if (initialHandle === undefined || replacementHandle === undefined) {
+        throw new Error('expected initial and replacement watch handles');
+      }
+
+      expect(initialHandle.disposed).toBe(false);
+
+      replacementReady.resolve(undefined);
+      const contribution = await loading;
+
+      expect(initialHandle.disposed).toBe(true);
+      expect(replacementHandle.disposed).toBe(false);
+      expect(scans).toBe(2);
+      expect(contribution.skills.map((skill) => skill.description)).toEqual(['fresh']);
+    } finally {
+      host.dispose();
+      await rm(workDir, { recursive: true, force: true });
+    }
+  });
+
   it('rescans the workspace-root source when a project skill file changes on disk', async () => {
     const workDir = await mkdtemp(join(tmpdir(), 'skill-watch-'));
     const host = createScopedTestHost([
