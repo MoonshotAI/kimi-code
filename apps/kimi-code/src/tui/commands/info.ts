@@ -57,8 +57,6 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
     host.showStatus(FEEDBACK_STATUS_NOT_SIGNED_IN);
     host.showStatus(KIMI_CODE_SIGNUP_URL);
     host.showStatus(FEEDBACK_ISSUE_URL);
-    openUrl(KIMI_CODE_SIGNUP_URL);
-    openUrl(FEEDBACK_ISSUE_URL);
     return;
   }
 

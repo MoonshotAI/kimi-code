@@ -93,9 +93,8 @@ vi.mock('../../src/feedback/archive', async (importOriginal) => {
   };
 });
 
-// /feedback opens the sign-up page and GitHub Issues in a browser when not
-// signed in, and GitHub Issues when submission fails — stub it out so the
-// test suite never spawns a browser window.
+// /feedback opens GitHub Issues in a browser when submission fails — stub it
+// out so the test suite never spawns a browser window.
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
 const ESC = String.fromCodePoint(0x1b);
@@ -1446,7 +1445,7 @@ command = "vim"
     expect(transcript).toContain('Session reloaded.');
   });
 
-  it('opens the sign-up page and GitHub Issues when not signed in', async () => {
+  it('prints the sign-up page and GitHub Issues links when not signed in', async () => {
     const { driver, harness } = await makeDriver(makeSession());
     harness.auth.status.mockResolvedValueOnce({
       providers: [{ providerName: 'managed:kimi-code', hasToken: false }],
@@ -1457,9 +1456,7 @@ command = "vim"
 
     await handleFeedbackCommand(feedbackDriver as any);
 
-    expect(openUrl).toHaveBeenCalledTimes(2);
-    expect(openUrl).toHaveBeenNthCalledWith(1, 'https://www.kimi.com/code');
-    expect(openUrl).toHaveBeenNthCalledWith(2, 'https://github.com/MoonshotAI/kimi-code/issues');
+    expect(openUrl).not.toHaveBeenCalled();
     expect(promptFeedbackInput).not.toHaveBeenCalled();
     expect(harness.auth.submitFeedback).not.toHaveBeenCalled();
     const transcript = stripSgr(renderTranscript(driver));
