@@ -1347,7 +1347,24 @@ export class Session {
     if (agent.config.systemPrompt === '') return;
     const profile = this.resolvePersistedProfile(agent, meta, parentAgent);
     if (profile === undefined) return;
-    agent.setActiveProfile(profile, this.options.kimiHomeDir);
+    // Apply global [tools].disabled to resumed/reloaded agents too. The
+    // bootstrap path (bootstrapAgentProfile) merges it at session start, but
+    // restoreAgentProfileHandle only calls setActiveProfile - which does not
+    // re-apply the tool denylist. Without this, a persisted agent resumed
+    // after [tools].disabled was added keeps its old tools active. #2534.
+    const toolsDisabled = this.readToolsDisabled();
+    const effectiveProfile =
+      toolsDisabled.length > 0
+        ? {
+            ...profile,
+            disallowedTools: [
+              ...(profile.disallowedTools ?? []),
+              ...toolsDisabled,
+            ],
+          }
+        : profile;
+    agent.setActiveProfile(effectiveProfile, this.options.kimiHomeDir);
+    agent.tools.setActiveTools(effectiveProfile.tools, effectiveProfile.disallowedTools);
   }
 
   private resolvePersistedProfile(
