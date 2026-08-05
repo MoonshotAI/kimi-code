@@ -69,7 +69,7 @@ export interface ExtractionResult {
   imageAttachmentIds: number[];
   /** Video attachment ids matched, in the order they appeared. */
   videoAttachmentIds: number[];
-  /** Cache copies owned by this submission until prompt intake returns. */
+  /** Cache copies owned by this submission until its consuming turn ends. */
   stagingPaths: string[];
 }
 

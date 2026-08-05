@@ -15,6 +15,8 @@ import type {
   PromptPart,
   Session,
   SkillSummary,
+  TurnEndedEvent,
+  TurnStartedEvent,
   WorkspaceTrustInfo,
 } from '@moonshot-ai/kimi-code-sdk';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
@@ -263,6 +265,16 @@ interface SendMessageOptions {
   readonly hasMedia?: boolean;
 }
 
+type StagingLeaseOrigin = 'user' | 'skill_activation' | 'plugin_command';
+
+interface StagingLease {
+  readonly imageAttachmentIds: readonly number[];
+  readonly paths: readonly string[];
+  readonly origin: StagingLeaseOrigin;
+  turnId: string | undefined;
+  released: boolean;
+}
+
 /** How long the one-shot "moved to background" footer hint stays visible. */
 const DETACH_HINT_DISPLAY_MS = 4_000;
 
@@ -274,6 +286,9 @@ export class KimiTUI {
   /** In-flight lazy session creation (v2 engine), shared by concurrent first-use triggers. */
   private ensureSessionPromise: Promise<Session | undefined> | null = null;
   private readonly stagingCleanups = new Set<Promise<void>>();
+  /** Staged media is owned by the turn that consumes it, not by the RPC call. */
+  private readonly stagingLeases = new Set<StagingLease>();
+  private readonly stagingLeasesByTurn = new Map<string, Set<StagingLease>>();
   private readonly approvalController = new ApprovalController();
   private readonly questionController = new QuestionController();
   private readonly reverseRpcDisposers: Array<() => void> = [];
@@ -911,6 +926,7 @@ export class KimiTUI {
     try {
       await this.closeSession('shutting down');
       this.clearQueuedMessages();
+      this.releaseAllStagingLeases();
       this.scheduleDeleteStagingFiles(this.imageStore.clear());
       await this.drainStagingCleanups();
       await this.harness.close();
@@ -1416,6 +1432,71 @@ export class KimiTUI {
     }
   }
 
+  private createStagingLease(
+    imageAttachmentIds: readonly number[],
+    paths: readonly string[],
+    origin: StagingLeaseOrigin,
+  ): StagingLease | undefined {
+    if (imageAttachmentIds.length === 0 && paths.length === 0) return undefined;
+    const lease: StagingLease = {
+      imageAttachmentIds: [...imageAttachmentIds],
+      paths: [...paths],
+      origin,
+      turnId: undefined,
+      released: false,
+    };
+    this.stagingLeases.add(lease);
+    return lease;
+  }
+
+  private bindStagingLeaseToTurn(lease: StagingLease | undefined, turnId: string): void {
+    if (lease === undefined || lease.released || lease.turnId !== undefined) return;
+    lease.turnId = turnId;
+    let leases = this.stagingLeasesByTurn.get(turnId);
+    if (leases === undefined) {
+      leases = new Set<StagingLease>();
+      this.stagingLeasesByTurn.set(turnId, leases);
+    }
+    leases.add(lease);
+  }
+
+  handleTurnStarted(event: TurnStartedEvent): void {
+    const kind = event.origin?.kind;
+    if (kind !== 'user' && kind !== 'skill_activation' && kind !== 'plugin_command') return;
+    const lease = [...this.stagingLeases].find(
+      (candidate) =>
+        !candidate.released && candidate.turnId === undefined && candidate.origin === kind,
+    );
+    this.bindStagingLeaseToTurn(lease, String(event.turnId));
+  }
+
+  handleTurnEnded(event: TurnEndedEvent): void {
+    const turnId = String(event.turnId);
+    const leases = this.stagingLeasesByTurn.get(turnId);
+    if (leases === undefined) return;
+    for (const lease of leases) this.releaseStagingLease(lease);
+    this.stagingLeasesByTurn.delete(turnId);
+  }
+
+  private releaseStagingLease(lease: StagingLease | undefined): void {
+    if (lease === undefined || lease.released) return;
+    lease.released = true;
+    this.stagingLeases.delete(lease);
+    if (lease.turnId !== undefined) {
+      const leases = this.stagingLeasesByTurn.get(lease.turnId);
+      leases?.delete(lease);
+      if (leases?.size === 0) this.stagingLeasesByTurn.delete(lease.turnId);
+    }
+    const fileIds = lease.imageAttachmentIds.flatMap((id) =>
+      this.imageStore.takeFileIds([id]),
+    );
+    this.scheduleDeleteStagingFiles(fileIds, lease.paths);
+  }
+
+  private releaseAllStagingLeases(): void {
+    for (const lease of this.stagingLeases) this.releaseStagingLease(lease);
+  }
+
   releaseStagingMedia(imageAttachmentIds: readonly number[], paths: readonly string[]): void {
     const fileIds = this.imageStore.takeFileIds(imageAttachmentIds);
     this.scheduleDeleteStagingFiles(fileIds, paths);
@@ -1446,17 +1527,22 @@ export class KimiTUI {
       content: input,
       imageAttachmentIds,
     });
-    const stagingFileIds = this.imageStore.takeFileIds(imageAttachmentIds ?? []);
-
     this.beginSessionRequest();
 
     const sdkInput = options?.parts ?? input;
+    const stagingLease = this.createStagingLease(
+      imageAttachmentIds ?? [],
+      options?.stagingPaths ?? [],
+      'user',
+    );
     // While a goal is being pursued the engine holds its active turn across the
     // whole continuation loop, so a fresh prompt races the goal driver at every
     // continuation boundary and is rejected with `turn.agent_busy`, dropping
     // the message. Steer instead: the engine buffers it into the running goal
     // turn, or launches a turn of its own if the loop just ended.
     if (this.state.appState.goal?.status === 'active') {
+      const currentTurnId = this.streamingUI.getTurnContext().turnId;
+      if (currentTurnId !== undefined) this.bindStagingLeaseToTurn(stagingLease, currentTurnId);
       this.trackStagingCleanup(
         session
           .steer(sdkInput)
@@ -1467,8 +1553,9 @@ export class KimiTUI {
             // steer (e.g. the session is gone), which would leave the UI stuck
             // queueing input behind a request that never completes.
             this.failSessionRequest(`Failed to steer: ${message}`);
+            if (stagingLease?.turnId === undefined) this.releaseStagingLease(stagingLease);
           })
-          .then(() => this.deleteStagingFiles(stagingFileIds, options?.stagingPaths)),
+          .then(() => undefined),
       );
       return;
     }
@@ -1478,8 +1565,9 @@ export class KimiTUI {
         .catch((error: unknown) => {
           const message = formatErrorMessage(error);
           this.failSessionRequest(`Failed to send: ${message}`);
+          if (stagingLease?.turnId === undefined) this.releaseStagingLease(stagingLease);
         })
-        .then(() => this.deleteStagingFiles(stagingFileIds, options?.stagingPaths)),
+        .then(() => undefined),
     );
   }
 
@@ -1502,15 +1590,20 @@ export class KimiTUI {
       return;
     }
     this.beginSessionRequest();
-    const stagingFileIds = this.imageStore.takeFileIds(rewrite.imageAttachmentIds);
+    const stagingLease = this.createStagingLease(
+      rewrite.imageAttachmentIds,
+      rewrite.stagingPaths,
+      'skill_activation',
+    );
     this.trackStagingCleanup(
       session
         .activateSkill(skillName, rewrite.text)
         .catch((error: unknown) => {
           const message = formatErrorMessage(error);
           this.failSessionRequest(`Skill "${skillName}" failed: ${message}`);
+          if (stagingLease?.turnId === undefined) this.releaseStagingLease(stagingLease);
         })
-        .then(() => this.deleteStagingFiles(stagingFileIds, rewrite.stagingPaths)),
+        .then(() => undefined),
     );
   }
 
@@ -1535,15 +1628,20 @@ export class KimiTUI {
       return;
     }
     this.beginSessionRequest();
-    const stagingFileIds = this.imageStore.takeFileIds(rewrite.imageAttachmentIds);
+    const stagingLease = this.createStagingLease(
+      rewrite.imageAttachmentIds,
+      rewrite.stagingPaths,
+      'plugin_command',
+    );
     this.trackStagingCleanup(
       session
         .activatePluginCommand(pluginId, commandName, rewrite.text)
         .catch((error: unknown) => {
           const message = formatErrorMessage(error);
           this.failSessionRequest(`Command "${pluginId}:${commandName}" failed: ${message}`);
+          if (stagingLease?.turnId === undefined) this.releaseStagingLease(stagingLease);
         })
-        .then(() => this.deleteStagingFiles(stagingFileIds, rewrite.stagingPaths)),
+        .then(() => undefined),
     );
   }
 
@@ -1587,18 +1685,20 @@ export class KimiTUI {
       });
     }
 
-    const stagingFileIds = input.flatMap((item) =>
-      this.imageStore.takeFileIds(item.imageAttachmentIds ?? []),
-    );
+    const imageAttachmentIds = input.flatMap((item) => item.imageAttachmentIds ?? []);
     const stagingPaths = input.flatMap((item) => item.stagingPaths ?? []);
+    const stagingLease = this.createStagingLease(imageAttachmentIds, stagingPaths, 'user');
+    const currentTurnId = this.streamingUI.getTurnContext().turnId;
+    if (currentTurnId !== undefined) this.bindStagingLeaseToTurn(stagingLease, currentTurnId);
     this.trackStagingCleanup(
       session
         .steer(combineSteerInput(input))
         .catch((error: unknown) => {
           const message = formatErrorMessage(error);
           this.showError(`Failed to steer: ${message}`);
+          if (stagingLease?.turnId === undefined) this.releaseStagingLease(stagingLease);
         })
-        .then(() => this.deleteStagingFiles(stagingFileIds, stagingPaths)),
+        .then(() => undefined),
     );
   }
 
@@ -1964,6 +2064,7 @@ export class KimiTUI {
   async closeSession(reason: string): Promise<void> {
     const previous = this.unloadCurrentSession(reason);
     await previous?.close();
+    this.releaseAllStagingLeases();
   }
 
   private unloadCurrentSession(reason: string): Session | undefined {

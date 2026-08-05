@@ -49,6 +49,35 @@ describe('ImageAttachmentStore', () => {
     expect(att.mime).toBe('image/jpeg');
   });
 
+  it('completes a pending image without changing its attachment id', () => {
+    const s = new ImageAttachmentStore();
+    const att = s.addImage(new Uint8Array([1]), 'image/png', 10, 20);
+
+    const completed = s.completeImage(att, {
+      bytes: new Uint8Array([2, 3]),
+      mime: 'image/jpeg',
+      width: 30,
+      height: 40,
+      fileId: 'file-2',
+    });
+
+    expect(completed).toBe(att);
+    expect(att.id).toBe(1);
+    expect(att.bytes).toEqual(new Uint8Array([2, 3]));
+    expect(att.mime).toBe('image/jpeg');
+    expect(att.placeholder).toBe('[image #1 (30×40)]');
+    const stale = att;
+    s.clear();
+    const fresh = s.addImage(new Uint8Array([9]), 'image/png', 2, 2);
+    expect(s.completeImage(stale, {
+      bytes: new Uint8Array([8]),
+      mime: 'image/png',
+      width: 3,
+      height: 3,
+    })).toBeUndefined();
+    expect(fresh.bytes).toEqual(new Uint8Array([9]));
+  });
+
   it('records the daemon file-store id when the paste was uploaded (v2)', () => {
     const s = new ImageAttachmentStore();
     const att = s.addImage(new Uint8Array([1]), 'image/png', 10, 20, undefined, 'file-abc');

@@ -66,6 +66,10 @@ export interface VideoAttachment {
 
 export type MediaAttachment = ImageAttachment | VideoAttachment;
 
+type MutableImageAttachment = {
+  -readonly [Property in keyof ImageAttachment]: ImageAttachment[Property];
+};
+
 export class ImageAttachmentStore {
   private nextId = 1;
   private readonly byId = new Map<number, MediaAttachment>();
@@ -113,6 +117,35 @@ export class ImageAttachmentStore {
       placeholder: formatVideoPlaceholder(id, label),
     };
     this.byId.set(id, attachment);
+    return attachment;
+  }
+
+  /**
+   * Complete an image that was inserted into the editor before its ingestion
+   * work (compression/original persistence/upload) finished. Returns undefined
+   * when the attachment was cleared while that work was in flight.
+   */
+  completeImage(
+    attachment: ImageAttachment,
+    input: {
+      bytes: Uint8Array;
+      mime: string;
+      width: number;
+      height: number;
+      original?: ImageAttachmentOriginal;
+      fileId?: string;
+    },
+  ): ImageAttachment | undefined {
+    const current = this.byId.get(attachment.id);
+    if (current !== attachment || attachment.kind !== 'image') return undefined;
+    const mutable = attachment as MutableImageAttachment;
+    mutable.bytes = input.bytes;
+    mutable.mime = input.mime;
+    mutable.width = input.width;
+    mutable.height = input.height;
+    mutable.original = input.original;
+    mutable.fileId = input.fileId;
+    mutable.placeholder = formatPlaceholder(attachment.id, input.width, input.height);
     return attachment;
   }
 

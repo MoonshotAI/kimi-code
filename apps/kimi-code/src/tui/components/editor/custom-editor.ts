@@ -154,13 +154,16 @@ export class CustomEditor extends Editor {
    * Alt-V on Windows — Ctrl-V is terminal-reserved there). Return
    * `true` to consume the key (image was read and handled); return
    * `false` to let the key fall through to the normal paste path.
-   * The callback may be async; pi-tui awaits it before dispatching
-   * the next keystroke.
+   * The callback may be async; CustomEditor queues subsequent keystrokes until
+   * it settles before dispatching them.
    */
   public onPasteImage?: () => Promise<boolean>;
 
   private consumingPaste = false;
   private consumeBuffer = '';
+  /** Serialize paste callbacks so Enter/typing cannot overtake an image paste. */
+  private pasteInFlight = false;
+  private readonly pasteInputQueue: string[] = [];
   private argumentHints: ReadonlyMap<string, string> = new Map();
 
   setArgumentHints(hints: ReadonlyMap<string, string>): void {
@@ -325,6 +328,14 @@ export class CustomEditor extends Editor {
       return;
     }
 
+    // Clipboard reads are asynchronous. Queue every key received while a
+    // paste callback is in flight and replay it once the callback has at least
+    // inserted its placeholder, so Enter cannot submit a half-built draft.
+    if (this.pasteInFlight) {
+      this.pasteInputQueue.push(normalized);
+      return;
+    }
+
     // Any input other than a lone Escape breaks a pending double-Esc sequence,
     // so the shortcut only fires for two consecutive Escape presses.
     if (!matchesKey(normalized, Key.escape)) {
@@ -368,17 +379,21 @@ export class CustomEditor extends Editor {
           this.onTextPaste?.();
           super.handleInput.call(this, normalized);
         };
-        void handler().then(
-          (handled) => {
+        this.pasteInFlight = true;
+        void handler()
+          .then((handled) => {
             if (!handled) pasteAsText();
-          },
-          () => {
+          })
+          .catch(() => {
             // A rejecting image-paste handler must not leak an unhandled
             // rejection (the CLI turns those into a silent exit) — treat it
             // the same as "no image available" and fall back to text paste.
             pasteAsText();
-          },
-        );
+          })
+          .finally(() => {
+            this.pasteInFlight = false;
+            this.flushPasteInputQueue();
+          });
         return;
       }
     }
@@ -501,6 +516,14 @@ export class CustomEditor extends Editor {
     }
 
     this.reopenAutocompleteAfterInput();
+  }
+
+  private flushPasteInputQueue(): void {
+    if (this.pasteInFlight) return;
+    const next = this.pasteInputQueue.shift();
+    if (next === undefined) return;
+    this.handleInput(next);
+    if (!this.pasteInFlight) this.flushPasteInputQueue();
   }
 
   private reopenAutocompleteAfterInput(): void {

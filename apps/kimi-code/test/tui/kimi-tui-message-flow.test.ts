@@ -2474,7 +2474,7 @@ command = "vim"
     expect(transcript).not.toContain('review');
   });
 
-  it('releases a pasted video cache copy after prompt intake returns', async () => {
+  it('keeps a pasted video cache copy until the consuming turn ends', async () => {
     let finishPrompt!: () => void;
     const promptSettled = new Promise<void>((resolve) => {
       finishPrompt = resolve;
@@ -2506,8 +2506,19 @@ command = "vim"
         ?? new URL(parts![1]!.videoUrl!.url).pathname;
       expect(existsSync(stagingPath)).toBe(true);
 
+      driver.sessionEventHandler.handleEvent(
+        { type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event,
+        () => {},
+      );
       finishPrompt();
-      await vi.waitFor(() => expect(existsSync(stagingPath)).toBe(false));
+      expect(existsSync(stagingPath)).toBe(true);
+      driver.sessionEventHandler.handleEvent(
+        { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+        () => {},
+      );
+      await vi.waitFor(() => {
+        expect(existsSync(stagingPath)).toBe(false);
+      });
     } finally {
       finishPrompt();
       await rm(dir, { recursive: true, force: true });
@@ -2539,7 +2550,17 @@ command = "vim"
 
       driver.sendQueuedMessage(session, queued!);
       expect(session.prompt).toHaveBeenCalledWith(parts);
-      await vi.waitFor(() => expect(existsSync(queued!.stagingPaths![0]!)).toBe(false));
+      driver.sessionEventHandler.handleEvent(
+        { type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event,
+        () => {},
+      );
+      driver.sessionEventHandler.handleEvent(
+        { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+        () => {},
+      );
+      await vi.waitFor(() => {
+        expect(existsSync(queued!.stagingPaths![0]!)).toBe(false);
+      });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -2566,7 +2587,7 @@ command = "vim"
     ]);
   });
 
-  it('releases an image staging upload after prompt intake returns', async () => {
+  it('keeps an image staging upload until the consuming turn ends', async () => {
     const { driver, session, harness } = await makeDriver();
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
     const attachment = imageStore.addImage(
@@ -2581,7 +2602,18 @@ command = "vim"
     driver.handleUserInput(attachment.placeholder);
 
     expect(session.prompt).toHaveBeenCalledOnce();
-    await vi.waitFor(() => expect(harness.deleteFile).toHaveBeenCalledWith('file-1'));
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event,
+      () => {},
+    );
+    expect(harness.deleteFile).not.toHaveBeenCalled();
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      () => {},
+    );
+    await vi.waitFor(() => {
+      expect(harness.deleteFile).toHaveBeenCalledWith('file-1');
+    });
     expect(attachment.fileId).toBeUndefined();
     expect(attachment.bytes).toEqual(new Uint8Array([0xaa, 0xbb]));
   });
@@ -2614,6 +2646,41 @@ command = "vim"
     });
     expect(harness.deleteFile).toHaveBeenCalledTimes(1);
     expect(attachment.fileId).toBeUndefined();
+  });
+
+  it('does not delete shared daemon media while another turn still uses it', async () => {
+    const session = makeSession();
+    const { driver, harness } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(
+      new Uint8Array([0xaa, 0xbb]),
+      'image/png',
+      1,
+      1,
+      undefined,
+      'file-shared-turn',
+    );
+
+    driver.handleUserInput(`first ${attachment.placeholder}`);
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event,
+      () => {},
+    );
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput(`second ${attachment.placeholder}`);
+    driver.clearQueuedMessages();
+
+    await Promise.resolve();
+    expect(harness.deleteFile).not.toHaveBeenCalled();
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      () => {},
+    );
+    await vi.waitFor(() => {
+      expect(harness.deleteFile).toHaveBeenCalledWith('file-shared-turn');
+    });
   });
 
   it('queues editor input instead of prompting while a turn is already streaming', async () => {
@@ -2967,6 +3034,10 @@ command = "vim"
     driver.state.editor.onCtrlS?.();
 
     expect(session.steer).toHaveBeenCalledOnce();
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      () => {},
+    );
     await vi.waitFor(() => {
       expect(harness.deleteFile).toHaveBeenCalledWith('file-batched');
     });

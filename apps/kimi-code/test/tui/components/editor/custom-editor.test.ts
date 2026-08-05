@@ -615,6 +615,33 @@ describe('CustomEditor paste marker expansion', () => {
       process.off('unhandledRejection', onRejection);
     }
   });
+
+  it('queues Enter and typing until an asynchronous image paste inserts its placeholder', async () => {
+    const editor = makeEditor();
+    const submit = vi.fn();
+    editor.onSubmit = submit;
+    let resolvePaste!: (handled: boolean) => void;
+    editor.onPasteImage = () =>
+      new Promise<boolean>((resolve) => {
+        resolvePaste = (handled) => {
+          editor.insertTextAtCursor?.('[image #1 (1×1)] ');
+          resolve(handled);
+        };
+      });
+
+    const pasteKey = process.platform === 'win32' ? '\u001Bv' : '\u0016';
+    editor.handleInput(pasteKey);
+    editor.handleInput('hello');
+    editor.handleInput('\r');
+
+    expect(editor.getText()).toBe('');
+    expect(submit).not.toHaveBeenCalled();
+
+    resolvePaste(true);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(submit).toHaveBeenCalledWith('[image #1 (1×1)] hello');
+  });
 });
 
 describe('CustomEditor shortcut telemetry hooks', () => {
