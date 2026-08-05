@@ -263,7 +263,10 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
   <div
     ref="dockRef"
     class="chat-dock"
-    :class="[mobile ? 'align-mobile' : 'align-center', { 'has-popup': anyPopupOpen }]"
+    :class="[
+      mobile ? 'align-mobile' : 'align-center',
+      { 'has-popup': anyPopupOpen, 'has-approval': !!pendingApproval && !pendingQuestion },
+    ]"
     @click.stop
   >
     <Transition name="dock-panel">
@@ -701,6 +704,22 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
 
 .dock-approval {
   margin-top: 8px;
+}
+
+/* Approval showing: the dock takes over the card's height budget
+   (calc(100dvh - 72px), see ApprovalCard) as a flex column, so an expanded
+   card yields the work pills' height instead of pushing them past the pane's
+   top edge. */
+.chat-dock.has-approval {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 72px);
+}
+.chat-dock.has-approval > .dock-workbar {
+  flex: none;
+}
+.chat-dock.has-approval > .dock-approval {
+  min-height: 0;
 }
 
 @media (max-width: 640px) {
