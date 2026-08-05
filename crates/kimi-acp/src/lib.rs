@@ -53,7 +53,7 @@ where
             };
         // Notifications (no response body) are processed and answered with
         // silence — the ACP/JSON-RPC convention.
-        let Some(response) = response else {
+        let Some(mut response) = response else {
             continue;
         };
         // ACP ordering: session/update notifications precede their response.
@@ -63,8 +63,32 @@ where
                 preamble = replay_updates(&harness, &session_id).await;
             }
             "session/prompt" => {
-                if let Some(text) = prompt_assistant_text(&response[0]) {
-                    preamble.push(session_update(&session_id, "agent_message_chunk", text));
+                // Streamed chunks (llm.delta) become chunk-granular
+                // agent_message_chunk notifications; strip the internal
+                // `_deltas` marker before the wire response.
+                if let Some(response_body) = response.first_mut() {
+                    let deltas: Vec<String> = response_body["result"]["_deltas"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|d| d.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if !deltas.is_empty() {
+                        let mut text = String::new();
+                        for chunk in deltas {
+                            text.push_str(&chunk);
+                            preamble.push(session_update(
+                                &session_id,
+                                "agent_message_chunk",
+                                text.clone(),
+                            ));
+                        }
+                        if let Some(obj) = response_body["result"].as_object_mut() {
+                            obj.remove("_deltas");
+                        }
+                    }
                 }
             }
             _ => {}
@@ -140,21 +164,6 @@ async fn replay_updates(harness: &Harness, session_id: &str) -> Vec<serde_json::
 }
 
 /// The assistant text embedded in a `session/prompt` response, if any.
-fn prompt_assistant_text(response: &serde_json::Value) -> Option<String> {
-    let text: String = response["result"]["messages"]
-        .as_array()?
-        .iter()
-        .filter(|m| m["role"] == "assistant")
-        .flat_map(|m| m["content"].as_array().into_iter().flatten())
-        .filter_map(|p| p["text"].as_str())
-        .collect();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
-}
-
 /// Dispatch one ACP request through the harness. Returns `None` for
 /// notifications, which must not receive a response.
 async fn handle(
@@ -355,14 +364,23 @@ async fn handle(
             if session_id.is_empty() || prompt.is_empty() {
                 return error(-32602, "session/prompt requires sessionId and prompt");
             }
-            match harness.run_prompt(session_id, prompt).await {
-                Ok(text) => result(serde_json::json!({
-                    "stopReason": "end_turn",
-                    "messages": [{
-                        "role": "assistant",
-                        "content": [{ "type": "text", "text": text }],
-                    }],
-                })),
+            match harness.run_prompt_stream(session_id, prompt).await {
+                Ok((text, deltas)) => {
+                    // The serve layer turns `_deltas` into session/update
+                    // agent_message_chunk notifications (chunk-granular live
+                    // transcript); it is stripped from the wire response.
+                    let mut r = serde_json::json!({
+                        "stopReason": "end_turn",
+                        "messages": [{
+                            "role": "assistant",
+                            "content": [{ "type": "text", "text": text }],
+                        }],
+                    });
+                    if !deltas.is_empty() {
+                        r["_deltas"] = serde_json::json!(deltas);
+                    }
+                    result(r)
+                }
                 Err(e) => error(-32603, &format!("session/prompt failed: {e}")),
             }
         }

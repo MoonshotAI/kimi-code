@@ -440,3 +440,41 @@ async fn harness_close_fork_rename_sessions() {
     );
     let _ = &mut fork;
 }
+
+#[tokio::test]
+async fn run_prompt_stream_returns_transcript() {
+    use std::sync::Arc;
+    let home = std::env::temp_dir().join(format!("kimi-sdk-stream-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).expect("mkdir");
+    std::env::set_var("KIMI_AGENT_HOME", &home);
+
+    // A fake LLM that answers one shot (host-proxy mode: no llm.delta, so the
+    // deltas vec is empty — the full transcript still lands).
+    let step: kimi_server::callbacks::LlmStep = Arc::new(
+        move |_req: kimi_protocol::wire_types::LlmChatRequest| {
+            Box::pin(async move {
+                Ok(kimi_protocol::wire_types::LlmChatResponse {
+                    content: "streamed reply".into(),
+                    tool_calls: vec![],
+                    finish_reason: Some("stop".into()),
+                    usage: kimi_protocol::wire_types::TokenUsage {
+                        input_tokens: 5,
+                        output_tokens: 5,
+                        total_tokens: 10,
+                    },
+                })
+            })
+        },
+    );
+
+    let harness = Harness::embedded_with_llm_step(Some(step)).expect("embedded with llm step");
+    let (text, deltas) = harness
+        .run_prompt_stream("s-stream", "hello")
+        .await
+        .expect("stream prompt");
+    assert!(text.contains("streamed reply"), "transcript: {text}");
+    // Host-proxy emits no llm.delta; the chunk list may be empty, but the
+    // method must not hang and must return the full text.
+    let _ = deltas;
+}

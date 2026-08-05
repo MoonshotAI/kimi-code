@@ -246,6 +246,55 @@ impl Harness {
             .unwrap_or_else(|| result.to_string()))
     }
 
+    /// Run a prompt and capture the `llm.delta` text chunks streamed by the
+    /// engine during the turn, in order. Returns the full assistant transcript
+    /// plus the delta sequence (for hosts that want chunk-granular updates,
+    /// e.g. the ACP adapter's `agent_message_chunk` notifications).
+    pub async fn run_prompt_stream(
+        &self,
+        session_id: &str,
+        text: &str,
+    ) -> anyhow::Result<(String, Vec<String>)> {
+        let mut session = self.create_session(session_id).await?;
+        let _ = session.load().await;
+        // Drain the shared event source for llm.delta text chunks while the
+        // prompt turn runs. The guard is held for the whole turn — acceptable
+        // here because the ACP serve loop is single-threaded per connection.
+        let mut guard = self.events.lock().await;
+        let source = guard.as_mut().ok_or_else(|| {
+            anyhow::anyhow!("no event source available for streaming")
+        })?;
+        let mut deltas: Vec<String> = Vec::new();
+        let prompt_result = {
+            let prompt_fut = session.prompt(text);
+            tokio::pin!(prompt_fut);
+            loop {
+                tokio::select! {
+                    result = &mut prompt_fut => break result,
+                    event = source.next() => {
+                        match event {
+                            Some(e) if e["type"] == "llm.delta" => {
+                                if let Some(delta) = e["part"]["text"].as_str() {
+                                    if !delta.is_empty() {
+                                        deltas.push(delta.to_string());
+                                    }
+                                }
+                            }
+                            Some(_) => {}
+                            None => break serde_json::Value::Null,
+                        }
+                    }
+                }
+            }
+        };
+        if let Some(error) = prompt_result.get("error") {
+            anyhow::bail!("run_prompt: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        drop(guard);
+        let full_text = session.transcript().await?.unwrap_or_default();
+        Ok((full_text, deltas))
+    }
+
     /// Installed plugins (summary objects) — the engine side of node-sdk
     /// `listPlugins`.
     pub async fn list_plugins(&self) -> anyhow::Result<Vec<serde_json::Value>> {
