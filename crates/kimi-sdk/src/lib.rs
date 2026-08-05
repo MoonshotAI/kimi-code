@@ -92,6 +92,18 @@ impl Harness {
         Ok(body["result"]["status"].as_str().unwrap_or("?").to_string())
     }
 
+    /// The engine's version string (from `agent/version`).
+    pub async fn core_version(&self) -> anyhow::Result<String> {
+        let body = self
+            .client
+            .call("agent/version", serde_json::Value::Null)
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("version: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(body["result"]["version"].as_str().unwrap_or("?").to_string())
+    }
+
     /// Create (or resume) a session by id and return a typed handle. The
     /// engine's native LLM config (config.toml / KIMI_MODEL_* env) is
     /// injected automatically when present and no explicit llm step was

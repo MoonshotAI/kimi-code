@@ -496,6 +496,7 @@ async fn handle_chat_command(
             println!("/models      list configured model aliases");
             println!("/status      session status snapshot");
             println!("/config      show the engine config");
+            println!("/info        show version and session info");
             println!("/skills      list registered skills");
             println!("/usage       token usage");
             println!("/clear       clear the session context");
@@ -603,6 +604,18 @@ async fn handle_chat_command(
                 return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
             }
             println!("{}", serde_json::to_string_pretty(&body["result"]).unwrap_or_default());
+            ChatCommand::Handled
+        }
+        "/info" => {
+            let body = client.call("agent/version", serde_json::Value::Null).await;
+            if let Some(error) = body.get("error") {
+                return ChatCommand::Error(error["message"].as_str().unwrap_or("unknown").into());
+            }
+            println!(
+                "kimi {} — session {}",
+                body["result"]["version"].as_str().unwrap_or("?"),
+                session_id
+            );
             ChatCommand::Handled
         }
         "/skills" => {

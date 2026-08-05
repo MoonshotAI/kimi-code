@@ -34,6 +34,7 @@ const SLASH_COMMANDS: &[&str] = &[
     "/goal-status",
     "/help",
     "/import",
+    "/info",
     "/model",
     "/models",
     "/plan",
@@ -399,6 +400,17 @@ impl App {
                         "status: {}",
                         serde_json::to_string_pretty(&status["result"]).unwrap_or_default()
                     )));
+                }
+                "/info" => {
+                    match self.harness.core_version().await {
+                        Ok(v) => self.transcript.push(TranscriptLine::status(format!(
+                            "kimi {} — session {}",
+                            v, self.session_id
+                        ))),
+                        Err(e) => self
+                            .transcript
+                            .push(TranscriptLine::error(format!("info failed: {e}"))),
+                    }
                 }
                 "/config" => {
                     let config = self.harness.config().await;
