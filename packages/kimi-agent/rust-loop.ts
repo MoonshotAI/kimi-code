@@ -2702,6 +2702,15 @@ export async function sessionCompact(
   return agentCall('session/compact', { session_id: sessionId, instruction });
 }
 
+/** Cancel an in-flight compaction. The engine's compaction is synchronous
+ *  (no in-flight operation), so this answers success as a no-op — SDK
+ *  `cancelCompaction` parity. */
+export async function sessionCancelCompaction(
+  sessionId: string,
+): Promise<{ cancelled: boolean } | null> {
+  return agentCall('session/cancel_compact', { session_id: sessionId });
+}
+
 /** One pending tool approval (web-facing approval surface). */
 export interface EngineApprovalEntry {
   id: string;

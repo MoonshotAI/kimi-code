@@ -67,6 +67,11 @@
     /// Manually compact the session context (requires a native-LLM summarizer)
     /// — the engine side of SDK `compact`.
     pub const SESSION_COMPACT: &str = "session/compact";
+    /// Cancel an in-flight compaction. The engine's compaction is synchronous
+    /// (it completes or errors before the call returns), so there is never an
+    /// in-flight operation to cancel — the engine side of SDK `cancelCompaction`
+    /// answers success (no-op).
+    pub const SESSION_CANCEL_COMPACT: &str = "session/cancel_compact";
     /// List the session's pending tool approvals (web-facing approval cards).
     pub const SESSION_APPROVAL_LIST: &str = "session/approval_list";
     /// Resolve a pending tool approval (allow/deny) — the web decision path.

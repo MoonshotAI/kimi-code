@@ -138,6 +138,7 @@ export interface RustLoopApi {
   sessionGetPlan(sessionId: string): Promise<unknown>;
   sessionClearPlan(sessionId: string): Promise<unknown>;
   sessionCompact(sessionId: string, instruction?: string): Promise<unknown>;
+  sessionCancelCompaction(sessionId: string): Promise<{ cancelled: boolean } | null>;
   sessionUndoHistory(sessionId: string, count: number): Promise<unknown>;
   sessionAddAdditionalDir(
     sessionId: string,
@@ -785,7 +786,9 @@ export class RustRpcClient extends SDKRpcClientBase {
           throw error;
         }
       },
-      cancelCompaction: async () => nativeUnavailable('cancelCompaction'),
+      cancelCompaction: async ({ sessionId }: any) => {
+        await r.sessionCancelCompaction(sessionId);
+      },
       registerTool: async () => {},
       unregisterTool: async () => {},
       setActiveTools: async () => {},

@@ -731,6 +731,20 @@ impl Processor for SessionProcessor {
             })
         });
 
+        // `session/cancel_compact` — engine compaction is synchronous (it
+        // completes or errors before the call returns), so there is never an
+        // in-flight operation to cancel; answer success as a no-op. The SDK's
+        // `cancelCompaction` contract is "nothing left running", which holds
+        // trivially here.
+        processor.register(kimi_protocol::methods::SESSION_CANCEL_COMPACT, move |params| {
+            Box::pin(async move {
+                let _input: kimi_protocol::wire_types::SessionIdParams =
+                    serde_json::from_value(params)
+                        .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+                Ok(serde_json::json!({ "cancelled": true }))
+            })
+        });
+
         // `session/start_btw` — spawn a side-question subagent.
         let mgr = self.state.manager.clone();
         let callbacks = self.state.callbacks.clone();
@@ -2587,5 +2601,34 @@ mod create_tests {
         assert_eq!(body["result"]["steps"], 1, "steps: {body}");
         assert!(body["result"]["usage"].is_object(), "usage: {body}");
         assert_eq!(body["result"]["usage"]["output_tokens"], 10, "usage: {body}");
+    }
+
+    #[tokio::test]
+    async fn cancel_compact_answers_noop_success() {
+        let processor = SessionProcessor::new().expect("session processor");
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+
+        server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/create".into(),
+                params: serde_json::json!({ "session_id": "s-cancel-compact" }),
+            })
+            .await;
+
+        // Engine compaction is synchronous, so cancelling is always a no-op
+        // success (there is no in-flight operation).
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/cancel_compact".into(),
+                params: serde_json::json!({ "session_id": "s-cancel-compact" }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "cancel_compact: {body}");
+        assert_eq!(body["result"]["cancelled"], true, "cancelled: {body}");
     }
 }

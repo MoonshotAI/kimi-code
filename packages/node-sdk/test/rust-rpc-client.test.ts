@@ -53,6 +53,8 @@ function fakeRustLoop(overrides: Partial<RustLoopApi> = {}): RustLoopApi & {
     sessionGetWarnings: async () => ({ warnings: [] }),
     sessionGetContext: async () => ({ messages: [], token_count: 100 }),
     sessionGetPlan: async () => null,
+    sessionCompact: async () => ({ compacted: true }),
+    sessionCancelCompaction: async () => ({ cancelled: true }),
     cronList: async () => ({ tasks: [] }),
     bgList: async () => ({ tasks: [] }),
     pluginList: async () => ({ plugins: [] }),
@@ -222,5 +224,12 @@ describe('RustRpcClient', () => {
     const after = readConfigFile(configPath);
     expect((after.providers as Record<string, unknown> | undefined)?.['kimi']).toBeUndefined();
     expect(after.defaultModel).toBe('kimi-k2');
+  });
+
+  it('cancels compaction through the engine (no-op success)', async () => {
+    const rust = fakeRustLoop();
+    const client = new RustRpcClient({ rustLoop: rust });
+    const rpc = await client['getRpc']();
+    await expect(rpc.cancelCompaction({ sessionId: 'ses_1' } as never)).resolves.toBeUndefined();
   });
 });

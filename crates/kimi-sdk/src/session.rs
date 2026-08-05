@@ -128,6 +128,23 @@ impl Session {
         Ok(body["result"].clone())
     }
 
+    /// Cancel an in-flight compaction. The engine's compaction is synchronous
+    /// (no in-flight operation), so this is a no-op success — mirrors the SDK's
+    /// `Session.cancelCompaction()`.
+    pub async fn cancel_compaction(&mut self) -> anyhow::Result<()> {
+        let body = self
+            .client
+            .call(
+                kimi_protocol::methods::SESSION_CANCEL_COMPACT,
+                serde_json::json!({ "session_id": self.id }),
+            )
+            .await;
+        if let Some(error) = body.get("error") {
+            anyhow::bail!("cancel compaction: {}", error["message"].as_str().unwrap_or("unknown"));
+        }
+        Ok(())
+    }
+
     /// Create a goal on the session; returns the goal snapshot.
     pub async fn create_goal(&mut self, objective: &str) -> anyhow::Result<serde_json::Value> {
         let body = self
