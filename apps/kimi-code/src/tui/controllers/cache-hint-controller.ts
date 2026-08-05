@@ -99,6 +99,10 @@ export class CacheHintController {
     const main = session.getResumeState()?.agents[MAIN_AGENT_ID];
     let lastActiveAt = 0;
     for (const record of main?.replay ?? []) {
+      // Only message/compaction records correspond to LLM round-trips; state
+      // records (permission/plan/config updates, approval results) can be
+      // appended by slash commands without touching the cache.
+      if (record.type !== 'message' && record.type !== 'compaction') continue;
       if (record.time > lastActiveAt) lastActiveAt = record.time;
     }
     // `summary.updatedAt` ≈ last user prompt — a coarser but valid fallback.

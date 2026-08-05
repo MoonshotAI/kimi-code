@@ -68,7 +68,7 @@ function resumeSession(replayTimes: number[], tokenCount: number, updatedAt = 0)
     getResumeState: () => ({
       agents: {
         main: {
-          replay: replayTimes.map((time) => ({ time })),
+          replay: replayTimes.map((time) => ({ type: 'message', time })),
           context: { tokenCount },
         },
       },
@@ -404,6 +404,27 @@ describe('CacheHintController scenario 1 (resume)', () => {
     resolveFetch(CONFIG);
     await pending;
     expect(host.mountEditorReplacement).not.toHaveBeenCalled();
+  });
+
+  it('ignores local-only state records when computing the resume idle time', async () => {
+    getMock.mockResolvedValue(CONFIG);
+    const oldMessage = { type: 'message', time: Date.now() - 1200_000 };
+    const recentStateRecord = { type: 'permission_updated', time: Date.now() - 5000 };
+    const session = {
+      id: 's1',
+      summary: { updatedAt: 0 },
+      getResumeState: () => ({
+        agents: {
+          main: { replay: [oldMessage, recentStateRecord], context: { tokenCount: 150000 } },
+        },
+      }),
+    };
+    const { host } = makeHost({ session });
+    const controller = new CacheHintController(host);
+
+    // The recent permission change must not mask the expired cache.
+    await showOnResumeAndDismiss(controller, host);
+    expect(host.mountEditorReplacement).toHaveBeenCalledOnce();
   });
 
   it('skips when the config cannot be resolved', async () => {
