@@ -38,8 +38,6 @@ export interface IAgentContextInjectorService {
     provider: ContextInjectionProvider,
   ): IDisposable;
 
-  /** Register a synchronous provider that runs after `turn.started` and
-   * before the turn's first step request materializes its prompt. */
   registerAtTurnStart(
     name: string,
     provider: SyncContextInjectionProvider,

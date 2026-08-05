@@ -139,9 +139,6 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     const isNewTurn = this.isNewTurn;
     this.isNewTurn = false;
     for (const entry of this.entries) {
-      // A turn-start provider is also reconciled at the step boundary as a
-      // fallback for facts that arrive after `turn.started` (for example, a
-      // queued turn cancelled while another turn is already running).
       if (
         boundary !== undefined &&
         entry.boundary !== boundary &&
