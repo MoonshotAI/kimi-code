@@ -1,6 +1,7 @@
 /**
  * Tests for the v2 session list REST client (`GET /api/v2/sessions`): query
- * string serialization, envelope-free payload parsing, and error mapping.
+ * string serialization, `{ code, msg, data }` envelope parsing, and error
+ * mapping (business codes on 2xx, infra statuses on non-2xx).
  */
 
 import { describe, expect, it } from 'vitest';
@@ -14,6 +15,15 @@ function fakeFetch(status: number, body: unknown) {
     return { ok: status >= 200 && status < 300, status, statusText: 'ERR', json: async () => body };
   }) as unknown as typeof fetch;
   return { calls, fetchImpl };
+}
+
+/** The shared REST envelope the server wraps every response in. */
+function okBody(data: unknown) {
+  return { code: 0, msg: 'success', data, request_id: 'req-1' };
+}
+
+function errBody(code: number, msg: string) {
+  return { code, msg, data: null, request_id: 'req-1' };
 }
 
 const pageData = {
@@ -55,7 +65,7 @@ const pageData = {
 
 describe('fetchV2SessionsPage', () => {
   it('serializes filters as repeated query params and maps items to camelCase', async () => {
-    const { calls, fetchImpl } = fakeFetch(200, pageData);
+    const { calls, fetchImpl } = fakeFetch(200, okBody(pageData));
     const page = await fetchV2SessionsPage({
       baseUrl: 'http://h:1',
       token: 'tok',
@@ -107,25 +117,28 @@ describe('fetchV2SessionsPage', () => {
   });
 
   it('omits the query string and authorization header when nothing is set', async () => {
-    const { calls, fetchImpl } = fakeFetch(200, pageData);
+    const { calls, fetchImpl } = fakeFetch(200, okBody(pageData));
     await fetchV2SessionsPage({ baseUrl: 'http://h:1', fetchImpl });
     expect(calls[0]!.url).toBe('http://h:1/api/v2/sessions');
     expect(calls[0]!.init?.headers).toEqual({});
   });
 
   it('parses a well-formed pull_request', async () => {
-    const { fetchImpl } = fakeFetch(200, {
-      ...pageData,
-      items: [
-        {
-          ...pageData.items[0],
-          git: {
-            branch: 'feat/x',
-            pull_request: { number: 7, state: 'open', url: 'https://example.com/pr/7' },
+    const { fetchImpl } = fakeFetch(
+      200,
+      okBody({
+        ...pageData,
+        items: [
+          {
+            ...pageData.items[0],
+            git: {
+              branch: 'feat/x',
+              pull_request: { number: 7, state: 'open', url: 'https://example.com/pr/7' },
+            },
           },
-        },
-      ],
-    });
+        ],
+      }),
+    );
     const page = await fetchV2SessionsPage({ baseUrl: 'http://h:1', includeGit: true, fetchImpl });
     expect(page.items[0]!.git?.pullRequest).toEqual({
       number: 7,
@@ -134,13 +147,18 @@ describe('fetchV2SessionsPage', () => {
     });
   });
 
-  it('throws the server error code/message on a non-2xx response', async () => {
-    const { fetchImpl } = fakeFetch(409, {
-      error: { code: 'page_token_mismatch', message: 'page_token is corrupted' },
-    });
+  it('throws the envelope code/msg on a business failure (2xx with code != 0)', async () => {
+    const { fetchImpl } = fakeFetch(200, errBody(40922, 'page_token is corrupted'));
     await expect(
       fetchV2SessionsPage({ baseUrl: 'http://h:1', pageToken: 'bad', fetchImpl }),
-    ).rejects.toThrow(/page_token_mismatch.*page_token is corrupted/);
+    ).rejects.toThrow(/40922.*page_token is corrupted/);
+  });
+
+  it('throws the envelope code/msg on a non-2xx response (e.g. 401 from the auth hook)', async () => {
+    const { fetchImpl } = fakeFetch(401, errBody(40101, 'unauthorized'));
+    await expect(fetchV2SessionsPage({ baseUrl: 'http://h:1', fetchImpl })).rejects.toThrow(
+      /40101.*unauthorized/,
+    );
   });
 
   it('falls back to the HTTP status when the error body is malformed', async () => {
@@ -150,8 +168,8 @@ describe('fetchV2SessionsPage', () => {
     );
   });
 
-  it('throws on a malformed 2xx payload', async () => {
-    const { fetchImpl } = fakeFetch(200, { has_more: false });
+  it('throws on a malformed success payload', async () => {
+    const { fetchImpl } = fakeFetch(200, okBody({ has_more: false }));
     await expect(fetchV2SessionsPage({ baseUrl: 'http://h:1', fetchImpl })).rejects.toThrow(
       /unexpected response shape/,
     );

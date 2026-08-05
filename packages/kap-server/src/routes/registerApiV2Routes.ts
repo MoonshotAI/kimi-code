@@ -1,11 +1,11 @@
 /**
  * `/api/v2` route registration.
  *
- * The v2 surface drops v1's envelope convention: handlers return the payload
- * directly and signal failures with real HTTP statuses plus a uniform
- * `{ error: { code, message } }` body. The global bearer-auth hook (a root
- * `onRequest` hook) covers `/api/v2/*` exactly like `/api/v1/*` — including
- * its 401 envelope shape, which is shared by every API path.
+ * The v2 surface shares v1's wire conventions: every response is wrapped in
+ * the `{ code, msg, data, request_id }` envelope with the business outcome in
+ * `code`, and the HTTP status only reports server-/transport-level outcomes
+ * (the global bearer-auth hook covers `/api/v2/*` exactly like `/api/v1/*`
+ * and answers 401 before routing).
  */
 
 import type { Scope } from '@moonshot-ai/agent-core-v2';

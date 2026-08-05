@@ -1,8 +1,9 @@
 /**
  * Scenario: `/api/v2/sessions` domain-grouped session list query.
- * Responsibilities: envelope-free wire shape, filters, sort orders, opaque
- * page tokens (409 on drift), git domain dedup/cache/degradation, v2 auth
- * error shape, and the activity-status mapper.
+ * Responsibilities: envelope wire shape (business outcome in `code`: 40001
+ * invalid params / 40922 page_token mismatch), filters, sort orders, opaque
+ * page tokens, git domain dedup/cache/degradation, v2 auth error shape, and
+ * the activity-status mapper.
  * Wiring: real kap-server; `ISessionIndex` / `IGitService` stubbed via DI seeds.
  * Run: `pnpm --filter @moonshot-ai/kap-server exec vitest run test/v2Sessions.test.ts`.
  */
@@ -51,8 +52,13 @@ interface PageWireV2 {
   next_page_token: string | null;
 }
 
-interface ErrorWireV2 {
-  error: { code: string; message: string };
+/** The shared REST envelope: business outcome in `code`, payload in `data`. */
+interface EnvelopeWire {
+  code: number;
+  msg: string;
+  data: PageWireV2 | null;
+  request_id: string;
+  details?: { path: string; message: string }[];
 }
 
 const WS_A = 'ws_aaa';
@@ -191,21 +197,36 @@ describe('server /api/v2/sessions', () => {
     }
   });
 
-  async function getPage(
-    query = '',
-  ): Promise<{ status: number; body: PageWireV2 & ErrorWireV2 }> {
+  async function getPage(query = ''): Promise<{ status: number; body: EnvelopeWire }> {
     const res = await authedFetch(server as RunningServer, base, `/api/v2/sessions${query}`);
-    return { status: res.status, body: (await res.json()) as PageWireV2 & ErrorWireV2 };
+    return { status: res.status, body: (await res.json()) as EnvelopeWire };
+  }
+
+  /** Fetch a page expected to succeed; returns the unwrapped `data` payload. */
+  async function getData(query = ''): Promise<PageWireV2> {
+    const { status, body } = await getPage(query);
+    expect(status).toBe(200);
+    expect(body.code).toBe(0);
+    expect(typeof body.request_id).toBe('string');
+    if (body.data === null) throw new Error('expected a data payload');
+    return body.data;
+  }
+
+  /** Fetch a page expected to fail with a business error code on HTTP 200. */
+  async function getError(query = ''): Promise<EnvelopeWire> {
+    const { status, body } = await getPage(query);
+    expect(status).toBe(200);
+    expect(body.data).toBeNull();
+    return body;
   }
 
   it('lists sessions with domain-grouped shape, default sort, archived excluded', async () => {
-    const { status, body } = await getPage();
-    expect(status).toBe(200);
-    expect(body.has_more).toBe(false);
-    expect(body.next_page_token).toBeNull();
-    expect(body.items.map((item) => item.id)).toEqual(['s1', 's2', 's3']);
+    const page = await getData();
+    expect(page.has_more).toBe(false);
+    expect(page.next_page_token).toBeNull();
+    expect(page.items.map((item) => item.id)).toEqual(['s1', 's2', 's3']);
 
-    const first = body.items[0] as SessionWireV2;
+    const first = page.items[0] as SessionWireV2;
     expect(first.workspace).toEqual({ id: WS_A, cwd: '/repo/a' });
     expect(first.meta).toEqual({
       title: 'Alpha',
@@ -220,133 +241,125 @@ describe('server /api/v2/sessions', () => {
     expect('git' in first).toBe(false);
 
     // title / last_prompt fall back to null when absent.
-    const second = body.items[1] as SessionWireV2;
+    const second = page.items[1] as SessionWireV2;
     expect(second.meta.title).toBeNull();
-    const third = body.items[2] as SessionWireV2;
+    const third = page.items[2] as SessionWireV2;
     expect(third.meta.last_prompt).toBeNull();
   });
 
   it('filters by workspace.id (single, repeated OR, unknown)', async () => {
-    const single = await getPage(`?workspace.id=${WS_A}`);
-    expect(single.body.items.map((item) => item.id)).toEqual(['s1', 's2']);
+    const single = await getData(`?workspace.id=${WS_A}`);
+    expect(single.items.map((item) => item.id)).toEqual(['s1', 's2']);
 
-    const repeated = await getPage(`?workspace.id=${WS_A}&workspace.id=${WS_B}`);
-    expect(repeated.body.items.map((item) => item.id)).toEqual(['s1', 's2', 's3']);
+    const repeated = await getData(`?workspace.id=${WS_A}&workspace.id=${WS_B}`);
+    expect(repeated.items.map((item) => item.id)).toEqual(['s1', 's2', 's3']);
 
-    const unknown = await getPage('?workspace.id=ws_nope');
-    expect(unknown.status).toBe(200);
-    expect(unknown.body.items).toEqual([]);
+    const unknown = await getData('?workspace.id=ws_nope');
+    expect(unknown.items).toEqual([]);
   });
 
   it('filters by activity.status with OR semantics', async () => {
-    const idle = await getPage('?activity.status=idle');
-    expect(idle.body.items.map((item) => item.id)).toEqual(['s1', 's2', 's3']);
+    const idle = await getData('?activity.status=idle');
+    expect(idle.items.map((item) => item.id)).toEqual(['s1', 's2', 's3']);
 
-    const running = await getPage('?activity.status=running&activity.status=approval');
-    expect(running.body.items).toEqual([]);
+    const running = await getData('?activity.status=running&activity.status=approval');
+    expect(running.items).toEqual([]);
 
-    const bogus = await getPage('?activity.status=bogus');
-    expect(bogus.status).toBe(400);
-    expect(bogus.body.error.code).toBe('invalid_param');
+    const bogus = await getError('?activity.status=bogus');
+    expect(bogus.code).toBe(40001);
   });
 
   it('filters by meta.updated_after (inclusive)', async () => {
-    const { body } = await getPage('?meta.updated_after=4000');
-    expect(body.items.map((item) => item.id)).toEqual(['s1', 's2']);
+    const page = await getData('?meta.updated_after=4000');
+    expect(page.items.map((item) => item.id)).toEqual(['s1', 's2']);
   });
 
   it('filters by meta.archived (default false / true / all)', async () => {
-    const only = await getPage('?meta.archived=true');
-    expect(only.body.items.map((item) => item.id)).toEqual(['s4']);
+    const only = await getData('?meta.archived=true');
+    expect(only.items.map((item) => item.id)).toEqual(['s4']);
 
-    const all = await getPage('?meta.archived=all');
-    expect(all.body.items.map((item) => item.id)).toEqual(['s1', 's2', 's3', 's4']);
+    const all = await getData('?meta.archived=all');
+    expect(all.items.map((item) => item.id)).toEqual(['s1', 's2', 's3', 's4']);
 
-    const bogus = await getPage('?meta.archived=yes');
-    expect(bogus.status).toBe(400);
-    expect(bogus.body.error.code).toBe('invalid_param');
+    const bogus = await getError('?meta.archived=yes');
+    expect(bogus.code).toBe(40001);
   });
 
   it('sorts by meta.updated_at_asc and meta.created_at_desc', async () => {
-    const asc = await getPage('?sort=meta.updated_at_asc');
-    expect(asc.body.items.map((item) => item.id)).toEqual(['s3', 's2', 's1']);
+    const asc = await getData('?sort=meta.updated_at_asc');
+    expect(asc.items.map((item) => item.id)).toEqual(['s3', 's2', 's1']);
 
-    const created = await getPage('?sort=meta.created_at_desc');
-    expect(created.body.items.map((item) => item.id)).toEqual(['s1', 's3', 's2']);
+    const created = await getData('?sort=meta.created_at_desc');
+    expect(created.items.map((item) => item.id)).toEqual(['s1', 's3', 's2']);
 
-    const bogus = await getPage('?sort=bogus');
-    expect(bogus.status).toBe(400);
-    expect(bogus.body.error.code).toBe('invalid_param');
+    const bogus = await getError('?sort=bogus');
+    expect(bogus.code).toBe(40001);
   });
 
   it('rejects out-of-range page_size', async () => {
     for (const value of ['0', '101', 'abc']) {
-      const { status, body } = await getPage(`?page_size=${value}`);
-      expect(status).toBe(400);
-      expect(body.error.code).toBe('invalid_param');
+      const body = await getError(`?page_size=${value}`);
+      expect(body.code).toBe(40001);
     }
   });
 
   it('paginates with an opaque cursor across pages', async () => {
-    const page1 = await getPage('?page_size=2');
-    expect(page1.status).toBe(200);
-    expect(page1.body.items.map((item) => item.id)).toEqual(['s1', 's2']);
-    expect(page1.body.has_more).toBe(true);
-    expect(typeof page1.body.next_page_token).toBe('string');
+    const page1 = await getData('?page_size=2');
+    expect(page1.items.map((item) => item.id)).toEqual(['s1', 's2']);
+    expect(page1.has_more).toBe(true);
+    expect(typeof page1.next_page_token).toBe('string');
 
-    const page2 = await getPage(`?page_size=2&page_token=${page1.body.next_page_token}`);
-    expect(page2.status).toBe(200);
-    expect(page2.body.items.map((item) => item.id)).toEqual(['s3']);
-    expect(page2.body.has_more).toBe(false);
-    expect(page2.body.next_page_token).toBeNull();
+    const page2 = await getData(`?page_size=2&page_token=${page1.next_page_token}`);
+    expect(page2.items.map((item) => item.id)).toEqual(['s3']);
+    expect(page2.has_more).toBe(false);
+    expect(page2.next_page_token).toBeNull();
   });
 
   it('paginates every sort order with the same cursor encoding', async () => {
     for (const sort of ['meta.updated_at_asc', 'meta.created_at_desc']) {
-      const page1 = await getPage(`?sort=${sort}&page_size=2`);
-      expect(page1.body.has_more).toBe(true);
-      const page2 = await getPage(
-        `?sort=${sort}&page_size=2&page_token=${page1.body.next_page_token}`,
+      const page1 = await getData(`?sort=${sort}&page_size=2`);
+      expect(page1.has_more).toBe(true);
+      const page2 = await getData(
+        `?sort=${sort}&page_size=2&page_token=${page1.next_page_token}`,
       );
-      expect(page2.status).toBe(200);
-      expect(page2.body.items).toHaveLength(1);
-      expect(page2.body.has_more).toBe(false);
+      expect(page2.items).toHaveLength(1);
+      expect(page2.has_more).toBe(false);
       const ids = [
-        ...page1.body.items.map((item) => item.id),
-        ...page2.body.items.map((item) => item.id),
+        ...page1.items.map((item) => item.id),
+        ...page2.items.map((item) => item.id),
       ];
       expect(new Set(ids).size).toBe(3);
     }
   });
 
-  it('rejects a page_token whose query conditions drifted (409)', async () => {
-    const page1 = await getPage('?page_size=2');
-    const token = page1.body.next_page_token;
+  it('rejects a page_token whose query conditions drifted (40922)', async () => {
+    const page1 = await getData('?page_size=2');
+    const token = page1.next_page_token;
 
     // page_size changed
-    const drifted = await getPage(`?page_size=3&page_token=${token}`);
-    expect(drifted.status).toBe(409);
-    expect(drifted.body.error.code).toBe('page_token_mismatch');
+    const drifted = await getError(`?page_size=3&page_token=${token}`);
+    expect(drifted.code).toBe(40922);
 
     // filter added mid-pagination
-    const filtered = await getPage(`?page_size=2&workspace.id=${WS_A}&page_token=${token}`);
-    expect(filtered.status).toBe(409);
+    const filtered = await getError(`?page_size=2&workspace.id=${WS_A}&page_token=${token}`);
+    expect(filtered.code).toBe(40922);
 
     // sort changed
-    const resorted = await getPage(`?page_size=2&sort=meta.updated_at_asc&page_token=${token}`);
-    expect(resorted.status).toBe(409);
+    const resorted = await getError(
+      `?page_size=2&sort=meta.updated_at_asc&page_token=${token}`,
+    );
+    expect(resorted.code).toBe(40922);
   });
 
-  it('rejects a corrupted page_token (409)', async () => {
-    const { status, body } = await getPage('?page_token=!!!not-a-token');
-    expect(status).toBe(409);
-    expect(body.error.code).toBe('page_token_mismatch');
+  it('rejects a corrupted page_token (40922)', async () => {
+    const body = await getError('?page_token=!!!not-a-token');
+    expect(body.code).toBe(40922);
   });
 
-  it('rejects an unknown include domain (400)', async () => {
-    const { status, body } = await getPage('?include=git,metrics');
-    expect(status).toBe(400);
-    expect(body.error.code).toBe('invalid_param');
+  it('rejects an unknown include domain (40001)', async () => {
+    const body = await getError('?include=git,metrics');
+    expect(body.code).toBe(40001);
+    expect(body.msg).toContain("unknown domain 'metrics'");
   });
 
   it('attaches the git domain per unique cwd with dedup + cache + null degradation', async () => {
@@ -356,10 +369,9 @@ describe('server /api/v2/sessions', () => {
     });
     gitState.responses.set('/repo/b', { branch: 'fix/x', pullRequest: null });
 
-    const { status, body } = await getPage('?include=git');
-    expect(status).toBe(200);
+    const page = await getData('?include=git');
 
-    const byId = new Map(body.items.map((item) => [item.id, item]));
+    const byId = new Map(page.items.map((item) => [item.id, item]));
     // draft folds into open (the v2 enum has no draft).
     expect(byId.get('s1')?.git).toEqual({
       branch: 'main',
@@ -372,16 +384,14 @@ describe('server /api/v2/sessions', () => {
     expect(gitState.calls.toSorted()).toEqual(['/repo/a', '/repo/b']);
 
     // Second identical page hits the 60s cache — no new git calls.
-    const again = await getPage('?include=git');
-    expect(again.status).toBe(200);
+    await getData('?include=git');
     expect(gitState.calls.toSorted()).toEqual(['/repo/a', '/repo/b']);
   });
 
   it('degrades non-git cwds to null fields without failing the request', async () => {
     // '/repo/a' and '/repo/b' both missing from the stub → git unavailable.
-    const { status, body } = await getPage('?include=git&meta.archived=all');
-    expect(status).toBe(200);
-    for (const item of body.items) {
+    const page = await getData('?include=git&meta.archived=all');
+    for (const item of page.items) {
       expect(item.git).toEqual({ branch: null, pull_request: null });
     }
   });

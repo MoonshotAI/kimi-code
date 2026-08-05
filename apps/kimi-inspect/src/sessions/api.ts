@@ -1,12 +1,15 @@
 /**
  * REST client for the v2 session list endpoint: `GET {baseUrl}/api/v2/sessions`.
  *
- * Unlike the v1 surface there is NO `{ code, msg, data }` envelope — a 2xx
- * body is the page payload directly, and failures carry a real HTTP status
- * plus `{ error: { code, message } }`. Pagination is an opaque cursor
- * (`page_token`) bound to the first page's query conditions; any condition
- * change mid-pagination fails server-side with 409, so callers must restart
- * from the first page instead of reusing a cursor across filters/sorts.
+ * Like the v1 surface, every response is wrapped in the
+ * `{ code, msg, data, request_id }` envelope — the business outcome lives in
+ * `code` (`0` success; e.g. `40001` invalid query params, `40922` page_token
+ * mismatch) while the HTTP status only reports server-/transport-level
+ * outcomes (401 from the global auth hook, etc.). Pagination is an opaque
+ * cursor (`page_token`) bound to the first page's query conditions; any
+ * condition change mid-pagination fails server-side with 40922, so callers
+ * must restart from the first page instead of reusing a cursor across
+ * filters/sorts.
  *
  * The wire shape is validated locally by hand (this app does not depend on
  * zod): a malformed page throws, individual items with an unexpected shape
@@ -155,15 +158,15 @@ export async function fetchV2SessionsPage(
     { headers },
   );
   const body: unknown = await res.json();
-  if (!res.ok) {
-    const error = (body as Record<string, unknown> | null)?.['error'] as
-      | Record<string, unknown>
-      | undefined;
-    const code = typeof error?.['code'] === 'string' ? error['code'] : `http_${res.status}`;
-    const message = typeof error?.['message'] === 'string' ? error['message'] : res.statusText;
-    throw new Error(`v2 sessions failed (${code}): ${message}`);
+  const envelope = (
+    body !== null && typeof body === 'object' && !Array.isArray(body) ? body : {}
+  ) as Record<string, unknown>;
+  const code = typeof envelope['code'] === 'number' ? envelope['code'] : undefined;
+  const msg = typeof envelope['msg'] === 'string' ? envelope['msg'] : res.statusText;
+  if (!res.ok || code !== 0) {
+    throw new Error(`v2 sessions failed (${code ?? `http_${res.status}`}): ${msg}`);
   }
-  const data = body as Record<string, unknown> | null;
+  const data = envelope['data'] as Record<string, unknown> | null;
   if (data === null || typeof data !== 'object' || !Array.isArray(data['items'])) {
     throw new Error('v2 sessions: unexpected response shape');
   }

@@ -1,18 +1,18 @@
 /**
  * `/api/v2/sessions` — domain-grouped session list query.
  *
- * The v2 REST surface deliberately breaks with v1 wire conventions:
- *   - responses are NOT wrapped in the `{ code, msg, data, request_id }`
- *     envelope — the payload is returned directly;
- *   - failures carry real HTTP statuses and a uniform
- *     `{ error: { code, message } }` body (`invalid_param` 400,
- *     `page_token_mismatch` 409, `internal` 500). Auth failures are the one
- *     exception: the global auth hook runs before routing and answers 401
- *     with the shared v1 envelope for every API path, v2 included.
+ * The v2 surface shares v1's wire conventions:
+ *   - every response is wrapped in the `{ code, msg, data, request_id }`
+ *     envelope and the business outcome lives in `code` — `0` success,
+ *     `40001` for invalid query params (zod issues ride the `details` list),
+ *     `40922` for a page_token that no longer matches the query conditions;
+ *   - the HTTP status only reports server-/transport-level outcomes — the
+ *     global bearer-auth hook answers 401 before routing, and unhandled
+ *     exceptions land in the catch-all error hook as `50001`;
  *   - pagination is an opaque cursor (`page_token`, base64url JSON with a
  *     version + query fingerprint + keyset position, following the search
  *     module's token precedent) that binds every query condition of the
- *     first page — flipping any condition mid-pagination fails with 409
+ *     first page — flipping any condition mid-pagination fails with 40922
  *     instead of silently serving a drifted window.
  *
  * Response domains: `workspace` / `meta` / `activity` are always projected;
@@ -41,21 +41,19 @@ import {
 import { IGitService, type FsPullRequest } from '@moonshot-ai/agent-core-v2/app/git/git';
 import { z } from 'zod';
 
-import { requestLog } from '../../lib/requestLog';
-import { jsonSchema, openApiDocumentJsonSchema } from '../../middleware/schema';
+import { defineRoute } from '../../middleware/defineRoute';
+import { errEnvelope, okEnvelope } from '../../protocol/envelope';
+import { ErrorCode } from '../../protocol/error-codes';
 import { resolveSessionFacts, type SessionFacts } from '../sessions';
 
 interface V2SessionsRouteHost {
   get(
     path: string,
-    options: { schema?: Record<string, unknown> },
+    options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
     handler: (
-      req: { id: string; query: unknown },
-      reply: {
-        code(status: number): { send(payload: unknown): unknown };
-        send(payload: unknown): unknown;
-      },
-    ) => Promise<void>,
+      req: { id: string; query: unknown; params: unknown },
+      reply: { send(payload: unknown): unknown },
+    ) => Promise<void> | void,
   ): unknown;
 }
 
@@ -81,37 +79,51 @@ type V2Sort = z.infer<typeof v2SortSchema>;
 
 const DEFAULT_PAGE_SIZE = 50;
 
-/** Repeated query params arrive as arrays; single ones as scalars. */
-const repeatedStringParam = z.preprocess(
-  (value) => (value === undefined ? undefined : Array.isArray(value) ? value : [value]),
-  z.array(z.string().min(1)).min(1).optional(),
-);
+/** Repeated query params arrive as arrays, single ones as scalars — accept both. */
+const repeatedParam = <T extends z.ZodTypeAny>(item: T) =>
+  z.union([item, z.array(item).min(1)]).optional();
 
-const v2SessionsListQuerySchema = z.object({
-  'workspace.id': repeatedStringParam,
-  'activity.status': z.preprocess(
-    (value) => (value === undefined ? undefined : Array.isArray(value) ? value : [value]),
-    z.array(v2ActivityStatusSchema).min(1).optional(),
-  ),
-  'meta.updated_after': z.coerce.number().int().nonnegative().optional(),
-  'meta.archived': z.enum(['true', 'false', 'all']).optional(),
-  sort: v2SortSchema.optional(),
-  include: z.string().optional(),
-  page_size: z.coerce.number().int().min(1).max(100).optional(),
-  page_token: z.string().min(1).optional(),
-});
+const KNOWN_INCLUDE_DOMAINS = new Set(['git']);
 
-/** Doc-side twin of the runtime schema (preprocess-free so JSON Schema stays precise). */
-const v2SessionsListQueryDocSchema = z.object({
-  'workspace.id': z.union([z.string(), z.array(z.string())]).optional(),
-  'activity.status': z.union([v2ActivityStatusSchema, z.array(v2ActivityStatusSchema)]).optional(),
-  'meta.updated_after': z.coerce.number().int().optional(),
-  'meta.archived': z.enum(['true', 'false', 'all']).optional(),
-  sort: v2SortSchema.optional(),
-  include: z.string().optional(),
-  page_size: z.coerce.number().int().min(1).max(100).optional(),
-  page_token: z.string().optional(),
-});
+/** `include` — comma-separated opt-in expensive domains. */
+function includeDomains(include: string | undefined): string[] {
+  return (include ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+}
+
+const v2SessionsListQuerySchema = z
+  .object({
+    'workspace.id': repeatedParam(z.string().min(1)),
+    'activity.status': repeatedParam(v2ActivityStatusSchema),
+    'meta.updated_after': z.coerce.number().int().nonnegative().optional(),
+    'meta.archived': z.enum(['true', 'false', 'all']).optional(),
+    sort: v2SortSchema.optional(),
+    include: z.string().optional(),
+    page_size: z.coerce.number().int().min(1).max(100).optional(),
+    page_token: z.string().min(1).optional(),
+  })
+  .superRefine((value, ctx) => {
+    // Unknown include domains are rejected so a typo never silently drops
+    // paid-for data.
+    for (const domain of includeDomains(value.include)) {
+      if (!KNOWN_INCLUDE_DOMAINS.has(domain)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `unknown domain '${domain}'`,
+          path: ['include'],
+          params: { code: ErrorCode.VALIDATION_FAILED },
+        });
+      }
+    }
+  });
+
+/** Fastify delivers a repeated param as an array and a single one as a scalar. */
+function asArray<T>(value: T | T[] | undefined): T[] | undefined {
+  if (value === undefined) return undefined;
+  return Array.isArray(value) ? value : [value];
+}
 
 interface NormalizedQuery {
   readonly workspaceFilter?: readonly string[];
@@ -158,9 +170,8 @@ const v2SessionPageSchema = z.object({
   next_page_token: z.string().nullable(),
 });
 
-const v2ErrorSchema = z.object({
-  error: z.object({ code: z.string(), message: z.string() }),
-});
+/** `40001 validation.failed` carries the offending fields (REST.md §1.4). */
+const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
 type V2GitDomain = z.infer<typeof v2GitDomainSchema>;
 type V2SessionWire = z.infer<typeof v2SessionSchema>;
@@ -169,15 +180,8 @@ type V2SessionWire = z.infer<typeof v2SessionSchema>;
 // Errors
 // ---------------------------------------------------------------------------
 
-class V2RequestError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+/** A page_token that is corrupted, version-incompatible, or bound to other query conditions. */
+class PageTokenMismatchError extends Error {}
 
 // ---------------------------------------------------------------------------
 // Activity status
@@ -244,15 +248,13 @@ function encodePageToken(fingerprint: string, key: number, id: string): string {
   ).toString('base64url');
 }
 
-/** Decode + validate a page token; any failure is a 409 mismatch by contract. */
+/** Decode + validate a page token; any failure is a 40922 mismatch by contract. */
 function decodePageToken(raw: string, fingerprint: string): readonly [number, string] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
   } catch {
-    throw new V2RequestError(
-      409,
-      'page_token_mismatch',
+    throw new PageTokenMismatchError(
       'page_token is corrupted; discard it and restart from the first page',
     );
   }
@@ -266,16 +268,12 @@ function decodePageToken(raw: string, fingerprint: string): readonly [number, st
     typeof key[0] !== 'number' ||
     typeof key[1] !== 'string'
   ) {
-    throw new V2RequestError(
-      409,
-      'page_token_mismatch',
+    throw new PageTokenMismatchError(
       'page_token is malformed or from an incompatible version; discard it and restart from the first page',
     );
   }
   if (token.f !== fingerprint) {
-    throw new V2RequestError(
-      409,
-      'page_token_mismatch',
+    throw new PageTokenMismatchError(
       'page_token does not match the query conditions; discard it and restart from the first page',
     );
   }
@@ -349,183 +347,162 @@ class GitDomainResolver {
 export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope): void {
   const gitResolver = new GitDomainResolver(core);
 
-  app.get(
-    '/sessions',
+  const listRoute = defineRoute(
     {
-      schema: {
-        description:
-          'List sessions with domain-grouped metadata (workspace / meta / activity; git via include=git). Opaque-cursor pagination: page_token binds the first page’s query conditions.',
-        tags: ['v2-sessions'],
-        querystring: jsonSchema(v2SessionsListQueryDocSchema),
-        response: {
-          200: openApiDocumentJsonSchema(v2SessionPageSchema, 'output'),
-          400: openApiDocumentJsonSchema(v2ErrorSchema, 'output'),
-          401: openApiDocumentJsonSchema(v2ErrorSchema, 'output'),
-          409: openApiDocumentJsonSchema(v2ErrorSchema, 'output'),
-          500: openApiDocumentJsonSchema(v2ErrorSchema, 'output'),
-        },
+      method: 'GET',
+      path: '/sessions',
+      querystring: v2SessionsListQuerySchema,
+      success: { data: v2SessionPageSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.PAGE_TOKEN_MISMATCH]: {},
       },
+      description:
+        'List sessions with domain-grouped metadata (workspace / meta / activity; git via include=git). Opaque-cursor pagination: page_token binds the first page’s query conditions.',
+      tags: ['v2-sessions'],
     },
     async (req, reply) => {
-      try {
-        const parsed = v2SessionsListQuerySchema.safeParse(req.query);
-        if (!parsed.success) {
-          const issue = parsed.error.issues[0];
-          const path = issue !== undefined && issue.path.length > 0 ? `${issue.path.join('.')}: ` : '';
-          throw new V2RequestError(400, 'invalid_param', `${path}${issue?.message ?? 'invalid query'}`);
-        }
-        const raw = parsed.data;
+      const raw = req.query;
 
-        // `include` — comma-separated opt-in expensive domains; unknown
-        // domains are rejected so a typo never silently drops paid-for data.
-        const includes = (raw.include ?? '')
-          .split(',')
-          .map((value) => value.trim())
-          .filter((value) => value.length > 0);
-        for (const domain of includes) {
-          if (domain !== 'git') {
-            throw new V2RequestError(400, 'invalid_param', `include: unknown domain '${domain}'`);
-          }
-        }
+      const query: NormalizedQuery = {
+        workspaceFilter: asArray(raw['workspace.id']),
+        statuses: asArray(raw['activity.status']),
+        updatedAfter: raw['meta.updated_after'],
+        archived: raw['meta.archived'] ?? 'false',
+        sort: raw.sort ?? 'meta.updated_at_desc',
+        includeGit: includeDomains(raw.include).includes('git'),
+        pageSize: raw.page_size ?? DEFAULT_PAGE_SIZE,
+      };
 
-        const query: NormalizedQuery = {
-          workspaceFilter: raw['workspace.id'],
-          statuses: raw['activity.status'],
-          updatedAfter: raw['meta.updated_after'],
-          archived: raw['meta.archived'] ?? 'false',
-          sort: raw.sort ?? 'meta.updated_at_desc',
-          includeGit: includes.includes('git'),
-          pageSize: raw.page_size ?? DEFAULT_PAGE_SIZE,
-        };
-
-        const fingerprint = queryFingerprint(query);
-        let cursor: readonly [number, string] | undefined;
-        if (raw.page_token !== undefined) {
+      const fingerprint = queryFingerprint(query);
+      let cursor: readonly [number, string] | undefined;
+      if (raw.page_token !== undefined) {
+        try {
           cursor = decodePageToken(raw.page_token, fingerprint);
-        }
-
-        // Workspace filter: each requested id expands to its full alias set
-        // (legacy split buckets list as one workspace); unknown ids resolve
-        // to themselves and simply match nothing.
-        let workspaceIds: string[] | undefined;
-        if (query.workspaceFilter !== undefined) {
-          const aliases = core.accessor.get(IWorkspaceAliases);
-          const sets = await Promise.all(
-            query.workspaceFilter.map((id) => aliases.resolveAliasIds(id)),
-          );
-          workspaceIds = [...new Set(sets.flat())];
-        }
-
-        const page = await core.accessor.get(ISessionIndex).listRecent({
-          workspaceIds,
-          includeArchived: query.archived !== 'false',
-        });
-
-        // Live activity facts are read at most once per session; a cold
-        // session resolves to the non-busy defaults (→ `idle`).
-        const factsById = new Map<string, SessionFacts>();
-        const factsOf = (id: string): SessionFacts => {
-          let facts = factsById.get(id);
-          if (facts === undefined) {
-            facts = resolveSessionFacts(core, id);
-            factsById.set(id, facts);
+        } catch (error) {
+          if (error instanceof PageTokenMismatchError) {
+            reply.send(errEnvelope(ErrorCode.PAGE_TOKEN_MISMATCH, error.message, req.id));
+            return;
           }
-          return facts;
-        };
-
-        const filtered = page.items.filter((summary) => {
-          if (query.archived === 'true' && !summary.archived) return false;
-          if (query.updatedAfter !== undefined && summary.updatedAt < query.updatedAfter) {
-            return false;
-          }
-          if (
-            query.statuses !== undefined &&
-            !query.statuses.includes(mapActivityStatus(factsOf(summary.id)))
-          ) {
-            return false;
-          }
-          return true;
-        });
-
-        const comparator = makeComparator(query.sort);
-        const sorted = filtered.toSorted(comparator);
-
-        let start = 0;
-        if (cursor !== undefined) {
-          const [cursorKey, cursorId] = cursor;
-          // The comparator only reads the sort key + id, so a synthetic
-          // cursor item pins the keyset position in any sort order.
-          const cursorItem = {
-            id: cursorId,
-            updatedAt: cursorKey,
-            createdAt: cursorKey,
-          } as SessionSummary;
-          start = sorted.findIndex((item) => comparator(item, cursorItem) > 0);
-          if (start === -1) start = sorted.length;
+          throw error;
         }
-
-        const window = sorted.slice(start, start + query.pageSize);
-        const hasMore = start + query.pageSize < sorted.length;
-        const lastServed = window.at(-1);
-        const nextPageToken =
-          hasMore && lastServed !== undefined
-            ? encodePageToken(fingerprint, sortKeyOf(query.sort)(lastServed), lastServed.id)
-            : null;
-
-        // cwd: the session's own frozen value wins; the registry back-fills
-        // sessions persisted before cwd was stored; unrecoverable → null.
-        const roots = new Map(
-          (await core.accessor.get(IWorkspaceService).list()).map(
-            (workspace) => [workspace.id, workspace.root] as const,
-          ),
-        );
-        const cwdOf = (summary: SessionSummary): string | null =>
-          summary.cwd ?? roots.get(summary.workspaceId) ?? null;
-
-        let gitByCwd: ReadonlyMap<string, V2GitDomain> | undefined;
-        if (query.includeGit) {
-          const cwds = new Set<string>();
-          for (const summary of window) {
-            const cwd = cwdOf(summary);
-            if (cwd !== null) cwds.add(cwd);
-          }
-          gitByCwd = await gitResolver.resolveAll(cwds);
-        }
-
-        const items: V2SessionWire[] = window.map((summary) => {
-          const cwd = cwdOf(summary);
-          return {
-            id: summary.id,
-            workspace: { id: summary.workspaceId, cwd },
-            meta: {
-              title: summary.title ?? null,
-              last_prompt: summary.lastPrompt ?? null,
-              created_at: summary.createdAt,
-              updated_at: summary.updatedAt,
-              archived: summary.archived,
-            },
-            activity: { status: mapActivityStatus(factsOf(summary.id)) },
-            git:
-              gitByCwd === undefined
-                ? undefined
-                : ((cwd !== null ? gitByCwd.get(cwd) : undefined) ?? GIT_DOMAIN_UNAVAILABLE),
-          };
-        });
-
-        reply.code(200).send({ items, has_more: hasMore, next_page_token: nextPageToken });
-      } catch (error) {
-        if (error instanceof V2RequestError) {
-          reply.code(error.status).send({ error: { code: error.code, message: error.message } });
-          return;
-        }
-        requestLog(req)?.error({ err: error }, 'v2 sessions list failed');
-        reply.code(500).send({
-          error: {
-            code: 'internal',
-            message: error instanceof Error ? error.message : String(error),
-          },
-        });
       }
+
+      // Workspace filter: each requested id expands to its full alias set
+      // (legacy split buckets list as one workspace); unknown ids resolve
+      // to themselves and simply match nothing.
+      let workspaceIds: string[] | undefined;
+      if (query.workspaceFilter !== undefined) {
+        const aliases = core.accessor.get(IWorkspaceAliases);
+        const sets = await Promise.all(
+          query.workspaceFilter.map((id) => aliases.resolveAliasIds(id)),
+        );
+        workspaceIds = [...new Set(sets.flat())];
+      }
+
+      const page = await core.accessor.get(ISessionIndex).listRecent({
+        workspaceIds,
+        includeArchived: query.archived !== 'false',
+      });
+
+      // Live activity facts are read at most once per session; a cold
+      // session resolves to the non-busy defaults (→ `idle`).
+      const factsById = new Map<string, SessionFacts>();
+      const factsOf = (id: string): SessionFacts => {
+        let facts = factsById.get(id);
+        if (facts === undefined) {
+          facts = resolveSessionFacts(core, id);
+          factsById.set(id, facts);
+        }
+        return facts;
+      };
+
+      const filtered = page.items.filter((summary) => {
+        if (query.archived === 'true' && !summary.archived) return false;
+        if (query.updatedAfter !== undefined && summary.updatedAt < query.updatedAfter) {
+          return false;
+        }
+        if (
+          query.statuses !== undefined &&
+          !query.statuses.includes(mapActivityStatus(factsOf(summary.id)))
+        ) {
+          return false;
+        }
+        return true;
+      });
+
+      const comparator = makeComparator(query.sort);
+      const sorted = filtered.toSorted(comparator);
+
+      let start = 0;
+      if (cursor !== undefined) {
+        const [cursorKey, cursorId] = cursor;
+        // The comparator only reads the sort key + id, so a synthetic
+        // cursor item pins the keyset position in any sort order.
+        const cursorItem = {
+          id: cursorId,
+          updatedAt: cursorKey,
+          createdAt: cursorKey,
+        } as SessionSummary;
+        start = sorted.findIndex((item) => comparator(item, cursorItem) > 0);
+        if (start === -1) start = sorted.length;
+      }
+
+      const window = sorted.slice(start, start + query.pageSize);
+      const hasMore = start + query.pageSize < sorted.length;
+      const lastServed = window.at(-1);
+      const nextPageToken =
+        hasMore && lastServed !== undefined
+          ? encodePageToken(fingerprint, sortKeyOf(query.sort)(lastServed), lastServed.id)
+          : null;
+
+      // cwd: the session's own frozen value wins; the registry back-fills
+      // sessions persisted before cwd was stored; unrecoverable → null.
+      const roots = new Map(
+        (await core.accessor.get(IWorkspaceService).list()).map(
+          (workspace) => [workspace.id, workspace.root] as const,
+        ),
+      );
+      const cwdOf = (summary: SessionSummary): string | null =>
+        summary.cwd ?? roots.get(summary.workspaceId) ?? null;
+
+      let gitByCwd: ReadonlyMap<string, V2GitDomain> | undefined;
+      if (query.includeGit) {
+        const cwds = new Set<string>();
+        for (const summary of window) {
+          const cwd = cwdOf(summary);
+          if (cwd !== null) cwds.add(cwd);
+        }
+        gitByCwd = await gitResolver.resolveAll(cwds);
+      }
+
+      const items: V2SessionWire[] = window.map((summary) => {
+        const cwd = cwdOf(summary);
+        return {
+          id: summary.id,
+          workspace: { id: summary.workspaceId, cwd },
+          meta: {
+            title: summary.title ?? null,
+            last_prompt: summary.lastPrompt ?? null,
+            created_at: summary.createdAt,
+            updated_at: summary.updatedAt,
+            archived: summary.archived,
+          },
+          activity: { status: mapActivityStatus(factsOf(summary.id)) },
+          git:
+            gitByCwd === undefined
+              ? undefined
+              : ((cwd !== null ? gitByCwd.get(cwd) : undefined) ?? GIT_DOMAIN_UNAVAILABLE),
+        };
+      });
+
+      reply.send(okEnvelope({ items, has_more: hasMore, next_page_token: nextPageToken }, req.id));
     },
+  );
+
+  app.get(
+    listRoute.path,
+    listRoute.options,
+    listRoute.handler as Parameters<V2SessionsRouteHost['get']>[2],
   );
 }

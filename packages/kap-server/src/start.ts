@@ -463,7 +463,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           { name: 'models', description: 'Configured model aliases' },
           { name: 'providers', description: 'Configured providers' },
           { name: 'sessions', description: 'Session lifecycle' },
-          { name: 'v2-sessions', description: 'Session list query (API v2, envelope-free)' },
+          { name: 'v2-sessions', description: 'Domain-grouped session list query (API v2)' },
           { name: 'workspaces', description: 'Workspace registry + folder picker' },
           { name: 'messages', description: 'Message history' },
           { name: 'search', description: 'Global message search' },
@@ -507,7 +507,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     dangerousBypassAuth: opts.disableAuth === true,
   });
 
-  // `/api/v2` — envelope-free surface (raw payloads, real HTTP statuses).
+  // `/api/v2` — same envelope conventions as v1, domain-grouped payloads.
   // Mounted after v1; the root auth/host/origin hooks cover it identically.
   await registerApiV2Routes(app, core);
 
