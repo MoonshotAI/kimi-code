@@ -125,6 +125,11 @@ interface SessionState {
   // In-memory message log (mirrors daemon message-log.ts)
   messages: AppMessage[];
 
+  /** True while the main turn's current step is in the retry backoff — the
+   *  last projected `agent.status.updated` carried phase 'retrying'. Gates the
+   *  clear emission so non-retrying phases don't each emit a redundant clear. */
+  retryActive: boolean;
+
   // Subagent lifecycle deltas after spawned only carry subagentId. Keep the
   // spawned metadata here so later updates can replace the full AppTask.
   subagentMeta: Map<string, AppTask>;
@@ -153,6 +158,7 @@ function createSessionState(): SessionState {
     messages: [],
     subagentMeta: new Map(),
     retryReuseMsgId: undefined,
+    retryActive: false,
   };
 }
 
@@ -726,7 +732,13 @@ export function createAgentProjector(): AgentProjector {
             metadata: { origin: turnOrigin as Record<string, unknown> },
           };
           s.messages.push(msg);
+          // Liveness first: it shares this frame's seq with the synthetic
+          // messageCreated, and the reducer's freshness gate only passes the
+          // first same-seq event (the turn.ended arm already orders it first
+          // for the same reason).
+          out.push({ type: 'turnActiveChanged', sessionId, active: true });
           out.push({ type: 'messageCreated', message: cloneMessage(msg) });
+          break;
         }
         // Main-conversation liveness (the working indicator) keys off the main agent's turn
         // boundary directly — only main-agent frames reach this switch arm.
@@ -737,6 +749,14 @@ export function createAgentProjector(): AgentProjector {
       // -----------------------------------------------------------------------
       case 'turn.step.started': {
         const turnId: number = p?.turnId;
+        // A step starting (including a retry's next attempt) means any retry
+        // backoff is over — clear it here too, not only on the next
+        // agent.status.updated phase, so the indicator never narrates a retry
+        // while the model is already producing.
+        if (s.retryActive) {
+          s.retryActive = false;
+          out.push({ type: 'turnRetry', sessionId, retry: undefined });
+        }
         let promptId = s.turnPromptId.get(turnId) ?? s.currentPromptId;
         if (!promptId) {
           // Joined mid-turn (reconnect/resync wiped the binding): synthesize a
@@ -962,6 +982,38 @@ export function createAgentProjector(): AgentProjector {
         if (p?.contextTokens !== undefined) s.contextTokens = p.contextTokens;
         if (p?.maxContextTokens !== undefined) s.contextLimit = p.maxContextTokens;
 
+        // The activity edge maps the main turn's live phase onto this event.
+        // Surface the retry backoff (provider 429/5xx etc.) so the working
+        // indicator can say "retrying (n/max)" instead of looking stuck.
+        const phase = p?.phase as Record<string, unknown> | null | undefined;
+        if (phase !== undefined && phase !== null && phase['kind'] === 'retrying') {
+          s.retryActive = true;
+          out.push({
+            type: 'turnRetry',
+            sessionId,
+            retry: {
+              failedAttempt: numberField(phase, 'failedAttempt') ?? 0,
+              nextAttempt: numberField(phase, 'nextAttempt') ?? 0,
+              maxAttempts: numberField(phase, 'maxAttempts') ?? 0,
+              delayMs: numberField(phase, 'delayMs') ?? 0,
+              errorName: stringField(phase, 'errorName'),
+              statusCode: numberField(phase, 'statusCode'),
+              turnId: numberField(phase, 'turnId'),
+            },
+          });
+        } else if (
+          s.retryActive &&
+          phase !== undefined &&
+          phase !== null &&
+          typeof phase['kind'] === 'string'
+        ) {
+          // Only an explicit non-retrying phase clears the backoff; routine
+          // status frames (model/context/usage) carry no phase and must not
+          // extinguish a live retry.
+          s.retryActive = false;
+          out.push({ type: 'turnRetry', sessionId, retry: undefined });
+        }
+
         out.push({
           type: 'sessionUsageUpdated',
           sessionId,
@@ -1077,6 +1129,25 @@ export function createAgentProjector(): AgentProjector {
 
       // -----------------------------------------------------------------------
       case 'turn.step.retrying': {
+        // Drive the retry label from the raw step frame too — the
+        // agent.status.updated phase is edge-synthesized and can be lost
+        // across a reconnect window. Emitted first in the arm: same-frame
+        // siblings share the seq and the reducer's freshness gate only
+        // passes the first.
+        s.retryActive = true;
+        out.push({
+          type: 'turnRetry',
+          sessionId,
+          retry: {
+            failedAttempt: numberField(p ?? {}, 'failedAttempt') ?? 0,
+            nextAttempt: numberField(p ?? {}, 'nextAttempt') ?? 0,
+            maxAttempts: numberField(p ?? {}, 'maxAttempts') ?? 0,
+            delayMs: numberField(p ?? {}, 'delayMs') ?? 0,
+            errorName: stringField(p ?? {}, 'errorName'),
+            statusCode: numberField(p ?? {}, 'statusCode'),
+            turnId: typeof p?.turnId === 'number' ? p.turnId : undefined,
+          },
+        });
         // The step's stream restarts from offset 0. Reuse the abandoned
         // bubble instead of stacking a new one: strip its streamed parts and
         // keep the id in retryReuseMsgId so the retried step.started refills

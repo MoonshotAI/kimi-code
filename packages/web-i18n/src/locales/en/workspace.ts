@@ -52,6 +52,6 @@ export default {
   awaitingAnswerTitle: 'A question is waiting for your answer',
   awaitingPermission: 'Approve',
   awaitingPermissionTitle: 'An action is waiting for your approval',
-  aborted: 'Stopped',
-  abortedTitle: 'This session was interrupted before finishing',
+  aborted: 'Failed',
+  abortedTitle: "This session's latest turn ended on an error",
 } as const;

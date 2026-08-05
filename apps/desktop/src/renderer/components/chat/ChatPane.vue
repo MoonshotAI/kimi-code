@@ -18,7 +18,7 @@ import MediaLightbox from './MediaLightbox.vue';
 import MediaThumb from './MediaThumb.vue';
 import AttachmentChip from './AttachmentChip.vue';
 import WorkingIndicator from './WorkingIndicator.vue';
-import { Icon, Kbd, Spinner } from '@moonshot-ai/web-ui';
+import { Icon, Kbd, Spinner, Button } from '@moonshot-ai/web-ui';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import { openFileAttachment } from '../../lib/openFileAttachment';
@@ -133,6 +133,20 @@ const props = withDefaults(
      */
     interruptedTurnId?: string | null;
     /**
+     * The session's latest main turn ended 'failed' (model request error) and
+     * the session has been idle since — renders a persistent failed-turn card
+     * with a resume action at the tail of the transcript.
+     */
+    turnFailed?: boolean;
+    /** The failed turn's wire error: the detail line (message), the
+        diagnostics meta (code / HTTP status / request id), and the card's
+        title kind (e.g. 'loop.max_steps_exceeded' is not a model failure). */
+    turnError?: { code?: string; message?: string; statusCode?: number; requestId?: string } | null;
+    /** Live step-retry state of the running main turn (provider failure
+        backoff) — the working indicator narrates the retry instead of
+        looking stuck. */
+    turnRetry?: { nextAttempt: number; maxAttempts: number } | null;
+    /**
      * @deprecated No longer used — Composer is rendered by ConversationPane.
      */
   }>(),
@@ -151,6 +165,9 @@ const props = withDefaults(
     queued: () => [],
     undoHintTurnId: null,
     interruptedTurnId: null,
+    turnFailed: false,
+    turnError: null,
+    turnRetry: null,
   },
 );
 
@@ -237,6 +254,12 @@ const showWorking = computed(() => props.working);
 // content — so the phase keys off output (text / thinking / tools), not the
 // turn's existence.
 const workingLabel = computed(() => {
+  // A step backing off for a retry (provider 429/5xx…) keeps the turn alive —
+  // say so instead of a generic "working" that reads as a hang.
+  const retry = props.turnRetry;
+  if (retry !== null && retry !== undefined) {
+    return t('conversation.workingRetry', { n: retry.nextAttempt, max: retry.maxAttempts });
+  }
   const last = props.turns.at(-1);
   const hasOutput =
     last?.role === 'assistant' &&
@@ -244,6 +267,27 @@ const workingLabel = computed(() => {
       (last.thinking?.trim().length ?? 0) > 0 ||
       (last.tools?.length ?? 0) > 0);
   return t(hasOutput ? 'conversation.working' : 'conversation.requesting');
+});
+
+// The card title follows the failure kind: a step-limit stop is not a
+// model-request failure. The code is the wire contract (kap-server
+// KimiErrorCode); everything else keeps the generic model-failure copy.
+const turnFailedTitle = computed(() =>
+  props.turnError?.code === 'loop.max_steps_exceeded'
+    ? t('conversation.turnFailedMaxSteps')
+    : t('conversation.turnFailed'),
+);
+
+// Diagnostics meta row — the same facts the error toast used to carry, kept
+// on the persistent card so foreground failures stay troubleshootable.
+const turnErrorMeta = computed(() => {
+  const error = props.turnError;
+  if (!error) return '';
+  const parts: string[] = [];
+  if (error.code !== undefined && error.code.length > 0) parts.push(error.code);
+  if (error.statusCode !== undefined) parts.push(`HTTP ${error.statusCode}`);
+  if (error.requestId !== undefined && error.requestId.length > 0) parts.push(error.requestId);
+  return parts.join(' · ');
 });
 
 const emit = defineEmits<{
@@ -270,6 +314,9 @@ const emit = defineEmits<{
   editQueued: [index: number];
   /** Drag-to-reorder a queued message within the active session's queue. */
   reorderQueue: [payload: { from: number; to: number }];
+  /** The failed-turn card's continue action — the parent routes it through the
+   *  normal submit path as a short "continue" prompt. */
+  resumeTurn: [];
 }>();
 
 // ---- Inline queue (pending messages while running) ------------------------
@@ -990,6 +1037,21 @@ function streamingTailIndex(turn: ChatTurn): number | null {
       </div>
     </template>
 
+    <!-- Model-request failure (e.g. provider 429 after retry exhaustion): the
+         turn died and nothing resumes it on its own — a persistent card, since
+         the transient error toast alone leaves a silently dead session. -->
+    <div v-if="turnFailed" class="turn-failed" role="alert">
+      <span class="tf-chip" aria-hidden="true"><Icon name="alert-triangle" size="sm" /></span>
+      <div class="tf-main">
+        <span class="tf-title">{{ turnFailedTitle }}</span>
+        <span v-if="turnError?.message" class="tf-sub" :title="turnError.message">{{ turnError.message }}</span>
+        <span v-if="turnErrorMeta" class="tf-meta" :title="turnErrorMeta">{{ turnErrorMeta }}</span>
+      </div>
+      <Button v-if="!readOnly" variant="secondary" size="sm" @click="emit('resumeTurn')">
+        {{ t('conversation.turnFailedResume') }}
+      </Button>
+    </div>
+
     <!-- Pending approvals are rendered in the bottom dock (ConversationPane),
          alongside questions, so both blocking prompts share one position. -->
 
@@ -1420,6 +1482,69 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 }
 .cd-view { color: var(--color-accent); }
 .cd-btn:hover .cd-view { text-decoration: underline; }
+
+/* Failed-turn card — the persistent counterpart of the transient error toast:
+   the turn died on a model-request failure and nothing resumes it by itself.
+   Shell follows the notification card's danger status token pair (§04). */
+.chat > .turn-failed {
+  margin-top: var(--chat-turn-gap);
+}
+.chat > .turn-failed:first-child {
+  margin-top: 0;
+}
+.turn-failed {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: var(--p-hairline) solid var(--color-danger-bd);
+  border-radius: var(--radius-lg);
+  background: var(--color-danger-soft);
+  box-shadow: var(--shadow-xs);
+  animation: kimi-card-in var(--duration-slow) var(--ease-out);
+}
+.tf-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-6);
+  height: var(--space-6);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-xs);
+  flex: none;
+  color: var(--color-danger);
+}
+.tf-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.tf-title {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
+  line-height: var(--leading-normal);
+}
+.tf-sub {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  line-height: var(--leading-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tf-meta {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+  line-height: var(--leading-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Goal-continuation provenance line — the target glyph shared with the Goal
    tool (this turn belongs to the goal), faint 12px, flush with the stream's

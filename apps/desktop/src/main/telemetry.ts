@@ -144,7 +144,7 @@ export async function wireDesktopTelemetry(
     startDesktopSystemMetrics({
       sessionCount: async () => {
         const workspaces = await core.accessor.get(IWorkspaceService).list();
-        return core.accessor.get(ISessionIndex).countActive(workspaces.map((w) => w.id));
+        return core.accessor.get(ISessionIndex).count({ workspaceIds: workspaces.map((w) => w.id) });
       },
     });
     // Product-level first launch, gated by the ui-state marker (not by the

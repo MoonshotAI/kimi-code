@@ -65,6 +65,13 @@ const props = defineProps<{
   /** End reason of the session's latest turn (server-persisted) — 'cancelled'
    *  marks the last assistant turn as manually stopped in the transcript. */
   lastTurnReason?: 'completed' | 'cancelled' | 'failed' | null;
+  /** Terminal error of the session's latest main turn, captured live from the
+   *  agent's error event — the failed-turn card's title kind, detail line and
+   *  diagnostics meta. */
+  turnError?: { code?: string; message?: string; statusCode?: number; requestId?: string } | null;
+  /** Live step-retry state of the running main turn — the working indicator
+   *  narrates the retry backoff instead of looking stuck. */
+  turnRetry?: { nextAttempt: number; maxAttempts: number } | null;
   /** A modal/overlay layer is open above the conversation — it owns Escape, so
    *  the pane's Esc-to-interrupt stays quiet while it is open. */
   overlayOpen?: boolean;
@@ -1852,6 +1859,24 @@ const interruptedTurnId = computed<string | null>(() => {
   return last?.role === 'assistant' && turnHasOutput(last) ? last.id : null;
 });
 
+// The failed-turn card pins to the transcript tail while the session sits idle
+// on a model-request failure (the turn may have produced no assistant output,
+// so unlike the interrupted marker it is not keyed to an assistant turn).
+const turnFailed = computed<boolean>(
+  () =>
+    props.lastTurnReason === 'failed' &&
+    !props.working &&
+    !props.turnActive &&
+    props.turns.length > 0,
+);
+
+// The card's continue action submits a short prompt through the normal path —
+// the same recovery the user would type by hand.
+function handleResumeTurn(): void {
+  followAfterUserAction();
+  emit('submit', { text: t('conversation.turnFailedResumeText'), attachments: [] });
+}
+
 // The hint shows only while the main turn is idle.
 const visibleUndoHintTurnId = computed<string | null>(() =>
   props.working ? null : undoHintTurnId.value,
@@ -2296,6 +2321,10 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
               :queued="queued"
               :undo-hint-turn-id="visibleUndoHintTurnId"
               :interrupted-turn-id="interruptedTurnId"
+              :turn-failed="turnFailed"
+              :turn-error="turnError ?? null"
+              :turn-retry="turnRetry ?? null"
+              @resume-turn="handleResumeTurn"
               @open-file="emit('openFile', $event)"
               @open-media="emit('openMedia', $event)"
               @open-turn-diff="emit('openTurnDiff', $event)"

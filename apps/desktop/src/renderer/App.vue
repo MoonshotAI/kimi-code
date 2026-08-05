@@ -1452,6 +1452,8 @@ function openPr(url: string): void {
       :upload-image="client.uploadImage"
       :working="client.working.value"
       :last-turn-reason="activeLastTurnReason"
+      :turn-error="client.activeTurnError.value ?? null"
+      :turn-retry="client.activeTurnRetry.value ?? null"
       :starting="client.isStartingFirstPrompt.value"
       :file-reload-key="client.activeSessionId.value"
       :session-loading="client.sessionLoading.value"

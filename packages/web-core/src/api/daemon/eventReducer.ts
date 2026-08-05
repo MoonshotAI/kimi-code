@@ -17,6 +17,8 @@ import type {
   AppMessageContent,
   AppNotice,
   AppNoticeDetail,
+  AppTurnError,
+  AppTurnRetry,
   AppWarning,
   AppQuestionRequest,
   AppSession,
@@ -136,6 +138,15 @@ export interface KimiClientState {
    *  turn.ended already provided the recency moment, so promptAborted skips
    *  its (no-turn) bump. Cleared when the next main turn starts. */
   turnEndedPromptIdBySession: Record<string, string>;
+  /** Latest main-turn terminal error per session, captured from the agent's
+   *  `error` event. Drives the persistent failed-turn card in the conversation
+   *  (the warning toast alone is transient); cleared when the next main turn
+   *  starts. */
+  turnErrorBySession: Record<string, AppTurnError>;
+  /** Live step-retry state per session (present only while the main turn's
+   *  current step is backing off before a retry). Drives the working
+   *  indicator's retry label. */
+  turnRetryBySession: Record<string, AppTurnRetry>;
   compactionBySession: Record<string, CompactionStatus>;
   config?: AppConfig | null;
   warnings: AppWarning[];
@@ -155,6 +166,8 @@ export function createInitialState(): KimiClientState {
     lastSeqBySession: {},
     turnActiveBySession: {},
     turnEndedPromptIdBySession: {},
+    turnErrorBySession: {},
+    turnRetryBySession: {},
     compactionBySession: {},
     warnings: [],
   };
@@ -184,6 +197,8 @@ function cloneState(s: KimiClientState): KimiClientState {
     lastSeqBySession: { ...s.lastSeqBySession },
     turnActiveBySession: { ...s.turnActiveBySession },
     turnEndedPromptIdBySession: { ...s.turnEndedPromptIdBySession },
+    turnErrorBySession: { ...s.turnErrorBySession },
+    turnRetryBySession: { ...s.turnRetryBySession },
     compactionBySession: { ...s.compactionBySession },
     warnings: [...s.warnings],
   };
@@ -399,6 +414,8 @@ export function reduceAppEvent(
       delete next.lastSeqBySession[id];
       delete next.turnActiveBySession[id];
       delete next.turnEndedPromptIdBySession[id];
+      delete next.turnErrorBySession[id];
+      delete next.turnRetryBySession[id];
       if (next.activeSessionId === id) {
         next.activeSessionId = undefined;
       }
@@ -407,6 +424,11 @@ export function reduceAppEvent(
 
     // -------------------------------------------------------------------------
     case 'sessionWorkChanged': {
+      // A replayed work_changed (stale seq after a reconnect) carries a stale
+      // busy/liveness/outcome aggregate — applying it could idle a turn that
+      // is actually mid-retry or clear the latest turn outcome. The current
+      // aggregate is restored from the snapshot, so only fresh frames apply.
+      if (!isFreshEvent(state, meta)) break;
       let pendingInteraction: AppSession['pendingInteraction'];
       next.sessions = next.sessions.map((s) => {
         if (s.id !== event.sessionId) return s;
@@ -423,13 +445,11 @@ export function reduceAppEvent(
           lastTurnReason: event.lastTurnReason,
         };
       });
-      if (isFreshEvent(state, meta)) {
-        if (pendingInteraction === 'none') {
-          delete next.approvalsBySession[event.sessionId];
-          delete next.questionsBySession[event.sessionId];
-        } else if (pendingInteraction === 'question') {
-          delete next.approvalsBySession[event.sessionId];
-        }
+      if (pendingInteraction === 'none') {
+        delete next.approvalsBySession[event.sessionId];
+        delete next.questionsBySession[event.sessionId];
+      } else if (pendingInteraction === 'question') {
+        delete next.approvalsBySession[event.sessionId];
       }
       if (event.mainTurnActive === true) {
         next.turnActiveBySession[event.sessionId] = true;
@@ -437,12 +457,13 @@ export function reduceAppEvent(
         // The fallback end-of-turn path: turn.ended was lost (abrupt agent
         // disposal) and this work_changed retires the main turn instead.
         // Give the turn its recency bump — but only when the flag was still
-        // set (a normal turn.ended already cleared it and bumped) and the
-        // event is fresh.
-        if (state.turnActiveBySession[event.sessionId] && isFreshEvent(state, meta)) {
+        // set (a normal turn.ended already cleared it and bumped).
+        if (state.turnActiveBySession[event.sessionId]) {
           bumpSessionRecency(next, event.sessionId);
         }
         delete next.turnActiveBySession[event.sessionId];
+        // A retired turn cannot be mid-retry — drop the backoff state too.
+        delete next.turnRetryBySession[event.sessionId];
       }
       break;
     }
@@ -882,6 +903,11 @@ export function reduceAppEvent(
 
     // -------------------------------------------------------------------------
     case 'turnActiveChanged': {
+      // Replays after a reconnect/resync re-deliver old turn boundaries; the
+      // current liveness comes from the snapshot, so a stale frame must not
+      // move any of this state (a stale start would otherwise hide the failed
+      // card behind a phantom "working").
+      if (!isFreshEvent(state, meta)) break;
       next.sessions = next.sessions.map((session) =>
         session.id === event.sessionId
           ? { ...session, mainTurnActive: event.active }
@@ -890,16 +916,31 @@ export function reduceAppEvent(
       if (event.active) {
         next.turnActiveBySession[event.sessionId] = true;
         delete next.turnEndedPromptIdBySession[event.sessionId];
+        // A new main turn supersedes the previous turn's terminal error and
+        // any leftover retry state.
+        delete next.turnErrorBySession[event.sessionId];
+        delete next.turnRetryBySession[event.sessionId];
       } else {
         delete next.turnActiveBySession[event.sessionId];
+        delete next.turnRetryBySession[event.sessionId];
         if (event.promptId !== undefined) {
           next.turnEndedPromptIdBySession[event.sessionId] = event.promptId;
         }
-        // The main turn's end is one of the coarse recency moments — but only
-        // a fresh one; a stale/replayed turn.ended must not float the session.
-        if (isFreshEvent(state, meta)) {
-          bumpSessionRecency(next, event.sessionId);
-        }
+        // The main turn's end is one of the coarse recency moments.
+        bumpSessionRecency(next, event.sessionId);
+      }
+      break;
+    }
+
+    case 'turnRetry': {
+      // The main turn's current step entered/left the retry backoff. Fresh
+      // events only: a replayed old phase frame must not resurrect an earlier
+      // turn's retry progress nor clear the current one.
+      if (!isFreshEvent(state, meta)) break;
+      if (event.retry === undefined) {
+        delete next.turnRetryBySession[event.sessionId];
+      } else {
+        next.turnRetryBySession[event.sessionId] = event.retry;
       }
       break;
     }
@@ -915,15 +956,41 @@ export function reduceAppEvent(
         message?: string;
         name?: string;
         details?: Record<string, unknown>;
+        retryable?: boolean;
         type?: string;
       } | null;
       if (raw && raw._noop === true) {
         // No-op streaming/tool event — seq already advanced, nothing else to do
       } else if (raw && raw._agentError) {
-        // Surface the agent's real error (e.g. a 429 from the model provider)
-        // as a structured notice: semantic title + raw provider message +
-        // diagnostics (code / HTTP status / request id) for troubleshooting.
-        next.warnings = [...next.warnings, buildAgentErrorNotice(raw, ctx.t)];
+        // Stale replays (reconnect / snapshot rebuild) re-deliver the same
+        // terminal failure; it was surfaced when fresh, so skip both the
+        // record and the toast — otherwise an old provider message could
+        // overwrite a newer failure's details.
+        if (isFreshEvent(state, meta)) {
+          // Agent errors only ever mean "a main turn died" (the loop's terminal
+          // failure is the single publisher). Record it per session so the
+          // conversation can render a persistent failed-turn card.
+          if (meta.sessionId !== undefined) {
+            const details = raw.details ?? {};
+            next.turnErrorBySession[meta.sessionId] = {
+              code: raw.code,
+              message: raw.message,
+              name: raw.name,
+              retryable: raw.retryable,
+              statusCode: typeof details['statusCode'] === 'number' ? details['statusCode'] : undefined,
+              requestId: typeof details['requestId'] === 'string' ? details['requestId'] : undefined,
+            };
+          }
+          // The card covers the session the user is looking at, so the
+          // transient toast is only worth showing for background sessions —
+          // it is their only failure signal (sidebar marker aside).
+          if (meta.sessionId === undefined || meta.sessionId !== state.activeSessionId) {
+            // Surface the agent's real error (e.g. a 429 from the model provider)
+            // as a structured notice: semantic title + raw provider message +
+            // diagnostics (code / HTTP status / request id) for troubleshooting.
+            next.warnings = [...next.warnings, buildAgentErrorNotice(raw, ctx.t)];
+          }
+        }
       } else if (raw && raw._agentWarning) {
         const msg = raw.message ?? raw.code ?? ctx.t('warnings.agentWarningFallback');
         next.warnings = [...next.warnings, `${ctx.t('warnings.noteLabel')}: ${msg}`];

@@ -286,3 +286,179 @@ describe('reduceAppEvent taskCreated replacement', () => {
     expect(state.tasksBySession[SID]![0]!.agentId).toBe('agent-1');
   });
 });
+
+describe('turnErrorBySession', () => {
+  const agentError = {
+    type: 'unknown' as const,
+    raw: {
+      _agentError: true,
+      code: 'provider.rate_limit',
+      message: '429 The engine is currently overloaded, please try again later',
+      name: 'APIProviderRateLimitError',
+      details: { statusCode: 429 },
+      retryable: true,
+    },
+  };
+
+  it('records the agent error per session so the failed-turn card survives the toast', () => {
+    const state = reduceAppEvent(createInitialState(), agentError, meta());
+    expect(state.turnErrorBySession[SID]).toEqual({
+      code: 'provider.rate_limit',
+      message: '429 The engine is currently overloaded, please try again later',
+      name: 'APIProviderRateLimitError',
+      retryable: true,
+      statusCode: 429,
+      requestId: undefined,
+    });
+    // A background (non-viewed) session keeps the transient warning toast —
+    // it is the only failure signal there.
+    expect(state.warnings).toHaveLength(1);
+  });
+
+  it('ignores stale replays of an already-surfaced error', () => {
+    let state = reduceAppEvent(createInitialState(), agentError, meta());
+    // A replayed frame with an older seq and different content must not
+    // overwrite the recorded failure nor re-toast.
+    const stale = {
+      type: 'unknown' as const,
+      raw: { _agentError: true, code: 'provider.connection_error', message: 'stale copy' },
+    };
+    state = reduceAppEvent(state, stale, { sessionId: SID, seq: 0 });
+    expect(state.turnErrorBySession[SID]?.code).toBe('provider.rate_limit');
+    expect(state.warnings).toHaveLength(1);
+  });
+
+  it('suppresses the toast when the failed session is the one being viewed', () => {
+    const initial = createInitialState();
+    initial.activeSessionId = SID;
+    const state = reduceAppEvent(initial, agentError, meta());
+    expect(state.turnErrorBySession[SID]?.code).toBe('provider.rate_limit');
+    expect(state.warnings).toHaveLength(0);
+  });
+
+  it('clears the recorded error when the next main turn starts', () => {
+    let state = reduceAppEvent(createInitialState(), agentError, meta());
+    state = reduceAppEvent(
+      state,
+      { type: 'turnActiveChanged', sessionId: SID, active: true },
+      meta(),
+    );
+    expect(state.turnErrorBySession[SID]).toBeUndefined();
+  });
+
+  it('keeps the recorded error when the turn merely ends', () => {
+    let state = reduceAppEvent(createInitialState(), agentError, meta());
+    state = reduceAppEvent(
+      state,
+      { type: 'turnActiveChanged', sessionId: SID, active: false },
+      meta(),
+    );
+    expect(state.turnErrorBySession[SID]?.code).toBe('provider.rate_limit');
+  });
+
+  it('drops the record when the session is deleted', () => {
+    let state = reduceAppEvent(createInitialState(), agentError, meta());
+    state = reduceAppEvent(state, { type: 'sessionDeleted', sessionId: SID }, meta());
+    expect(state.turnErrorBySession[SID]).toBeUndefined();
+  });
+});
+
+describe('turnRetryBySession', () => {
+  const retry = { failedAttempt: 1, nextAttempt: 2, maxAttempts: 3, delayMs: 1000, statusCode: 429 };
+
+  it('records the live retry state and clears it when the backoff ends', () => {
+    let state = reduceAppEvent(createInitialState(), { type: 'turnRetry', sessionId: SID, retry }, meta());
+    expect(state.turnRetryBySession[SID]).toEqual(retry);
+    state = reduceAppEvent(state, { type: 'turnRetry', sessionId: SID, retry: undefined }, meta());
+    expect(state.turnRetryBySession[SID]).toBeUndefined();
+  });
+
+  it('clears the retry state when the turn ends', () => {
+    let state = reduceAppEvent(createInitialState(), { type: 'turnRetry', sessionId: SID, retry }, meta());
+    state = reduceAppEvent(
+      state,
+      { type: 'turnActiveChanged', sessionId: SID, active: false },
+      meta(),
+    );
+    expect(state.turnRetryBySession[SID]).toBeUndefined();
+  });
+
+  it('drops the retry state with the session', () => {
+    let state = reduceAppEvent(createInitialState(), { type: 'turnRetry', sessionId: SID, retry }, meta());
+    state = reduceAppEvent(state, { type: 'sessionDeleted', sessionId: SID }, meta());
+    expect(state.turnRetryBySession[SID]).toBeUndefined();
+  });
+});
+
+describe('freshness gates on turn failure/retry state', () => {
+  const retry = { failedAttempt: 1, nextAttempt: 2, maxAttempts: 3, delayMs: 1000 };
+
+  it('ignores a stale turnRetry write', () => {
+    let state = reduceAppEvent(createInitialState(), { type: 'turnRetry', sessionId: SID, retry }, meta());
+    expect(state.turnRetryBySession[SID]).toEqual(retry);
+    // A replayed older write must not resurrect an earlier turn's retry.
+    state = reduceAppEvent(
+      state,
+      { type: 'turnRetry', sessionId: SID, retry: { ...retry, nextAttempt: 9 } },
+      { sessionId: SID, seq: 0 },
+    );
+    expect(state.turnRetryBySession[SID]?.nextAttempt).toBe(2);
+  });
+
+  it('ignores a stale turnRetry clear against a live retry', () => {
+    let state = reduceAppEvent(createInitialState(), { type: 'turnRetry', sessionId: SID, retry }, meta());
+    state = reduceAppEvent(
+      state,
+      { type: 'turnRetry', sessionId: SID, retry: undefined },
+      { sessionId: SID, seq: 0 },
+    );
+    expect(state.turnRetryBySession[SID]).toEqual(retry);
+  });
+
+  it('keeps the recorded failure when a stale turn start replays', () => {
+    const agentError = {
+      type: 'unknown' as const,
+      raw: { _agentError: true, code: 'provider.rate_limit', message: '429' },
+    };
+    let state = reduceAppEvent(createInitialState(), agentError, meta());
+    expect(state.turnErrorBySession[SID]?.code).toBe('provider.rate_limit');
+    state = reduceAppEvent(
+      state,
+      { type: 'turnActiveChanged', sessionId: SID, active: true },
+      { sessionId: SID, seq: 0 },
+    );
+    expect(state.turnErrorBySession[SID]?.code).toBe('provider.rate_limit');
+  });
+});
+
+describe('sessionWorkChanged fallback freshness', () => {
+  it('does not clear a live retry on a stale work_changed replay', () => {
+    const retry = { failedAttempt: 1, nextAttempt: 2, maxAttempts: 3, delayMs: 1000 };
+    let state = reduceAppEvent(createInitialState(), { type: 'turnRetry', sessionId: SID, retry }, meta());
+    const session = {
+      id: SID,
+      workspaceId: 'w',
+      title: '',
+      createdAt: '',
+      updatedAt: '',
+      busy: true,
+      archived: false,
+      cwd: '/tmp',
+      model: '',
+      thinking: 'high',
+      permission: 'auto',
+      usage: {},
+      lastPrompt: '',
+      messageCount: 0,
+      lastSeq: 0,
+    } as never;
+    state.sessions = [session];
+    // A stale idle work_changed (older seq) must not retire the live retry.
+    state = reduceAppEvent(
+      state,
+      { type: 'sessionWorkChanged', sessionId: SID, busy: false, mainTurnActive: false },
+      { sessionId: SID, seq: 0 },
+    );
+    expect(state.turnRetryBySession[SID]).toEqual(retry);
+  });
+});

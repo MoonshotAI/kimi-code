@@ -44,6 +44,38 @@ export interface AppNotice {
 
 export type AppWarning = string | AppNotice;
 
+/**
+ * The latest main-turn terminal error of a session (e.g. a provider 429 after
+ * step retries are exhausted). Recorded from the agent's session-scoped `error`
+ * event so the conversation can render a persistent failed-turn card; cleared
+ * when the next main turn starts. Not persisted — after a reload the card
+ * falls back to the generic copy driven by `lastTurnReason` alone.
+ */
+export interface AppTurnError {
+  code?: string;
+  message?: string;
+  name?: string;
+  retryable?: boolean;
+  /** HTTP status from the provider (details.statusCode), when present. */
+  statusCode?: number;
+  /** Provider request id (details.requestId), when present. */
+  requestId?: string;
+}
+
+/** Live retry state of the main turn's current step (the loop's stepRetry
+ *  backoff). Mirrors the wire `agent.status.updated` phase 'retrying'. */
+export interface AppTurnRetry {
+  failedAttempt: number;
+  nextAttempt: number;
+  maxAttempts: number;
+  delayMs: number;
+  errorName?: string;
+  statusCode?: number;
+  /** The turn this backoff belongs to — snapshot rebuilds keep the slice
+   *  only while the in-flight turn still matches it. */
+  turnId?: number;
+}
+
 // ---------------------------------------------------------------------------
 // Session
 // ---------------------------------------------------------------------------
@@ -555,6 +587,11 @@ export type AppEvent =
       promptId?: string;
     }
   | { type: 'goalUpdated'; sessionId: string; goal: AppGoal | null }
+  /** The main turn's current step is backing off before a retry (provider
+   *  429/5xx, connection, timeout). `retry` present = retrying phase entered;
+   *  undefined = left (next attempt started / step completed / turn ended).
+   *  Drives the working indicator's retry label. */
+  | { type: 'turnRetry'; sessionId: string; retry?: AppTurnRetry }
   | { type: 'configChanged'; changedFields: string[]; config: AppConfig }
   | {
       type: 'modelCatalogChanged';

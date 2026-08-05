@@ -78,6 +78,8 @@ import type {
   SessionPlan,
   AppSkill,
   AppTask,
+  AppTurnError,
+  AppTurnRetry,
   AppWarning,
   AppWorkspace,
   ApprovalDecision,
@@ -715,6 +717,8 @@ function forgetSession(sessionId: string): void {
   delete rawState.inFlightBySession[sessionId];
   delete rawState.turnActiveBySession[sessionId];
   delete rawState.turnEndedPromptIdBySession[sessionId];
+  delete rawState.turnErrorBySession[sessionId];
+  delete rawState.turnRetryBySession[sessionId];
   // Drop per-session mode toggles and re-persist so a deleted session's entry
   // doesn't linger in localStorage.
   delete rawState.planModeBySession[sessionId];
@@ -932,6 +936,8 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     lastSeqBySession: rawState.lastSeqBySession,
     turnActiveBySession: rawState.turnActiveBySession,
     turnEndedPromptIdBySession: rawState.turnEndedPromptIdBySession,
+    turnErrorBySession: rawState.turnErrorBySession,
+    turnRetryBySession: rawState.turnRetryBySession,
     compactionBySession: rawState.compactionBySession,
     config: rawState.config,
     warnings: rawState.warnings,
@@ -968,6 +974,8 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   applyRecordDiff(rawState.lastSeqBySession, next.lastSeqBySession);
   applyRecordDiff(rawState.turnActiveBySession, next.turnActiveBySession);
   applyRecordDiff(rawState.turnEndedPromptIdBySession, next.turnEndedPromptIdBySession);
+  applyRecordDiff(rawState.turnErrorBySession, next.turnErrorBySession);
+  applyRecordDiff(rawState.turnRetryBySession, next.turnRetryBySession);
   applyRecordDiff(rawState.compactionBySession, next.compactionBySession);
   if (next.config !== snapshot.config) rawState.config = next.config ?? null;
   if (!shallowEqualArray(next.warnings, snapshot.warnings)) {
@@ -1885,6 +1893,30 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       return 'ok';
     }
 
+    // Every snapshot apply re-seeds liveness from the server: keep the cached
+    // retry only while the snapshot's in-flight turn still owns it — an older
+    // turn's backoff must never narrate a newer one, and a live retry keeps
+    // showing through a re-open (its edge frames won't replay past the
+    // snapshot cursor).
+    const cachedRetry = rawState.turnRetryBySession[sessionId];
+    if (cachedRetry !== undefined && cachedRetry.turnId !== snap.inFlightTurn?.turnId) {
+      delete rawState.turnRetryBySession[sessionId];
+    }
+    if (mustApplySnapshot) {
+      // A forced rebuild means the client lost ground (resync / stale cursor):
+      // cached failure details may belong to a turn we never saw — drop them,
+      // the card falls back to the generic copy rather than narrating the
+      // wrong turn.
+      delete rawState.turnErrorBySession[sessionId];
+    } else if (snap.session.lastTurnReason !== 'failed') {
+      // A fresh snapshot proving the latest turn is not the recorded failure
+      // (a newer turn started, or ended differently) retires the cached
+      // provider details; a 'failed' snapshot keeps them — a same-client
+      // re-open holds prefix continuity and any newer failure's live error
+      // frame replays in and overwrites on its own.
+      delete rawState.turnErrorBySession[sessionId];
+    }
+
     const snapUsagePlaceholder = isPlaceholderSessionUsage(snap.session.usage);
     updateSession(sessionId, (s) => ({
       ...snap.session,
@@ -2465,6 +2497,27 @@ const turnActive = computed<boolean>(() => {
     (rawState.turnActiveBySession[sid] ?? false) ||
     (rawState.sessions.find((session) => session.id === sid)?.mainTurnActive ?? false)
   );
+});
+
+/** The active session's latest main-turn terminal error (provider failure
+ *  after retry exhaustion), captured live from the agent's error event. Drives
+ *  the persistent failed-turn card; undefined once a new turn starts. */
+const activeTurnError = computed<AppTurnError | undefined>(() => {
+  const sid = rawState.activeSessionId;
+  if (!sid) return undefined;
+  return rawState.turnErrorBySession[sid];
+});
+
+/** The active session's live step-retry state (present only while the main
+ *  turn's current step backs off before a retry — e.g. provider 429). Drives
+ *  the working indicator's "retrying (n/max)" label. */
+const activeTurnRetry = computed<AppTurnRetry | undefined>(() => {
+  const sid = rawState.activeSessionId;
+  if (!sid) return undefined;
+  // A retry backoff only exists inside a live main turn — never surface one
+  // for a turn the snapshot/baseline paths already retired.
+  if (!turnActive.value) return undefined;
+  return rawState.turnRetryBySession[sid];
 });
 
 // Turns run through an incremental projector: unchanged turns keep their object
@@ -3419,6 +3472,8 @@ export function useKimiWebClient() {
     questions,
     activity,
     turnActive,
+    activeTurnError,
+    activeTurnRetry,
     inFlight,
     working,
     isStartingFirstPrompt,

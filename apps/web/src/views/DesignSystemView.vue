@@ -1295,6 +1295,22 @@ onUnmounted(() => {
               <li><b>A sub-agent delegation is an identity card</b> — never a quiet line: the card carries the TASK as its title and the agent type as a quiet meta line, while the orchestrator's full prompt stays out of the stream on purpose. The whole card is one action (the quiet shell vocabulary: raised surface, hairline edge, large radius, no shadow): click to open the subagent's live progress in the side panel — there is no in-stream expansion.</li>
               <li>Status keeps the shared vocabulary: running (pulsing accent dot) / done (green ✓) / failed (red ✗), at the line's right edge. <b>Only two types keep a full card</b>: <code>Question</code> and <code>Approval</code> — they genuinely need the user's attention. The Swarm composite keeps one quiet card (raised surface, 0.5px hairline, large radius) for its phase overview + member accordion.</li>
               <li><b>A task notification is a status card, not a quiet line</b> (<code>NotificationCard.vue</code>): the hidden <code>&lt;notification&gt;</code> injections (background-task / sub-agent settlement) render where they landed in the turn — a 28px status chip + title/sub head tinted with the toast status token pairs (completed → success, failed / timed_out / lost → danger, killed → warning, else neutral surface), expanding in place to the fields, the body, an output-file row (copy path) and the raw payload. ≥2 CONSECUTIVE notifications merge into one neutral group card (count + per-item status dots + compact rows, each expanding on its own). Notifications break the activity run but are never turn boundaries, and they <b>never fold</b> — a notification is an event worth noticing, not process noise, so it punches out of the turn fold and renders right after the fold row, in order.</li>
+              <li><b>A turn that dies on a model-request failure leaves a persistent terminal card</b> at the transcript tail (ChatPane's <code>.turn-failed</code>): the notification card's danger shell (danger-soft surface, danger hairline, 24px status chip with the warning glyph) carrying a title keyed by the wire error kind (model failure vs step-limit stop), the provider message as a muted sub, a mono diagnostics meta (code · HTTP status · request id), and exactly ONE secondary sm action — Continue, which submits a short continue prompt through the normal path. It renders only while the session sits idle on <code>lastTurnReason === 'failed'</code> (a turn with zero assistant output included, so it pins to the tail rather than any assistant row), it is not dismissible, and it vanishes the moment a new turn starts. While the turn is still fighting, the working indicator instead narrates the retry backoff ("retrying n/max" from the live <code>agent.status.updated</code> phase) — a retrying turn never shows the card. The transient error toast now fires only for background sessions; the viewed session's failure is fully covered by the card.</li>
+
+            <div class="stage-wrap">
+              <div class="stage-bar"><span class="st">Turn failed card · persistent terminal marker + one resume action</span></div>
+              <div class="stage p col">
+                <div class="p-turn-failed">
+                  <span class="tf-chip"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M11.9996 7C11.5026 7 11.0996 7.36985 11.0996 7.82609V14.1739C11.0996 14.6301 11.5026 15 11.9996 15C12.4967 15 12.8996 14.6301 12.8996 14.1739V7.82609C12.8996 7.36985 12.4967 7 11.9996 7Z"/><path d="M12.8996 17.1006C12.8996 17.5974 12.4968 18.001 11.9992 18.001C11.5024 18.001 11.0996 17.5974 11.0996 17.1006C11.0996 16.6038 11.5024 16.2002 11.9992 16.2002C12.4968 16.2002 12.8996 16.6038 12.8996 17.1006Z"/><path fill-rule="evenodd" clip-rule="evenodd" d="M14.5108 3.5501C13.3946 1.61676 10.6041 1.61676 9.48786 3.5501L1.69363 17.0501C0.577423 18.9834 1.97269 21.4001 4.20511 21.4001H19.7936C22.026 21.4001 23.4212 18.9834 22.305 17.0501L14.5108 3.5501ZM11.0467 4.4501C11.4701 3.71676 12.5286 3.71676 12.952 4.4501L20.7462 17.9501C21.1696 18.6834 20.6403 19.6001 19.7936 19.6001H4.20511C3.35833 19.6001 2.82909 18.6834 3.25248 17.9501L11.0467 4.4501Z"/></svg></span>
+                  <div class="tf-main">
+                    <span class="tf-title">模型请求失败，本轮对话已中断</span>
+                    <span class="tf-sub">429 The engine is currently overloaded, please try again later</span>
+                    <span class="tf-meta">provider.rate_limit · HTTP 429 · req_01KZ8Y…</span>
+                  </div>
+                  <button class="p-btn secondary sm">继续</button>
+                </div>
+              </div>
+            </div>
               <li><b>A goal-continuation turn carries a provenance row</b>: the hidden <code>goal_continuation</code> trigger (goal mode's self-driven next turn — a turn boundary, unlike task notifications) never renders its machine prompt; instead the assistant turn it opens shows one faint 12px line flush with the stream's left edge — the <code>target</code> glyph shared with the Goal tool (this turn belongs to the goal) + a localized label — ABOVE the turn's content and OUTSIDE the turn fold, so the row survives as the turn's provenance after settling. The marker lands with the trigger (before the first assistant block), and while the newest exchange is a goal-continuation turn the undo affordances (edit-and-resend, Esc undo) are suppressed — rewinding would drop the hidden trigger while refilling the older user text.</li>
               <li><b>A settled turn's file changes are one summary card</b> (<code>TurnFilesSummary.vue</code>): between the turn's final text and its footer, a §03 <code>Card</code> (hairline border, no shadow — NOT the quiet tool line, the artifacts are worth a discrete object) lists every file the turn's Edit / Write calls touched. The head reads "N files changed" with the aggregate <code>+A −D</code> and the mini diffbar; the aggregate hides whenever any row's stats are incomplete (a Write or an underivable edit makes the total a lower bound, never presented as exact). Each row is one clickable workspace-relative path (short and self-locating; a file outside the cwd stays absolute) with its per-file <code>+A −D</code> at the right edge. The row's action keys on the tool kind, and the stats tell it apart: a <b>Write</b> has no per-file count (its diff is underivable) and opens the whole file in the preview; an <b>Edit / MultiEdit</b> carries its <code>+A −D</code> and opens that file's <b>turn diff</b> in the right-side detail layer (<code>TurnDiffPanel.vue</code> — the turn's own X→Y change, not the git diff), whose header keeps an open-file action. The first three files show inline; the rest collapse behind a "N more files" ghost-button row in the card's foot. Where nothing handles the row action (the BTW side chat), the card renders its file rows as plain text instead of links.</li>
             </ul>
@@ -2510,6 +2526,34 @@ onUnmounted(() => {
   /* ===== Divider ===== */
   .p-divider { width: 100%; height: 1px; background: var(--p-line); border: none; }
   .p-divider-v { width: 1px; align-self: stretch; background: var(--p-line); border: none; }
+
+  /* ===== Turn failed card (chat §04 demo) ===== */
+  .p-turn-failed {
+    display: flex; align-items: center; gap: var(--space-2);
+    width: 100%; max-width: 560px;
+    padding: var(--space-2) var(--space-3);
+    border: var(--p-hairline) solid var(--color-danger-bd);
+    border-radius: var(--radius-lg);
+    background: var(--color-danger-soft);
+    box-shadow: var(--shadow-xs);
+  }
+  .p-turn-failed .tf-chip {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: var(--space-6); height: var(--space-6); flex: none;
+    border-radius: var(--radius-md);
+    background: var(--color-surface-raised);
+    box-shadow: var(--shadow-xs);
+    color: var(--color-danger);
+  }
+  .p-turn-failed .tf-chip svg { width: var(--p-ic-sm); height: var(--p-ic-sm); }
+  .p-turn-failed .tf-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .p-turn-failed .tf-title { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--color-text); line-height: var(--leading-normal); }
+  .p-turn-failed .tf-sub,
+  .p-turn-failed .tf-meta {
+    font-size: var(--text-xs); color: var(--color-text-muted); line-height: var(--leading-normal);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .p-turn-failed .tf-meta { font-family: var(--font-mono); color: var(--color-text-faint); }
 
   /* ===== Tooltip ===== */
   .p-tip { position: relative; display: inline-flex; }
