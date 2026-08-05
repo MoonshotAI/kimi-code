@@ -137,10 +137,18 @@ Kimi WebBridge 让 AI 直接操控你的浏览器，带着你的登录状态和 
 
 #### 安装浏览器扩展
 
-通过 `/plugins` 安装后，还需要在浏览器中安装 Kimi WebBridge 扩展，AI 才能操控你的浏览器：
+通过 `/plugins` 安装后，还需要在浏览器中安装 Kimi WebBridge 扩展，AI 才能操控你的浏览器。推荐从应用商店安装：打开 [Chrome 应用商店](https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc)或 [Edge 应用商店](https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg)，点击添加即可。
 
-- **应用商店安装（推荐）**：打开 [Chrome 应用商店](https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc)或 [Edge 应用商店](https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg)，点击添加即可
-- **手动安装**：无法访问应用商店时，先[下载扩展安装包](https://kimi-web-img.moonshot.cn/webbridge/latest/extension/kimi-webbridge-extension.zip)并解压，然后在浏览器地址栏输入 `chrome://extensions/` 打开扩展管理页，开启右上角的**开发者模式**，点击**加载已解压的扩展程序**，选择刚才解压的文件夹
+无法访问应用商店时，按以下步骤手动安装：
+
+1. [下载扩展安装包](https://kimi-web-img.moonshot.cn/webbridge/latest/extension/kimi-webbridge-extension.zip)并解压
+2. 在浏览器地址栏输入 `chrome://extensions/` 打开扩展管理页，开启右上角的**开发者模式**
+
+   ![开启开发者模式](../../media/webbridge-dev-mode.jpeg)
+
+3. 点击左上角的**加载未打包的扩展程序**，选择解压后的 `kimi-webbridge-extension` 文件夹
+
+   ![加载未打包的扩展程序](../../media/webbridge-load-unpacked.jpeg)
 
 装好后让 AI 帮你打开一个网页，能打开就说明已经生效。
 

@@ -137,10 +137,18 @@ Kimi WebBridge lets AI drive your browser directly — not an emulator, not a cr
 
 #### Install the browser extension
 
-After installing via `/plugins`, you also need the Kimi WebBridge extension in your browser before AI can drive it:
+After installing via `/plugins`, you also need the Kimi WebBridge extension in your browser before AI can drive it. The recommended way is to install from a store: open the [Chrome Web Store](https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc) or [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg) page and click Add.
 
-- **Install from a store (recommended)**: Open the [Chrome Web Store](https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc) or [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg) page and click Add
-- **Install manually**: If you can't reach the stores, [download the extension package](https://kimi-web-img.moonshot.cn/webbridge/latest/extension/kimi-webbridge-extension.zip) and unzip it, then type `chrome://extensions/` in the address bar to open the extensions page, turn on **Developer mode** in the top-right corner, click **Load unpacked**, and select the folder you just unzipped
+If you can't reach the stores, install manually:
+
+1. [Download the extension package](https://kimi-web-img.moonshot.cn/webbridge/latest/extension/kimi-webbridge-extension.zip) and unzip it
+2. Type `chrome://extensions/` in the address bar to open the extensions page, then turn on **Developer mode** in the top-right corner
+
+   ![Turn on Developer mode](../../media/webbridge-dev-mode.jpeg)
+
+3. Click **Load unpacked** in the top-left corner and select the unzipped `kimi-webbridge-extension` folder
+
+   ![Load the unpacked extension](../../media/webbridge-load-unpacked.jpeg)
 
 Once installed, ask AI to open a web page for you; if the page opens, everything is working.
 
