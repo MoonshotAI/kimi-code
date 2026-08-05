@@ -472,20 +472,18 @@ export class SessionSubagentHost {
       this.session.agentCatalog.delegatableSubagents(profile.name),
     );
 
-    // Apply global [tools].disabled to subagents too. #2534.
+    // Apply global [tools].disabled to subagents without persisting it into
+    // the child's profile/wire record (useProfile with a merged profile would
+    // write config-disabled tools into set_active_tools, which survives a
+    // later config removal on resume). #2534.
     const toolsDisabled = this.session.readToolsDisabled();
-    const effectiveProfile =
-      toolsDisabled.length > 0
-        ? {
-            ...profile,
-            disallowedTools: [
-              ...(profile.disallowedTools ?? []),
-              ...toolsDisabled,
-            ],
-          }
-        : profile;
-
-    child.useProfile(effectiveProfile, context, this.session.options.kimiHomeDir, subagentNames);
+    child.useProfile(profile, context, this.session.options.kimiHomeDir, subagentNames);
+    if (toolsDisabled.length > 0) {
+      child.tools.setActiveTools(
+        profile.tools,
+        [...(profile.disallowedTools ?? []), ...toolsDisabled],
+      );
+    }
     child.tools.inheritUserTools(parent.tools);
   }
 

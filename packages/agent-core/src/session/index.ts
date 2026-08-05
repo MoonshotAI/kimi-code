@@ -779,22 +779,20 @@ export class Session {
     );
     const subagentNames = Object.keys(this.agentCatalog.delegatableSubagents(profile.name));
 
-    // Merge global [tools].disabled config into the profile's disallowedTools.
-    // v2 has a dedicated toolPolicy service for this; v1 reads it from the
-    // raw config (unknown sections land in `config.raw`). #2534.
+    // Apply global [tools].disabled without persisting it into the agent's
+    // profile/wire record. useProfile internally calls setActiveTools with
+    // profile.disallowedTools, which gets replayed on resume - so merging
+    // config-disabled tools into the profile would persist them even after
+    // the user removes the config. Instead, use the original profile for
+    // useProfile, then compose the denylist separately. #2534.
     const toolsDisabled = this.readToolsDisabled();
-    const effectiveProfile =
-      toolsDisabled.length > 0
-        ? {
-            ...profile,
-            disallowedTools: [
-              ...(profile.disallowedTools ?? []),
-              ...toolsDisabled,
-            ],
-          }
-        : profile;
-
-    agent.useProfile(effectiveProfile, context, this.options.kimiHomeDir, subagentNames);
+    agent.useProfile(profile, context, this.options.kimiHomeDir, subagentNames);
+    if (toolsDisabled.length > 0) {
+      agent.tools.setActiveTools(
+        profile.tools,
+        [...(profile.disallowedTools ?? []), ...toolsDisabled],
+      );
+    }
     const { agentsMdWarning } = context;
     if (agentsMdWarning !== undefined) {
       this.agentsMdWarning = agentsMdWarning;
