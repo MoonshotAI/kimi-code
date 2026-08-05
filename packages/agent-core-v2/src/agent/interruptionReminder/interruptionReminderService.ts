@@ -2,15 +2,16 @@
  * `interruptionReminder` domain — `IAgentInterruptionReminderService` implementation.
  *
  * Projects checkpointed user-cancellation facts from `wire` through the
- * `contextInjector` boundary, and reads `contextMemory` to collapse retry-only
- * duplicate notices. Bound at Agent scope.
+ * `contextInjector` turn-start boundary, and reads `contextMemory` to collapse
+ * retry-only duplicate notices. The turn-start placement keeps the notice
+ * between the interrupted turn and the next user prompt on provider wires.
+ * Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { isUndoAnchor } from '#/agent/contextMemory/conversationTime';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { IWireService } from '#/wire/wire';
@@ -36,7 +37,10 @@ export class AgentInterruptionReminderService
   ) {
     super();
     this._register(
-      injector.register(INTERRUPTION_REMINDER_VARIANT, () => this.reconcileReminder()),
+      injector.registerAtTurnStart(
+        INTERRUPTION_REMINDER_VARIANT,
+        () => this.reconcileReminder(),
+      ),
     );
   }
 
@@ -53,7 +57,6 @@ export class AgentInterruptionReminderService
 }
 
 function lastComparableMessage(messages: readonly ContextMessage[]): ContextMessage | undefined {
-  let skippedCurrentPrompt = false;
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]!;
     if (
@@ -62,10 +65,6 @@ function lastComparableMessage(messages: readonly ContextMessage[]): ContextMess
       message.toolCalls.length === 0 &&
       message.content.every(isVacuousContentPart)
     ) {
-      continue;
-    }
-    if (!skippedCurrentPrompt && isUndoAnchor(message)) {
-      skippedCurrentPrompt = true;
       continue;
     }
     return message;

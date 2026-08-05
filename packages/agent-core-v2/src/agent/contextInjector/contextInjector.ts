@@ -26,12 +26,23 @@ export type ContextInjectionProvider = (
   | undefined
   | Promise<ContextInjectionContent | ContextInjectionResult | undefined>;
 
+export type SyncContextInjectionProvider = (
+  context: ContextInjectionContext,
+) => ContextInjectionContent | ContextInjectionResult | undefined;
+
 export interface IAgentContextInjectorService {
   readonly _serviceBrand: undefined;
 
   register(
     name: string,
     provider: ContextInjectionProvider,
+  ): IDisposable;
+
+  /** Register a synchronous provider that runs after `turn.started` and
+   * before the turn's first step request materializes its prompt. */
+  registerAtTurnStart(
+    name: string,
+    provider: SyncContextInjectionProvider,
   ): IDisposable;
 
   injectAfterCompaction(): Promise<void>;

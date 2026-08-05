@@ -15,7 +15,7 @@
  * functions, not plain data). Bound at Agent scope.
  */
 
-import { Disposable, toDisposable } from "#/_base/di/lifecycle";
+import { Disposable, toDisposable, type IDisposable } from "#/_base/di/lifecycle";
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 
@@ -32,12 +32,14 @@ import {
   type ContextInjectionContent,
   type ContextInjectionProvider,
   type ContextInjectionResult,
+  type SyncContextInjectionProvider,
 } from './contextInjector';
 
 interface ContextInjectionEntry {
   readonly provider: ContextInjectionProvider;
   readonly name: string;
   readonly positions: number[];
+  readonly boundary: 'step' | 'turn-start';
 }
 
 export const contextInjectorIsNewTurnKey = defineState<boolean>(
@@ -63,13 +65,14 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     this._register(
       loopService.hooks.onWillBeginStep.register('context-injector', async (_ctx, next) => {
         await next();
-        await this.inject();
+        await this.inject('step');
       }),
     );
     this._register(
       this.eventBus.subscribe('turn.started', () => {
         this.reminderQueue.drain();
         this.isNewTurn = true;
+        this.injectAtTurnStart();
       }),
     );
     this._register(
@@ -97,12 +100,28 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
   register(
     name: string,
     provider: ContextInjectionProvider,
-  ) {
+  ): IDisposable {
+    return this.registerProvider(name, provider, 'step');
+  }
+
+  registerAtTurnStart(
+    name: string,
+    provider: SyncContextInjectionProvider,
+  ): IDisposable {
+    return this.registerProvider(name, provider, 'turn-start');
+  }
+
+  private registerProvider(
+    name: string,
+    provider: ContextInjectionProvider,
+    boundary: ContextInjectionEntry['boundary'],
+  ): IDisposable {
     const positions = findInjections(this.context.get(), name);
     const entry: ContextInjectionEntry = {
       provider,
       name,
       positions,
+      boundary,
     };
     this.entries.add(entry);
     return toDisposable(() => {
@@ -115,49 +134,84 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     await this.inject();
   }
 
-  private async inject(): Promise<void> {
+  private async inject(boundary?: ContextInjectionEntry['boundary']): Promise<void> {
     this.reminderQueue.drain();
     const isNewTurn = this.isNewTurn;
     this.isNewTurn = false;
-    const history = this.context.get();
     for (const entry of this.entries) {
-      const injectedPositions: readonly number[] = [...entry.positions];
-      const lastInjectedAt = injectedPositions.at(-1) ?? null;
-      const lastInjection = lastInjectedAt === null ? undefined : history[lastInjectedAt];
-      const content = await entry.provider({
-        injectedPositions,
-        lastInjectedAt,
-        lastInjection,
-        lastDisclosure:
-          lastInjection?.origin?.kind === 'injection'
-            ? lastInjection.origin.disclosure
-            : undefined,
-        isNewTurn,
-      });
+      // A turn-start provider is also reconciled at the step boundary as a
+      // fallback for facts that arrive after `turn.started` (for example, a
+      // queued turn cancelled while another turn is already running).
+      if (
+        boundary !== undefined &&
+        entry.boundary !== boundary &&
+        !(boundary === 'step' && entry.boundary === 'turn-start')
+      ) continue;
+      const content = await entry.provider(this.providerContext(entry, isNewTurn));
       if (!this.entries.has(entry)) continue;
-      if (content === undefined) continue;
-      const result: ContextInjectionResult =
-        typeof content === 'object' && content !== null && !Array.isArray(content)
-          ? (content as ContextInjectionResult)
-          : { content: content as ContextInjectionContent };
-      const origin = {
-        kind: 'injection' as const,
-        variant: entry.name,
-        disclosure: result.disclosure,
-      };
-      if (typeof result.content === 'string') {
-        if (result.content.trim().length === 0) continue;
-        this.reminders.appendSystemReminder(result.content, origin);
-        continue;
-      }
-      if (result.content.length === 0) continue;
-      this.context.append({
-        role: 'user',
-        content: [...result.content],
-        toolCalls: [],
-        origin,
-      });
+      this.appendResult(entry, content);
     }
+  }
+
+  private injectAtTurnStart(): void {
+    for (const entry of this.entries) {
+      if (entry.boundary !== 'turn-start') continue;
+      const content = entry.provider(this.providerContext(entry, true));
+      if (isThenable(content)) {
+        throw new TypeError(`Turn-start context provider "${entry.name}" returned a Promise`);
+      }
+      if (!this.entries.has(entry)) continue;
+      this.appendResult(entry, content);
+    }
+  }
+
+  private providerContext(
+    entry: ContextInjectionEntry,
+    isNewTurn: boolean,
+  ): Parameters<ContextInjectionProvider>[0] {
+    const injectedPositions: readonly number[] = [...entry.positions];
+    const lastInjectedAt = injectedPositions.at(-1) ?? null;
+    const lastInjection = lastInjectedAt === null
+      ? undefined
+      : this.context.get()[lastInjectedAt];
+    return {
+      injectedPositions,
+      lastInjectedAt,
+      lastInjection,
+      lastDisclosure:
+        lastInjection?.origin?.kind === 'injection'
+          ? lastInjection.origin.disclosure
+          : undefined,
+      isNewTurn,
+    };
+  }
+
+  private appendResult(
+    entry: ContextInjectionEntry,
+    content: ContextInjectionContent | ContextInjectionResult | undefined,
+  ): void {
+    if (content === undefined) return;
+    const result: ContextInjectionResult =
+      typeof content === 'object' && content !== null && !Array.isArray(content)
+        ? (content as ContextInjectionResult)
+        : { content: content as ContextInjectionContent };
+    const origin = {
+      kind: 'injection' as const,
+      variant: entry.name,
+      disclosure: result.disclosure,
+    };
+    if (typeof result.content === 'string') {
+      if (result.content.trim().length === 0) return;
+      this.reminders.appendSystemReminder(result.content, origin);
+      return;
+    }
+    if (result.content.length === 0) return;
+    this.context.append({
+      role: 'user',
+      content: [...result.content],
+      toolCalls: [],
+      origin,
+    });
   }
 
   private resyncPositions(): void {
@@ -218,6 +272,12 @@ function findInjections(
     }
   });
   return positions;
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    (typeof value === 'object' && value !== null) || typeof value === 'function'
+  ) && 'then' in value && typeof value.then === 'function';
 }
 
 registerScopedService(

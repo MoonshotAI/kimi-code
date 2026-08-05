@@ -407,7 +407,7 @@ describe('AgentRecords persistence metadata', () => {
       'forked',
     ]);
     expect(ctx.get(IAgentGoalService).getGoal().goal).toBeNull();
-    await ctx.get(IAgentReminderQueueService).drain();
+    ctx.get(IAgentReminderQueueService).drain();
     const reminder = context.get().at(-1);
     expect(reminder?.origin).toEqual({ kind: 'injection', variant: 'goal_fork_cleared' });
     expect(JSON.stringify(reminder?.content)).toContain('This fork does not have a current goal.');
@@ -434,7 +434,7 @@ describe('AgentRecords persistence metadata', () => {
       goalId: 'fork-goal',
       objective: 'fork work',
     });
-    await ctx.get(IAgentReminderQueueService).drain();
+    ctx.get(IAgentReminderQueueService).drain();
     expect(context.get().at(-1)?.origin).toEqual({
       kind: 'injection',
       variant: 'goal_fork_cleared',

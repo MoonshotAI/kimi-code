@@ -355,4 +355,17 @@ describe('AgentContextInjectorService', () => {
 
     expect(calls).toEqual(['drain', 'provider']);
   });
+
+  it('runs synchronous turn-start providers before the next prompt materializes', () => {
+    injector(ix).registerAtTurnStart('turn_start_test', () => 'turn-start reminder');
+
+    ix.get(IEventBus).publish({
+      type: 'turn.started',
+      turnId: 0,
+      origin: { kind: 'user' },
+    });
+
+    expect(context.get()).toHaveLength(1);
+    expect(lastText(context)).toContain('turn-start reminder');
+  });
 });

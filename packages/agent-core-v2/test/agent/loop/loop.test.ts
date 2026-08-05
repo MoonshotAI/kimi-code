@@ -1045,7 +1045,7 @@ describe('interruption reminder', () => {
         text: '<system-reminder>\nThe previous turn was interrupted by the user before completion; any partial output shown above is incomplete. The user\'s next message continues the conversation.\n</system-reminder>',
       },
     ]);
-    expect(ctx.contextData().history.indexOf(interruptionReminders()[0]!)).toBe(3);
+    expect(ctx.contextData().history.indexOf(interruptionReminders()[0]!)).toBe(2);
   });
 
   it('writes one active cancellation when cancel repeats before the turn settles', async () => {
@@ -1173,8 +1173,8 @@ describe('interruption reminder', () => {
       messages:
         <last>
         assistant: text "partial answer"
-        user: text "Next"
         user: text "<system-reminder>\\nThe previous turn was interrupted by the user before completion; any partial output shown above is incomplete. The user's next message continues the conversation.\\n</system-reminder>"
+        user: text "Next"
     `);
   });
 
@@ -1304,7 +1304,7 @@ describe('interruption reminder', () => {
       expect(remindersIn(local)).toHaveLength(1);
       const reminderIndex = history.indexOf(remindersIn(local)[0]!);
       expect(history.slice(0, reminderIndex).some((message) => message.role === 'tool')).toBe(true);
-      expect(history[reminderIndex - 1]).toMatchObject({
+      expect(history[reminderIndex + 1]).toMatchObject({
         role: 'user',
         content: [{ type: 'text', text: 'again' }],
       });
