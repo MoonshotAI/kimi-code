@@ -7,7 +7,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as RenderLine, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Terminal;
@@ -240,6 +240,8 @@ pub struct App {
     scroll: u16,
     /// Session status summary for the footer (plan/swarm).
     status: String,
+    /// Semantic color palette resolved from `tui.toml`.
+    theme: crate::theme::Theme,
 }
 
 impl App {
@@ -258,6 +260,7 @@ impl App {
             pending_approvals: Vec::new(),
             scroll: 0,
             status: String::new(),
+            theme: crate::theme::load_theme(),
         }
     }
 
@@ -813,6 +816,7 @@ impl App {
             &self.session_id,
             &self.status,
             self.scroll,
+            self.theme,
         );
     }
 }
@@ -826,12 +830,13 @@ fn render_frame(
     session_id: &str,
     status: &str,
     scroll: u16,
+    theme: crate::theme::Theme,
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(3)])
         .split(frame.area());
-    let chat = Paragraph::new(styled_lines(transcript))
+    let chat = Paragraph::new(styled_lines(transcript, theme))
         .block(Block::default().borders(Borders::ALL).title("chat"))
         .scroll((scroll, 0));
     let input = Paragraph::new(input)
@@ -848,34 +853,37 @@ fn max_scroll(total: usize, pane_height: u16) -> usize {
 
 /// Map transcript entries to styled render lines (role → prefix + style).
 /// Assistant (and live-streaming) text is markdown-rendered; everything else
-/// stays plain.
-fn styled_lines(transcript: &[TranscriptLine]) -> Vec<RenderLine<'static>> {
+/// stays plain. Colors come from the resolved theme palette.
+fn styled_lines(
+    transcript: &[TranscriptLine],
+    theme: crate::theme::Theme,
+) -> Vec<RenderLine<'static>> {
     let mut out = Vec::new();
     for entry in transcript {
         match entry.kind {
             TranscriptKind::Assistant | TranscriptKind::Streaming => {
-                out.extend(crate::markdown::render_markdown(&entry.text));
+                out.extend(crate::markdown::render_markdown_themed(&entry.text, theme));
             }
             TranscriptKind::User => out.push(RenderLine::from(Span::styled(
                 format!("▶ {}", entry.text),
-                Style::default().add_modifier(Modifier::BOLD),
+                Style::default().fg(theme.user).add_modifier(Modifier::BOLD),
             ))),
             // Reasoning is transient and dimmer than the visible stream.
             TranscriptKind::Thinking => out.push(RenderLine::from(Span::styled(
                 entry.text.clone(),
-                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                Style::default().fg(theme.thinking).add_modifier(Modifier::ITALIC),
             ))),
             TranscriptKind::Tool => out.push(RenderLine::from(Span::styled(
                 format!("  ⚙ {}", entry.text),
-                Style::default().fg(Color::Blue),
+                Style::default().fg(theme.tool),
             ))),
             TranscriptKind::Status => out.push(RenderLine::from(Span::styled(
                 entry.text.clone(),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.status),
             ))),
             TranscriptKind::Error => out.push(RenderLine::from(Span::styled(
                 entry.text.clone(),
-                Style::default().fg(Color::Red),
+                Style::default().fg(theme.error),
             ))),
         }
     }
@@ -946,6 +954,7 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> an
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::style::Color;
 
     /// Reconstruct each buffer row as a string (for substring assertions).
     fn buffer_text(buffer: &ratatui::buffer::Buffer) -> Vec<String> {
@@ -1016,7 +1025,7 @@ mod tests {
 
     #[test]
     fn thinking_renders_dimmed() {
-        let lines = styled_lines(&[TranscriptLine::thinking("reasoning")]);
+        let lines = styled_lines(&[TranscriptLine::thinking("reasoning")], crate::theme::Theme::dark());
         assert_eq!(lines[0].spans[0].content, "reasoning");
         assert_eq!(lines[0].spans[0].style.fg, Some(Color::DarkGray));
         assert!(lines[0].spans[0].style.add_modifier.contains(Modifier::ITALIC));
@@ -1050,7 +1059,7 @@ mod tests {
 
     #[test]
     fn streaming_renders_distinct() {
-        let lines = styled_lines(&[TranscriptLine::streaming("growing")]);
+        let lines = styled_lines(&[TranscriptLine::streaming("growing")], crate::theme::Theme::dark());
         let text: String = lines[0].spans.iter().map(|s| s.content.clone()).collect();
         assert_eq!(text, "growing");
     }
@@ -1116,7 +1125,7 @@ mod tests {
             TranscriptLine::status("plan mode on"),
             TranscriptLine::error("boom"),
         ];
-        let lines = styled_lines(&transcript);
+        let lines = styled_lines(&transcript, crate::theme::Theme::dark());
         assert_eq!(lines.len(), 5);
         // User lines are prefixed and bold.
         assert_eq!(lines[0].spans[0].content, "▶ hi");
@@ -1159,7 +1168,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(60, 12)).unwrap();
         terminal
             .draw(|frame| {
-                render_frame(frame, &transcript, "/help", "sess-1", "plan=off swarm=off", 0);
+                render_frame(frame, &transcript, "/help", "sess-1", "plan=off swarm=off", 0, crate::theme::Theme::dark());
             })
             .unwrap();
         let buffer = terminal.backend().buffer().clone();

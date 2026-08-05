@@ -1707,6 +1707,7 @@ dependencies = [
  "ratatui",
  "serde_json",
  "tokio",
+ "toml",
 ]
 
 [[package]]

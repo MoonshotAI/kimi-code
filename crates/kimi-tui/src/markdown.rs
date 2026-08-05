@@ -1,17 +1,25 @@
-//! Markdown rendering for the assistant transcript — a lightweight pass over
+﻿//! Markdown rendering for the assistant transcript 鈥?a lightweight pass over
 //! `pulldown-cmark` that maps block/span events onto ratatui styled spans.
 //! Pure function, unit-testable without a terminal.
 
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as RenderLine, Span};
 
-/// Render a markdown document into styled ratatui lines.
-///
-/// Supported: ATX headings, bold/italic/code inline, fenced + indented code
-/// blocks, bullet/ordered lists, blockquotes, and thematic breaks. Other
-/// constructs (tables, links, images) degrade to their text content.
+use crate::theme::Theme;
+
+/// Render a markdown document into styled ratatui lines using the given
+/// theme palette.
+pub fn render_markdown_themed(markdown: &str, theme: Theme) -> Vec<RenderLine<'static>> {
+    render_inner(markdown, theme)
+}
+
+/// Render a markdown document with the default (dark) palette.
 pub fn render_markdown(markdown: &str) -> Vec<RenderLine<'static>> {
+    render_inner(markdown, Theme::dark())
+}
+
+fn render_inner(markdown: &str, theme: Theme) -> Vec<RenderLine<'static>> {
     let parser = Parser::new_ext(markdown, Options::ENABLE_TABLES);
     let mut out: Vec<RenderLine<'static>> = Vec::new();
     let mut current: Vec<Span<'static>> = Vec::new();
@@ -67,7 +75,7 @@ pub fn render_markdown(markdown: &str) -> Vec<RenderLine<'static>> {
             Event::End(TagEnd::List(_)) => {}
             Event::Start(Tag::Item) => {
                 let indent = "  ".repeat(quote_depth);
-                current.push(Span::raw(format!("{indent}• ")));
+                current.push(Span::raw(format!("{indent}鈥?")));
             }
             Event::End(TagEnd::Item) => flush_line!(),
             Event::Start(Tag::CodeBlock(_kind)) => {
@@ -81,7 +89,7 @@ pub fn render_markdown(markdown: &str) -> Vec<RenderLine<'static>> {
                 for line in code.lines() {
                     out.push(RenderLine::from(Span::styled(
                         format!("  {line}"),
-                        Style::default().fg(Color::Cyan),
+                        Style::default().fg(theme.code),
                     )));
                 }
                 code_buf.clear();
@@ -104,7 +112,7 @@ pub fn render_markdown(markdown: &str) -> Vec<RenderLine<'static>> {
                 }
             }
             Event::Code(text) => {
-                current.push(Span::styled(text.to_string(), Style::default().fg(Color::Yellow)));
+                current.push(Span::styled(text.to_string(), Style::default().fg(theme.code)));
             }
             Event::SoftBreak | Event::HardBreak => {
                 flush_line!();
@@ -112,12 +120,12 @@ pub fn render_markdown(markdown: &str) -> Vec<RenderLine<'static>> {
             Event::Rule => {
                 flush_line!();
                 out.push(RenderLine::from(Span::styled(
-                    "──────────────────────────────",
-                    Style::default().fg(Color::DarkGray),
+                    "鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€",
+                    Style::default().fg(theme.status),
                 )));
             }
-            Event::TaskListMarker(true) => current.push(Span::raw("☑ ")),
-            Event::TaskListMarker(false) => current.push(Span::raw("☐ ")),
+            Event::TaskListMarker(true) => current.push(Span::raw("鈽?")),
+            Event::TaskListMarker(false) => current.push(Span::raw("鈽?")),
             Event::Start(Tag::Link { .. }) | Event::Start(Tag::Image { .. }) => {}
             Event::End(TagEnd::Link) | Event::End(TagEnd::Image) => {}
             Event::Html(_) | Event::InlineHtml(_) => {}
@@ -150,7 +158,7 @@ pub fn render_markdown(markdown: &str) -> Vec<RenderLine<'static>> {
         for line in code.lines() {
             out.push(RenderLine::from(Span::styled(
                 format!("  {line}"),
-                Style::default().fg(Color::Cyan),
+                Style::default().fg(theme.code),
             )));
         }
     }
@@ -163,7 +171,7 @@ pub fn render_markdown(markdown: &str) -> Vec<RenderLine<'static>> {
     out
 }
 
-/// The visual prefix for a heading level (h1 → `# `, h2 → `## `, …).
+/// The visual prefix for a heading level (h1 鈫?`# `, h2 鈫?`## `, 鈥?.
 fn heading_prefix(level: HeadingLevel) -> String {
     let n = match level {
         HeadingLevel::H1 => 1,
@@ -179,6 +187,8 @@ fn heading_prefix(level: HeadingLevel) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::style::Color;
+
 
     #[test]
     fn renders_plain_text() {
@@ -226,8 +236,8 @@ mod tests {
             .collect();
         assert!(all.contains("fn main() {}"), "code body present: {all}");
         assert!(
-            lines.iter().any(|l| l.spans.iter().any(|s| s.style.fg == Some(Color::Cyan))),
-            "code line is cyan"
+            lines.iter().any(|l| l.spans.iter().any(|s| s.style.fg == Some(Color::Yellow))),
+            "code line is yellow"
         );
     }
 
@@ -238,3 +248,4 @@ mod tests {
         assert!(lines[0].spans.is_empty());
     }
 }
+
