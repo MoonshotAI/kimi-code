@@ -186,4 +186,25 @@ describe('AgentCacheBreakService', () => {
       curr_input_cache_read: 5000,
     });
   });
+
+  it('ignores unmeasured all-zero records without touching the baseline', () => {
+    usageService.record('model-a', usage(10000), { type: 'turn', turnId: 1 });
+    usageService.record(
+      'model-a',
+      { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 },
+      { type: 'turn', turnId: 2 },
+    );
+
+    // Zeros are not a measurement: no break report against the cached baseline.
+    expect(telemetryEvents).toEqual([]);
+
+    // The baseline survived the unmeasured record, so a later real drop is
+    // still judged against the last measured one.
+    usageService.record('model-a', usage(5000), { type: 'turn', turnId: 3 });
+    expect(telemetryEvents).toHaveLength(1);
+    expect(telemetryEvents[0]?.properties).toMatchObject({
+      prev_input_cache_read: 10000,
+      curr_input_cache_read: 5000,
+    });
+  });
 });

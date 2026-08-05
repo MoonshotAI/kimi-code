@@ -5,7 +5,9 @@
  * event and keeps the previous turn record's usage and record time as the
  * per-agent baseline. `operation` records (e.g. compaction) clear the
  * baseline because a cache-read drop after them is expected; records without
- * a turn source are ignored entirely. When a turn record's `inputCacheRead`
+ * a turn source are ignored entirely, and all-zero records from streams
+ * without usage reporting are skipped without touching the baseline. When a
+ * turn record's `inputCacheRead`
  * falls below 95% of the baseline by more than `MIN_CACHE_BREAK_DROP_TOKENS`,
  * the service writes a debug entry through `log` and reports
  * `cache_break_detected` through `telemetry`. The baseline is registered into
@@ -71,6 +73,18 @@ export class AgentCacheBreakService extends Disposable implements IAgentCacheBre
       return;
     }
     if (source?.type !== 'turn') return;
+    // Streams without usage reporting record all-zero usage — there is no
+    // cache measurement to compare, so skip the record entirely and keep the
+    // last measured baseline instead of treating zeros as a full cache drop.
+    const curr = ctx.usage;
+    if (
+      curr.inputOther === 0 &&
+      curr.output === 0 &&
+      curr.inputCacheRead === 0 &&
+      curr.inputCacheCreation === 0
+    ) {
+      return;
+    }
 
     const prev = this.baseline;
     const now = Date.now();
