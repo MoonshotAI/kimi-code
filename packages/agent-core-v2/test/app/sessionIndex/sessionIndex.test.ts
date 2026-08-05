@@ -888,8 +888,11 @@ describe('FileSessionIndex (read model)', () => {
   // every warm read must touch a bounded number of store rows and zero
   // session directories, and that work must be identical at 1k, 10k, and 50k
   // sessions — a linear regression changes the counts deterministically, on
-  // any runner. The single retry absorbs a background reconcile tick (60s
-  // interval) landing inside a counting window.
+  // any runner. The background reconcile loop is stopped right after
+  // prepare(): a tick's authoritative scan enumerates the session
+  // directories (60s interval), and on a runner slow enough for the test to
+  // cross that interval it would land inside a counting window and be
+  // attributed to the read under test. The retry absorbs runner hiccups.
   const baseline = { retry: 1, timeout: 120_000 };
 
   it('baseline: warm listRecent(limit=20) at 1k vs 10k vs 50k sessions', baseline, async () => {
@@ -907,6 +910,9 @@ describe('FileSessionIndex (read model)', () => {
     // directly into the generation (the mirror path is covered elsewhere).
     await seedSession('seed', { createdAt: 0, updatedAt: 0 });
     await store.prepare();
+    // Freeze the background reconcile loop so the counting windows below
+    // contain only the read under test.
+    store.stopReconcileLoop();
     const collection = sessionCollection(1);
 
     const seedRows = async (from: number, to: number): Promise<void> => {
