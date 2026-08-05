@@ -46,8 +46,17 @@ impl LLM for HostLlmProxy {
         &self.model_name
     }
 
-    fn is_retryable_error(&self, _error: &str) -> bool {
-        true
+    fn is_retryable_error(&self, error: &str) -> bool {
+        // Only transient failures (rate limit / overload / connection) are
+        // worth retrying. A deterministic error from the host (e.g. "llm_chat
+        // not implemented") must fail fast — retrying it with exponential
+        // backoff just hangs the turn for the full retry budget.
+        matches!(
+            crate::turn_loop::retry::classify_error(error),
+            crate::turn_loop::retry::ErrorClass::RateLimit
+                | crate::turn_loop::retry::ErrorClass::Overload
+                | crate::turn_loop::retry::ErrorClass::Transient
+        )
     }
 
     fn chat(&self, params: LLMChatParams) -> crate::rpc::types::BoxFuture<'_, Result<LLMChatResponse, Box<dyn std::error::Error + Send + Sync>>> {
