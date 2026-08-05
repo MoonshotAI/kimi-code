@@ -847,31 +847,39 @@ fn max_scroll(total: usize, pane_height: u16) -> usize {
 }
 
 /// Map transcript entries to styled render lines (role → prefix + style).
+/// Assistant (and live-streaming) text is markdown-rendered; everything else
+/// stays plain.
 fn styled_lines(transcript: &[TranscriptLine]) -> Vec<RenderLine<'static>> {
-    transcript
-        .iter()
-        .map(|entry| {
-            let (text, style) = match entry.kind {
-                TranscriptKind::User => (
-                    format!("▶ {}", entry.text),
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
-                TranscriptKind::Assistant => (entry.text.clone(), Style::default()),
-                // Live stream reads as a growing line in cyan (no prefix, so
-                // the final replace is seamless).
-                TranscriptKind::Streaming => (entry.text.clone(), Style::default().fg(Color::Cyan)),
-                // Reasoning is transient and dimmer than the visible stream.
-                TranscriptKind::Thinking => (
-                    entry.text.clone(),
-                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
-                ),
-                TranscriptKind::Tool => (format!("  ⚙ {}", entry.text), Style::default().fg(Color::Blue)),
-                TranscriptKind::Status => (entry.text.clone(), Style::default().fg(Color::DarkGray)),
-                TranscriptKind::Error => (entry.text.clone(), Style::default().fg(Color::Red)),
-            };
-            RenderLine::from(Span::styled(text, style))
-        })
-        .collect()
+    let mut out = Vec::new();
+    for entry in transcript {
+        match entry.kind {
+            TranscriptKind::Assistant | TranscriptKind::Streaming => {
+                out.extend(crate::markdown::render_markdown(&entry.text));
+            }
+            TranscriptKind::User => out.push(RenderLine::from(Span::styled(
+                format!("▶ {}", entry.text),
+                Style::default().add_modifier(Modifier::BOLD),
+            ))),
+            // Reasoning is transient and dimmer than the visible stream.
+            TranscriptKind::Thinking => out.push(RenderLine::from(Span::styled(
+                entry.text.clone(),
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            ))),
+            TranscriptKind::Tool => out.push(RenderLine::from(Span::styled(
+                format!("  ⚙ {}", entry.text),
+                Style::default().fg(Color::Blue),
+            ))),
+            TranscriptKind::Status => out.push(RenderLine::from(Span::styled(
+                entry.text.clone(),
+                Style::default().fg(Color::DarkGray),
+            ))),
+            TranscriptKind::Error => out.push(RenderLine::from(Span::styled(
+                entry.text.clone(),
+                Style::default().fg(Color::Red),
+            ))),
+        }
+    }
+    out
 }
 
 /// Resolve a Tab press against `base` (the input when the cycle started, or
@@ -1043,8 +1051,8 @@ mod tests {
     #[test]
     fn streaming_renders_distinct() {
         let lines = styled_lines(&[TranscriptLine::streaming("growing")]);
-        assert_eq!(lines[0].spans[0].content, "growing");
-        assert_eq!(lines[0].spans[0].style.fg, Some(Color::Cyan));
+        let text: String = lines[0].spans.iter().map(|s| s.content.clone()).collect();
+        assert_eq!(text, "growing");
     }
 
     #[test]

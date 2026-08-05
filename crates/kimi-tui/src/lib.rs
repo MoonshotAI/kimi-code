@@ -5,5 +5,6 @@
 //! view. The full chatwidget/bottom-pane surface lands incrementally.
 
 pub mod app;
+pub mod markdown;
 
 pub use app::App;
