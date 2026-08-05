@@ -10,7 +10,7 @@ Gates not-yet-public features behind `IFlagService.enabled(id)`, per the reposit
 - `src/flag/flagRegistryService.ts` — `FlagRegistryService` impl; in-memory catalog seeded from import-time contributions; App scope.
 - `src/flag/flag.ts` — `IFlagService` token + resolver types (`ExperimentalFlagMap`, `ExperimentalFlagConfig`, `ExperimentalFlagSource`, `ExperimentalFeatureState`) + `ExperimentalConfigSchema` / `ExperimentalConfig` (zod).
 - `src/flag/flagService.ts` — `FlagService` impl + `MASTER_ENV` (`KIMI_CODE_EXPERIMENTAL_FLAG`) + `EXPERIMENTAL_SECTION` (`experimental`); reads definitions from `IFlagRegistry`; self-registers at App scope.
-- `src/flag/index.ts` — barrel; re-exported by `src/index.ts` at the L3 block.
+- `src/flag/index.ts` — barrel; re-exported by `src/index.ts`.
 - `src/<domain>/flag.ts` — each domain that owns a flag declares it here and calls `registerFlagDefinition` at the module top level (e.g. `src/agent/toolSelect/flag.ts`). The directory already names the domain, so the file is just `flag.ts`.
 
 ## Public surface
@@ -95,8 +95,8 @@ if (!this.flags.enabled('my_feature')) return;
 
 ## Layering & scope
 
-- Domain `flag` is registered at **L3** (`scripts/check-domain-layers.mjs` → `['flag', 3]`). It imports only `config` (L2) downward.
-- It cannot live in `_base` (L0): registering/reading the config section requires importing `config`, and L0 must not import L2.
+- Domain `flag` imports only `config` downward.
+- It cannot live in `_base`: registering/reading the config section requires importing `config`, and `_base` is pure infrastructure that must not know any business domain.
 - Scope: `IFlagRegistry` and `IFlagService` are both `App`. Env + config are process-global inputs, so there is no per-session/agent state. Flag definitions are contributed at **import time** (top-level `registerFlagDefinition` calls), so they are queued before any scope is created and drained when `FlagRegistryService` is first instantiated — before `IFlagService` is first resolved.
 - Tests build `FlagService` + `FlagRegistryService` directly with a real `ConfigRegistry`/`ConfigService` and an injected env map, then `register` the flags they exercise (`test/flag/flag.test.ts`).
 
@@ -106,6 +106,5 @@ if (!this.flags.enabled('my_feature')) return;
 - `packages/agent-core-v2/src/agent/toolSelect/flag.ts` — example per-domain flag contribution.
 - `packages/agent-core-v2/test/flag/flag.test.ts` — precedence + config subscription tests.
 - `packages/agent-core/src/flags/` — v1 source this was ported from.
-- `plan/PLAN.md` §2/§3 — domain placement (`flag` at L3, not `_base/flags`).
 - `packages/agent-core-v2/GAP_ANALYSIS.md` §2.1 — gap closure note.
 - Root `AGENTS.md` — experimental-feature gating rule.

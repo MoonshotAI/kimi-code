@@ -11,7 +11,7 @@
 import type { AgentModelPreference } from '../types';
 import { z } from 'zod';
 
-export type AgentFileSource = 'project' | 'user' | 'extra' | 'explicit';
+export type AgentFileSource = 'plugin' | 'project' | 'user' | 'extra' | 'explicit';
 
 export interface AgentFileRoot {
   readonly path: string;
@@ -52,6 +52,7 @@ const AgentProfileSnapshotSchema = z.object({
   subagents: z.array(z.string()),
   modelPreference: z.enum(['primary', 'secondary']).optional(),
   prompt: z.string(),
+  source: z.enum(['plugin', 'project', 'user', 'extra', 'explicit']).optional(),
 });
 
 /**

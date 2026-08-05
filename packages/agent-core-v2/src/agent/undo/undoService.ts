@@ -1,5 +1,5 @@
 /**
- * `undo` domain (L6) — `IAgentConversationUndoService` implementation.
+ * `undo` domain — `IAgentConversationUndoService` implementation.
  *
  * Owns idle conversation undo coordination and restored observable state.
  * Coordinates `contextMemory`, undo participants, `fullCompaction`,
@@ -158,8 +158,6 @@ export class AgentConversationUndoService
     }
     const { depth, model } = this.checkpointDepth();
     if (depth >= turns) return;
-    // A compaction explains missing checkpoints (they are cleared at the
-    // boundary); without one, a checkpointed model failed to track an anchor.
     const fullCut = computeUndoCut(this.context.get(), Number.MAX_SAFE_INTEGER);
     const reason = fullCut.stoppedAtCompaction ? 'compaction_boundary' : 'checkpoint_lost';
     throw new Error2(

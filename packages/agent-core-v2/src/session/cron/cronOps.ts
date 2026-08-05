@@ -1,5 +1,5 @@
 /**
- * `cron` domain (L5) — wire Model (`CronModel`) and the `cron.add`
+ * `cron` domain — wire Model (`CronModel`) and the `cron.add`
  * (`cronAdd`) / `cron.delete` (`cronDelete`) / `cron.cursor` (`cronCursor`)
  * Ops for the session-level scheduling engine, plus the `cron.fired` edge
  * event declared on `DomainEventMap`.
@@ -12,8 +12,7 @@
  * `cron.cursor` for an unknown id) so the wire's reference-equality gate stays
  * quiet. The Ops are live-only because cron records are not v1 wire types; the
  * authoritative store is the App-scoped `ICronTaskPersistence`, reloaded on
- * resume. Consumed cross-scope by the Session-scope `SessionCronService`,
- * which dispatches to the MAIN agent's wire. The Ops register into the global
+ * resume. The Ops register into the global
  * `OP_REGISTRY` at import time.
  */
 

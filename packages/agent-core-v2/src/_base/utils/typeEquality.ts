@@ -1,10 +1,9 @@
 /**
  * Compile-time type equality.
  *
- * Used to pin a hand-written type to the zod schema that re-derives it —
- * e.g. kosong's persistence-free types vs the section schemas their
- * `kosongConfig` wrapper registers: a drift in either direction (added /
- * removed field, changed field type, optionality flip) fails typecheck.
+ * Used to pin a hand-written type to the zod schema that re-derives it: a
+ * drift in either direction (added / removed field, changed field type,
+ * optionality flip) fails typecheck.
  *
  * `Equal` compares by mutual assignability through a contravariant
  * function-type trick, so it is stricter than a one-way `A extends B`

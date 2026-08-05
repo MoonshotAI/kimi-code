@@ -1,45 +1,38 @@
 /**
- * `skillCatalog` domain (L3) — SKILL.md parsing primitives.
+ * `skillCatalog` domain — SKILL.md parsing primitives.
  *
  * Parses a SKILL.md (frontmatter + body) into a `SkillDefinition` and extracts
- * flowchart blocks. Pure functions with no IO: callers (the catalog Store
- * backends) read bytes however they like and pass the decoded text in. Keeping
- * parsing here lets the Store layer stay filesystem-agnostic.
+ * flowchart blocks. Pure functions with no IO: callers read bytes however they
+ * like and pass the decoded text in.
  */
 
 import path from 'pathe';
 
-import { load as loadYaml } from 'js-yaml';
+import { Error2 } from '#/_base/errors/errors';
+import { FrontmatterError, parseFrontmatter } from '#/_base/text/frontmatter';
 
+import { SkillErrors } from './errors';
 import type { SkillDefinition, SkillMetadata, SkillSource } from './types';
 import { isSupportedSkillType } from './types';
 
-export class FrontmatterError extends Error {
-  constructor(message: string, cause?: unknown) {
-    super(message);
-    this.name = 'FrontmatterError';
-    if (cause !== undefined) {
-      Object.defineProperty(this, 'cause', { value: cause, configurable: true });
-    }
-  }
-}
-
-export class SkillParseError extends Error {
+export class SkillParseError extends Error2 {
   readonly reason?: unknown;
 
   constructor(message: string, cause?: unknown) {
-    super(message);
+    super(SkillErrors.codes.SKILL_PARSE_FAILED, message, { cause });
     this.name = 'SkillParseError';
     if (cause !== undefined) this.reason = cause;
   }
 }
 
-export class UnsupportedSkillTypeError extends Error {
+export class UnsupportedSkillTypeError extends Error2 {
   readonly skillType: string;
 
   constructor(skillType: string) {
     super(
+      SkillErrors.codes.SKILL_TYPE_UNSUPPORTED,
       `Skill type "${skillType}" is not supported; only "prompt", "inline", and "flow" are supported.`,
+      { details: { skillType } },
     );
     this.name = 'UnsupportedSkillTypeError';
     this.skillType = skillType;
@@ -56,11 +49,6 @@ export interface ParseSkillTextOptions extends ParseSkillOptions {
   readonly text: string;
 }
 
-export interface ParsedFrontmatter {
-  readonly data: unknown;
-  readonly body: string;
-}
-
 const FENCE = '---';
 const METADATA_ALIASES: Readonly<Record<string, string>> = {
   'when-to-use': 'whenToUse',
@@ -68,31 +56,6 @@ const METADATA_ALIASES: Readonly<Record<string, string>> = {
   'disable-model-invocation': 'disableModelInvocation',
   disable_model_invocation: 'disableModelInvocation',
 };
-
-export function parseFrontmatter(text: string): ParsedFrontmatter {
-  const lines = text.split(/\r?\n/);
-  if (lines[0]?.trim() !== FENCE) {
-    return { data: null, body: text };
-  }
-
-  const close = lines.findIndex((line, index) => index > 0 && line.trim() === FENCE);
-  if (close === -1) {
-    throw new FrontmatterError('Missing closing frontmatter fence');
-  }
-
-  const yamlText = lines.slice(1, close).join('\n').trim();
-  const body = lines.slice(close + 1).join('\n');
-  if (yamlText === '') {
-    return { data: {}, body };
-  }
-
-  try {
-    return { data: loadYaml(yamlText) ?? {}, body };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new FrontmatterError(message, error);
-  }
-}
 
 export function parseSkillText(options: ParseSkillTextOptions): SkillDefinition {
   const isDirectorySkill = path.basename(options.skillMdPath) === 'SKILL.md';

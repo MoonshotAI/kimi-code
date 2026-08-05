@@ -1,11 +1,9 @@
 /**
- * `plan` domain (L3) — `defaultPlanMode` config section.
+ * `plan` domain — `defaultPlanMode` config section.
  *
  * Top-level boolean preference (`default_plan_mode` on disk, v1-compatible):
  * when `true`, every freshly created session starts in plan mode. Resumed /
- * forked sessions restore plan state from wire records and ignore this. Read by
- * `sessionLifecycle` at session creation; runtime plan state lives on the wire
- * `PlanModel`, not here.
+ * forked sessions restore plan state from wire records and ignore this.
  */
 
 import { z } from 'zod';

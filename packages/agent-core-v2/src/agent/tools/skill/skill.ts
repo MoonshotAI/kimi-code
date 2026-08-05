@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ISkillTool` contract (the `Skill` tool).
+ * `tools` domain — `ISkillTool` contract (the `Skill` tool).
  *
  * Public contract of the `Skill` collaboration tool that lets the LLM
  * proactively invoke an inline registered skill: the model-facing
@@ -7,27 +7,28 @@
  * constants — `MAX_SKILL_QUERY_DEPTH` caps Skill→Skill recursion so a skill
  * that re-invokes itself (or chains into another) cannot recurse without
  * bound, and `NestedSkillTooDeepError` is raised when a chain exceeds it —
- * and the `ISkillTool` DI decorator that the implementation (`skillTool.ts`)
- * registers against via `registerAgentToolService`. Bound at Agent scope.
+ * and the `ISkillTool` DI decorator. Bound at Agent scope.
  */
 
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';
+import { Error2, ErrorCodes } from '#/errors';
 import { type AgentTool } from '#/tool/toolContract';
 
 export const MAX_SKILL_QUERY_DEPTH = 3;
 
-export class NestedSkillTooDeepError extends Error {
+export class NestedSkillTooDeepError extends Error2 {
   readonly skillName?: string;
   readonly depth: number;
 
   constructor(depth: number, skillName?: string) {
     const label = skillName !== undefined ? ` "${skillName}"` : '';
     super(
+      ErrorCodes.SKILL_NESTED_TOO_DEEP,
       `Nested skill invocation${label} exceeded the maximum depth of ${String(depth)} — refusing to recurse further.`,
+      { name: 'NestedSkillTooDeepError', details: { depth, skillName } },
     );
-    this.name = 'NestedSkillTooDeepError';
     this.depth = depth;
     if (skillName !== undefined) this.skillName = skillName;
   }

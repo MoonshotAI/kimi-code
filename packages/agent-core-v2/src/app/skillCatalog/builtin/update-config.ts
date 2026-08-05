@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — builtin `update-config` skill definition.
+ * `skillCatalog` domain — builtin `update-config` skill definition.
  */
 
 import type { SkillDefinition } from '#/app/skillCatalog/types';
@@ -23,4 +23,5 @@ export const UPDATE_CONFIG_SKILL: SkillDefinition = {
     ...parsed.metadata,
     type: parsed.metadata.type ?? 'inline',
   },
+  productSpecific: true,
 };

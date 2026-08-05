@@ -1,5 +1,5 @@
 /**
- * `_base/log` (L0) — `BoundLogger` base and the App-scope `ILogService`.
+ * `_base/log` — `BoundLogger` base and the App-scope `ILogService`.
  *
  * `BoundLogger` filters entries by level, extracts the payload into ctx/error,
  * merges bound context, and writes to a plain `ILogWriter`. It extends

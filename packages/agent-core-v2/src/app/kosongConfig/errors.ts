@@ -1,7 +1,7 @@
 /**
- * `kosongConfig` domain (L3) — models.dev import error codes.
+ * `kosongConfig` domain — models.dev import error codes.
  *
- * The edge (kap-server) branches on these codes to map them onto its numeric
+ * The edge server branches on these codes to map them onto its numeric
  * protocol envelope, so the code strings are part of the wire contract.
  */
 
@@ -9,15 +9,10 @@ import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 
 export const ModelsDevImportErrors = {
   codes: {
-    /** models.dev directory fetch failed and no built-in snapshot could fall back. */
     CATALOG_UNAVAILABLE: 'modelsDev.catalog_unavailable',
-    /** The named entry does not exist in the models.dev directory. */
     CATALOG_ENTRY_NOT_FOUND: 'modelsDev.catalog_entry_not_found',
-    /** A directory entry cannot be imported (rejected wire / missing or invalid base_url / no importable models / unusable id). */
     CATALOG_IMPORT_INVALID: 'modelsDev.import_invalid',
-    /** A custom registry (api.json) cannot be imported (unreachable / invalid document / no valid entries). */
     REGISTRY_IMPORT_INVALID: 'modelsDev.registry_import_invalid',
-    /** The target provider is managed by OAuth login and refuses REST writes. */
     PROVIDER_OAUTH_MANAGED: 'provider.oauth_managed',
   },
   info: {

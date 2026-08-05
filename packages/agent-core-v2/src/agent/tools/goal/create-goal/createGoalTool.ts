@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ICreateGoalTool` implementation.
+ * `tools` domain — `ICreateGoalTool` implementation.
  *
  * Resolves a CreateGoal call against the goal service (`goal`): guards
  * against the current goal changing between resolution and execution, then

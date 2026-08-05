@@ -501,14 +501,14 @@ describe('CLI options parsing', () => {
       expect(validateOptions(parse(['--agent-file', 'a.md']), {}).uiMode).toBe('shell');
     });
 
-    it('accepts the flags in prompt mode without the v2 engine flag', () => {
+    it('accepts the flags in prompt mode on the default v2 engine', () => {
       const opts = parse(['-p', 'hi', '--agent-file', 'a.md']);
       expect(validateOptions(opts, {}).uiMode).toBe('print');
     });
 
-    it('accepts the flags in prompt mode with the v2 engine flag', () => {
+    it('accepts the flags in prompt mode with the legacy engine flag', () => {
       const opts = parse(['-p', 'hi', '--agent', 'reviewer']);
-      expect(validateOptions(opts, { KIMI_CODE_EXPERIMENTAL_FLAG: '1' }).uiMode).toBe('print');
+      expect(validateOptions(opts, { KIMI_CODE_LEGACY_FLAG: '1' }).uiMode).toBe('print');
     });
   });
 
@@ -593,6 +593,7 @@ describe('CLI options parsing', () => {
         'upgrade',
       ]);
     });
+
   });
 
   describe('rejected flags', () => {

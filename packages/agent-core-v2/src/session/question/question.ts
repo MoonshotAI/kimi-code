@@ -1,5 +1,5 @@
 /**
- * `question` domain (L7) — ask-user request broker.
+ * `question` domain — ask-user request broker.
  *
  * Defines the public contract of asking the user: the rich in-process
  * `QuestionRequest` model (mirrors the `agent-core` SDK shape — a batch of
@@ -8,9 +8,8 @@
  *
  * The model is the **in-process** representation (camelCase, options carry no
  * ids). The protocol wire shape (snake_case, synthesized item/option ids,
- * 5-kind answer union) is produced at the edge — see the
- * `server-v2` questions route, which is the single protocol↔in-process
- * adapter for this domain. Session-scoped — one instance per session.
+ * 5-kind answer union) is produced at the edge. Session-scoped — one
+ * instance per session.
  * `request` accepts the owning `agentId` so question events and transcript
  * frames route to the asking agent's surfaces instead of falling back to
  * 'main' (a subagent's question must not land there).

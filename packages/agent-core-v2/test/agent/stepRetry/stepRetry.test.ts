@@ -202,14 +202,14 @@ describe('stepRetry plugin', () => {
     expect(result.type).toBe('cancelled');
   });
 
-  it('honors loop_control.max_retries_per_step', async () => {
+  it('honors loop_control.max_attempts_per_step', async () => {
     vi.useFakeTimers();
     let calls = 0;
     ctx = createTestAgent(llmGenerateServices(async () => {
       calls += 1;
       throw new APIConnectionError('terminated');
     }), {
-      initialConfig: { loopControl: { maxRetriesPerStep: 1 } },
+      initialConfig: { loopControl: { maxAttemptsPerStep: 1 } },
     });
 
     const result = await runTurn(1);

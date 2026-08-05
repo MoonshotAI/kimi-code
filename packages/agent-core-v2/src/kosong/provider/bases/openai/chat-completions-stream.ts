@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — Chat Completions stream tool-call buffering.
+ * `kosong/provider` domain — Chat Completions stream tool-call buffering.
  *
  * Shared mechanics for the OpenAI-family bases: folds streamed
  * `delta.tool_calls` entries into buffered per-index tool calls, emitting a

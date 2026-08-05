@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ICronDeleteTool` implementation.
+ * `tools` domain — `ICronDeleteTool` implementation.
  *
  * CronDeleteTool — cancel a scheduled cron job by id.
  *
@@ -36,7 +36,7 @@
  *   with a new task id. The doc string spells this out so the model can
  *   reach for it without prompting from a system message.
  *
- * Collaborators: `ISessionCronService` (`session/cron`) for task removal
+ * Collaborators: `ISessionCronService` for task removal
  * and telemetry emission, and `IAgentScopeContext` for the emitting agent
  * id. Bound at Agent scope.
  */

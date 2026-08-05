@@ -1,12 +1,10 @@
 /**
- * `tools` domain (L7) — `ISelectToolsTool` contract (the `select_tools` tool).
+ * `tools` domain — `ISelectToolsTool` contract (the `select_tools` tool).
  *
  * Public contract of `select_tools`, the load-by-exact-name primitive of
  * progressive tool disclosure: the model-facing `SelectToolsInputSchema` /
- * `SelectToolsInput` and the `ISelectToolsTool` DI decorator that the
- * implementation (`selectToolsTool.ts`) registers against via
- * `registerAgentToolService`. The tool name itself stays with the `toolSelect`
- * domain (`SELECT_TOOLS_TOOL_NAME`). Bound at Agent scope.
+ * `SelectToolsInput` and the `ISelectToolsTool` DI decorator. Bound at
+ * Agent scope.
  */
 
 import { z } from 'zod';

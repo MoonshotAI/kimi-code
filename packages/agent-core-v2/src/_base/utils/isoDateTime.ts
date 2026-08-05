@@ -3,11 +3,6 @@ import { z } from 'zod';
 const ISO_8601_REGEX =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}(?::?\d{2})?)$/;
 
-/**
- * Wire-schema primitive for ISO 8601 datetime strings: validates the shape and
- * normalizes to `Date#toISOString()` output. Shared by the edge DTO schemas
- * (`sessionFs`, `file`, `terminal`, `auth`, …) that expose timestamps.
- */
 export const isoDateTimeSchema = z
   .string()
   .refine((value) => ISO_8601_REGEX.test(value), {

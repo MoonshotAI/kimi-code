@@ -1,5 +1,5 @@
 /**
- * `toolSelect` domain (L4) — `IAgentToolSelectService` implementation.
+ * `toolSelect` domain — `IAgentToolSelectService` implementation.
  *
  * Shapes the provider-visible tool and history views for progressive tool
  * disclosure, loads dynamic schemas into `contextMemory`, and exposes

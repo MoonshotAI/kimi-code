@@ -33,7 +33,7 @@ import {
   fsStatManyResponseSchema,
   fsStatRequestSchema,
   fsStatResponseSchema,
-} from '@moonshot-ai/agent-core-v2/session/sessionFs/fs';
+} from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { z } from 'zod';
 
 import {

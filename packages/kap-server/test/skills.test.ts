@@ -27,8 +27,7 @@ import { join } from 'node:path';
 
 import {
   IAgentLifecycleService,
-  ISessionLifecycleService,
-  ISkillCatalogRuntimeOptions,
+  getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import {
   activateSkillResultSchema,
@@ -37,6 +36,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -62,7 +62,7 @@ describe('server-v2 /api/v1 skills', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-skills-'));
-    server = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     base = `http://127.0.0.1:${server.port}`;
   });
 
@@ -107,7 +107,7 @@ describe('server-v2 /api/v1 skills', () => {
   // The main agent scope is not created automatically on session creation
   // (server-v2 gap G10); create it here so skill activation can start a turn.
   async function createMainAgent(sessionId: string): Promise<void> {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     const agents = session.accessor.get(IAgentLifecycleService);
     if (agents.get('main') === undefined) await agents.create({ agentId: 'main' });
@@ -307,11 +307,12 @@ describe('server-v2 /api/v1 skills', () => {
       await server!.close();
       server = undefined;
       server = await startServer({
+        hostIdentity: TEST_HOST_IDENTITY,
         host: '127.0.0.1',
         port: 0,
         homeDir: home,
         logLevel: 'silent',
-        seeds: [[ISkillCatalogRuntimeOptions, { _serviceBrand: undefined, explicitDirs: [explicitDir] }]] as never,
+        skillDirs: [explicitDir],
       });
       base = `http://127.0.0.1:${server.port}`;
 

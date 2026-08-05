@@ -4,9 +4,7 @@
  *
  * Wraps a raw file's text and exposes a normalized LF "model view" for matching
  * (so a pure CRLF file can be edited with an LF `old_string`), plus the
- * mechanical replace primitives. No IO, no business rules — {@link EditService}
- * owns uniqueness / `replace_all` / error messages, and `FileEditService` owns
- * the filesystem.
+ * mechanical replace primitives. No IO, no business rules.
  */
 
 import {

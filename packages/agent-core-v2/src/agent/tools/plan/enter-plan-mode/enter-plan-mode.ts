@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IEnterPlanModeTool` contract.
+ * `tools` domain — `IEnterPlanModeTool` contract.
  *
  * Public contract of the EnterPlanMode tool — the plan-mode entry tool the
  * LLM calls to enter plan mode directly: the (empty) input schema and the

@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   SyncDescriptor,
@@ -131,6 +131,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   if (prevHome === undefined) {
     delete process.env['KIMI_HOME'];
   } else {
@@ -273,10 +274,50 @@ describe('CoreProcessService direct construction', () => {
     expect(typeof tokenProvider?.getAccessToken).toBe('function');
   });
 
+  it('threads identity into the default resolver so refreshes carry X-Msh-Platform', async () => {
+    const credentialsDir = join(tmpHome, 'credentials');
+    mkdirSync(credentialsDir, { recursive: true });
+    writeFileSync(
+      join(credentialsDir, 'kimi-code.json'),
+      JSON.stringify({
+        access_token: 'expired-access',
+        refresh_token: 'refresh-1',
+        expires_at: 1,
+        scope: '',
+        token_type: 'Bearer',
+        expires_in: 3600,
+      }),
+    );
+    const refreshHeaders: Record<string, string>[] = [];
+    vi.stubGlobal('fetch', async (_input: unknown, init?: RequestInit) => {
+      refreshHeaders.push((init?.headers ?? {}) as Record<string, string>);
+      return new Response(
+        JSON.stringify({
+          access_token: 'rotated-access',
+          refresh_token: 'rotated-refresh',
+          expires_in: 3600,
+          scope: '',
+          token_type: 'Bearer',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+
+    const resolver = CoreProcessService._defaultOAuthTokenResolver(
+      tmpHome,
+      join(tmpHome, 'config.toml'),
+      { productName: 'test', version: '0.0.0-test', platform: 'test_platform' },
+    );
+    const tokenProvider = resolver('managed:kimi-code');
+    await expect(tokenProvider?.getAccessToken()).resolves.toBe('rotated-access');
+    expect(refreshHeaders).toHaveLength(1);
+    expect(refreshHeaders[0]?.['X-Msh-Platform']).toBe('test_platform');
+  });
+
   it('default-wires kimiRequestHeaders from identity when caller omits headers', () => {
     const headers = CoreProcessService._defaultKimiRequestHeaders(
       tmpHome,
-      { userAgentProduct: 'kimi-code-cli', version: '9.9.9' },
+      { productName: 'kimi-code-cli', version: '9.9.9', platform: 'kimi_code_cli' },
     );
     expect(headers).toBeDefined();
     expect(headers!['User-Agent']).toMatch(/^kimi-code-cli\/9\.9\.9/);
@@ -297,7 +338,7 @@ describe('CoreProcessService direct construction', () => {
     const picked =
       explicit ?? CoreProcessService._defaultKimiRequestHeaders(
         tmpHome,
-        { userAgentProduct: 'kimi-code-cli', version: '9.9.9' },
+        { productName: 'kimi-code-cli', version: '9.9.9', platform: 'kimi_code_cli' },
       );
     expect(picked).toBe(explicit);
   });

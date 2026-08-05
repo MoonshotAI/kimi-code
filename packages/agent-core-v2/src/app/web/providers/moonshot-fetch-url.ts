@@ -1,3 +1,5 @@
+import { Error2, ErrorCodes } from '#/errors';
+
 import { HttpFetchError, type UrlFetcher, type UrlFetchResult } from '../tools/fetch-url-types';
 
 interface BearerTokenProvider {
@@ -103,6 +105,9 @@ export class MoonshotFetchURLProvider implements UrlFetcher {
       }
     }
     if (this.apiKey !== undefined && this.apiKey.length > 0) return this.apiKey;
-    throw new Error('Moonshot fetch service is not configured: missing API key or token provider.');
+    throw new Error2(
+      ErrorCodes.AUTH_TOKEN_MISSING,
+      'Moonshot fetch service is not configured: missing API key or token provider.',
+    );
   }
 }

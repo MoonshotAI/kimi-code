@@ -2,26 +2,21 @@
  * `contextMemory` loop-event fold — reduction of `context.append_loop_event`
  * records into folded `ContextMessage`s.
  *
- * Both loops stream a turn as `context.append_loop_event` records
+ * The agent loop streams a turn as `context.append_loop_event` records
  * (`step.begin` / `content.part` / `tool.call` / `tool.result` / `step.end`)
- * and never write a folded assistant message: the v1 loop
- * (`packages/agent-core`) always has, and since the v1.4 wire-parity alignment
- * the v2 live loop emits the same records (`LoopService` →
- * `ContextMemory.appendLoopEvent`), keeping the on-disk shape byte-compatible.
- * This fold turns them into assistant / tool messages — at live dispatch time
- * and again when `WireService.restore` restores an Agent. Without it, restore
- * would skip those records (no Op is registered for the type) and the restored
- * `ContextModel` — and every consumer built on it (`/messages`, `/snapshot`,
- * live resume) — would show only the user prompts.
+ * and never writes a folded assistant message, keeping the on-disk shape
+ * byte-compatible with v1. This fold turns them into assistant / tool
+ * messages — at live dispatch time and again when `WireService.restore`
+ * restores an Agent. Without it, restore would skip those records (no Op is
+ * registered for the type) and the restored `ContextModel` — and every
+ * consumer built on it — would show only the user prompts.
  *
- * Semantics mirror v1's `ContextMemory.appendLoopEvent`
- * (`packages/agent-core/src/agent/context/index.ts`) and the transcript
- * reducer (`packages/agent-core/src/services/message/transcript.ts`) exactly:
+ * Semantics mirror the v1 fold exactly:
  *   - `step.begin`  → open an assistant message (`partial: true`); first settle
  *                     the step left open by a failed attempt
  *   - `content.part`→ append to the open assistant's content
  *   - `tool.call`   → append to the open assistant's `toolCalls`, mark pending
- *   - `tool.result` → push a `tool` message (v1 `toolResultOutputForModel`
+ *   - `tool.result` → push a `tool` message (with the v1 output
  *                     wrapping), clear its pending id
  *   - `step.end`    → settle the assistant
  * "Settle" closes any tool exchange left open (interrupted result messages),

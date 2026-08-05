@@ -1,5 +1,5 @@
 /**
- * `media` domain (L4) — request-time video reference resolver contract.
+ * `media` domain — request-time video reference resolver contract.
  *
  * Rewrites the `kimi-file://` video references a prompt carries in the
  * projected wire messages into a provider-acceptable form (an uploaded

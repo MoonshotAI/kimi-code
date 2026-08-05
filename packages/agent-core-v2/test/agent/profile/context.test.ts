@@ -1,12 +1,17 @@
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'pathe';
+import { join, normalize } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { loadAgentsMd, prepareSystemPromptContext } from '#/agent/profile/context';
+import {
+  extractAgentsMdPathsFromSystemPrompt,
+  loadAgentsMd,
+  loadAgentsMdDetailed,
+  prepareSystemPromptContext,
+} from '#/agent/profile/context';
 
 function createFs(): IHostFileSystem {
   return new HostFileSystem();
@@ -258,5 +263,48 @@ describe('prepareSystemPromptContext additional directories', () => {
     expect(agentsMd.split('shared user instructions').length - 1).toBe(1);
     expect(agentsMd).not.toContain('extra A instructions');
     expect(agentsMd).not.toContain('extra B instructions');
+  });
+});
+
+describe('loadAgentsMdDetailed discovered paths', () => {
+  it('recovers AGENTS.md source annotations without treating plugin annotations as files', () => {
+    expect(
+      extractAgentsMdPathsFromSystemPrompt(
+        '<!-- From: /repo/AGENTS.md -->\nroot\n\n<!-- From: plugin example -->\nplugin',
+      ),
+    ).toEqual(['/repo/AGENTS.md']);
+  });
+
+  it('returns the normalized paths of every injected file in collection order', async () => {
+    await mkdir(join(homeDir, '.kimi-code'), { recursive: true });
+    await writeFile(join(homeDir, '.kimi-code', 'AGENTS.md'), 'user branded', 'utf-8');
+    await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+    await writeFile(join(workDir, '.kimi-code', 'AGENTS.md'), 'dot kimi', 'utf-8');
+    await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');
+
+    const result = await loadAgentsMdDetailed({ fs, homeDir }, workDir);
+
+    expect(result.paths).toEqual([
+      normalize(join(homeDir, '.kimi-code', 'AGENTS.md')),
+      normalize(join(workDir, '.kimi-code', 'AGENTS.md')),
+      normalize(join(workDir, 'AGENTS.md')),
+    ]);
+  });
+
+  it('prefers AGENTS.md over agents.md within one directory', async () => {
+    await writeFile(join(workDir, 'AGENTS.md'), 'upper', 'utf-8');
+    await writeFile(join(workDir, 'agents.md'), 'lower', 'utf-8');
+
+    const result = await loadAgentsMdDetailed({ fs, homeDir }, workDir);
+
+    expect(result.paths).toEqual([normalize(join(workDir, 'AGENTS.md'))]);
+  });
+
+  it('exposes the same paths through prepareSystemPromptContext', async () => {
+    await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');
+
+    const result = await prepareSystemPromptContext({ fs, homeDir }, workDir);
+
+    expect(result.agentsMdPaths).toEqual([normalize(join(workDir, 'AGENTS.md'))]);
   });
 });

@@ -1,5 +1,5 @@
 /**
- * `interaction` domain (L6) — `ISessionInteractionService` implementation.
+ * `interaction` domain — `ISessionInteractionService` implementation.
  *
  * Owns the pending interaction set and resolves requests when a response
  * arrives; announces add/remove through a typed `onDidChangePending`. Every
@@ -9,9 +9,8 @@
  * transcript fold. The plain-data state (`pending`, `recentlyResolved`,
  * `nextId`) is registered into `sessionState` (`ISessionStateService`) and
  * read/written through it. `IAgentLifecycleService` is resolved lazily at dispatch
- * time (via `IInstantiationService.invokeFunction`) because the lifecycle
- * service already depends on this kernel for turn-end cancellation — a
- * constructor edge would close a DI cycle. Direct construction without a
+ * time (via `IInstantiationService.invokeFunction`) — a constructor edge
+ * would close a DI cycle. Direct construction without a
  * container (tests, embeddings) simply skips the journaling. The kernel's
  * pending semantics stay memory-only: pending promises are never restored
  * from the journal. Bound at Session scope.
@@ -191,8 +190,6 @@ export class SessionInteractionService extends Disposable implements ISessionInt
         (accessor) => accessor.get(IAgentLifecycleService).get(agentId)?.accessor.get(IWireService),
       );
     } catch {
-      // Journaling is best-effort: a partial scope without the agent
-      // lifecycle (test hosts, embeddings) must not break the kernel.
       return undefined;
     }
   }

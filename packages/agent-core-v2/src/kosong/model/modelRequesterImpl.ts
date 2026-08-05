@@ -1,5 +1,5 @@
 /**
- * `kosong/model` domain (L2) — `ModelRequesterImpl`, the request executor.
+ * `kosong/model` domain — `ModelRequesterImpl`, the request executor.
  *
  * This is the ONLY production code that calls
  * `IProtocolAdapterRegistry.createChatProvider`: it lazily composes exactly
@@ -17,8 +17,7 @@
  * `translateProviderError` as `provider.auth_error` carrying the provider's
  * message instead of a misleading re-login prompt.
  *
- * Constructed by `ModelCatalog` (`catalogService.ts`) — plain constructor
- * args, no DI.
+ * Constructed by `ModelCatalog` — plain constructor args, no DI.
  */
 
 import { AsyncEventQueue } from '#/_base/asyncEventQueue';
@@ -158,11 +157,6 @@ export class ModelRequesterImpl implements ModelRequester {
       throw translateProviderError(error);
     }
 
-    // Every content/tool-call part already arrived through `onMessagePart`:
-    // the contract's `generate()` fires the callback for each part before
-    // merging it into the result message and throws `APIEmptyResponseError`
-    // on an empty stream, so there is nothing to backfill from
-    // `result.message` here — only stream-absent metadata remains.
     if (result.usage !== undefined && result.usage !== null) {
       queue.push({ type: 'usage', usage: result.usage, model: this.model.name });
     }
@@ -202,9 +196,6 @@ export class ModelRequesterImpl implements ModelRequester {
     try {
       return await run(refreshedAuth);
     } catch (error) {
-      // A 401 that survives a forced token refresh means the provider rejected
-      // the account itself: surface it as `provider.auth_error` (carrying the
-      // provider's message) instead of a misleading re-login prompt.
       if (isUnauthorizedStatusError(error)) throw translateProviderError(error);
       throw error;
     }
@@ -223,7 +214,6 @@ function isUnauthorizedStatusError(error: unknown): error is APIStatusError {
   return error instanceof APIStatusError && error.statusCode === 401;
 }
 
-/** Writable view of `ModelRequestTiming`, used to build the timing incrementally. */
 type MutableModelRequestTiming = { -readonly [K in keyof ModelRequestTiming]: ModelRequestTiming[K] };
 
 export function buildStreamTiming(

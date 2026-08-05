@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — consecutive same-role history merging.
+ * `kosong/provider` domain — consecutive same-role history merging.
  *
  * Shared mechanics for bases whose wire format requires alternating roles:
  * folds consecutive user messages into one, never merging a tool-result-only

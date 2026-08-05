@@ -669,7 +669,7 @@ describe('AgentTaskService', () => {
     const reminder = await backgroundTaskReminder();
     expect(reminder).toContain('The conversation was compacted');
     expect(reminder).toContain(
-      'gone — but the tasks are still running from before. Do not start duplicates. Use TaskOutput to fetch a task’s result',
+      'gone — but the tasks are still running from before. Do not start duplicates. Use TaskList to list them, TaskOutput for a non-blocking status/output snapshot',
     );
     expect(reminder).toContain('active_background_tasks: 1');
     expect(reminder).toContain(taskId);

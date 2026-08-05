@@ -1,5 +1,5 @@
 /**
- * `plan` domain (L4) — wire Model (`PlanModel`) and the `plan_mode.enter`
+ * `plan` domain — wire Model (`PlanModel`) and the `plan_mode.enter`
  * (`planModeEnter`) / `plan_mode.cancel` (`planModeCancel`) / `plan_mode.exit`
  * (`planModeExit`) Ops that mirror the plan-mode lifecycle into a persisted,
  * replayable `{ active, id }` state, plus the `plan.revision`
@@ -11,7 +11,7 @@
  * wrapped in `contextMemory`'s checkpoint protocol so plan mode stays aligned
  * with conversation undo. The lifecycle records keep exactly v1's field set
  * (`{ id }`); the plan file path is NOT persisted — it is derived from the id
- * at read time (`planService.planFilePathFor`), matching v1's `restoreEnter`.
+ * at read time, matching v1's `restoreEnter`.
  * Plan content is recorded separately: every ExitPlanMode submit snapshots
  * the plan file into blob storage and persists a `plan.revision` record
  * carrying only the reference (`{ id, version, path, sha256, bytes }`, `path`
@@ -25,12 +25,11 @@
  * mode, plan-directory/file fs I/O, the blob write, and the
  * `agent.status.updated` planMode slice — are NOT part of `apply`: they run
  * after `wire.dispatch` on the live path, and `wire.replay` rebuilds the
- * Model silently from the persisted `plan_mode.*` / `plan.revision` records
- * (seeded by `sessionLifecycle`). The legacy `toReplay: plan_updated`
- * projection is dropped (inert — nothing reads it). `plan.revision` carries
- * a `toEvent` so the live transcript projector can map it onto a marker plus
- * the plan badge; replay never emits it. Consumed by the Agent-scope
- * `planService`.
+ * Model silently from the persisted `plan_mode.*` / `plan.revision` records.
+ * The legacy `toReplay: plan_updated` projection is dropped (inert — nothing
+ * reads it). `plan.revision` carries a `toEvent` so the live transcript
+ * projector can map it onto a marker plus the plan badge; replay never emits
+ * it.
  */
 
 import { z } from 'zod';

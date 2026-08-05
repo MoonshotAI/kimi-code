@@ -1,5 +1,5 @@
 /**
- * `bashParser` domain (L1) — bash source parsing capability.
+ * `bashParser` domain — bash source parsing capability.
  *
  * Defines the `IBashParserService` that parses a bash source string into a
  * syntax tree through the pure `@moonshot-ai/tree-sitter-bash` package, plus

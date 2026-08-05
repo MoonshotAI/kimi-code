@@ -38,7 +38,7 @@
  *   `tools.set_active_tools`, `context.update_token_count`, loop bookkeeping)
  *   rebuilds state only; v2-only ops (`profile.bind`, `plan.revision`,
  *   `task.started` / `task.terminated`, `skill.activate`, `interaction.*`,
- *   `context_size.measured`, `llm.*`) fall through v1's restore switch
+ *   `token_counting.*`, `llm.*`) fall through v1's restore switch
  *   untouched. Two consequences: the v2 profile BINDING never appears as a
  *   `config_updated` replay record (v1 persists the bind as `config.update`,
  *   v2 as `profile.bind` — pinned in the parity KNOWN_DIFFS), and background

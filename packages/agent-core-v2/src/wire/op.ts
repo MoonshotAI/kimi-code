@@ -1,5 +1,5 @@
 /**
- * `wire` domain (L2) — Op definition primitive (`Op`, `OpDescriptor`,
+ * `wire` domain — Op definition primitive (`Op`, `OpDescriptor`,
  * `defineOp`, the global `OP_REGISTRY`) and the `DuplicateOpError` fail-fast
  * guard.
  *
@@ -8,7 +8,7 @@
  * callable (`goalCreate(payload)`) and inspectable (`goalCreate.apply`,
  * `goalCreate.type`). Every Op carries a mandatory pure `apply` and may carry
  * an optional `toEvent` that derives an `IEventBus` fact from the payload and
- * the post-apply state (published by `WireService` on live `dispatch`,
+ * the post-apply state (published on live `dispatch`,
  * never during `restore`). A mandatory `schema` (zod, declared before `apply`) is the
  * payload's single source of truth: `P` is inferred from it, so Op authors
  * never restate payload interfaces, and it is stored on the descriptor for
@@ -19,11 +19,7 @@
  * payload type, stays assignable to the single `dispatch(...ops: Op[])` rest
  * parameter, while the precise payload type survives on `Op.payload` for the
  * Op's own caller. Registering a duplicate `type` throws `DuplicateOpError` so
- * the global Op-type namespace stays unique. Payloads flow from each Op
- * definition into the `types.ts` registries (which map op types to `typeof`
- * the Op); registration constrains only the persistence policy — a registered
- * type must honor its map, an unregistered type keeps its free `persist`
- * option. Scope-agnostic.
+ * the global Op-type namespace stays unique. Scope-agnostic.
  */
 
 import type { z } from 'zod';

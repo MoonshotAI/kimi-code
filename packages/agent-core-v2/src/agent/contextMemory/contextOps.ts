@@ -1,5 +1,5 @@
 /**
- * `contextMemory` domain (L4) — wire Model (`ContextModel`) and the wire-protocol
+ * `contextMemory` domain — wire Model (`ContextModel`) and the wire-protocol
  * 1.4 Ops `context.append_message` (`contextAppendMessage`) / `context.clear`
  * (`contextClear`) / `context.apply_compaction` (`contextApplyCompaction`) /
  * `context.undo` (`contextUndo`) / `context.append_loop_event`
@@ -15,15 +15,15 @@
  * without local ids — the on-disk record matches v1's field set), while the
  * agent loop streams each turn as `context.append_loop_event` records — the
  * same on-disk shape the v1 loop writes — and `contextAppendLoopEvent` folds
- * them into assistant / tool messages (see `loopEventFold.ts`) both at live
- * dispatch time and on replay, so v1- and v2-written sessions reduce
+ * them into assistant / tool messages both at live dispatch time and on
+ * replay, so v1- and v2-written sessions reduce
  * identically. The swarm-mode exit reminder removal is a cross-model fold:
  * `ContextModel` registers a reducer on `swarm_mode.exit` (see
  * `popSwarmModeReminder`) so the pop replays from the `swarm_mode.exit` record
- * itself, exactly like v1's restore-time `popMatchedMessage`.
+ * itself.
  *
  * `context.undo` counts conversation ticks with the single `isUndoAnchor`
- * predicate (`./conversationTime`) — the same definition the checkpoint
+ * predicate — the same definition the checkpoint
  * protocol pushes with, so anchor counting and checkpoint pushing can never
  * drift apart.
  *
@@ -39,6 +39,7 @@
 
 import { z } from 'zod';
 
+import { ErrorCodes, Error2 } from '#/errors';
 import type { ContentPart } from '#/kosong/contract/message';
 import { defineModel, type PartsTransformer } from '#/wire/model';
 import type { WireRecord } from '#/wire/record';
@@ -162,6 +163,7 @@ export const contextClear = ContextModel.defineOp('context.clear', {
 const contextCompactionBaseShape = {
   tokensBefore: z.number().optional(),
   tokensAfter: z.number().optional(),
+  summaryOutputTokens: z.number().optional(),
   keptUserMessageCount: z.number().optional(),
   keptHeadUserMessageCount: z.number().optional(),
   droppedCount: z.number().optional(),
@@ -225,6 +227,7 @@ export function readContextCompactionShapeInput(
     compactedCount: readContextCompactedCount(fields),
     tokensBefore: readOptionalNumber(fields, 'tokensBefore') ?? 0,
     tokensAfter: readOptionalNumber(fields, 'tokensAfter'),
+    summaryOutputTokens: readOptionalNumber(fields, 'summaryOutputTokens'),
     keptUserMessageCount,
     keptHeadUserMessageCount: readOptionalNumber(fields, 'keptHeadUserMessageCount'),
     droppedCount: readOptionalNumber(fields, 'droppedCount'),
@@ -238,7 +241,17 @@ export function readContextCompactedCount(record: ContextCompactionRecord): numb
   if (typeof compactedCount === 'number') return compactedCount;
   const legacyCount = fields['count'];
   if (typeof legacyCount === 'number') return legacyCount;
-  throw new Error('Invalid context.apply_compaction record: missing compactedCount');
+  throw new Error2(
+    ErrorCodes.STORAGE_DECODE_FAILED,
+    'Invalid context.apply_compaction record: missing compactedCount',
+    {
+      details: {
+        recordKeys: Object.keys(record),
+        compactedCountType: typeof compactedCount,
+        countType: typeof legacyCount,
+      },
+    },
+  );
 }
 
 export function readContextCompactionSummary(record: ContextCompactionRecord): ContextMessage {
@@ -248,7 +261,17 @@ export function readContextCompactionSummary(record: ContextCompactionRecord): C
   const summary = fields['summary'];
   if (typeof summary === 'string') return createCompactionSummaryMessage(summary);
   if (isContextMessage(summary)) return summary;
-  throw new Error('Invalid context.apply_compaction record: missing summary');
+  throw new Error2(
+    ErrorCodes.STORAGE_DECODE_FAILED,
+    'Invalid context.apply_compaction record: missing summary',
+    {
+      details: {
+        recordKeys: Object.keys(record),
+        summaryType: typeof summary,
+        contextSummaryType: typeof contextSummary,
+      },
+    },
+  );
 }
 
 function readContextCompactionRawSummary(record: UnknownRecord): string {
@@ -259,7 +282,17 @@ function readContextCompactionRawSummary(record: UnknownRecord): string {
   if (isContextMessage(summary)) {
     return textOf(summary);
   }
-  throw new Error('Invalid context.apply_compaction record: missing summary');
+  throw new Error2(
+    ErrorCodes.STORAGE_DECODE_FAILED,
+    'Invalid context.apply_compaction record: missing summary',
+    {
+      details: {
+        recordKeys: Object.keys(record),
+        summaryType: typeof summary,
+        contextSummaryType: typeof contextSummary,
+      },
+    },
+  );
 }
 
 function readLegacySummaryMessage(record: UnknownRecord): ContextMessage | undefined {

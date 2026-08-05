@@ -5,13 +5,14 @@ import { join } from 'node:path';
 import {
   IAgentLifecycleService,
   IAgentTaskService,
-  ISessionLifecycleService,
+  getLiveSessionById,
   IModelCatalog,
   type AgentTask,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -74,6 +75,7 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
       },
     };
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -124,7 +126,7 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
   // (server-v2 gap G10); create it here, then register fake tasks
   // directly into its IAgentTaskService to bypass the tool loop.
   async function mainAgentTasks(sessionId: string): Promise<IAgentTaskService> {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     const agent =
       session.accessor.get(IAgentLifecycleService).get('main') ??

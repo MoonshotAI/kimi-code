@@ -32,6 +32,8 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
+import { Event } from '#/_base/event';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   type GrepInput,
@@ -311,6 +313,11 @@ describe('GrepTool', () => {
           reg.define(IGrepTool, ProductionGrepTool);
           reg.define(IAgentToolRegistryService, AgentToolRegistryService);
           reg.define(IAgentToolActivationService, AgentToolActivationService);
+          reg.defineInstance(ISessionToolPolicyGate, {
+            _serviceBrand: undefined,
+            disabledTools: [],
+            onDidChange: Event.None as Event<void>,
+          } satisfies ISessionToolPolicyGate);
           reg.definePartialInstance(IAgentProfileService, {
             data: () => ({}) as unknown as ProfileData,
           });

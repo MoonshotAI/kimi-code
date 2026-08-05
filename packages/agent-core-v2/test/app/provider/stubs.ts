@@ -1,5 +1,5 @@
 /**
- * `provider` domain (L2) — in-memory `IProviderService` test double.
+ * `provider` domain — in-memory `IProviderService` test double.
  *
  * Stores provider configuration by name for App-scope consumer tests.
  */

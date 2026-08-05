@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IReadTool` contract.
+ * `tools` domain — `IReadTool` contract.
  *
  * Public contract of Read, the model's UTF-8 text file reader. Renders a
  * text file as `<line-number>\t<content>` per line as `output`, and rides a

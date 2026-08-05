@@ -119,6 +119,7 @@ interface EnvRow {
 /** Property access shape of an `EnvBinding` object (avoids index-signature access). */
 interface EnvBindingFields {
   readonly env?: unknown;
+  readonly deprecatedEnv?: unknown;
   readonly parse?: unknown;
   readonly default?: unknown;
 }
@@ -133,6 +134,9 @@ function flattenEnvBindings(bindings: unknown, path: string[] = []): EnvRow[] {
     const detail: string[] = [];
     if (binding.parse !== undefined) detail.push('custom parse');
     if (binding.default !== undefined) detail.push(`default ${JSON.stringify(binding.default)}`);
+    if (typeof binding.deprecatedEnv === 'string') {
+      detail.push(`deprecated fallback ${binding.deprecatedEnv}`);
+    }
     return [{ field: path.join('.'), env: binding.env, detail: detail.join('; ') }];
   }
   return Object.entries(bindings).flatMap(([key, value]) => flattenEnvBindings(value, [...path, key]));
@@ -278,6 +282,13 @@ function renderSection(section: ConfigSectionContribution, owner: string | undef
   if (options.toToml !== undefined) hooks.push('custom toToml');
   if (options.stripEnv !== undefined) hooks.push('stripEnv');
   if (hooks.length > 0) lines.push(`#   hooks: ${hooks.join(' · ')}`);
+  const deprecations = options.deprecations ?? [];
+  if (deprecations.length > 0) {
+    lines.push('#   deprecations (old key is ignored + warns; rename manually):');
+    for (const deprecation of deprecations) {
+      lines.push(`#     ${deprecation.key} -> ${deprecation.replacement}`);
+    }
+  }
   const envRows = flattenEnvBindings(options.env);
   if (envRows.length > 0) {
     lines.push('#   env:');

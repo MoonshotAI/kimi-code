@@ -14,15 +14,18 @@ import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiati
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { type IAgentScopeHandle, type ISessionScopeHandle, LifecycleScope } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
+import { IConfigService } from '#/app/config/config';
 import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import { ISessionLegacyService } from '#/app/sessionLegacy/sessionLegacy';
 import { SessionLegacyService } from '#/app/sessionLegacy/sessionLegacyService';
-import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
+import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
+import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
+import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -40,6 +43,43 @@ function accessor(
       throw new Error(`Unexpected service request: ${String(id)}`);
     },
   };
+}
+
+/** Stub the index → handler → session-lifecycle chain for one live session. */
+function stubSessionChain(ix: TestInstantiationService, session: ISessionScopeHandle): void {
+  const handler = {
+    id: 'wd',
+    kind: LifecycleScope.Workspace,
+    accessor: accessor([
+      [
+        ISessionLifecycleService,
+        {
+          resume: () => Promise.resolve(session),
+          get: () => session,
+        },
+      ],
+    ]),
+    dispose: () => {},
+  } as const;
+  ix.stub(ISessionIndex, {
+    get: (id: string) =>
+      Promise.resolve(
+        id === session.id
+          ? {
+              id: session.id,
+              workspaceId: 'wd',
+              cwd: '/workspace',
+              createdAt: 1,
+              updatedAt: 1,
+              archived: false,
+            }
+          : undefined,
+      ),
+  });
+  ix.stub(IWorkspaceLifecycleService, {
+    handlerFor: () => Promise.resolve(handler),
+    handlers: { list: () => [handler] },
+  });
 }
 
 describe('Session legacy status (best-effort runtime state)', () => {
@@ -77,7 +117,7 @@ describe('Session legacy status (best-effort runtime state)', () => {
       kind: LifecycleScope.Agent,
       accessor: accessor([
         [IAgentProfileService, profile],
-        [IAgentContextSizeService, { get: () => ({ size: 25, measured: 20, estimated: 5 }) }],
+        [IAgentTokenCountingService, { get: () => ({ size: 25, measured: 20, estimated: 5 }), statusSize: () => 25 }],
         [IAgentPermissionModeService, { mode: 'manual' }],
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
         [IAgentSwarmService, { isActive: false }],
@@ -104,10 +144,7 @@ describe('Session legacy status (best-effort runtime state)', () => {
       ]),
       dispose: () => {},
     };
-    ix.stub(ISessionLifecycleService, {
-      resume: () => Promise.resolve(session),
-      get: () => session,
-    });
+    stubSessionChain(ix, session);
     ix.set(ISessionLegacyService, new SyncDescriptor(SessionLegacyService));
 
     const status = await ix.get(ISessionLegacyService).status('session-test');
@@ -117,6 +154,70 @@ describe('Session legacy status (best-effort runtime state)', () => {
       model: 'removed-model',
       thinking_level: 'high',
       max_context_tokens: 0,
+    });
+  });
+
+  it('reports an empty thinking level for a never-bound main agent', async () => {
+    // A fresh session's main agent is materialized unbound (no Profile / Model
+    // — see kap-server's ensureMainAgent). The wire model's initial
+    // thinkingLevel is the zero value 'off'; reporting it would make clients
+    // fold a level nobody chose into the session's real state, so the status
+    // edge must report '' (mirroring `model: undefined`) instead.
+    const profile = {
+      _serviceBrand: undefined,
+      data: () => ({
+        cwd: '/workspace',
+        modelAlias: undefined,
+        modelCapabilities: UNKNOWN_CAPABILITY,
+        thinkingLevel: 'off',
+        systemPrompt: '',
+      }),
+      getModel: () => '',
+      getModelCapabilities: () => UNKNOWN_CAPABILITY,
+      getEffectiveThinkingLevel: () => 'off',
+    } as unknown as IAgentProfileService;
+    const agent: IAgentScopeHandle = {
+      id: 'main',
+      kind: LifecycleScope.Agent,
+      accessor: accessor([
+        [IAgentProfileService, profile],
+        [IAgentTokenCountingService, { get: () => ({ size: 0, measured: 0, estimated: 0 }), statusSize: () => 0 }],
+        [IAgentPermissionModeService, { mode: 'manual' }],
+        [IAgentPlanService, { status: () => Promise.resolve(null) }],
+        [IAgentSwarmService, { isActive: false }],
+        // Unbound: assembleStatus resolves the default model's context cap,
+        // which reads the `defaultModel` config section first.
+        [IConfigService, { get: () => undefined }],
+        [
+          IAgentActivityView,
+          { state: () => ({ lifecycle: 'ready', background: [] }) },
+        ],
+      ]),
+      dispose: () => {},
+    };
+    const agents = {
+      create: () => Promise.resolve(agent),
+      whenReady: () => Promise.resolve(agent),
+      list: () => [agent],
+    } as unknown as IAgentLifecycleService;
+    const session: ISessionScopeHandle = {
+      id: 'session-unbound',
+      kind: LifecycleScope.Session,
+      accessor: accessor([
+        [IAgentLifecycleService, agents],
+        [ISessionCronService, { _serviceBrand: undefined }],
+      ]),
+      dispose: () => {},
+    };
+    stubSessionChain(ix, session);
+    ix.set(ISessionLegacyService, new SyncDescriptor(SessionLegacyService));
+
+    const status = await ix.get(ISessionLegacyService).status('session-unbound');
+
+    expect(status).toMatchObject({
+      busy: false,
+      model: undefined,
+      thinking_level: '',
     });
   });
 
@@ -157,7 +258,7 @@ describe('Session legacy status (best-effort runtime state)', () => {
       kind: LifecycleScope.Agent,
       accessor: accessor([
         [IAgentProfileService, profile],
-        [IAgentContextSizeService, { get: () => ({ size: 120_000, measured: 110_000, estimated: 10_000 }) }],
+        [IAgentTokenCountingService, { get: () => ({ size: 120_000, measured: 110_000, estimated: 10_000 }), statusSize: () => 120_000 }],
         [IAgentPermissionModeService, { mode: 'manual' }],
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
         [IAgentSwarmService, { isActive: false }],
@@ -182,10 +283,7 @@ describe('Session legacy status (best-effort runtime state)', () => {
       ]),
       dispose: () => {},
     };
-    ix.stub(ISessionLifecycleService, {
-      resume: () => Promise.resolve(session),
-      get: () => session,
-    });
+    stubSessionChain(ix, session);
     ix.set(ISessionLegacyService, new SyncDescriptor(SessionLegacyService));
 
     const status = await ix.get(ISessionLegacyService).status('session-capped');
@@ -231,10 +329,7 @@ describe('Session legacy status (best-effort runtime state)', () => {
       ]),
       dispose: () => {},
     };
-    ix.stub(ISessionLifecycleService, {
-      resume: () => Promise.resolve(session),
-      get: () => session,
-    });
+    stubSessionChain(ix, session);
     ix.set(ISessionLegacyService, new SyncDescriptor(SessionLegacyService));
 
     await ix.get(ISessionLegacyService).updateProfile('session-test', {

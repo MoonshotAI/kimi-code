@@ -1,5 +1,5 @@
 /**
- * `log` domain (L1) — logfmt entry formatter.
+ * `log` domain — logfmt entry formatter.
  *
  * Renders a `LogEntry` as a single logfmt line (`ISO LEVEL msg k=v ...`),
  * redacts secret-shaped keys and raw secret patterns, truncates oversized

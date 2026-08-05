@@ -6,7 +6,6 @@
  * `DocumentCodec` so the same access pattern serves different on-disk formats.
  *
  * This file ships the interface, codec contract, and DI tokens only.
- * Concrete implementations live in `persistence/backends/`.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

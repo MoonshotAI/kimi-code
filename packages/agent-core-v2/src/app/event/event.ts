@@ -1,5 +1,5 @@
 /**
- * `event` domain (L0) — process-wide pub/sub event bus contract.
+ * `event` domain — process-wide pub/sub event bus contract.
  *
  * Defines `IEventService`, a minimal type-tagged event bus used by business
  * domains to broadcast facts (for example session lifecycle changes) to an

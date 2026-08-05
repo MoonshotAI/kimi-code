@@ -1,9 +1,9 @@
 /**
- * `config` domain (L2) — record-level config-section diffing.
+ * `config` domain — record-level config-section diffing.
  *
- * Shared by the model/provider/platform services: `diffRecords` computes the
- * added/removed/changed keys between two snapshots of a record-shaped config
- * section, `deepEqual` is the value comparison it uses. Pure functions.
+ * `diffRecords` computes the added/removed/changed keys between two snapshots
+ * of a record-shaped config section, `deepEqual` is the value comparison it
+ * uses. Pure functions.
  */
 
 export interface RecordDiff {

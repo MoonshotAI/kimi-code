@@ -14,7 +14,7 @@ description: Use when developing in packages/agent-core-v2 (the DI × Scope agen
 ```text
 Orient → Design → Implement → Test → Verify
   │        │          │          │        │
-  │        │          │          │        └─ lint:domain · typecheck · test · dep graph · red lines
+  │        │          │          │        └─ lint:imports · typecheck · test · dep graph · red lines
   │        │          │          └─ test.md
   │        │          └─ implement.md (+ errors.md · flags.md · permission.md)
   │        └─ design.md
@@ -46,7 +46,7 @@ End-to-end procedures that span the stages. Reach for these before reading the s
   - Topic: [Permission](permission.md) — risk-only chain-of-responsibility kernel, harness constraints and product reviews as domain `onBeforeExecuteTool` veto listeners (`veto` / `allow` / `pass` / cold `waitUntil` factories), shared `toolApproval` round-trip, policy registry + composer, `modes`/`agentTypes` metadata, `resolveExecution`/`accesses`.
   - Topic: [Telemetry](telemetry.md) — emitting events via `ITelemetryService`, context propagation, and appender destinations (`ConsoleAppender` / `CloudAppender`).
 - [Stage 4 — Test](test.md): resolve the system under test by interface, pick `TestInstantiationService` vs `createScopedTestHost`, shared stubs, service groups, teardown.
-- [Stage 5 — Verify & submit](verify.md): `lint:domain`, `typecheck`, `test`, and the pre-submit checklist.
+- [Stage 5 — Verify & submit](verify.md): `lint:imports`, `typecheck`, `test`, and the pre-submit checklist.
 
 ## How to use this skill
 
@@ -67,4 +67,4 @@ Invariants that hold across every stage. Each is expanded in the stage file note
 9. Throw coded errors; register codes centrally; branch on `code` across the wire, never `instanceof`. (errors.md)
 10. Gate unreleased behavior behind a flag contributed via `registerFlagDefinition` and resolved through `IFlagService.enabled(id)`; no ad-hoc env toggles. (flags.md)
 11. Tests resolve the SUT by interface; shared stubs live under `test/`, never `src/`. (test.md)
-12. Config is the preference registry: only preferences that are persistable, schema'd, and user/operator-facing go in `IConfigService`. Domain-specific config (including env-only operational toggles) goes through `registerSection` + `envOverlay`. Facts → `IBootstrapService` (kept domain-agnostic — never add cron/flags/model state); session state → Session scope; constants → code. Business domains never call `IBootstrapService.getEnv()` directly. (config.md)
+12. Config is the preference registry: only preferences that are persistable, schema'd, and user/operator-facing go in `IConfigService`. Domain-specific config (including env-only operational toggles) goes through `registerSection` + `envOverlay`. Facts → `IBootstrapService`, and host invocation arguments (CLI flags, host identity headers, prompt identity) → `BootstrapInput.args` / `IBootstrapService.args` — never new per-domain runtime-options services; domain runtime state (cron/flags/model) never goes onto `IBootstrapService`; session state → Session scope; constants → code. Business domains never call `IBootstrapService.getEnv()` directly. (config.md)

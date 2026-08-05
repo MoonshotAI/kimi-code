@@ -1,5 +1,5 @@
 /**
- * `activityView` domain (L4) — the agent's one-way activity projection.
+ * `activityView` domain — the agent's one-way activity projection.
  *
  * Defines `IAgentActivityView`: a per-agent, read-only, event-folded read
  * model of "what this agent is doing" — the current turn with its live
@@ -8,11 +8,8 @@
  * `agent.activity.updated`. The view OWNS NO authoritative state: every fact
  * is folded from the agent's own event bus (loop turn/step/delta/tool/retry,
  * permission approval, task, and full-compaction events) and seeded once from
- * the owning services; it can be discarded and rebuilt at any time. Turn
- * mechanics live in the loop, admission/drain in the session lifecycle, and
- * background work in task/full-compaction services — none of that is
- * duplicated here. Bound at Agent scope — one instance per agent, dying with
- * it.
+ * the owning services; it can be discarded and rebuilt at any time. Bound at
+ * Agent scope — one instance per agent, dying with it.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -63,24 +60,14 @@ export interface ActivityLastTurnState {
   readonly at: number;
 }
 
-/**
- * Coarse existence reference to one piece of the agent's active background
- * work (task or full compaction) — the second busy layer. Owner-specific
- * details live in their own domains; this carries only "there is live
- * background work".
- */
 export interface BackgroundRef {
   readonly kind: string;
   readonly id: string;
   readonly since: number;
 }
 
-/** The view's lifecycle slice: `ready` once materialized, `disposed` when the
- *  agent is being torn down. There is no `initializing` state — the view is
- *  created lazily and a restoring agent exposes no handles yet. */
 export type ActivityViewLifecycle = 'ready' | 'disposed';
 
-/** The agent's folded activity snapshot — the payload of `agent.activity.updated`. */
 export interface AgentActivityState {
   readonly lifecycle: ActivityViewLifecycle;
   readonly turn?: ActivityTurnState;
@@ -91,7 +78,6 @@ export interface AgentActivityState {
 export interface IAgentActivityView {
   readonly _serviceBrand: undefined;
 
-  /** The current folded snapshot (cheap to recompute; do not cache long-term). */
   state(): AgentActivityState;
 }
 

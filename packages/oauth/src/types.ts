@@ -45,14 +45,20 @@ export interface OAuthFlowConfig {
 }
 
 /** Device identification for `X-Msh-*` headers. */
-export interface DeviceHeaders {
+export type DeviceHeaders = {
   readonly 'X-Msh-Platform': string;
   readonly 'X-Msh-Version': string;
   readonly 'X-Msh-Device-Name': string;
   readonly 'X-Msh-Device-Model': string;
   readonly 'X-Msh-Os-Version': string;
   readonly 'X-Msh-Device-Id': string;
-}
+};
+
+/** Headers sent with OAuth HTTP requests: the `X-Msh-*` device set, plus a
+    product User-Agent when the caller carries a host identity — the OAuth
+    host needs both to tell client families (platform) and runtime surfaces
+    (UA suffix) apart. */
+export type OAuthRequestHeaders = Record<string, string>;
 
 /** JSON wire format for token persistence (snake_case, Python-compatible). */
 export interface TokenInfoWire {

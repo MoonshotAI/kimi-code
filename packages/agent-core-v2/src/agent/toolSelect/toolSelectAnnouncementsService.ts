@@ -1,5 +1,5 @@
 /**
- * `toolSelect` domain (L4) — `IAgentToolSelectAnnouncementsService`
+ * `toolSelect` domain — `IAgentToolSelectAnnouncementsService`
  * implementation.
  *
  * Appends v1-compatible loadable-tools diff announcements at turn boundaries

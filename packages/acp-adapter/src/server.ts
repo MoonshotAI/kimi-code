@@ -356,6 +356,11 @@ export class AcpServer implements Agent {
     // record verbatim. The `@ts-expect-error` documents this contract;
     // if the SDK ever switches from spread-passthrough to explicit field
     // copy, this line breaks and we revisit the boundary.
+    // NOTE (workspace-domain consolidation): the passthrough reaches the
+    // v1 kernel only. The v2 engine has NO caller `mcpServers` channel on
+    // session create/resume (its MCP manager is per-workspace-handler, fed
+    // by config files and plugins only) — how ACP-supplied servers should
+    // reach the v2 engine is left to a future ACP-specific design.
     const mcpServers = acpMcpServersToConfigs(params.mcpServers);
     if (!this.conn) {
       // Defensive: every code path that constructs `AcpServer` (the

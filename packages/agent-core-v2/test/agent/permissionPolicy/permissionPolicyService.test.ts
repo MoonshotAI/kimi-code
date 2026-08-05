@@ -25,7 +25,10 @@ import {
   type PermissionRule,
 } from '#/agent/permissionRules/permissionRules';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IGitService } from '#/app/git/git';
+import { findGitWorkTree } from '#/app/git/workTree';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { ToolAccesses, type ToolAccesses as ToolAccessList } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
@@ -33,6 +36,8 @@ import { stubPermissionModeService } from '../permissionMode/stubs';
 import { recordingTelemetry } from '../../app/telemetry/stubs';
 
 const signal = new AbortController().signal;
+
+const hostFs = new HostFileSystem();
 
 describe('AgentPermissionPolicyService chain', () => {
   let disposables: DisposableStore;
@@ -59,9 +64,10 @@ describe('AgentPermissionPolicyService chain', () => {
           rules: () => rules,
           sessionApprovalRulePatterns: () => sessionApprovalRulePatterns,
         }));
-        reg.defineInstance(ISessionWorkspaceContext, workspace);
+        reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
         reg.defineInstance(IHostEnvironment, kaosStub());
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
+        reg.definePartialInstance(IGitService, { findWorkTree: async () => null });
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
       },
       strict: true,
@@ -196,9 +202,12 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
           makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
         );
         reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub());
-        reg.defineInstance(ISessionWorkspaceContext, workspace);
+        reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
         reg.defineInstance(IHostEnvironment, kaosStub());
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
+        reg.definePartialInstance(IGitService, {
+          findWorkTree: (cwd: string) => findGitWorkTree(hostFs, cwd),
+        });
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
       },
       strict: true,
@@ -475,31 +484,25 @@ function stringArg(
   return typeof value === 'string' ? value : fallback;
 }
 
-function workspaceStub(initialWorkDir: string): ISessionWorkspaceContext {
-  let workDir = initialWorkDir;
+function workspaceStub(initialWorkDir: string): {
+  readonly stub: ISessionWorkspaceContext;
+  addAdditionalDir(dir: string): void;
+} {
   let additionalDirs: string[] = [];
-  return {
+  const stub: ISessionWorkspaceContext = {
     _serviceBrand: undefined,
-    get workDir() {
-      return workDir;
-    },
+    workDir: initialWorkDir,
     get additionalDirs() {
       return additionalDirs;
-    },
-    setWorkDir: (nextWorkDir) => {
-      workDir = nextWorkDir;
-    },
-    setAdditionalDirs: (dirs) => {
-      additionalDirs = [...dirs];
     },
     resolve: (path) => path,
     isWithin: () => true,
     assertAllowed: (path) => path,
+  };
+  return {
+    stub,
     addAdditionalDir: (dir) => {
       if (!additionalDirs.includes(dir)) additionalDirs = [...additionalDirs, dir];
-    },
-    removeAdditionalDir: (dir) => {
-      additionalDirs = additionalDirs.filter((candidate) => candidate !== dir);
     },
   };
 }

@@ -1,5 +1,5 @@
 /**
- * `skill` domain (L3) — `IAgentSkillService` implementation.
+ * `skill` domain — `IAgentSkillService` implementation.
  *
  * Resolves skills from the session catalog, renders the activation prompt,
  * records the activation as a `skill.activate` fact through `wire.dispatch`

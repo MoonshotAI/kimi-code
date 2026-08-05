@@ -1,5 +1,5 @@
 /**
- * `goal` domain (L4) — public goal lifecycle and budget models.
+ * `goal` domain — public goal lifecycle and budget models.
  */
 
 export type GoalStatus = 'active' | 'paused' | 'blocked' | 'complete';

@@ -11,6 +11,7 @@
  */
 
 import type {
+  AuthManagedUserInfoResult,
   AuthManagedUsageResult,
   BearerTokenProvider,
   KimiOAuthLoginOptions,
@@ -47,6 +48,7 @@ export interface IOAuthService {
   status(provider?: string): Promise<AuthStatus>;
   refreshOAuthProviderModels(): Promise<RefreshOAuthProviderModelsResponse>;
   getManagedUsage(provider?: string): Promise<AuthManagedUsageResult>;
+  getManagedUserInfo(provider?: string): Promise<AuthManagedUserInfoResult>;
   resolveTokenProvider(provider: string, oauthRef?: OAuthRef): BearerTokenProvider | undefined;
   getCachedAccessToken(provider: string, oauthRef?: OAuthRef): Promise<string | undefined>;
 }
@@ -68,6 +70,10 @@ export interface IOAuthToolkit {
     providerName?: string,
     options?: { readonly oauthRef?: KimiOAuthTokenRef; readonly baseUrl?: string },
   ): Promise<AuthManagedUsageResult>;
+  getManagedUserInfo(
+    providerName?: string,
+    options?: { readonly oauthRef?: KimiOAuthTokenRef; readonly baseUrl?: string },
+  ): Promise<AuthManagedUserInfoResult>;
 }
 
 export const IOAuthToolkit: ServiceIdentifier<IOAuthToolkit> =

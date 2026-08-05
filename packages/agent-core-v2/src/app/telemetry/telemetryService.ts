@@ -1,5 +1,5 @@
 /**
- * `telemetry` domain (L1) — `ITelemetryService` implementation.
+ * `telemetry` domain — `ITelemetryService` implementation.
  *
  * Owns the appender set, enabled flag, and root context, and creates forwarding
  * context views that merge scoped properties at emission time. Views retain no

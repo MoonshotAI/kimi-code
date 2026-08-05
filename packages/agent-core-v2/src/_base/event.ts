@@ -1,5 +1,5 @@
 /**
- * `event` domain (L0) — `Event` / `Emitter` primitives, the async
+ * `event` domain — `Event` / `Emitter` primitives, the async
  * `AsyncEmitter` / `IWaitUntil` participation primitive (for interceptable
  * `onWill` events whose listeners register work via `waitUntil`), the
  * `handleVetos` helper (for `onBefore*` veto events whose listeners answer

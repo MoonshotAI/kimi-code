@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IWriteTool` contract.
+ * `tools` domain — `IWriteTool` contract.
  *
  * Public contract of Write, the model's UTF-8 text file writer. Overwrites a
  * file entirely or appends content to its end. Creates the file if it does

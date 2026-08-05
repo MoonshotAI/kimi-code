@@ -1,5 +1,5 @@
 /**
- * `kosong/contract` domain (L0) — wire message shapes and their pure helpers.
+ * `kosong/contract` domain — wire message shapes and their pure helpers.
  *
  * `Message` / `ContentPart` / `ToolCall` are the provider-agnostic wire
  * content every protocol base encodes from and decodes into. The helpers

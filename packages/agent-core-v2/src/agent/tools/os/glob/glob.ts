@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IGlobTool` contract.
+ * `tools` domain — `IGlobTool` contract.
  *
  * Public contract of Glob, the model's ripgrep-backed file pattern matcher.
  * Finds files matching a glob pattern, returned sorted by modification time

@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IGetGoalTool` contract.
+ * `tools` domain — `IGetGoalTool` contract.
  *
  * Public contract of the GetGoal tool: the (empty) input schema and the
  * Agent-scope identifier used to resolve the implementation through the

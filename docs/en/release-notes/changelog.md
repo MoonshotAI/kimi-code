@@ -6,6 +6,57 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.32.0 (2026-08-04)
+
+### Features
+
+- Add four hook events: `TurnStarted`, `UserPromptQueued`, `TaskStarted`, and `SessionHeartbeat`. Configure them under `[[hooks]]` in `config.toml` — see [Hooks](https://moonshotai.github.io/kimi-code/en/customization/hooks.html) for details.
+
+### Polish
+
+- Rename two `[loop_control]` keys: `max_retries_per_step` → `max_attempts_per_step` and `max_steps_per_run` → `max_steps_per_turn`; the old keys stop working with a rename warning at startup — see [loop_control](https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#loop-control).
+- Add a `[token_counting]` config section: when a provider doesn't report token usage, switch the context-size display to local estimates — see [token_counting](https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#token-counting).
+
+### Bug Fixes
+
+- Fix answers to interactive question prompts being rejected when the model provider returns tool call IDs containing colons (some OpenAI-compatible gateways).
+- Fix automatic context compaction getting stuck retrying an oversized request until it fails.
+- Fall back to the built-in models.dev catalog snapshot when the public catalog is unreachable, so importing a known provider still works offline or in blocked networks.
+- Fix the context window limit showing as 0 when no model is configured; it now falls back to the default model.
+- web: Fix dark-mode monochrome controls and align the chat composer corner radius with the design system.
+- Fix the `/login` already-logged-in confirmation being hard to read; it now uses the success color.
+
+## 0.31.1 (2026-07-31)
+
+### Polish
+
+- Reduce frequent full-screen redraws in the TUI.
+- Preserve the assistant's partial output when a turn is interrupted with Esc, and remind the model that the previous turn was deliberately interrupted.
+- web: Order permission modes from safest to most permissive across settings surfaces, and fix the swapped yolo/auto risk colors in the status panel and mobile settings.
+- web: Enable Monaco-based highlighting for code blocks, and fix line numbers overlapping or drifting out of alignment in fallback-rendered code blocks.
+
+### Bug Fixes
+
+- Fix sporadic "model is not configured" errors when starting kimi web, caused by the background provider-model refresh transiently clearing the model catalog while the first session was being created.
+- web: Fix new sessions showing the thinking level (e.g. Max) while the first message actually ran with thinking off.
+- web: Make the @ file mention work in a new-session draft, before the first prompt creates the session.
+- web: Fix chat code blocks rendering in the proportional UI font at the wrong size after the markdown renderer upgrade, and align the loading fallback with the highlighted block.
+
+## 0.31.0 (2026-07-30)
+
+### Features
+
+- Support Markdown-defined custom agents on agent-core.
+- Add the /secondary_model slash command to configure the secondary model used by subagents (experimental; enable it in /experiments first).
+- Plugins can contribute custom agents, discovered automatically and available for sub-agent delegation.
+- Plugins can contribute system prompt instructions through `systemPrompt` or `systemPromptPath` in `kimi.plugin.json`.
+
+### Bug Fixes
+
+- Remove the blocking `block`/`timeout` wait from the TaskOutput tool so checking a background task can no longer stall the conversation; it now always returns an immediate snapshot, and completion still arrives via automatic notification.
+- Fix sessions missing from the session picker when their cached metadata predates the archived flag.
+- Fix request headers not being passed correctly on some requests.
+
 ## 0.30.0 (2026-07-29)
 
 ### Features

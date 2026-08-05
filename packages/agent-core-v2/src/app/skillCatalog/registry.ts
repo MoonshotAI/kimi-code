@@ -1,12 +1,10 @@
 /**
- * `skillCatalog` domain (L3) — concrete in-memory skill catalog.
+ * `skillCatalog` domain — concrete in-memory skill catalog.
  *
  * Owns registered skill lookup, plugin-scoped skill lookup, prompt rendering,
  * and model-facing skill listings for `skill`, plus the skipped-skill /
- * scanned-root diagnostics accumulated from discovery results. Held internally
- * by the Session skill-catalog sink (`ISessionSkillCatalog`) and composed
- * directly by the edge to resolve a workspace's skills without a Session; it is
- * not a scoped service.
+ * scanned-root diagnostics accumulated from discovery results. It is not a
+ * scoped service.
  */
 
 import { escapeXmlAttr, escapeXmlTags } from '#/_base/utils/xml-escape';
@@ -84,9 +82,9 @@ export class InMemorySkillCatalog implements SkillCatalog {
     const instructions = plugin.instructions;
     if (instructions === undefined || instructions.trim().length === 0) return content;
     return (
-      `<kimi-plugin-instructions plugin="${escapeXmlAttr(plugin.id)}">\n` +
+      `<plugin-instructions plugin="${escapeXmlAttr(plugin.id)}">\n` +
       `${instructions}\n` +
-      `</kimi-plugin-instructions>\n\n${content}`
+      `</plugin-instructions>\n\n${content}`
     );
   }
 

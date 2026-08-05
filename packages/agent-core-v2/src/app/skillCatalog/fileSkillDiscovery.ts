@@ -1,10 +1,9 @@
 /**
- * `skillCatalog` domain (L3) — filesystem `ISkillDiscovery` backend.
+ * `skillCatalog` domain — filesystem `ISkillDiscovery` backend.
  *
  * Discovers skill bundles by walking caller-supplied roots and parsing each
- * SKILL.md through `parser`. Provides the App-scoped filesystem backend for
- * `ISkillDiscovery` and the same stateless path for `PluginManager`'s standalone
- * API; other consumers stay filesystem-agnostic through the interface.
+ * SKILL.md. Exposes discovery through the App-scoped service and a stateless
+ * filesystem entry point.
  */
 
 import { promises as fs } from 'node:fs';
@@ -17,7 +16,11 @@ import type { SkillDiscoveryResult, ISkillDiscovery } from './skillDiscovery';
 import type { SkillDefinition, SkillRoot, SkippedSkill } from './types';
 import { normalizeSkillName } from './types';
 
-const MAX_SKILL_SCAN_DEPTH = 8;
+export const MAX_SKILL_SCAN_DEPTH = 8;
+
+export function isSkillScanExcludedEntry(entryName: string): boolean {
+  return entryName === 'node_modules' || entryName.startsWith('.');
+}
 
 export class FileSkillDiscovery implements ISkillDiscovery {
   declare readonly _serviceBrand: undefined;
@@ -37,6 +40,7 @@ export async function discoverFileSkills(
 ): Promise<SkillDiscoveryResult> {
   const byDiscoveryKey = new Map<string, SkillDefinition>();
   const skipped: SkippedSkill[] = [];
+  const scannedDirectories: string[] = [];
 
   async function walkSkillDir(
     dirPath: string,
@@ -53,6 +57,7 @@ export async function discoverFileSkills(
     } catch {
       return;
     }
+    scannedDirectories.push(dirPath);
 
     const directorySkills = new Set<string>();
     const subdirs: string[] = [];
@@ -61,7 +66,7 @@ export async function discoverFileSkills(
       if (await isFile(path.join(entryPath, 'SKILL.md'))) {
         directorySkills.add(entry);
       }
-      if (entry === 'node_modules' || entry.startsWith('.')) continue;
+      if (isSkillScanExcludedEntry(entry)) continue;
       if (await isDir(entryPath)) subdirs.push(entry);
     }
 
@@ -135,6 +140,7 @@ export async function discoverFileSkills(
     skills: sortSkills([...byDiscoveryKey.values()]),
     skipped,
     scannedRoots: roots.map((root) => root.path),
+    scannedDirectories,
   };
 }
 

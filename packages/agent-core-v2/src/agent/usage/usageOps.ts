@@ -1,17 +1,17 @@
 /**
- * `usage` domain (L3) — wire Model (`UsageModel`) and the `usage.record` Op
+ * `usage` domain — wire Model (`UsageModel`) and the `usage.record` Op
  * (`recordUsage`) for the agent's accumulated token usage.
  *
  * Declares usage as a wire Model (`byModel` totals) plus the single Op that
  * folds one `record` call into it. The persisted record carries exactly v1's
  * field set (`{ model, usage, usageScope }`); the per-turn accumulator is NOT
- * in the Model — it is live-only service state (see `usageService`), reset on
+ * in the Model — it is live-only service state, reset on
  * resume like v1 (v1 restore folds every `usage.record` as `session` scope and
  * never rebuilds `currentTurn`). `apply` is pure and ignores any extra fields
  * found on replayed legacy records (early v2 logs carried `turnId` / `context`).
  * Also declares the canonical `agent.status.updated` event shape on
- * `DomainEventMap`; the usage slice is published live by `usageService` after
- * each dispatch (never on replay). Consumed by the Agent-scope `usageService`.
+ * `DomainEventMap`; the usage slice is published live after
+ * each dispatch (never on replay).
  */
 
 import { z } from 'zod';

@@ -30,7 +30,7 @@ export class AuthSummaryService
     @ICoreProcessService private readonly core: ICoreProcessService,
   ) {
     super();
-    this._authFacade = createManagedAuthFacade(env);
+    this._authFacade = createManagedAuthFacade(env, env.identity);
   }
 
   async get(): Promise<AuthSummary> {

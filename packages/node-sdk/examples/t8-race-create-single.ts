@@ -6,7 +6,7 @@ const homeDir = process.argv[3]!;
 const sessionId = process.argv[4]!;
 const label = process.argv[5] ?? 'P';
 
-const identity: any = { userAgentProduct: 'kimi-code-cli', version: '0.0.1-test' };
+const identity: any = { productName: 'kimi-code-cli', version: '0.0.1-test', platform: 'kimi_code_cli' };
 const h = createKimiHarness({ identity, homeDir });
 
 try {

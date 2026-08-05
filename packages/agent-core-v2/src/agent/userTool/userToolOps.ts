@@ -1,5 +1,5 @@
 /**
- * `userTool` domain (L4) — wire Model (`UserToolModel`) and the
+ * `userTool` domain — wire Model (`UserToolModel`) and the
  * `tools.register_user_tool` (`registerUserTool`) / `tools.unregister_user_tool`
  * (`unregisterUserTool`) Ops for the set of user-defined tools registered by the
  * host.
@@ -16,7 +16,6 @@
  * are re-derived from the rebuilt Model by `wire.hooks.onDidRestore` after
  * restore, so a resumed agent re-registers exactly the tools the persisted ops
  * describe.
- * Consumed by the Agent-scope `userToolService`.
  */
 
 import { z } from 'zod';

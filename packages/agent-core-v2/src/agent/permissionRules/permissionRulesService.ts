@@ -1,5 +1,5 @@
 /**
- * `permissionRules` domain (L3) — `IAgentPermissionRulesService` implementation.
+ * `permissionRules` domain — `IAgentPermissionRulesService` implementation.
  *
  * Holds the agent's permission rules and deduped session-approval patterns in the
  * `wire` `PermissionRulesModel`, mutating it only through the `permission.rules.add`

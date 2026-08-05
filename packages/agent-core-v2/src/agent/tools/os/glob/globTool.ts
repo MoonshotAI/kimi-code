@@ -1,13 +1,11 @@
 /**
- * `tools` domain (L7) — `GlobTool` implementation, file pattern matching via
+ * `tools` domain — `GlobTool` implementation, file pattern matching via
  * ripgrep.
  *
  * Finds files matching a glob pattern, returned sorted by modification time
  * (most recent first). Implemented by shelling out to `rg --files` through the
  * host `IHostProcessService` — sharing the ripgrep subprocess plumbing,
- * gitignore handling, and sensitive-file filtering with the Grep tool. The
- * model-facing contract (schema, `MAX_MATCHES`, `WINDOWS_PATH_HINT`,
- * `IGlobTool` identifier) lives in `./glob`.
+ * gitignore handling, and sensitive-file filtering with the Grep tool.
  *
  * Collaborators injected via constructor:
  *   - `fs`             — `IHostFileSystem`, search-root existence/type
@@ -21,21 +19,18 @@
  *   - `skillCatalog`   — `ISessionSkillCatalog` (optional), extends the
  *                        workspace with skill roots
  *
- * Ported from v1 (`packages/agent-core/src/tools/builtin/file/glob.ts`) onto
- * the v2 os domains:
+ * Ported from v1 onto the v2 os domains:
  *   - Search: v1 `kaos.exec(rgPath, ...)` maps to
  *     `this.processService.spawn(rgPath, [...], { cwd: searchRoot })`. Pinning
  *     the subprocess cwd to the search root so `--glob` patterns match paths
  *     relative to that root.
- *   - Binary resolution: `ensureRgPath`
- *     (`#/os/backends/node-local/tools/rgLocator`) probes the execution
- *     environment for a working `rg` (system PATH, then the cached bootstrap
- *     binary) so a missing `rg` surfaces an actionable message instead of a
- *     naked `spawn rg ENOENT`.
- *   - Subprocess plumbing: `runRgOnce` / `shouldRetryRipgrepEagain`
- *     (`#/os/backends/node-local/tools/runRg`) own spawn, capped draining,
- *     abort/timeout, two-phase kill, and the single-threaded EAGAIN retry
- *     shared with v1's run-rg.
+ *   - Binary resolution: `ensureRgPath` probes the execution environment for
+ *     a working `rg` (system PATH, then the cached bootstrap binary) so a
+ *     missing `rg` surfaces an actionable message instead of a naked
+ *     `spawn rg ENOENT`.
+ *   - Subprocess plumbing: `runRgOnce` / `shouldRetryRipgrepEagain` own
+ *     spawn, capped draining, abort/timeout, two-phase kill, and the
+ *     single-threaded EAGAIN retry shared with v1's run-rg.
  *   - Directory pre-check: `fs.stat(searchRoot)` surfaces a missing or
  *     non-directory root as "does not exist" / "is not a directory" instead of
  *     a misleading "No matches found" (or, for a file root, rg listing the

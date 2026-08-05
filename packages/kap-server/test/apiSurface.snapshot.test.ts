@@ -24,6 +24,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { startServer, type RunningServer } from '../src';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 /** OpenAPI path-item keys that are HTTP methods (skip `parameters`, etc.). */
@@ -64,6 +65,7 @@ describe('API surface snapshot', () => {
     home = mkdtempSync(join(tmpdir(), 'kimi-server-v2-api-surface-'));
 
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,

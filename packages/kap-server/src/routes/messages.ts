@@ -1,12 +1,11 @@
 /**
- * `/sessions/{session_id}/messages*` route handlers — server-v2 port.
+ * `/sessions/{session_id}/messages*` route handlers.
  *
  * Implements the v1 `/api/v1/sessions/{sid}/messages` wire contract on top of
- * `IMessageLegacyService` (`packages/agent-core-v2/src/messageLegacy`), which
- * reads the persisted wire transcript for cold sessions and the live context
- * for live ones. This route is a thin adapter: it resolves the Core-scoped
- * legacy service, projects the result into the protocol envelope, and maps the
- * domain error codes to the v1 wire codes.
+ * `services/messages/messageHistory`, which reads the persisted wire transcript
+ * for cold sessions and merges the unflushed live tail for live ones. This
+ * route is a thin adapter: it projects the result into the protocol envelope
+ * and maps the sentinel errors to the v1 wire codes.
  *
  *   GET    /sessions/{session_id}/messages              query: ListMessages   data: Page<Message>
  *   GET    /sessions/{session_id}/messages/{message_id} -                     data: Message
@@ -17,15 +16,21 @@
  *   - invalid query     → `40001` (validation.failed, via defineRoute)
  */
 
-import { IMessageLegacyService, isError2, type Scope } from '@moonshot-ai/agent-core-v2';
-import { messageRoleSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
+import { type Scope } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../protocol/error-codes';
+import { messageRoleSchema } from '../protocol/message';
 import { getMessageResponseSchema, listMessagesResponseSchema } from '../protocol/rest-message';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
+import {
+  getMessage,
+  listMessages,
+  MessageNotFoundError,
+  SessionNotFoundError,
+} from '../services/messages/messageHistory';
 
 interface MessageRouteHost {
   get(
@@ -97,7 +102,7 @@ export function registerMessagesRoutes(app: MessageRouteHost, core: Scope): void
     async (req, reply) => {
       try {
         const { session_id } = req.params;
-        const page = await core.accessor.get(IMessageLegacyService).list(session_id, req.query);
+        const page = await listMessages(core, session_id, req.query);
         reply.send(okEnvelope(page, req.id));
       } catch (err) {
         sendMappedError(reply, req, err);
@@ -128,7 +133,7 @@ export function registerMessagesRoutes(app: MessageRouteHost, core: Scope): void
     async (req, reply) => {
       try {
         const { session_id, message_id } = req.params;
-        const message = await core.accessor.get(IMessageLegacyService).get(session_id, message_id);
+        const message = await getMessage(core, session_id, message_id);
         reply.send(okEnvelope(message, req.id));
       } catch (err) {
         sendMappedError(reply, req, err);
@@ -143,10 +148,10 @@ export function registerMessagesRoutes(app: MessageRouteHost, core: Scope): void
 }
 
 /**
- * Map a thrown `Error2` to the right envelope:
- *   - `session.not_found` → `code: 40401`
- *   - `message.not_found` → `code: 40403`
- *   - anything else → `code: 50001`.
+ * Map a thrown sentinel error to the right envelope:
+ *   - unknown session → `code: 40401`
+ *   - unknown message → `code: 40403`
+ *   - anything else   → `code: 50001`.
  */
 function sendMappedError(
   reply: { send(payload: unknown): unknown },
@@ -155,15 +160,13 @@ function sendMappedError(
 ): void {
   const requestId = req.id;
   const log = requestLog(req);
-  if (isError2(err)) {
-    switch (err.code) {
-      case 'session.not_found':
-        reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      case 'message.not_found':
-        reply.send(errEnvelope(ErrorCode.MESSAGE_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-    }
+  if (err instanceof SessionNotFoundError) {
+    reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
+    return;
+  }
+  if (err instanceof MessageNotFoundError) {
+    reply.send(errEnvelope(ErrorCode.MESSAGE_NOT_FOUND, err.message, requestId, err.stack));
+    return;
   }
   log?.error({ err }, 'message request failed');
   reply.send(

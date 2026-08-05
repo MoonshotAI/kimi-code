@@ -7,6 +7,7 @@ import {
   type QueuedSubagentTask,
   type SessionSubagentHost,
 } from '../../../session/subagent-host';
+import { stripSubagentModelParameter } from '../../../session/subagent-binding';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { toInputJsonSchema } from '../../support/input-schema';
@@ -89,10 +90,13 @@ interface SwarmRunResult {
   readonly error?: string;
 }
 
+const AGENT_SWARM_PARAMETERS = toInputJsonSchema(AgentSwarmToolInputSchema);
+const AGENT_SWARM_PARAMETERS_NO_MODEL = stripSubagentModelParameter(AGENT_SWARM_PARAMETERS);
+
 export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
   readonly name = 'AgentSwarm' as const;
   readonly description: string;
-  readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentSwarmToolInputSchema);
+  readonly parameters: Record<string, unknown>;
 
   constructor(
     private readonly subagentHost: SessionSubagentHost,
@@ -101,11 +105,18 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     // SubagentBatch arms no timer for non-positive timeouts.
     private readonly subagentTimeoutMs?: number,
     subagentModelDescription?: string,
+    // Mirrors the `secondary-model` experiment: off (the default), the no-op
+    // `model` parameter is stripped from the advertised schema so the
+    // secondary-model concept never enters the prompt.
+    modelChoiceEnabled = false,
   ) {
     this.description =
       subagentModelDescription === undefined
         ? AGENT_SWARM_DESCRIPTION
         : `${AGENT_SWARM_DESCRIPTION}\n\n${subagentModelDescription}`;
+    this.parameters = modelChoiceEnabled
+      ? AGENT_SWARM_PARAMETERS
+      : AGENT_SWARM_PARAMETERS_NO_MODEL;
   }
 
   resolveExecution(args: AgentSwarmToolInput): ToolExecution {

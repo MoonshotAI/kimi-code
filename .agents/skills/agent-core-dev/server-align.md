@@ -69,7 +69,7 @@ Resolve the v2 Service that will back the route. Two cases:
 
 **Case A — the v2 native Service already matches the v1 contract.** Use it directly. Most data/command Services (`IConfigService`, `IWorkspaceService`, `IApprovalService`, `IQuestionService`, `IFileStore`, …) land here: the route is a thin adapter that resolves the scope, calls the method, and wraps the result. Examples: `routes/config.ts`, `routes/messages.ts`, `routes/questions.ts`, `routes/files.ts`.
 
-**Case B — the v1 contract needs behavior that would distort the v2 domain.** Introduce a **`*LegacyService`** — an L7 edge adapter that implements the v1 contract **on top of** the v2 native Service, leaving the native Service untouched. The v2 native Service keeps serving `/api/v2`; the LegacyService serves `/api/v1`.
+**Case B — the v1 contract needs behavior that would distort the v2 domain.** Introduce a **`*LegacyService`** — an edge adapter that implements the v1 contract **on top of** the v2 native Service, leaving the native Service untouched. The v2 native Service keeps serving `/api/v2`; the LegacyService serves `/api/v1`.
 
 Reach for a LegacyService when **any** hold:
 
@@ -127,7 +127,7 @@ registerScopedService(
 Conventions:
 
 - **Name** the domain `<domain>Legacy` and the interface with the scope prefix, `I<Scope><Domain>LegacyService` (e.g. `prompt` / `IAgentPromptService`), per service-authoring.md.
-- **Header comment** must say it is an `L7 edge adapter` and name both the v1 contract it implements and the native v2 Service it leaves untouched (see `prompt.ts`).
+- **Header comment** must say it is an `edge adapter` and name both the v1 contract it implements and the native v2 Service it leaves untouched (see `prompt.ts`).
 - **Scope** = the lifetime of the *legacy* state it holds (the `prompt` queue is per-agent → `LifecycleScope.Agent`). Apply [orient.md](orient.md) / [design.md](design.md) normally — a LegacyService is not exempt from scope rules.
 - **Delegate, do not duplicate** business logic. The LegacyService translates the v1 contract into native-Service calls and translates results back; the real work stays in the native Service.
 - **Contract types come from the v1 wire schema homes** (the owning v2 domain contract or `kap-server/src/protocol`), so the interface cannot drift from the wire shape.
@@ -206,7 +206,7 @@ Where the route mirrors v1, the test is the regression guard for the schema-fide
 - `pnpm -C packages/kap-server test` — server routes green.
 - `pnpm -C packages/kap-server test` — server routes green (incl. any wire-schema guards).
 - `pnpm -C packages/agent-core-v2 test` — native + Legacy Service tests green.
-- `pnpm -C packages/agent-core-v2 run lint:domain` — a LegacyService is still inside the domain layers (edge adapter, L7); it must not pull business code into the edge or invert scope direction.
+- `pnpm -C packages/agent-core-v2 run lint:imports` — the import boundaries (v1 ban, kosong subtree) still hold for a LegacyService.
 - `pnpm -C packages/klient test` (optionally with `KIMI_SERVER_URL` for the live legacy suites) when a v1 parity scenario exists.
 
 ## Worked example — porting v1 `/sessions/:sid/prompts`
@@ -235,11 +235,11 @@ Before submitting a server-align change:
 - [ ] Request and response schemas come from their owning home (the `agent-core-v2` domain contract or `packages/kap-server/src/protocol`); no inline re-declaration in server-v2.
 - [ ] Existing schema fields are unchanged in name, type, and semantics; only optional fields added (if any).
 - [ ] Native v2 Service left clean; v1-only behavior isolated in a `<domain>Legacy` / `I<Domain>LegacyService` edge adapter when the semantics diverge.
-- [ ] LegacyService registered with the correct `LifecycleScope` and a header comment naming it an L7 edge adapter + the native Service it preserves.
+- [ ] LegacyService registered with the correct `LifecycleScope` and a header comment naming it an edge adapter + the native Service it preserves.
 - [ ] Domain error codes registered in `agent-core-v2`; wire codes registered in `packages/kap-server/src/protocol`; route maps them in `sendMappedError`, matching v1's status codes and idempotent envelopes.
 - [ ] Route resolves the scope from the URL by `accessor.get(IX)`; no cached scope; finishes before disposal.
 - [ ] Tests assert the wire envelope + protocol shape; wire-shape guards added/updated where the route mirrors v1.
-- [ ] `lint:domain` passes; the LegacyService did not invert scope or domain direction.
+- [ ] `lint:imports` passes; the LegacyService did not invert scope direction.
 
 ## Red lines (this subskill)
 

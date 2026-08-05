@@ -1,5 +1,5 @@
 /**
- * `shellCommand` domain (L4) — shell command contract.
+ * `shellCommand` domain — shell command contract.
  *
  * Defines the Agent-scoped `IAgentShellCommandService` used to run user-initiated
  * `!` commands: resolves the builtin Bash tool, records the command and its

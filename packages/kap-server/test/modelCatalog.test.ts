@@ -16,6 +16,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -88,6 +89,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       await writeFile(join(home as string, 'config.toml'), toml, 'utf-8');
     }
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -320,6 +322,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       status: async () => ({ loggedIn: false }),
       refreshOAuthProviderModels,
       getManagedUsage: async () => ({ kind: 'error' as const, message: 'unused' }),
+      getManagedUserInfo: async () => ({ kind: 'error' as const, message: 'unused' }),
       resolveTokenProvider: () => undefined,
       getCachedAccessToken: async () => undefined,
     };

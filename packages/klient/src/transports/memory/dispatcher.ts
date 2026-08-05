@@ -3,7 +3,7 @@
  * against a live engine scope and mirrors kap-server's dispatcher semantics
  * (reflection call, non-function members are property reads, `main` agent
  * auto-materialized via `ensureMainAgent`). Scope routing walks
- * `ISessionLifecycleService` / `IAgentLifecycleService` exactly like the
+ * `IWorkspaceLifecycleService` / `IAgentLifecycleService` exactly like the
  * server's `resolveScope`. Every argument, result, and event payload passes
  * through `wireClone` (a JSON round-trip), so consumers observe
  * byte-identical data no matter whether the call crossed a socket or stayed
@@ -14,7 +14,8 @@
  */
 
 import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
-import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
+import { IWorkspaceLifecycleService } from '@moonshot-ai/agent-core-v2/app/workspaceLifecycle/workspaceLifecycle';
+import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/workspaceLifecycle/sessionLookup';
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
 import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
@@ -51,7 +52,7 @@ export interface MemoryDispatcher {
 const REQUEST_INVALID = 40001;
 const NOT_FOUND = 40404;
 
-type ScopeKind = 'core' | 'session' | 'agent';
+type ScopeKind = 'core' | 'workspace' | 'session' | 'agent';
 
 interface ResolvedScope {
   readonly kind: ScopeKind;
@@ -61,8 +62,14 @@ interface ResolvedScope {
 export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
   /** Mirrors kap-server's `resolveScope`, incl. main-agent materialization. */
   async function resolveScope(scope: ScopeRef): Promise<ResolvedScope> {
+    if (scope.workspaceId !== undefined) {
+      const handler = await root.accessor
+        .get(IWorkspaceLifecycleService)
+        .handlerFor({ workspaceId: scope.workspaceId });
+      return { kind: 'workspace', like: handler };
+    }
     if (scope.sessionId === undefined) return { kind: 'core', like: root };
-    const session = root.accessor.get(ISessionLifecycleService).get(scope.sessionId);
+    const session = getLiveSessionById(root.accessor, scope.sessionId);
     if (session === undefined) {
       throw new RPCError(NOT_FOUND, `session not found: ${scope.sessionId}`);
     }

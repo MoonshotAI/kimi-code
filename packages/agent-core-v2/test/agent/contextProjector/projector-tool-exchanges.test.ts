@@ -16,7 +16,6 @@ import { ILogService, type ILogger } from '#/_base/log/log';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
-import { toProtocolMessage } from '#/agent/contextMemory/messageProjection';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -326,28 +325,6 @@ describe('projector tool-exchange normalization', () => {
       { type: 'text', text: `image result\n${note}` },
     ]);
     expect(result.content).toEqual([{ type: 'text', text: 'image result' }]);
-
-    const protocol = toProtocolMessage('session_1', 0, result, 0);
-    expect(protocol.content).toEqual([
-      { type: 'tool_result', tool_call_id: 'call_image', output: 'image result' },
-    ]);
-  });
-
-  it('passes raw media parts through as the tool_result output', () => {
-    const result: ContextMessage = {
-      role: 'tool',
-      content: [
-        { type: 'text', text: 'image result' },
-        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
-      ],
-      toolCalls: [],
-      toolCallId: 'call_media',
-    };
-
-    const protocol = toProtocolMessage('session_1', 0, result, 0);
-    expect(protocol.content).toEqual([
-      { type: 'tool_result', tool_call_id: 'call_media', output: result.content },
-    ]);
   });
 
   it('renders v1 tool-result status at the model projection boundary', () => {

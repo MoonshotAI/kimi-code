@@ -1,5 +1,5 @@
 /**
- * `usage` domain (L3) — `IAgentUsageService` implementation.
+ * `usage` domain — `IAgentUsageService` implementation.
  *
  * Accumulates the agent's token usage in the `wire` `UsageModel`, mutating it
  * only through the `usage.record` Op (`wire.dispatch(recordUsage(...))`) and

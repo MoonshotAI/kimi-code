@@ -113,11 +113,6 @@ export async function atomicWrite(
   }
 }
 
-/**
- * Streamed variant of `atomicWrite`: same tmp + fsync + rename discipline, but
- * the content arrives as an `AsyncIterable` so arbitrarily large values never
- * sit in memory at once.
- */
 export async function atomicWriteStream(
   filePath: string,
   source: AsyncIterable<Uint8Array>,

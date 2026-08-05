@@ -4,13 +4,14 @@ import { join } from 'node:path';
 
 import {
   ISessionQuestionService,
-  ISessionLifecycleService,
+  getLiveSessionById,
   type QuestionRequest,
   type QuestionResult,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -70,6 +71,7 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-questions-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -84,7 +86,9 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
       server = undefined;
     }
     if (home !== undefined) {
-      await rm(home, { recursive: true, force: true });
+      // maxRetries: the async query-store shard writer can still be flushing
+      // after close (ENOTEMPTY on macOS) — same retry pattern as fs.test.ts.
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       home = undefined;
     }
   });
@@ -121,7 +125,7 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
   }
 
   function questionService(sessionId: string): ISessionQuestionService {
-    const handle = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const handle = getLiveSessionById(server!.core.accessor, sessionId);
     expect(handle).toBeDefined();
     return handle!.accessor.get(ISessionQuestionService);
   }
@@ -330,6 +334,58 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
       answers: { q_0: { kind: 'single', option_id: 'opt_0_0' } },
     });
     expect(body.code).toBe(40405);
+  });
+
+  it('resolves a question whose id contains a colon (provider tool_call id)', async () => {
+    const sid = await createSession();
+    // Real-world shape: no explicit id, so the question id falls back to the
+    // tool_call id — which some providers emit as `{function_name}:{index}`.
+    const resultPromise: Promise<QuestionResult> = questionService(sid).request({
+      toolCallId: 'AskUserQuestion:0',
+      questions: [
+        {
+          question: 'Pick one',
+          options: [{ label: 'Yes' }, { label: 'No' }],
+        },
+      ],
+    });
+
+    const list = await getJson<ListWire>(`/api/v1/sessions/${sid}/questions?status=pending`);
+    expect(list.body.data.items[0]!.question_id).toBe('AskUserQuestion:0');
+
+    const { body } = await postJson<ResolveWire>(
+      `/api/v1/sessions/${sid}/questions/AskUserQuestion%3A0`,
+      { answers: { q_0: { kind: 'single', option_id: 'opt_0_0' } } },
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.resolved).toBe(true);
+    await expect(resultPromise).resolves.toEqual({ answers: { 'Pick one': 'Yes' } });
+  });
+
+  it('keeps 40001 for a colon tail that matches no pending question', async () => {
+    const sid = await createSession();
+    const { body } = await postJson<null>(`/api/v1/sessions/${sid}/questions/q-9:0`, {
+      answers: { q_0: { kind: 'single', option_id: 'opt_0_0' } },
+    });
+    expect(body.code).toBe(40001);
+  });
+
+  it('returns 40902 on a duplicate resolve of a colon-id question', async () => {
+    const sid = await createSession();
+    questionService(sid).enqueue({
+      toolCallId: 'AskUserQuestion:1',
+      questions: [{ question: 'Pick one', options: [{ label: 'Yes' }] }],
+    });
+    const url = `/api/v1/sessions/${sid}/questions/AskUserQuestion%3A1`;
+    await postJson<ResolveWire>(url, {
+      answers: { q_0: { kind: 'single', option_id: 'opt_0_0' } },
+    });
+
+    const dup = await postJson<{ resolved: false }>(url, {
+      answers: { q_0: { kind: 'single', option_id: 'opt_0_0' } },
+    });
+    expect(dup.body.code).toBe(40902);
+    expect(dup.body.data).toEqual({ resolved: false });
   });
 
   it('returns 40401 for an unknown session', async () => {

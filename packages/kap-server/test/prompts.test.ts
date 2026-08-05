@@ -8,11 +8,13 @@ import {
   IAgentLifecycleService,
   IAgentProfileService,
   IAgentToolPolicyService,
-  ISessionLifecycleService,
+  closeSessionById,
+  getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -134,7 +136,7 @@ describe('server-v2 /api/v1 prompts', () => {
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-prompts-'));
     await writeFile(join(home, 'config.toml'), PROMPT_TOML, 'utf-8');
-    server = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     base = `http://127.0.0.1:${server.port}`;
   });
 
@@ -184,7 +186,7 @@ describe('server-v2 /api/v1 prompts', () => {
   // The main agent scope is not created automatically on session creation
   // (server-v2 gap G10); create it here so the prompt route resolves.
   async function createMainAgent(sessionId: string): Promise<void> {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
   }
@@ -215,7 +217,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
   it('rejects a stale file reference without creating the agent or mutating the model', async () => {
     const id = await createSession(home as string);
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
 
     const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
       model: 'stub',
@@ -232,7 +234,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
   it('rejects a mis-kinded file reference without creating the agent', async () => {
     const id = await createSession(home as string);
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
 
     // A real upload, but referenced with the wrong media kind.
     const form = new FormData();
@@ -639,8 +641,8 @@ describe('server-v2 /api/v1 prompts', () => {
     // Drop the in-memory handle so the session only exists on disk / in the
     // index — the state a session is in after a server restart. The route must
     // cold-resume it rather than report 40401.
-    await server!.core.accessor.get(ISessionLifecycleService).close(id);
-    expect(server!.core.accessor.get(ISessionLifecycleService).get(id)).toBeUndefined();
+    await closeSessionById(server!.core.accessor, id);
+    expect(getLiveSessionById(server!.core.accessor, id)).toBeUndefined();
 
     const list = await call<{ active: PromptItemWire | null; queued: PromptItemWire[] }>(
       'GET',
@@ -656,7 +658,7 @@ describe('server-v2 /api/v1 prompts', () => {
     await createMainAgent(id);
 
     // Fork the main agent into a side-channel child the way `/btw` does.
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
     const lifecycle = session.accessor.get(IAgentLifecycleService);
     const child = await lifecycle.fork('main');
@@ -744,7 +746,7 @@ describe('server-v2 /api/v1 prompts', () => {
     });
     expect(submitted.body.code).toBe(0);
 
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
     const main = session.accessor.get(IAgentLifecycleService).get('main');
     expect(main?.accessor.get(IAgentProfileService).data().profileName).toBe('route-reviewer');
@@ -790,7 +792,7 @@ describe('server-v2 /api/v1 prompts', () => {
     });
     expect(submitted.body.code).toBe(0);
 
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
     const main = session.accessor.get(IAgentLifecycleService).get('main');
     const profile = main?.accessor.get(IAgentProfileService);
@@ -811,7 +813,7 @@ describe('server-v2 /api/v1 prompts', () => {
     });
     expect(submitted.body.code).toBe(0);
 
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
     const toolPolicy = session.accessor.get(IAgentLifecycleService).get('main')?.accessor
       .get(IAgentToolPolicyService);
@@ -847,7 +849,7 @@ describe('server-v2 /api/v1 prompts', () => {
     });
     expect(submitted.body.code).toBe(0);
 
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
     const child = await session.accessor.get(IAgentLifecycleService).create({
       binding: {
@@ -886,15 +888,15 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.code).toBe(0);
 
     // Drop the live handle; the next submit cold-resumes the session from disk.
-    await server!.core.accessor.get(ISessionLifecycleService).close(id);
-    expect(server!.core.accessor.get(ISessionLifecycleService).get(id)).toBeUndefined();
+    await closeSessionById(server!.core.accessor, id);
+    expect(getLiveSessionById(server!.core.accessor, id)).toBeUndefined();
 
     const again = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'again' }],
     });
     expect(again.body.code).toBe(0);
 
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
     const toolPolicy = session.accessor.get(IAgentLifecycleService).get('main')?.accessor
       .get(IAgentToolPolicyService);

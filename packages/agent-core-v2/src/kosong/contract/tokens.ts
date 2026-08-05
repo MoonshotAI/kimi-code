@@ -1,5 +1,5 @@
 /**
- * `kosong/contract` domain (L0) — character-based token-count estimates for
+ * `kosong/contract` domain — character-based token-count estimates for
  * messages, tools, and content parts.
  *
  * Estimates are heuristic (ASCII ≈ 4 chars/token, non-ASCII ≈ 1 token/char,

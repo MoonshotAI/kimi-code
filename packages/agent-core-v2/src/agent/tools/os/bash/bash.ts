@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IBashTool` contract.
+ * `tools` domain — `IBashTool` contract.
  *
  * Public contract of Bash, the model's shell command runner: the command runs
  * as `cd <cwd> && <command>` inside the session's working directory, with a
@@ -9,8 +9,8 @@
  *
  * Owns the `BashInput` / `BashOutput` zod schemas, the foreground/background
  * timeout constants the schema descriptions and validation share with the
- * implementation (`./bashTool`), and the Agent-scope service identifier.
- * Bound at Agent scope.
+ * implementation, and the Agent-scope service identifier. Bound at Agent
+ * scope.
  */
 
 import { z } from 'zod';

@@ -11,6 +11,15 @@
       "source": "./official/kimi-datasource"
     },
     {
+      "id": "kimi-webbridge",
+      "tier": "official",
+      "displayName": "Kimi WebBridge",
+      "version": "1.11.3",
+      "description": "Control your real browser from Kimi Code.",
+      "keywords": ["browser", "automation", "webbridge"],
+      "source": "./official/kimi-webbridge"
+    },
+    {
       "id": "superpowers",
       "tier": "curated",
       "displayName": "Superpowers",

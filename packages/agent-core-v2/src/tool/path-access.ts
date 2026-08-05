@@ -1,5 +1,5 @@
 /**
- * `tool` domain (L3) — workspace path access policy for file tools.
+ * `tool` domain — workspace path access policy for file tools.
  *
  * Owns `WorkspaceConfig` (the roots tools are allowed to access, injected
  * through each tool's constructor), the lexical path guards used by
@@ -8,7 +8,7 @@
  * explicit exemptions like `.env.example`) — and `PathSecurityError`.
  * `extendWorkspaceWithSkillRoots` merges skill-catalog roots into a tool
  * workspace so skill directories outside the cwd (e.g. `~/.kimi-code/skills`)
- * stay reachable — the v2 port of v1's `skill/scanner.ts` helper.
+ * stay reachable.
  * Canonicalization is **lexical** only (no `realpath` / symlink following).
  * The guard stays host-aware: callers pass the active `IHostEnvironment`
  * path class so SSH paths stay POSIX even when the host Node process is

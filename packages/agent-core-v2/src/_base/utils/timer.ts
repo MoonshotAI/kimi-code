@@ -49,3 +49,30 @@ export class IntervalTimer implements IDisposable {
     this.cancel();
   }
 }
+
+export class TimeoutTimer implements IDisposable {
+  private handle: ReturnType<typeof setTimeout> | undefined;
+
+  cancel(): void {
+    if (this.handle !== undefined) {
+      clearTimeout(this.handle);
+      this.handle = undefined;
+    }
+  }
+
+  cancelAndSet(runner: () => void, timeoutMs: number): void {
+    this.cancel();
+    const handle = setTimeout(() => {
+      this.handle = undefined;
+      runner();
+    }, timeoutMs);
+    if (typeof handle === 'object' && handle !== null && 'unref' in handle) {
+      (handle as { unref: () => void }).unref();
+    }
+    this.handle = handle;
+  }
+
+  dispose(): void {
+    this.cancel();
+  }
+}

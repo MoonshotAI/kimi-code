@@ -19,7 +19,7 @@
  * the most-recent session. v2 has no global tool/MCP state — both services are
  * Agent-scoped — so we reproduce the fallback: `core` → `ISessionIndex` (pick
  * the newest session by `createdAt`, or the explicit `session_id`) →
- * `ISessionLifecycleService` → `IAgentLifecycleService` (the `main` agent) →
+ * the live handler registry → `IAgentLifecycleService` (the `main` agent) →
  * the service. When no session is live, or the main agent does not exist yet
  * (server-v2 gap G10), the GET endpoints answer an empty list and `:restart`
  * answers `40408`, exactly like v1.
@@ -51,9 +51,9 @@ import {
   ErrorCodes,
   IAgentMcpService,
   ISessionIndex,
-  ISessionLifecycleService,
   IAgentToolRegistryService,
   IAgentToolPolicyService,
+  getLiveSessionById,
   Error2,
   type Scope,
   type ToolInfo,
@@ -222,14 +222,14 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
 async function resolveEffectiveAgent(core: Scope, sessionId: string | undefined) {
   const sid = sessionId ?? (await mostRecentSessionId(core));
   if (sid === undefined) return undefined;
-  const session = core.accessor.get(ISessionLifecycleService).get(sid);
+  const session = getLiveSessionById(core.accessor, sid);
   if (session === undefined) return undefined;
   return ensureMainAgent(session);
 }
 
 /** Pick the most-recently-created session id, mirroring v1's fallback. */
 async function mostRecentSessionId(core: Scope): Promise<string | undefined> {
-  const page = await core.accessor.get(ISessionIndex).list({});
+  const page = await core.accessor.get(ISessionIndex).listRecent({});
   const [first, ...rest] = page.items;
   if (first === undefined) return undefined;
   let newest = first;

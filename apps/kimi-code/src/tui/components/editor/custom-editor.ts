@@ -16,7 +16,6 @@ import {
 import { currentTheme } from '#/tui/theme';
 import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
 import { printableChar } from '#/tui/utils/printable-key';
-import { isInsideTmux } from '#/tui/utils/terminal-notification';
 
 import { extractAtPrefix } from './file-mention-provider';
 import { WrappingSelectList } from './wrapping-select-list';
@@ -163,7 +162,6 @@ export class CustomEditor extends Editor {
   private consumingPaste = false;
   private consumeBuffer = '';
   private argumentHints: ReadonlyMap<string, string> = new Map();
-  private autocompleteWasShowing = false;
 
   setArgumentHints(hints: ReadonlyMap<string, string>): void {
     this.argumentHints = hints;
@@ -258,38 +256,7 @@ export class CustomEditor extends Editor {
     (this as unknown as AutocompleteInternals).cancelAutocomplete();
   }
 
-  // Force a full re-render when the autocomplete dropdown closes, so the editor
-  // snaps back to the bottom instead of sitting where the taller dropdown left it.
-  // Only worthwhile when the session content already overflows one screen; below
-  // that a full clear + home would pull the editor to the top and leave a blank
-  // tail. Always skipped inside tmux, whose own reflow handles the shrink.
-  private requestFullRenderOnAutocompleteClose(): void {
-    if (isInsideTmux()) return;
-    const { columns, rows } = this.tui.terminal;
-    // Redraw when content fills or overflows the viewport. An exact fill (==
-    // rows) is safe to clear (no blank tail) and still needs the redraw: the
-    // differential renderer keeps the old viewport offset after a shrink.
-    if (this.tui.render(columns).length < rows) return;
-    this.tui.requestRender(true);
-  }
-
-  // Detect an autocomplete open→close edge from a render frame and force a full
-  // re-render. Running from render() (not handleInput) also catches asynchronous
-  // closes — e.g. Backspace deleting the leading `/`, where pi-tui only cancels
-  // the menu once the provider re-query resolves. The render request is deferred
-  // to a microtask so the overflow probe inside the helper does not re-enter
-  // render() synchronously.
-  private trackAutocompleteCloseForFullRender(): void {
-    const showing = this.isShowingAutocomplete();
-    const closed = this.autocompleteWasShowing && !showing;
-    this.autocompleteWasShowing = showing;
-    if (closed) {
-      queueMicrotask(() => this.requestFullRenderOnAutocompleteClose());
-    }
-  }
-
   override render(width: number): string[] {
-    this.trackAutocompleteCloseForFullRender();
     const lines = super.render(width);
     if (lines.length < 3) return lines;
     const firstContentIdx = 1;

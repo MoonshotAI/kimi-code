@@ -11,15 +11,13 @@ import { describe, expect, it } from 'vitest';
 
 import type { Event } from '@moonshot-ai/agent-core';
 import {
-  ContextSizeModel,
-  IAgentContextSizeService,
   IAgentLifecycleService,
   IAgentProfileService,
+  IAgentTokenCountingService,
   IAgentUsageService,
   IEventBus,
   IModelCatalog,
   ISessionInteractionService,
-  IWireService,
   SECONDARY_DERIVED_MODEL_ID,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
@@ -106,18 +104,12 @@ const USAGE = {
 };
 
 function bindStatusServices(agent: FakeAgentHandle, model: string): void {
-  agent.set(IAgentContextSizeService, { get: () => ({ size: 10 }) });
+  agent.set(IAgentTokenCountingService, { statusSize: () => 10 });
   agent.set(IAgentProfileService, {
     getModel: () => model,
     getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
   });
   agent.set(IAgentUsageService, { status: () => USAGE });
-  agent.set(IWireService, {
-    getModel: (requested: unknown) => {
-      expect(requested).toBe(ContextSizeModel);
-      return { length: 0, tokens: 8 };
-    },
-  });
 }
 
 // ---------------------------------------------------------------------------

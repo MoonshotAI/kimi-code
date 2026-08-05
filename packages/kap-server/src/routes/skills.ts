@@ -25,7 +25,8 @@
  * are exported for exactly this purpose.
  *
  * **Activation gate**: by convention the session endpoints are only valid for
- * an *activated* session — one that is live in `ISessionLifecycleService`. When
+ * an *activated* session — one that is live in a workspace handler's session
+ * registry. When
  * the session is not in the live map we still answer `40401 session.not_found`
  * (the only session error code on the v1 wire contract), but we enrich the
  * message:
@@ -69,7 +70,8 @@
  */
 
 import {
-  BUILTIN_SKILLS,
+  builtinProductSkillsEnabled,
+  visibleBuiltinSkills,
   ErrorCodes,
   EXTRA_SKILL_DIRS_SECTION,
   IAgentSkillService,
@@ -78,14 +80,13 @@ import {
   IEventService,
   IPluginService,
   ISessionIndex,
-  ISessionLifecycleService,
   ISessionMetadata,
   ISessionSkillCatalog,
-  ISkillCatalogRuntimeOptions,
   ISkillDiscovery,
   IWorkspaceService,
   InMemorySkillCatalog,
   isError2,
+  resumeSessionById,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   SKILL_SOURCE_PRIORITY,
   applyPromptMetadataUpdate,
@@ -161,7 +162,7 @@ async function resolveActivatedSession(
   // session cold-loads it instead of reporting "not activated"; matches v1's
   // `resumeSession` in SkillService. `resume` returns undefined only when the
   // session is unknown or its workspace is gone.
-  const handle = await core.accessor.get(ISessionLifecycleService).resume(sessionId);
+  const handle = await resumeSessionById(core.accessor, sessionId);
   if (handle !== undefined) return { handle };
 
   const summary = await core.accessor.get(ISessionIndex).get(sessionId);
@@ -341,11 +342,10 @@ async function listWorkspaceSkillsForRoot(
   const plugins = core.accessor.get(IPluginService);
   const config = core.accessor.get(IConfigService);
   await config.ready;
-  const runtimeOptions = core.accessor.get(ISkillCatalogRuntimeOptions);
   const extraSkillDirs = config.get<ExtraSkillDirsConfig>(EXTRA_SKILL_DIRS_SECTION) ?? [];
   const mergeAllAvailableSkills =
     config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
-  const explicitDirs = runtimeOptions.explicitDirs ?? [];
+  const explicitDirs = bootstrap.args.skillDirs ?? [];
   const useExplicitDirs = explicitDirs.length > 0;
   const rootOptions = { mergeAllAvailableSkills };
 
@@ -368,7 +368,10 @@ async function listWorkspaceSkillsForRoot(
 
   const catalog = new InMemorySkillCatalog();
   const ordered = [
-    { skills: BUILTIN_SKILLS, priority: SKILL_SOURCE_PRIORITY.builtin },
+    {
+      skills: visibleBuiltinSkills(builtinProductSkillsEnabled(config)),
+      priority: SKILL_SOURCE_PRIORITY.builtin,
+    },
     { skills: plugin.skills, priority: SKILL_SOURCE_PRIORITY.plugin },
     { skills: extra.skills, priority: SKILL_SOURCE_PRIORITY.extra },
     { skills: user.skills, priority: SKILL_SOURCE_PRIORITY.user },

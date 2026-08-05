@@ -1,7 +1,6 @@
 /**
- * `config` domain (L2) — module-level config-overlay contribution collector.
+ * `config` domain — module-level config-overlay contribution collector.
  *
- * Mirrors `configSectionContributions.ts` but for `ConfigEffectiveOverlay`s.
  * An owner domain calls `registerConfigOverlay(...)` at the top level of the
  * module that defines the overlay; `ConfigRegistry` drains the collected
  * overlays when it is constructed. Pure data — no DI, no container — so
@@ -11,8 +10,7 @@
  *
  * This decouples overlay registration from Service lifetime: an overlay must
  * not depend on a Service being constructed, because top-level contributions
- * are available before any scope activation (see `ModelService` /
- * `kimiModelEnvOverlay`).
+ * are available before any scope activation.
  */
 
 import type { ConfigEffectiveOverlay } from './config';

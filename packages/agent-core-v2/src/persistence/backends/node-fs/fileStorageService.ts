@@ -18,9 +18,7 @@
  *
  * It uses raw `node:fs` rather than `kaos`: the storage kernel needs direct
  * control over append offsets, fsync, atomic rename and streaming, which the
- * agent-execution-environment abstraction does not expose. Higher-level code
- * (wire journal, blob store) goes through the Store / Storage interfaces above
- * this backend, never `node:fs` directly.
+ * agent-execution-environment abstraction does not expose.
  */
 
 import { createReadStream, mkdirSync } from 'node:fs';

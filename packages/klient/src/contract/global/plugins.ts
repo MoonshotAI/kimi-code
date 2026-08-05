@@ -1,10 +1,11 @@
 /**
  * `pluginService` — plugin management and consumption. Mirrors
  * `agent-core-v2/app/plugin/plugin.ts` and `agent-core-v2/app/plugin/types.ts`;
- * nested `McpServerConfig` mirrors `agent-core-v2/agent/mcp/config-schema.ts`,
+ * nested `McpServerConfig` mirrors `agent-core-v2/mcpCore/config-schema.ts`,
  * `HookDefConfig` mirrors `agent-core-v2/agent/externalHooks/configSection.ts`.
- * `pluginSkillRoots`, `enabledSessionStarts`, `enabledMcpServers`, and
- * `enabledHooks` are excluded (not part of the klient wire surface).
+ * `pluginSkillRoots`, `enabledSessionStarts`, `enabledSystemPrompts`,
+ * `enabledMcpServers`, and `enabledHooks` are excluded (not part of the
+ * klient wire surface).
  */
 
 import { z } from 'zod';
@@ -43,13 +44,17 @@ const hookDefSchema = z.object({
     'PermissionRequest',
     'PermissionResult',
     'UserPromptSubmit',
+    'UserPromptQueued',
+    'TurnStarted',
     'Stop',
     'StopFailure',
     'Interrupt',
     'SessionStart',
     'SessionEnd',
+    'SessionHeartbeat',
     'SubagentStart',
     'SubagentStop',
+    'TaskStarted',
     'PreCompact',
     'PostCompact',
     'Notification',
@@ -84,12 +89,14 @@ export const pluginManifestSchema = z.object({
   homepage: z.string().optional(),
   license: z.string().optional(),
   skills: z.array(z.string()).optional(),
+  agents: z.array(z.string()).optional(),
   sessionStart: pluginSessionStartSchema.optional(),
   mcpServers: z.record(z.string(), mcpServerConfigSchema).optional(),
   hooks: z.array(hookDefSchema).optional(),
   commands: z.array(pluginCommandEntrySchema).optional(),
   interface: pluginInterfaceSchema.optional(),
   skillInstructions: z.string().optional(),
+  systemPrompt: z.string().optional(),
 });
 
 export const pluginMcpServerInfoSchema = z.object({

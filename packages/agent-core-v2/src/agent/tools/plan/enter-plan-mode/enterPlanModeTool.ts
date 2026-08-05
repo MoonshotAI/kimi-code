@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IEnterPlanModeTool` implementation.
+ * `tools` domain — `IEnterPlanModeTool` implementation.
  *
  * Enters plan mode through the plan service (`plan`), reporting an error when
  * plan mode is already active, and tracks the `plan_enter_resolved`

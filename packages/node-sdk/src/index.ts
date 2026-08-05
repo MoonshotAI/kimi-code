@@ -20,6 +20,7 @@ export {
 export { SDKRpcClientBase } from '#/rpc';
 export { KimiForCodingProvider } from '#/kimi-code-model-provider';
 export type { KimiForCodingProviderOptions } from '#/kimi-code-model-provider';
+export { removeProviderFromConfig } from '#/v2/config-mapper';
 
 export {
   applyCatalogProvider,

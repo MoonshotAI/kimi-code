@@ -1,5 +1,5 @@
 /**
- * `loop` domain (L4) — the step queue held by `AgentLoopService`.
+ * `loop` domain — the step queue held by `AgentLoopService`.
  *
  * Turn-owned FIFO with head insertion: senders enqueue `StepRequest`s (tail
  * for ordered work, head for retries of a failed step), and one Turn drains

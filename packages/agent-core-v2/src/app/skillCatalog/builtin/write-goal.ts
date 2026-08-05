@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — builtin `write-goal` skill definition.
+ * `skillCatalog` domain — builtin `write-goal` skill definition.
  */
 
 import type { SkillDefinition } from '#/app/skillCatalog/types';

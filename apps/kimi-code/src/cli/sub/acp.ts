@@ -1,9 +1,9 @@
 /**
- * `kimi acp` sub-command.
+ * `kimi acp` sub-command routing and legacy implementation.
  *
- * Starts the Agent Client Protocol (ACP) server over stdio so that
- * ACP-compatible clients (editors, IDEs, custom front-ends) can drive
- * a kimi-code session.
+ * By default the command delegates to the agent-core-v2 ACP server. A truthy
+ * `KIMI_CODE_LEGACY_FLAG` uses the SDK harness and `@moonshot-ai/acp-adapter`
+ * implementation below instead.
  *
  * Wire-up:
  *  - A {@link KimiHarness} is constructed with the kimi-code host identity
@@ -33,9 +33,16 @@ import { KIMI_CODE_HOME_ENV } from '#/constant/app';
 import { createKimiCodeHostIdentity, getVersion } from '#/cli/version';
 import { buildSkillSlashCommands } from '#/tui/commands/skills';
 
+import { isLegacyEnabled } from '../experimental-v2';
+import { registerNativeAcpCommand } from './acp-native';
 import { runLoginFlow } from './login-flow';
 
 export function registerAcpCommand(parent: Command): void {
+  if (!isLegacyEnabled()) {
+    registerNativeAcpCommand(parent);
+    return;
+  }
+
   parent
     .command('acp')
     .description('Run kimi-code as an Agent Client Protocol (ACP) server over stdio.')

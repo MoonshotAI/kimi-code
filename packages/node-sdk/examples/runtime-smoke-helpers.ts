@@ -7,8 +7,9 @@ export function smokeIdentityFromEnv(): KimiHostIdentity {
     throw new Error('KIMI_CODE_SMOKE_VERSION is required for Kimi SDK smoke examples.');
   }
   return {
-    userAgentProduct: 'kimi-code-cli',
+    productName: 'kimi-code-cli',
     version,
+    platform: 'kimi_code_cli',
   };
 }
 

@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — builtin `mcp-config` skill definition.
+ * `skillCatalog` domain — builtin `mcp-config` skill definition.
  */
 
 import type { SkillDefinition } from '#/app/skillCatalog/types';
@@ -24,4 +24,5 @@ export const MCP_CONFIG_SKILL: SkillDefinition = {
     type: parsed.metadata.type ?? 'inline',
     disableModelInvocation: true,
   },
+  productSpecific: true,
 };

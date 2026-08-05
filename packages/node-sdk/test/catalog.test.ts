@@ -7,6 +7,7 @@ import {
   catalogProviderModels,
   CatalogFetchError,
   fetchCatalog,
+  loadBuiltInCatalog,
   type CatalogModel,
 } from '../src/catalog';
 
@@ -76,6 +77,19 @@ describe('fetchCatalog', () => {
     });
     const withoutUa = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect((withoutUa[1].headers as Record<string, string>)['User-Agent']).toBeUndefined();
+  });
+});
+
+describe('loadBuiltInCatalog', () => {
+  it('parses a valid catalog JSON string', () => {
+    const catalog = { anthropic: { id: 'anthropic', models: {} } };
+    expect(loadBuiltInCatalog(JSON.stringify(catalog))).toEqual(catalog);
+  });
+
+  it('returns undefined for missing or invalid input', () => {
+    expect(loadBuiltInCatalog(undefined)).toBeUndefined();
+    expect(loadBuiltInCatalog('')).toBeUndefined();
+    expect(loadBuiltInCatalog('not-json')).toBeUndefined();
   });
 });
 

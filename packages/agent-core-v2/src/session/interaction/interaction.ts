@@ -1,5 +1,5 @@
 /**
- * `interaction` domain (L6) — blocking human-in-the-loop request kernel.
+ * `interaction` domain — blocking human-in-the-loop request kernel.
  *
  * Defines the `Interaction` model and the `ISessionInteractionService` kernel that
  * owns the session's pending interaction set: a unified, blocking request /

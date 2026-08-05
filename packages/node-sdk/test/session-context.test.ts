@@ -48,12 +48,12 @@ describe('Session context', () => {
   it('clears context without replacing the session', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-context-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-context-work-');
-    const additionalDir = await makeTempDir(tempDirs, 'kimi-sdk-context-additional-');
+    await writeTestConfig(homeDir, 200_000);
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_context_clear', workDir });
-      await session.addAdditionalDir(additionalDir, { persist: false });
+      await session.importContext('Earlier context to clear.', "file 'notes.md'");
       await expect(session.getContext()).resolves.toMatchObject({
         history: [{ role: 'user' }],
       });

@@ -18,6 +18,7 @@ import {
   isError2,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import type { KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
@@ -48,7 +49,7 @@ interface SessionExportReply {
 export function registerSessionExportRoute(
   app: SessionExportRouteHost,
   core: Scope,
-  options: { readonly serverVersion: string },
+  options: { readonly hostIdentity: KimiHostIdentity },
 ): void {
   const log = core.accessor.get(ILogService);
   const route = defineRoute(
@@ -120,9 +121,13 @@ export function registerSessionExportRoute(
             outputPath,
             includeGlobalLog: true,
             // Desktop hosts ask for their own app log via `desktop: true`;
-            // the file is read server-side (missing files are skipped).
+            // the file is read server-side (missing files are skipped) and the
+            // manifest is stamped with the host product version as
+            // `desktopVersion`.
             includeDesktopLog: req.body.desktop === true,
-            version: options.serverVersion,
+            version: options.hostIdentity.version,
+            desktopVersion:
+              req.body.desktop === true ? options.hostIdentity.version : undefined,
           },
           {
             webLog: req.body.web_log,

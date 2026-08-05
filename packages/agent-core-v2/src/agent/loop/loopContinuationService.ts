@@ -1,5 +1,5 @@
 /**
- * `loop` domain (L4) — tool-step continuation aspect.
+ * `loop` domain — tool-step continuation aspect.
  *
  * A step that executed tools must drive one more step so the model consumes
  * the tool results: this service watches the loop's `onDidFinishStep` and enqueues
@@ -10,7 +10,7 @@
  * hook-set `stopTurn` still wins over the continuation: the turn ends at the
  * step boundary and the turn-scoped request is discarded by the run-end
  * cleanup. Bound at Agent scope and constructed with the scope so the hook
- * registers before the first turn runs (same rationale as `stepRetry`).
+ * registers before the first turn runs.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';

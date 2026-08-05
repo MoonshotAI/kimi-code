@@ -1,5 +1,5 @@
 /**
- * `event` domain (L1) — augmentable `DomainEventMap`, the `DomainEvent`
+ * `event` domain — augmentable `DomainEventMap`, the `DomainEvent`
  * discriminated union, and the `IEventBus` contract (the per-agent "what
  * happened" channel) plus its DI token.
  *
@@ -7,15 +7,14 @@
  * `publish(event)` and consumers `subscribe(handler)` (all events) or
  * `subscribe(type, handler)` (one type). It is bound at Agent scope — one
  * instance per agent — so a subscription sees only that agent's events (the
- * server fans out per agent and tags `agentId` / `sessionId`). Process-global events (model catalog,
- * session lifecycle, auth) stay on the legacy `IEventService` (`./event`),
- * which is retained as the global channel; its payload type is re-exported from
- * the barrel as `GlobalEvent`. Domains declare their agent-event shapes by
- * augmenting `DomainEventMap` via `declare module '#/app/event/eventBus'`;
- * `DomainEvent` resolves to the map entry intersected with the key-derived
- * `{ type }`, so domains can register either payload-only shapes or complete
- * protocol event types. Durability classification (volatile vs durable) lives
- * in the server consumer, not here. Agent-scope; scope-agnostic contract.
+ * server fans out per agent and tags `agentId` / `sessionId`). Process-global
+ * events (model catalog, session lifecycle, auth) stay on the legacy
+ * `IEventService`, which is retained as the global channel. Domains declare
+ * their agent-event shapes by augmenting `DomainEventMap` via
+ * `declare module '#/app/event/eventBus'`; `DomainEvent` resolves to the map
+ * entry intersected with the key-derived `{ type }`, so domains can register
+ * either payload-only shapes or complete protocol event types. Agent-scope;
+ * scope-agnostic contract.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

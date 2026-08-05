@@ -50,8 +50,9 @@ export class KimiForCodingProvider implements ModelProvider {
     this.defaultHeaders = options.defaultHeaders;
     this.homeDir = resolveKimiHome(options.homeDir);
     this.identity = {
-      userAgentProduct: options.userAgentProduct,
+      productName: options.productName,
       version: options.version,
+      platform: options.platform,
       userAgentSuffix: options.userAgentSuffix,
     };
     this.oauthRef = resolveKimiCodeOAuthRef({

@@ -60,8 +60,9 @@ export class KimiRuntime {
       createKimiHarness({
         ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
         identity: {
-          userAgentProduct: "kimi-code-vscode",
+          productName: "kimi-code-vscode",
           version: options.version,
+          platform: "kimi_code_vscode",
         },
         uiMode: "vscode",
       });

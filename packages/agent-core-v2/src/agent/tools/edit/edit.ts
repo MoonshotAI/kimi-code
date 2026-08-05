@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IEditTool` contract.
+ * `tools` domain — `IEditTool` contract.
  *
  * Public contract of Edit, the model's exact-string-replacement editor for
  * text files. Line endings are preserved by the model view: the raw file is

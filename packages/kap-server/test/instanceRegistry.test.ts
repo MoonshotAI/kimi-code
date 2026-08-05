@@ -20,6 +20,7 @@ import {
   type ServerInstanceInfo,
 } from '../src/instanceRegistry';
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
 let tmpDir: string;
 let instancesDir: string;
@@ -99,7 +100,7 @@ describe('createInstanceRegistry — register / release', () => {
 
   it('records host_version when provided', async () => {
     const registry = createInstanceRegistry({ instancesDir, now: () => 1 });
-    const reg = await registry.register({ ...baseInfo, hostVersion: '1.2.3' });
+    const reg = await registry.register({ ...baseInfo, serverVersion: '1.2.3' });
     expect(readInstance(reg.serverId).host_version).toBe('1.2.3');
     await reg.release();
   });
@@ -278,9 +279,9 @@ describe('startServer — instance registry wiring', () => {
 
   it('lets two servers share one homeDir, each registering a distinct instance and port', async () => {
     home = mkdtempSync(join(tmpdir(), 'kimi-server-multi-server-'));
-    const a = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    const a = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     servers.push(a);
-    const b = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    const b = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     servers.push(b);
 
     // Each instance binds its own (ephemeral) port and registers it.
@@ -298,9 +299,9 @@ describe('startServer — instance registry wiring', () => {
 
   it('removes its instance file on close so peers no longer list it', async () => {
     home = mkdtempSync(join(tmpdir(), 'kimi-server-multi-server-'));
-    const a = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    const a = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     servers.push(a);
-    const b = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    const b = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     servers.push(b);
     expect(await listLiveServerInstances(home)).toHaveLength(2);
 
@@ -315,6 +316,7 @@ describe('startServer — instance registry wiring', () => {
   it('releases its registration on close so a fresh instance on the same home can start', async () => {
     home = mkdtempSync(join(tmpdir(), 'kimi-server-multi-server-'));
     const first = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -323,6 +325,7 @@ describe('startServer — instance registry wiring', () => {
     await first.close();
 
     const restarted = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,

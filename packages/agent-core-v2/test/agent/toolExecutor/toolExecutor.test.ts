@@ -16,7 +16,10 @@ import {
   type ToolUpdate,
 } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
+import type {
+  BeforeToolExecuteEvent,
+  ToolExecutionOutcome,
+} from '#/agent/toolExecutor/toolHooks';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
@@ -588,8 +591,13 @@ describe('AgentToolExecutorService', () => {
     const controller = new AbortController();
     const first = new ControlledTool('first', ToolAccesses.writeFile('/repo/a.ts'));
     const second = new ControlledTool('second', ToolAccesses.writeFile('/repo/a.ts'));
+    const outcomes = new Map<string, ToolExecutionOutcome>();
     registry.register(first);
     registry.register(second);
+    executor.hooks.onDidExecuteTool.register('capture-outcomes', async (ctx, next) => {
+      outcomes.set(ctx.toolCall.id, ctx.outcome);
+      await next();
+    });
 
     const execution = execute(
       [toolCall('call_first', 'first', {}), toolCall('call_second', 'second', {})],
@@ -601,6 +609,12 @@ describe('AgentToolExecutorService', () => {
 
     expect(first.calls).toHaveLength(1);
     expect(second.calls).toHaveLength(0);
+    expect(outcomes).toEqual(
+      new Map([
+        ['call_first', 'executed'],
+        ['call_second', 'aborted'],
+      ]),
+    );
     expect(results).toEqual([
       expect.objectContaining({ output: 'Tool "first" was aborted', isError: true }),
       expect.objectContaining({ output: 'Tool "second" was aborted', isError: true }),

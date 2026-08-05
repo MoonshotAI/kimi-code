@@ -26,13 +26,6 @@ export type ReasoningKey = (typeof KNOWN_REASONING_KEYS)[number];
 
 export const DEFAULT_REASONING_KEY: ReasoningKey = KNOWN_REASONING_KEYS[0];
 
-/**
- * Find the reasoning text on an inbound chat-completions message or stream
- * delta, returning the wire key it was found under. With `explicitKey`, only
- * that key is consulted. Non-string values are skipped (vLLM's compatibility
- * placeholder `reasoning_content: null`, OpenRouter's array-shaped
- * `reasoning_details`).
- */
 export function extractReasoning(
   source: unknown,
   explicitKey?: string,
@@ -47,30 +40,11 @@ export function extractReasoning(
   return undefined;
 }
 
-/**
- * Per-endpoint reasoning-field dialect: observes inbound responses, remembers
- * which wire key carried reasoning, and echoes that key when serializing
- * thinking back into outbound messages ("reply in the dialect the peer
- * spoke"). Detection never clears: a response without reasoning keeps the
- * last known dialect, and a peer that switches dialects mid-session is
- * adapted to on its next observation.
- *
- * Precedence: an explicit constructor key always wins and disables detection;
- * otherwise the last observed key; otherwise `DEFAULT_REASONING_KEY`. The
- * explicit key comes from operator config (`reasoning_key`) or a trait's
- * `reasoningKey` declaration — both assert a hard protocol fact about the
- * endpoint. The dialect cell itself is plain instance state: one composed
- * provider serves one endpoint, so detection simply lives on the instance.
- */
 export class ReasoningKeyDialect {
   private _detected: string | undefined;
 
   constructor(private readonly _explicitKey?: string) {}
 
-  /**
-   * Extract reasoning text from an inbound message or stream delta, remembering
-   * the key it arrived under (unless an explicit key pins the dialect).
-   */
   observe(source: unknown): string | undefined {
     const found = extractReasoning(source, this._explicitKey);
     if (found === undefined) return undefined;
@@ -80,7 +54,6 @@ export class ReasoningKeyDialect {
     return found.value;
   }
 
-  /** The wire key to serialize thinking content into on outbound messages. */
   outboundKey(): string {
     return this._explicitKey ?? this._detected ?? DEFAULT_REASONING_KEY;
   }

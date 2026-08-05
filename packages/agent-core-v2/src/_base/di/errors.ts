@@ -1,5 +1,5 @@
 /**
- * `di` domain (L0) — `CyclicDependencyError` raised on DI dependency cycles.
+ * `di` domain — `CyclicDependencyError` raised on DI dependency cycles.
  */
 
 import type { Graph } from './graph';
@@ -22,5 +22,21 @@ export class CyclicDependencyError extends Error {
       this.path = cycle ? cycle.split(' -> ') : [];
     }
     this.name = 'CyclicDependencyError';
+  }
+}
+
+/**
+ * Raised when a resolution hits a token inside an in-flight cascade
+ * transaction's contagion set. The async resolution path suspends instead
+ * (see `CascadeEngine.resolveWhenAvailable`); the sync path cannot suspend,
+ * so it fails fast with this error.
+ */
+export class CascadeConflictError extends Error {
+  constructor(
+    readonly token: string,
+    readonly detail: string,
+  ) {
+    super(`Cascade conflict resolving '${token}': ${detail}`);
+    this.name = 'CascadeConflictError';
   }
 }

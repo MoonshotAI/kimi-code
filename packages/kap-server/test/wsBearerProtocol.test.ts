@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { WS_BEARER_PROTOCOL_PREFIX } from '../src/transport/ws/bearerProtocol';
 
 function openWs(url: string, protocols: string | string[]): Promise<WebSocket> {
@@ -24,7 +25,7 @@ describe('server-v2 WS bearer subprotocol', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-ws-bearer-'));
-    server = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     wsUrl = `ws://127.0.0.1:${server.port}/api/v1/ws`;
   });
 

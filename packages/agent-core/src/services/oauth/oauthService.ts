@@ -83,7 +83,7 @@ export class OAuthService extends Disposable implements IOAuthService {
   constructor(@IEnvironmentService private readonly env: IEnvironmentService) {
     super();
     this._flows = this._register(new DisposableMap<string, FlowState>());
-    this._authFacade = createManagedAuthFacade(env);
+    this._authFacade = createManagedAuthFacade(env, env.identity);
   }
 
   /** @internal Test-only factory that injects a mock facade. */

@@ -34,13 +34,19 @@ export interface InjectionOrigin {
   readonly kind: 'injection';
   readonly variant: string;
   readonly ownerPromptId?: string;
+  readonly disclosure?: ContextInjectionDisclosure;
 }
+
+export type ContextInjectionDisclosure = {
+  readonly kind: 'date';
+  readonly renderGeneration: number;
+  readonly localDate: string;
+  readonly timeZone: string;
+};
 
 export interface ShellCommandOrigin {
   readonly kind: 'shell_command';
   readonly phase: 'input' | 'output';
-  /** Only present on `phase: 'output'` — whether the command failed, so replay
-   *  can colour stderr red only for actual failures (not warnings). */
   readonly isError?: boolean;
 }
 

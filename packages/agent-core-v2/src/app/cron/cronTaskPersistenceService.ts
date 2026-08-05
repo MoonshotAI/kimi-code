@@ -1,5 +1,5 @@
 /**
- * `cron` domain (L5) — `ICronTaskPersistence` implementation.
+ * `cron` domain — `ICronTaskPersistence` implementation.
  *
  * Persists cron tasks as atomic JSON documents under the `cron` persistence
  * scope (`bootstrap.scope('cron')`), laid out as `<workspaceId>/<id>.json`.

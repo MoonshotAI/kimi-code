@@ -6,9 +6,9 @@
  * least-recently-used entries until the payload fits. A single payload larger
  * than `maxBytes` is never cached.
  *
- * Module-private helper for `AgentBlobServiceImpl`; not part of the package
- * surface. Owned as a value (not a DI service) so each agent keeps its own
- * cache. Promote to a shared util only when a second caller appears.
+ * Module-private helper; not part of the package surface. Owned as a value
+ * (not a DI service) so each agent keeps its own cache. Promote to a shared
+ * util only when a second caller appears.
  */
 
 export class ByteLruCache {

@@ -1,5 +1,5 @@
 /**
- * `toolDedupe` domain (L4) — `IAgentToolDedupeService` implementation.
+ * `toolDedupe` domain — `IAgentToolDedupeService` implementation.
  *
  * Self-wiring plugin: its constructor registers `loop` onWillBeginStep/onDidFinishStep
  * hooks, an `onBeforeExecuteTool` veto listener (same-step duplicates are

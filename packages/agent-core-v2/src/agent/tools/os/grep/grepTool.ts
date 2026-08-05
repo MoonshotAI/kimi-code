@@ -1,11 +1,8 @@
 /**
- * `tools` domain (L7) — `GrepTool` implementation, content search via ripgrep.
+ * `tools` domain — `GrepTool` implementation, content search via ripgrep.
  *
- * Shells out to `rg` through the host process service. The model-facing
- * contract (schemas, `IGrepTool` identifier) lives in `./grep`; the ripgrep
- * binary resolution and subprocess plumbing are shared with the Glob tool via
- * `#/os/backends/node-local/tools/rgLocator` and
- * `#/os/backends/node-local/tools/runRg`.
+ * Shells out to `rg` through the host process service. The ripgrep binary
+ * resolution and subprocess plumbing are shared with the Glob tool.
  *
  * Collaborators injected via constructor:
  *   - `processService` — `IHostProcessService`, spawns the rg subprocess

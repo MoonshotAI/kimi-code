@@ -1,5 +1,5 @@
 /**
- * `kosong/contract` domain (L0) — the generation driver.
+ * `kosong/contract` domain — the generation driver.
  *
  * `generate()` is the single place that orchestrates "call
  * `ChatProvider.generate` and normalize the event stream": it merges streamed

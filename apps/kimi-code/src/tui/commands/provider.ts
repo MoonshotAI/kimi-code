@@ -9,13 +9,13 @@ import {
   catalogProviderModels,
   CatalogFetchError,
   DEFAULT_CATALOG_URL,
-  fetchCatalog,
   resolveCatalogImport,
   type Catalog,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { createKimiCodeUserAgent } from '#/cli/version';
+import { fetchCatalogOrBuiltIn } from '#/utils/catalog-fetch';
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
 import {
   CustomRegistryImportDialogComponent,
@@ -162,11 +162,17 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   const spinner = host.showLoginProgressSpinner(`Fetching catalog from ${DEFAULT_CATALOG_URL}`);
   let catalog: Catalog | undefined;
   try {
-    catalog = await fetchCatalog(DEFAULT_CATALOG_URL, {
+    const loaded = await fetchCatalogOrBuiltIn(DEFAULT_CATALOG_URL, {
       signal: controller.signal,
       userAgent: createKimiCodeUserAgent(),
     });
-    spinner.stop({ ok: true, label: 'Catalog loaded.' });
+    catalog = loaded.catalog;
+    spinner.stop({
+      ok: true,
+      label: loaded.fromBuiltIn
+        ? 'Catalog loaded from built-in snapshot (models.dev unreachable).'
+        : 'Catalog loaded.',
+    });
   } catch (error) {
     if (controller.signal.aborted) {
       spinner.stop({ ok: false, label: 'Aborted.' });

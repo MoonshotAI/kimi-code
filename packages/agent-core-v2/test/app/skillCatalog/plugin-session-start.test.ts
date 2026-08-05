@@ -120,7 +120,7 @@ describe('plugin session-start dynamic injection', () => {
 
     const text = lastReminder(ctx);
     expect(text).toContain('<plugin_session_start plugin="superpowers" skill="using-superpowers">');
-    expect(text).toContain('<kimi-plugin-instructions plugin="superpowers">');
+    expect(text).toContain('<plugin-instructions plugin="superpowers">');
     expect(text).toContain('AskUserQuestion');
     expect(text).toContain('TodoList');
     expect(text).toContain('body of skill');
@@ -142,7 +142,7 @@ describe('plugin session-start dynamic injection', () => {
     const text = lastReminder(ctx);
     expect(text).toContain('<plugin_session_start plugin="superpowers" skill="using-superpowers">');
     expect(text).toContain('body');
-    expect(text).not.toContain('<kimi-plugin-instructions plugin="superpowers">');
+    expect(text).not.toContain('<plugin-instructions plugin="superpowers">');
     expect(text).not.toContain('AskUserQuestion');
   });
 

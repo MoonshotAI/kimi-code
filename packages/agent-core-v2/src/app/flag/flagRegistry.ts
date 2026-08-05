@@ -1,9 +1,9 @@
 /**
- * `flag` domain (L3) — flag-definition registry contract.
+ * `flag` domain — flag-definition registry contract.
  *
  * `IFlagRegistry` is the writable catalog that `IFlagService` reads flag
  * definitions from. Definitions are contributed **decentrally**: each domain
- * calls `registerFlagDefinition` from its own `<domain>Flag.ts` top level, and
+ * calls `registerFlagDefinition` from its own module's top level, and
  * `FlagRegistryService` drains those contributions when it is instantiated.
  * There is no central catalog to edit by hand. App-scoped.
  */

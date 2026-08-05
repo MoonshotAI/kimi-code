@@ -1,5 +1,5 @@
 /**
- * `usage` domain (L3) — per-agent token usage accounting contract.
+ * `usage` domain — per-agent token usage accounting contract.
  *
  * Exposes accumulated status, live usage recording, and an `onDidRecord` event
  * for agent-scoped consumers that react to newly recorded usage. Bound at Agent

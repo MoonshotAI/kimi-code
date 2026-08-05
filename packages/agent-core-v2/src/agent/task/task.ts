@@ -1,9 +1,9 @@
 /**
- * `task` domain (L5) — Agent-scope task manager contract.
+ * `task` domain — Agent-scope task manager contract.
  *
  * Defines the Agent-scoped task manager surface used for both foreground and
  * detached work. Task execution adapters implement the generic `AgentTask`
- * contract from this domain's type module; this service owns registration,
+ * contract; this service owns registration,
  * output retention, persistence, detach/stop/wait, terminal notifications,
  * and session-close task teardown with a `keepAliveOnExit` opt-out.
  * Bound at Agent scope.

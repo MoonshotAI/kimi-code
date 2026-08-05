@@ -20,6 +20,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost } from '#/_base/di/test';
 import { Error2, isError2 } from '#/_base/errors/errors';
+import { DEFAULT_IDENTITY_SLUG, IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import {
   resetModelsDevUpstreamForTest,
@@ -35,6 +37,10 @@ import type { ModelsSection } from '#/kosong/model/model';
 import type { ProvidersSection } from '#/kosong/provider/provider';
 
 import { StubConfigService } from '../../kosong/stubs';
+import { stubBootstrap } from '../bootstrap/stubs';
+import { stubAgentIdentity } from '../agentIdentity/stubs';
+
+const HOST_HEADERS = { 'User-Agent': 'kimi-test/1.0' };
 
 const codes = ModelsDevImportErrors.codes;
 
@@ -109,6 +115,16 @@ function fetchJson(doc: unknown): typeof fetch {
     })) as unknown as typeof fetch;
 }
 
+function fetchJsonRecordingUserAgent(doc: unknown, seen: Array<string | null>): typeof fetch {
+  return (async (_input: unknown, init?: { headers?: Record<string, string> }) => {
+    seen.push(new Headers(init?.headers).get('User-Agent'));
+    return new Response(JSON.stringify(doc), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as unknown as typeof fetch;
+}
+
 function fetchFail(): typeof fetch {
   return (async () => {
     throw new Error('network down');
@@ -132,7 +148,11 @@ function stubModelCatalog(): IModelCatalog {
   } as unknown as IModelCatalog;
 }
 
-function createHost(sections: Record<string, unknown> = {}): {
+function createHost(
+  sections: Record<string, unknown> = {},
+  identitySlug?: string,
+  hostHeaders: Record<string, string> = HOST_HEADERS,
+): {
   config: StubConfigService;
   imports: IModelsDevImportService;
 } {
@@ -141,6 +161,8 @@ function createHost(sections: Record<string, unknown> = {}): {
     [IConfigService, config],
     [IKosongConfigService, stubKosongConfig()],
     [IModelCatalog, stubModelCatalog()],
+    [IBootstrapService, stubBootstrap('/home', {}, { requestHeaders: hostHeaders })],
+    [IAgentIdentity, stubAgentIdentity({ slug: identitySlug, hostRequestHeaders: hostHeaders })],
   ]);
   return { config, imports: host.app.accessor.get(IModelsDevImportService) };
 }
@@ -285,6 +307,64 @@ describe('IModelsDevImportService', () => {
       codes.CATALOG_IMPORT_INVALID,
     );
     expect(err.message).toContain('requires a base_url');
+  });
+
+  // A custom registry is a user-supplied third-party endpoint, so this request
+  // carries the same identity the scheduled refresh of that registry sends —
+  // it used to go out with a hardcoded product token instead.
+  it('sends the configured identity as the custom-registry import User-Agent', async () => {
+    const seen: Array<string | null> = [];
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJsonRecordingUserAgent(REGISTRY_DOC, seen) });
+    const { imports } = createHost({}, 'acme');
+
+    await imports.importCustomRegistry({ url: REGISTRY_URL });
+
+    expect(seen).toEqual(['acme/1.0']);
+  });
+
+  it('keeps the host User-Agent on the import when no identity is configured', async () => {
+    const seen: Array<string | null> = [];
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJsonRecordingUserAgent(REGISTRY_DOC, seen) });
+    const { imports } = createHost();
+
+    await imports.importCustomRegistry({ url: REGISTRY_URL });
+
+    expect(seen).toEqual([HOST_HEADERS['User-Agent']]);
+  });
+
+  it('sends the configured identity when browsing the models.dev directory', async () => {
+    const seen: Array<string | null> = [];
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJsonRecordingUserAgent(CATALOG, seen) });
+    const { imports } = createHost({}, 'acme');
+
+    await imports.listModelsDevProviders();
+
+    expect(seen).toEqual(['acme/1.0']);
+  });
+
+  // The fourth combination of (host header, configured slug): a host that
+  // states no User-Agent must still present the configured identity, not the
+  // neutral stand-in — this is exactly the case the fallback exists to serve.
+  it('presents the configured slug when the host states no User-Agent', async () => {
+    const seen: Array<string | null> = [];
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJsonRecordingUserAgent(REGISTRY_DOC, seen) });
+    const { imports } = createHost({}, 'acme', {});
+
+    await imports.importCustomRegistry({ url: REGISTRY_URL });
+
+    expect(seen).toEqual(['acme']);
+  });
+
+  // These directories are ones this service chooses to call, so a host that
+  // states no User-Agent gets a neutral token rather than no header at all.
+  it('falls back to a neutral token when the host states no User-Agent', async () => {
+    const seen: Array<string | null> = [];
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJsonRecordingUserAgent(REGISTRY_DOC, seen) });
+    const { imports } = createHost({}, undefined, {});
+
+    await imports.importCustomRegistry({ url: REGISTRY_URL });
+
+    expect(seen).toEqual([DEFAULT_IDENTITY_SLUG]);
   });
 
   it('imports a custom registry with a source blob and drops providers vanished upstream', async () => {

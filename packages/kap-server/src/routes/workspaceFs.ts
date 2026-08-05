@@ -26,7 +26,7 @@
  * All file handling lives here in the transport layer on top of the os
  * `IHostFileSystem` primitives — the engine deliberately has no "unconfined
  * read" domain Service. The mime / etag helpers are shared with the engine's
- * `sessionFs` via `agent-core-v2/_base/utils/fileMeta` so both surfaces label
+ * `workspaceFs` via `agent-core-v2/_base/utils/fileMeta` so both surfaces label
  * content the same way. `IHostFileSystem` failures arrive as coded `os.fs.*`
  * errors and are mapped here:
  *

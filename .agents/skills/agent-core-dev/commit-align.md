@@ -57,7 +57,7 @@ Keep the recommendation to the commit's footprint. If it keeps growing, that is 
 
 ### 6. Verify
 
-Point at the checks that cover the fix, per [verify.md](verify.md): `lint:domain`, `typecheck`, and the relevant `test`. Note the expected outcome rather than asserting you ran it if you did not.
+Point at the checks that cover the fix, per [verify.md](verify.md): `lint:imports`, `typecheck`, and the relevant `test`. Note the expected outcome rather than asserting you ran it if you did not.
 
 ## Output shape
 

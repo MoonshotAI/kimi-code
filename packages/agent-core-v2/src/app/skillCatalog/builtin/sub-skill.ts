@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — builtin `sub-skill` bundle (parent + review + consolidate).
+ * `skillCatalog` domain — builtin `sub-skill` bundle (parent + review + consolidate).
  */
 
 import type { SkillDefinition } from '#/app/skillCatalog/types';

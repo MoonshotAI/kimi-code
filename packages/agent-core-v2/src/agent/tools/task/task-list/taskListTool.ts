@@ -1,10 +1,8 @@
 /**
- * `tools` domain (L7) — `TaskListTool` implementation (the `TaskList` tool).
+ * `tools` domain — `TaskListTool` implementation (the `TaskList` tool).
  *
  * Reads the agent's background tasks from `IAgentTaskService` (`agentTask`
- * domain) and renders them as a plain `key: value` list via
- * `formatPlainObject` (`task/tools/format`). The public contract (input
- * schema, `ITaskListTool`) lives in `./task-list`.
+ * domain) and renders them as a plain `key: value` list.
  *
  * Registered via the module-level `registerAgentToolService(ITaskListTool,
  * TaskListTool)` at the bottom of this file — the same "import = register"

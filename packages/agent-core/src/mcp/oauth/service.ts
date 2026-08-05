@@ -126,6 +126,10 @@ export class McpOAuthService {
     }
 
     provider.setRedirectUrl(new URL(callbackServer.redirectUri));
+    // See invalidateStaleRegistration: a reused registration whose redirect
+    // URIs no longer cover this flow's random-port callback would be rejected
+    // at the authorization endpoint with an error only the browser ever sees.
+    provider.invalidateStaleRegistration(callbackServer.redirectUri);
 
     let authorizationUrl: URL | undefined;
     try {

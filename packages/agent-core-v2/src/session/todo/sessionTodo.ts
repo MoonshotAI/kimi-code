@@ -1,5 +1,5 @@
 /**
- * `todo` domain (L4) — `ISessionTodoService` contract.
+ * `todo` domain — `ISessionTodoService` contract.
  *
  * The session-shared todo list: an in-memory list materialized from the main
  * agent's `tools.update_store` (`key: 'todo'`) wire records, mutated through

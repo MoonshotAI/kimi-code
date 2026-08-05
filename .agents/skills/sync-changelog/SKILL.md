@@ -115,17 +115,10 @@ Drop SDK-only and provider-internal detail. This changelog serves `@moonshot-ai/
 
 - Drop sentences about how the SDK maps a capability, builds model aliases, or exposes a flag through an API such as `getExperimentalFeatures()` — that belongs in the SDK changelog, not here.
 - Drop provider / wire-format implementation mechanics (XML markers like `<tools_added>`, protocol field explanations, "the wire protocol is unchanged", cache-hit mechanics) unless they are the behavior a user perceives.
+- Drop hook/event payload mechanics — clauses about what extra fields an event payload carries or what an event reports in a specific case (for example "enrich hook payloads with the session title and client type", "`SessionEnd` reports `archive` when a session is archived"). Keep the new events or capability itself and how to configure it.
 - Keep the user-facing effect and any constraints users must follow (for example "question texts must be unique").
 
 Do not change facts or drop a real user-facing behavior — only trim the internal-only scaffolding. For over-long, internal-heavy entries, this trim applies on the English page too, not only in translation.
-
-Web UI prefix: if the entry is a web UI change, prefix the body text with `web: ` so readers can tell it affects the web UI:
-
-```markdown
-- web: <body text>
-```
-
-An entry counts as a web UI change when its upstream commit touches `apps/kimi-web/`. Check with `git show --name-only <hash>` (the commit hash is the one stripped above). `gen-changesets` writes this prefix for web changes, so it is usually already present in upstream — preserve it when it is there, and add it when a web entry lacks it. When a commit touches both web and non-web code, use `web:` only if the user-facing change described by the entry is in the web UI. Keep the `web:` prefix on the Chinese page too — it is a scope marker, not translated text.
 
 Upstream language rule: `gen-changesets` requires changelog entries to be English. If the upstream CLI changelog contains a non-English entry, stop and report it to the user. Do not silently rewrite it while syncing docs.
 
@@ -135,13 +128,13 @@ Public-text rule: do not copy real internal endpoints, key names, account names,
 
 Before classifying, merge related entries and drop redundant ones from the user-facing changelog:
 
-- **Merge micro-tweaks to the same surface.** Collapse several small tweaks to the same UI area or feature into one concise entry at the higher level. For example, "change the composer's default height" and "change the composer's default font" merge into "Polish the composer's default styling." Use the most specific common ancestor (composer, settings page, tool card, and so on). Classify the merged entry by its combined effect, and keep the `web:` prefix if the combined change is still web-facing.
+- **Merge micro-tweaks to the same surface.** Collapse several small tweaks to the same UI area or feature into one concise entry at the higher level. For example, "change the composer's default height" and "change the composer's default font" merge into "Polish the composer's default styling." Use the most specific common ancestor (composer, settings page, tool card, and so on). Classify the merged entry by its combined effect
 - **Merge same-surface or same-kind fixes when you have three or more.** The `Bug Fixes` section tends to accumulate many narrow UI/polish fixes that read as noise when listed one by one. When three or more fixes target the same area (for example several tool cards in the TUI, or the web session/conversation surface) or the same class of problem (for example several "jumping/flickering/collapsing during streaming" fixes), merge them into one higher-level entry. Examples:
   - "Fix the Bash tool card collapsing...", "Fix the Edit tool card jumping in height...", "Fix the Edit tool card flickering while its result streams in" → "Fix several TUI tool cards jumping, flickering, or collapsing in height when results stream in or end with short output."
-  - "Fix the collapsed sidebar not hiding...", "Stop the chat history from replaying its entrance animation...", "Fix tool components jumping the conversation when expanded/collapsed" → "web: Fix several layout and display glitches when switching sessions, including the collapsed sidebar not hiding, the chat history replaying its entrance animation, and tool components jumping the conversation."
-  - Keep `web:` if the merged fixes are all web-facing. Classify as `Bug Fixes`.
+  - "Fix the collapsed sidebar not hiding...", "Stop the chat history from replaying its entrance animation...", "Fix tool components jumping the conversation when expanded/collapsed" → "Fix several layout and display glitches when switching sessions, including the collapsed sidebar not hiding, the chat history replaying its entrance animation, and tool components jumping the conversation."
+  - Classify the merged fixes as `Bug Fixes`.
   - **Do not over-merge.** Leave a fix standalone when it is broad, high-value, or genuinely distinct (for example model/provider tool-calling bugs, session-list corruption, file-completion gaps). Merging is for low-reader-value, similar-shape fixes that read as a wall of similar bullets.
-- **Drop server/API plumbing covered by a web entry.** If one entry adds a web UI feature (for example, an Archived sessions page) and another entry only adds the server or REST/WebSocket endpoints that exist solely to power that web feature, keep the `web:` entry and drop the API entry. CLI and web users perceive the web page; the backing API is implementation detail with no independent user value on this changelog. Keep the API entry only when it has independent user value — a new public endpoint that SDK or server consumers call directly, or a capability usable outside the web feature. When unsure, keep both and let the reviewer decide.
+- **Drop server/API plumbing covered by a web entry.** If one entry adds a web UI feature (for example, an Archived sessions page) and another entry only adds the server or REST/WebSocket endpoints that exist solely to power that web feature, keep the web UI entry and drop the API entry. CLI and web users perceive the web page; the backing API is implementation detail with no independent user value on this changelog. Keep the API entry only when it has independent user value — a new public endpoint that SDK or server consumers call directly, or a capability usable outside the web feature. When unsure, keep both and let the reviewer decide.
 
 The docs changelog uses five section types:
 
@@ -229,6 +222,8 @@ Example:
 - Update the native release workflow to use current GitHub artifact actions.
 ```
 
+Doc links: an entry that changes a documented config surface may end with a pointer to the docs page — `see [X](...) for details` (Chinese: `详见 [X](...)。`). Keep it a real Markdown link into the docs tree with a relative path (for example `../configuration/config-files.md#loop-control`). When the link text is a config key or another identifier, code-style the text inside the brackets: [`loop_control`](../configuration/config-files.md#loop-control). Never wrap the whole link in backticks — `` `[loop_control](...)` `` renders as raw inline code that exposes the relative path instead of a clickable link.
+
 ### 6. Translate The Increment Into Chinese
 
 After updating the English page, translate only the newly added English content into `docs/zh/release-notes/changelog.md`.
@@ -281,7 +276,7 @@ Guidelines:
 - **Keep usage hints to one short clause**.
   - Bad: `传入 --allowed-host 以允许额外的 host。例如 ... （多句展开）`
   - Better: `例如 kimi web --allowed-host example.com。`
-- **Do not translate technical identifiers**: keep command names, flag names, file names, env vars, config keys, and the `web:` scope prefix as-is.
+- **Do not translate technical identifiers**: keep command names, flag names, file names, env vars, config keys as-is.
 - **Keep parallel rhythm within a section.** When several entries fix similar web surfaces (layout, animation, sizing), phrase them with a consistent structure (for example 修复 <问题>，现 <行为>) so the section reads as a tidy list rather than a mix of shapes.
 
 Example — translating a feature entry:
@@ -322,6 +317,7 @@ Check:
 - PR links and commit hashes were stripped.
 - No `Thanks ...!` credit remains (remove it every time).
 - Real internal identifiers were replaced with neutral placeholders.
+- Doc links are real Markdown links (code-styled text inside the brackets when needed), never wrapped in backticks.
 - There are no empty sections.
 - Markdown indentation and blank lines are intact.
 
@@ -426,7 +422,6 @@ Return the PR URL to the user when done.
 - The English docs changelog is the source of truth.
 - Never edit upstream `apps/kimi-code/CHANGELOG.md`.
 - Do not backfill unreleased `.changeset/*.md` drafts into the docs site.
-- Prefix web UI entries with `web: ` (when the upstream commit touches `apps/kimi-web/`), and keep the prefix on both the English and Chinese pages.
 - If upstream wording is wrong, leave upstream alone and fix it in a future changeset.
 - Always sync on a `docs/changelog-sync-*` branch and open a PR; never push changelog docs sync directly to `main`.
 - Wait for the human review checkpoint before committing, pushing, or opening a PR.
@@ -440,7 +435,7 @@ Return the PR URL to the user when done.
 | Leaving the `Thanks ...!` credit in docs | Remove it every time, including the multi-author form |
 | Leaving near-duplicate micro-tweaks as separate bullets | Merge small tweaks to the same surface into one higher-level entry (e.g. composer height + font → composer's default styling) |
 | Listing many narrow fixes to the same surface as separate bullets | When three or more fixes target the same UI area or the same class of problem, merge them into one higher-level fix entry; keep genuinely distinct or high-value fixes standalone |
-| Listing a server/API entry that only backs a web feature already listed | Drop the API entry and keep the `web:` entry, unless the API has independent user value |
+| Listing a server/API entry that only backs a web feature already listed | Drop the API entry and keep the web UI entry, unless the API has independent user value |
 | Rewording upstream English entries | Upstream is frozen; copy the body text unless the user explicitly asks otherwise |
 | Leaving English text untranslated in the Chinese page | The Chinese page must be fully Chinese except preserved technical terms |
 | Editing upstream changelog text | Do not edit upstream |
@@ -454,12 +449,13 @@ Return the PR URL to the user when done.
 | Leaving empty sections | Delete sections with no entries |
 | Putting everything under Other for convenience | Classify what can be classified first |
 | Translating tool names, command names, or config keys | Keep them as written |
+| Wrapping a whole doc link in backticks | Code-style the link text inside the brackets instead, so the link stays clickable: [`loop_control`](...) |
+| Keeping hook/event payload-mechanics clauses | Drop what an event reports or carries; keep the new capability and how to configure it |
 | Creating a changeset for docs sync | Do not create one |
 | Committing or pushing directly on `main` | Create `docs/changelog-sync-<version>`, commit there, then open a PR |
 | Committing or opening a PR before the user skips review or confirms review is done | Wait at the human review checkpoint |
 | Using curly quotes or half-width Chinese punctuation | Follow `docs/AGENTS.md` |
 | Omitting the release date from a version heading, or guessing it | Add ` (YYYY-MM-DD)` (full-width `（）` in Chinese) taken from the published tag |
-| Forgetting or translating the `web:` prefix on web UI entries | Prefix web UI entries (commit touches `apps/kimi-web/`) with `web: ` on both pages; keep the prefix as-is when translating |
 
 ## Stop Signals
 

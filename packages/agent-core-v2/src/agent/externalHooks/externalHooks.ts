@@ -1,5 +1,5 @@
 /**
- * `externalHooks` domain (L6) — contract for configured external hook
+ * `externalHooks` domain — contract for configured external hook
  * commands.
  *
  * The service is intentionally observer-shaped: business domains expose their

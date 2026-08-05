@@ -1,12 +1,10 @@
 /**
- * `permissionPolicy` domain (L3) — `IAgentPermissionPolicyService` implementation.
+ * `permissionPolicy` domain — `IAgentPermissionPolicyService` implementation.
  *
  * Runs the static, ordered permission chain: every node adjudicates the *risk*
  * of a tool call (mode posture, user rules, session approval memory, sensitive
- * paths, intrinsic tool risk, workspace write trust, fallback). Harness
- * constraints (plan guard, swarm batch exclusivity, btw deny) are NOT here —
- * they live in their owning domains as `onBeforeExecuteTool` veto listeners.
- * Bound at Agent scope.
+ * paths, intrinsic tool risk, workspace write trust, fallback). Bound at
+ * Agent scope.
  */
 
 import { IInstantiationService } from "#/_base/di/instantiation";

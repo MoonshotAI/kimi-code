@@ -4,11 +4,9 @@
  * Binds `sessionId` to every entry and writes to a rotating file under
  * `<sessionDir>/logs` (the `sessionId` key is omitted from each line since the
  * path already identifies the session). Registered to the single `ILogService`
- * token at Session scope, so every Session/Agent consumer injecting
- * `@ILogService` lands here (Agent has no own binding and falls back to this).
- * Flushes synchronously when the Session scope is disposed. The plain-data
- * state (`rootLevel`) is registered into `sessionState`
- * (`ISessionStateService`) and read/written through it.
+ * token at Session scope. Flushes synchronously when the Session scope is
+ * disposed. The plain-data state (`rootLevel`) is registered into
+ * `sessionState` (`ISessionStateService`) and read/written through it.
  */
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -25,11 +23,6 @@ export const sessionLogRootLevelKey = defineState<LogLevelState>('sessionLog.roo
   level: 'info',
 }));
 
-/**
- * Registers the root level into `sessionState` and hands the stored object to
- * the `BoundLogger` base, so base and subclass share one `LogLevelState`.
- * Runs inside the `super(...)` arguments, where `this` is not yet available.
- */
 function seedRootLevel(states: ISessionStateService, level: LogLevel): LogLevelState {
   states.register(sessionLogRootLevelKey);
   states.set(sessionLogRootLevelKey, { level });

@@ -6,9 +6,8 @@
  * Utilities: `extractText | mergeInPlace` (in-place merge of streamed
  * tool-call argument deltas).
  *
- * Values live in `./message` beside the wire types; this module re-exports
- * them so callers can take the helper surface without pulling in the entire
- * wire-type module.
+ * Re-exports the helper surface so callers can take it without pulling in the
+ * entire wire-type module.
  */
 
 export {

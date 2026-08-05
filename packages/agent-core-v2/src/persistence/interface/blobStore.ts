@@ -5,7 +5,7 @@
  * objects. Sits alongside `IAppendLogStore` and `IAtomicDocumentStore` as the
  * third generic access-pattern Store in the three-layer persistence model.
  *
- * Business services that need blob storage (`IFileService`, `IAgentBlobService`)
+ * Business services that need blob storage
  * depend on this interface rather than on the raw `IFileSystemStorageService`.
  */
 

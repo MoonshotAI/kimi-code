@@ -1,5 +1,5 @@
 /**
- * `approval` domain (L7) — `ISessionApprovalService` implementation.
+ * `approval` domain — `ISessionApprovalService` implementation.
  *
  * Typed facade over the `interaction` kernel for approval requests; owns no
  * pending state of its own (the kernel holds it). Bound at Session scope.

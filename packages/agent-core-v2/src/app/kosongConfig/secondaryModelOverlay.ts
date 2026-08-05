@@ -1,15 +1,14 @@
 /**
- * `kosongConfig` domain (L3) — `[secondary_model]` derived-entry overlay.
+ * `kosongConfig` domain — `[secondary_model]` derived-entry overlay.
  *
- * When the secondary-model recipe carries patch fields (see
- * `secondaryModelPatch`), synthesizes the derived registry entry
- * (`SECONDARY_DERIVED_MODEL_ID`) into the effective `models` view: a copy of
- * the pointed entry with the patch merged into its `overrides` block (patch
- * wins conflicts) and `aliases` dropped, so the derived entry never competes
- * in name/alias routing. Subagent binding then resolves it by name through
- * the standard catalog path, and the patch rides the same
- * `effectiveModelConfig` merge as any `models.*.overrides` (including its
- * supportEfforts/defaultEffort pruning and input clamping).
+ * When the secondary-model recipe carries patch fields, synthesizes the
+ * derived registry entry (`SECONDARY_DERIVED_MODEL_ID`) into the effective
+ * `models` view: a copy of the pointed entry with the patch merged into its
+ * `overrides` block (patch wins conflicts) and `aliases` dropped, so the
+ * derived entry never competes in name/alias routing. Subagent binding then
+ * resolves it by name through the standard catalog path, and the patch rides
+ * the same `effectiveModelConfig` merge as any `models.*.overrides`
+ * (including its supportEfforts/defaultEffort pruning and input clamping).
  *
  * Like the env overlay, the synthesized entry lives ONLY in the in-memory
  * effective view: `strip` removes it from `models` writes so it never
@@ -24,9 +23,9 @@
  * error). The id is reserved: a user-configured entry under it is stripped
  * on write all the same.
  *
- * Self-registered at module load via `registerConfigOverlay`; `src/index.ts`
- * imports it for side effects AFTER `envOverlay`, so a `secondary.model`
- * pointing at the env-synthesized entry sees the already-applied env view.
+ * Self-registered at module load via `registerConfigOverlay`; it is imported
+ * for side effects after the env overlay, so a `secondary.model` pointing at
+ * the env-synthesized entry sees the already-applied env view.
  */
 
 import type { ConfigEffectiveOverlay } from '#/app/config/config';
@@ -41,18 +40,8 @@ import {
   type SecondaryModelConfig,
 } from './configSection';
 
-/**
- * The reserved registry id of the synthesized derived entry. Listing edges
- * (e.g. the kap-server `GET /models` route) hide it from pickers; the
- * catalog resolves it by id like any other entry.
- */
 export const SECONDARY_DERIVED_MODEL_ID = '__secondary__';
 
-/**
- * The patch half of the recipe: every field except `model`. Returns
- * `undefined` when no patch field is set — the signal that subagents bind
- * the pointed entry directly and no derived entry is synthesized.
- */
 export function secondaryModelPatch(
   secondary: SecondaryModelConfig | undefined,
 ): ModelOverride | undefined {

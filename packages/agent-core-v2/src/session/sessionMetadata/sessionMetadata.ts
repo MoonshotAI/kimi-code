@@ -1,5 +1,5 @@
 /**
- * `sessionMetadata` domain (L6) — typed session metadata.
+ * `sessionMetadata` domain — typed session metadata.
  *
  * Defines the `SessionMeta` model and the `ISessionMetadata` used by upper
  * layers to read and update the session's durable metadata (title, timestamps,
@@ -13,8 +13,6 @@ import type { Event } from '#/_base/event';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 export interface AgentMeta {
-  /** Absolute standard path retained for older v1 readers. Current readers
-   * derive the agent directory from the session scope and ignore this field. */
   readonly homedir?: string;
   readonly type?: 'main' | 'sub' | 'independent';
   readonly parentAgentId?: string | null;

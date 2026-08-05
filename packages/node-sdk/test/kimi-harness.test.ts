@@ -28,6 +28,60 @@ class StubRpc extends SDKRpcClientBase {
   }
 }
 
+function makeHarnessWithRpc(rpc: SDKRpcClientBase): KimiHarness {
+  return new KimiHarness(rpc, {
+    homeDir: '/tmp/home',
+    configPath: '/tmp/config.toml',
+    auth: { status: async () => ({ providers: [] }) } as never,
+    telemetry: recordingTelemetry([]),
+    ensureConfigFile: async () => undefined,
+    onClose: () => undefined,
+  });
+}
+
+describe('KimiHarness capability facade', () => {
+  const ready = {
+    id: 'kimi-webbridge',
+    displayName: 'Kimi WebBridge',
+    description: 'd',
+    supported: true,
+    state: 'ready',
+    steps: [],
+    install: { running: false },
+  } as const;
+
+  it('routes capability calls through the global channel with no session', async () => {
+    const calls: string[] = [];
+    class CapabilityRpc extends StubRpc {
+      async listCapabilities() {
+        calls.push('list');
+        return [ready];
+      }
+      async getCapability(id: string) {
+        calls.push(`get:${id}`);
+        return ready;
+      }
+      async installCapability(id: string) {
+        calls.push(`install:${id}`);
+        return ready;
+      }
+    }
+    const harness = makeHarnessWithRpc(new CapabilityRpc());
+
+    expect(await harness.listCapabilities()).toEqual([ready]);
+    expect((await harness.getCapability('kimi-webbridge')).state).toBe('ready');
+    await harness.installCapability('kimi-webbridge');
+    expect(calls).toEqual(['list', 'get:kimi-webbridge', 'install:kimi-webbridge']);
+  });
+
+  it('reports the capability surface as unavailable on v1', async () => {
+    // The v1 rpc has no capability methods, exactly like the real v1 client.
+    const harness = makeHarnessWithRpc(new StubRpc());
+    await expect(harness.listCapabilities()).rejects.toThrow(/requires v2/);
+    await expect(harness.installCapability('kimi-cu')).rejects.toThrow(/requires v2/);
+  });
+});
+
 describe('KimiHarness imageLimits', () => {
   it('exposes the in-process core [image] limits loaded from config.toml', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-harness-'));

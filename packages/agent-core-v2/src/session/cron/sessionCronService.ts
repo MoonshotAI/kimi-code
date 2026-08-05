@@ -1,5 +1,5 @@
 /**
- * `cron` domain (L5) — `ISessionCronService` contract.
+ * `cron` domain — `ISessionCronService` contract.
  *
  * Session-level scheduling engine for cron tasks. Owns the live task set
  * (filtered from `ICronTaskPersistence` by `sessionId` tag), the polling timer,

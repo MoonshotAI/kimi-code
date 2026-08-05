@@ -1,5 +1,5 @@
 /**
- * `tool` domain (L3) — permission rule-subject matching.
+ * `tool` domain — permission rule-subject matching.
  *
  * Owns the glob / path matching primitives (`globMatch` / `pathGlobMatch`)
  * and the rule-subject helpers (`literalRulePattern`,

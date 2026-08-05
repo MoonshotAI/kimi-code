@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ICronListTool` contract.
+ * `tools` domain — `ICronListTool` contract.
  *
  * Public contract of the CronList tool: a read-only, side-effect-free tool
  * that enumerates the cron tasks currently scheduled in this session. Takes

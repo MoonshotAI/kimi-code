@@ -3,10 +3,7 @@
  *
  * `ReadMediaFile` is only useful when the active model can consume image or
  * video input, so registration is capability-gated here instead of inside the
- * tool (v1 threw a `SkipThisTool` sentinel from the constructor). In
- * production, `AgentMediaToolsRegistrar` (see `mediaToolsRegistrar.ts`) calls
- * `registerMediaTools` and re-runs it whenever the resolved model or its
- * media capabilities change.
+ * tool (v1 threw a `SkipThisTool` sentinel from the constructor).
  *
  * `createVideoUploader` is a thin binder over a `ModelRequester`'s optional
  * `uploadVideo`. Auth is already resolved via the requester's auth-provider

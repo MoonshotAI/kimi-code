@@ -17,7 +17,7 @@ One folder per domain, **camelCase**: `session/`, `sessionActivity/`, `contextMe
 ```
 
 - **Strictly one service per file.** An interface file holds exactly one injectable interface and exactly one `createDecorator(...)`; an impl file holds exactly one service implementation class and exactly one `registerScopedService(...)`. No exceptions for "tightly-coupled" groups: even same-scope collaborators each get their own `<name>.ts` + `<name>Service.ts` pair.
-- **Scope is in the filename.** `session*.ts` = Session, `agent*.ts` = Agent, no scope prefix = App (see [Naming](#naming)). The header comment restates the same scope.
+- **Scope is in the filename.** `workspace*.ts` = Workspace, `session*.ts` = Session, `agent*.ts` = Agent, no scope prefix = App (see [Naming](#naming)). The header comment restates the same scope.
 - A domain therefore has as many impl files as it has services (e.g. `logService.ts` for the App `ILogService`, `sessionLogService.ts` for the Session `ISessionLogService`). See [Multi-Service domains](#multi-service-domains).
 
 The package entry `src/index.ts` imports and `export *`s every domain's leaf files precisely (one line per leaf), so importing the package still runs every `registerScopedService(...)` side effect — exactly as the old per-domain barrels did.
@@ -28,12 +28,12 @@ The package entry `src/index.ts` imports and `export *`s every domain's leaf fil
 
 | Artifact | Rule | Example |
 |---|---|---|
-| Interface | `I` + scope prefix + PascalCase domain + role suffix. Scope prefix: `Session` / `Agent` / none (= App). Role suffix is usually `Service`. | `ISessionLogService`, `IAgentLoopService`, `ILogService` (App) |
+| Interface | `I` + scope prefix + PascalCase domain + role suffix. Scope prefix: `Workspace` / `Session` / `Agent` / none (= App). Role suffix is usually `Service`. | `IWorkspaceDirs`, `ISessionLogService`, `IAgentLoopService`, `ILogService` (App) |
 | Class | the interface name minus the leading `I`, plus `Service` if it does not already end in `Service`; `implements` the interface | `SessionLogService implements ISessionLogService`, `AppendLogStoreService implements IAppendLogStore` |
 | Decorator string | lowerCamelCase of the interface name minus the leading `I`; **globally unique and stable** (it surfaces in `CyclicDependencyError.path` and "no service registered" errors) | `createDecorator<ISessionLogService>('sessionLogService')` |
 | Model / non-service types | PascalCase, no `I` prefix | `SessionMeta`, `LogEntry`, `ConfigSection` |
 
-The scope prefix makes a service's lifetime readable from its name. App services carry **no** prefix (App is the default, longest-lived tier); Session and Agent services always carry `Session` / `Agent`. The prefix applies to the interface, the class, and therefore the file names.
+The scope prefix makes a service's lifetime readable from its name. App services carry **no** prefix (App is the default, longest-lived tier); Workspace, Session and Agent services always carry `Workspace` / `Session` / `Agent`. The prefix applies to the interface, the class, and therefore the file names.
 
 > Do **not** use the scope prefix to re-merge domains by lifetime. `IAgentEntityService`, `IAgentDataService`, and `ISessionEntityService` are still banned — the prefix marks lifetime, the rest of the name must still be the real owning domain (`IBackgroundTaskEntityService`, `ISessionMetadata`, `IPermissionRulesService`). See [domain-boundaries.md](domain-boundaries.md).
 
@@ -204,7 +204,7 @@ A scoped Service may expose a factory method that returns a **new** instance of 
 
 ### Runtime state goes into the per-scope state container
 
-Session/Agent-scope Services register their runtime state into the scope's state container (`ISessionStateService` / `IAgentStateService`, both over `_base`'s `StateRegistry`) instead of holding it in bare instance fields, so per-scope state lives in one observable place (`snapshot()` / `onDidChange`) and dies with the scope. Reference: `session/interaction/interactionService.ts`.
+Workspace/Session/Agent-scope Services register their runtime state into the scope's state container (`IWorkspaceStateService` / `ISessionStateService` / `IAgentStateService`, all over `_base`'s `StateRegistry`) instead of holding it in bare instance fields, so per-scope state lives in one observable place (`snapshot()` / `onDidChange`) and dies with the scope. Reference: `session/interaction/interactionService.ts`.
 
 - Declare keys in the domain file and export them: `export const interactionPendingKey = defineState<Map<string, Pending>>('interaction.pending', () => new Map())` — `<domain>.<field>` naming, factory initializers.
 - Inject `@ISessionStateService private readonly states` (or the Agent token) and `this.states.register(key)` per key at the top of the constructor.

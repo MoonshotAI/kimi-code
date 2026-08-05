@@ -1,11 +1,11 @@
 import { MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE } from '#/agent/mcp/tools/auth';
 import { describe, expect, it } from 'vitest';
 
-import { AlreadyAuthorizedError, type BeginAuthorizationResult, type McpOAuthService } from '#/agent/mcp/oauth/service';
+import { AlreadyAuthorizedError, type BeginAuthorizationResult, type McpOAuthService } from '#/mcpCore/oauth/service';
 import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
 import type { ToolUpdate } from '#/tool/toolContract';
 
-import { executeTool } from '../stubs';
+import { executeTool } from '../../../mcpCore/stubs';
 
 function fakeOAuthService(
   begin: (
@@ -62,14 +62,18 @@ describe('createMcpAuthTool', () => {
     expect(final.output).toMatch(/authenticated successfully/);
     expect(reconnectCalls).toBe(1);
     expect(updates.some((u) => u.text?.includes('https://example.com/authorize'))).toBe(true);
-    expect(updates).toContainEqual({
-      kind: 'custom',
-      customKind: MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE,
-      customData: {
-        serverName: 'notion',
-        authorizationUrl: 'https://example.com/authorize?state=abc',
-      },
+    const authUpdate = updates.find(
+      (u) => u.kind === 'custom' && u.customKind === MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE,
+    );
+    expect(authUpdate?.customData).toMatchObject({
+      serverName: 'notion',
+      authorizationUrl: 'https://example.com/authorize?state=abc',
     });
+    // The deadline is absolute (now + wait timeout), so hosts never mirror
+    // the engine-side constant.
+    const { expiresAt } = authUpdate?.customData as { expiresAt?: number };
+    expect(expiresAt).toBeGreaterThan(Date.now());
+    expect(expiresAt).toBeLessThanOrEqual(Date.now() + 15 * 60 * 1000);
   });
 
   it('falls through to reconnect when the provider reports already-authorized', async () => {

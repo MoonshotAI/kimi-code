@@ -6,9 +6,10 @@
  * high-fidelity one. Known limitations, accepted by design:
  *  - step granularity collapses to "one assistant message = one step";
  *  - live-only detail is never backfilled: step usage / finishReason /
- *    timing / retry, turn durationMs / error, tool inputText / progress, and
- *    task resultSummary / error / stateReason / usage exist only on live
- *    engine events — persisted context messages do not carry them;
+ *    timing / retry, tool inputText / progress, and task resultSummary /
+ *    error / stateReason / usage exist only on live engine events — persisted
+ *    context messages do not carry them (turn end facts DO persist as
+ *    `turn.ended` records and are folded in by `foldWireRecordFacts`);
  *  - media content parts become attachment entities (metadata only — base64
  *    bytes are dropped, never shipped); mid-turn media is not anchored;
  *  - streamed-vs-persisted duplication is assumed already resolved upstream;

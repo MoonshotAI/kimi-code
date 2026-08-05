@@ -1,9 +1,9 @@
 /**
- * `loop` domain (L4) — `StepRequest` contracts for the loop's step queue.
+ * `loop` domain — `StepRequest` contracts for the loop's step queue.
  *
- * A `StepRequest` is one queued unit of step work. Senders (`prompt`, `goal`,
- * `externalHooks`) create plain request objects and hand them to
- * `IAgentLoopService.enqueue`; requests carry no DI identity of their own, so
+ * A `StepRequest` is one queued unit of step work. Senders create plain
+ * request objects and hand them to `IAgentLoopService.enqueue`; requests
+ * carry no DI identity of their own, so
  * constructing them with `new` is expected. Each request describes the context
  * message(s) it contributes — computed lazily at pop time through
  * `resolveContextMessages` — plus its queue semantics (`mergeable`,

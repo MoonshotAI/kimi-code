@@ -15,16 +15,6 @@ type McpTimeoutField = 'startupTimeoutMs' | 'toolTimeoutMs';
 
 const timeoutCases = [
   {
-    surface: 'session creation',
-    parse: (field: McpTimeoutField, value: number) =>
-      createSessionOptionsSchema.safeParse({
-        workDir: '/tmp/example',
-        mcpServers: {
-          example: { transport: 'stdio', command: 'node', [field]: value },
-        },
-      }),
-  },
-  {
     surface: 'plugin manifests',
     parse: (field: McpTimeoutField, value: number) =>
       pluginManifestSchema.safeParse({
@@ -46,5 +36,32 @@ describe('MCP timeout contract validation', () => {
 
   it.each(timeoutCases)('rejects an above-maximum $field for $surface', ({ field, parse }) => {
     expect(parse(field, 2_147_483_648).success).toBe(false);
+  });
+
+  it('session creation options accept ephemeral mcpServers', () => {
+    const parsed = createSessionOptionsSchema.safeParse({
+      workDir: '/tmp/example',
+      mcpServers: {
+        stdioExample: { transport: 'stdio', command: 'node', args: ['server.mjs'] },
+        httpExample: { transport: 'http', url: 'https://example.com/mcp', headers: { a: 'b' } },
+        sseExample: { transport: 'sse', url: 'https://example.com/sse' },
+      },
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.mcpServers?.['stdioExample']).toEqual({
+      transport: 'stdio',
+      command: 'node',
+      args: ['server.mjs'],
+    });
+  });
+
+  it('session creation options reject malformed mcpServers entries', () => {
+    const parsed = createSessionOptionsSchema.safeParse({
+      workDir: '/tmp/example',
+      mcpServers: {
+        example: { transport: 'http', url: 'not-a-url' },
+      },
+    });
+    expect(parsed.success).toBe(false);
   });
 });

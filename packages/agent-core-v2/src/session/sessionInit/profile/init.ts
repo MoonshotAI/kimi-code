@@ -1,15 +1,11 @@
 /**
- * `sessionInit` domain (L6) — `/init` brief and completion reminder.
+ * `sessionInit` domain — `/init` brief and completion reminder.
  *
  * Verbatim brief handed to the `coder` subagent that generates `AGENTS.md`
  * (`DEFAULT_INIT_PROMPT`), and the system reminder appended to the main agent
  * once `/init` finishes (`initCompletionReminder`), which carries the freshly
  * loaded AGENTS.md content back into the main conversation. Pure
  * constants/functions — no scoped state.
- *
- * Port of v1 `packages/agent-core/src/profile/default/init.md`
- * (`DEFAULT_INIT_PROMPT`) and the `initCompletionReminder` helper in
- * `packages/agent-core/src/session/index.ts`.
  */
 
 import initMd from './init.md?raw';

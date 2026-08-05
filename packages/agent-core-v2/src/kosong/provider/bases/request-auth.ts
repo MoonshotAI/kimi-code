@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — per-request auth resolution for the bases.
+ * `kosong/provider` domain — per-request auth resolution for the bases.
  *
  * A base caches a construction-time client when an apiKey is available; a
  * per-request `ProviderRequestAuth` (OAuth token, extra headers) rebuilds the

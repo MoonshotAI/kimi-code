@@ -1,5 +1,5 @@
 /**
- * `sessionActivity` domain (L6) — the session's aggregated work projection.
+ * `sessionActivity` domain — the session's aggregated work projection.
  *
  * Defines `ISessionActivityView`: a Session-scoped, read-only, event-folded
  * aggregate of "what this session is doing" — `busy` (any agent with an
@@ -9,9 +9,7 @@
  * agent event bus) and the session's `interaction` kernel; the view owns no
  * authoritative state and can be discarded and rebuilt at any time. Change
  * notifications carry the domain `cause` so consumers can schedule their own
- * rendering around related facts (the v1 WS edge orders its
- * `event.session.work_changed` frame before `turn.started` but after
- * `turn.ended`). Bound at Session scope.
+ * rendering around related facts. Bound at Session scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -28,7 +26,6 @@ export interface SessionActivityState {
   readonly lastTurnReason?: SessionTurnOutcome;
 }
 
-/** What folded input produced a change — scheduling information for consumers. */
 export type SessionActivityCause =
   | 'turn_started'
   | 'turn_ended'
@@ -44,10 +41,8 @@ export interface SessionActivityChangedEvent {
 export interface ISessionActivityView {
   readonly _serviceBrand: undefined;
 
-  /** The current aggregate (cheap to recompute; do not cache long-term). */
   state(): SessionActivityState;
 
-  /** Fires only when the aggregate tuple actually changes. */
   readonly onDidChange: Event<SessionActivityChangedEvent>;
 }
 

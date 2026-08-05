@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ITodoListTool` contract (the `TodoList` tool).
+ * `tools` domain — `ITodoListTool` contract (the `TodoList` tool).
  *
  * Public contract of the structured TODO list tool. A single input schema
  * serves both reads and writes:
@@ -9,10 +9,7 @@
  *   - `{}`               — query the current list
  *
  * Exports the model-facing `TodoListInputSchema` / `TodoListInput` and the
- * `ITodoListTool` DI decorator that the implementation (`todoListTool.ts`)
- * registers against via `registerAgentToolService`. The tool name and item types
- * stay with the `todo` domain (`TODO_LIST_TOOL_NAME`, `TodoItem`,
- * `TodoStatus`). Bound at Agent scope.
+ * `ITodoListTool` DI decorator. Bound at Agent scope.
  */
 
 import { z } from 'zod';

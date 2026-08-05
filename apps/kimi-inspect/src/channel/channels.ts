@@ -19,7 +19,7 @@ import { DEBUG_RPC_BASE, type InspectClient } from './client';
 import { RPCError } from './errors';
 
 /** Wire scope kinds reported by the channels endpoint (`app` ≡ the core route). */
-export type ChannelScope = 'app' | 'session' | 'agent';
+export type ChannelScope = 'app' | 'workspace' | 'session' | 'agent';
 
 /** Mirror of `ChannelDescriptor` in kap-server (`GET /api/v1/debug/channels`). */
 export interface ChannelDescriptor {
@@ -94,6 +94,7 @@ export async function probeDebugSurface(options: {
 
 export interface ServiceTarget {
   readonly scope: ChannelScope;
+  readonly workspaceId?: string;
   readonly sessionId?: string;
   readonly agentId?: string;
 }
@@ -103,7 +104,7 @@ export interface ServiceTarget {
  * identifiers by name, so re-creating the decorator resolves to the same token
  * the server channel registry created — the name is the wire channel, which is
  * all the proxy uses. Returns `undefined` when the target scope needs a
- * session/agent id that isn't available.
+ * workspace/session/agent id that isn't available.
  */
 export function serviceByName<T extends object>(
   client: InspectClient,
@@ -112,6 +113,10 @@ export function serviceByName<T extends object>(
 ): ServiceProxy<T> | undefined {
   const id = createDecorator<T>(name);
   if (target.scope === 'app') return client.core(id);
+  if (target.scope === 'workspace') {
+    if (target.workspaceId === undefined) return undefined;
+    return client.workspace(target.workspaceId).service(id);
+  }
   if (target.sessionId === undefined) return undefined;
   const base = client.session(target.sessionId);
   if (target.scope === 'session') return base.service(id);

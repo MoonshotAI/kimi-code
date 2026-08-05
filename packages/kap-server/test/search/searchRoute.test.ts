@@ -6,6 +6,7 @@ import { ISessionIndex, type SessionSummary } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../../src/start';
+import { TEST_HOST_IDENTITY } from '../helpers/hostIdentity';
 import { authedFetch } from '../helpers/auth';
 
 interface Envelope<T> {
@@ -46,9 +47,12 @@ const WS = 'ws_route';
 function stubSessionIndex(summaries: SessionSummary[]): ISessionIndex {
   return {
     _serviceBrand: undefined,
-    list: async () => ({ items: summaries, nextCursor: undefined }),
+    prepare: async () => ({ state: 'uninitialized', degradedCount: 0 }),
+    status: () => ({ state: 'uninitialized', degradedCount: 0 }),
+    listRecent: async () => ({ items: summaries, nextCursor: undefined }),
     get: async () => undefined,
-    countActive: async () => summaries.length,
+    count: async () => summaries.length,
+    remove: async () => {},
   };
 }
 
@@ -102,6 +106,7 @@ describe('server-v2 /api/v1/search', () => {
       },
     ];
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,

@@ -206,6 +206,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
     getExperimentalFeatures: vi.fn(async () => []),
+    supportsAtomicSectionReplace: vi.fn(() => false),
     auth: {
       status: vi.fn(async () => ({ providers: [] })),
       login: vi.fn(async () => {}),
@@ -278,6 +279,220 @@ describe('KimiTUI startup', () => {
       maxContextTokens: 200,
       contextUsage: 0.125,
       sessionTitle: 'Session title',
+    });
+  });
+
+  it('starts session-less on the v2 engine and carries startup flags to appState', async () => {
+    const harness = makeHarness(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: { model: 'moonshot-v1', maxContextSize: 200 },
+        },
+        defaultModel: 'k2',
+        // CLI --yolo must win over the config default.
+        defaultPermissionMode: 'auto',
+      })),
+    });
+    const driver = makeDriver(
+      harness,
+      { ...makeStartupInput({ model: 'k2', yolo: true }), engineV2: true },
+    );
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(driver.state.startupState).toBe('ready');
+    expect(driver.state.appState).toMatchObject({
+      sessionId: '',
+      model: 'k2',
+      permissionMode: 'yolo',
+    });
+  });
+
+  it('shows a session-less notice on v2 startup', async () => {
+    const harness = makeHarness(makeSession());
+    const driver = makeDriver(harness, { ...makeStartupInput(), engineV2: true });
+
+    await expect(driver.init()).resolves.toBe(false);
+    await (
+      driver as unknown as { finishStartup(shouldReplayHistory: boolean): Promise<void> }
+    ).finishStartup(false);
+
+    const transcript = driver.state.transcriptContainer.render(160).join('\n');
+    expect(transcript).toContain('No session yet — one will be created on your first message.');
+  });
+
+  it('shows config defaults in appState before the lazy session exists (v2)', async () => {
+    const harness = makeHarness(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: { model: 'moonshot-v1', maxContextSize: 200 },
+        },
+        defaultModel: 'k2',
+        defaultPermissionMode: 'auto',
+        defaultPlanMode: true,
+        thinking: { enabled: true, effort: 'high' },
+      })),
+    });
+    const driver = makeDriver(harness, { ...makeStartupInput(), engineV2: true });
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(driver.state.appState).toMatchObject({
+      sessionId: '',
+      model: 'k2',
+      maxContextTokens: 200,
+      permissionMode: 'auto',
+      planMode: true,
+      thinkingEffort: 'high',
+    });
+  });
+
+  it('hydrates the model default effort when thinking is enabled without an effort (v2)', async () => {
+    const harness = makeHarness(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            model: 'moonshot-v1',
+            maxContextSize: 200,
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'medium', 'high'],
+            defaultEffort: 'high',
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true },
+      })),
+    });
+    const driver = makeDriver(harness, { ...makeStartupInput(), engineV2: true });
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(driver.state.appState.thinkingEffort).toBe('high');
+  });
+
+  it('hydrates the model default effort when no [thinking] section exists (v2)', async () => {
+    const harness = makeHarness(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            model: 'moonshot-v1',
+            maxContextSize: 200,
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'medium', 'high'],
+          },
+        },
+        defaultModel: 'k2',
+      })),
+    });
+    const driver = makeDriver(harness, { ...makeStartupInput(), engineV2: true });
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    expect(driver.state.appState.thinkingEffort).toBe('medium');
+  });
+
+  it('hydrates permission/plan defaults after a session-less v2 login', async () => {
+    let loggedIn = false;
+    const harness = makeHarness(makeSession(), {
+      getConfig: vi.fn(async () =>
+        loggedIn
+          ? {
+              models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+              defaultModel: 'k2',
+              defaultPermissionMode: 'auto',
+              defaultPlanMode: true,
+            }
+          : { models: {} },
+      ),
+      auth: {
+        status: vi.fn(async () => ({ providers: [] })),
+        login: vi.fn(async () => {
+          loggedIn = true;
+        }),
+        logout: vi.fn(),
+        getManagedUsage: vi.fn(),
+      },
+    });
+    const driver = makeDriver(harness, { ...makeStartupInput(), engineV2: true });
+
+    await expect(driver.init()).resolves.toBe(false);
+    expect(driver.state.appState).toMatchObject({
+      sessionId: '',
+      model: '',
+      permissionMode: 'manual',
+      planMode: false,
+    });
+
+    vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
+    await handleLoginCommand(driver as any);
+
+    // Login must not create a session on v2, but the refreshed config
+    // defaults must reach the first lazy-created session.
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(driver.state.appState).toMatchObject({
+      sessionId: '',
+      model: 'k2',
+      permissionMode: 'auto',
+      planMode: true,
+      configDefaultPlanMode: true,
+    });
+  });
+
+  it('hydrates permission defaults after a session-less v2 login without a default model', async () => {
+    let loggedIn = false;
+    const harness = makeHarness(makeSession(), {
+      getConfig: vi.fn(async () =>
+        loggedIn
+          ? {
+              models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+              defaultPermissionMode: 'auto',
+            }
+          : { models: {} },
+      ),
+      auth: {
+        status: vi.fn(async () => ({ providers: [] })),
+        login: vi.fn(async () => {
+          loggedIn = true;
+        }),
+        logout: vi.fn(),
+        getManagedUsage: vi.fn(),
+      },
+    });
+    const driver = makeDriver(harness, { ...makeStartupInput(), engineV2: true });
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
+    await handleLoginCommand(driver as any);
+
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(driver.state.appState).toMatchObject({
+      sessionId: '',
+      model: '',
+      permissionMode: 'auto',
+    });
+  });
+
+  it('carries the --agent/--agent-file binding for the lazy-created first session (v2)', async () => {
+    const harness = makeHarness(makeSession());
+    const driver = makeDriver(
+      harness,
+      {
+        ...makeStartupInput({ model: 'k2', agentFiles: ['agent.md'] }),
+        engineV2: true,
+        agentProfile: 'reviewer',
+      },
+    );
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(driver.state.appState).toMatchObject({
+      agentProfile: 'reviewer',
+      agentFiles: ['agent.md'],
     });
   });
 
@@ -1138,6 +1353,121 @@ describe('KimiTUI startup', () => {
 
     expect(showStatus).toHaveBeenCalledTimes(1);
     expect(showStatus).toHaveBeenCalledWith("New Models · +2 models.");
+  });
+
+  it("stages provider-refresh removals and persists one atomic write on atomic-capable harnesses", async () => {
+    const registryUrl = "https://registry.example.test/v1/models/api.json";
+    const source = { kind: "apiJson", url: registryUrl, apiKey: "sk-test-token" };
+    const replaceConfigSections = vi.fn(async (_sections: Record<string, unknown>) => {});
+    const removeProvider = vi.fn(async () => ({}));
+    const setConfig = vi.fn(async () => ({}));
+    const harness = makeHarness(makeSession(), {
+      supportsAtomicSectionReplace: vi.fn(() => true),
+      replaceConfigSections,
+      removeProvider,
+      setConfig,
+      getConfig: vi.fn(async () => ({
+        providers: {
+          a: { type: "openai", baseUrl: "https://a.example.test/v1", apiKey: "sk-test-token", source },
+          b: { type: "openai", baseUrl: "https://b.example.test/v1", apiKey: "sk-test-token", source },
+        },
+        models: {
+          "a/m1": { provider: "a", model: "m1", maxContextSize: 100, capabilities: ["tool_use"] },
+          "b/m1": { provider: "b", model: "m1", maxContextSize: 100, capabilities: ["tool_use"] },
+        },
+        defaultModel: "b/m1",
+        thinking: { enabled: true },
+      })),
+    });
+    const driver = makeDriver(harness, makeStartupInput());
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            a: {
+              id: "a",
+              name: "Provider A",
+              api: "https://a.example.test/v1",
+              type: "openai",
+              models: { m1: { id: "m1" } },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    try {
+      const result = await (driver as any).authFlow.refreshProviderModels();
+
+      expect(result.failed).toEqual([]);
+      expect(result.changed).toContainEqual({ providerId: "b", providerName: "b", added: 0, removed: 1 });
+      // The removal was staged in memory: no destructive pre-write, exactly
+      // one atomic section replace carrying the complete records — with the
+      // dangling default model / thinking expressed as cleared sections.
+      expect(removeProvider).not.toHaveBeenCalled();
+      expect(setConfig).not.toHaveBeenCalled();
+      expect(replaceConfigSections).toHaveBeenCalledTimes(1);
+      const sections = replaceConfigSections.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(Object.keys(sections["providers"] as object)).toEqual(["a"]);
+      expect(sections["models"]).not.toHaveProperty("b/m1");
+      expect(sections["defaultModel"]).toBeUndefined();
+      expect(sections["thinking"]).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps the two-phase removeProvider/setConfig host on harnesses without atomic replace", async () => {
+    const registryUrl = "https://registry.example.test/v1/models/api.json";
+    const source = { kind: "apiJson", url: registryUrl, apiKey: "sk-test-token" };
+    const replaceConfigSections = vi.fn(async () => {});
+    const removeProvider = vi.fn(async () => ({}));
+    const setConfig = vi.fn(async (patch: Record<string, unknown>) => patch);
+    const harness = makeHarness(makeSession(), {
+      replaceConfigSections,
+      removeProvider,
+      setConfig,
+      getConfig: vi.fn(async () => ({
+        providers: {
+          a: { type: "openai", baseUrl: "https://a.example.test/v1", apiKey: "sk-test-token", source },
+          b: { type: "openai", baseUrl: "https://b.example.test/v1", apiKey: "sk-test-token", source },
+        },
+        models: {
+          "a/m1": { provider: "a", model: "m1", maxContextSize: 100, capabilities: ["tool_use"] },
+          "b/m1": { provider: "b", model: "m1", maxContextSize: 100, capabilities: ["tool_use"] },
+        },
+        defaultModel: "b/m1",
+      })),
+    });
+    const driver = makeDriver(harness, makeStartupInput());
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            a: {
+              id: "a",
+              name: "Provider A",
+              api: "https://a.example.test/v1",
+              type: "openai",
+              models: { m1: { id: "m1" } },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    try {
+      const result = await (driver as any).authFlow.refreshProviderModels();
+
+      expect(result.failed).toEqual([]);
+      expect(removeProvider).toHaveBeenCalledWith("b");
+      expect(setConfig).toHaveBeenCalledTimes(1);
+      expect(replaceConfigSections).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("starts TUI without a session when fresh startup needs OAuth login", async () => {

@@ -848,6 +848,7 @@ export class ToolManager {
               log: this.agent.log,
               subagentTimeoutMs: resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
               showModelPreferences: this.agent.experimentalFlags.enabled('secondary-model'),
+              modelChoiceEnabled: this.agent.experimentalFlags.enabled('secondary-model'),
               subagentModelDescription: buildSubagentModelDescriptions(
                 this.agent.kimiConfig,
                 this.agent.experimentalFlags,
@@ -865,6 +866,7 @@ export class ToolManager {
               this.agent.experimentalFlags,
               this.agent.config.modelAlias,
             ),
+            this.agent.experimentalFlags.enabled('secondary-model'),
           ),
         toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
         toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),

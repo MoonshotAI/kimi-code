@@ -1,5 +1,5 @@
 /**
- * `toolPolicy` domain (L4) — Agent-scope tool authorization contract.
+ * `toolPolicy` domain — Agent-scope tool authorization contract.
  *
  * Combines profile, global configuration, and Session-owned restrictions into
  * one policy used by both provider schema projection and executor preflight.

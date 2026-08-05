@@ -16,6 +16,8 @@ export type JsonObject = { readonly [key: string]: JsonValue };
 
 export type Unsubscribe = () => void;
 
+export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
+
 export type {
   AgentReplayRecord,
   AgentBackgroundTaskInfo,
@@ -73,6 +75,17 @@ export type { TelemetryClient, TelemetryContextPatch, TelemetryProperties };
 export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/kosong';
 
 export type PermissionMode = 'yolo' | 'manual' | 'auto';
+
+/**
+ * Trust state of a workspace directory. Only meaningful on the agent-core-v2
+ * engine; the v1 engine has no workspace-trust concept and reports
+ * `{ trusted: true, gatedMcpServers: [] }`.
+ */
+export interface WorkspaceTrustInfo {
+  readonly trusted: boolean;
+  /** Names of project-level MCP servers that trusting the workspace would enable. */
+  readonly gatedMcpServers: readonly string[];
+}
 
 export interface CreateGoalInput {
   readonly objective: string;

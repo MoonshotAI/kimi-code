@@ -6,7 +6,7 @@ import {
   IAgentContextMemoryService,
   IAgentLifecycleService,
   IWireService,
-  ISessionLifecycleService,
+  getLiveSessionById,
   IModelCatalog,
   type ContextMessage,
   type ScopeSeed,
@@ -14,6 +14,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -80,6 +81,7 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
 
   async function boot(): Promise<void> {
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home as string,
@@ -125,7 +127,7 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     sessionId: string,
     messages: readonly ContextMessage[],
   ): Promise<void> {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     let agent = session.accessor.get(IAgentLifecycleService).get('main');
     if (agent === undefined) {
@@ -300,7 +302,7 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
   // on the same home so the session is genuinely cold on the read path.
   it('reads the persisted full transcript for a cold session', async () => {
     const id = await createSession();
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
     const agent = await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
     const ctx = agent.accessor.get(IAgentContextMemoryService);

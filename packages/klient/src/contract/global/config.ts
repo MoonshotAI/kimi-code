@@ -35,6 +35,10 @@ export const configContract = {
     input: z.tuple([z.string(), z.unknown(), configTargetSchema.optional()]),
     output: noResult,
   },
+  replaceSections: {
+    input: z.tuple([z.record(z.string(), z.unknown()), configTargetSchema.optional()]),
+    output: noResult,
+  },
   reload: { input: z.tuple([]), output: noResult },
   diagnostics: { input: z.tuple([]), output: z.array(configDiagnosticSchema) },
 } satisfies ServiceContract;

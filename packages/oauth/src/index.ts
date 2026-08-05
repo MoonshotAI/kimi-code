@@ -36,6 +36,7 @@ export {
   KIMI_CODE_PLATFORM,
   parseKimiCodeCustomHeaders,
   readKimiDeviceId,
+  replaceUserAgentProduct,
 } from './identity';
 export type { KimiHostIdentity, KimiIdentityOptions } from './identity';
 
@@ -76,6 +77,22 @@ export type {
   ManagedKimiRuntimeAuth,
   ProvisionManagedKimiCodeConfigOptions,
 } from './managed-kimi-code';
+
+export {
+  fetchManagedUserInfo,
+  kimiCodeUserInfoUrl,
+  managedUserInfoPhoneSchema,
+  managedUserInfoResultSchema,
+  managedUserInfoSchema,
+  parseManagedUserInfoPayload,
+} from './managed-userinfo';
+export type {
+  FetchManagedUserInfoError,
+  FetchManagedUserInfoResult,
+  ManagedUserInfo,
+  ManagedUserInfoPhone,
+  ManagedUserInfoResult,
+} from './managed-userinfo';
 
 export {
   fetchManagedUsage,
@@ -153,6 +170,7 @@ export type {
 
 export { KimiOAuthToolkit, resolveKimiTokenStorageName } from './toolkit';
 export type {
+  AuthManagedUserInfoResult,
   AuthManagedUsageResult,
   AuthProviderStatus,
   AuthStatus,

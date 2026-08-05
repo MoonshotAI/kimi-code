@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — side-effect module: the Kimi vendor
+ * `kosong/provider` domain — side-effect module: the Kimi vendor
  * registration, one definition per transport Kimi runs over, each driven by
  * a single trait object.
  *
@@ -24,7 +24,7 @@
  *     - tools: `convertTool` emits `$`-prefixed tool names as
  *       `builtin_function` declarations; every other tool goes through the
  *       base OpenAI conversion with its parameters normalized into the Kimi
- *       schema dialect (`normalizeKimiToolSchema` from `./kimi-schema`);
+ *       schema dialect (`normalizeKimiToolSchema`);
  *     - messages: `convertMessage` post-processes each base-converted wire
  *       message — assistant tool-call messages whose content is effectively
  *       empty drop the `content` field entirely, `tool_calls[].extras`
@@ -47,10 +47,10 @@
  *     - errors: `convertError` classifies Moonshot's quota/balance-exhausted
  *       429s (structured `exceeded_current_quota_error` type/code, billing
  *       wordings) as the non-retryable `APIProviderQuotaExhaustedError` via
- *       `classifyKimiQuotaError` from `./kimi-errors`, before the base's own
- *       classification would mint a retryable rate limit;
+ *       `classifyKimiQuotaError`, before the base's own classification would
+ *       mint a retryable rate limit;
  *     - video upload: `uploadVideo` uploads through the Kimi files API
- *       (`KimiFiles` from `./kimi-files`), memoized per trait context with a
+ *       (`KimiFiles`), memoized per trait context with a
  *       WeakMap — one composition (one resolved ctx) gets one files client,
  *       derived from the same endpoint fallback chain the trait declares;
  *  - `(kimi, anthropic)`, driven by `kimiAnthropicTrait`: the thinking intent
@@ -174,8 +174,6 @@ function resolveFiles(ctx: TraitContext): KimiFiles {
 }
 
 export const kimiOpenAITrait: ProtocolTrait = {
-  // v1 parity contract: Kimi's native API rejects unlisted thinking efforts,
-  // so the profile validates strictly when this trait drives thinking.
   strictThinkingValidation: true,
 
   endpoint: () => ({
@@ -228,7 +226,6 @@ export const kimiOpenAITrait: ProtocolTrait = {
       out['max_completion_tokens'] = resolvedMaxCompletionTokens;
     }
     if (extraBody !== undefined && extraBody !== null) {
-      // extra_body expands last — its keys win over top-level kwargs.
       Object.assign(out, extraBody);
     }
     return out;
@@ -306,7 +303,6 @@ export const kimiAnthropicTrait: ProtocolTrait = {
   },
 };
 
-/** The vendor-level endpoint declaration, shared by both registrations. */
 const kimiEndpoint: ProtocolEndpoint = {
   apiKeyEnv: KIMI_API_KEY_ENV,
   baseUrlEnv: KIMI_BASE_URL_ENV,

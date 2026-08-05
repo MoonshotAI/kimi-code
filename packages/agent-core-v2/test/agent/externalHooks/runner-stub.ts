@@ -44,7 +44,11 @@ export function makeHookRunner(
       enabledHooks: async () => [],
       onDidReload: Event.None as IPluginService['onDidReload'],
     } as unknown as IPluginService,
-    { _serviceBrand: undefined, cwd: options.cwd ?? '' } as unknown as IBootstrapService,
+    {
+      _serviceBrand: undefined,
+      cwd: options.cwd ?? '',
+      clientIdentity: { productName: 'test', version: '0.0.0-test', platform: 'test_platform' },
+    } as unknown as IBootstrapService,
     new HostProcessService(),
     { onTriggered: options.onTriggered, onResolved: options.onResolved },
   );

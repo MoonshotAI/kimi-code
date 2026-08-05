@@ -1,5 +1,5 @@
 /**
- * `question` domain (L7) — `ISessionQuestionService` implementation.
+ * `question` domain — `ISessionQuestionService` implementation.
  *
  * Typed facade over the `interaction` kernel for ask-user requests; owns no
  * pending state of its own (the kernel holds it). Bound at Session scope.

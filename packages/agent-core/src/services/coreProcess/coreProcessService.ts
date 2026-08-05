@@ -92,7 +92,11 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
     // tests) can still override via `options.resolveOAuthTokenProvider`.
     const resolveOAuthTokenProvider: OAuthTokenProviderResolver =
       options.resolveOAuthTokenProvider ??
-      CoreProcessService._defaultOAuthTokenResolver(env.homeDir, env.configPath);
+      CoreProcessService._defaultOAuthTokenResolver(
+        env.homeDir,
+        env.configPath,
+        options.identity,
+      );
 
     // Default-wire the Kimi request headers (User-Agent + X-Msh-* device
     // identity). Without this, KimiCore's outbound fetch carries the
@@ -212,14 +216,18 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
    * runtimes share OAuth credentials when both run against the same
    * `~/.kimi-code`.
    *
+   * `identity` is forwarded to the managed auth facade so token refreshes
+   * carry the same `X-Msh-*` device headers as `_defaultKimiRequestHeaders`.
+   *
    * Exposed as `static` so tests can assert the wiring without exercising the
    * full agent-core turn loop.
    */
   static _defaultOAuthTokenResolver(
     homeDir: string,
     configPath: string,
+    identity?: KimiHostIdentity,
   ): OAuthTokenProviderResolver {
-    const facade = createManagedAuthFacade({ homeDir, configPath });
+    const facade = createManagedAuthFacade({ homeDir, configPath }, identity);
     return facade.resolveOAuthTokenProvider;
   }
 

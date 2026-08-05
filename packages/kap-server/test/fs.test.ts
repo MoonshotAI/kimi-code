@@ -7,6 +7,7 @@ import { ErrorCode } from '../src/protocol/error-codes';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -27,7 +28,7 @@ interface FsEntryWire {
   mime?: string;
 }
 
-describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
+describe('server-v2 /api/v1 fs routes', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   /** Session work dir — kept separate from the server homeDir so the server's
@@ -63,6 +64,7 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
       },
     };
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -78,11 +80,13 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
       server = undefined;
     }
     if (home !== undefined) {
-      await rm(home, { recursive: true, force: true });
+      // maxRetries: the async query-store shard writer can still be flushing
+      // after close (ENOTEMPTY on macOS) — same retry pattern as sessions.test.ts.
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       home = undefined;
     }
     if (work !== undefined) {
-      await rm(work, { recursive: true, force: true });
+      await rm(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       work = undefined;
     }
   });
@@ -207,6 +211,42 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
     expect(body.data.items.map((i) => i.path)).toContain('alpha.ts');
   });
 
+  it('fs:search resolves a registered workspace id when no session exists', async () => {
+    await writeFile(join(work!, 'gamma.ts'), '');
+    // Register the workspace without creating any session (the kimi-web
+    // new-session draft addresses the workspace directly).
+    const res = await fetch(`${base}/api/v1/workspaces`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ root: work }),
+    } as never);
+    const created = (await res.json()) as Envelope<{ id: string }>;
+    expect(created.code).toBe(0);
+    const body = await postFs<{ items: { path: string }[]; truncated: boolean }>(
+      created.data.id,
+      'search',
+      { query: 'gamma' },
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.path)).toContain('gamma.ts');
+  });
+
+  it('fs:search resolves an unregistered workspace root path', async () => {
+    await writeFile(join(work!, 'delta.ts'), '');
+    const body = await postFs<{ items: { path: string }[]; truncated: boolean }>(
+      encodeURIComponent(work!),
+      'search',
+      { query: 'delta' },
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.path)).toContain('delta.ts');
+  });
+
+  it('fs:search still maps an unknown ref to SESSION_NOT_FOUND', async () => {
+    const body = await postFs<null>('does-not-exist', 'search', { query: 'x' });
+    expect(body.code).toBe(ErrorCode.SESSION_NOT_FOUND);
+  });
+
   it('fs:grep finds matching lines', async () => {
     await writeFile(join(work!, 'a.txt'), 'hello world\nfoo bar\n');
     const id = await createSession();
@@ -302,5 +342,66 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
       headers: authHeaders(server as RunningServer, { 'if-none-match': etag as string }),
     } as never);
     expect(cached.status).toBe(304);
+  });
+
+  // -------------------------------------------------------------------------
+  // POST /api/v1/workspace/fs:search — session-less workspace file search.
+  // -------------------------------------------------------------------------
+
+  async function postWorkspaceSearch<T>(body: unknown): Promise<Envelope<T>> {
+    const res = await fetch(`${base}/api/v1/workspace/fs:search`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    } as never);
+    return (await res.json()) as Envelope<T>;
+  }
+
+  it('workspace fs:search finds files by registered workspace id', async () => {
+    await writeFile(join(work!, 'epsilon.ts'), '');
+    const res = await fetch(`${base}/api/v1/workspaces`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ root: work }),
+    } as never);
+    const created = (await res.json()) as Envelope<{ id: string }>;
+    expect(created.code).toBe(0);
+
+    const body = await postWorkspaceSearch<{ items: { path: string }[]; truncated: boolean }>({
+      workspace: created.data.id,
+      query: 'epsilon',
+    });
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.path)).toContain('epsilon.ts');
+  });
+
+  it('workspace fs:search finds files by absolute root path', async () => {
+    await writeFile(join(work!, 'zeta.ts'), '');
+    const body = await postWorkspaceSearch<{ items: { path: string }[]; truncated: boolean }>({
+      workspace: work,
+      query: 'zeta',
+    });
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.path)).toContain('zeta.ts');
+  });
+
+  it('workspace fs:search lists top-level entries for an empty query', async () => {
+    await writeFile(join(work!, 'eta.ts'), '');
+    const body = await postWorkspaceSearch<{ items: { path: string }[]; truncated: boolean }>({
+      workspace: work,
+      query: '',
+    });
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.path)).toContain('eta.ts');
+  });
+
+  it('workspace fs:search maps an unknown ref to WORKSPACE_NOT_FOUND', async () => {
+    const body = await postWorkspaceSearch<null>({ workspace: 'does-not-exist', query: 'x' });
+    expect(body.code).toBe(ErrorCode.WORKSPACE_NOT_FOUND);
+  });
+
+  it('workspace fs:search rejects a missing workspace field with VALIDATION_FAILED', async () => {
+    const body = await postWorkspaceSearch<null>({ query: 'x' });
+    expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
   });
 });

@@ -35,7 +35,7 @@ export interface ServerInstanceInfo {
   readonly port: number;
   readonly startedAt: number;
   readonly heartbeatAt: number;
-  readonly hostVersion?: string;
+  readonly serverVersion?: string;
 }
 
 /** On-disk JSON shape. snake_case to match operator-facing logs and the legacy lock. */
@@ -46,6 +46,8 @@ interface ServerInstanceDisk {
   port: number;
   started_at: number;
   heartbeat_at: number;
+  // Wire name kept as `host_version`: external tooling (kimi-inspect's server
+  // discovery) parses these files independently.
   host_version?: string;
 }
 
@@ -105,7 +107,7 @@ function encode(info: ServerInstanceInfo): string {
     port: info.port,
     started_at: info.startedAt,
     heartbeat_at: info.heartbeatAt,
-    ...(info.hostVersion !== undefined ? { host_version: info.hostVersion } : {}),
+    ...(info.serverVersion !== undefined ? { host_version: info.serverVersion } : {}),
   };
   return JSON.stringify(disk);
 }
@@ -128,7 +130,7 @@ function decode(raw: string): ServerInstanceInfo | undefined {
         port: parsed.port,
         startedAt: parsed.started_at,
         heartbeatAt: parsed.heartbeat_at,
-        ...(parsed.host_version !== undefined ? { hostVersion: parsed.host_version } : {}),
+        ...(parsed.host_version !== undefined ? { serverVersion: parsed.host_version } : {}),
       };
     }
     return undefined;
@@ -264,7 +266,7 @@ export function createInstanceRegistry(options: InstanceRegistryOptions = {}): I
             port: state.port,
             startedAt: info.startedAt,
             heartbeatAt: now(),
-            ...(info.hostVersion !== undefined ? { hostVersion: info.hostVersion } : {}),
+            ...(info.serverVersion !== undefined ? { serverVersion: info.serverVersion } : {}),
           };
           await writeFileAtomic(filePath, encode(full));
         } finally {

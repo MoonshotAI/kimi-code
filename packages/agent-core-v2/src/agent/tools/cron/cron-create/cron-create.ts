@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ICronCreateTool` contract.
+ * `tools` domain — `ICronCreateTool` contract.
  *
  * Public contract of the CronCreate tool: the input zod schema (5-field cron
  * expression + prompt + recurring flag), the output record shape reported

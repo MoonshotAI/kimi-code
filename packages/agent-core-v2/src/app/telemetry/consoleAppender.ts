@@ -1,5 +1,5 @@
 /**
- * `telemetry` domain (L1) — `ConsoleAppender`, an `ITelemetryAppender` that
+ * `telemetry` domain — `ConsoleAppender`, an `ITelemetryAppender` that
  * echoes events to a log function for development and debugging. App-scoped;
  * has no cross-domain collaborators.
  */

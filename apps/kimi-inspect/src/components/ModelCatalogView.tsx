@@ -18,7 +18,8 @@
  */
 
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
-import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
+import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
+import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/sessionLifecycle';
 import type { InspectionSource } from '@moonshot-ai/agent-core-v2/kosong/contract/inspection';
 import type { TokenUsage } from '@moonshot-ai/agent-core-v2/kosong/contract/usage';
 import {
@@ -405,7 +406,13 @@ function ModelSection({
       const envelope = (await res.json()) as { code: number; msg: string; data: { id: string } };
       if (envelope.code !== 0) throw new Error(envelope.msg);
       const sessionId = envelope.data.id;
-      await klient.core(ISessionLifecycleService).resume(sessionId);
+      const summary = await klient.core(ISessionIndex).get(sessionId);
+      if (summary !== undefined) {
+        await klient
+          .workspace(summary.workspaceId)
+          .service(ISessionLifecycleService)
+          .resume(sessionId);
+      }
       await klient
         .session(sessionId)
         .agent('main')

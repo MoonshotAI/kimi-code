@@ -30,7 +30,7 @@ import {
   type PromptHandle,
   type PromptQueueSnapshot,
   ISessionContext,
-  ISessionLifecycleService,
+  resumeSessionById,
   ITelemetryService,
   applyPromptMetadataUpdate,
   buildImageCompressionCaption,
@@ -110,7 +110,7 @@ async function resolveSession(core: Scope, sessionId: string): Promise<ISessionS
   // process, by v1, or closed in this one — is loaded from disk instead of
   // being reported as `session.not_found`. Mirrors the snapshot route. Returns
   // `undefined` only when the session is unknown or its workspace is gone.
-  const session = await core.accessor.get(ISessionLifecycleService).resume(sessionId);
+  const session = await resumeSessionById(core.accessor, sessionId);
   if (session === undefined) {
     throw new Error2('session.not_found', `session ${sessionId} does not exist`);
   }
@@ -267,12 +267,12 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           {
             telemetry,
             resolveOriginalsDir: async () => {
-              const session = await core.accessor.get(ISessionLifecycleService).resume(session_id);
+              const session = await resumeSessionById(core.accessor, session_id);
               if (session === undefined) return undefined;
               return sessionMediaOriginalsDir(session.accessor.get(ISessionContext).sessionDir);
             },
             resolveAttachmentsDir: async () => {
-              const session = await core.accessor.get(ISessionLifecycleService).resume(session_id);
+              const session = await resumeSessionById(core.accessor, session_id);
               if (session === undefined) return undefined;
               return join(session.accessor.get(ISessionContext).sessionDir, 'attachments');
             },

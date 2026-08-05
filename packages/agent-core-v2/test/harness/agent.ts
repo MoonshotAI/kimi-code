@@ -14,18 +14,26 @@ import { escapeXmlAttr } from '#/_base/utils/xml-escape';
 import type { AgentTaskInfo } from '#/agent/task/task';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
+import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { CHECKPOINTED_MODELS, type Checkpointed } from '#/agent/contextMemory/conversationTime';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { SessionCronServiceImpl } from '#/session/cron/sessionCronServiceImpl';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { CronTaskPersistenceService } from '#/app/cron/cronTaskPersistenceService';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { AgentGoalService } from '#/agent/goal/goalService';
-import { ISessionMcpService } from '#/session/mcp/sessionMcp';
-import type { McpConnectionManager } from '#/agent/mcp/connection-manager';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { McpConnectionManager } from '#/mcpCore/connection-manager';
+import { loadAgentsMdForRoots, type LoadedAgentsMd } from '#/agent/profile/context';
+import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
+import { ISessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
+import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
+import { ISessionSkillCatalogData } from '#/session/sessionSkillCatalog/skillCatalogData';
 import type { PermissionData, PermissionMode } from '#/agent/permissionPolicy/types';
 import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
 import { IAgentPlanService, type PlanData } from '#/agent/plan/plan';
@@ -68,7 +76,7 @@ import { OP_REGISTRY } from '#/wire/op';
 import { IProtocolAdapterRegistry, type ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
 import { hasProviderDefinition } from '#/kosong/provider/providerDefinition';
-import type { SkillCatalog } from '#/app/skillCatalog/types';
+import { summarizeSkill, type SkillCatalog } from '#/app/skillCatalog/types';
 import { type ModelCapability } from '#/kosong/contract/capability';
 import { isToolCall, isToolCallPart, type ContentPart, type Message as KosongMessage, type StreamedMessagePart } from '#/kosong/contract/message';
 import { type ThinkingEffort } from '#/kosong/contract/provider';
@@ -98,7 +106,6 @@ import {
   IConfigService,
   IAgentContextMemoryService,
   IAgentContextProjectorService,
-  IAgentContextSizeService,
   IAgentExternalHooksService,
   IExternalHooksRunnerService,
   IAgentFullCompactionService,
@@ -117,6 +124,8 @@ import {
   IAgentLoopContinuationService,
   IAgentSwarmService,
   AgentSwarmService,
+  IAgentTokenCountingService,
+  IAppStateService,
   ITelemetryService,
   IHostTerminalService,
   IAgentToolRegistryService,
@@ -124,6 +133,7 @@ import {
   IAgentUserToolService,
   IAgentUsageService,
   ISessionWorkspaceContext,
+  IWorkspaceStateService,
   AgentLLMRequesterService,
   LifecycleScope,
   AgentMcpService,
@@ -142,6 +152,11 @@ import {
   type ScopeSeed,
   type ServiceIdentifier,
 } from '#/index';
+import { createHooks } from '#/hooks';
+import {
+  ISessionLifecycleHooks,
+  type SessionLifecycleHookSlots,
+} from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 import { IEventBus } from '#/app/event/eventBus';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
@@ -178,6 +193,8 @@ import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog
 import { ISessionSwarmService } from '#/session/swarm/sessionSwarm';
 import type { PathAccessOperation } from '#/session/workspaceContext/workspaceContext';
 
+import { stubAgentIdentity } from '../app/agentIdentity/stubs';
+import { stubClientIdentity } from '../app/bootstrap/stubs';
 import { recordAgentEvents, type RecordedEventEntry } from '../snapshot/events';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
 import { createScriptedGenerate } from './scripted-generate';
@@ -537,6 +554,7 @@ export function homeDirServices(homeDir: string | undefined): TestAgentServiceOv
         homeDir,
         cwd: process.cwd(),
         env: process.env,
+        clientIdentity: stubClientIdentity,
       })) {
         reg.defineInstance(id, value);
       }
@@ -643,18 +661,24 @@ function resolveExternalHooksRunner(
 function isRunnerLike(
   value: Pick<IExternalHooksRunnerService, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'>,
 ): value is IExternalHooksRunnerService {
+  const candidate = value as IExternalHooksRunnerService;
   return (
-    typeof value.trigger === 'function' &&
-    typeof value.triggerBlock === 'function' &&
-    typeof value.fireAndForgetTrigger === 'function'
+    typeof candidate.trigger === 'function' &&
+    typeof candidate.triggerBlock === 'function' &&
+    typeof candidate.fireAndForgetTrigger === 'function' &&
+    typeof candidate.hasHooksFor === 'function' &&
+    candidate.ready instanceof Promise
   );
 }
 
 const noopHookRunner: IExternalHooksRunnerService = {
   _serviceBrand: undefined,
+  ready: Promise.resolve(),
+  onDidReload: Event.None as Event<void>,
   trigger: async () => [],
   triggerBlock: async () => undefined,
   fireAndForgetTrigger: async () => [],
+  hasHooksFor: () => false,
 };
 
 export function permissionModeServices(mode: PermissionMode): TestAgentServiceOverride {
@@ -678,13 +702,13 @@ export function cronServices(): TestAgentServiceOverride {
 export function mcpServices(options: {
   readonly manager?: McpConnectionManager;
 }): TestAgentServiceOverride {
-  // `AgentMcpService` now resolves the session's shared manager through
-  // `ISessionMcpService`; tests inject a fake manager by stubbing that service.
-  return sessionService(ISessionMcpService, {
+  // `AgentMcpService` resolves the workspace's shared manager through the
+  // seeded `ISessionMcpHandle`; tests inject a fake manager by stubbing it.
+  return sessionService(ISessionMcpHandle, {
     _serviceBrand: undefined,
-    ensureMcpReady: () => Promise.resolve(),
-    connectionManager: () => options.manager!,
-  } satisfies ISessionMcpService);
+    ready: Promise.resolve(),
+    connectionManager: options.manager!,
+  } satisfies ISessionMcpHandle);
 }
 
 export function skillServices(
@@ -711,6 +735,7 @@ function createSessionSkillCatalog(catalog: SkillCatalog): ISessionSkillCatalog 
     onDidChange: Event.None as Event<string>,
     load: async () => { },
     reload: async () => { },
+    list: async () => catalog.listSkills().map(summarizeSkill),
   };
 }
 
@@ -1032,6 +1057,7 @@ export class AgentTestContext {
             cwd: this.cwd,
             osHomeDir: TEST_HOME_DIR,
             env: process.env,
+            clientIdentity: stubClientIdentity,
           })) {
             reg.defineInstance(id, value);
           }
@@ -1043,6 +1069,11 @@ export class AgentTestContext {
             IConfigService,
             configService(() => this.kimiConfig),
           );
+          // The harness is a config-already-loaded world, so the identity is
+          // handed out pre-frozen (no custom identity, matching the empty
+          // bootstrap headers above); the freeze ordering itself is covered
+          // by the agentIdentity suite. Suites override via `appService`.
+          reg.defineInstance(IAgentIdentity, stubAgentIdentity());
           reg.defineInstance(
             IAppendLogStore,
             new PersistenceAppendLogStore(
@@ -1141,7 +1172,7 @@ export class AgentTestContext {
     const agentTelemetry = this.root.accessor
       .get(ITelemetryService)
       .withContext({ agent_id: agentId });
-    const sessionScope = bootstrap.sessionScope(workspaceId, sessionId);
+    const sessionScope = `${bootstrap.scope('sessions')}/${workspaceId}/${sessionId}`;
     this.session = this.root.createChild(LifecycleScope.Session, sessionId, {
       extra: collectScopeSeed(
         [
@@ -1150,15 +1181,58 @@ export class AgentTestContext {
               _serviceBrand: undefined,
               sessionId,
               workspaceId,
-              sessionDir: bootstrap.sessionDir(workspaceId, sessionId),
+              sessionDir: `${bootstrap.homeDir}/${sessionScope}`,
               metaScope: `${sessionScope}/session-meta`,
               cwd: this.cwd,
               scope: (subKey?: string): string =>
                 subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
             });
+            reg.defineInstance(
+              ISessionLifecycleHooks,
+              createHooks<SessionLifecycleHookSlots, keyof SessionLifecycleHookSlots>([
+                'onDidCreateSession',
+                'onWillCloseSession',
+              ]),
+            );
             reg.defineInstance(ISessionInteractionService, this.createInteractionService());
             reg.defineInstance(ISessionApprovalService, this.createApprovalService());
             reg.defineInstance(ISessionQuestionService, this.createQuestionService());
+            // Workspace-resource injection contracts (the seeds the real
+            // handler hands each session): the harness has no Workspace
+            // scope, so it seeds equivalents directly — an empty skill
+            // catalog, the workspace key the Session agent-profile catalog
+            // reads the App registry with, a live-read AGENTS.md
+            // provider, and a no-server MCP manager. Tests replace them
+            // through the usual service overrides.
+            reg.defineInstance(ISessionSkillCatalogData, {
+              _serviceBrand: undefined,
+              ready: Promise.resolve(),
+              catalog: new InMemorySkillCatalog(),
+              onDidChange: Event.None as Event<string>,
+            } satisfies ISessionSkillCatalogData);
+            reg.defineInstance(ISessionAgentProfileCatalogSeed, {
+              _serviceBrand: undefined,
+              workspaceKey: workspaceId,
+            } satisfies ISessionAgentProfileCatalogSeed);
+            reg.defineInstance(ISessionInstructionsProvider, this.createInstructionsProvider());
+            reg.defineInstance(ISessionMcpHandle, {
+              _serviceBrand: undefined,
+              ready: Promise.resolve(),
+              connectionManager: new McpConnectionManager(),
+            } satisfies ISessionMcpHandle);
+            reg.defineInstance(ISessionWorkspaceInfo, {
+              _serviceBrand: undefined,
+              ready: Promise.resolve(),
+              additionalDirs: [],
+              onDidChange: Event.None as Event<void>,
+            } satisfies ISessionWorkspaceInfo);
+            // The harness skips the Workspace scope entirely, so the session
+            // state service's cascade parent is seeded directly: a workspace
+            // state instance chained onto the App-scope root.
+            reg.defineInstance(
+              IWorkspaceStateService,
+              new WorkspaceStateService(this.root.accessor.get(IAppStateService)),
+            );
             reg.defineInstance(IAgentLifecycleService, {
               _serviceBrand: undefined,
               onDidCreate: Event.None as Event<IAgentScopeHandle>,
@@ -1231,7 +1305,7 @@ export class AgentTestContext {
             reg.defineDescriptor(IAgentGoalService, new SyncDescriptor(AgentGoalService));
             reg.defineDescriptor(IAgentSkillService, new SyncDescriptor(AgentSkillService));
             reg.defineDescriptor(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
-            const agentScope = bootstrap.agentScope(workspaceId, sessionId, agentId);
+            const agentScope = `${sessionScope}/agents/${agentId}`;
             reg.defineInstance(IAgentScopeContext, {
               _serviceBrand: undefined,
               agentId,
@@ -1244,14 +1318,6 @@ export class AgentTestContext {
         this.serviceOverrides,
         'agent',
       ),
-    });
-
-    this.get(IAgentProfileService).configure({
-      cwd: () => this.cwd,
-      chdir: async (nextCwd: string) => {
-        this.cwd = nextCwd;
-        workspace.setWorkDir(nextCwd);
-      },
     });
 
     this.initializeRestorableServices();
@@ -1290,8 +1356,8 @@ export class AgentTestContext {
     return this.get(IAgentContextMemoryService);
   }
 
-  get contextSize(): IAgentContextSizeService {
-    return this.get(IAgentContextSizeService);
+  get tokenCounting(): IAgentTokenCountingService {
+    return this.get(IAgentTokenCountingService);
   }
 
   get wire(): IWireService {
@@ -1330,7 +1396,7 @@ export class AgentTestContext {
 
   private initializeRestorableServices(): void {
     const context = this.get(IAgentContextMemoryService);
-    const contextSize = this.get(IAgentContextSizeService);
+    const tokenCounting = this.get(IAgentTokenCountingService);
     const usage = this.get(IAgentUsageService);
     const permissionMode = this.get(IAgentPermissionModeService);
     const permissionRules = this.get(IAgentPermissionRulesService);
@@ -1351,7 +1417,7 @@ export class AgentTestContext {
 
     context.get();
     void swarm.isActive;
-    contextSize.get();
+    tokenCounting.get();
     usage.status();
     tasks.list(false);
     permission.data();
@@ -1369,7 +1435,6 @@ export class AgentTestContext {
     this.configureRuntimeModel(provider, modelCapabilities);
     const profile = this.get(IAgentProfileService);
     profile.update({
-      cwd: process.cwd(),
       modelAlias: provider.model,
       systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
       thinkingLevel: 'off',
@@ -1430,10 +1495,10 @@ export class AgentTestContext {
 
   contextData(): { readonly history: readonly ContextMessage[]; readonly tokenCount: number } {
     const context = this.get(IAgentContextMemoryService);
-    const contextSize = this.get(IAgentContextSizeService);
+    const tokenCounting = this.get(IAgentTokenCountingService);
     return {
       history: context.get(),
-      tokenCount: contextSize.get().measured,
+      tokenCount: tokenCounting.get().measured,
     };
   }
 
@@ -1516,6 +1581,12 @@ export class AgentTestContext {
 
   untilTurnEnd(): Promise<EventSnapshot> {
     return this.snapshots.until('turn.ended');
+  }
+
+  /** The agent's persisted wire journal (drains the persistence queue first). */
+  async persistedWireRecords(): Promise<WireRecord[]> {
+    await this.drainWirePersistence();
+    return this.persistedRecords();
   }
 
   untilApprovalRequest(): Promise<EventSnapshot> {
@@ -1713,12 +1784,11 @@ export class AgentTestContext {
   async expectResumeMatches(): Promise<void> {
     await this.waitForSessionMetadata();
     await this.drainWirePersistence();
-    const profile = this.get(IAgentProfileService);
     const configSnapshot = structuredClone(this.get(IConfigService).getAll() as KimiConfig);
     let wireHistory = await this.wireHistory();
     let resumedThroughRecord = wireHistory.length;
     const resumed = createTestAgent(
-      { autoConfigure: false, cwd: profile.data().cwd },
+      { autoConfigure: false, cwd: this.cwd },
       ...this.serviceOverrides,
       configServices(() => configSnapshot),
       llmGenerateServices(failOnResumeGenerate),
@@ -1849,6 +1919,40 @@ export class AgentTestContext {
 
   private resolvePendingRpc(method: string, id: string, result: unknown): void {
     this.snapshots.respondPending(method, id, result);
+  }
+
+  /**
+   * The harness AGENTS.md provider: no Workspace scope and no fs watch exist
+   * here, so `ready` re-reads the instruction files on every await and the
+   * getters expose the freshest load — the same freshness the old per-prompt
+   * disk read gave prompt builds.
+   */
+  private createInstructionsProvider(): ISessionInstructionsProvider {
+    const fs = this.root.accessor.get(IHostFileSystem);
+    const env = this.root.accessor.get(IHostEnvironment);
+    const bootstrapService = this.root.accessor.get(IBootstrapService);
+    const cwd = this.cwd;
+    let current: LoadedAgentsMd = { content: '', warning: undefined, paths: [] };
+    return {
+      _serviceBrand: undefined,
+      get ready(): Promise<void> {
+        return loadAgentsMdForRoots({ fs, homeDir: env.homeDir }, bootstrapService.homeDir, [
+          cwd,
+        ]).then((result) => {
+          current = result;
+        });
+      },
+      get agentsMd() {
+        return current.content;
+      },
+      get agentsMdWarning() {
+        return current.warning;
+      },
+      get agentsMdPaths() {
+        return current.paths;
+      },
+      onDidChange: Event.None as Event<void>,
+    };
   }
 
   private createInteractionService(): ISessionInteractionService {
@@ -2088,8 +2192,8 @@ export class AgentTestContext {
       inputCacheCreation: 0,
     };
     const context = this.get(IAgentContextMemoryService);
-    const contextSize = this.get(IAgentContextSizeService);
-    contextSize.measured(context.get(), [], usage);
+    const tokenCounting = this.get(IAgentTokenCountingService);
+    tokenCounting.measured(context.get(), [], usage);
     const profile = this.get(IAgentProfileService);
     const usageService = this.get(IAgentUsageService);
     usageService.record(profile.data().modelAlias ?? 'mock-model', usage, {
@@ -2103,8 +2207,8 @@ function createWorkspaceContextStub(
   initialWorkDir: string,
   initialAdditionalDirs: readonly string[],
 ): ISessionWorkspaceContext {
-  let workDir = resolve(initialWorkDir);
-  let additionalDirs = initialAdditionalDirs.map((dir) => resolve(dir));
+  const workDir = resolve(initialWorkDir);
+  const additionalDirs = initialAdditionalDirs.map((dir) => resolve(dir));
   const isWithin = (absPath: string): boolean => {
     const target = resolve(absPath);
     if (target === workDir) return true;
@@ -2117,18 +2221,8 @@ function createWorkspaceContextStub(
   };
   return {
     _serviceBrand: undefined,
-    get workDir() {
-      return workDir;
-    },
-    get additionalDirs() {
-      return additionalDirs;
-    },
-    setWorkDir: (next) => {
-      workDir = resolve(next);
-    },
-    setAdditionalDirs: (dirs) => {
-      additionalDirs = dirs.map((dir) => resolve(dir));
-    },
+    workDir,
+    additionalDirs,
     resolve: (path) => (isAbsolute(path) ? resolve(path) : resolve(workDir, path)),
     isWithin,
     assertAllowed: (absPath: string, op: PathAccessOperation) => {
@@ -2137,14 +2231,6 @@ function createWorkspaceContextStub(
         throw new Error(`Path outside workspace (${op}): ${target}`);
       }
       return target;
-    },
-    addAdditionalDir: (dir) => {
-      const resolved = resolve(dir);
-      if (!additionalDirs.includes(resolved)) additionalDirs = [...additionalDirs, resolved];
-    },
-    removeAdditionalDir: (dir) => {
-      const resolved = resolve(dir);
-      additionalDirs = additionalDirs.filter((candidate) => candidate !== resolved);
     },
   };
 }
@@ -2321,7 +2407,7 @@ function configStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot['config
   const providerConfig =
     model === undefined ? undefined : ctx.get(IProviderService).get(model.providerName);
   return {
-    cwd: data.cwd,
+    cwd: ctx.get(ISessionContext).cwd,
     activeToolNames: data.activeToolNames,
     provider: providerConfig,
     profileName: data.profileName,

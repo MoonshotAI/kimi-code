@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IExitPlanModeTool` contract.
+ * `tools` domain — `IExitPlanModeTool` contract.
  *
  * Public contract of the ExitPlanMode tool — the plan-mode exit tool the LLM
  * calls to surface a finalised plan to the user and exit plan mode: the input

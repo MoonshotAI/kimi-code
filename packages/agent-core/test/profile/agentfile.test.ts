@@ -22,6 +22,7 @@ import {
   SessionAgentProfileCatalog,
   agentProfileFromFile,
   parseAgentFileText,
+  type AgentFileRoot,
   type SystemPromptContext,
 } from '../../src/profile';
 import { AgentFileParseError } from '../../src/profile/agentfile/parser';
@@ -262,6 +263,7 @@ describe('SessionAgentProfileCatalog', () => {
     osHomeDir: string;
     extraDirs?: readonly string[];
     explicitFiles?: readonly string[];
+    pluginRoots?: readonly AgentFileRoot[];
     warnings?: string[];
   }): SessionAgentProfileCatalog {
     return new SessionAgentProfileCatalog({
@@ -270,6 +272,7 @@ describe('SessionAgentProfileCatalog', () => {
       osHomeDir: options.osHomeDir,
       extraDirs: options.extraDirs,
       explicitFiles: options.explicitFiles,
+      pluginRoots: options.pluginRoots,
       warn: (message) => options.warnings?.push(message),
     });
   }
@@ -309,6 +312,24 @@ describe('SessionAgentProfileCatalog', () => {
     const c = catalog({ workDir, brandHomeDir: brandHome, osHomeDir: osHome });
     await c.ready;
     expect(c.get('shared')?.description).toBe('From project.');
+  });
+
+  it('discovers plugin agents and lets the user source shadow them', async () => {
+    const { workDir, brandHome, osHome } = await makeLayout();
+    const pluginDir = await makeTempDir();
+    await writeAgent(pluginDir, 'shared.md', agentFileText({ description: 'From plugin.' }));
+    await writeAgent(pluginDir, 'plugin-only.md', agentFileText({ description: 'Plugin agent.' }));
+    await writeAgent(join(brandHome, 'agents'), 'shared.md', agentFileText({ description: 'From user.' }));
+
+    const c = catalog({
+      workDir,
+      brandHomeDir: brandHome,
+      osHomeDir: osHome,
+      pluginRoots: [{ path: pluginDir, source: 'plugin' }],
+    });
+    await c.ready;
+    expect(c.get('shared')?.description).toBe('From user.');
+    expect(c.get('plugin-only')?.description).toBe('Plugin agent.');
   });
 
   it('requires override: true before a file replaces a same-name builtin', async () => {

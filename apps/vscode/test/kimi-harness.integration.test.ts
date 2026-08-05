@@ -141,7 +141,7 @@ async function createRuntimeRig(extraAliases: readonly string[] = []): Promise<R
 async function createPlainHarness(homeDir: string): Promise<KimiHarness> {
   const harness = createKimiHarness({
     homeDir,
-    identity: { userAgentProduct: "kimi-code-cli", version: "test" },
+    identity: { productName: "kimi-code-cli", version: "test", platform: "kimi_code_cli" },
   });
   cleanups.push(() => harness.close());
   return harness;

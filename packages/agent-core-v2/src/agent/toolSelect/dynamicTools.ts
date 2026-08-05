@@ -1,5 +1,5 @@
 /**
- * `toolSelect` domain (L4) — predicates and shaping helpers for the
+ * `toolSelect` domain — predicates and shaping helpers for the
  * select_tools progressive-disclosure protocol context.
  *
  * Exposes pure helpers for recognizing injected tool-schema messages,
@@ -12,9 +12,7 @@
  *     `{kind: 'injection', variant: 'dynamic_tool_schema'}`) — tool loading is
  *     protocol context, not conversation. v2's undo cuts histories at the
  *     first real user prompt it finds regardless of origin: schema messages
- *     survive only when the cut lands before them, otherwise
- *     `toolSelectService` reconciles its pending ledger from the surviving
- *     history on the `context.spliced` event so the model can re-select.
+ *     survive only when the cut lands before them.
  *   - loadable-tools announcements: `<tools_added>/<tools_removed>` system
  *     reminders (origin `{kind: 'system_trigger', name: 'loadable-tools'}`) —
  *     undo removes them (they are not `injection`-origin), and the next

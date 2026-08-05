@@ -1,5 +1,5 @@
 /**
- * `terminal` domain (L6) — Session-scoped terminal facade.
+ * `terminal` domain — Session-scoped terminal facade.
  *
  * Owns this session's terminal set and its per-terminal output buffers and
  * attached sinks; spawns PTYs through the App-scoped `IHostTerminalService`,

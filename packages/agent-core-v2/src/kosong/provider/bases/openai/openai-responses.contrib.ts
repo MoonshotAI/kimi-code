@@ -1,11 +1,11 @@
 /**
- * `kosong/provider` domain (L2) — side-effect module: registers the OpenAI
+ * `kosong/provider` domain — side-effect module: registers the OpenAI
  * Responses base (`id: 'openai_responses'`).
  *
- * Same factory shape as the Chat Completions contrib: endpoint aggregation,
- * `provides` under explicit config, composed headers — and the same
- * `apiKey ?? ''` suppression of the base's `OPENAI_API_KEY` environment
- * fallback once a trait declared an endpoint.
+ * The factory aggregates the endpoint, applies `provides` under explicit
+ * config, composes headers — and passes `apiKey ?? ''` to suppress the
+ * base's `OPENAI_API_KEY` environment fallback once a trait declared an
+ * endpoint.
  */
 
 import { registerProtocolBase } from '#/kosong/protocol/protocolBase';

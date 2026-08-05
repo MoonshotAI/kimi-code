@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — Google GenAI (Gemini) wire base.
+ * `kosong/provider` domain — Google GenAI (Gemini) wire base.
  *
  * Speaks the Gemini generateContent wire format (and Vertex AI through the
  * same SDK options). This base carries no hook surface today — per-turn
@@ -7,8 +7,8 @@
  * silently dropped, which is the intended "dialect decides whether to encode
  * an intent" behavior.
  *
- * The local `createAbortError` copy is DELIBERATELY not deduplicated with the
- * contract's helper: this module's abort plumbing (abortPromise racing,
+ * The local `createAbortError` copy is DELIBERATELY not deduplicated: this
+ * module's abort plumbing (abortPromise racing,
  * per-chunk checks, the catch guard that rethrows DOMException aborts before
  * error conversion) is self-contained by design.
  */
@@ -203,7 +203,6 @@ function convertMediaUrl(
   return { fileData: { fileUri: url, mimeType } };
 }
 
-// Deliberate local copy — see the module header. Not the contract import.
 function createAbortError(): DOMException {
   return new DOMException('The operation was aborted.', 'AbortError');
 }
@@ -728,8 +727,6 @@ export class GoogleGenAIChatProvider implements ChatProvider {
 
     let kwargs: GoogleGenAIGenerationKwargs = { ...this._generationKwargs };
 
-    // Per-turn intent overlays in the fixed contract order. A cache key has
-    // no native field on this wire and is silently dropped — by design.
     if (options?.sampling?.temperature !== undefined) {
       kwargs = { ...kwargs, temperature: options.sampling.temperature };
     }
@@ -861,10 +858,6 @@ export class GoogleGenAIChatProvider implements ChatProvider {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Base capability catalog — the final fallback of capability resolution.
-// `undefined` means the base knows nothing about the model.
-// ---------------------------------------------------------------------------
 
 const GEMINI_CATALOGUED_PREFIXES = [
   'gemini-1.5-pro',

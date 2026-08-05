@@ -1,5 +1,5 @@
 /**
- * `permissionMode` domain (L3) — permission-mode context injection.
+ * `permissionMode` domain — permission-mode context injection.
  *
  * Owns the `permission_mode` context-injection provider. It reads the live mode
  * from `IAgentPermissionModeService` and registers reminders through

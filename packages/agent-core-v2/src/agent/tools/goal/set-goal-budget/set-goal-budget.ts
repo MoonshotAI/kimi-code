@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ISetGoalBudgetTool` contract.
+ * `tools` domain — `ISetGoalBudgetTool` contract.
  *
  * Public contract of the SetGoalBudget tool: the budget-unit enum backing the
  * input schema the model calls with, plus the Agent-scope identifier used to

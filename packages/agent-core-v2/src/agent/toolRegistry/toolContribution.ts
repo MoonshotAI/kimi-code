@@ -1,5 +1,5 @@
 /**
- * `toolRegistry` domain (L3) — module-level agent-tool contribution registry.
+ * `toolRegistry` domain — module-level agent-tool contribution registry.
  *
  * Tools contribute themselves at module load via
  * `registerAgentToolService(identifier, ctor, options?)` — a double registration:
@@ -10,7 +10,7 @@
  * when their host capability is absent (e.g. `WebSearchTool` without a
  * configured provider), and the runtime registry always holds real instances,
  * never proxies.
- * `AgentToolActivationService` (`toolActivation`, L4) consumes the table when
+ * `AgentToolActivationService` consumes the table when
  * an Agent is created: for each contribution whose `when` predicate holds and
  * whose `name` the bound Profile's tool policy allows, it resolves the
  * service through the container (`accessor.get`, triggering construction) and
@@ -43,7 +43,6 @@ export type AnyAgentTool = AgentTool<any>;
 export type AgentToolCtor<T extends AnyAgentTool = AnyAgentTool> = new (...args: any[]) => T;
 
 export interface AgentToolContributionOptions {
-  /** Model-facing tool name, declared so activation can filter without instantiating. */
   readonly name: string;
   readonly source?: ToolSource;
   readonly disclosure?: ToolDisclosure;

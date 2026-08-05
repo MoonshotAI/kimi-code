@@ -12,12 +12,13 @@ import {
   type DomainEvent,
   IEventBus,
   IAgentLifecycleService,
-  ISessionLifecycleService,
+  getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Frame {
@@ -116,7 +117,7 @@ describe('server-v2 /api/v1/ws resync', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-wsv1-test-'));
-    server = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     base = `http://127.0.0.1:${server.port}`;
     wsUrl = `ws://127.0.0.1:${server.port}/api/v1/ws`;
   });
@@ -144,7 +145,7 @@ describe('server-v2 /api/v1/ws resync', () => {
   }
 
   async function ensureMainAgent(sessionId: string): Promise<void> {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     expect(session).toBeDefined();
     const agents = session!.accessor.get(IAgentLifecycleService);
     if (agents.get('main') === undefined) {
@@ -157,7 +158,7 @@ describe('server-v2 /api/v1/ws resync', () => {
   }
 
   function emitAgentEvent(sessionId: string, event: DomainEvent): void {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     expect(session).toBeDefined();
     const agents = session!.accessor.get(IAgentLifecycleService);
     const main = agents.get('main');
@@ -260,7 +261,7 @@ describe('server-v2 /api/v1/ws resync', () => {
     await ensureMainAgent(sid);
 
     // Add a second agent to the same session so we can distinguish sources.
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sid);
+    const session = getLiveSessionById(server!.core.accessor, sid);
     expect(session).toBeDefined();
     const agents = session!.accessor.get(IAgentLifecycleService);
     const sub = await agents.create({ agentId: 'agent-0' });

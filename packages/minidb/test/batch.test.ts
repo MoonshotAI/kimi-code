@@ -49,10 +49,10 @@ test('batch unique violation rejects the whole batch', async () => {
   const dir = await tmpDir();
   const db = await MiniDb.open({ dir, valueCodec: 'json' });
   await db.createIndex('byEmail', { field: 'email', unique: true });
-  await db.set('a', { email: 'x@y.com' });
+  await db.set('a', { email: 'duplicate@example.test' });
   try {
     await assert.rejects(
-      () => db.batch([{ op: 'set', key: 'b', value: { email: 'ok@y.com' } }, { op: 'set', key: 'c', value: { email: 'x@y.com' } }]),
+      () => db.batch([{ op: 'set', key: 'b', value: { email: 'unique@example.test' } }, { op: 'set', key: 'c', value: { email: 'duplicate@example.test' } }]),
       /unique/,
     );
     // neither op applied

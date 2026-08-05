@@ -1,5 +1,5 @@
 /**
- * `approval` domain (L7) — session-scope approval broker.
+ * `approval` domain — session-scope approval broker.
  *
  * Defines the public contract of approval brokering: the `ApprovalRequest` /
  * `ApprovalDecision` models and the `ISessionApprovalService` used to request a

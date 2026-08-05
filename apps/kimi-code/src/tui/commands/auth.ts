@@ -74,7 +74,7 @@ async function handleKimiCodeOAuthLogin(host: SlashCommandHost): Promise<void> {
       already_logged_in: alreadyLoggedIn,
     });
     if (alreadyLoggedIn) {
-      host.showStatus('Already logged in. Model configuration refreshed.');
+      host.showStatus('Already logged in. Model configuration refreshed.', 'success');
     }
   } catch (error) {
     const cancelled = controller.signal.aborted;

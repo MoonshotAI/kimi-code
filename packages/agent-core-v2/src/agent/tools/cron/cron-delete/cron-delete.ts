@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ICronDeleteTool` contract.
+ * `tools` domain — `ICronDeleteTool` contract.
  *
  * Public contract of the CronDelete tool: cancel a scheduled cron job by id.
  * The input is the cron job id (a ULID) returned by CronCreate / CronList; a

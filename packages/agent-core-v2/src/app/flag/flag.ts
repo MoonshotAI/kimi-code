@@ -1,5 +1,5 @@
 /**
- * `flag` domain (L3) — experimental-flag resolution contract.
+ * `flag` domain — experimental-flag resolution contract.
  *
  * Defines the `IFlagService` used to check whether a flag is enabled, snapshot
  * and explain flag state, and apply config overrides, together with the

@@ -5,6 +5,45 @@ import type { ExtensionConfig } from "shared/types";
 
 export type AppStatus = "loading" | "no-workspace" | "runtime-error" | "not-logged-in" | "no-models" | "ready";
 
+export type ConfigErrorStatus = "loading" | "no-workspace" | "runtime-error" | "no-models";
+
+export type AppViewResolution =
+  | { readonly view: "login" }
+  | {
+      readonly view: "status";
+      readonly status: ConfigErrorStatus;
+      /** True when the status screen must offer a path to the sign-in screen. */
+      readonly canGoToLogin: boolean;
+    }
+  | { readonly view: "main" };
+
+/**
+ * Pure view router for App. The `no-models` status (a managed OAuth token
+ * exists but config.toml has no models — e.g. a first login whose model
+ * provisioning failed after the device flow already persisted the token)
+ * must always keep a path back to the sign-in screen: Reload alone cannot
+ * change the on-disk state, so without it the user is stranded and the
+ * login UI becomes unreachable.
+ */
+export function resolveAppView(input: {
+  readonly status: AppStatus;
+  readonly modelsCount: number;
+  readonly skippedLogin: boolean;
+  readonly showLogin: boolean;
+}): AppViewResolution {
+  const { status, modelsCount, skippedLogin, showLogin } = input;
+  if (showLogin || (status === "not-logged-in" && !skippedLogin)) {
+    return { view: "login" };
+  }
+  if (skippedLogin && modelsCount === 0) {
+    return { view: "status", status: "no-models", canGoToLogin: true };
+  }
+  if (status !== "ready" && status !== "not-logged-in") {
+    return { view: "status", status, canGoToLogin: status === "no-models" };
+  }
+  return { view: "main" };
+}
+
 export interface AppInitState {
   status: AppStatus;
   errorMessage: string | null;

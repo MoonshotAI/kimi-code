@@ -1,5 +1,5 @@
 /**
- * `toolExecutor` domain (L3) — `onBeforeExecuteTool` veto-event machinery.
+ * `toolExecutor` domain — `onBeforeExecuteTool` veto-event machinery.
  *
  * `BeforeToolExecuteEventImpl` is the per-fire event object listeners
  * adjudicate through; `BeforeToolExecuteEmitter` owns the listener registry
@@ -23,6 +23,7 @@
  */
 
 import { Emitter } from '#/_base/event';
+import { BugIndicatingError } from '#/errors';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import type {
@@ -39,7 +40,6 @@ import type {
 
 type PendingVetoFactory = () => Promise<BeforeExecuteDecision | undefined>;
 
-/** Convenience for the common veto shape: a denial carrying only a message. */
 export function denyToolExecution(reason: string): ExecutableToolResult {
   return { output: reason, isError: true };
 }
@@ -113,7 +113,7 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
 
   private assertOpen(statement: string): void {
     if (!this._open) {
-      throw new Error(`${statement} can NOT be called asynchronously`);
+      throw new BugIndicatingError(`${statement} can NOT be called asynchronously`);
     }
   }
 }

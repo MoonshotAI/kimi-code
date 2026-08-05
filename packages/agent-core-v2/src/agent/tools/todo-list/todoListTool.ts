@@ -1,10 +1,9 @@
 /**
- * `tools` domain (L7) — `TodoListTool` implementation (the `TodoList` tool).
+ * `tools` domain — `TodoListTool` implementation (the `TodoList` tool).
  *
  * The list is session-shared: the tool reads/writes `ISessionTodoService`
  * (`todo` domain), which persists every change as a `tools.update_store`
- * (`key: 'todo'`) wire record on the main agent. The public contract (input
- * schema, `ITodoListTool`) lives in `./todo-list`.
+ * (`key: 'todo'`) wire record on the main agent.
  *
  * Registered via the module-level `registerAgentToolService(ITodoListTool,
  * TodoListTool)` at the bottom of this file — the same "import = register"

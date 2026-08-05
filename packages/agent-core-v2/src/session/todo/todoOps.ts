@@ -1,9 +1,8 @@
 /**
- * `todo` domain (L4) — persists the session's shared todo document.
+ * `todo` domain — persists the session's shared todo document.
  *
- * Validates todo state through the local item contract, keeps it aligned with
- * conversation undo through `contextMemory`, and serves the Session-scope todo
- * facade from the main agent's wire.
+ * Validates todo state against the item contract and keeps it aligned with
+ * conversation undo.
  */
 
 import { z } from 'zod';

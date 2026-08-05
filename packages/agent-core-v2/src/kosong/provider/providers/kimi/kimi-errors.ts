@@ -1,6 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — Kimi vendor error classification, declared
- * on the Kimi traits via the `convertError` hook.
+ * `kosong/provider` domain — Kimi vendor error classification.
  *
  * This module owns the vendor-specific knowledge of how the Moonshot backend
  * signals quota/balance exhaustion on a 429: the structured body
@@ -13,7 +12,7 @@
  * transient throttle messages like "token quota per minute" keep classifying
  * as retryable rate limits. The classifier reads the raw SDK error
  * structurally (status / code / type / message), so it works over both the
- * OpenAI and Anthropic transports Kimi registers on: the OpenAI SDK hoists
+ * OpenAI and Anthropic transports: the OpenAI SDK hoists
  * the body's `error.code`/`error.type` to the top level, while the Anthropic
  * SDK keeps the full body on `.error` (`{type: 'error', error: {type}}`), so
  * candidate codes are collected from `error` → `.error` → `.error.error`.

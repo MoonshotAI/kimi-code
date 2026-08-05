@@ -1,5 +1,6 @@
 /**
- * `prompt` domain (L4) — the `StepRequest` types `AgentPromptService` sends.
+ * `prompt` domain — the `StepRequest` types for prompt, steer, and retry
+ * steps.
  *
  * `PromptStepRequest` / `SteerStepRequest` carry an already-built user
  * `ContextMessage` (image-compression captions pre-split), apply the image
@@ -11,8 +12,8 @@
  * the `turn.steer` wire op on materialization and unregisters itself from the
  * service's pending-steer set once settled. `RetryStepRequest` uses `newTurn`:
  * it contributes no message and simply drives one more step over the
- * existing context. Constructed by the prompt service with its collaborators
- * captured — these are plain runtime objects, not DI services.
+ * existing context. Each is constructed with its collaborators captured —
+ * these are plain runtime objects, not DI services.
  */
 
 import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/types';

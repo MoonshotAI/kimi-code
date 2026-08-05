@@ -14,6 +14,7 @@ export interface IDisposable {
 
 /** Scope coordinates of a call/subscription. Empty object = core (app) scope. */
 export interface ScopeRef {
+  readonly workspaceId?: string;
   readonly sessionId?: string;
   readonly agentId?: string;
 }

@@ -1,12 +1,11 @@
 /**
- * `subagent` domain (L6) — registers the `secondary-model` experimental flag
+ * `subagent` domain — registers the `secondary-model` experimental flag
  * into `flag`.
  *
  * Gates secondary-model selection for newly spawned subagents, including the
  * agent-facing model choices and startup validation warning. Off by default;
  * enable via `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL`, the master
  * `KIMI_CODE_EXPERIMENTAL_FLAG`, or the `[experimental]` config section.
- * Imported for its side effect from the package barrel.
  */
 
 import { type FlagDefinitionInput, registerFlagDefinition } from '#/app/flag/flagRegistry';

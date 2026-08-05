@@ -1,10 +1,10 @@
 /**
- * `scopeContext` domain (L1) — agent-scope identity token.
+ * `scopeContext` domain — agent-scope identity token.
  *
  * Exposes `IAgentScopeContext`, the identity of the current agent scope (its
  * `agentId`) plus a `scope(subKey?)` helper that returns the agent's
  * persistence scope (or a child under it, e.g. `scope('cron')`). Seeded into
- * every agent scope at creation by `agentLifecycle` so Agent-scoped consumers
+ * every agent scope at creation so Agent-scoped consumers
  * can refer to themselves and address their per-agent storage without any
  * path arithmetic. Bound at Agent scope via a per-agent seed, not the scoped
  * registry.

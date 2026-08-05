@@ -1,5 +1,5 @@
 /**
- * `wire` domain (L2) — `IWireService` implementation.
+ * `wire` domain — `IWireService` implementation.
  *
  * `WireService` is the sole runtime owner of an Agent wire aggregate. It
  * combines the model reducer engine with the `wire.jsonl` journal protocol,

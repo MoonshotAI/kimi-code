@@ -4,7 +4,7 @@ import {
   WIRE_PROTOCOL_VERSION,
   CHECKPOINTED_MODELS,
   IAgentContextMemoryService,
-  IAgentContextSizeService,
+  IAgentTokenCountingService,
   IAgentGoalService,
   type ContextMessage,
   type WireRecord,
@@ -78,15 +78,17 @@ const V2_ONLY_RECORD_TYPES: ReadonlySet<string> = new Set([
 
 // Persisted record types introduced after the v1 vocabulary: the task
 // lifecycle journal (the restore seed for ghosts and the cold transcript
-// fold), the interaction request/resolution journal, and the plan revision
-// reference journal. Replay tolerates unknown record types (skip + warn), so
-// older readers degrade gracefully.
+// fold), the interaction request/resolution journal, the plan revision
+// reference journal, and the terminal turn record. Replay tolerates unknown
+// record types (skip + warn), so older readers degrade gracefully.
 const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'task.started',
   'task.terminated',
   'interaction.request',
   'interaction.resolved',
   'plan.revision',
+  'interruptionReminder.recorded',
+  'turn.ended',
 ]);
 
 describe('v1 wire vocabulary', () => {
@@ -205,7 +207,7 @@ describe('conversation-time checkpoint registration', () => {
 
 describe('AgentRecords persistence metadata', () => {
   let context: IAgentContextMemoryService;
-  let contextSize: IAgentContextSizeService;
+  let tokenCounting: IAgentTokenCountingService;
   let ctx: TestAgentContext;
   let expectResumeMatches: boolean;
   let persistence: RecordingInMemoryWireRecordPersistence;
@@ -215,7 +217,7 @@ describe('AgentRecords persistence metadata', () => {
     persistence = new RecordingInMemoryWireRecordPersistence();
     ctx = createTestAgent({ persistence, autoConfigure: false });
     context = ctx.get(IAgentContextMemoryService);
-    contextSize = ctx.get(IAgentContextSizeService);
+    tokenCounting = ctx.get(IAgentTokenCountingService);
   });
 
   afterEach(async () => {
@@ -456,7 +458,7 @@ describe('AgentRecords persistence metadata', () => {
         },
       },
       {
-        type: 'context_size.measured',
+        type: 'token_counting.measured',
         length: 1,
         tokens: 42,
       },
@@ -474,7 +476,7 @@ describe('AgentRecords persistence metadata', () => {
     ]);
 
     expect(context.get()).toHaveLength(1);
-    expect(contextSize.get()).toEqual({
+    expect(tokenCounting.get()).toEqual({
       size: 42,
       measured: 42,
       estimated: 0,

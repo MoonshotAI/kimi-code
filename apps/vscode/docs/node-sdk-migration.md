@@ -80,7 +80,7 @@ stay in the trusted Extension Host.
 
 The runtime constructs the SDK client with:
 
-- `userAgentProduct: "kimi-code-vscode"`
+- `productName: "kimi-code-vscode"`
 - `version` from `apps/vscode/package.json`
 - `uiMode: "vscode"`
 

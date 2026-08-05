@@ -1,5 +1,5 @@
 /**
- * `task` domain (L5) — `AgentTaskService` implementation.
+ * `task` domain — `AgentTaskService` implementation.
  *
  * Owns the agent's registry of running and restored tasks:
  * registers and drives tasks to completion, retains a bounded output ring,
@@ -54,6 +54,7 @@ import {
 } from '#/_base/utils/abort';
 import { escapeXml, escapeXmlAttr } from '#/_base/utils/xml-escape';
 import { IEventBus } from '#/app/event/eventBus';
+import { Error2, ErrorCodes } from '#/errors';
 import { defineCheckpointedModel } from '#/agent/contextMemory/conversationTime';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
@@ -189,7 +190,7 @@ const NOTIFICATION_FALLBACK_PREVIEW_BYTES = 3_000;
 const ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT = 'background_task_status';
 const ACTIVE_BACKGROUND_TASK_GUIDANCE = [
   'The conversation was compacted, so the earlier messages that started these background tasks are gone — but the tasks are still running from before.',
-  'Do not start duplicates. Use TaskOutput to fetch a task’s result, TaskList to list them, and TaskStop to cancel one.',
+  'Do not start duplicates. Use TaskList to list them, TaskOutput for a non-blocking status/output snapshot, and TaskStop to cancel one — completion arrives via automatic notification.',
 ].join(' ');
 
 export function isAgentTaskTerminal(status: AgentTaskStatus): boolean {
@@ -918,7 +919,9 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     if (maxRunningTasks === undefined) return;
     if (!detached) return;
     if (this.activeTaskCount() < maxRunningTasks) return;
-    throw new Error('Too many background tasks are already running.');
+    throw new Error2(ErrorCodes.TASK_LIMIT_EXCEEDED, 'Too many background tasks are already running.', {
+      details: { running: this.activeTaskCount(), max: maxRunningTasks },
+    });
   }
 
   private activeTaskCount(): number {

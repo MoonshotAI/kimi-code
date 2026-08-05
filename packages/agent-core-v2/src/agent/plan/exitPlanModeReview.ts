@@ -1,5 +1,5 @@
 /**
- * `plan` domain (L3) — ExitPlanMode plan review.
+ * `plan` domain — ExitPlanMode plan review.
  *
  * Owns the user-facing review that intercepts an `ExitPlanMode` call carrying
  * a non-empty `plan_review` display: emits `plan_submitted` / `plan_resolved`
@@ -8,9 +8,7 @@
  * policy's telemetry), and folds every approval outcome (approve with or
  * without a selected option, Revise with feedback, Reject and Exit, dismiss)
  * into a synthetic tool result, exiting plan mode through `plan` when the
- * outcome deactivates it. Consumed by `planService`'s plan-guard veto
- * listener through a cold `waitUntil` factory; the mode / plan-active gating
- * stays in the listener.
+ * outcome deactivates it.
  */
 
 import type {

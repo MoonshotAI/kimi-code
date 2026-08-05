@@ -289,4 +289,56 @@ describe('ExternalHooksRunnerService', () => {
     expect(results).toHaveLength(1);
     expect(results[0]?.action).toBe('block');
   });
+
+  it('injects the bootstrap client platform as client_type into every payload', async () => {
+    const runner = makeHookRunner([
+      {
+        event: 'SessionStart',
+        command: nodeCommand([
+          'let input = "";',
+          'process.stdin.on("data", (chunk) => { input += chunk; });',
+          'process.stdin.on("end", () => {',
+          '  process.stdout.write(String(JSON.parse(input).client_type));',
+          '});',
+        ].join('\n')),
+        timeout: 5,
+      },
+    ]);
+
+    const results = await runner.trigger('SessionStart', { inputData: {} });
+    expect(results[0]?.stdout?.trim()).toBe('test_platform');
+  });
+
+  it('lets the caller override clientType in inputData', async () => {
+    const runner = makeHookRunner([
+      {
+        event: 'SessionStart',
+        command: nodeCommand([
+          'let input = "";',
+          'process.stdin.on("data", (chunk) => { input += chunk; });',
+          'process.stdin.on("end", () => {',
+          '  process.stdout.write(String(JSON.parse(input).client_type));',
+          '});',
+        ].join('\n')),
+        timeout: 5,
+      },
+    ]);
+
+    const results = await runner.trigger('SessionStart', {
+      inputData: { clientType: 'custom_client' },
+    });
+    expect(results[0]?.stdout?.trim()).toBe('custom_client');
+  });
+
+  it('reports hook presence through hasHooksFor', async () => {
+    const runner = makeHookRunner([
+      { event: 'PreToolUse', matcher: 'Bash', command: 'echo 1' },
+      { event: 'SessionHeartbeat', command: 'echo 2' },
+    ]);
+
+    await runner.ready;
+    expect(runner.hasHooksFor('PreToolUse')).toBe(true);
+    expect(runner.hasHooksFor('SessionHeartbeat')).toBe(true);
+    expect(runner.hasHooksFor('Stop')).toBe(false);
+  });
 });

@@ -1,5 +1,5 @@
 /**
- * `kosong/contract` domain (L0) — the provider-agnostic tool definition.
+ * `kosong/contract` domain — the provider-agnostic tool definition.
  *
  * A tool that the model may invoke during generation. The definition is
  * provider-agnostic; each provider implementation converts it to the

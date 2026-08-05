@@ -1,18 +1,13 @@
 /**
- * `sessionContext` domain (L6) — seeded per-session facts.
+ * `sessionContext` domain — seeded per-session facts.
  *
  * Defines the `ISessionContext` carrying the session's identity, storage
  * addressing (`sessionId`, `workspaceId`, `sessionDir`, `metaScope`), the
- * session's initial working directory (`cwd`), and a `scope(subKey?)` helper
- * that returns the session's persistence scope (or a child under it, e.g.
- * `scope('agents/main/cron')`). Seeded into the Session scope by
- * `sessionLifecycle` when the session is created.
- *
- * `cwd` is the working directory frozen at session creation; it is the default
- * root the `process` runner spawns in and the seed `workspaceContext` derives
- * its mutable `workDir` from. The live, runtime-mutable "current cwd" (changed
- * via `chdir`) is owned by `profile` (Agent scope) and `workspaceContext`, not
- * here. Pure facts — no store, no IO. Session-scoped.
+ * session's working directory (`cwd`) — frozen at session creation — and a
+ * `scope(subKey?)` helper that returns the session's persistence scope (or a
+ * child under it, e.g. `scope('agents/main/cron')`). Seeded into the Session
+ * scope when the session is created. Pure facts — no store, no IO.
+ * Session-scoped.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

@@ -83,6 +83,29 @@ export const WIRE_RENDERERS: RendererMap = {
     },
   },
 
+  'profile.bind': {
+    tone: 'config',
+    label: 'profile',
+    headline: (r) => {
+      const parts: string[] = [];
+      if (r.profileName !== undefined) parts.push(`profile=${r.profileName}`);
+      if (r.modelAlias !== undefined) parts.push(`model=${r.modelAlias}`);
+      if (r.thinkingEffort !== undefined) parts.push(`thinking=${r.thinkingEffort}`);
+      if (r.activeToolNames !== undefined) {
+        parts.push(`${r.activeToolNames.length} tools`);
+      } else {
+        parts.push('all tools');
+      }
+      return {
+        main: (
+          <span className="truncate text-fg-0">
+            {parts.length === 0 ? <Dim>(no fields)</Dim> : parts.join(' · ')}
+          </span>
+        ),
+      };
+    },
+  },
+
   'turn.prompt': {
     tone: 'turn',
     label: 'prompt',
@@ -322,6 +345,14 @@ export const WIRE_RENDERERS: RendererMap = {
         right: <Dim>{r.names.length} tools</Dim>,
       };
     },
+  },
+
+  'tools.reset_active_tools': {
+    tone: 'tools',
+    label: 'reset',
+    headline: () => ({
+      main: <Mono>all tools active</Mono>,
+    }),
   },
 
   'tools.update_store': {

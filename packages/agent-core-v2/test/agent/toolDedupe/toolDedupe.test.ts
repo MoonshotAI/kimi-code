@@ -251,6 +251,7 @@ function didCtx(
     toolCall: tc,
     toolCalls: [tc],
     args,
+    outcome: 'executed',
     result,
   };
 }

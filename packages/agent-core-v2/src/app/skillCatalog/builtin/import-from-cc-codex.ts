@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — builtin `import-from-cc-codex` skill definition.
+ * `skillCatalog` domain — builtin `import-from-cc-codex` skill definition.
  */
 
 import type { SkillDefinition } from '#/app/skillCatalog/types';
@@ -24,4 +24,5 @@ export const IMPORT_FROM_CC_CODEX_SKILL: SkillDefinition = {
     type: parsed.metadata.type ?? 'inline',
     disableModelInvocation: true,
   },
+  productSpecific: true,
 };

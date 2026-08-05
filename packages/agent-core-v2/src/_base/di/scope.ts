@@ -1,5 +1,5 @@
 /**
- * `di` domain (L0) — DI Scope tree (`Scope`, `LifecycleScope`) and scoped service registry.
+ * `di` domain — DI Scope tree (`Scope`, `LifecycleScope`) and scoped service registry.
  *
  * Scoped services are resolved when their scope is created by default;
  * registrations that defer construction until first resolution use `OnDemand`.
@@ -9,12 +9,14 @@ import { SyncDescriptor } from './descriptors';
 import type { ServiceIdentifier, ServicesAccessor, IInstantiationService } from './instantiation';
 import { InstantiationService } from './instantiationService';
 import { DisposableStore, type IDisposable } from './lifecycle';
+import { Ledger, type LedgerEntry } from '../lifecycle/ledger';
 import { ServiceCollection } from './serviceCollection';
 
 export enum LifecycleScope {
   App = 0,
-  Session = 1,
-  Agent = 2,
+  Workspace = 1,
+  Session = 2,
+  Agent = 3,
 }
 
 export enum ScopeActivation {
@@ -76,6 +78,7 @@ export interface IScopeHandle<K extends LifecycleScope = LifecycleScope> {
 }
 
 export type IAppScopeHandle = IScopeHandle<LifecycleScope.App>;
+export type IWorkspaceScopeHandle = IScopeHandle<LifecycleScope.Workspace>;
 export type ISessionScopeHandle = IScopeHandle<LifecycleScope.Session>;
 export type IAgentScopeHandle = IScopeHandle<LifecycleScope.Agent>;
 
@@ -137,6 +140,8 @@ export class Scope implements IDisposable {
   readonly accessor: ServicesAccessor;
 
   private readonly _store = new DisposableStore();
+  private readonly _ledger: Ledger;
+  private _ledgerEntry: LedgerEntry | undefined;
   private _disposed = false;
 
   private constructor(
@@ -145,6 +150,15 @@ export class Scope implements IDisposable {
     readonly instantiation: IInstantiationService,
     private readonly _parent?: Scope,
   ) {
+    // Registration order is reversed at teardown: children (registered later)
+    // go first, then the store, then the instantiation container.
+    this._ledger = new Ledger(`scope:${id}`);
+    this._ledger.register(() => {
+      this.instantiation.dispose();
+    }, 'instantiation');
+    this._ledger.register(() => {
+      this._store.dispose();
+    }, 'store');
     this.accessor = {
       get: <T>(serviceId: ServiceIdentifier<T>): T =>
         instantiation.invokeFunction((a) => a.get(serviceId)),
@@ -190,6 +204,9 @@ export class Scope implements IDisposable {
     }
     const child = new Scope(id, kind, childInstantiation, this);
     this.children.set(id, child);
+    child._ledgerEntry = this._ledger.register(() => {
+      child.dispose();
+    }, `scope:${id}`);
     return child;
   }
 
@@ -203,17 +220,15 @@ export class Scope implements IDisposable {
     }
     this._disposed = true;
 
-    const kids = Array.from(this.children.values());
-    this.children.clear();
-    for (const child of kids) {
-      child.dispose();
-    }
-
-    this._store.dispose();
-    this.instantiation.dispose();
-
-    if (this._parent) {
-      this._parent.children.delete(this.id);
+    this._ledgerEntry?.release();
+    this._ledgerEntry = undefined;
+    try {
+      void this._ledger.teardown('scope-close');
+    } finally {
+      this.children.clear();
+      if (this._parent) {
+        this._parent.children.delete(this.id);
+      }
     }
   }
 }

@@ -1,5 +1,5 @@
 /**
- * `_base/log` (L0) — structured logging contract.
+ * `_base/log` — structured logging contract.
  *
  * Defines the public logging model shared by every scope: the `LogEntry` /
  * `LogLevel` types, the `ILogger` / `ILogService` facade used by other domains

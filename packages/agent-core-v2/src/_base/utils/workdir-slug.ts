@@ -34,30 +34,10 @@ export function encodeWorkDirKey(workDir: string): string {
   return `${WORKDIR_KEY_PREFIX}${slug}_${hash}`;
 }
 
-// Windows-shaped: drive-letter (C:\, C:/) or UNC (\\host\share, //host/share).
-// Shape-based detection (not process.platform): browser/remote daemons and
-// tests must fold the same way regardless of host OS.
 const WIN_SHAPED = /^(?:[A-Za-z]:[\\/]|\\\\|\/\/)/;
 
-/**
- * Platform-aware identity key for "is this the same workspace directory?"
- * comparisons. Slash-normalizes, strips trailing separators, and case-folds
- * Windows-shaped paths (NTFS lookups are case-insensitive by default), so the
- * drive-letter casing the process happened to inherit and typed-vs-realpath
- * spelling variants collapse onto one key; POSIX paths never fold.
- *
- * Comparison-only: the minted `workspaceId` (`encodeWorkDirKey`) stays
- * case-sensitive so already-persisted session buckets keep resolving. Pure
- * string ops on purpose — a path library (`pathe.resolve`/`normalize`) would
- * treat a Windows-shaped string as relative on a POSIX host and join the
- * process cwd. Per-directory case sensitivity (`fsutil`) and WSL mount
- * translations are a documented non-goal.
- */
 export function workspaceRootKey(root: string): string {
   const slashed = root.replaceAll('\\', '/');
-  // Test the shape BEFORE stripping trailing separators: a drive root
-  // (`C:\`) loses its only separator to the strip (`C:`) and would no
-  // longer read as Windows-shaped, escaping the case-fold.
   const shaped = WIN_SHAPED.test(slashed);
   const normalized = slashed.replace(/\/+$/, '');
   return shaped ? normalized.toLowerCase() : normalized;

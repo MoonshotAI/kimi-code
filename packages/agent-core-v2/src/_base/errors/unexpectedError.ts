@@ -1,6 +1,6 @@
 /**
- * Unexpected-error reporting hook (`onUnexpectedError`) used by the Emitter to
- * surface exceptions thrown by listener callbacks.
+ * Unexpected-error reporting hook (`onUnexpectedError`) — surfaces exceptions
+ * thrown by listener callbacks.
  */
 
 export type UnexpectedErrorHandler = (err: unknown) => void;

@@ -1,18 +1,17 @@
 /**
- * `kosongConfig` domain (L3) — models.dev upstream: fetch the third-party
+ * `kosongConfig` domain — models.dev upstream: fetch the third-party
  * directory, in-memory cache, built-in snapshot fallback, and the pruned
- * item mapping behind `IModelsDevImportService`'s browse methods.
+ * item mapping behind the import service's browse methods.
  *
- * The normalization decisions (wire resolution, base-URL adaptation, model
- * pruning) all come from the sibling `modelsDev` module, the same functions
- * the TUI/CLI import paths use (via the kosong copy), so a GUI import stays
- * behavior-identical to a CLI import. The config write itself is
- * orchestrated by the import service through `IConfigService` sections
- * (never the node-sdk's `applyCatalogProvider`, which would also move the
- * global default pointers).
+ * The caller states the outbound `User-Agent`: this module is plain
+ * module-level state with no container access, and the value depends on the
+ * host and the configured identity, which only the calling service can see.
+ * The cached catalog does not vary by caller, so a later call with a different
+ * value still reuses it.
  */
 
-import { Error2 } from '#/_base/errors/errors';
+import { CoreErrors } from '#/_base/errors/codes';
+import { BugIndicatingError, Error2 } from '#/_base/errors/errors';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ModelRecord } from '#/kosong/model/model';
 
@@ -29,10 +28,8 @@ import type { ModelsDevModelItem, ModelsDevProviderItem } from './modelsDevImpor
 
 export const MODELS_DEV_URL = 'https://models.dev/api.json';
 const CACHE_TTL_MS = 10 * 60 * 1000;
-/** Shared upstream timeout for both the models.dev and registry fetches. */
 export const UPSTREAM_FETCH_TIMEOUT_MS = 10_000;
 
-/** Parses a built-in directory snapshot string; undefined when missing/invalid. */
 export function loadBuiltInModelsDevCatalog(text?: string): ModelsDevCatalog | undefined {
   if (typeof text !== 'string' || text.length === 0) return undefined;
   try {
@@ -53,12 +50,6 @@ let builtInMemo: ModelsDevCatalog | undefined | null = null;
 let fetchImpl: typeof fetch = fetch;
 let nowImpl: () => number = Date.now;
 
-/**
- * Test hook: swap the fetch/clock used by `getModelsDevCatalog`. The cache is
- * kept, so TTL behavior can be exercised by advancing the injected clock;
- * pair with `resetModelsDevUpstreamForTest` in test setup/teardown for
- * isolation.
- */
 export function setModelsDevUpstreamForTest(options: {
   fetchImpl?: typeof fetch;
   now?: () => number;
@@ -67,7 +58,6 @@ export function setModelsDevUpstreamForTest(options: {
   if (options.now !== undefined) nowImpl = options.now;
 }
 
-/** Test hook: drop the cache and restore the real fetch/clock. */
 export function resetModelsDevUpstreamForTest(): void {
   cache = undefined;
   inFlight = undefined;
@@ -76,37 +66,34 @@ export function resetModelsDevUpstreamForTest(): void {
   nowImpl = Date.now;
 }
 
-/** The currently injected fetch — shared by the models.dev and registry upstreams. */
 export function upstreamFetch(): typeof fetch {
   return fetchImpl;
 }
 
-/**
- * Returns the models.dev directory: fresh cache hit → one shared network
- * fetch (concurrent misses join the same in-flight promise; cached on
- * success) → stale cache on fetch failure → built-in snapshot → throws
- * `modelsDev.catalog_unavailable`.
- */
-export async function getModelsDevCatalog(): Promise<ModelsDevCatalog> {
+export async function getModelsDevCatalog(userAgent: string): Promise<ModelsDevCatalog> {
   const now = nowImpl();
   if (cache !== undefined && now - cache.fetchedAt < CACHE_TTL_MS) return cache.catalog;
-  inFlight ??= fetchAndCache().finally(() => {
+  inFlight ??= fetchAndCache(userAgent).finally(() => {
     inFlight = undefined;
   });
   return inFlight;
 }
 
-async function fetchAndCache(): Promise<ModelsDevCatalog> {
+async function fetchAndCache(userAgent: string): Promise<ModelsDevCatalog> {
   const now = nowImpl();
   try {
     const res = await fetchImpl(MODELS_DEV_URL, {
-      headers: { Accept: 'application/json', 'User-Agent': 'kimi-code-kap-server' },
+      headers: { Accept: 'application/json', 'User-Agent': userAgent },
       signal: AbortSignal.timeout(UPSTREAM_FETCH_TIMEOUT_MS),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      throw new Error2(CoreErrors.codes.INTERNAL, `HTTP ${res.status}`, {
+        details: { status: res.status },
+      });
+    }
     const payload: unknown = await res.json();
     if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-      throw new Error('unexpected catalog payload shape');
+      throw new Error2(CoreErrors.codes.INTERNAL, 'unexpected catalog payload shape');
     }
     cache = { catalog: payload as ModelsDevCatalog, fetchedAt: now };
     return cache.catalog;
@@ -114,8 +101,6 @@ async function fetchAndCache(): Promise<ModelsDevCatalog> {
     if (cache !== undefined) return cache.catalog;
     const builtIn = builtInCatalog();
     if (builtIn !== undefined) {
-      // Cache the snapshot too — an offline install would otherwise pay the
-      // full upstream timeout on every directory call before falling back.
       cache = { catalog: builtIn, fetchedAt: now };
       return builtIn;
     }
@@ -126,14 +111,11 @@ async function fetchAndCache(): Promise<ModelsDevCatalog> {
   }
 }
 
-/** The built-in snapshot, parsed at most once per process (it can be MBs). */
 function builtInCatalog(): ModelsDevCatalog | undefined {
   if (builtInMemo === null) builtInMemo = loadBuiltInModelsDevCatalog(BUILT_IN_MODELS_DEV_JSON);
   return builtInMemo;
 }
 
-/** Own-property lookup — a parsed directory still carries the Object prototype
- *  chain, so `catalog['constructor']` must not masquerade as a real entry. */
 export function modelsDevEntry(
   catalog: ModelsDevCatalog,
   id: string,
@@ -141,9 +123,6 @@ export function modelsDevEntry(
   return Object.prototype.hasOwnProperty.call(catalog, id) ? catalog[id] : undefined;
 }
 
-// ---------------------------------------------------------------------------
-// Pruned item mapping (the browse wire shape)
-// ---------------------------------------------------------------------------
 
 function capabilityToStrings(capability: ModelCapability): string[] | undefined {
   const caps: string[] = [];
@@ -167,7 +146,6 @@ function toModelItem(model: ModelsDevModel): ModelsDevModelItem {
   };
 }
 
-/** Maps one directory entry to its pruned browse item, resolving import eligibility. */
 export function toModelsDevProviderItem(
   id: string,
   entry: ModelsDevProviderEntry,
@@ -176,7 +154,6 @@ export function toModelsDevProviderItem(
   const models = modelsDevProviderModels(entry).map(toModelItem);
   const base = {
     id,
-    // An empty-string upstream name is as useless as a missing one — fall back.
     name: entry.name || id,
     env_key: entry.env?.[0] ?? null,
     models,
@@ -210,24 +187,14 @@ export function toModelsDevProviderItem(
         reject_reason: resolution.reason,
       };
   }
-  // Unreachable in practice: ModelsDevImportResolution is a closed three-way
-  // union, but older TS control-flow cannot prove the switch exhaustive.
-  throw new Error(`unhandled models.dev import resolution: ${JSON.stringify(resolution)}`);
+  throw new BugIndicatingError(
+    `unhandled models.dev import resolution: ${JSON.stringify(resolution)}`,
+  );
 }
 
-// ---------------------------------------------------------------------------
-// Config record mapping (used by the models.dev import)
-// ---------------------------------------------------------------------------
 
-/**
- * Builds the persisted model alias record for an imported models.dev model —
- * the same field set as the node-sdk's `catalogModelToAlias`, so a
- * GUI-imported provider is indistinguishable from a TUI-imported one.
- */
 export function modelsDevModelToRecord(providerId: string, model: ModelsDevModel): ModelRecord {
   const caps = capabilityToStrings(model.capability);
-  // A model that always reasons advertises `always_thinking` instead of
-  // `thinking`, so the UI locks thinking on and offers no off option.
   const capabilities =
     model.alwaysThinking === true
       ? caps?.map((cap) => (cap === 'thinking' ? 'always_thinking' : cap))

@@ -1,5 +1,5 @@
 /**
- * `blobStore` domain (L2) — `IBlobStore` implementation.
+ * `blobStore` domain — `IBlobStore` implementation.
  *
  * Delegates to the `IFileSystemStorageService` backend with atomic writes. Bound at App
  * scope; child scopes (Session, Agent) inherit the same instance and use

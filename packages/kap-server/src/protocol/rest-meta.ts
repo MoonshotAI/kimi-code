@@ -33,6 +33,17 @@ export const metaResponseSchema = z.object({
    */
   dangerous_bypass_auth: z.boolean(),
   /**
+   * Effective experimental-flag state (flag id → enabled), resolved by the
+   * FlagService from every source (master env, per-flag env, the
+   * `[experimental]` config section, defaults). This is the *effective* state,
+   * not the persisted config section: a flag enabled via
+   * `KIMI_CODE_EXPERIMENTAL_*` env appears here but not in `GET /config`'s
+   * `experimental` map. Computed per request — config-section writes flip it
+   * live. Clients use it to gate experimental UI; older servers omit it, so
+   * treat absence as "no flags enabled".
+   */
+  experimental_flags: z.record(z.string(), z.boolean()).optional(),
+  /**
    * Backend engine generation serving this API. `'v2'` is the DI × Scope
    * engine (`@moonshot-ai/kap-server` / `agent-core-v2`); older servers omit
    * the field (treat absence as v1). Lets clients identify the backend without

@@ -8,9 +8,7 @@
  * default. A scope that seeds neither backend will fail to resolve the storage
  * tokens on first use.
  *
- * `append` concatenates into the same key slot `write` replaces, mirroring the
- * file implementation's single-namespace semantics so the two are
- * interchangeable for the facades above.
+ * `append` concatenates into the same key slot `write` replaces.
  */
 
 import {

@@ -1,5 +1,5 @@
 /**
- * `kosong/model` domain (L2) — `IModelService` implementation.
+ * `kosong/model` domain — `IModelService` implementation.
  *
  * The in-memory model registry plus the default-model pointer. Holds no
  * config dependency: the persistence bridge hydrates it via `loadAll` and
@@ -20,7 +20,6 @@ import {
   type ModelsSection,
 } from './model';
 
-/** Registry mutations are not abortable; `fireAsync` still requires a signal. */
 const NO_ABORT = new AbortController().signal;
 
 export class ModelService extends Disposable implements IModelService {
@@ -58,9 +57,6 @@ export class ModelService extends Disposable implements IModelService {
   }
 
   loadAll(models: ModelsSection, defaultModel: string | undefined): void {
-    // Fire-and-forget on purpose: hydration has no persistence participant
-    // yet, and `fireAsync` still invokes every listener synchronously up to
-    // its own first await, so config-originated syncs keep their timing.
     void this.applyRecords(models);
     void this.applyDefaultModel(defaultModel);
     if (!this.hydrated) {
@@ -96,9 +92,6 @@ export class ModelService extends Disposable implements IModelService {
     const diff = diffRecords(this.models, next);
     if (isEmptyDiff(diff)) return;
     this.models = { ...next };
-    // Awaiting delivery is what lets a mutation's caller rely on the
-    // persistence bridge's `waitUntil` participation: the returned promise
-    // only settles once the write has reached the config layer.
     await this._onDidChangeModels.fireAsync(diff, NO_ABORT);
   }
 

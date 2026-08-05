@@ -1,5 +1,5 @@
 /**
- * `wire` domain (L2) — the persisted journal record language.
+ * `wire` domain — the persisted journal record language.
  *
  * A `WireRecord` is the flat JSONL representation of one persisted Op. The
  * first line of an Agent journal is a `WireMetadataRecord`; metadata is a
