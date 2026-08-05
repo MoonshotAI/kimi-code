@@ -121,7 +121,7 @@ You must first complete OAuth login with a Kimi Code account via `/login`; data 
 
 | Category | Scope |
 |---|---|
-| Stocks & financial markets | Well-known databases such as Wind, S&P Capital IQ, and SEC EDGAR, covering prices, technical indicators, financials and valuation, and consensus estimates across A-shares, HK, US, and other major markets, plus official filings for 8,000+ US-listed companies (back to 2009) |
+| Stocks & financial markets | Well-known databases such as Wind, S&P Capital IQ, and SEC EDGAR, covering prices, technical indicators, financials and valuation, and consensus estimates across A-shares, HK, US, and other major markets, plus official filings for 8,000+ US-listed companies |
 | Macroeconomics | Well-known databases such as the World Bank and IMF, covering 50+ years of time series for 189 countries: GDP, trade, population, exchange rates, CPI, balance of payments, GDP forecasts, and more |
 | Corporate data | Business registration, equity chain, legal risk, and related-entity graph for mainland Chinese companies |
 | Academic literature | Millions of papers across physics, mathematics, CS, quantitative finance, economics — including preprints |
