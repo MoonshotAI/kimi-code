@@ -503,7 +503,11 @@ describe('AgentGoalService', () => {
       expect(goals.getGoal()).toEqual({ goal: null });
       ctx.get(IAgentReminderQueueService).drain();
       const reminder = context.get().at(-1);
-      expect(reminder?.origin).toEqual({ kind: 'injection', variant: 'goal_cancelled' });
+      expect(reminder?.origin).toEqual({
+        kind: 'injection',
+        variant: 'goal_cancelled',
+        disclosure: { kind: 'once_reminder', id: expect.any(String) },
+      });
       expect(JSON.stringify(reminder?.content)).toContain('Ignore earlier active-goal reminders');
       await expect(goals.cancelGoal()).rejects.toMatchObject({ code: ErrorCodes.GOAL_NOT_FOUND });
     });
@@ -2307,7 +2311,11 @@ describe('AgentGoalService fork boundaries', () => {
     expect(goals.getGoal().goal).toBeNull();
     ctx.get(IAgentReminderQueueService).drain();
     const reminder = context.get().at(-1);
-    expect(reminder?.origin).toEqual({ kind: 'injection', variant: 'goal_fork_cleared' });
+    expect(reminder?.origin).toEqual({
+      kind: 'injection',
+      variant: 'goal_fork_cleared',
+      disclosure: { kind: 'once_reminder', id: expect.any(String) },
+    });
     const text = JSON.stringify(reminder?.content);
     expect(text).toContain('This fork does not have a current goal.');
     expect(text).toContain('Ignore earlier active-goal reminders from the source session.');

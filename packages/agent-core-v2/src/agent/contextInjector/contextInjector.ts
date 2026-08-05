@@ -1,5 +1,6 @@
 import { createDecorator } from "#/_base/di/instantiation";
 import type { IDisposable } from "#/_base/di/lifecycle";
+import type { Event } from "#/_base/event";
 import type { ContentPart } from "#/kosong/contract/message";
 import type { ContextInjectionDisclosure, ContextMessage } from '#/agent/contextMemory/types';
 
@@ -32,6 +33,11 @@ export type SyncContextInjectionProvider = (
 
 export interface IAgentContextInjectorService {
   readonly _serviceBrand: undefined;
+
+  /** Fired synchronously at every injection boundary (turn start, step,
+   * compaction follow-up, wire restore) before any provider runs. This is
+   * where boundary participants such as the once-reminder queue drain. */
+  readonly onWillInject: Event<void>;
 
   register(
     name: string,

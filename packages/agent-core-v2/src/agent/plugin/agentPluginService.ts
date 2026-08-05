@@ -3,9 +3,10 @@
  *
  * Renders session-start skills from `plugin` and `sessionSkillCatalog` through
  * `contextInjector`, reconciling the desired instructions against the latest
- * surviving render in `contextMemory`. Main-agent-only (v1 parity): the
- * service self-gates on `agentId === 'main'`; Agent scope creation instantiates
- * it for every agent, so other agents construct it as a no-op. Resolves session
+ * surviving render reported by the injector (`lastInjection`) and unwrapped
+ * through `systemReminder`. Main-agent-only (v1 parity): the service
+ * self-gates on `agentId === 'main'`; Agent scope creation instantiates it for
+ * every agent, so other agents construct it as a no-op. Resolves session
  * prompt context through `sessionContext` and reports missing skills through
  * `log`; stores the refresh signal through `agentState`. Bound at Agent scope.
  */
@@ -15,11 +16,14 @@ import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/_base/state/stateRegistry';
 import { escapeXmlAttr } from '#/_base/utils/xml-escape';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import {
+  IAgentContextInjectorService,
+  type ContextInjectionContext,
+} from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { systemReminderContent } from '#/agent/systemReminder/systemReminder';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSessionStart } from '#/app/plugin/types';
 import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
@@ -61,8 +65,8 @@ export class AgentPluginService extends Disposable implements IAgentPluginServic
     if (scopeContext.agentId !== MAIN_AGENT_ID) return;
     this.states.register(pluginSessionStartRefreshPendingKey);
     this._register(
-      injector.register(SESSION_START_INJECTION_VARIANT, () =>
-        this.reconcileSessionStartReminder(),
+      injector.register(SESSION_START_INJECTION_VARIANT, (injection) =>
+        this.reconcileSessionStartReminder(injection),
       ),
     );
     this._register(
@@ -92,61 +96,35 @@ export class AgentPluginService extends Disposable implements IAgentPluginServic
     });
   }
 
-  private async reconcileSessionStartReminder(): Promise<string | undefined> {
+  private async reconcileSessionStartReminder(
+    injection: ContextInjectionContext,
+  ): Promise<string | undefined> {
     const forceRefresh = this.refreshPending;
     this.refreshPending = false;
     const desired = await this.renderSessionStartReminder();
-    const history = this.context.get();
-    const latest = lastPluginSessionStart(history);
+    const latest = injection.lastInjection;
     if (desired === undefined) {
       if (
         latest === undefined &&
-        (!forceRefresh || !shouldNeutralizePluginSessionStart(history))
+        (!forceRefresh || !shouldNeutralizePluginSessionStart(this.context.get()))
       ) {
         return undefined;
       }
-      if (
-        latest !== undefined &&
-        messageText(latest) === systemReminderText(NO_ACTIVE_SESSION_STARTS)
-      ) {
+      if (latest !== undefined && systemReminderContent(latest) === NO_ACTIVE_SESSION_STARTS) {
         return undefined;
       }
       return NO_ACTIVE_SESSION_STARTS;
     }
     if (latest === undefined) return desired;
-    const rendered = messageText(latest);
+    const rendered = systemReminderContent(latest);
     if (
       !forceRefresh &&
-      (
-        rendered === systemReminderText(desired) ||
-        rendered === systemReminderText(`${desired}\n\n${SUPERSEDES_SUFFIX}`)
-      )
+      (rendered === desired.trim() || rendered === `${desired}\n\n${SUPERSEDES_SUFFIX}`.trim())
     ) {
       return undefined;
     }
     return `${desired}\n\n${SUPERSEDES_SUFFIX}`;
   }
-}
-
-function lastPluginSessionStart(history: readonly ContextMessage[]): ContextMessage | undefined {
-  for (let index = history.length - 1; index >= 0; index--) {
-    const message = history[index]!;
-    if (
-      message.origin?.kind === 'injection' &&
-      message.origin.variant === SESSION_START_INJECTION_VARIANT
-    ) {
-      return message;
-    }
-  }
-  return undefined;
-}
-
-function messageText(message: ContextMessage): string {
-  return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
-}
-
-function systemReminderText(content: string): string {
-  return `<system-reminder>\n${content.trim()}\n</system-reminder>`;
 }
 
 interface RenderPluginSessionStartReminderInput {

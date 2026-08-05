@@ -21,7 +21,6 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { DEFAULT_SUBAGENT_TIMEOUT_MS } from '#/session/subagent/configSection';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionSwarmService, type SessionSwarmRunResult, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
-import { IAgentReminderQueueService } from '#/agent/reminderQueue/reminderQueue';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
@@ -199,11 +198,6 @@ describe('AgentSwarmService', () => {
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix.stub(IAgentLoopService, stubLoopWithHooks());
-    ix.stub(IAgentReminderQueueService, {
-      _serviceBrand: undefined,
-      enqueue: () => '',
-      drain: () => {},
-    });
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IAgentContextInjectorService, new SyncDescriptor(AgentContextInjectorService));
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
@@ -267,7 +261,11 @@ describe('AgentSwarmService', () => {
     await runInjectionBoundary(ix.get(IAgentLoopService));
 
     let reminder = context.get().at(-1);
-    expect(reminder?.origin).toEqual({ kind: 'injection', variant: 'swarm_mode' });
+    expect(reminder?.origin).toEqual({
+      kind: 'injection',
+      variant: 'swarm_mode',
+      disclosure: { kind: 'swarm_mode', state: 'active' },
+    });
     expect(textOf(reminder)).toContain('You are now in "agent swarm" mode.');
 
     await runInjectionBoundary(ix.get(IAgentLoopService));
@@ -277,7 +275,11 @@ describe('AgentSwarmService', () => {
     await runInjectionBoundary(ix.get(IAgentLoopService));
 
     reminder = context.get().at(-1);
-    expect(reminder?.origin).toEqual({ kind: 'injection', variant: 'swarm_mode' });
+    expect(reminder?.origin).toEqual({
+      kind: 'injection',
+      variant: 'swarm_mode',
+      disclosure: { kind: 'swarm_mode', state: 'inactive' },
+    });
     expect(textOf(reminder)).toContain('Swarm Mode has ended.');
     expect(context.get()).toHaveLength(2);
   });
@@ -332,11 +334,36 @@ describe('AgentSwarmService', () => {
 
     expect(swarm.isActive).toBe(false);
     const reminder = context.get().at(-1);
-    expect(reminder?.origin).toEqual({ kind: 'injection', variant: 'swarm_mode' });
+    expect(reminder?.origin).toEqual({
+      kind: 'injection',
+      variant: 'swarm_mode',
+      disclosure: { kind: 'swarm_mode', state: 'inactive' },
+    });
     const text =
       reminder?.content.map((part) => (part.type === 'text' ? part.text : '')).join('') ?? '';
     expect(text).toContain('Swarm Mode has ended.');
     expect(context.get()).toHaveLength(2);
+  });
+
+  it('derives the rendered state from the disclosure, not the reminder text', async () => {
+    const swarm = ix.get(IAgentSwarmService);
+    const context = ix.get(IAgentContextMemoryService);
+    ix.get(IAgentSystemReminderService).appendSystemReminder('outdated enter copy', {
+      kind: 'injection',
+      variant: 'swarm_mode',
+      disclosure: { kind: 'swarm_mode', state: 'active' },
+    });
+    await restoreTestAgentWire(
+      ix.get(IWireService),
+      ix.get(IAppendLogStore),
+      testWireScope('wire', 'swarm-test'),
+      [{ type: 'swarm_mode.enter', trigger: 'manual' }],
+    );
+
+    await runInjectionBoundary(ix.get(IAgentLoopService));
+
+    expect(swarm.isActive).toBe(true);
+    expect(context.get()).toHaveLength(1);
   });
 
   it('dispatch persists enter/exit records and replay rebuilds the trigger (silent)', async () => {

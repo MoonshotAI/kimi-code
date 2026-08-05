@@ -1,27 +1,35 @@
 /**
  * `contextInjector` domain — `IAgentContextInjectorService` implementation.
  *
- * The unified boundary scheduler for every model-facing reminder. It drains
- * the persisted once-reminder queue (`reminderQueue`, past-tense events,
- * exactly-once) ahead of reconciling the registered context providers
+ * The unified boundary scheduler for every model-facing reminder. At each
+ * injection boundary (turn start, step, compaction follow-up, wire restore)
+ * it first fires `onWillInject` — where boundary participants such as the
+ * `reminderQueue` drain their persisted once-reminders (past-tense events,
+ * exactly-once) — then reconciles the registered context providers
  * (present-tense state) through `loop` and `systemReminder`, tracks provider
- * positions in `contextMemory` through `eventBus`, and reconciles those
- * positions after `wire` restoration. Each provider call receives the
- * newest surviving injection of its own variant (`lastInjection`) and the
- * typed disclosure recorded on it (`lastDisclosure`), so providers never read
- * context layout or position indexes themselves. The plain-data `isNewTurn`
- * flag is registered into `agentState` (`IAgentStateService`) and read/written
- * through it; `entries` stays a plain instance field (its values hold provider
- * functions, not plain data). Bound at Agent scope.
+ * positions in `contextMemory` through `eventBus`, and resyncs those
+ * positions after `wire` restoration. Each provider call receives the newest
+ * surviving injection of its own variant (`lastInjection`) and the typed
+ * disclosure recorded on it (`lastDisclosure`), so providers never read
+ * context layout or position indexes themselves. Turn-start providers run
+ * synchronously after `turn.started` — before the turn's first step request
+ * materializes its prompt — and must stay synchronous (registration throws on
+ * a Promise-returning provider); they are also reconciled at every later step
+ * boundary as a fallback for facts that arrive after `turn.started` (for
+ * example, a queued turn cancelled while another turn is already running).
+ * The plain-data `isNewTurn` flag is registered
+ * into `agentState` (`IAgentStateService`) and read/written through it;
+ * `entries` stays a plain instance field (its values hold provider functions,
+ * not plain data). Bound at Agent scope.
  */
 
 import { Disposable, toDisposable, type IDisposable } from "#/_base/di/lifecycle";
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Emitter, type Event } from '#/_base/event';
 import { defineState } from '#/_base/state/stateRegistry';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentReminderQueueService } from '#/agent/reminderQueue/reminderQueue';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventBus } from '#/app/event/eventBus';
@@ -50,11 +58,12 @@ export const contextInjectorIsNewTurnKey = defineState<boolean>(
 export class AgentContextInjectorService extends Disposable implements IAgentContextInjectorService {
   declare readonly _serviceBrand: undefined;
   private readonly entries = new Set<ContextInjectionEntry>();
+  private readonly willInject = this._register(new Emitter<void>());
+  readonly onWillInject: Event<void> = this.willInject.event;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentLoopService loopService: IAgentLoopService,
-    @IAgentReminderQueueService private readonly reminderQueue: IAgentReminderQueueService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IEventBus private readonly eventBus: IEventBus,
     @IWireService wire: IWireService,
@@ -70,7 +79,7 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     );
     this._register(
       this.eventBus.subscribe('turn.started', () => {
-        this.reminderQueue.drain();
+        this.willInject.fire();
         this.isNewTurn = true;
         this.injectAtTurnStart();
       }),
@@ -82,7 +91,7 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     );
     this._register(
       wire.hooks.onDidRestore.register('context-injector', async (_ctx, next) => {
-        this.reminderQueue.drain();
+        this.willInject.fire();
         this.resyncPositions();
         await next();
       }),
@@ -135,15 +144,11 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
   }
 
   private async inject(boundary?: ContextInjectionEntry['boundary']): Promise<void> {
-    this.reminderQueue.drain();
+    this.willInject.fire();
     const isNewTurn = this.isNewTurn;
     this.isNewTurn = false;
     for (const entry of this.entries) {
-      if (
-        boundary !== undefined &&
-        entry.boundary !== boundary &&
-        !(boundary === 'step' && entry.boundary === 'turn-start')
-      ) continue;
+      if (boundary !== undefined && !shouldRunAtBoundary(entry, boundary)) continue;
       const content = await entry.provider(this.providerContext(entry, isNewTurn));
       if (!this.entries.has(entry)) continue;
       this.appendResult(entry, content);
@@ -269,6 +274,14 @@ function findInjections(
     }
   });
   return positions;
+}
+
+function shouldRunAtBoundary(
+  entry: ContextInjectionEntry,
+  boundary: NonNullable<ContextInjectionEntry['boundary']>,
+): boolean {
+  if (entry.boundary === boundary) return true;
+  return boundary === 'step' && entry.boundary === 'turn-start';
 }
 
 function isThenable(value: unknown): value is PromiseLike<unknown> {

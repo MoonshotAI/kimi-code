@@ -35,7 +35,6 @@ import {
 } from '#/agent/loop/loop';
 import type { StepRequest } from '#/agent/loop/stepRequest';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentReminderQueueService } from '#/agent/reminderQueue/reminderQueue';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
@@ -324,11 +323,6 @@ function registerSharedServices(
     enabled: (id: string) => (id === TOOL_SELECT_FLAG_ID ? flagEnabled : false),
   });
   reg.defineInstance(IWireService, stubWire());
-  reg.defineInstance(IAgentReminderQueueService, {
-    _serviceBrand: undefined,
-    enqueue: () => '',
-    drain: () => {},
-  });
   reg.define(IAgentContextInjectorService, AgentContextInjectorService);
   reg.define(IAgentToolRegistryService, AgentToolRegistryService);
   reg.define(IAgentToolSelectService, AgentToolSelectService);

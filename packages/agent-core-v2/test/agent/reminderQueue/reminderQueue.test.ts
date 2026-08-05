@@ -11,6 +11,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
+import { Emitter } from '#/_base/event';
+import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { CHECKPOINTED_MODELS } from '#/agent/contextMemory/conversationTime';
 import { IAgentReminderQueueService } from '#/agent/reminderQueue/reminderQueue';
@@ -34,15 +36,24 @@ describe('AgentReminderQueueService', () => {
   let context: IAgentContextMemoryService;
   let queue: IAgentReminderQueueService;
   let reminders: IAgentSystemReminderService;
+  let willInject: Emitter<void>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     records = [];
     log = recordingWireLog(records);
+    willInject = disposables.add(new Emitter<void>());
     ix = createServices(disposables, {
       base: [registerContextMemoryServices],
       strict: true,
       additionalServices: (reg) => {
+        reg.defineInstance(IAgentContextInjectorService, {
+          _serviceBrand: undefined,
+          onWillInject: willInject.event,
+          register: () => ({ dispose() {} }),
+          registerAtTurnStart: () => ({ dispose() {} }),
+          injectAfterCompaction: async () => {},
+        });
         reg.define(IAgentSystemReminderService, AgentSystemReminderService);
         reg.define(IAgentReminderQueueService, AgentReminderQueueService);
       },
@@ -147,6 +158,7 @@ describe('AgentReminderQueueService', () => {
     reminders.appendSystemReminder('crash window', {
       kind: 'injection',
       variant: 'interruption',
+      disclosure: { kind: 'once_reminder', id: 'e1' },
     });
     const journal = [
       {
@@ -164,10 +176,42 @@ describe('AgentReminderQueueService', () => {
     expect(wire.getModel(ReminderQueueModel)).toEqual([]);
   });
 
+  it('reconciles multiple appended-but-unrecorded deliveries after restore', async () => {
+    reminders.appendSystemReminder('first', {
+      kind: 'injection',
+      variant: 'a',
+      disclosure: { kind: 'once_reminder', id: 'e1' },
+    });
+    reminders.appendSystemReminder('second', {
+      kind: 'injection',
+      variant: 'b',
+      disclosure: { kind: 'once_reminder', id: 'e2' },
+    });
+    const journal = [
+      {
+        type: 'reminderQueue.enqueue',
+        entry: { id: 'e1', variant: 'a', content: 'first' },
+      },
+      {
+        type: 'reminderQueue.enqueue',
+        entry: { id: 'e2', variant: 'b', content: 'second' },
+      },
+    ] as unknown as WireRecord[];
+
+    await restoreTestAgentWire(wire, log, SCOPE, journal);
+    expect(wire.getModel(ReminderQueueModel)).toHaveLength(2);
+
+    queue.drain();
+
+    expect(injectionMessages()).toHaveLength(2);
+    expect(wire.getModel(ReminderQueueModel)).toEqual([]);
+  });
+
   it('skips vacuous partial assistant messages when matching the conversation tail', async () => {
     reminders.appendSystemReminder('crash window', {
       kind: 'injection',
       variant: 'interruption',
+      disclosure: { kind: 'once_reminder', id: 'e1' },
     });
     context.append({ role: 'assistant', content: [], toolCalls: [], partial: true });
     const journal = [
@@ -193,6 +237,27 @@ describe('AgentReminderQueueService', () => {
     queue.drain();
 
     expect(injectionMessages()).toHaveLength(2);
+    expect(wire.getModel(ReminderQueueModel)).toEqual([]);
+  });
+
+  it('records the entry id as the delivered reminder disclosure', () => {
+    queue.enqueue({ variant: 'a', content: 'first' });
+
+    queue.drain();
+
+    expect(injectionMessages()[0]?.origin).toEqual({
+      kind: 'injection',
+      variant: 'a',
+      disclosure: { kind: 'once_reminder', id: expect.any(String) },
+    });
+  });
+
+  it('drains itself on every injection boundary', () => {
+    queue.enqueue({ variant: 'a', content: 'first' });
+
+    willInject.fire();
+
+    expect(injectionMessages()).toHaveLength(1);
     expect(wire.getModel(ReminderQueueModel)).toEqual([]);
   });
 });

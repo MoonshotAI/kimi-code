@@ -409,7 +409,11 @@ describe('AgentRecords persistence metadata', () => {
     expect(ctx.get(IAgentGoalService).getGoal().goal).toBeNull();
     ctx.get(IAgentReminderQueueService).drain();
     const reminder = context.get().at(-1);
-    expect(reminder?.origin).toEqual({ kind: 'injection', variant: 'goal_fork_cleared' });
+    expect(reminder?.origin).toEqual({
+      kind: 'injection',
+      variant: 'goal_fork_cleared',
+      disclosure: { kind: 'once_reminder', id: expect.any(String) },
+    });
     expect(JSON.stringify(reminder?.content)).toContain('This fork does not have a current goal.');
   });
 
@@ -438,6 +442,7 @@ describe('AgentRecords persistence metadata', () => {
     expect(context.get().at(-1)?.origin).toEqual({
       kind: 'injection',
       variant: 'goal_fork_cleared',
+      disclosure: { kind: 'once_reminder', id: expect.any(String) },
     });
   });
 

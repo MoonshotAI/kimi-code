@@ -20,7 +20,6 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentReminderQueueService } from '#/agent/reminderQueue/reminderQueue';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
@@ -83,11 +82,6 @@ describe('AgentContextInjectorService', () => {
         reg.defineInstance(IAgentLoopService, loop);
         reg.defineInstance(IWireService, stubWire());
         reg.defineInstance(IAgentStateService, new AgentStateService());
-        reg.defineInstance(IAgentReminderQueueService, {
-          _serviceBrand: undefined,
-          enqueue: () => '',
-          drain: () => {},
-        });
         reg.define(IAgentSystemReminderService, AgentSystemReminderService);
         reg.define(IAgentContextInjectorService, AgentContextInjectorService);
       },
@@ -337,15 +331,13 @@ describe('AgentContextInjectorService', () => {
     ]);
   });
 
-  it('drains the reminder queue before running the providers', async () => {
+  it('fires onWillInject before running the providers', async () => {
     const calls: string[] = [];
-    ix.stub(IAgentReminderQueueService, {
-      _serviceBrand: undefined,
-      enqueue: () => '',
-      drain: () => {
-        calls.push('drain');
-      },
-    });
+    disposables.add(
+      injector(ix).onWillInject(() => {
+        calls.push('willInject');
+      }),
+    );
     injector(ix).register('ordering_test', () => {
       calls.push('provider');
       return undefined;
@@ -353,7 +345,7 @@ describe('AgentContextInjectorService', () => {
 
     await injector(ix).inject();
 
-    expect(calls).toEqual(['drain', 'provider']);
+    expect(calls).toEqual(['willInject', 'provider']);
   });
 
   it('runs synchronous turn-start providers before the next prompt materializes', () => {

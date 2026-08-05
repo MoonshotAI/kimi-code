@@ -169,6 +169,16 @@ function scrubHomePrefixes(value: unknown, home: HomePair): unknown {
  * the comparison still covers everything not listed here. Keep empty unless a
  * gap is genuinely accepted; remove entries as gaps close.
  */
+function stripOriginDisclosure(history: readonly unknown[]): readonly unknown[] {
+  return history.map((message) => {
+    const record = message as { readonly origin?: { readonly disclosure?: unknown } };
+    if (record.origin?.disclosure === undefined) return message;
+    const origin = { ...record.origin };
+    delete origin.disclosure;
+    return { ...record, origin };
+  });
+}
+
 const KNOWN_DIFFS = {
   // v2's flag registry is per-domain and already carries flags v1 does not
   // have (minidb backend, subagent); v1-only flags would be the symmetric
@@ -247,10 +257,14 @@ const KNOWN_DIFFS = {
   // provider-MEASURED prefix. In-memory appends (e.g. importContext) count
   // identically on both engines via the shared `estimateTokensForMessages`,
   // but once the provider reports measured usage the counts diverge by
-  // design. Histories compare in full; the count compares only in the
-  // pre-LLM state where both sides still estimate.
+  // design. Histories compare in full except for `origin.disclosure` — v2
+  // records typed reminder-render state there (swarm mode, once-reminder
+  // ids) and v1 has no such field; the count compares only in the pre-LLM
+  // state where both sides still estimate.
   getContext: (context: { readonly history: readonly unknown[] }): unknown =>
-    context.history.length === 0 ? context : { history: context.history },
+    context.history.length === 0
+      ? context
+      : { history: stripOriginDisclosure(context.history) },
   // Plan ids are random per engine (hero slugs) and the plan path embeds
   // both the per-home session dir and the id, so the comparison covers the
   // content and the path LAYOUT (id scrubbed); the id itself is asserted

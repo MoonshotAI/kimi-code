@@ -6,20 +6,28 @@
  * positions are folded away (compaction), and enter/exit transitions render
  * the corresponding reminder. Tool-triggered swarms never render — the
  * AgentSwarm tool result already tells the model. Reconciliation derives the
- * rendered state from the latest surviving `contextMemory` message, so undo,
- * compaction, and restore cannot leave a stale in-memory render flag.
+ * rendered state from the typed disclosure recorded on the newest surviving
+ * injection, never from rendered text, so reminder copy edits cannot corrupt
+ * the state of restored sessions. Sessions written before disclosures existed
+ * fall back to variant matching against `contextMemory`: a surviving
+ * `swarm_mode` injection means active, a surviving legacy `swarm_mode_exit`
+ * injection means inactive, whichever is latest wins.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import {
+  IAgentContextInjectorService,
+  type ContextInjectionContext,
+  type ContextInjectionResult,
+} from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
 
 import SWARM_MODE_ENTER_REMINDER from '../enter-reminder.md?raw';
 import SWARM_MODE_EXIT_REMINDER from '../exit-reminder.md?raw';
 import type { SwarmModeTrigger } from '../swarm';
 
 const SWARM_MODE_INJECTION_VARIANT = 'swarm_mode';
+const LEGACY_SWARM_MODE_EXIT_VARIANT = 'swarm_mode_exit';
 
 export interface SwarmInjectionOptions {
   readonly getTrigger: () => SwarmModeTrigger | null;
@@ -33,37 +41,39 @@ export class SwarmInjection extends Disposable {
   ) {
     super();
     this._register(
-      dynamicInjector.register(SWARM_MODE_INJECTION_VARIANT, () => this.reminder()),
+      dynamicInjector.register(SWARM_MODE_INJECTION_VARIANT, (ctx) => this.reminder(ctx)),
     );
   }
 
-  private reminder(): string | undefined {
+  private reminder(ctx: ContextInjectionContext): ContextInjectionResult | undefined {
     const trigger = this.options.getTrigger();
     const active = trigger !== null && trigger !== 'tool';
-    const rendered = lastRenderedFromHistory(this.context.get());
-    if (active) return rendered === 'active' ? undefined : SWARM_MODE_ENTER_REMINDER;
-    return rendered === 'active' ? SWARM_MODE_EXIT_REMINDER : undefined;
+    const rendered = this.renderedState(ctx);
+    if (active) {
+      return rendered === 'active'
+        ? undefined
+        : {
+            content: SWARM_MODE_ENTER_REMINDER,
+            disclosure: { kind: 'swarm_mode', state: 'active' },
+          };
+    }
+    return rendered === 'active'
+      ? {
+          content: SWARM_MODE_EXIT_REMINDER,
+          disclosure: { kind: 'swarm_mode', state: 'inactive' },
+        }
+      : undefined;
   }
-}
 
-function lastRenderedFromHistory(
-  history: readonly ContextMessage[],
-): 'active' | 'inactive' | undefined {
-  for (let i = history.length - 1; i >= 0; i--) {
-    const message = history[i]!;
-    const origin = message.origin;
-    if (origin?.kind !== 'injection') continue;
-    if (origin.variant !== SWARM_MODE_INJECTION_VARIANT && origin.variant !== 'swarm_mode_exit') {
-      continue;
-    }
-    const text = message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
-    if (text === `<system-reminder>\n${SWARM_MODE_ENTER_REMINDER.trim()}\n</system-reminder>`) {
-      return 'active';
-    }
-    if (text === `<system-reminder>\n${SWARM_MODE_EXIT_REMINDER.trim()}\n</system-reminder>`) {
-      return 'inactive';
+  private renderedState(ctx: ContextInjectionContext): 'active' | 'inactive' | undefined {
+    if (ctx.lastDisclosure?.kind === 'swarm_mode') return ctx.lastDisclosure.state;
+    const history = this.context.get();
+    for (let i = history.length - 1; i >= 0; i--) {
+      const origin = history[i]!.origin;
+      if (origin?.kind !== 'injection') continue;
+      if (origin.variant === LEGACY_SWARM_MODE_EXIT_VARIANT) return 'inactive';
+      if (origin.variant === SWARM_MODE_INJECTION_VARIANT) return 'active';
     }
     return undefined;
   }
-  return undefined;
 }

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { Emitter } from '#/_base/event';
 import {
   IAgentContextInjectorService,
   type ContextInjectionProvider,
@@ -35,6 +36,7 @@ let registeredInjection:
 
 const injectorStub: IAgentContextInjectorService = {
   _serviceBrand: undefined,
+  onWillInject: new Emitter<void>().event,
   register: (name, provider) => {
     registeredInjection = { name, provider };
     return {
