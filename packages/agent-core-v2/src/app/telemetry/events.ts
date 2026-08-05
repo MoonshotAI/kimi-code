@@ -228,20 +228,6 @@ export interface CompactionFailedEvent {
   trace_id?: string;
 }
 
-export interface CacheBreakDetectedEvent {
-  model: string;
-  prev_input_cache_read: number;
-  curr_input_cache_read: number;
-  prev_input_other: number;
-  curr_input_other: number;
-  prev_output: number;
-  curr_output: number;
-  prev_input_cache_creation: number;
-  curr_input_cache_creation: number;
-  cache_read_drop_ratio: number;
-  interval_ms: number;
-}
-
 export interface ContextProjectionRepairedEvent {
   reordered: number;
   synthesized: number;
@@ -674,23 +660,6 @@ export const telemetryEventDefinitions = {
       error_type: 'Error class name',
       trace_id:
         'Trace id of the failed compaction request, from its response headers or its error response; absent when the failure happened before any request or before response headers arrived (network errors), and for non-Kimi protocols',
-    },
-  }),
-  cache_break_detected: defineAgentTelemetryEvent<CacheBreakDetectedEvent>({
-    owner: 'kimi-code',
-    comment: 'A sudden prompt-cache read drop between consecutive turn requests is detected.',
-    properties: {
-      model: 'Model id the current request targeted',
-      prev_input_cache_read: 'Cache-read input tokens of the previous turn request (the baseline)',
-      curr_input_cache_read: 'Cache-read input tokens of the current turn request',
-      prev_input_other: 'Non-cached input tokens of the previous turn request',
-      curr_input_other: 'Non-cached input tokens of the current turn request',
-      prev_output: 'Output tokens of the previous turn request',
-      curr_output: 'Output tokens of the current turn request',
-      prev_input_cache_creation: 'Cache-creation input tokens of the previous turn request',
-      curr_input_cache_creation: 'Cache-creation input tokens of the current turn request',
-      cache_read_drop_ratio: 'Cache-read drop relative to the baseline: (prev - curr) / prev',
-      interval_ms: 'Time between the two usage records in milliseconds',
     },
   }),
   context_projection_repaired: defineAgentTelemetryEvent<ContextProjectionRepairedEvent>({

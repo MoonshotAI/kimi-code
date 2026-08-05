@@ -7,7 +7,7 @@
  */
 
 import type { Component, Focusable } from '@moonshot-ai/pi-tui';
-import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
+import type { KimiHarness, Session, TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 
 import { getCacheHintConfig, peekCacheHintConfig } from '#/utils/cache-hint-config';
 import { currentTuiConfig } from '../commands/config';
@@ -39,6 +39,17 @@ export interface CacheHintHost {
 
 type HintDecision = { readonly idleSeconds: number; readonly totalTokens: number };
 
+/** Cache-break detection: a step's cache read dropping under 95% of the
+ *  previous step's by more than this many tokens counts as a break. */
+const CACHE_BREAK_MIN_DROP_TOKENS = 2000;
+const CACHE_BREAK_DROP_RATIO = 0.95;
+
+interface CacheBreakBaseline {
+  readonly model: string;
+  readonly usage: TokenUsage;
+  readonly time: number;
+}
+
 export class CacheHintController {
   /** Latest in-process LLM round-trip time (turn begin / turn end). */
   private lastActivityAt: number | undefined;
@@ -60,8 +71,56 @@ export class CacheHintController {
   private restoredTexts: string[] = [];
   /** Resume scenario fires at most once per session per TUI instance. */
   private readonly resumedSessions = new Set<string>();
+  /** Last measured main-loop step usage for cache-break detection. */
+  private breakBaseline: CacheBreakBaseline | undefined;
 
   constructor(private readonly host: CacheHintHost) {}
+
+  /**
+   * Cache-break detection (client-side, main loop): feed each completed
+   * step's usage. A step whose cache read drops sharply below the previous
+   * one is reported as `cache_break_detected` with both usages, the drop
+   * ratio, and the interval. Unmeasured (missing/all-zero) usage is skipped
+   * without touching the baseline; a model change resets the comparison.
+   */
+  noteStepUsage(usage: TokenUsage | undefined): void {
+    if (usage === undefined) return;
+    if (
+      usage.inputOther === 0 &&
+      usage.output === 0 &&
+      usage.inputCacheRead === 0 &&
+      usage.inputCacheCreation === 0
+    ) {
+      return;
+    }
+    const model = this.host.state.appState.model;
+    const now = Date.now();
+    const prev = this.breakBaseline;
+    this.breakBaseline = { model, usage, time: now };
+    if (prev === undefined || prev.model !== model) return;
+    const prevRead = prev.usage.inputCacheRead;
+    const currRead = usage.inputCacheRead;
+    if (currRead >= prevRead * CACHE_BREAK_DROP_RATIO) return;
+    if (prevRead - currRead <= CACHE_BREAK_MIN_DROP_TOKENS) return;
+    this.host.track('cache_break_detected', {
+      model,
+      prev_input_cache_read: prevRead,
+      curr_input_cache_read: currRead,
+      prev_input_other: prev.usage.inputOther,
+      curr_input_other: usage.inputOther,
+      prev_output: prev.usage.output,
+      curr_output: usage.output,
+      prev_input_cache_creation: prev.usage.inputCacheCreation,
+      curr_input_cache_creation: usage.inputCacheCreation,
+      cache_read_drop_ratio: (prevRead - currRead) / prevRead,
+      interval_ms: now - prev.time,
+    });
+  }
+
+  /** Compaction legitimately shrinks the cached prefix — reset the baseline. */
+  noteCompactionFinished(): void {
+    this.breakBaseline = undefined;
+  }
 
   recordActivity(): void {
     this.lastActivityAt = Date.now();
@@ -83,6 +142,7 @@ export class CacheHintController {
     this.triggerFetchAttempted = false;
     this.lastDialogRestored = false;
     this.restoredTexts = [];
+    this.breakBaseline = undefined;
   }
 
   /** Background warm-up on session creation; never blocks, never throws. */

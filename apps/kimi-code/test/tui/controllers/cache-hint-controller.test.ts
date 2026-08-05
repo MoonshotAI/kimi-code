@@ -335,6 +335,80 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
   });
 });
 
+describe('CacheHintController cache-break detection', () => {
+  const u = (inputCacheRead: number) => ({
+    inputOther: 100,
+    output: 50,
+    inputCacheRead,
+    inputCacheCreation: 0,
+  });
+
+  it('does not judge the first measured step', () => {
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.noteStepUsage(u(10000));
+    expect(host.track).not.toHaveBeenCalled();
+  });
+
+  it('reports a drop beyond the ratio and token gates with both usages', () => {
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.noteStepUsage(u(10000));
+    controller.noteStepUsage(u(7000));
+
+    expect(host.track).toHaveBeenCalledWith(
+      'cache_break_detected',
+      expect.objectContaining({
+        model: 'k2',
+        prev_input_cache_read: 10000,
+        curr_input_cache_read: 7000,
+        cache_read_drop_ratio: 0.3,
+      }),
+    );
+  });
+
+  it('stays quiet within the ratio gate or under the token threshold', () => {
+    const a = makeHost();
+    const controllerA = new CacheHintController(a.host);
+    controllerA.noteStepUsage(u(100000));
+    controllerA.noteStepUsage(u(96000)); // 4% drop — inside the ratio gate
+    expect(a.host.track).not.toHaveBeenCalled();
+
+    const b = makeHost();
+    const controllerB = new CacheHintController(b.host);
+    controllerB.noteStepUsage(u(4000));
+    controllerB.noteStepUsage(u(2500)); // drop 1500 ≤ 2000 — under the token threshold
+    expect(b.host.track).not.toHaveBeenCalled();
+  });
+
+  it('skips unmeasured usage without touching the baseline', () => {
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.noteStepUsage(u(10000));
+    controller.noteStepUsage(undefined);
+    controller.noteStepUsage({ inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 });
+    controller.noteStepUsage(u(5000));
+    expect(host.track).toHaveBeenCalledWith(
+      'cache_break_detected',
+      expect.objectContaining({ prev_input_cache_read: 10000, curr_input_cache_read: 5000 }),
+    );
+  });
+
+  it('resets the baseline on compaction and on model change', () => {
+    const { host, state } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.noteStepUsage(u(10000));
+    controller.noteCompactionFinished();
+    controller.noteStepUsage(u(100)); // post-compaction drop is expected
+    expect(host.track).not.toHaveBeenCalled();
+
+    controller.noteStepUsage(u(10000));
+    state.appState.model = 'other-model';
+    controller.noteStepUsage(u(100)); // model changed — incomparable
+    expect(host.track).not.toHaveBeenCalled();
+  });
+});
+
 describe('CacheHintController scenario 1 (resume)', () => {
   /** maybeShowOnResume awaits the user's choice; dismiss the dialog once mounted. */
   async function showOnResumeAndDismiss(

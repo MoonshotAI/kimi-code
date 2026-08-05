@@ -14,6 +14,7 @@ import type {
   PromptPart,
   Session,
   SkillSummary,
+  TokenUsage,
   WorkspaceTrustInfo,
 } from '@moonshot-ai/kimi-code-sdk';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
@@ -3087,6 +3088,16 @@ export class KimiTUI {
   /** Latest in-process LLM round-trip; feeds the idle cache-hint scenario. */
   recordSessionActivity(): void {
     this.cacheHint.recordActivity();
+  }
+
+  /** Per-step usage for the client-side cache-break detector. */
+  noteStepUsage(usage: TokenUsage | undefined): void {
+    this.cacheHint.noteStepUsage(usage);
+  }
+
+  /** Compaction shrinks the cached prefix — reset the cache-break baseline. */
+  noteCompactionFinished(): void {
+    this.cacheHint.noteCompactionFinished();
   }
 
   private async runMigrationScreen(plan: MigrationPlan): Promise<MigrationScreenResult> {

@@ -28,6 +28,7 @@ import type {
   TurnStepCompletedEvent,
   TurnStepInterruptedEvent,
   TurnStepStartedEvent,
+  TokenUsage,
   WarningEvent,
 } from '@moonshot-ai/kimi-code-sdk';
 
@@ -105,6 +106,8 @@ export interface SessionEventHost {
   updateActivityPane(): void;
   track(event: string, props?: Record<string, unknown>): void;
   recordSessionActivity(): void;
+  noteStepUsage(usage: TokenUsage | undefined): void;
+  noteCompactionFinished(): void;
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
   restoreInputText(text: string): void;
@@ -407,6 +410,7 @@ export class SessionEventHandler {
 
   private handleStepCompleted(event: TurnStepCompletedEvent): void {
     this.host.streamingUI.flushNow();
+    this.host.noteStepUsage(event.usage);
     this.maybeShowDebugTiming(event);
 
     if (event.providerFinishReason === 'filtered') {
@@ -1055,6 +1059,7 @@ export class SessionEventHandler {
   }
 
   private finishCompaction(sendQueued: (item: QueuedMessage) => void): void {
+    this.host.noteCompactionFinished();
     const hasActiveTurn = this.host.streamingUI.hasActiveTurn();
     if (!hasActiveTurn) {
       const next = this.host.shiftQueuedMessage();
