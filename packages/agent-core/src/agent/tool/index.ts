@@ -531,13 +531,14 @@ export class ToolManager {
 
   setActiveTools(names: readonly string[], disallowedNames?: readonly string[]): void {
     // Callers compose [tools].disabled into an array, but an empty denylist
-    // carries no information; omit it so the serialized record matches the
-    // pre-config behavior (undefined -> omitted) instead of changing every
-    // set_active_tools record. #2534.
+    // carries no information; normalize to undefined so the serialized record
+    // omits it (matching the pre-config behavior) instead of changing every
+    // set_active_tools record with an empty disallowedNames. #2534.
     this.agent.records.logRecord({
       type: 'tools.set_active_tools',
       names,
-      ...(disallowedNames && disallowedNames.length > 0 ? { disallowedNames } : {}),
+      disallowedNames:
+        disallowedNames && disallowedNames.length > 0 ? disallowedNames : undefined,
     });
     // MCP entries are glob patterns gated separately; the rest are exact
     // builtin/user tool names. The split keeps every caller on one string[].
