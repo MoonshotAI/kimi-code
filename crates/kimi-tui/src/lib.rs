@@ -9,6 +9,7 @@ pub mod bottom_pane;
 pub mod chatwidget;
 pub mod markdown;
 pub mod picker;
+pub mod streaming;
 pub mod theme;
 
 pub use app::App;

@@ -70,54 +70,6 @@ impl TranscriptLine {
         Self { kind: TranscriptKind::Error, text: text.into() }
     }
 }
-
-/// Append a live text delta to the trailing streaming line, starting one if
-/// the transcript tail is not a streaming line (e.g. after a tool event).
-fn append_stream(transcript: &mut Vec<TranscriptLine>, delta: &str) {
-    if let Some(last) = transcript.last_mut() {
-        if last.kind == TranscriptKind::Streaming {
-            last.text.push_str(delta);
-            return;
-        }
-    }
-    transcript.push(TranscriptLine::streaming(delta.to_string()));
-}
-
-/// Append a thinking delta to the trailing thinking line (same accumulate
-/// semantics as `append_stream`).
-fn append_thinking(transcript: &mut Vec<TranscriptLine>, delta: &str) {
-    if let Some(last) = transcript.last_mut() {
-        if last.kind == TranscriptKind::Thinking {
-            last.text.push_str(delta);
-            return;
-        }
-    }
-    transcript.push(TranscriptLine::thinking(delta.to_string()));
-}
-
-/// Drop trailing transient thinking lines (reasoning never enters the
-/// transcript once the turn closes).
-fn drop_trailing_thinking(transcript: &mut Vec<TranscriptLine>) {
-    while transcript.last().is_some_and(|l| l.kind == TranscriptKind::Thinking) {
-        transcript.pop();
-    }
-}
-
-/// Close a streaming turn: replace the trailing streaming line with the final
-/// assistant text (or push it when nothing streamed). Returns whether a line
-/// was replaced.
-fn finish_stream(transcript: &mut Vec<TranscriptLine>, final_text: String) -> bool {
-    if let Some(last) = transcript.last_mut() {
-        if last.kind == TranscriptKind::Streaming {
-            last.kind = TranscriptKind::Assistant;
-            last.text = final_text;
-            return true;
-        }
-    }
-    transcript.push(TranscriptLine::assistant(final_text));
-    false
-}
-
 /// State for an in-progress Tab completion cycle.
 #[derive(Debug, Clone, PartialEq)]
 struct TabState {
@@ -1021,13 +973,13 @@ impl App {
                 // Close the streamed turn: drop transient thinking, replace
                 // the live line with the final transcript (or append it when
                 // nothing streamed).
-                drop_trailing_thinking(&mut self.transcript);
+                crate::streaming::drop_trailing_thinking(&mut self.transcript);
                 match self.session.as_mut().expect("session").transcript().await? {
                     Some(text) => {
-                        finish_stream(&mut self.transcript, text);
+                        crate::streaming::finish_stream(&mut self.transcript, text);
                     }
                     None => {
-                        finish_stream(&mut self.transcript, result.to_string());
+                        crate::streaming::finish_stream(&mut self.transcript, result.to_string());
                     }
                 }
             }
@@ -1068,9 +1020,9 @@ impl App {
             // Live model output: thinking deltas accumulate on a transient
             // dimmed line; text deltas stream into the assistant line.
             if let Some(think) = kimi_ui::stream_thinking(&event) {
-                append_thinking(&mut self.transcript, think);
+                crate::streaming::append_thinking(&mut self.transcript, think);
             } else if let Some(delta) = kimi_ui::stream_delta(&event) {
-                append_stream(&mut self.transcript, delta);
+                crate::streaming::append_stream(&mut self.transcript, delta);
             }
             return;
         }
@@ -1279,22 +1231,22 @@ mod tests {
     #[test]
     fn thinking_accumulates_and_drops() {
         let mut transcript = Vec::new();
-        append_thinking(&mut transcript, "let me ");
-        append_thinking(&mut transcript, "think");
+        crate::streaming::append_thinking(&mut transcript, "let me ");
+        crate::streaming::append_thinking(&mut transcript, "think");
         assert_eq!(transcript, vec![TranscriptLine::thinking("let me think")]);
         // Text streaming after thinking starts a separate assistant line.
-        append_stream(&mut transcript, "answer");
+        crate::streaming::append_stream(&mut transcript, "answer");
         assert_eq!(transcript[1], TranscriptLine::streaming("answer"));
         // Only TRAILING thinking lines are dropped at turn close: reasoning
         // above the visible answer stays, trailing reasoning goes.
-        drop_trailing_thinking(&mut transcript);
+        crate::streaming::drop_trailing_thinking(&mut transcript);
         assert_eq!(
             transcript,
             vec![TranscriptLine::thinking("let me think"), TranscriptLine::streaming("answer")],
             "non-trailing thinking survives"
         );
         transcript.pop(); // the assistant line closes via finish_stream
-        drop_trailing_thinking(&mut transcript);
+        crate::streaming::drop_trailing_thinking(&mut transcript);
         assert!(transcript.is_empty(), "trailing thinking dropped");
     }
 
@@ -1310,8 +1262,8 @@ mod tests {
     fn streaming_append_and_finish() {
         // Deltas accumulate on a trailing streaming line.
         let mut transcript = Vec::new();
-        append_stream(&mut transcript, "hello ");
-        append_stream(&mut transcript, "world");
+        crate::streaming::append_stream(&mut transcript, "hello ");
+        crate::streaming::append_stream(&mut transcript, "world");
         assert_eq!(
             transcript,
             vec![TranscriptLine::streaming("hello world")],
@@ -1320,15 +1272,15 @@ mod tests {
         // A non-streaming line in between (e.g. a tool event) starts a new
         // streaming line instead of corrupting the previous message.
         transcript.push(TranscriptLine::tool("Bash started"));
-        append_stream(&mut transcript, "step 2");
+        crate::streaming::append_stream(&mut transcript, "step 2");
         assert_eq!(transcript[2], TranscriptLine::streaming("step 2"));
 
         // finish_stream replaces the trailing streaming line with the final
         // transcript, and reports the replacement.
-        assert!(finish_stream(&mut transcript, "final text".to_string()));
+        assert!(crate::streaming::finish_stream(&mut transcript, "final text".to_string()));
         assert_eq!(transcript[2], TranscriptLine::assistant("final text"));
         // With no streaming line it appends a fresh assistant line.
-        assert!(!finish_stream(&mut transcript, "another".to_string()));
+        assert!(!crate::streaming::finish_stream(&mut transcript, "another".to_string()));
         assert_eq!(transcript.last(), Some(&TranscriptLine::assistant("another")));
     }
 
