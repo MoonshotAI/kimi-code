@@ -373,6 +373,10 @@ export interface AgentTaskInfo extends TaskInfoBase {
   readonly kind: 'agent';
   readonly agentId?: string;
   readonly subagentType?: string;
+  /** Display-normalized bound model alias (populated by the v2 engine). */
+  readonly model?: string;
+  /** The subagent's effective thinking effort at spawn (v2 engine). */
+  readonly thinkingEffort?: string;
 }
 
 export interface QuestionTaskInfo extends TaskInfoBase {
@@ -1342,6 +1346,8 @@ export const agentTaskInfoSchema = taskInfoBaseSchema.extend({
   kind: z.literal('agent'),
   agentId: z.string().optional(),
   subagentType: z.string().optional(),
+  model: z.string().optional(),
+  thinkingEffort: z.string().optional(),
 }) satisfies z.ZodType<AgentTaskInfo>;
 
 export const questionTaskInfoSchema = taskInfoBaseSchema.extend({

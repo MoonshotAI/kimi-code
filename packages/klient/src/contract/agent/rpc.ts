@@ -175,6 +175,8 @@ export const agentTaskInfoSchema = z.discriminatedUnion('kind', [
     kind: z.literal('agent'),
     agentId: z.string().optional(),
     subagentType: z.string().optional(),
+    model: z.string().optional(),
+    thinkingEffort: z.string().optional(),
     ...taskInfoBaseFields,
   }),
   z.object({

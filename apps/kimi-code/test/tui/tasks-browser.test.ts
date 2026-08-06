@@ -176,6 +176,33 @@ describe('TasksBrowserApp — full-screen rendering', () => {
     expect(out).toContain('call_question');
   });
 
+  it('shows the bound model and effort for agent tasks in the Detail pane', () => {
+    const out = strip(
+      makeApp({
+        tasks: [
+          task({
+            taskId: 'agent-aaaaaaaa',
+            kind: 'agent',
+            description: 'explore project',
+            agentId: 'agent-1',
+            subagentType: 'explore',
+            model: 'kimi-code/k3-256k',
+            thinkingEffort: 'low',
+          }),
+        ],
+        selectedTaskId: 'agent-aaaaaaaa',
+      })
+        .render(120)
+        .join('\n'),
+    );
+    expect(out).toContain('Agent type:');
+    expect(out).toContain('explore');
+    expect(out).toContain('Model:');
+    expect(out).toContain('kimi-code/k3-256k');
+    expect(out).toContain('Effort:');
+    expect(out).toContain('low');
+  });
+
   it('renders tail output in the Preview Output pane', () => {
     const out = strip(
       makeApp({
