@@ -1764,4 +1764,30 @@ describe('limitAgentReplayByTurns', () => {
     // trailing reminder stays attached to the last kept turn.
     expect(limited).toEqual(records.slice(11));
   });
+
+  it('counts submission-scoped skill activations and their prompt as one turn', () => {
+    const records = [
+      replayMessage('user', 't1', { kind: 'user' }),
+      replayMessage('user', '/skill a', {
+        kind: 'skill_activation',
+        activationId: 'act-1',
+        skillName: 'a',
+        trigger: 'user-slash',
+        submissionId: 'sub-1',
+      }),
+      replayMessage('user', '/skill b', {
+        kind: 'skill_activation',
+        activationId: 'act-2',
+        skillName: 'b',
+        trigger: 'user-slash',
+        submissionId: 'sub-1',
+      }),
+      replayMessage('user', 'grouped prompt', { kind: 'user', submissionId: 'sub-1' }),
+      replayMessage('assistant', 'one'),
+      replayMessage('user', 't2', { kind: 'user' }),
+    ];
+    // Trimming to 2 turns must keep the whole submission group — slicing at
+    // the prompt record would drop its skill cards.
+    expect(limitAgentReplayByTurns(records, 2)).toEqual(records.slice(1));
+  });
 });

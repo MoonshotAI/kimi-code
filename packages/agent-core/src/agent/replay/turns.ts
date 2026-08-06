@@ -1,4 +1,5 @@
 import type { AgentReplayRecord } from '../../rpc/resumed';
+import { promptSubmissionId } from '../compaction/handoff';
 
 /**
  * User-turn boundary detection over an agent's replay records.
@@ -59,9 +60,19 @@ export function limitAgentReplayByTurns(
 ): readonly AgentReplayRecord[] {
   if (maxTurns === undefined) return records;
   if (maxTurns <= 0) return [];
-  const turnStarts = records.flatMap((record, index) =>
-    isAgentReplayUserTurnRecord(record) ? [index] : [],
-  );
+  // One prompt submission may produce several turn-boundary records (skill
+  // cards appended before the prompt message); they share the submission's id
+  // and must count as a single turn, or trimming could cut a group in half.
+  const turnStarts: number[] = [];
+  let lastTurnSubmissionId: string | undefined;
+  for (let index = 0; index < records.length; index++) {
+    const record = records[index]!;
+    if (record.type !== 'message' || !isAgentReplayUserTurnRecord(record)) continue;
+    const submissionId = promptSubmissionId(record.message.origin);
+    if (submissionId !== undefined && submissionId === lastTurnSubmissionId) continue;
+    turnStarts.push(index);
+    lastTurnSubmissionId = submissionId;
+  }
   if (turnStarts.length <= maxTurns) return records;
   return records.slice(turnStarts[turnStarts.length - maxTurns]);
 }
