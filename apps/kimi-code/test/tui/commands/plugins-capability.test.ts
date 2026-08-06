@@ -299,11 +299,15 @@ describe('plugins command capability surface', () => {
 
     const lines = visibleLines(transcriptEntries, 180);
     const installed = lines.findIndex((line) => line.includes('Kimi WebBridge is installed.'));
+    const intro = lines.findIndex((line) =>
+      line.includes('Two steps left to use Kimi WebBridge:'),
+    );
     const firstStep = lines.findIndex((line) =>
       line.includes('Install the browser extension'),
     );
     const secondStep = lines.findIndex((line) => line.includes('Run /reload or /new to apply it.'));
-    expect(lines.slice(installed + 1, firstStep)).toEqual(['']);
+    expect(lines.slice(installed + 1, intro)).toEqual(['']);
+    expect(firstStep).toBe(intro + 1);
     expect(lines[firstStep]).toContain('1.');
     expect(lines.find((line) => line.includes('Chrome Web Store'))).toContain('•');
     expect(lines.find((line) => line.includes('Edge Add-ons'))).toContain('•');
