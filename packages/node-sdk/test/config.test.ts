@@ -38,6 +38,7 @@ default_model = "kimi-for-coding"
 default_permission_mode = "auto"
 skip_afk_prompt_injection = false
 default_plan_mode = false
+default_swarm_mode = false
 default_editor = ""
 theme = "dark"
 show_thinking_stream = true
@@ -132,6 +133,7 @@ max_context_size = "large"
     expect(config.thinking?.effort).toBe('high');
     expect(config.defaultPermissionMode).toBe('auto');
     expect(config.defaultPlanMode).toBe(false);
+    expect(config.defaultSwarmMode).toBe(false);
     expect(config.mergeAllAvailableSkills).toBe(true);
     expect(config.extraSkillDirs).toEqual(['~/team-skills', '.agents/team-skills']);
 

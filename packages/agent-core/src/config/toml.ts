@@ -491,6 +491,7 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
     'yolo',
     'defaultPermissionMode',
     'defaultPlanMode',
+    'defaultSwarmMode',
     'mergeAllAvailableSkills',
     'extraSkillDirs',
     'extraAgentDirs',

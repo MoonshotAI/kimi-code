@@ -39,6 +39,7 @@ import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsSer
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { IWorkspaceMcpService, type ISessionMcpOverlay } from '#/workspace/workspaceMcp/workspaceMcp';
 import { IAgentPlanService } from '#/agent/plan/plan';
+import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionSecondaryModelWarningService } from '#/session/subagent/secondaryModelWarning';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
@@ -433,6 +434,41 @@ function agentLifecycleCapturingPlanSpy(opts: { mainPreexists?: boolean } = {}):
       kind: LifecycleScope.Agent,
       accessor: {
         get: (token: unknown) => (token === IAgentPlanService ? planService : {}),
+      },
+      dispose: () => {},
+    }) as IAgentScopeHandle;
+  let mainHandle: IAgentScopeHandle | undefined = opts.mainPreexists
+    ? makeMain(MAIN_AGENT_ID)
+    : undefined;
+  const create = vi.fn((args: { agentId: string }) => {
+    mainHandle = makeMain(args.agentId);
+    return Promise.resolve(mainHandle);
+  });
+  const lifecycle: IAgentLifecycleService = {
+    ...agentLifecycleStub(),
+    get: (id: string) => (id === MAIN_AGENT_ID ? mainHandle : undefined),
+    create,
+  };
+  return { lifecycle, enter, create };
+}
+
+function agentLifecycleCapturingSwarmSpy(opts: { mainPreexists?: boolean } = {}): {
+  lifecycle: IAgentLifecycleService;
+  enter: ReturnType<typeof vi.fn>;
+  create: ReturnType<typeof vi.fn>;
+} {
+  const enter = vi.fn();
+  const swarmService = {
+    enter,
+    exit: vi.fn(),
+    isActive: false,
+  };
+  const makeMain = (agentId: string): IAgentScopeHandle =>
+    ({
+      id: agentId,
+      kind: LifecycleScope.Agent,
+      accessor: {
+        get: (token: unknown) => (token === IAgentSwarmService ? swarmService : {}),
       },
       dispose: () => {},
     }) as IAgentScopeHandle;
@@ -1678,6 +1714,56 @@ describe('SessionLifecycleService', () => {
       });
       const svc = await build([
         stubPair(IConfigService, configStub({ defaultPlanMode: true })),
+        stubPair(IAgentLifecycleService, lifecycle),
+        stubPair(ISessionIndex, {
+          ...sessionIndexStub(),
+          get: () => Promise.resolve(summary),
+        }),
+      ]);
+
+      await svc.resume('s1');
+
+      expect(create).not.toHaveBeenCalled();
+      expect(enter).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('defaultSwarmMode bootstrap', () => {
+    it('enters swarm mode on a fresh session when config.defaultSwarmMode is true', async () => {
+      const { lifecycle, enter, create } = agentLifecycleCapturingSwarmSpy();
+      const svc = await build([
+        stubPair(IConfigService, configStub({ defaultSwarmMode: true })),
+        stubPair(IAgentLifecycleService, lifecycle),
+      ]);
+
+      await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(enter).toHaveBeenCalledTimes(1);
+      expect(enter).toHaveBeenCalledWith('manual');
+    });
+
+    it('leaves swarm mode inactive when config.defaultSwarmMode is absent', async () => {
+      const { lifecycle, enter, create } = agentLifecycleCapturingSwarmSpy();
+      const svc = await build([
+        stubPair(IConfigService, configStub({})),
+        stubPair(IAgentLifecycleService, lifecycle),
+      ]);
+
+      await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+
+      expect(create).not.toHaveBeenCalled();
+      expect(enter).not.toHaveBeenCalled();
+    });
+
+    it('does not apply config.defaultSwarmMode when resuming a session', async () => {
+      const workDir = '/tmp/proj';
+      const summary = { id: 's1', workspaceId: 'wd_stub', cwd: workDir } as SessionSummary;
+      const { lifecycle, enter, create } = agentLifecycleCapturingSwarmSpy({
+        mainPreexists: true,
+      });
+      const svc = await build([
+        stubPair(IConfigService, configStub({ defaultSwarmMode: true })),
         stubPair(IAgentLifecycleService, lifecycle),
         stubPair(ISessionIndex, {
           ...sessionIndexStub(),

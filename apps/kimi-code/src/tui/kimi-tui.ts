@@ -1694,6 +1694,10 @@ export class KimiTUI {
     if (!startup.plan) {
       patch.planMode = config.defaultPlanMode === true;
     }
+    // No CLI flag gates swarm mode: the config default always hydrates the
+    // footer state; the engine applies it at (lazy) session create time.
+    patch.configDefaultSwarmMode = config.defaultSwarmMode === true;
+    patch.swarmMode = config.defaultSwarmMode === true;
     const effort = thinkingEffortFromConfig(config.thinking);
     if (effort !== undefined) {
       patch.thinkingEffort = effort;

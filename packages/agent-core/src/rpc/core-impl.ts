@@ -451,6 +451,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       if (config.defaultPlanMode === true) {
         await mainAgent.planMode.enter();
       }
+      // Honor config.defaultSwarmMode for fresh sessions. Resumed sessions
+      // restore their own swarm state from records and never re-apply this.
+      // 'manual' trigger so the entry persists across turns (task/tool
+      // entries auto-exit at turn end), matching an explicit `/swarm on`.
+      if (config.defaultSwarmMode === true) {
+        mainAgent.swarmMode.enter('manual');
+      }
       await session.writeMetadata();
       await session.flushMetadata();
     } catch (error) {

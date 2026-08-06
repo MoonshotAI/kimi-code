@@ -23,7 +23,13 @@
  * watching and connecting all live on the Workspace-scope services; session
  * consumers read the seeds and refresh off their change events.
  * Materializes the session's initial metadata on
- * creation. Bound at Workspace scope.
+ * creation. On fresh create the config-declared startup modes are entered
+ * through the main agent — plan via `IAgentPlanService` and swarm via
+ * `IAgentSwarmService` (`default_plan_mode` / `default_swarm_mode`, the
+ * latter with the `manual` trigger so the entry persists across turns
+ * instead of auto-exiting at turn end); resumed and forked sessions
+ * restore mode state from wire records and never re-apply config defaults.
+ * Bound at Workspace scope.
  * Persisted sessions are discovered through the session-index read model.
  * On create / fork the
  * session is also appended to the shared `session_index.jsonl` so v1 clients
@@ -77,6 +83,8 @@ import { unwrapErrorCause } from '#/_base/errors/errors';
 import { Emitter, type Event } from '#/_base/event';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/agent/plan/configSection';
 import { IAgentPlanService } from '#/agent/plan/plan';
+import { DEFAULT_SWARM_MODE_SECTION } from '#/agent/swarm/configSection';
+import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
@@ -244,6 +252,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       if (this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true) {
         const planAgent = main ?? (await ensureMainAgent(handle));
         await planAgent.accessor.get(IAgentPlanService).enter();
+      }
+      if (this.config.get<boolean>(DEFAULT_SWARM_MODE_SECTION) === true) {
+        const swarmAgent = main ?? (await ensureMainAgent(handle));
+        swarmAgent.accessor.get(IAgentSwarmService).enter('manual');
       }
       await this.appendSessionIndexEntry(sessionId, opts.workDir);
     } catch (error) {

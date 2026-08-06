@@ -26,6 +26,7 @@ The following example covers the most commonly used configuration fields. You ca
 default_model = "kimi-code/k3"
 default_permission_mode = "manual"
 default_plan_mode = false
+default_swarm_mode = false
 merge_all_available_skills = true
 telemetry = true
 
@@ -100,6 +101,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `default_model` | `string` | — | Default model alias; must be defined in `models` |
 | `default_permission_mode` | `string` | `manual` | Default permission mode for new sessions; one of `manual` (prompt each time), `yolo` (auto-approve tool actions, but the agent may still ask questions), or `auto` (fully autonomous — the agent decides everything without asking) |
 | `default_plan_mode` | `boolean` | `false` | Whether new sessions start in Plan mode (produce a plan before executing) by default |
+| `default_swarm_mode` | `boolean` | `false` | Whether new sessions start in swarm mode (parallel subagent orchestration, as via `/swarm on`) by default |
 | `merge_all_available_skills` | `boolean` | `true` | Whether to merge Agent Skills from all available directories |
 | `extra_skill_dirs` | `array<string>` | — | Extra skill search directories, layered on top of the default directories |
 | `extra_agent_dirs` | `array<string>` | — | Extra custom agent search directories, layered on top of the default directories |
