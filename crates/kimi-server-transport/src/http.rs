@@ -48,6 +48,13 @@ pub struct HttpState {
     processor: Arc<MessageProcessor>,
     events: Option<tokio::sync::broadcast::Sender<serde_json::Value>>,
     auth: AuthConfig,
+    /// Server self-info for `/api/v1/meta` (frozen at construction).
+    server_version: String,
+    server_id: String,
+    started_at: String,
+    /// `/api/v1/shutdown` fires this channel when configured. `Arc<Mutex>`
+    /// so handler clones (per request) share the same sender.
+    shutdown: Option<Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>>,
 }
 
 impl HttpState {
@@ -56,6 +63,20 @@ impl HttpState {
             processor,
             events: None,
             auth: AuthConfig { token: None },
+            server_version: std::env::var("KIMI_CODE_VERSION")
+                .unwrap_or_else(|_| "dev".to_string()),
+            server_id: format!(
+                "kimi-{:x}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0)
+            ),
+            started_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs().to_string())
+                .unwrap_or_default(),
+            shutdown: None,
         }
     }
 
@@ -69,7 +90,30 @@ impl HttpState {
             processor,
             events: Some(events),
             auth: AuthConfig { token: None },
+            server_version: std::env::var("KIMI_CODE_VERSION")
+                .unwrap_or_else(|_| "dev".to_string()),
+            server_id: format!(
+                "kimi-{:x}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0)
+            ),
+            started_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs().to_string())
+                .unwrap_or_default(),
+            shutdown: None,
         }
+    }
+
+    /// Arm `/api/v1/shutdown` to fire `tx` (used with graceful shutdown).
+    pub fn with_shutdown(
+        mut self,
+        tx: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    ) -> Self {
+        self.shutdown = Some(tx);
+        self
     }
 
     /// Attach the expected bearer credential (REST `Authorization` header +
@@ -109,6 +153,8 @@ pub fn router(state: HttpState) -> Router {
     let middleware = axum::middleware::from_fn_with_state(state.clone(), require_auth);
     Router::new()
         .route("/api/v1/health", get(health))
+        .route("/api/v1/meta", get(meta))
+        .route("/api/v1/shutdown", post(shutdown))
         .route("/api/v1/config", get(config_get).post(config_set))
         .route("/api/v1/sessions", get(sessions_list).post(sessions_create))
         .route(
@@ -190,12 +236,21 @@ pub fn router_with_assets(state: HttpState, assets_dir: &str) -> Router {
     router(state).fallback_service(assets)
 }
 
-/// Serve the HTTP/REST projection on `listener` until it errors.
+/// Serve the HTTP/REST projection on `listener` until it errors or
+/// `/api/v1/shutdown` is called (graceful shutdown).
 pub async fn serve(
     processor: Arc<MessageProcessor>,
     listener: tokio::net::TcpListener,
 ) -> anyhow::Result<()> {
-    axum::serve(listener, router(HttpState::new(processor))).await?;
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let state = HttpState::new(processor).with_shutdown(Arc::new(tokio::sync::Mutex::new(
+        Some(shutdown_tx),
+    )));
+    axum::serve(listener, router(state))
+        .with_graceful_shutdown(async move {
+            let _ = shutdown_rx.await;
+        })
+        .await?;
     Ok(())
 }
 
@@ -228,6 +283,38 @@ pub async fn serve_web(
 /// `GET /api/v1/health` — engine health (`{ status }`).
 async fn health(State(state): State<HttpState>) -> Json<Value> {
     Json(state.rpc(kimi_protocol::methods::HEALTH, Value::Null).await)
+}
+
+/// `GET /api/v1/meta` — server self-info (version, capabilities, id).
+async fn meta(State(state): State<HttpState>) -> Json<Value> {
+    Json(ok(json!({
+        "server_version": state.server_version,
+        "capabilities": {
+            "websocket": true,
+            "file_upload": true,
+            "fs_query": true,
+            "mcp": true,
+            "tasks": true,
+            "terminal": true
+        },
+        "server_id": state.server_id,
+        "started_at": state.started_at,
+        "open_in_apps": [],
+        "dangerous_bypass_auth": state.auth.token.is_none(),
+        "backend": "v2"
+    })))
+}
+
+/// `POST /api/v1/shutdown` — fire the graceful-shutdown channel (reply first
+/// so the caller gets a clean 200 instead of a dropped connection).
+async fn shutdown(State(state): State<HttpState>) -> Json<Value> {
+    if let Some(arc) = &state.shutdown {
+        let mut guard = arc.lock().await;
+        if let Some(tx) = guard.take() {
+            let _ = tx.send(());
+        }
+    }
+    Json(ok(json!({ "shutting_down": true })))
 }
 
 /// `GET /api/v1/config` — the engine's parsed config.
