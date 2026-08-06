@@ -5,6 +5,7 @@
 //! view. The full chatwidget/bottom-pane surface lands incrementally.
 
 pub mod app;
+pub mod bottom_pane;
 pub mod chatwidget;
 pub mod markdown;
 pub mod picker;

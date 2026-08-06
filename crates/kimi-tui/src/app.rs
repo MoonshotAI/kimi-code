@@ -15,57 +15,9 @@ use ratatui::Terminal;
 use kimi_sdk::Harness;
 
 /// All slash commands the chat surface understands (shared with `/help`).
-const SLASH_COMMANDS: &[&str] = &[
-    "/add-dir",
-    "/approvals",
-    "/approve",
-    "/archive",
-    "/auto",
-    "/clear",
-    "/compact",
-    "/config",
-    "/deny",
-    "/exit",
-    "/export",
-    "/fork",
-    "/goal",
-    "/goal-cancel",
-    "/goal-pause",
-    "/goal-resume",
-    "/goal-status",
-    "/help",
-    "/import",
-    "/info",
-    "/init",
-    "/mcp",
-    "/model",
-    "/models",
-    "/new",
-    "/permission",
-    "/plan",
-    "/plugins",
-    "/quit",
-    "/reload",
-    "/resume",
-    "/session",
-    "/sessions",
-    "/skills",
-    "/status",
-    "/steer",
-    "/swarm",
-    "/tasks",
-    "/theme",
-    "/thinking",
-    "/title",
-    "/undo",
-    "/usage",
-    "/version",
-    "/yolo",
-];
+use crate::bottom_pane::SLASH_COMMANDS;
 
-/// Closed argument sets for Tab completion of a few commands.
-const ON_OFF_ARGS: &[&str] = &["on", "off"];
-const THINKING_ARGS: &[&str] = &["low", "medium", "high"];
+
 
 /// The role/source of a transcript line, driving its render style.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -281,98 +233,6 @@ fn interrupt_action(code: KeyCode, modifiers: event::KeyModifiers) -> Option<Int
 // ── Input editing primitives ──────────────────────────────────────────────
 // The input cursor is a char index (UTF-8 safe); byte offsets are computed
 // only at edit boundaries. Every function clamps an out-of-range cursor.
-
-/// Byte offset of the `cursor`-th char (0 = start, chars count = len).
-fn byte_of_char(input: &str, cursor: usize) -> usize {
-    input.char_indices().nth(cursor).map_or(input.len(), |(i, _)| i)
-}
-
-/// Insert `ch` at the char index `cursor`; returns the new input and cursor.
-fn insert_char(input: &str, cursor: usize, ch: char) -> (String, usize) {
-    let cursor = cursor.min(input.chars().count());
-    let at = byte_of_char(input, cursor);
-    let mut out = String::with_capacity(input.len() + ch.len_utf8());
-    out.push_str(&input[..at]);
-    out.push(ch);
-    out.push_str(&input[at..]);
-    (out, cursor + 1)
-}
-
-/// Delete the char before `cursor`; returns the new input and cursor.
-fn backspace(input: &str, cursor: usize) -> (String, usize) {
-    let cursor = cursor.min(input.chars().count());
-    if cursor == 0 {
-        return (input.to_string(), 0);
-    }
-    let start = byte_of_char(input, cursor - 1);
-    let end = byte_of_char(input, cursor);
-    let mut out = String::with_capacity(input.len());
-    out.push_str(&input[..start]);
-    out.push_str(&input[end..]);
-    (out, cursor - 1)
-}
-
-/// Delete the char at `cursor` (Delete key); unchanged at end of input.
-fn delete_forward(input: &str, cursor: usize) -> String {
-    let chars = input.chars().count();
-    let cursor = cursor.min(chars);
-    if cursor >= chars {
-        return input.to_string();
-    }
-    let start = byte_of_char(input, cursor);
-    let end = byte_of_char(input, cursor + 1);
-    let mut out = String::with_capacity(input.len());
-    out.push_str(&input[..start]);
-    out.push_str(&input[end..]);
-    out
-}
-
-/// Move the cursor left (`dir < 0`) or right (`dir > 0`), clamped to bounds.
-fn move_cursor(input: &str, cursor: usize, dir: i8) -> usize {
-    let chars = input.chars().count();
-    let cursor = cursor.min(chars);
-    match dir {
-        d if d < 0 => cursor.saturating_sub(1),
-        d if d > 0 => (cursor + 1).min(chars),
-        _ => cursor,
-    }
-}
-
-/// Ctrl-U: delete everything before the cursor; cursor jumps to the start.
-fn kill_to_start(input: &str, cursor: usize) -> (String, usize) {
-    let cursor = cursor.min(input.chars().count());
-    (input[byte_of_char(input, cursor)..].to_string(), 0)
-}
-
-/// Ctrl-K: delete everything from the cursor to the end of the input.
-fn kill_to_end(input: &str, cursor: usize) -> String {
-    let cursor = cursor.min(input.chars().count());
-    input[..byte_of_char(input, cursor)].to_string()
-}
-
-/// Ctrl-W: delete the word before the cursor (skipping intervening
-/// whitespace); returns the new input and cursor.
-fn kill_word(input: &str, cursor: usize) -> (String, usize) {
-    let chars: Vec<char> = input.chars().collect();
-    let cursor = cursor.min(chars.len());
-    if cursor == 0 {
-        return (input.to_string(), 0);
-    }
-    let mut i = cursor;
-    while i > 0 && chars[i - 1].is_whitespace() {
-        i -= 1;
-    }
-    while i > 0 && !chars[i - 1].is_whitespace() {
-        i -= 1;
-    }
-    let start = byte_of_char(input, i);
-    let end = byte_of_char(input, cursor);
-    let mut out = String::with_capacity(input.len());
-    out.push_str(&input[..start]);
-    out.push_str(&input[end..]);
-    (out, i)
-}
-
 /// The interactive chat application.
 pub struct App {
     harness: Harness,
@@ -471,15 +331,15 @@ impl App {
                             'a' => self.cursor = 0,
                             'e' => self.cursor = self.input.chars().count(),
                             'u' => {
-                                let (input, cursor) = kill_to_start(&self.input, self.cursor);
+                                let (input, cursor) = crate::bottom_pane::kill_to_start(&self.input, self.cursor);
                                 self.input = input;
                                 self.cursor = cursor;
                             }
                             'k' => {
-                                self.input = kill_to_end(&self.input, self.cursor);
+                                self.input = crate::bottom_pane::kill_to_end(&self.input, self.cursor);
                             }
                             'w' => {
-                                let (input, cursor) = kill_word(&self.input, self.cursor);
+                                let (input, cursor) = crate::bottom_pane::kill_word(&self.input, self.cursor);
                                 self.input = input;
                                 self.cursor = cursor;
                             }
@@ -488,27 +348,27 @@ impl App {
                     }
                     KeyCode::Char(ch) => {
                         self.tab = None;
-                        let (input, cursor) = insert_char(&self.input, self.cursor, ch);
+                        let (input, cursor) = crate::bottom_pane::insert_char(&self.input, self.cursor, ch);
                         self.input = input;
                         self.cursor = cursor;
                     }
                     KeyCode::Backspace => {
                         self.tab = None;
-                        let (input, cursor) = backspace(&self.input, self.cursor);
+                        let (input, cursor) = crate::bottom_pane::backspace(&self.input, self.cursor);
                         self.input = input;
                         self.cursor = cursor;
                     }
                     KeyCode::Delete => {
                         self.tab = None;
-                        self.input = delete_forward(&self.input, self.cursor);
+                        self.input = crate::bottom_pane::delete_forward(&self.input, self.cursor);
                     }
                     KeyCode::Left => {
                         self.tab = None;
-                        self.cursor = move_cursor(&self.input, self.cursor, -1);
+                        self.cursor = crate::bottom_pane::move_cursor(&self.input, self.cursor, -1);
                     }
                     KeyCode::Right => {
                         self.tab = None;
-                        self.cursor = move_cursor(&self.input, self.cursor, 1);
+                        self.cursor = crate::bottom_pane::move_cursor(&self.input, self.cursor, 1);
                     }
                     KeyCode::Home => {
                         self.tab = None;
@@ -1330,7 +1190,7 @@ impl App {
     fn complete(&mut self) {
         let base = self.tab.as_ref().map(|t| t.base.clone()).unwrap_or_else(|| self.input.clone());
         let idx = self.tab.as_ref().map(|t| t.idx);
-        let (completed, next) = complete_line(&base, &self.model_aliases, idx);
+        let (completed, next) = crate::bottom_pane::complete_line(&base, &self.model_aliases, idx);
         match next {
             Some(i) => {
                 self.input = completed;
@@ -1382,53 +1242,6 @@ impl App {
         );
     }
 }
-
-fn complete_line(base: &str, model_aliases: &[String], tab_idx: Option<usize>) -> (String, Option<usize>) {
-    // Argument completion: `/plan `, `/swarm `, `/thinking `, `/model `.
-    if let Some((cmd, arg)) = base.split_once(' ') {
-        let next = match cmd {
-            "/plan" | "/swarm" => complete_from(cmd, arg, ON_OFF_ARGS, tab_idx),
-            "/thinking" => complete_from(cmd, arg, THINKING_ARGS, tab_idx),
-            "/model" => complete_model_arg(arg, model_aliases, tab_idx),
-            _ => None,
-        };
-        return next.map_or((base.to_string(), None), |(s, i)| (s, Some(i)));
-    }
-    // Command-name completion while typing `/…`.
-    if base.starts_with('/') {
-        let matches: Vec<&&str> = SLASH_COMMANDS.iter().filter(|c| c.starts_with(base)).collect();
-        if matches.is_empty() {
-            return (base.to_string(), None);
-        }
-        let idx = tab_idx.map_or(0, |i| (i + 1) % matches.len());
-        return ((*matches[idx]).to_string(), Some(idx));
-    }
-    (base.to_string(), None)
-}
-
-/// Cycle through a closed argument set (`on|off`, `low|medium|high`, …).
-fn complete_from(cmd: &str, arg: &str, options: &[&str], tab_idx: Option<usize>) -> Option<(String, usize)> {
-    let matches: Vec<&str> = options.iter().copied().filter(|o| o.starts_with(arg)).collect();
-    if matches.is_empty() {
-        return None;
-    }
-    let idx = tab_idx.map_or(0, |i| (i + 1) % matches.len());
-    Some((format!("{cmd} {}", matches[idx]), idx))
-}
-
-/// Cycle through live model aliases for `/model <prefix>`.
-fn complete_model_arg(prefix: &str, model_aliases: &[String], tab_idx: Option<usize>) -> Option<(String, usize)> {
-    if model_aliases.is_empty() {
-        return None;
-    }
-    let matches: Vec<&String> = model_aliases.iter().filter(|a| a.starts_with(prefix)).collect();
-    if matches.is_empty() {
-        return None;
-    }
-    let idx = tab_idx.map_or(0, |i| (i + 1) % matches.len());
-    Some((format!("/model {}", matches[idx]), idx))
-}
-
 fn init_terminal() -> anyhow::Result<Terminal<CrosstermBackend<io::Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -1460,38 +1273,8 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn completes_command_names_and_cycles() {
-        assert_eq!(complete_line("/", &[], None), ("/add-dir".to_string(), Some(0)));
-        assert_eq!(complete_line("/", &[], Some(0)), ("/approvals".to_string(), Some(1)));
-        assert_eq!(complete_line("/go", &[], None), ("/goal".to_string(), Some(0)));
-        assert_eq!(complete_line("/mod", &[], None), ("/model".to_string(), Some(0)));
-        assert_eq!(complete_line("/zzz", &[], None), ("/zzz".to_string(), None));
-        // Non-slash input is never completed.
-        assert_eq!(complete_line("hi", &[], None), ("hi".to_string(), None));
-    }
 
-    #[test]
-    fn completes_closed_argument_sets() {
-        assert_eq!(complete_line("/plan ", &[], None), ("/plan on".to_string(), Some(0)));
-        assert_eq!(complete_line("/plan ", &[], Some(0)), ("/plan off".to_string(), Some(1)));
-        assert_eq!(complete_line("/plan ", &[], Some(1)), ("/plan on".to_string(), Some(0)));
-        assert_eq!(complete_line("/swarm o", &[], None), ("/swarm on".to_string(), Some(0)));
-        assert_eq!(complete_line("/thinking med", &[], None), ("/thinking medium".to_string(), Some(0)));
-        // Commands without a closed arg set are left alone.
-        assert_eq!(complete_line("/clear ", &[], None), ("/clear ".to_string(), None));
-    }
 
-    #[test]
-    fn completes_model_aliases() {
-        let aliases = ["kimi-k2", "kimi-latest", "claude-3"].map(String::from);
-        assert_eq!(complete_line("/model ", &aliases, None), ("/model kimi-k2".to_string(), Some(0)));
-        assert_eq!(complete_line("/model ", &aliases, Some(0)), ("/model kimi-latest".to_string(), Some(1)));
-        assert_eq!(complete_line("/model kimi-", &aliases, None), ("/model kimi-k2".to_string(), Some(0)));
-        assert_eq!(complete_line("/model nope", &aliases, None), ("/model nope".to_string(), None));
-        // No aliases configured → untouched.
-        assert_eq!(complete_line("/model ", &[], None), ("/model ".to_string(), None));
-    }
 
     #[test]
     fn thinking_accumulates_and_drops() {
