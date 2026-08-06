@@ -629,11 +629,29 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     const before = await detect();
     const stepStates = new Map(before.steps.map((step) => [step.id, step.state]));
     const readyBefore = before.steps.every((step) => step.state === 'ok');
+    const installPlugin = stepStates.get('plugin') !== 'ok';
     const installRuntime = stepStates.get('runtime') !== 'ok' || readyBefore;
     const installPowerShell = installRuntime ? await installerPowerShell() : undefined;
 
-    report('plugin');
-    await installPluginLayer(ctx, WINDOWS_PLUGIN);
+    if (installPlugin) {
+      report('plugin');
+      try {
+        await installPluginLayer(ctx, WINDOWS_PLUGIN);
+      } catch (error) {
+        if (
+          typeof error !== 'object' ||
+          error === null ||
+          !('code' in error) ||
+          error.code !== 'EBUSY'
+        ) {
+          throw error;
+        }
+        throw new Error(
+          'Kimi Computer Use plugin files are still in use by the current Kimi Code process. Restart Kimi Code, then install again.',
+          { cause: error },
+        );
+      }
+    }
 
     if (installPowerShell !== undefined) {
       const workDir = await mkdtemp(path.join(tmpdir(), 'kimi-cu-windows-install-'));

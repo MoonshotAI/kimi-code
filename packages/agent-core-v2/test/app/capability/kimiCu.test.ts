@@ -489,6 +489,78 @@ describe('kimi-cu entry', () => {
     expect(downloads).toBe(0);
   });
 
+  it('repairs a missing Windows runtime without replacing a healthy plugin', async () => {
+    const plugins = fakePlugins([{ id: 'kimi-cu-win', enabled: true, state: 'ok' }]);
+    const doctorResults = [
+      { code: 3, stdout: '', stderr: '' },
+      {
+        code: 0,
+        stdout: 'version=0.2.14\r\nmcp=true\r\nhelper=embedded\r\nagent=running\r\n',
+        stderr: '',
+      },
+    ];
+    const hostProcess = {
+      _serviceBrand: undefined,
+      spawn: (_command: string, args: readonly string[] = []) => {
+        if (args.some((arg) => arg.includes('Get-FileHash'))) {
+          return Promise.resolve(fakeProc(0, 'PowerShell 5.1'));
+        }
+        if (args.some((arg) => arg.includes('setup_windows.ps1'))) {
+          return Promise.resolve(fakeProc(0));
+        }
+        const result = doctorResults.shift();
+        return Promise.resolve(
+          fakeProc(result?.code ?? 1, result?.stdout ?? '', result?.stderr ?? 'unexpected doctor'),
+        );
+      },
+    } as IHostProcessService;
+    const entry = createKimiCuEntry(
+      makeCtx({
+        platform: 'win32',
+        arch: 'x64',
+        plugins: plugins.service,
+        hostProcess,
+        fetchImpl: (() =>
+          Promise.resolve(
+            new Response("Write-Host 'official setup'", {
+              headers: { 'content-length': '27' },
+            }),
+          )) as typeof fetch,
+      }),
+    );
+
+    await entry.install(() => undefined);
+
+    expect(plugins.installs).toEqual([]);
+    expect(doctorResults).toEqual([]);
+  });
+
+  it('explains how to recover when Windows plugin files are still in use', async () => {
+    const busy = Object.assign(new Error('resource busy or locked'), { code: 'EBUSY' });
+    const plugins = fakePlugins([], () => {
+      throw busy;
+    });
+    const host = fakeHostProcess([
+      {
+        match: '-Command',
+        code: 0,
+        stdout: 'version=0.2.14\nmcp=true\nhelper=embedded\nagent=running\n',
+      },
+    ]);
+    const entry = createKimiCuEntry(
+      makeCtx({
+        platform: 'win32',
+        arch: 'x64',
+        plugins: plugins.service,
+        hostProcess: host.service,
+      }),
+    );
+
+    await expect(entry.install(() => undefined)).rejects.toThrow(
+      'Kimi Computer Use plugin files are still in use by the current Kimi Code process. Restart Kimi Code, then install again.',
+    );
+  });
+
   it('does not reinstall a healthy Windows runtime when only the plugin is missing', async () => {
     const plugins = fakePlugins([]);
     const host = fakeHostProcess([

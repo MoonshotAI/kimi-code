@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Select a compatible PowerShell installation before running the Windows Kimi Computer Use installer.
+Use a compatible PowerShell for Windows Kimi Computer Use installation and provide actionable recovery for locked plugin files.

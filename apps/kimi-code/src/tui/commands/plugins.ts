@@ -723,8 +723,9 @@ async function removePlugin(host: SlashCommandHost, id: string): Promise<void> {
   host.showStatus(`Removed ${id}.`);
   if (isCapabilityPluginId(host, id)) {
     host.showStatus(
-      'Note: the runtime binaries were left untouched, but Kimi Code plugin wiring is disabled for new sessions. Reinstall any time from the Official tab.',
+      'Note: the runtime binaries were left untouched, but Kimi Code plugin wiring is disabled for new sessions. Restart Kimi Code before reinstalling from the Official tab.',
     );
+    return;
   }
   host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
 }

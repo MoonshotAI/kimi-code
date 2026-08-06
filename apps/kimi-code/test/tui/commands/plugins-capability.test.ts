@@ -128,6 +128,8 @@ describe('plugins command capability surface', () => {
     expect(statuses.some((s) => s.includes('Removed kimi-cu'))).toBe(true);
     expect(statuses.some((s) => s.includes('runtime binaries were left untouched'))).toBe(true);
     expect(statuses.some((s) => s.includes('plugin wiring is disabled for new sessions'))).toBe(true);
+    expect(statuses.some((s) => s.includes('Restart Kimi Code before reinstalling'))).toBe(true);
+    expect(statuses.some((s) => s.includes('Run /new or /reload'))).toBe(false);
   });
 
   it('keeps the runtime note for the Windows backing plugin id', async () => {
