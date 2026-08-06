@@ -790,11 +790,7 @@ function pluginReloadHint(): string {
 }
 
 const WEBBRIDGE_POST_INSTALL_MARKDOWN = [
-  '*Two steps left to use Kimi WebBridge:*',
-  '1. Install the browser extension:',
-  '   - Chrome Web Store: <https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc>',
-  '   - Edge Add-ons Store: <https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg>',
-  '   - Manual installation guide: <https://www.kimi.com/code/docs/kimi-code-cli/customization/plugins.html#install-the-browser-extension>',
+  '1. Install the browser extension — [Chrome](https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc) · [Edge](https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg) · [Manual guide](https://www.kimi.com/code/docs/kimi-code-cli/customization/plugins.html#install-the-browser-extension)',
   '2. Run `/reload` or `/new` to apply it.',
 ].join('\n');
 
