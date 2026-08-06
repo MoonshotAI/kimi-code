@@ -49,7 +49,9 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
     const authorizedUrl = 'https://authorized.example.test/mcp';
-    new McpOAuthService({ kimiHomeDir: homeDir })
+    const requiredUrl = 'https://required.example.test/mcp';
+    const externalOAuth = new McpOAuthService({ kimiHomeDir: homeDir });
+    externalOAuth
       .getProvider('oauth-authorized', authorizedUrl)
       .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
     await writeFile(
@@ -65,7 +67,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
           },
           'oauth-required': {
             transport: 'http',
-            url: 'https://required.example.test/mcp',
+            url: requiredUrl,
             auth: 'oauth',
           },
           'oauth-authorized': {
@@ -86,6 +88,19 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
         { name: 'bearer', authStatus: 'bearer-token' },
         { name: 'oauth-required', authStatus: 'oauth-required' },
         { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
+      ]);
+
+      externalOAuth
+        .getProvider('oauth-required', requiredUrl)
+        .saveTokens({ access_token: 'new-test-access-token', token_type: 'Bearer' });
+      externalOAuth.invalidate('oauth-authorized', authorizedUrl, 'tokens');
+
+      await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
+        { name: 'stdio', authStatus: 'not-applicable' },
+        { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'bearer', authStatus: 'bearer-token' },
+        { name: 'oauth-required', authStatus: 'oauth-authorized' },
+        { name: 'oauth-authorized', authStatus: 'oauth-required' },
       ]);
     } finally {
       await harness.close();

@@ -2102,10 +2102,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     readonly GlobalMcpServerAuthStatus[]
   > {
     const servers = await this.globalMcpConfig.list();
+    const oauth = new McpOAuthService({
+      store: createMcpOAuthStore(this.engineAccessor.get(IAtomicDocumentStore)),
+    });
     return Promise.all(
       servers.map(async (server) => ({
         name: server.name,
-        authStatus: await this.globalMcpServerAuthState(server),
+        authStatus: await this.globalMcpServerAuthState(server, oauth),
       })),
     );
   }
@@ -2221,11 +2224,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   private async globalMcpServerAuthState(
     server: McpServerConfig,
+    oauth: McpOAuthService,
   ): Promise<GlobalMcpServerAuthState> {
     if (server.transport === 'stdio') return 'not-applicable';
     if (server.bearerTokenEnvVar !== undefined) return 'bearer-token';
     if (server.auth !== 'oauth') return 'not-applicable';
-    const oauth = await this.globalMcpOAuthService();
     return (await oauth.hasTokens(server.name, server.url))
       ? 'oauth-authorized'
       : 'oauth-required';
