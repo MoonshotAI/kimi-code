@@ -92,6 +92,7 @@ describe('SessionOutcomeMirror (Session scope)', () => {
   let session: Scope;
   let lifecycle: FakeAgentLifecycle;
   let writes: (SessionMeta['lastTurnReason'])[];
+  let touches: boolean[];
   let failNextWrite: boolean;
 
   beforeEach(() => {
@@ -100,15 +101,20 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     registerScopedService(LifecycleScope.Session, ISessionOutcomeMirror, SessionOutcomeMirror, ScopeActivation.OnScopeCreated, 'sessionActivity');
 
     writes = [];
+    touches = [];
     failNextWrite = false;
     const metadata = {
       read: async () => ({ lastTurnReason: writes.at(-1) }) as SessionMeta,
-      update: async (patch: { lastTurnReason?: SessionMeta['lastTurnReason'] }) => {
+      update: async (
+        patch: { lastTurnReason?: SessionMeta['lastTurnReason'] },
+        uopts?: { touchUpdatedAt?: boolean },
+      ) => {
         if (failNextWrite) {
           failNextWrite = false;
           throw new Error('write failed');
         }
         writes.push(patch.lastTurnReason);
+        touches.push(uopts?.touchUpdatedAt !== false);
       },
     };
 
@@ -187,6 +193,21 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     expect(writes).toEqual(['failed']);
     secondLifecycle.bus.publish({ type: 'turn.ended', turnId: 2, reason: 'completed' } as unknown as DomainEvent);
     expect(writes).toEqual(['failed', 'completed']);
+  });
+
+  it('a live turn ending writes with the recency bump, never the backfill channel', async () => {
+    lifecycle.addMain();
+    await tick();
+    started();
+    ended('completed');
+    lifecycle.bus.publish({
+      type: 'agent.activity.updated',
+      lastTurn: { turnId: 1, reason: 'completed', at: 0 },
+    } as unknown as DomainEvent);
+    // Nothing was persisted before, so the turn.started clear is a deduped
+    // no-op; the single write is the bumped live outcome.
+    expect(writes).toEqual(['completed']);
+    expect(touches).toEqual([true]);
   });
 
   it('backfills a restored outcome that never got a turn.ended fact', async () => {

@@ -7,8 +7,10 @@
  * (completed/failed, or a user's stop), cleared when a new turn starts, and
  * backfilled from a cold resume's restored outcome — backfills never bump
  * `updatedAt`, and programmatic aborts (including scope-teardown cancels)
- * are deliberately never persisted. Writes are deduped against the last
- * value this process persisted. Bound at Session scope.
+ * are deliberately never persisted, and backfills only apply to a pure
+ * resume (no turn started in this process — a live turn end owns its write,
+ * recency bump included). Writes are deduped against the last value this
+ * process persisted. Bound at Session scope.
  */
 
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
@@ -28,6 +30,7 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
 
   private lastPersisted: SessionTurnOutcome | undefined;
   private adopted = false;
+  private turnStartedHere = false;
   private mainSubscription: DisposableStore | undefined;
 
   constructor(
@@ -84,11 +87,13 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
     );
     subscription.add(
       bus.subscribe('turn.started', () => {
+        this.turnStartedHere = true;
         this.write(undefined);
       }),
     );
     subscription.add(
       bus.subscribe('agent.activity.updated', (event) => {
+        if (this.turnStartedHere) return;
         if (this.lastPersisted !== undefined) return;
         const lastTurn = (event as { lastTurn?: { reason?: unknown } }).lastTurn;
         const reason = lastTurn?.reason;
