@@ -1776,8 +1776,7 @@ describe('subagent config section', () => {
       '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
     );
     // Patch fields bind the synthesized derived entry; default_effort is the
-    // explicit subagent thinking. displayModel stays human-readable: the base
-    // alias the recipe points at, never the derived `__secondary__` id.
+    // explicit subagent thinking.
     expect(resolveSubagentBinding(withEffort.config, secondaryModelFlags(), own)).toEqual({
       model: SECONDARY_DERIVED_MODEL_ID,
       thinking: 'low',
@@ -1824,20 +1823,28 @@ describe('subagent config section', () => {
       {},
       '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
     );
-    // A persisted derived binding (from when the flag was on) must still
-    // display as the base alias after the experiment is switched off.
     expect(subagentDisplayModel(withRecipe.config, SECONDARY_DERIVED_MODEL_ID)).toBe(
       'provider/secondary',
     );
     expect(subagentDisplayModel(withRecipe.config, 'provider/main')).toBe('provider/main');
     withRecipe.disposables.dispose();
 
-    // Recipe gone: fall back to the raw alias rather than dropping the row.
     const bare = await createConfig({});
     expect(subagentDisplayModel(bare.config, SECONDARY_DERIVED_MODEL_ID)).toBe(
       SECONDARY_DERIVED_MODEL_ID,
     );
     bare.disposables.dispose();
+  });
+
+  it('normalizes an inherited derived alias on the caller-fallback branch', async () => {
+    const withRecipe = await createConfig({}, '[secondary_model]\nmodel = "provider/secondary"\n');
+    const own = { modelAlias: SECONDARY_DERIVED_MODEL_ID, thinkingLevel: 'medium' };
+    expect(resolveSubagentBinding(withRecipe.config, secondaryModelFlags(false), own)).toEqual({
+      model: SECONDARY_DERIVED_MODEL_ID,
+      thinking: 'medium',
+      displayModel: 'provider/secondary',
+    });
+    withRecipe.disposables.dispose();
   });
 
   it('preserves the coded error contract when adding secondary-model guidance', () => {

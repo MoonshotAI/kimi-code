@@ -129,7 +129,11 @@ export function resolveSubagentBinding(
       displayModel: subagentDisplayModel(config, model),
     };
   }
-  return { model: own.modelAlias, thinking: own.thinkingLevel, displayModel: own.modelAlias };
+  return {
+    model: own.modelAlias,
+    thinking: own.thinkingLevel,
+    displayModel: subagentDisplayModel(config, own.modelAlias),
+  };
 }
 
 export function subagentDisplayModel(

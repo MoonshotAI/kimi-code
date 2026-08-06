@@ -1060,8 +1060,6 @@ describe('Agent tool execution contract', () => {
       description: 'Find cause',
     });
 
-    // Bound to the synthesized derived entry, but the spawned signal reports
-    // the recipe's base alias — the display never shows `__secondary__`.
     expect(lifecycle.publishedEvents).toContainEqual(
       expect.objectContaining({
         type: 'subagent.spawned',

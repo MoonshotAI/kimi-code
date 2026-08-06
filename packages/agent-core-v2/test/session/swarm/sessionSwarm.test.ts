@@ -1134,7 +1134,6 @@ describe('SessionSwarmService metadata compatibility', () => {
 
     // No realign: resume must not drag the child back to the parent's model.
     expect(child.accessor.get(IAgentProfileService).data().modelAlias).toBe('stale-model');
-    // The spawned signal reports the child's own recorded binding.
     expect(eventBus.publish).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'subagent.spawned',
@@ -1174,7 +1173,6 @@ describe('SessionSwarmService metadata compatibility', () => {
         },
       }),
     );
-    // The spawned signal surfaces the bound alias for display.
     expect(eventBus.publish).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'subagent.spawned',
@@ -1197,8 +1195,6 @@ describe('SessionSwarmService metadata compatibility', () => {
     const spawnTask: SessionSwarmSpawnTask = {
       ...spawnSessionTask('src/a.ts'),
       kind: 'spawn',
-      // The tool layer binds the synthesized derived entry when the recipe
-      // carries patch fields; the display model must stay human-readable.
       binding: { model: '__secondary__', thinking: 'low' },
     };
 
