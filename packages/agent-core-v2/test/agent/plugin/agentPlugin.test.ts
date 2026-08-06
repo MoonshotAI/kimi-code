@@ -341,4 +341,101 @@ describe('AgentPluginService plugin-change reminder', () => {
     expect(findPluginChangeMessages(ctx)).toHaveLength(0);
     reloadEmitter.dispose();
   });
+
+  function skillCatalogWithChange(catalog: InMemorySkillCatalog, change: Emitter<string>) {
+    const skillCatalog: ISessionSkillCatalog = {
+      _serviceBrand: undefined,
+      catalog,
+      ready: Promise.resolve(),
+      onDidChange: change.event,
+      load: async () => {},
+      reload: async () => {},
+      list: async () => catalog.listSkills().map(summarizeSkill),
+    };
+    return skillCatalog;
+  }
+
+  function fireMutation(mutateEmitter: Emitter<PluginMutationSummary>, id: string): void {
+    mutateEmitter.fire({
+      added: [],
+      removed: [],
+      errors: [],
+      mutation: { kind: 'install', id },
+    });
+  }
+
+  it('suppresses the session-start refresh for mutation-driven catalog changes', async () => {
+    const catalog = new InMemorySkillCatalog();
+    catalog.register(pluginSkill());
+    const sinkChange = new Emitter<string>();
+    const mutateEmitter = new Emitter<PluginMutationSummary>();
+    ctx = createTestAgent(
+      { autoConfigure: true },
+      appService(
+        IPluginService,
+        pluginServiceStub({
+          sessionStarts: [{ pluginId: 'demo', skillName: 'demo-skill' }],
+          mutateEmitter,
+        }),
+      ),
+      skillServices(skillCatalogWithChange(catalog, sinkChange)),
+      agentService(IAgentPluginService, new SyncDescriptor(AgentPluginService)),
+    );
+    ctx.get(IAgentPluginService);
+    await injectRegistered(ctx);
+    expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
+
+    // Production ordering: onDidMutate fires synchronously inside the
+    // mutation's onDidReload; the catalog change arrives after the async
+    // re-scan.
+    fireMutation(mutateEmitter, 'demo');
+    sinkChange.fire('plugin');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(findPluginChangeMessages(ctx)).toHaveLength(1);
+    expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
+
+    // An explicit reload (no mutation) still refreshes the guidance.
+    const appended = waitForPluginSessionStartMessage(ctx);
+    sinkChange.fire('plugin');
+    await appended;
+    expect(findPluginSessionStartMessages(ctx).length).toBeGreaterThanOrEqual(2);
+
+    sinkChange.dispose();
+    mutateEmitter.dispose();
+  });
+
+  it('suppresses one session-start refresh per mutation when mutations arrive back to back', async () => {
+    const catalog = new InMemorySkillCatalog();
+    catalog.register(pluginSkill());
+    const sinkChange = new Emitter<string>();
+    const mutateEmitter = new Emitter<PluginMutationSummary>();
+    ctx = createTestAgent(
+      { autoConfigure: true },
+      appService(
+        IPluginService,
+        pluginServiceStub({
+          sessionStarts: [{ pluginId: 'demo', skillName: 'demo-skill' }],
+          mutateEmitter,
+        }),
+      ),
+      skillServices(skillCatalogWithChange(catalog, sinkChange)),
+      agentService(IAgentPluginService, new SyncDescriptor(AgentPluginService)),
+    );
+    ctx.get(IAgentPluginService);
+    await injectRegistered(ctx);
+    expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
+
+    fireMutation(mutateEmitter, 'demo');
+    fireMutation(mutateEmitter, 'demo');
+    sinkChange.fire('plugin');
+    sinkChange.fire('plugin');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(findPluginChangeMessages(ctx)).toHaveLength(2);
+    expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
+
+    sinkChange.dispose();
+    mutateEmitter.dispose();
+  });
 });

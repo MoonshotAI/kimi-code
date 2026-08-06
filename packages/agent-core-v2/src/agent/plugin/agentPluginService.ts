@@ -3,12 +3,14 @@
  *
  * Renders session-start skills from `plugin` and `sessionSkillCatalog`, injects
  * them through `contextInjector` and `systemReminder`, and uses `contextMemory`
- * to neutralize stale guidance. Also appends a `plugin_change` system reminder
- * through `systemReminder` whenever a plugin mutation lands (`plugin`
- * `onDidMutate` — never on an explicit reload, whose resumed session would
- * otherwise inherit a stale notice), naming the mutated plugin and telling the
- * model the live session keeps its original prompt and tool set until `/new`
- * or `/reload`.
+ * to neutralize stale guidance. The session-start refresh on plugin-source
+ * catalog changes fires only for an explicit plugin reload: a mutation-driven
+ * reload (install / enable / disable / remove) skips it — the live session
+ * keeps the guidance it started with — and instead appends a `plugin_change`
+ * system reminder through `systemReminder` (`plugin` `onDidMutate` — never on
+ * an explicit reload, whose resumed session would otherwise inherit a stale
+ * notice), naming the mutated plugin and telling the model the live session
+ * keeps its original prompt and tool set until `/new` or `/reload`.
  * Main-agent-only (v1 parity): the service
  * self-gates on `agentId === 'main'`; Agent scope creation instantiates it for
  * every agent, so other agents construct it as a no-op. Resolves
@@ -59,6 +61,13 @@ const MAIN_AGENT_ID = 'main';
 export class AgentPluginService extends Service implements IAgentPluginService {
   declare readonly _serviceBrand: undefined;
 
+  // Count of mutation-driven plugin reloads whose catalog change has not
+  // reached this agent yet. `reloadAndNotify` fires `onDidMutate`
+  // synchronously within every mutation's `onDidReload`, while the catalog
+  // re-scan completes asynchronously, so the count is always positive by the
+  // time a mutation-driven catalog change arrives.
+  private pendingMutationCatalogChanges = 0;
+
   constructor(
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
@@ -82,13 +91,22 @@ export class AgentPluginService extends Service implements IAgentPluginService {
     );
     this._register(
       this.skillCatalog.onDidChange((sourceId) => {
-        if (sourceId === PLUGIN_SKILL_SOURCE_ID) {
-          void this.appendFreshSessionStartReminder();
+        if (sourceId !== PLUGIN_SKILL_SOURCE_ID) return;
+        if (this.pendingMutationCatalogChanges > 0) {
+          // Mutation-driven reload: the live session keeps the session-start
+          // guidance it started with — the plugin_change reminder is the only
+          // notice it gets. A failed mutation reload produces no catalog
+          // change, so a later explicit-reload refresh may be skipped once;
+          // that only keeps the frozen guidance longer, which is safe.
+          this.pendingMutationCatalogChanges--;
+          return;
         }
+        void this.appendFreshSessionStartReminder();
       }),
     );
     this._register(
       this.plugins.onDidMutate(({ mutation }) => {
+        this.pendingMutationCatalogChanges++;
         this.reminders.appendSystemReminder(renderPluginChangeReminder(mutation), {
           kind: 'injection',
           variant: PLUGIN_CHANGE_INJECTION_VARIANT,

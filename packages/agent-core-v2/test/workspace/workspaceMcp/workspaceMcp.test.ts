@@ -231,6 +231,48 @@ describe('WorkspaceMcpService', () => {
     await overlay.shutdown();
   }, 20000);
 
+  it('sessionOverlay freezes the workspace baseline on workspace ready even while the overlay connect is pending', async () => {
+    current = { base: stdioServer() };
+    let settleOverlay: () => void = () => undefined;
+    vi.spyOn(McpConnectionManager.prototype, 'connectAll').mockImplementation(function (
+      this: McpConnectionManager,
+      servers: Readonly<Record<string, McpServerConfig>>,
+    ) {
+      if ('eph' in servers) {
+        // Slow ephemeral connect: keeps the overlay's combined readiness open
+        // long after the workspace initial load has settled.
+        return new Promise<void>((resolve) => {
+          settleOverlay = resolve;
+        });
+      }
+      for (const [name, config] of Object.entries(servers)) {
+        void this.connect(name, config);
+      }
+      return Promise.resolve();
+    });
+
+    const service = createService();
+    manager = service.connectionManager();
+    await service.ready;
+
+    const overlay = service.sessionOverlay({ eph: stdioServer() });
+    expect(overlay.handle.isBaselineServer('eph')).toBe(true);
+    expect(overlay.handle.isBaselineServer('base')).toBe(true);
+
+    // The overlay connect is still pending, but the workspace portion of the
+    // baseline closed with the workspace initial load: a workspace server
+    // added now (plugin install, config edit) must not leak into the session.
+    await manager?.connect('late', stdioServer());
+    expect(overlay.handle.isBaselineServer('late')).toBe(false);
+
+    settleOverlay();
+    await overlay.handle.ready;
+    expect(overlay.handle.isBaselineServer('late')).toBe(false);
+    expect(overlay.handle.isBaselineServer('eph')).toBe(true);
+
+    await overlay.shutdown();
+  }, 20000);
+
   it('sessionOverlay connects ephemeral servers on a session-owned manager, released by shutdown', async () => {
     current = { base: stdioServer() };
     const service = createService();

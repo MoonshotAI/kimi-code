@@ -22,7 +22,10 @@
  * ephemeral (caller-injected, never persisted) servers — baseline members
  * by construction — presented through a
  * `MergedMcpConnectionView` over the shared manager and shut down by the
- * session lifecycle when the session scope tears down.
+ * session lifecycle when the session scope tears down. An overlay handle's
+ * baseline still freezes on the workspace manager's initial load — never on
+ * the overlay's own connect — so a slow ephemeral connect cannot reopen the
+ * window for mid-session workspace additions.
  * An outright initial-load or change-apply failure is logged (per-server
  * failures are status entries). The manager (and its stdio child processes,
  * whose cwd is the handler root) lives as long as the handler — i.e. the
@@ -145,7 +148,13 @@ export class WorkspaceMcpService extends Service implements IWorkspaceMcpService
         _serviceBrand: undefined,
         ready,
         connectionManager: view,
-        isBaselineServer: this.sessionBaseline(view, ready, Object.keys(servers)),
+        // The baseline's lazy window tracks only the workspace manager's
+        // initial load: freezing on the combined `ready` would keep it open
+        // while a slow ephemeral server connects, and a workspace server
+        // added in that window (plugin install, config edit) would leak into
+        // the live session through the merged view. Overlay names are known
+        // at construction, so they need no window at all.
+        isBaselineServer: this.sessionBaseline(this.manager, this.ready, Object.keys(servers)),
       },
       shutdown: () => sessionManager.shutdown(),
     };
