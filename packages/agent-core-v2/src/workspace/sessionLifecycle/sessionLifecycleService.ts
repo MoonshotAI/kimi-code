@@ -511,6 +511,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     let target: ISessionScopeHandle | undefined;
     let targetSessionDir: string | undefined;
     try {
+      // A turn that just ended may still have its outcome write queued;
+      // settle pending metadata writes before reading the source for
+      // inheritance, or the fork could copy a stale (or absent) outcome.
+      await drainSessionMetadataWrites();
       const sourceMeta =
         sourceHandle !== undefined
           ? await sourceHandle.accessor.get(ISessionMetadata).read()
