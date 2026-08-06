@@ -19,8 +19,10 @@
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
+import { BugIndicatingError } from '#/errors';
 import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
@@ -42,6 +44,7 @@ interface ProfileCandidate {
   readonly priority: number;
 }
 
+// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class SessionAgentProfileCatalogService
   extends Disposable
   implements ISessionAgentProfileCatalog
@@ -82,7 +85,7 @@ export class SessionAgentProfileCatalogService
   getDefault(): AgentProfile {
     const profile = this.get(DEFAULT_AGENT_PROFILE_NAME);
     if (profile === undefined) {
-      throw new Error(
+      throw new BugIndicatingError(
         `Default agent profile "${DEFAULT_AGENT_PROFILE_NAME}" is not registered`,
       );
     }

@@ -1,5 +1,17 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.15.2
+
+### Patch Changes
+
+- [#2601](https://github.com/MoonshotAI/kimi-code/pull/2601) [`75fe068`](https://github.com/MoonshotAI/kimi-code/commit/75fe068a01261ff6b34f176530b338ec6a24918e) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Fix built-in capability availability and installed status in `/plugins`, preserve legacy WebBridge skills as backups during updates, and prevent Computer Use updates from duplicating or disconnecting MCP servers.
+
+## 0.15.1
+
+### Patch Changes
+
+- [#2567](https://github.com/MoonshotAI/kimi-code/pull/2567) [`98ef0f0`](https://github.com/MoonshotAI/kimi-code/commit/98ef0f0b2ffaef84903b9c116ada0eeb4c8e9a6c) Thanks [@7Sageer](https://github.com/7Sageer)! - Fix v1 replay ignoring v2 `profile.bind` records, which made sessions resumed from CLI-created wires lose their tool allowlist and send requests without `tools`.
+
 ## 0.15.0
 
 ### Minor Changes

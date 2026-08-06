@@ -34,7 +34,15 @@ export interface InjectionOrigin {
   readonly kind: 'injection';
   readonly variant: string;
   readonly ownerPromptId?: string;
+  readonly disclosure?: ContextInjectionDisclosure;
 }
+
+export type ContextInjectionDisclosure = {
+  readonly kind: 'date';
+  readonly renderGeneration: number;
+  readonly localDate: string;
+  readonly timeZone: string;
+};
 
 export interface ShellCommandOrigin {
   readonly kind: 'shell_command';

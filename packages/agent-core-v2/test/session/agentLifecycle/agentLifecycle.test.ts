@@ -1,5 +1,5 @@
 /**
- * Scenario: session-owned agent creation, persistence, and MCP readiness.
+ * Scenario: session-owned agent creation, persistence, and MCP wiring.
  *
  * Exercises `AgentLifecycleService` through its DI contract with controlled
  * persistence and MCP boundaries, including completion ordering.
@@ -11,17 +11,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
-import { type ISessionScopeHandle, LifecycleScope } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { type ISessionScopeHandle } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import '#/agent/profile/profileService';
+import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import '#/agent/permissionMode/permissionModeOps';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { SessionStateService } from '#/session/state/sessionStateService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
@@ -166,6 +170,7 @@ describe('AgentLifecycleService', () => {
     _clearAgentToolContributionsForTests();
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
+    ix.set(ISessionStateService, new SessionStateService());
     ix.set(IAgentStateService, new AgentStateService());
     ix.stub(IAppendLogStore, recordingAppendLog().store);
     stubBlobPassThrough(ix);
@@ -347,12 +352,13 @@ describe('AgentLifecycleService', () => {
       ready: Promise.resolve(),
       agentsMd: undefined,
       agentsMdWarning: undefined,
+      agentsMdPaths: undefined,
       onDidChange: Event.None as Event<void>,
     } satisfies ISessionInstructionsProvider);
-    // The session's MCP readiness arrives through the seeded
-    // `ISessionMcpHandle`; the default handle carries an OAuth-wired manager
-    // over the test atomic document store so the agent mirror's OAuth
-    // surface stays exercisable.
+    ix.stub(IAgentAgentsMdReminderService, {
+      _serviceBrand: undefined,
+      seedInjected: () => {},
+    });
     ix.stub(ISessionMcpHandle, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
@@ -642,7 +648,7 @@ describe('AgentLifecycleService', () => {
     ]);
   });
 
-  it('waits for the MCP handle readiness before returning an agent', async () => {
+  it('returns an agent without waiting for the MCP handle readiness', async () => {
     let releaseReady!: () => void;
     const ready = new Promise<void>((resolve) => {
       releaseReady = resolve;
@@ -654,21 +660,10 @@ describe('AgentLifecycleService', () => {
     } satisfies ISessionMcpHandle);
 
     const svc = ix.get(IAgentLifecycleService);
-    let settled = false;
-    const create = svc.create({ agentId: 'main' }).then(() => {
-      settled = true;
-    });
-
-    // The wire seal + registerAgent complete first; the create call then
-    // parks on the seeded MCP readiness promise.
-    await vi.waitFor(() => {
-      expect(registerAgent).toHaveBeenCalled();
-    });
-    expect(settled).toBe(false);
+    const handle = await svc.create({ agentId: 'main' });
+    expect(handle.id).toBe('main');
 
     releaseReady();
-    await create;
-    expect(settled).toBe(true);
   });
 
   it('exposes the in-flight handle and joins it after bootstrap', async () => {
@@ -690,8 +685,6 @@ describe('AgentLifecycleService', () => {
     expect(early).toBeDefined();
 
     const joined = svc.create({ agentId: 'main' });
-    // doCreate awaits the wire-log seal before registerAgent, so the mock is
-    // invoked a few microtasks after create() — wait for the actual call.
     await registerCalled;
     releaseRegister();
     const handle = await joined;

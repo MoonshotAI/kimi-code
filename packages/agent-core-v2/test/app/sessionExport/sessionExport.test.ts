@@ -27,7 +27,8 @@ import {
   type ServiceRegistration,
   type TestInstantiationService,
 } from '#/_base/di/test';
-import { LifecycleScope, type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { ILogService, type ILogService as LogService } from '#/_base/log/log';
 import { IWireService } from '#/wire/wire';
@@ -172,7 +173,6 @@ describe('sessionExport', () => {
       request: { sessionId: 'ses_repeated_export', version: '1.0.0-test' },
       summary,
     });
-    // Cross the next second boundary so the second export gets a distinct timestamp.
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 1100 - (Date.now() % 1000)));
     const second = await exportSessionDirectory({
       request: { sessionId: 'ses_repeated_export', version: '1.0.0-test' },
@@ -893,9 +893,12 @@ function registerSessionExportServices(
   reg.defineInstance(ILogService, options.appLog ?? stubLog());
   reg.defineInstance(ISessionIndex, {
     _serviceBrand: undefined,
-    list: async () => ({ items: options.summary === undefined ? [] : [options.summary] }),
+    prepare: async () => ({ state: 'uninitialized' as const, degradedCount: 0 }),
+    status: () => ({ state: 'uninitialized' as const, degradedCount: 0 }),
+    listRecent: async () => ({ items: options.summary === undefined ? [] : [options.summary] }),
     get: async () => options.summary,
-    countActive: async () => (options.summary === undefined || options.summary.archived ? 0 : 1),
+    count: async () => (options.summary === undefined || options.summary.archived ? 0 : 1),
+    remove: async () => {},
   });
   reg.defineInstance(IWorkspaceLifecycleService, {
     _serviceBrand: undefined,
@@ -926,6 +929,7 @@ function registerSessionExportServices(
                 close: async () => {},
                 archive: async () => {},
                 restore: async () => options.lifecycleHandle,
+                delete: async () => {},
                 fork: async () => {
                   throw new Error('fork should not be called by session export');
                 },

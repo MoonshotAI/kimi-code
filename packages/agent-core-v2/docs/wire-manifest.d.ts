@@ -21,9 +21,8 @@
 // owning model offloads inline media to blob storage), cross-reducers
 // (foreign models that also reduce this record on dispatch and replay).
 
-// Index (46 record types)
+// Index (48 record types)
 //   config.update                      profile               persisted  src/agent/profile/profileOps.ts
-//   context_size.measured              contextSize           transient  src/agent/contextSize/contextSizeOps.ts
 //   context.append_loop_event          contextMemory         persisted  src/agent/contextMemory/contextOps.ts
 //   context.append_message             contextMemory         persisted  src/agent/contextMemory/contextOps.ts
 //   context.apply_compaction           contextMemory         persisted  src/agent/contextMemory/contextOps.ts
@@ -48,16 +47,19 @@
 //   permission.record_approval_result  permissionRules       persisted  src/agent/permissionRules/permissionRulesOps.ts
 //   permission.rules.add               permissionRules       transient  src/agent/permissionRules/permissionRulesOps.ts
 //   permission.set_mode                permissionMode        persisted  src/agent/permissionMode/permissionModeOps.ts
-//   plan_mode.cancel                   plan                  persisted  src/agent/plan/planOps.ts
-//   plan_mode.enter                    plan                  persisted  src/agent/plan/planOps.ts
-//   plan_mode.exit                     plan                  persisted  src/agent/plan/planOps.ts
-//   plan.revision                      plan                  persisted  src/agent/plan/planOps.ts
+//   plan_mode.cancel                   plan                  persisted  src/features/plan/planOps.ts
+//   plan_mode.enter                    plan                  persisted  src/features/plan/planOps.ts
+//   plan_mode.exit                     plan                  persisted  src/features/plan/planOps.ts
+//   plan.revision                      plan                  persisted  src/features/plan/planOps.ts
 //   profile.bind                       profile               persisted  src/agent/profile/profileOps.ts
 //   skill.activate                     skill                 transient  src/agent/skill/skillOps.ts
 //   swarm_mode.enter                   swarm                 persisted  src/agent/swarm/swarmOps.ts
 //   swarm_mode.exit                    swarm                 persisted  src/agent/swarm/swarmOps.ts
 //   task.started                       task                  persisted  src/agent/task/taskOps.ts
 //   task.terminated                    task                  persisted  src/agent/task/taskOps.ts
+//   token_counting.measured            tokenCounting         transient  src/agent/tokenCounting/tokenCountingOps.ts
+//   token_counting.rebased             tokenCounting         transient  src/agent/tokenCounting/tokenCountingOps.ts
+//   token_counting.truncated           tokenCounting         transient  src/agent/tokenCounting/tokenCountingOps.ts
 //   tools.register_user_tool           userTool              persisted  src/agent/userTool/userToolOps.ts
 //   tools.reset_active_tools           profile.activeTools   persisted  src/agent/profile/profileOps.ts
 //   tools.set_active_tools             profile.activeTools   persisted  src/agent/profile/profileOps.ts
@@ -82,17 +84,14 @@ interface ConfigUpdatePayload {
   /** ThinkingEffort */
   thinkingLevel?: 'off' | 'on' | (string & {});
   systemPrompt?: string;
+  /** EnvironmentDisclosureSnapshot */
+  environmentDisclosure?: {
+    cwd: string;
+    date: { disclosed: true, value: { localDate: string, timeZone: string } } | { disclosed: false };
+  };
+  renderGeneration?: number;
+  agentsMdPaths?: string[];
   disallowedTools?: string[];
-}
-
-/**
- * model: contextSize · toEvent
- * owner: src/agent/contextSize/contextSizeOps.ts
- */
-interface ContextSizeMeasuredPayload {
-  _name: 'context_size.measured';
-  length: number;
-  tokens: number;
 }
 
 /**
@@ -411,7 +410,7 @@ interface PermissionSetModePayload {
 
 /**
  * model: plan · persisted · toEvent
- * owner: src/agent/plan/planOps.ts
+ * owner: src/features/plan/planOps.ts
  */
 interface PlanModeCancelPayload {
   _name: 'plan_mode.cancel';
@@ -420,7 +419,7 @@ interface PlanModeCancelPayload {
 
 /**
  * model: plan · persisted · toEvent
- * owner: src/agent/plan/planOps.ts
+ * owner: src/features/plan/planOps.ts
  */
 interface PlanModeEnterPayload {
   _name: 'plan_mode.enter';
@@ -429,7 +428,7 @@ interface PlanModeEnterPayload {
 
 /**
  * model: plan · persisted · toEvent
- * owner: src/agent/plan/planOps.ts
+ * owner: src/features/plan/planOps.ts
  */
 interface PlanModeExitPayload {
   _name: 'plan_mode.exit';
@@ -438,7 +437,7 @@ interface PlanModeExitPayload {
 
 /**
  * model: plan · persisted · toEvent
- * owner: src/agent/plan/planOps.ts
+ * owner: src/features/plan/planOps.ts
  */
 interface PlanRevisionPayload {
   _name: 'plan.revision';
@@ -460,6 +459,13 @@ interface ProfileBindPayload {
   /** ThinkingEffort */
   thinkingEffort: 'off' | 'on' | (string & {});
   systemPrompt: string;
+  /** EnvironmentDisclosureSnapshot */
+  environmentDisclosure?: {
+    cwd: string;
+    date: { disclosed: true, value: { localDate: string, timeZone: string } } | { disclosed: false };
+  };
+  renderGeneration?: number;
+  agentsMdPaths?: string[];
   activeToolNames?: string[];
   disallowedTools: string[];
   subagents?: string[];
@@ -521,6 +527,37 @@ interface TaskTerminatedPayload {
   /** AgentTaskInfo */
   info: AgentTaskInfoByKind[AgentTaskKind];
   outputTail?: string;
+}
+
+/**
+ * model: tokenCounting · toEvent
+ * owner: src/agent/tokenCounting/tokenCountingOps.ts
+ */
+interface TokenCountingMeasuredPayload {
+  _name: 'token_counting.measured';
+  length: number;
+  tokens: number;
+}
+
+/**
+ * model: tokenCounting · toEvent
+ * owner: src/agent/tokenCounting/tokenCountingOps.ts
+ */
+interface TokenCountingRebasedPayload {
+  _name: 'token_counting.rebased';
+  length: number;
+  tokens: number;
+  measured: boolean;
+}
+
+/**
+ * model: tokenCounting · toEvent
+ * owner: src/agent/tokenCounting/tokenCountingOps.ts
+ */
+interface TokenCountingTruncatedPayload {
+  _name: 'token_counting.truncated';
+  length: number;
+  tokens: number;
 }
 
 /**
@@ -681,7 +718,6 @@ interface UsageRecordPayload {
 /** Record type → payload sketch. */
 interface WirePayloadMap {
   "config.update": ConfigUpdatePayload;
-  "context_size.measured": ContextSizeMeasuredPayload;
   "context.append_loop_event": ContextAppendLoopEventPayload;
   "context.append_message": ContextAppendMessagePayload;
   "context.apply_compaction": ContextApplyCompactionPayload;
@@ -716,6 +752,9 @@ interface WirePayloadMap {
   "swarm_mode.exit": SwarmModeExitPayload;
   "task.started": TaskStartedPayload;
   "task.terminated": TaskTerminatedPayload;
+  "token_counting.measured": TokenCountingMeasuredPayload;
+  "token_counting.rebased": TokenCountingRebasedPayload;
+  "token_counting.truncated": TokenCountingTruncatedPayload;
   "tools.register_user_tool": ToolsRegisterUserToolPayload;
   "tools.reset_active_tools": ToolsResetActiveToolsPayload;
   "tools.set_active_tools": ToolsSetActiveToolsPayload;

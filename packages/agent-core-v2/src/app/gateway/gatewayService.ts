@@ -9,13 +9,15 @@
  * is a transport concern of the edge server, not of this module.
  */
 
+import { LifecycleScope } from '#/app/scopes';
+
 import {
   type IAgentScopeHandle,
-  LifecycleScope,
   ScopeActivation,
   registerScopedService,
 } from '#/_base/di/scope';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { Error2, ErrorCodes } from '#/errors';
 import { ILogService } from '#/_base/log/log';
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
@@ -34,10 +36,18 @@ export class RestGateway implements IRestGateway {
 
   private agent(sessionId: string, agentId: string): IAgentScopeHandle {
     const session = this.liveSession(sessionId);
-    if (session === undefined) throw new Error(`unknown session '${sessionId}'`);
+    if (session === undefined) {
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `unknown session '${sessionId}'`, {
+        details: { sessionId },
+      });
+    }
     const agents = session.accessor.get(IAgentLifecycleService);
     const agent = agents.get(agentId);
-    if (agent === undefined) throw new Error(`unknown agent '${agentId}'`);
+    if (agent === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `unknown agent '${agentId}'`, {
+        details: { agentId, sessionId },
+      });
+    }
     return agent;
   }
 

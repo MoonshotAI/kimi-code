@@ -63,7 +63,7 @@ describe('proxy utilities', () => {
     expect(bypass('example.com')).toBe(true);
     expect(bypass('sub.example.com')).toBe(true);
     expect(bypass('[::1]')).toBe(true);
-    expect(bypass('other.com')).toBe(false);
+    expect(bypass('other.example.test')).toBe(false);
 
     const portBypass = makeNoProxyMatcher('api.example.com:443');
     expect(portBypass('api.example.com', 443)).toBe(true);
@@ -140,8 +140,8 @@ describe('proxy utilities', () => {
       NO_PROXY: 'aug',
       no_proxy: 'aug',
     };
-    reconcileChildNoProxy(childEnv, { no_proxy: '', NO_PROXY: 'real.corp' });
-    expect(childEnv['NO_PROXY']).toBe('real.corp,localhost,127.0.0.1,::1,[::1]');
-    expect(childEnv['no_proxy']).toBe('real.corp,localhost,127.0.0.1,::1,[::1]');
+    reconcileChildNoProxy(childEnv, { no_proxy: '', NO_PROXY: 'internal.example.test' });
+    expect(childEnv['NO_PROXY']).toBe('internal.example.test,localhost,127.0.0.1,::1,[::1]');
+    expect(childEnv['no_proxy']).toBe('internal.example.test,localhost,127.0.0.1,::1,[::1]');
   });
 });

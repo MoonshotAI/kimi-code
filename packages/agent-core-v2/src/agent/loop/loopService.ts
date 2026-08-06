@@ -34,7 +34,8 @@ import { randomUUID } from 'node:crypto';
 import { createControlledPromise } from '@antfu/utils';
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { abortError, isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
@@ -99,6 +100,7 @@ export const loopLastRequestTraceIdKey = defineState<string | undefined>(
 );
 export const loopDisposingKey = defineState<boolean>('loop.disposing', () => false);
 
+// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class AgentLoopService extends Disposable implements IAgentLoopService {
   declare readonly _serviceBrand: undefined;
 
@@ -579,7 +581,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     options: LoopErrorHandlerRegistrationOptions = {},
   ): IDisposable {
     if (options.before !== undefined && options.after !== undefined) {
-      throw new Error('Loop error handler registration cannot specify both before and after');
+      throw new BugIndicatingError('Loop error handler registration cannot specify both before and after');
     }
     this.deleteErrorHandler(handler.id);
     const target = options.before ?? options.after;
@@ -588,7 +590,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     } else {
       const targetIndex = this.errorHandlers.findIndex((entry) => entry.id === target);
       if (targetIndex < 0) {
-        throw new Error(`Loop error handler target "${target}" is not registered`);
+        throw new BugIndicatingError(`Loop error handler target "${target}" is not registered`);
       }
       const insertAt = options.before !== undefined ? targetIndex : targetIndex + 1;
       this.errorHandlers.splice(insertAt, 0, handler);

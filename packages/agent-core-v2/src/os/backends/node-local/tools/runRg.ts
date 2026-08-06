@@ -9,6 +9,7 @@
 
 import type { Readable } from 'node:stream';
 
+import { BugIndicatingError } from '#/errors';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 
 export const DEFAULT_TIMEOUT_MS = 20_000;
@@ -46,7 +47,7 @@ export async function runRgOnce(
 
   const [command, ...args] = rgArgs;
   if (command === undefined) {
-    throw new Error('runRgOnce: rgArgs must not be empty');
+    throw new BugIndicatingError('runRgOnce: rgArgs must not be empty');
   }
   const proc: IHostProcess = await processService.spawn(command, args, { cwd: options?.cwd });
 

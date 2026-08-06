@@ -10,6 +10,9 @@
  * remaining local `$ref` pointers stay resolvable to a JSON Schema validator.
  */
 
+import { Error2 } from '#/_base/errors/errors';
+import { ProtocolErrors } from '#/kosong/protocol/errors';
+
 export function derefJsonSchema(schema: Record<string, unknown>): Record<string, unknown> {
   const visited = new Set<string>();
   const result = resolveNode(schema, schema, visited) as Record<string, unknown>;
@@ -111,7 +114,10 @@ export function normalizeKimiToolSchema(schema: Record<string, unknown>): Record
 function ensureKimiPropertyTypes(schema: Record<string, unknown>): Record<string, unknown> {
   const normalized = cloneJsonValue(schema);
   if (!isRecord(normalized)) {
-    throw new Error('JSON Schema root must normalize to an object.');
+    throw new Error2(
+      ProtocolErrors.codes.PROVIDER_API_ERROR,
+      'JSON Schema root must normalize to an object.',
+    );
   }
   recurseSchema(normalized);
   return normalized;
@@ -345,7 +351,10 @@ function inferTypeFromValues(values: unknown[]): JsonSchemaType {
   for (const value of values) {
     const valueType = inferValueType(value);
     if (valueType === undefined) {
-      throw new Error('Cannot infer JSON Schema type from non-JSON enum or const value.');
+      throw new Error2(
+        ProtocolErrors.codes.PROVIDER_API_ERROR,
+        'Cannot infer JSON Schema type from non-JSON enum or const value.',
+      );
     }
     inferred.add(valueType);
   }
@@ -353,11 +362,17 @@ function inferTypeFromValues(values: unknown[]): JsonSchemaType {
   if (types.length === 1) {
     const onlyType = types[0];
     if (onlyType === undefined) {
-      throw new Error('Cannot infer JSON Schema type from an empty enum.');
+      throw new Error2(
+        ProtocolErrors.codes.PROVIDER_API_ERROR,
+        'Cannot infer JSON Schema type from an empty enum.',
+      );
     }
     return onlyType;
   }
-  throw new Error('Mixed JSON Schema enum or const types are not supported by Kimi tool schemas.');
+  throw new Error2(
+    ProtocolErrors.codes.PROVIDER_API_ERROR,
+    'Mixed JSON Schema enum or const types are not supported by Kimi tool schemas.',
+  );
 }
 
 function inferValueType(value: unknown): JsonSchemaType | undefined {

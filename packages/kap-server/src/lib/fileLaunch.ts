@@ -6,6 +6,7 @@ export interface LaunchCommand {
   readonly command: string;
   readonly args: readonly string[];
   readonly shell?: boolean;
+  readonly windowsVerbatimArguments?: boolean;
 }
 
 export function openFileCommandFor(
@@ -44,7 +45,17 @@ export function revealFileCommandFor(
     case 'darwin':
       return { command: 'open', args: ['-R', absolutePath] };
     case 'win32':
-      return { command: 'explorer.exe', args: [`/select,${absolutePath}`] };
+      // explorer.exe parses its RAW command line (not argv), so Node's
+      // default spawn quoting breaks `/select,` whenever the path contains
+      // spaces: the command line becomes `"/select,\"C:\some dir\f.txt\""`,
+      // which explorer's parser rejects, silently opening the Documents
+      // folder. `windowsVerbatimArguments: true` keeps the command line in
+      // the documented `/select,"C:\some dir\f.txt"` form.
+      return {
+        command: 'explorer.exe',
+        args: [explorerSelectArg(absolutePath)],
+        windowsVerbatimArguments: true,
+      };
     default:
       return { command: 'xdg-open', args: [path.dirname(absolutePath)] };
   }
@@ -163,7 +174,11 @@ function openInFinder(
     case 'win32':
       return isDirectory
         ? { command: 'explorer.exe', args: [absolutePath] }
-        : { command: 'explorer.exe', args: [`/select,${absolutePath}`] };
+        : {
+            command: 'explorer.exe',
+            args: [explorerSelectArg(absolutePath)],
+            windowsVerbatimArguments: true,
+          };
     default:
       return {
         command: 'xdg-open',
@@ -191,6 +206,7 @@ export async function launchDetached(cmd: LaunchCommand): Promise<void> {
       detached: true,
       stdio: 'ignore',
       shell: cmd.shell,
+      windowsVerbatimArguments: cmd.windowsVerbatimArguments,
     });
     child.once('error', (err) => {
       if (settled) return;
@@ -217,6 +233,20 @@ function resolveEditorCommand(env: Record<string, string | undefined>): string |
 function supportsLineTarget(command: string): boolean {
   const first = command.trim().split(/\s+/)[0] ?? '';
   return /(?:^|\/)(code|cursor|windsurf)(?:\.cmd|\.exe)?$/i.test(first);
+}
+
+/**
+ * Build the single `/select,` argument for explorer.exe, quoting only the
+ * path: `/select,"C:\some dir\f.txt"`. Must be launched with
+ * `windowsVerbatimArguments: true` — explorer parses its raw command line,
+ * and Node's default quoting would wrap the whole argument as
+ * `"/select,\"C:\...\""`, which explorer rejects (it then silently opens the
+ * Documents folder). A trailing backslash is dropped so it cannot escape the
+ * closing quote.
+ */
+function explorerSelectArg(absolutePath: string): string {
+  const trimmed = absolutePath.replace(/\\+$/, '');
+  return `/select,"${trimmed}"`;
 }
 
 function quoteShellArg(value: string, platform: NodeJS.Platform): string {

@@ -13,7 +13,10 @@
  * of the workspace.
  */
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { BugIndicatingError } from '#/errors';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 import { type IProcess, ISessionProcessRunner, type ProcessExecOptions } from '#/session/process/processRunner';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -29,7 +32,7 @@ export class WorkspaceProcessRunnerService implements ISessionProcessRunner {
   async exec(args: readonly string[], options?: ProcessExecOptions): Promise<IProcess> {
     const command = args[0];
     if (command === undefined) {
-      throw new Error(
+      throw new BugIndicatingError(
         'WorkspaceProcessRunnerService.exec(): at least one argument (the command to run) is required.',
       );
     }

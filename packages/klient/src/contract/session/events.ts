@@ -39,6 +39,8 @@ export interface SessionEventPayloads {
   'metadata.changed': SessionMetadataChangedEvent;
   'interactions.changed': readonly Interaction[];
   'interactions.resolved': InteractionResolution;
+  /** The merged skill catalog changed; the payload is the changed source id. */
+  'skills.changed': string;
 }
 
 export type SessionEventName = keyof SessionEventPayloads;
@@ -50,6 +52,12 @@ export const sessionEvents = {
     service: 'sessionMetadata',
     event: 'onDidChangeMetadata',
     schema: sessionMetadataChangedEventSchema,
+  },
+  'skills.changed': {
+    kind: 'emitter',
+    service: 'sessionSkillCatalog',
+    event: 'onDidChange',
+    schema: z.string(),
   },
   // Passthrough stream (no `type` filter): the source pushes the full
   // pending interaction set on every change.

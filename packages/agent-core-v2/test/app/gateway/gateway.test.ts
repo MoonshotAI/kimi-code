@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
-import { type IAgentScopeHandle, type ISessionScopeHandle, LifecycleScope } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -101,6 +102,7 @@ describe('RestGateway', () => {
       close: () => Promise.resolve(),
       archive: () => Promise.resolve(),
       restore: () => Promise.resolve(sessionHandle),
+      delete: () => Promise.resolve(),
       fork: () => Promise.resolve(sessionHandle),
       createChild: () => Promise.resolve(sessionHandle),
     };

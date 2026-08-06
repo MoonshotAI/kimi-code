@@ -23,6 +23,7 @@
  */
 
 import { Emitter } from '#/_base/event';
+import { BugIndicatingError } from '#/errors';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import type {
@@ -112,7 +113,7 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
 
   private assertOpen(statement: string): void {
     if (!this._open) {
-      throw new Error(`${statement} can NOT be called asynchronously`);
+      throw new BugIndicatingError(`${statement} can NOT be called asynchronously`);
     }
   }
 }

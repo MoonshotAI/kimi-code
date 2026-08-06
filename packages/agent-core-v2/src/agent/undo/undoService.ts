@@ -7,8 +7,10 @@
  * `eventBus`, `telemetry`, and `wire`. Bound at Agent scope.
  */
 
-import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { type IDisposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
@@ -46,7 +48,7 @@ declare module '#/app/event/eventBus' {
 }
 
 export class AgentConversationUndoService
-  extends Disposable
+  extends Service
   implements IAgentConversationUndoService
 {
   declare readonly _serviceBrand: undefined;

@@ -21,6 +21,7 @@ import { CHECKPOINTED_MODELS, type Checkpointed } from '#/agent/contextMemory/co
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { SessionCronServiceImpl } from '#/session/cron/sessionCronServiceImpl';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { CronTaskPersistenceService } from '#/app/cron/cronTaskPersistenceService';
 import { IAgentGoalService } from '#/agent/goal/goal';
@@ -35,7 +36,7 @@ import { ISessionInstructionsProvider } from '#/session/sessionInstructions/inst
 import { ISessionSkillCatalogData } from '#/session/sessionSkillCatalog/skillCatalogData';
 import type { PermissionData, PermissionMode } from '#/agent/permissionPolicy/types';
 import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
-import { IAgentPlanService, type PlanData } from '#/agent/plan/plan';
+import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import { IAgentProfileService, type AgentConfigData } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
@@ -75,7 +76,7 @@ import { OP_REGISTRY } from '#/wire/op';
 import { IProtocolAdapterRegistry, type ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
 import { hasProviderDefinition } from '#/kosong/provider/providerDefinition';
-import type { SkillCatalog } from '#/app/skillCatalog/types';
+import { summarizeSkill, type SkillCatalog } from '#/app/skillCatalog/types';
 import { type ModelCapability } from '#/kosong/contract/capability';
 import { isToolCall, isToolCallPart, type ContentPart, type Message as KosongMessage, type StreamedMessagePart } from '#/kosong/contract/message';
 import { type ThinkingEffort } from '#/kosong/contract/provider';
@@ -105,7 +106,6 @@ import {
   IConfigService,
   IAgentContextMemoryService,
   IAgentContextProjectorService,
-  IAgentContextSizeService,
   IAgentExternalHooksService,
   IExternalHooksRunnerService,
   IAgentFullCompactionService,
@@ -124,6 +124,7 @@ import {
   IAgentLoopContinuationService,
   IAgentSwarmService,
   AgentSwarmService,
+  IAgentTokenCountingService,
   IAppStateService,
   ITelemetryService,
   IHostTerminalService,
@@ -192,6 +193,7 @@ import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog
 import { ISessionSwarmService } from '#/session/swarm/sessionSwarm';
 import type { PathAccessOperation } from '#/session/workspaceContext/workspaceContext';
 
+import { stubAgentIdentity } from '../app/agentIdentity/stubs';
 import { stubClientIdentity } from '../app/bootstrap/stubs';
 import { recordAgentEvents, type RecordedEventEntry } from '../snapshot/events';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
@@ -246,11 +248,6 @@ interface ProviderConfigForConfig {
   };
 }
 
-/**
- * Harness-local provider descriptor for `configureRuntimeModel`: the vendor
- * the scripted provider poses as (`type` = providerType), the wire-facing
- * model name, and the endpoint to seed into the test config.
- */
 interface TestProviderConfig {
   readonly type: string;
   readonly model: string;
@@ -311,12 +308,6 @@ type RpcPromise<T> = Promise<T> & {
   reject(reason?: unknown): void;
 };
 
-/**
- * Wire signatures of the methods removed from `AgentAPI` for being pure
- * forwards to domain services. The harness keeps `ctx.rpc` backward
- * compatible by re-declaring them here and adapting each onto the
- * corresponding domain service in `createPromiseAgentApi`.
- */
 interface AgentRpcPassthroughAPI {
   runShellCommand: (payload: RunShellCommandPayload) => Promisable<ShellCommandResult>;
   cancelShellCommand: (payload: CancelShellCommandPayload) => void;
@@ -659,18 +650,24 @@ function resolveExternalHooksRunner(
 function isRunnerLike(
   value: Pick<IExternalHooksRunnerService, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'>,
 ): value is IExternalHooksRunnerService {
+  const candidate = value as IExternalHooksRunnerService;
   return (
-    typeof value.trigger === 'function' &&
-    typeof value.triggerBlock === 'function' &&
-    typeof value.fireAndForgetTrigger === 'function'
+    typeof candidate.trigger === 'function' &&
+    typeof candidate.triggerBlock === 'function' &&
+    typeof candidate.fireAndForgetTrigger === 'function' &&
+    typeof candidate.hasHooksFor === 'function' &&
+    candidate.ready instanceof Promise
   );
 }
 
 const noopHookRunner: IExternalHooksRunnerService = {
   _serviceBrand: undefined,
+  ready: Promise.resolve(),
+  onDidReload: Event.None as Event<void>,
   trigger: async () => [],
   triggerBlock: async () => undefined,
   fireAndForgetTrigger: async () => [],
+  hasHooksFor: () => false,
 };
 
 export function permissionModeServices(mode: PermissionMode): TestAgentServiceOverride {
@@ -694,8 +691,6 @@ export function cronServices(): TestAgentServiceOverride {
 export function mcpServices(options: {
   readonly manager?: McpConnectionManager;
 }): TestAgentServiceOverride {
-  // `AgentMcpService` resolves the workspace's shared manager through the
-  // seeded `ISessionMcpHandle`; tests inject a fake manager by stubbing it.
   return sessionService(ISessionMcpHandle, {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
@@ -727,6 +722,7 @@ function createSessionSkillCatalog(catalog: SkillCatalog): ISessionSkillCatalog 
     onDidChange: Event.None as Event<string>,
     load: async () => { },
     reload: async () => { },
+    list: async () => catalog.listSkills().map(summarizeSkill),
   };
 }
 
@@ -935,15 +931,6 @@ class ConfigBackedModelCatalog extends ModelCatalog {
     super(providerRegistry, modelRegistry, oauthTokens, protocolRegistry, hostRequestHeaders);
   }
 
-  /**
-   * The harness mutates `kimiConfig` BEHIND the config services' backs (no
-   * section-change events fire), so nothing pushes the new values into the
-   * kosong registries. Re-hydrate them from the live config view before every
-   * read: `loadAll` is deep-equal-aware, so an unchanged config is a no-op
-   * and a changed one fires the diff events that drop the assembled-Model
-   * cache — preserving the old read-config-live semantics through the new
-   * in-memory registries.
-   */
   private syncRegistriesFromConfig(): void {
     this.providerRegistry.loadAll(
       this.config.get<ProvidersSection>(PROVIDERS_SECTION) ?? {},
@@ -1060,6 +1047,11 @@ export class AgentTestContext {
             IConfigService,
             configService(() => this.kimiConfig),
           );
+          // The harness is a config-already-loaded world, so the identity is
+          // handed out pre-frozen (no custom identity, matching the empty
+          // bootstrap headers above); the freeze ordering itself is covered
+          // by the agentIdentity suite. Suites override via `appService`.
+          reg.defineInstance(IAgentIdentity, stubAgentIdentity());
           reg.defineInstance(
             IAppendLogStore,
             new PersistenceAppendLogStore(
@@ -1135,10 +1127,6 @@ export class AgentTestContext {
     );
     this.root = createAppScope({ extra: appSeeds });
 
-    // Hydrate the kosong registries from the (possibly overridden) config so
-    // direct IProviderService/IModelService reads work before the first
-    // catalog access; ConfigBackedModelCatalog re-syncs on every read after
-    // that (the harness mutates kimiConfig behind the config events' backs).
     const initialConfig = this.root.accessor.get(IConfigService);
     this.root.accessor
       .get(IProviderService)
@@ -1183,13 +1171,6 @@ export class AgentTestContext {
             reg.defineInstance(ISessionInteractionService, this.createInteractionService());
             reg.defineInstance(ISessionApprovalService, this.createApprovalService());
             reg.defineInstance(ISessionQuestionService, this.createQuestionService());
-            // Workspace-resource injection contracts (the seeds the real
-            // handler hands each session): the harness has no Workspace
-            // scope, so it seeds equivalents directly — an empty skill
-            // catalog, the workspace key the Session agent-profile catalog
-            // reads the App registry with, a live-read AGENTS.md
-            // provider, and a no-server MCP manager. Tests replace them
-            // through the usual service overrides.
             reg.defineInstance(ISessionSkillCatalogData, {
               _serviceBrand: undefined,
               ready: Promise.resolve(),
@@ -1212,9 +1193,6 @@ export class AgentTestContext {
               additionalDirs: [],
               onDidChange: Event.None as Event<void>,
             } satisfies ISessionWorkspaceInfo);
-            // The harness skips the Workspace scope entirely, so the session
-            // state service's cascade parent is seeded directly: a workspace
-            // state instance chained onto the App-scope root.
             reg.defineInstance(
               IWorkspaceStateService,
               new WorkspaceStateService(this.root.accessor.get(IAppStateService)),
@@ -1307,8 +1285,6 @@ export class AgentTestContext {
     });
 
     this.initializeRestorableServices();
-    // Resolve the activity view so its constructor subscriptions publish
-    // `agent.activity.updated` — production ignites it in agentLifecycle.
     this.get(IAgentActivityView);
 
     const eventBus = this.get(IEventBus);
@@ -1342,8 +1318,8 @@ export class AgentTestContext {
     return this.get(IAgentContextMemoryService);
   }
 
-  get contextSize(): IAgentContextSizeService {
-    return this.get(IAgentContextSizeService);
+  get tokenCounting(): IAgentTokenCountingService {
+    return this.get(IAgentTokenCountingService);
   }
 
   get wire(): IWireService {
@@ -1382,16 +1358,12 @@ export class AgentTestContext {
 
   private initializeRestorableServices(): void {
     const context = this.get(IAgentContextMemoryService);
-    const contextSize = this.get(IAgentContextSizeService);
+    const tokenCounting = this.get(IAgentTokenCountingService);
     const usage = this.get(IAgentUsageService);
     const permissionMode = this.get(IAgentPermissionModeService);
     const permissionRules = this.get(IAgentPermissionRulesService);
     const cron = this.get(ISessionCronService);
     const plan = this.get(IAgentPlanService);
-    // Activate the AgentTool contributions before any profile allowlist is
-    // applied by `configure()` — at this point `activeToolNames` is still
-    // undefined, so every contribution whose `when` holds lands in the
-    // registry, matching the harness's historical all-tools behavior.
     void this.get(IAgentToolActivationService).activate();
     this.get(IAgentToolDedupeService);
     this.get(IAgentExternalHooksService);
@@ -1403,7 +1375,7 @@ export class AgentTestContext {
 
     context.get();
     void swarm.isActive;
-    contextSize.get();
+    tokenCounting.get();
     usage.status();
     tasks.list(false);
     permission.data();
@@ -1461,30 +1433,21 @@ export class AgentTestContext {
     modelCapabilities?: ModelCapability | undefined,
   ): void {
     this.kimiConfig = configWithProvider(this.kimiConfig, provider, modelCapabilities);
-    // The harness swaps config BEHIND the config services' backs, so no
-    // change events fire — drop the assembled-Model cache by hand (the
-    // load-bearing ModelCatalog contract), or the next `get` keeps serving
-    // the entry assembled from the previous config.
     (this.get(IModelCatalog) as ModelCatalog).notifyConfigChanged();
     const profile = this.get(IAgentProfileService);
     profile.update({ modelAlias: provider.model });
   }
 
-  /**
-   * The manual cache-drop for tests that mutate `kimiConfig` behind the
-   * config services' backs (no change events fire): the ModelCatalog keeps
-   * serving the previously assembled Model until this is called.
-   */
   notifyModelConfigChanged(): void {
     (this.get(IModelCatalog) as ModelCatalog).notifyConfigChanged();
   }
 
   contextData(): { readonly history: readonly ContextMessage[]; readonly tokenCount: number } {
     const context = this.get(IAgentContextMemoryService);
-    const contextSize = this.get(IAgentContextSizeService);
+    const tokenCounting = this.get(IAgentTokenCountingService);
     return {
       history: context.get(),
-      tokenCount: contextSize.get().measured,
+      tokenCount: tokenCounting.get().measured,
     };
   }
 
@@ -1569,7 +1532,6 @@ export class AgentTestContext {
     return this.snapshots.until('turn.ended');
   }
 
-  /** The agent's persisted wire journal (drains the persistence queue first). */
   async persistedWireRecords(): Promise<WireRecord[]> {
     await this.drainWirePersistence();
     return this.persistedRecords();
@@ -1907,18 +1869,12 @@ export class AgentTestContext {
     this.snapshots.respondPending(method, id, result);
   }
 
-  /**
-   * The harness AGENTS.md provider: no Workspace scope and no fs watch exist
-   * here, so `ready` re-reads the instruction files on every await and the
-   * getters expose the freshest load — the same freshness the old per-prompt
-   * disk read gave prompt builds.
-   */
   private createInstructionsProvider(): ISessionInstructionsProvider {
     const fs = this.root.accessor.get(IHostFileSystem);
     const env = this.root.accessor.get(IHostEnvironment);
     const bootstrapService = this.root.accessor.get(IBootstrapService);
     const cwd = this.cwd;
-    let current: LoadedAgentsMd = { content: '', warning: undefined };
+    let current: LoadedAgentsMd = { content: '', warning: undefined, paths: [] };
     return {
       _serviceBrand: undefined,
       get ready(): Promise<void> {
@@ -1933,6 +1889,9 @@ export class AgentTestContext {
       },
       get agentsMdWarning() {
         return current.warning;
+      },
+      get agentsMdPaths() {
+        return current.paths;
       },
       onDidChange: Event.None as Event<void>,
     };
@@ -2081,12 +2040,6 @@ export class AgentTestContext {
     }) as unknown as PromiseAgentAPI;
   }
 
-  /**
-   * Adapters for the wire methods removed from `AgentRPCService` as pure
-   * forwards. Each mirrors the forward the RPC service used to implement
-   * (including the `beginCompaction` manual source, the `stopTask` reason
-   * branch, and the `setActiveTools` profile mapping).
-   */
   private createRpcPassthroughAdapters(): AgentRpcPassthroughAPI {
     return {
       runShellCommand: (payload) => this.get(IAgentShellCommandService).run(payload),
@@ -2175,8 +2128,8 @@ export class AgentTestContext {
       inputCacheCreation: 0,
     };
     const context = this.get(IAgentContextMemoryService);
-    const contextSize = this.get(IAgentContextSizeService);
-    contextSize.measured(context.get(), [], usage);
+    const tokenCounting = this.get(IAgentTokenCountingService);
+    tokenCounting.measured(context.get(), [], usage);
     const profile = this.get(IAgentProfileService);
     const usageService = this.get(IAgentUsageService);
     usageService.record(profile.data().modelAlias ?? 'mock-model', usage, {
@@ -2420,10 +2373,6 @@ function applyTestAgentOptionsToConfig(config: KimiConfig, options: TestAgentOpt
 }
 
 function configService(readConfig: () => KimiConfig): IConfigService {
-  // Mirror the production overlay chain: the secondary-model recipe
-  // materializes its derived entry into the effective models view, so
-  // spawn-time binding resolves it exactly as in production. Top-level
-  // shallow clone only — `apply` replaces (never mutates) section values.
   const effectiveConfig = () => {
     const effective = { ...configWithEnvOverrides(readConfig()) } as Record<string, unknown>;
     secondaryModelOverlay.apply(effective, () => undefined, (_domain, value) => value);
@@ -2671,24 +2620,6 @@ function createLogService(logger: Logger | undefined, bindings: LogContext = {})
   };
 }
 
-/**
- * The harness protocol registry: identity/capability resolution delegates to
- * the real `ProtocolAdapterRegistry` (so vendor verdicts like Kimi thinking
- * semantics stay truthful), while `createChatProvider` returns a provider
- * driven by the scripted `GenerateFn`.
- *
- * For a registered vendor (`providerType` with a provider definition — today
- * only `kimi`) `createChatProvider` composes the REAL provider through the
- * registry and replaces only its `generate` (appendix B item 10), so the
- * test-visible provider has the production shape: the base's `name`
- * (`'openai'`, never `'kimi'`), trait-bound capabilities (`uploadVideo`),
- * and no vendor subclass. Unregistered provider types keep the generic
- * generate-backed provider.
- *
- * Either way the per-turn `GenerateOptions` intent fields (cacheKey /
- * sampling / thinking / budget) are forwarded into the `GenerateFn` so tests
- * assert them as request parameters instead of morph-era provider state.
- */
 function createGenerateBackedProtocolRegistry(generate: GenerateFn): IProtocolAdapterRegistry {
   const real = new ProtocolAdapterRegistry();
   return {
@@ -2711,12 +2642,6 @@ function createGenerateBackedProtocolRegistry(generate: GenerateFn): IProtocolAd
   } as IProtocolAdapterRegistry;
 }
 
-/**
- * The real composed provider with only `generate` swapped for the scripted
- * driver. Everything else — `name`, `thinkingEffort`, `maxCompletionTokens`,
- * the trait-bound `uploadVideo` — delegates to the composed provider, and the
- * scripted `GenerateFn` receives the composed provider as its `chat` argument.
- */
 function replaceProviderGenerate(provider: ChatProvider, generate: GenerateFn): ChatProvider {
   const replaced: ChatProvider = {
     get name() {
@@ -2787,9 +2712,6 @@ async function generateBackedResponse(
     {
       signal: options?.signal,
       auth: options?.auth,
-      // Forward the per-turn intent fields so tests assert them as request
-      // parameters — the replacement for morph-era provider state
-      // (`_generationKwargs` / `modelParameters` / baked `thinkingEffort`).
       cacheKey: options?.cacheKey,
       sampling: options?.sampling,
       thinking: options?.thinking,
@@ -2797,9 +2719,6 @@ async function generateBackedResponse(
       usedContextTokens: options?.usedContextTokens,
       maxContextTokens: options?.maxContextTokens,
       responseFormat: options?.responseFormat,
-      // Forward the early-capture hook so a GenerateFn can fire the trace id
-      // as soon as its (simulated) response headers arrive — e.g. before a
-      // mid-stream failure — mirroring real kosong generate() behavior.
       onTraceId: options?.onTraceId,
     },
   );

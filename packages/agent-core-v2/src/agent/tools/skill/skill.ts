@@ -13,20 +13,22 @@
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';
+import { Error2, ErrorCodes } from '#/errors';
 import { type AgentTool } from '#/tool/toolContract';
 
 export const MAX_SKILL_QUERY_DEPTH = 3;
 
-export class NestedSkillTooDeepError extends Error {
+export class NestedSkillTooDeepError extends Error2 {
   readonly skillName?: string;
   readonly depth: number;
 
   constructor(depth: number, skillName?: string) {
     const label = skillName !== undefined ? ` "${skillName}"` : '';
     super(
+      ErrorCodes.SKILL_NESTED_TOO_DEEP,
       `Nested skill invocation${label} exceeded the maximum depth of ${String(depth)} — refusing to recurse further.`,
+      { name: 'NestedSkillTooDeepError', details: { depth, skillName } },
     );
-    this.name = 'NestedSkillTooDeepError';
     this.depth = depth;
     if (skillName !== undefined) this.skillName = skillName;
   }

@@ -219,16 +219,18 @@ describe('AgentMcpService', () => {
     disposables.dispose();
   });
 
-  function createService(manager: FakeMcpManager): AgentMcpService {
+  function createService(
+    manager: FakeMcpManager,
+    ready: Promise<void> = Promise.resolve(),
+  ): IAgentMcpService {
     ix.stub(ISessionMcpHandle, {
       _serviceBrand: undefined,
-      ready: Promise.resolve(),
+      ready,
       connectionManager: manager as unknown as McpConnectionManager,
     } satisfies ISessionMcpHandle);
     ix.stub(ISessionContext, { sessionDir: '/tmp/kimi-code-mcp-test' });
-    const svc = ix.createInstance(AgentMcpService);
-    disposables.add(svc);
-    return svc;
+    ix.set(IAgentMcpService, new SyncDescriptor(AgentMcpService));
+    return ix.get(IAgentMcpService);
   }
 
   it('delegates list / status events to the connection manager', async () => {
@@ -249,9 +251,32 @@ describe('AgentMcpService', () => {
     expect(statuses).toEqual(['s1:connected', 's2:connected', 's1:disabled']);
   });
 
+  it('holds the LLM step until the session MCP handle is ready', async () => {
+    const manager = new FakeMcpManager();
+    let releaseReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      releaseReady = resolve;
+    });
+    createService(manager, ready);
+
+    const loop = ix.get(IAgentLoopService);
+    let settled = false;
+    const step = loop.hooks.onWillBeginStep
+      .run({ turnId: 1, step: 1, signal: new AbortController().signal })
+      .then(() => {
+        settled = true;
+      });
+
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    releaseReady();
+    await step;
+    expect(settled).toBe(true);
+  });
+
   it('resolves through the IAgentMcpService binding with no manager', () => {
     const created = createService(new FakeMcpManager());
-    ix.set(IAgentMcpService, created);
     const svc = ix.get(IAgentMcpService);
     expect(svc).toBe(created);
     expect(svc.list()).toEqual([]);
@@ -477,10 +502,6 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    // The connection drops while no call is in flight: the manager marks the
-    // server failed. The tools must stay registered so the next call reaches
-    // the adapter and its reconnect-and-retry path instead of failing with
-    // "tool not found".
     manager.fail('s');
 
     const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
@@ -547,8 +568,6 @@ describe('AgentMcpService', () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow('Connection closed');
-    // The tools stay registered after the failed reconnect so a later call
-    // can try healing the server again instead of hitting "tool not found".
     expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toHaveLength(2);
   });
 
@@ -730,9 +749,6 @@ describe('AgentMcpService', () => {
     const registry = ix.get(IAgentToolRegistryService);
     const staleEcho = registry.resolve('mcp__s__echo');
 
-    // Resolve the stale tool first, then heal the server the way a parallel
-    // call's reconnect would: the resolved entry swaps to a fresh client and
-    // the registry re-seeds, leaving `staleEcho` bound to the dead client.
     manager.setResolved('s', freshClient, await discoverTools(freshClient));
     manager.connect('s');
 

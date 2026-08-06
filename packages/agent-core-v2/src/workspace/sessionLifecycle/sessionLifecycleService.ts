@@ -8,7 +8,12 @@
  * slots instance it runs around create/close,
  * tearing sessions down on close/archive — archiving flags the session's
  * metadata, removes its agents, restoring clears
- * the archived flag, and broadcasts the transition; session start and
+ * the archived flag, and broadcasts the transition; deleting closes a live
+ * session through the same flow, then removes the session directory
+ * (metadata, agent wire records, plans, logs), evicts the index read-model
+ * entry, and appends a `deleted` tombstone to the shared
+ * `session_index.jsonl`, raising `session.not_found` for ids this handler
+ * never persisted. Session start and
  * resume failures are reported through telemetry. Each Session scope
  * receives a telemetry view bound to its session id, while failures before
  * a scope is available use an ephemeral context view. Closing a session
@@ -16,7 +21,9 @@
  * Every Session scope is also seeded with the handler's shared workspace
  * resources as pure-data read views (the injection contracts) — discovery,
  * watching and connecting all live on the Workspace-scope services; session
- * consumers read the seeds and refresh off their change events.
+ * consumers read the seeds and refresh off their change events. The five
+ * workspace-projection seeds are provided by the seed-adapter units
+ * assembled with the scope (`assembleSessionSeedAdapters`), not by `extra`.
  * Materializes the session's initial metadata on
  * creation. Bound at Workspace scope.
  * Persisted sessions are discovered through the session-index read model.
@@ -40,9 +47,16 @@
  * with a fire-and-forget `reload()` so a fixed agent file unblocks later
  * creates
  * (the workspace skill catalog, by contrast, is kicked fire-and-forget).
- * The handler's shared MCP manager (file + plugin servers only — sessions
- * cannot contribute servers) is awaited before create/resume returns. The
- * session-level services whose subscriptions
+ * The handler's shared MCP manager is NOT awaited before create/resume
+ * returns — it connects fire-and-forget at Workspace scope, and the seeded
+ * handle's `ready` promise lets the agent's LLM steps wait on it instead
+ * (see `AgentMcpService`). A session created with ephemeral `mcpServers`
+ * additionally gets a session overlay from `workspaceMcp` (session-owned
+ * connections, seeded as a merged view, shut down when the session handle
+ * disposes — with a backstop in the service's own dispose for teardown
+ * paths that bypass the handle wrapper), likewise connected in the
+ * background.
+ * The session-level services whose subscriptions
  * must exist before the first agent / turn (external hooks, cron, the
  * secondary-model startup warning) opt into `OnScopeCreated` activation.
  */
@@ -54,17 +68,17 @@ import { ulid } from 'ulid';
 
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
+import { LifecycleScope } from '#/app/scopes';
 import {
   createScopedChildHandle,
   type ISessionScopeHandle,
-  LifecycleScope,
   ScopeActivation,
   registerScopedService,
 } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { Emitter, type Event } from '#/_base/event';
-import { DEFAULT_PLAN_MODE_SECTION } from '#/agent/plan/configSection';
-import { IAgentPlanService } from '#/agent/plan/plan';
+import { DEFAULT_PLAN_MODE_SECTION } from '#/features/plan/configSection';
+import { IAgentPlanService } from '#/features/plan/plan';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
@@ -85,12 +99,10 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
-import { sessionMcpHandleSeed } from '#/session/mcp/sessionMcpHandle';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
 import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
-import { sessionInstructionsProviderSeed } from '#/session/sessionInstructions/instructionsProvider';
-import { sessionWorkspaceInfoSeed } from '#/session/workspaceInfo/workspaceInfo';
+import { assembleSessionSeedAdapters } from '#/session/sessionSeed/sessionSeedAdapters';
 import {
   ISessionLifecycleHooks,
   sessionLifecycleHooksSeed,
@@ -98,9 +110,7 @@ import {
 } from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
-import { sessionSkillCatalogDataSeed } from '#/session/sessionSkillCatalog/skillCatalogData';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
-import { sessionToolPolicyGateSeed } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { IWireService } from '#/wire/wire';
 import {
   AGENT_WIRE_RECORD_KEY,
@@ -120,10 +130,10 @@ import {
   IWorkspaceAgentProfileLoader,
 } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
-import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
-import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
-import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceToolPolicy';
+import {
+  IWorkspaceMcpService,
+  type ISessionMcpOverlay,
+} from '#/workspace/workspaceMcp/workspaceMcp';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
 import {
@@ -143,6 +153,7 @@ type MaterializeSessionOptions = Omit<CreateSessionOptions, 'sessionId'> & {
   readonly sessionId: string;
 };
 
+// NOTE: stays Disposable — its own 'get' and 'config' collide with the Fiber
 export class SessionLifecycleService extends Disposable implements ISessionLifecycleService {
   declare readonly _serviceBrand: undefined;
   private readonly sessions = new Map<string, ISessionScopeHandle>();
@@ -155,6 +166,14 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private readonly _onDidForkSession = this._register(new Emitter<SessionForkedEvent>());
   readonly onDidForkSession: Event<SessionForkedEvent> = this._onDidForkSession.event;
   private readonly resuming = new Map<string, Promise<ISessionScopeHandle | undefined>>();
+  /**
+   * Live per-session MCP overlays keyed by session id. The session handle's
+   * dispose removes its overlay here before shutting it down, so whatever
+   * remains at service teardown (the DI container disposes session scopes
+   * directly, bypassing the handle wrapper) is shut down from the
+   * service's own dispose instead — no overlay outlives the lifecycle.
+   */
+  private readonly liveOverlays = new Map<string, ISessionMcpOverlay>();
 
   constructor(
     @IInstantiationService private readonly instantiation: IInstantiationService,
@@ -169,7 +188,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @ICronTaskPersistence private readonly cronStore: ICronTaskPersistence,
     @IEventService private readonly event: IEventService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IWorkspaceSkillCatalog private readonly skillCatalog: IWorkspaceSkillCatalog,
     @IWorkspaceAgentProfileLoader
     private readonly workspaceAgentProfileLoader: IWorkspaceAgentProfileLoader,
     @IExtraAgentProfileLoader
@@ -180,13 +198,21 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     private readonly userAgentProfileLoader: IUserAgentProfileLoader,
     @IPluginAgentProfileLoader
     private readonly pluginAgentProfileLoader: IPluginAgentProfileLoader,
-    @IWorkspaceInstructionsService private readonly instructions: IWorkspaceInstructionsService,
     @IWorkspaceMcpService private readonly mcp: IWorkspaceMcpService,
     @IWorkspaceDirs private readonly workspaceDirs: IWorkspaceDirs,
-    @IWorkspaceToolPolicy private readonly toolPolicy: IWorkspaceToolPolicy,
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
   ) {
     super();
+    this._register({
+      dispose: () => {
+        // Service teardown (e.g. workspace/root scope disposal) bypasses the
+        // per-session handle wrappers — shut down every overlay still live.
+        for (const overlay of this.liveOverlays.values()) {
+          void overlay.shutdown();
+        }
+        this.liveOverlays.clear();
+      },
+    });
   }
 
   private get workspaceId(): string {
@@ -247,7 +273,14 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       'onWillCloseSession',
     ]);
     await this.hostEnv.ready;
-    const handle = createScopedChildHandle(
+    const mcpOverlay =
+      opts.mcpServers !== undefined && Object.keys(opts.mcpServers).length > 0
+        ? this.mcp.sessionOverlay(opts.mcpServers, { stdioCwd: opts.workDir })
+        : undefined;
+    if (mcpOverlay !== undefined) {
+      this.liveOverlays.set(opts.sessionId, mcpOverlay);
+    }
+    const scopeHandle = createScopedChildHandle(
       this.instantiation,
       LifecycleScope.Session,
       opts.sessionId,
@@ -256,23 +289,33 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           ...sessionContextSeed(ctx),
           ...sessionLifecycleHooksSeed(hooks),
           [ITelemetryService, this.telemetry.withContext({ sessionId: opts.sessionId })],
-          ...sessionSkillCatalogDataSeed(this.skillCatalog.sessionData()),
           ...sessionAgentProfileCatalogSeed({
             _serviceBrand: undefined,
             workspaceKey: workspaceId,
           }),
-          ...sessionInstructionsProviderSeed(this.instructions.sessionProvider()),
-          ...sessionMcpHandleSeed(this.mcp.sessionHandle()),
-          ...sessionWorkspaceInfoSeed(this.workspaceDirs.sessionInfo()),
-          ...sessionToolPolicyGateSeed(this.toolPolicy.sessionGate()),
           [ISessionProcessRunner, this.processRunner],
         ],
+        assemble: (container) => assembleSessionSeedAdapters(container, mcpOverlay?.handle),
       },
     ) as ISessionScopeHandle;
+    const handle: ISessionScopeHandle =
+      mcpOverlay === undefined
+        ? scopeHandle
+        : {
+            ...scopeHandle,
+            dispose: () => {
+              // Delete-then-shutdown is atomic (single-threaded): the service
+              // teardown path only shuts down overlays still in the map, so a
+              // handle dispose and a service dispose can never double-shutdown.
+              if (this.liveOverlays.delete(opts.sessionId)) {
+                void mcpOverlay.shutdown();
+              }
+              scopeHandle.dispose();
+            },
+          };
     try {
       await handle.accessor.get(ISessionMetadata).ready;
       await handle.accessor.get(ISessionToolPolicy).ready;
-      void this.skillCatalog.ready;
       await Promise.all([
         this.workspaceAgentProfileLoader.ready,
         this.extraAgentProfileLoader.ready,
@@ -280,7 +323,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         this.userAgentProfileLoader.ready,
         this.pluginAgentProfileLoader.ready,
       ]);
-      await this.mcp.ready;
     } catch (error) {
       handle.dispose();
       void this.explicitAgentProfileLoader.reload().catch(() => undefined);
@@ -349,6 +391,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       sessionId,
       workDir,
       additionalDirs: opts?.additionalDirs,
+      mcpServers: opts?.mcpServers,
     });
     const agents = handle.accessor.get(IAgentLifecycleService);
     if (agents.get(MAIN_AGENT_ID) === undefined) {
@@ -386,17 +429,40 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       type: 'event.session.archived',
       payload: { sessionId },
     });
-    await this.announceWillClose({ sessionId, handle, reason: 'exit' });
+    await this.announceWillClose({ sessionId, handle, reason: 'archive' });
     this.sessions.delete(sessionId);
     handle.dispose();
     this._onDidArchiveSession.fire({ sessionId });
   }
 
-  async restore(sessionId: string): Promise<ISessionScopeHandle | undefined> {
-    const handle = await this.resume(sessionId);
+  async restore(
+    sessionId: string,
+    opts?: ResumeSessionOptions,
+  ): Promise<ISessionScopeHandle | undefined> {
+    const handle = await this.resume(sessionId, opts);
     if (handle === undefined) return undefined;
     await handle.accessor.get(ISessionMetadata).setArchived(false);
     return handle;
+  }
+
+  async delete(sessionId: string): Promise<void> {
+    const inflight = this.resuming.get(sessionId);
+    if (inflight !== undefined) {
+      await inflight.catch(() => undefined);
+    }
+    const handle = this.sessions.get(sessionId);
+    const summary = await this.index.get(sessionId);
+    const persistedHere = summary !== undefined && summary.workspaceId === this.workspaceId;
+    if (handle === undefined && !persistedHere) {
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
+    }
+    if (handle !== undefined) {
+      await this.close(sessionId);
+    }
+    await this.hostFs.remove(sessionDirOf(this.bootstrap.homeDir, this.handlerScope, sessionId));
+    await this.index.remove(sessionId);
+    this.appendLogStore.append('', 'session_index.jsonl', { sessionId, deleted: true });
+    await this.appendLogStore.flush();
   }
 
   private async announceWillClose(event: SessionWillCloseEvent): Promise<void> {

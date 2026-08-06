@@ -59,7 +59,7 @@ function harness() {
       reg.define(IAgentPromptService, AgentPromptService);
     }
   });
-  return { prompt: ix.get(IAgentPromptService), loop, context, fullCompaction };
+  return { prompt: ix.get(IAgentPromptService), loop, context, fullCompaction, eventBus: ix.get(IEventBus) };
 }
 
 describe('AgentPromptService', () => {
@@ -77,6 +77,20 @@ describe('AgentPromptService', () => {
     const first = await prompt.enqueue({ message: message('one') });
     const second = await prompt.enqueue({ message: message('two') });
     expect(prompt.list().pending.map((item) => item.id)).toEqual([first.id, second.id]);
+  });
+
+  it('publishes prompt.queued only for prompts that cannot launch immediately', async () => {
+    const { prompt, eventBus } = harness();
+    const queued: Array<{ promptId: string; queueLength: number }> = [];
+    eventBus.subscribe('prompt.queued', (e) => {
+      queued.push({ promptId: e.promptId, queueLength: e.queueLength });
+    });
+
+    await prompt.enqueue({ id: 'active', message: message('active') });
+    expect(queued).toEqual([]);
+
+    await prompt.enqueue({ id: 'waiting', message: message('waiting') });
+    expect(queued).toEqual([{ promptId: 'waiting', queueLength: 1 }]);
   });
 
   it('atomically rejects steer when any id is not pending', async () => {

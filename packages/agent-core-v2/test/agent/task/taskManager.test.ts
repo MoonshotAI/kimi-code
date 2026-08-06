@@ -1282,10 +1282,6 @@ describe('AgentTaskService', () => {
       expect(manager.getTask('bash-bogusss0')).toBeUndefined();
 
       expect(await persistence!.listTasks()).toEqual([]);
-      // The session scope's initial metadata write is kicked at creation but
-      // not awaited by the (synchronous) harness; settle it before the
-      // cleanup below removes the home dir, the same way session
-      // materialization awaits metadata readiness in production.
       await ctx.get(ISessionMetadata).ready;
     } finally {
       await rm(sessionDir, { recursive: true, force: true });

@@ -1,5 +1,73 @@
 # @moonshot-ai/kimi-code
 
+## 0.33.0
+
+### Minor Changes
+
+- [#2407](https://github.com/MoonshotAI/kimi-code/pull/2407) [`0abcd00`](https://github.com/MoonshotAI/kimi-code/commit/0abcd00f7fd3e3cbf087509ffef1c54a6f8d396d) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Add Kimi Computer Use and Kimi WebBridge as built-in official marketplace entries in the v2 CLI. Installing from `/plugins` sets up the latest managed runtime and plugin together, reports incomplete manual steps, and supports retrying interrupted setup.
+
+- [#2627](https://github.com/MoonshotAI/kimi-code/pull/2627) [`f881cdd`](https://github.com/MoonshotAI/kimi-code/commit/f881cdd97073475c43272ec5734bbc39290dd399) Thanks [@sailist](https://github.com/sailist)! - Run the CLI surfaces (interactive TUI, `kimi -p`, `kimi acp`, `kimi export`, `kimi provider`) on the agent-core-v2 engine by default. Set `KIMI_CODE_LEGACY_FLAG=1` to fall back to the legacy engine.
+
+- [#2565](https://github.com/MoonshotAI/kimi-code/pull/2565) [`54c04bf`](https://github.com/MoonshotAI/kimi-code/commit/54c04bf03ddbeb46d02b2edb460ea091ae194509) Thanks [@7Sageer](https://github.com/7Sageer)! - `/fork` no longer switches to the forked session: the current session stays active and its background tasks keep running. Find the fork in `/sessions`.
+
+- [#2630](https://github.com/MoonshotAI/kimi-code/pull/2630) [`3bd098b`](https://github.com/MoonshotAI/kimi-code/commit/3bd098b80643c99eabdc602b767dbc53fc47cedd) Thanks [@liruifengv](https://github.com/liruifengv)! - Ask whether to trust the current folder on startup.
+
+- [#2630](https://github.com/MoonshotAI/kimi-code/pull/2630) [`3bd098b`](https://github.com/MoonshotAI/kimi-code/commit/3bd098b80643c99eabdc602b767dbc53fc47cedd) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Add and manage custom providers in settings.
+
+- [#2599](https://github.com/MoonshotAI/kimi-code/pull/2599) [`541ddd2`](https://github.com/MoonshotAI/kimi-code/commit/541ddd2d898c4880a312874b1c539f85888bf0c1) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Overhaul the UI/UX and fix known issues.
+
+### Patch Changes
+
+- [#2601](https://github.com/MoonshotAI/kimi-code/pull/2601) [`75fe068`](https://github.com/MoonshotAI/kimi-code/commit/75fe068a01261ff6b34f176530b338ec6a24918e) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Fix built-in capability availability and installed status in `/plugins`, preserve legacy WebBridge skills as backups during updates, and prevent Computer Use updates from duplicating or disconnecting MCP servers.
+
+- [#2635](https://github.com/MoonshotAI/kimi-code/pull/2635) [`2b3e9a9`](https://github.com/MoonshotAI/kimi-code/commit/2b3e9a9f7910b0bb8050380068fa122c2c2cee91) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Rename the partner plugin marketplace tab to Curated and clarify that it contains third-party plugins from Kimi partners.
+
+- [#2614](https://github.com/MoonshotAI/kimi-code/pull/2614) [`8db7d42`](https://github.com/MoonshotAI/kimi-code/commit/8db7d42f23472a692eb389a0e0e5a3e18aa1b94d) Thanks [@RealKai42](https://github.com/RealKai42)! - Add /bug as an alias for the /feedback slash command. Type /bug to submit feedback.
+
+- [#2586](https://github.com/MoonshotAI/kimi-code/pull/2586) [`278b6af`](https://github.com/MoonshotAI/kimi-code/commit/278b6af19d8708ec0f3eb2696d62a8d8209d497d) Thanks [@7Sageer](https://github.com/7Sageer)! - Ensure the first request waits for MCP startup to finish while the interface still opens immediately.
+
+- [#2620](https://github.com/MoonshotAI/kimi-code/pull/2620) [`2ee6e43`](https://github.com/MoonshotAI/kimi-code/commit/2ee6e431240a4a31034e0a403011dd6b2bfef9df) Thanks [@xpzouying](https://github.com/xpzouying)! - Fixed MCP OAuth re-authorization always failing with "Invalid redirect URI": the OAuth callback listener binds a random port per flow, but the dynamic client registration recorded the first flow's port, so every later interactive authorization was rejected at the authorization endpoint. A stale registration is now dropped automatically and the flow re-registers with the current callback URI.
+
+- [#2596](https://github.com/MoonshotAI/kimi-code/pull/2596) [`c32e661`](https://github.com/MoonshotAI/kimi-code/commit/c32e661faa931df9fdc72e63230f3ebebc00dce5) Thanks [@xpzouying](https://github.com/xpzouying)! - MCP tool results now surface the spec-defined `structuredContent` field and `_meta` server metadata to the model as a serialized `<mcp-structured-result>` block, instead of silently dropping them. Servers that return their machine-readable contract in these fields work the same as on other MCP hosts.
+
+- [#2612](https://github.com/MoonshotAI/kimi-code/pull/2612) [`e357028`](https://github.com/MoonshotAI/kimi-code/commit/e3570280bde775a153ee04388393506da7ac4cc1) Thanks [@7Sageer](https://github.com/7Sageer)! - Fix all tool calls failing with spawn EBADF on macOS when a skill folder contains a very large file tree.
+
+- [#2630](https://github.com/MoonshotAI/kimi-code/pull/2630) [`3bd098b`](https://github.com/MoonshotAI/kimi-code/commit/3bd098b80643c99eabdc602b767dbc53fc47cedd) Thanks [@liruifengv](https://github.com/liruifengv)! - Start the interactive TUI without creating a session.
+
+- [#2630](https://github.com/MoonshotAI/kimi-code/pull/2630) [`3bd098b`](https://github.com/MoonshotAI/kimi-code/commit/3bd098b80643c99eabdc602b767dbc53fc47cedd) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Show the signed-in account and plan usage.
+
+- [#2630](https://github.com/MoonshotAI/kimi-code/pull/2630) [`3bd098b`](https://github.com/MoonshotAI/kimi-code/commit/3bd098b80643c99eabdc602b767dbc53fc47cedd) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Set an emoji for the session title.
+
+- [#2630](https://github.com/MoonshotAI/kimi-code/pull/2630) [`3bd098b`](https://github.com/MoonshotAI/kimi-code/commit/3bd098b80643c99eabdc602b767dbc53fc47cedd) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Pin sessions to the top of the sidebar.
+
+## 0.32.0
+
+### Minor Changes
+
+- [#2558](https://github.com/MoonshotAI/kimi-code/pull/2558) [`75395f6`](https://github.com/MoonshotAI/kimi-code/commit/75395f6abb17f83f30d16b51f4e060a639f43622) Thanks [@sailist](https://github.com/sailist)! - Add the TurnStarted, UserPromptQueued, TaskStarted, and SessionHeartbeat hook events, enrich hook payloads with the session title and client type, include the model and profile in SessionStart, and report SessionEnd as archive when a session is archived instead of exited. Configure the new events under [[hooks]] in config.toml.
+
+### Patch Changes
+
+- [#2416](https://github.com/MoonshotAI/kimi-code/pull/2416) [`eaab2b6`](https://github.com/MoonshotAI/kimi-code/commit/eaab2b6f28c0b958edf8ab5ae5e78a4c0426af26) Thanks [@mangeshraut712](https://github.com/mangeshraut712)! - Fall back to the built-in models.dev catalog snapshot when the public catalog is unreachable, so Known third-party provider import still works offline or in blocked networks.
+
+- [#2083](https://github.com/MoonshotAI/kimi-code/pull/2083) [`bfa0080`](https://github.com/MoonshotAI/kimi-code/commit/bfa00807c975fdc5b84dda32d47b16b09e8d42c1) Thanks [@StaR4y](https://github.com/StaR4y)! - web: Fix dark-mode monochrome controls and align the chat composer corner radius with the design system.
+
+- [#2559](https://github.com/MoonshotAI/kimi-code/pull/2559) [`dfc55a5`](https://github.com/MoonshotAI/kimi-code/commit/dfc55a5c977dbff657e1da74ff5c2b9d488807be) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Render the "/login" already-logged-in confirmation in the success color instead of dim text, so the "Already logged in. Model configuration refreshed." message is clearly visible.
+
+- [#2572](https://github.com/MoonshotAI/kimi-code/pull/2572) [`6ba75a1`](https://github.com/MoonshotAI/kimi-code/commit/6ba75a173b595904bc70d0d7161de2f9b964c961) Thanks [@sailist](https://github.com/sailist)! - Rename the `[loop_control] max_retries_per_step` config key to `max_attempts_per_step` and `max_steps_per_run` to `max_steps_per_turn`: on the v2 engine the old keys no longer take effect and a startup warning prompts the rename in `config.toml`. The `KIMI_LOOP_MAX_RETRIES_PER_STEP` env var is likewise deprecated in favor of `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP` but keeps working with a warning.
+
+- [#2585](https://github.com/MoonshotAI/kimi-code/pull/2585) [`c396873`](https://github.com/MoonshotAI/kimi-code/commit/c39687318c64bf8a305a10bf9ca86ef6ef2c6656) Thanks [@sailist](https://github.com/sailist)! - Fix submitting answers to interactive question prompts being rejected when the model provider returns tool call IDs containing colons (some OpenAI-compatible gateways).
+
+- [#2562](https://github.com/MoonshotAI/kimi-code/pull/2562) [`071b6a5`](https://github.com/MoonshotAI/kimi-code/commit/071b6a50d9c2ce9c4b45dc4d58dac1101b8c4f52) Thanks [@sailist](https://github.com/sailist)! - Serve v1 message history from the server layer and drop the engine-side legacy message adapter; the /api/v1 message contract is unchanged.
+
+- [#2562](https://github.com/MoonshotAI/kimi-code/pull/2562) [`071b6a5`](https://github.com/MoonshotAI/kimi-code/commit/071b6a50d9c2ce9c4b45dc4d58dac1101b8c4f52) Thanks [@sailist](https://github.com/sailist)! - Assemble the session snapshot endpoint from the engine's services for both cold and live sessions, and remove the KIMI_SNAPSHOT_READER, KIMI_SNAPSHOT_TIMEOUT_MS, and KIMI_SNAPSHOT_CACHE_LIMIT environment knobs.
+
+- [#2563](https://github.com/MoonshotAI/kimi-code/pull/2563) [`2118544`](https://github.com/MoonshotAI/kimi-code/commit/21185447fe0f04dbe342bebb6c6d0b364fd43daa) Thanks [@sailist](https://github.com/sailist)! - Fix the context window limit showing as 0 in session status updates when no model is bound yet or the configured model no longer resolves; the limit now falls back to the default model or is omitted when unknown.
+
+- [#2563](https://github.com/MoonshotAI/kimi-code/pull/2563) [`2118544`](https://github.com/MoonshotAI/kimi-code/commit/21185447fe0f04dbe342bebb6c6d0b364fd43daa) Thanks [@sailist](https://github.com/sailist)! - The `[token_counting]` strategy now only selects the reported context size: `estimated` keeps provider-reported usage out of the context-size display, and `measured` no longer gets stuck retrying an oversized compaction request until it fails.
+
+- [#2563](https://github.com/MoonshotAI/kimi-code/pull/2563) [`2118544`](https://github.com/MoonshotAI/kimi-code/commit/21185447fe0f04dbe342bebb6c6d0b364fd43daa) Thanks [@sailist](https://github.com/sailist)! - Add a `[token_counting]` config section to choose how context token counts are derived: `measured+estimated` (default), `measured` (provider usage only), or `estimated` (heuristic only, for providers without usage reporting). Set `strategy` under `[token_counting]` in config.toml (or `KIMI_TOKEN_COUNTING_STRATEGY`) to switch.
+
 ## 0.31.1
 
 ### Patch Changes

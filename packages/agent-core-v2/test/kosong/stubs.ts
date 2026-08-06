@@ -22,6 +22,9 @@ export class StubConfigService implements IConfigService {
   private readonly _onDidChange = new Emitter<ConfigChangedEvent>();
   readonly onDidChangeConfiguration: Event<ConfigChangedEvent> = this._onDidChange.event;
   readonly onDidSectionChange: Event<ConfigChangedEvent> = this._onDidChange.event;
+  private readonly _onDidChangeDiagnostics = new Emitter<readonly ConfigDiagnostic[]>();
+  readonly onDidChangeDiagnostics: Event<readonly ConfigDiagnostic[]> =
+    this._onDidChangeDiagnostics.event;
   private readonly _values = new Map<string, unknown>();
 
   constructor(initial?: Record<string, unknown>) {
@@ -82,12 +85,6 @@ export class StubConfigService implements IConfigService {
     return Promise.resolve();
   }
 
-  /**
-   * Mutate a section WITHOUT firing the change event — simulates a config
-   * write that bypasses the services' change events (the cache-invalidation
-   * tests use it to prove the catalog cache only drops on
-   * `notifyConfigChanged()`).
-   */
   setSilent(domain: string, value: unknown): void {
     if (value === undefined) {
       this._values.delete(domain);
@@ -138,11 +135,6 @@ export function stubOAuthService(tokenProvider?: StubTokenProvider): IOAuthServi
   } as unknown as IOAuthService;
 }
 
-/**
- * The kosong-side OAuth port stub (`IModelOAuthTokens`), mirroring what the
- * real `app/kosongConfig` adapter does over `IOAuthService`: a programmable
- * token provider for `getAccessToken` and a probeable cached-token flag.
- */
 export function stubModelOAuthTokens(
   tokenProvider?: StubTokenProvider,
   cachedToken?: string,

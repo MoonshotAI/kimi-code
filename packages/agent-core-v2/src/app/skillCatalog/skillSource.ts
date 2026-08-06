@@ -31,6 +31,7 @@ export const SKILL_SOURCE_PRIORITY = {
 } as const;
 
 export const PLUGIN_SKILL_SOURCE_ID = 'plugin';
+export const BUILTIN_SKILL_SOURCE_ID = 'builtin';
 
 export interface ISkillSource {
   readonly _serviceBrand: undefined;

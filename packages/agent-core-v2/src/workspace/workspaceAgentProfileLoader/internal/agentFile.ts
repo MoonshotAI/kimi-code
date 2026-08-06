@@ -11,16 +11,20 @@
  * (Claude Code).
  */
 
+import { CoreErrors } from '#/_base/errors/codes';
+import { Error2 } from '#/_base/errors/errors';
 import { FrontmatterError, parseFrontmatter } from '#/_base/text/frontmatter';
 
 import type { AgentFileDefinition, AgentFileSource } from './types';
 
-export class AgentFileParseError extends Error {
+export class AgentFileParseError extends Error2 {
   readonly reason?: unknown;
 
   constructor(message: string, cause?: unknown) {
-    super(message);
-    this.name = 'AgentFileParseError';
+    super(CoreErrors.codes.VALIDATION_FAILED, message, {
+      cause,
+      name: 'AgentFileParseError',
+    });
     if (cause !== undefined) this.reason = cause;
   }
 }

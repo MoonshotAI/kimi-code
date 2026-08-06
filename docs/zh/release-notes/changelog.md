@@ -6,6 +6,57 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 0.33.0（2026-08-05）
+
+### 新功能
+
+- `/plugins` 市场新增 Kimi Computer Use 与 Kimi WebBridge 官方内置插件，安装时自动配置托管运行时，中断后可重试。
+- web: 支持在设置中添加和管理自定义供应商。
+- web: 侧边栏支持将会话置顶。
+- web: 会话标题支持设置 emoji。
+- web: 显示登录账号信息与套餐用量。
+- 新增 `/bug` 命令作为 `/feedback` 的别名，输入 `/bug` 即可提交反馈。
+
+### 优化
+
+- 启动时询问是否信任当前文件夹。
+- `/fork` 不再切换到分叉会话，当前会话与后台任务保持运行，分叉结果可在 `/sessions` 中查看。
+- web: 深度优化界面 UI/UX 并修复已知问题。
+- 交互式 TUI 启动时不再立即创建会话。
+- 插件市场的合作伙伴标签页更名为 Curated，并说明其内容为 Kimi 合作伙伴提供的第三方插件。
+
+### 修复
+
+- 修复 macOS 上技能目录文件过多时所有工具调用失败（spawn EBADF）的问题。
+- 修复 MCP OAuth 重新授权总是因 `Invalid redirect URI` 失败的问题，现会自动清理过期注册并重新发起。
+- 修复首条请求未等待 MCP 初始化完成的问题，界面仍可立即打开。
+- 修复 MCP 工具结果中 `structuredContent` 与 `_meta` 元数据被静默丢弃的问题，现已正确传递给模型。
+- 修复 `/plugins` 中内置能力的可用性与安装状态显示，更新时保留旧版 WebBridge 技能备份，并避免 Computer Use 更新导致 MCP 服务重复或断连。
+
+### 重构
+
+- CLI 各界面（交互式 TUI、`kimi -p`、`kimi acp` 等）默认运行在 agent-core-v2 引擎上；设置 `KIMI_CODE_LEGACY_FLAG=1` 可回退旧引擎。
+
+## 0.32.0（2026-08-04）
+
+### 新功能
+
+- 新增四个 hook 事件：`TurnStarted`、`UserPromptQueued`、`TaskStarted` 和 `SessionHeartbeat`。在 `config.toml` 的 `[[hooks]]` 下配置，详见 [Hooks](https://moonshotai.github.io/kimi-code/zh/customization/hooks.html)。
+
+### 优化
+
+- `[loop_control]` 两个配置键改名：`max_retries_per_step` → `max_attempts_per_step`、`max_steps_per_run` → `max_steps_per_turn`；旧键不再生效，启动时会有改名警告，详见 [loop_control](https://moonshotai.github.io/kimi-code/zh/configuration/config-files.html#loop-control)。
+- 新增 `[token_counting]` 配置节：供应商不上报 token 用量时，可将上下文大小显示切换为本地估算，详见 [token_counting](https://moonshotai.github.io/kimi-code/zh/configuration/config-files.html#token-counting)。
+
+### 修复
+
+- 修复部分 OpenAI 兼容网关返回含冒号的工具调用 ID 时，交互式提问无法提交答案的问题。
+- 修复上下文自动压缩因请求过大反复重试直至失败的问题。
+- models.dev 目录不可达时回退到内置快照，离线或网络受限时也能导入已知第三方供应商。
+- 修复未配置模型时上下文窗口上限显示为 0 的问题，现回退到默认模型显示。
+- web: 修复深色模式下单色控件显示异常，聊天输入框圆角与设计系统对齐。
+- 修复 `/login` 已登录确认信息难以看清的问题，现以成功色显示。
+
 ## 0.31.1（2026-07-31）
 
 ### 优化

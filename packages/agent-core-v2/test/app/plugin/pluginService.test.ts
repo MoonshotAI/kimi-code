@@ -16,9 +16,8 @@ import path from 'node:path';
 
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -58,7 +57,12 @@ function makeHost(
     stubPair(IProviderService, providers),
     stubPair(ISkillDiscovery, {
       _serviceBrand: undefined,
-      discover: async () => ({ skills: [], skipped: [], scannedRoots: [] }),
+      discover: async () => ({
+        skills: [],
+        skipped: [],
+        scannedRoots: [],
+        scannedDirectories: [],
+      }),
     } satisfies ISkillDiscovery),
   ]);
 }

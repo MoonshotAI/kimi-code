@@ -20,7 +20,7 @@ import { linkAbortSignal, userCancellationReason } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
-import { ErrorCodes, toKimiErrorPayload, type KimiErrorPayload } from '#/errors';
+import { Error2, ErrorCodes, toKimiErrorPayload, type KimiErrorPayload } from '#/errors';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
 import { IAgentUsageService } from '#/agent/usage/usage';
@@ -58,7 +58,7 @@ export async function runAgentTurn(
           origin: AGENT_RUN_PROMPT_ORIGIN,
         } })).launched
       : await promptService.retry();
-  if (turn === undefined) throw new Error('Agent turn could not be started');
+  if (turn === undefined) throw new Error2(ErrorCodes.INTERNAL, 'Agent turn could not be started');
 
   if (options.onReady !== undefined) {
     void turn.ready.then(() => options.onReady?.()).catch(() => {});
@@ -162,7 +162,7 @@ function classifyTurnResult(result: TurnResult): void {
   switch (result.type) {
     case 'completed':
       if (result.truncated) {
-        throw new Error(SUBAGENT_MAX_TOKENS_ERROR);
+        throw new Error2(ErrorCodes.AGENT_MAX_TOKENS_EXCEEDED, SUBAGENT_MAX_TOKENS_ERROR);
       }
       return;
     case 'failed': {

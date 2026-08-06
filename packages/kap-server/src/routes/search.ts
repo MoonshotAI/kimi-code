@@ -78,6 +78,8 @@ function toWirePage(page: GlobalSearchPage): SearchMessagesResponse {
       indexed_sessions: page.indexState.indexedSessions,
       total_sessions: page.indexState.totalSessions,
       documents: page.indexState.documents,
+      stale: page.indexState.stale,
+      degraded: page.indexState.degraded,
     },
     source: page.source,
   };

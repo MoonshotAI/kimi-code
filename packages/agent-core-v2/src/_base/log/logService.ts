@@ -3,14 +3,15 @@
  *
  * `BoundLogger` filters entries by level, extracts the payload into ctx/error,
  * merges bound context, and writes to a plain `ILogWriter`. It extends
- * `Disposable` so scope implementations can flush synchronously when their
+ * `Service` so scope implementations can flush synchronously when their
  * scope is disposed. `AppLogService` is the App-scope binding of the single
  * `ILogService` token: it owns the global rotating file sink and reads its
  * level from `ILogOptions`.
  */
 
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import {
   type ILogger,
@@ -78,7 +79,7 @@ export interface LogLevelState {
   level: LogLevel;
 }
 
-export class BoundLogger extends Disposable implements ILogger {
+export class BoundLogger extends Service implements ILogger {
   constructor(
     protected readonly writer: ILogWriter,
     private readonly levelState: LogLevelState,

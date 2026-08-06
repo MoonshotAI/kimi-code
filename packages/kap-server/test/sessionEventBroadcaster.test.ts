@@ -16,19 +16,18 @@ import type {
   SessionActivityState,
 } from '@moonshot-ai/agent-core-v2';
 import {
-  ContextSizeModel,
   IAgentActivityView,
   LifecycleScope,
-  IAgentContextSizeService,
   IAgentLifecycleService,
   IAgentProfileService,
+  IAgentTokenCountingService,
   IAgentUsageService,
   IEventBus,
   IEventService,
   IModelCatalog,
+  IModelService,
   ISessionActivityView,
   ISessionInteractionService,
-  IWireService,
   ISessionMetadata,
   ISessionLifecycleService,
   IWorkspaceLifecycleService,
@@ -525,18 +524,14 @@ describe('SessionEventBroadcaster', () => {
     const usage = {
       total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
     };
-    main.set(IAgentContextSizeService, { get: () => ({ size: contextSize }) });
+    main.set(IAgentTokenCountingService, {
+      statusSize: () => contextSize,
+    });
     main.set(IAgentProfileService, {
       getModel: () => 'example-model',
       getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
     });
     main.set(IAgentUsageService, { status: () => usage });
-    main.set(IWireService, {
-      getModel: (model: unknown) => {
-        expect(model).toBe(ContextSizeModel);
-        return { length: 0, tokens: 8 };
-      },
-    });
     sessions.set('s1', lc);
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
@@ -574,18 +569,12 @@ describe('SessionEventBroadcaster', () => {
     const usage = {
       total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
     };
-    sub.set(IAgentContextSizeService, { get: () => ({ size: 10 }) });
+    sub.set(IAgentTokenCountingService, { statusSize: () => 10 });
     sub.set(IAgentProfileService, {
       getModel: () => 'sub-model',
       getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
     });
     sub.set(IAgentUsageService, { status: () => usage });
-    sub.set(IWireService, {
-      getModel: (model: unknown) => {
-        expect(model).toBe(ContextSizeModel);
-        return { length: 0, tokens: 8 };
-      },
-    });
     sessions.set('s1', lc);
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
@@ -611,13 +600,12 @@ describe('SessionEventBroadcaster', () => {
   it('resolves the secondary derived model id to a display string in status events', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
-    main.set(IAgentContextSizeService, { get: () => ({ size: 10 }) });
+    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
     main.set(IAgentProfileService, {
       getModel: () => SECONDARY_DERIVED_MODEL_ID,
       getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
     });
     main.set(IAgentUsageService, { status: () => ({}) });
-    main.set(IWireService, { getModel: () => ({ length: 0, tokens: 8 }) });
     main.set(IModelCatalog, {
       get: (id: string) => {
         expect(id).toBe(SECONDARY_DERIVED_MODEL_ID);
@@ -661,18 +649,12 @@ describe('SessionEventBroadcaster', () => {
       },
       total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
     };
-    main.set(IAgentContextSizeService, { get: () => ({ size: 10 }) });
+    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
     main.set(IAgentProfileService, {
       getModel: () => 'example-model',
       getModelCapabilities: () => ({ max_context_tokens: 128_000, max_input_tokens: 64_000 }),
     });
     main.set(IAgentUsageService, { status: () => usage });
-    main.set(IWireService, {
-      getModel: (model: unknown) => {
-        expect(model).toBe(ContextSizeModel);
-        return { length: 0, tokens: 8 };
-      },
-    });
     sessions.set('s1', lc);
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
@@ -684,6 +666,89 @@ describe('SessionEventBroadcaster', () => {
     expect(statuses.map((envelope) => envelope.payload)).toMatchObject([
       { type: 'agent.status.updated', maxContextTokens: 64_000 },
     ]);
+  });
+
+  it('omits maxContextTokens instead of pushing 0 when the context limit is unknown', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
+    // A bound alias whose model entry no longer resolves surfaces as the
+    // UNKNOWN_CAPABILITY marker (max_context_tokens: 0) — 0 means "unknown",
+    // not a real limit, so the wire event must drop the field entirely.
+    main.set(IAgentProfileService, {
+      getModel: () => 'ghost-model',
+      getModelCapabilities: () => ({ max_context_tokens: 0 }),
+    });
+    main.set(IAgentUsageService, { status: () => ({}) });
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(agentEvent('agent.status.updated', {}));
+    await bc.getCursor('s1');
+
+    const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
+    expect(statuses).toHaveLength(1);
+    const payload = statuses[0]!.payload as Record<string, unknown>;
+    expect(payload['maxContextTokens']).toBeUndefined();
+    expect(JSON.stringify(payload)).not.toContain('maxContextTokens');
+  });
+
+  it('falls back to the default model limit when no model is bound', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
+    // Draft-session shape: no model bound, so the capabilities are unknown;
+    // the push mirrors the REST status rollup and reads the default model.
+    main.set(IAgentProfileService, {
+      getModel: () => '',
+      getModelCapabilities: () => ({ max_context_tokens: 0 }),
+    });
+    main.set(IAgentUsageService, { status: () => ({}) });
+    main.set(IModelService, { getDefaultModel: () => 'default-model' });
+    main.set(IModelCatalog, {
+      get: (id: string) => {
+        expect(id).toBe('default-model');
+        return { capabilities: { max_context_tokens: 200_000 } };
+      },
+    });
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(agentEvent('agent.status.updated', {}));
+    await bc.getCursor('s1');
+
+    const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0]!.payload).toMatchObject({ maxContextTokens: 200_000, model: '' });
+  });
+
+  it('omits maxContextTokens when no model is bound and no default model resolves', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
+    main.set(IAgentProfileService, {
+      getModel: () => '',
+      getModelCapabilities: () => ({ max_context_tokens: 0 }),
+    });
+    main.set(IAgentUsageService, { status: () => ({}) });
+    main.set(IModelService, { getDefaultModel: () => 'removed-model' });
+    main.set(IModelCatalog, {
+      get: () => {
+        throw new Error('unknown model');
+      },
+    });
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(agentEvent('agent.status.updated', {}));
+    await bc.getCursor('s1');
+
+    const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
+    expect(statuses).toHaveLength(1);
+    expect(JSON.stringify(statuses[0]!.payload)).not.toContain('maxContextTokens');
   });
 
   it('projects agent activity state into legacy running and ended phases', async () => {
@@ -878,6 +943,8 @@ describe('SessionEventBroadcaster', () => {
         description: 'task agent-1',
         swarmIndex: 0,
         runInBackground: false,
+        model: 'provider/secondary',
+        thinkingEffort: 'low',
       }),
     );
     main.bus.emit(agentEvent('subagent.started', { subagentId: 'agent-1' }));
@@ -892,6 +959,8 @@ describe('SessionEventBroadcaster', () => {
         parent_tool_call_id: 'tc_swarm_1',
         swarm_index: 0,
         run_in_background: false,
+        model: 'provider/secondary',
+        thinking_effort: 'low',
       }),
     ]);
 
@@ -1005,6 +1074,60 @@ describe('SessionEventBroadcaster', () => {
     expect(s1View.envelopes[0]!.volatile).toBeUndefined();
   });
 
+  it('gates event.di.unit_changed to connections opted into the DI debug feed', async () => {
+    // The engine's DI debug feed (agent-core-v2's IDebugCascadeService) has no
+    // owning session: it routes through the global state ('__global__'
+    // watermark). Only kimi-inspect consumes it, so delivery is opt-in via
+    // `addDiEventTarget` — every other connection skips the frames; being
+    // volatile they are never journaled.
+    const plainView = collectingTarget();
+    bc.addGlobalTarget(plainView.target);
+    const diView = collectingTarget();
+    bc.addGlobalTarget(diView.target);
+    bc.addDiEventTarget(diView.target);
+
+    eventBus.emit({
+      type: 'event.di.unit_changed',
+      payload: { scope: 'app', token: 'debugCascadeService', state: 'Active' },
+    });
+
+    await vi.waitFor(() => expect(diView.envelopes).toHaveLength(1));
+    expect(diView.envelopes[0]).toMatchObject({
+      type: 'event.di.unit_changed',
+      session_id: '__global__',
+      volatile: true,
+      payload: {
+        type: 'event.di.unit_changed',
+        scope: 'app',
+        token: 'debugCascadeService',
+        state: 'Active',
+        agentId: 'main',
+        sessionId: '__global__',
+      },
+    });
+    expect(diView.deliveries).toEqual(['immediate']);
+    // The non-opted-in connection never sees the debug feed.
+    expect(plainView.envelopes).toHaveLength(0);
+
+    // A malformed payload is dropped, never forwarded.
+    eventBus.emit({
+      type: 'event.di.unit_changed',
+      payload: { scope: 'app', token: 'x', state: 'Exploded' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(diView.envelopes).toHaveLength(1);
+
+    // `removeGlobalTarget` also drops the DI opt-in (the connection-close path).
+    bc.removeGlobalTarget(diView.target);
+    eventBus.emit({
+      type: 'event.di.unit_changed',
+      payload: { scope: 'app', token: 'debugCascadeService', state: 'Unloading' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(diView.envelopes).toHaveLength(1);
+    expect(plainView.envelopes).toHaveLength(0);
+  });
+
   describe('global fan-out to unsubscribed connections', () => {
     it('delivers event.session.created to a global-only target that never subscribed', async () => {
       sessions.set('s1', new FakeLifecycle());
@@ -1090,6 +1213,49 @@ describe('SessionEventBroadcaster', () => {
       await vi.waitFor(() => expect(both.envelopes).toHaveLength(1));
       await bc.getCursor('s1'); // drain any would-be duplicate
       expect(both.envelopes).toHaveLength(1);
+    });
+
+    it('delivers event.config.warning to a global-only target that never subscribed', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      const warnings = [
+        {
+          domain: 'loopControl',
+          message:
+            "[loop_control] 'max_retries_per_step' is deprecated and no longer used; rename it to 'max_attempts_per_step'.",
+        },
+        { message: 'Environment variable OLD_VAR is deprecated; use NEW_VAR instead.' },
+      ];
+      eventBus.emit({ type: 'event.config.warning', payload: { warnings } });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.config.warning',
+        session_id: '__global__',
+        payload: { warnings },
+      });
+      expect(globalView.deliveries).toEqual(['immediate']);
+    });
+
+    it('drops malformed event.config.warning payloads', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      eventBus.emit({ type: 'event.config.warning', payload: { warnings: [{ message: 42 }] } });
+      eventBus.emit({ type: 'event.config.warning', payload: { warnings: 'nope' } });
+      eventBus.emit({ type: 'event.config.warning', payload: null });
+
+      // A valid frame right after proves the malformed ones were dropped, not
+      // merely slow.
+      const warnings = [{ message: 'something deprecated' }];
+      eventBus.emit({ type: 'event.config.warning', payload: { warnings } });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.config.warning',
+        payload: { warnings },
+      });
     });
   });
 

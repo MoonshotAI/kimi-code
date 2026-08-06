@@ -17,6 +17,7 @@
  * bag (defaulting to `process.env`).
  */
 
+import { BugIndicatingError } from '#/_base/errors/errors';
 import type { Protocol, ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
 import type {
   ProtocolEndpoint,
@@ -44,7 +45,7 @@ export function registerProviderDefinition(definition: ProviderDefinition): void
     providerDefinitions.set(definition.id, byProtocol);
   }
   if (byProtocol.has(definition.baseProtocol)) {
-    throw new Error(
+    throw new BugIndicatingError(
       `provider definition '${definition.id}' is already registered for protocol '${definition.baseProtocol}'`,
     );
   }

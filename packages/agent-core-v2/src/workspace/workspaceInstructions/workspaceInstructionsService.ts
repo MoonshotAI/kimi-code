@@ -17,9 +17,10 @@
  * Workspace scope.
  */
 
-import { Disposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/_base/state/stateRegistry';
 import { TimeoutTimer } from '#/_base/utils/timer';
@@ -42,11 +43,11 @@ const WATCH_DEBOUNCE_MS = 200;
 
 export const workspaceInstructionsCurrentKey = defineState<WorkspaceInstructionsSnapshot>(
   'workspaceInstructions.current',
-  () => ({ agentsMd: undefined, agentsMdWarning: undefined }),
+  () => ({ agentsMd: undefined, agentsMdWarning: undefined, agentsMdPaths: undefined }),
 );
 
 export class WorkspaceInstructionsService
-  extends Disposable
+  extends Service
   implements IWorkspaceInstructionsService
 {
   declare readonly _serviceBrand: undefined;
@@ -94,12 +95,13 @@ export class WorkspaceInstructionsService
       const next: WorkspaceInstructionsSnapshot = {
         agentsMd: result.content,
         agentsMdWarning: result.warning,
+        agentsMdPaths: result.paths,
       };
-      if (
+      const changed =
         next.agentsMd !== this.current.agentsMd ||
-        next.agentsMdWarning !== this.current.agentsMdWarning
-      ) {
-        this.current = next;
+        next.agentsMdWarning !== this.current.agentsMdWarning;
+      this.current = next;
+      if (changed) {
         this.onDidChangeEmitter.fire();
       }
     });
@@ -110,6 +112,7 @@ export class WorkspaceInstructionsService
   sessionProvider(): ISessionInstructionsProvider {
     const currentAgentsMd = (): string | undefined => this.current.agentsMd;
     const currentWarning = (): string | undefined => this.current.agentsMdWarning;
+    const currentPaths = (): readonly string[] | undefined => this.current.agentsMdPaths;
     return {
       _serviceBrand: undefined,
       ready: this.ready,
@@ -119,6 +122,9 @@ export class WorkspaceInstructionsService
       },
       get agentsMdWarning() {
         return currentWarning();
+      },
+      get agentsMdPaths() {
+        return currentPaths();
       },
     };
   }

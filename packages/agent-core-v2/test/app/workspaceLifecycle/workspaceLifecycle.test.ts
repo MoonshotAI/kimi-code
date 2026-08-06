@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -81,7 +80,6 @@ function hostEnvironmentStub(): IHostEnvironment {
   };
 }
 
-/** Catalog stub that mints `encodeWorkDirKey` ids and records createOrTouch calls. */
 function catalogStub() {
   const workspaces = new Map<string, Workspace>();
   const createOrTouch = vi.fn((root: string, name?: string) => {
@@ -106,9 +104,12 @@ function catalogStub() {
 function sessionIndexStub(): ISessionIndex {
   return {
     _serviceBrand: undefined,
-    list: () => Promise.resolve({ items: [], total: 0, hasMore: false }),
+    prepare: () => Promise.resolve({ state: 'ready', generation: 0, degradedCount: 0 }),
+    status: () => ({ state: 'ready', generation: 0, degradedCount: 0 }),
     get: () => Promise.resolve(undefined),
-    countActive: () => Promise.resolve(0),
+    listRecent: () => Promise.resolve({ items: [] }),
+    count: () => Promise.resolve(0),
+    remove: () => Promise.resolve(),
   };
 }
 
@@ -428,8 +429,6 @@ describe('WorkspaceLifecycleService', () => {
     const again = await lifecycle.handlerFor({ workspaceId: encodeWorkDirKey('/tmp/proj') });
 
     expect(again).toBe(handler);
-    // A live handler is returned as-is — no catalog write beyond the initial
-    // materialization.
     expect(createOrTouchSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -527,7 +526,6 @@ describe('WorkspaceLifecycleService', () => {
 
       const first = await lifecycle.handlerFor({ root: '/tmp/proj' });
       await first.accessor.get(ISessionLifecycleService).create({ sessionId: 's1', workDir: '/tmp/proj' });
-      // Materialized AFTER the follow subscription — still observed.
       const second = await lifecycle.handlerFor({ root: '/tmp/other' });
       await second.accessor.get(ISessionLifecycleService).create({ sessionId: 's2', workDir: '/tmp/other' });
 
