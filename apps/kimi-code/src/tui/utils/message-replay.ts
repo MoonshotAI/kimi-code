@@ -8,7 +8,10 @@ import type {
   ResumedAgentState,
   ToolCall,
 } from '@moonshot-ai/kimi-code-sdk';
-import { limitAgentReplayByTurns } from '@moonshot-ai/kimi-code-sdk';
+import {
+  foldMediaPathTagRefs,
+  limitAgentReplayByTurns,
+} from '@moonshot-ai/kimi-code-sdk';
 
 import type {
   AppState,
@@ -218,7 +221,11 @@ export function toolResultOutput(content: readonly ContentPart[]): string {
 }
 
 export function contentPartsToText(content: readonly ContentPart[]): string {
-  return content.map(contentPartToText).join('');
+  // Fold the upload pair (`<media path>` tag + daemon-ref media part): a
+  // claimed tag is machine markup carrying the materialization path, and the
+  // ref renders as a bare `[image]`/`[video]` placeholder downstream — neither
+  // the path nor the internal `kimi-file://` url may surface as user text.
+  return foldMediaPathTagRefs(content).parts.map(contentPartToText).join('');
 }
 
 /**

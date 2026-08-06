@@ -99,6 +99,7 @@ import {
 
 import { toWireApproval } from '../../../routes/approvals';
 import { toWireQuestion } from '../../../routes/questions';
+import { projectPromptContentParts } from '../../../services/messages/messageProjection';
 import { readLegacyStatus, toLegacyPhase } from '../../../services/legacyStatus/legacyStatus';
 import type { TranscriptService } from '../../../services/transcript/transcriptService';
 import { InFlightTurnTracker } from './inFlightTurnTracker';
@@ -1086,7 +1087,34 @@ export class SessionEventBroadcaster {
     // ported from the former `record.signal(agentEvent)` call sites); the declared
     // `DomainEventMap` payload types are deliberately wider than the protocol
     // contract, hence the assertion via `unknown`.
-    const wireEvent = { ...event, agentId, sessionId } as unknown as Event;
+    let wireEvent: Event;
+    if (event.type === 'turn.started') {
+      // `promptAttachments` is an internal transcript-projection input, not part
+      // of the v1 wire contract (`turnStartedEventSchema` stops at
+      // {type, turnId, origin, prompt?, promptId?}). Strip it at the edge so the
+      // payload — video-prompt turns included — keeps exactly the
+      // pre-attachment field set (plus the optional `promptId` echo). The
+      // journal records this same stripped envelope, so the one strip covers
+      // live fan-out and every replay path (memory tail + cursor read).
+      const { promptAttachments: _internal, ...wireFields } = event;
+      wireEvent = { ...wireFields, agentId, sessionId } as unknown as Event;
+    } else if (event.type === 'prompt.steered' || event.type === 'prompt.queued') {
+      // `content` arrives as raw engine content parts: daemon references carry
+      // `kimi-file://…?path=<abs>` and a paired `<media path>` tag text part.
+      // The pair folds into one `{kind:'file'}` part, so neither the internal
+      // URL nor the materialization path leaves the process (for steered, the
+      // declared `promptSteeredEventSchema` content is `messageContentSchema`).
+      // Projecting before the journal write covers live fan-out and every
+      // replay path with one mapping.
+      wireEvent = {
+        ...event,
+        content: projectPromptContentParts(event.content),
+        agentId,
+        sessionId,
+      } as unknown as Event;
+    } else {
+      wireEvent = { ...event, agentId, sessionId } as unknown as Event;
+    }
     const volatile = isVolatileSignal(event.type);
     state.queue = state.queue
       .then(() => this.dispatch(state, wireEvent, volatile))

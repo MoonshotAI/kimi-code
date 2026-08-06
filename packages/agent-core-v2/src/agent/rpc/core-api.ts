@@ -118,6 +118,11 @@ export interface SessionSummary {
 export interface PromptPayload {
   readonly input: readonly ContentPart[];
   readonly disabledTools?: readonly string[];
+  /**
+   * Client-chosen prompt record id; echoed back on the consuming turn's
+   * `turn.started` (`promptId`). Omit to let the engine assign one.
+   */
+  readonly promptId?: string;
 }
 export interface RunShellCommandPayload {
   readonly command: string;

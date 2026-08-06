@@ -147,6 +147,11 @@ export function bindSessionTranscript(
           const turn = view?.state().turn;
           return turn === undefined || `t${turn.turnId}` !== turnId ? undefined : turn.step;
         },
+        // A projector that attached mid-turn never saw `turn.started`: let its
+        // terminal upsert inherit the header the backfill seeded into the
+        // store (origin / prompt / attachmentIds) instead of clobbering them
+        // — `turn.upsert` is a whole-header replace downstream.
+        turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),
       });
       projectors.set(agentId, projector);
     }

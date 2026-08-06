@@ -85,6 +85,43 @@ describe('FileServiceImpl', () => {
     expect(Date.parse(meta.expires_at!)).toBeGreaterThan(Date.parse(meta.created_at));
   });
 
+  it('removes an expired staging upload on access', async () => {
+    const meta = await store().save(readable('temporary'), 'temporary.bin', {
+      expiresInSec: -1,
+    });
+
+    await expect(store().get(meta.id)).rejects.toMatchObject({
+      code: FileErrors.codes.FILE_NOT_FOUND,
+    });
+    expect(await backend.list('files')).not.toContain(meta.id);
+  });
+
+  it('prunes expired uploads while loading a persisted index', async () => {
+    const expired = await store().save(readable('old'), 'old.bin', { expiresInSec: 60 });
+    const fresh = await store().save(readable('new'), 'new.bin');
+    const rawIndex = await backend.read('file', 'index.json');
+    const index = JSON.parse(new TextDecoder().decode(rawIndex)) as {
+      files: Array<{ id: string; expires_at?: string }>;
+    };
+    index.files.find((file) => file.id === expired.id)!.expires_at = new Date(0).toISOString();
+    await backend.write('file', 'index.json', textEncoder.encode(JSON.stringify(index)));
+
+    const ix2 = createServices(disposables, {
+      additionalServices: (reg) => {
+        reg.defineInstance(IFileSystemStorageService, backend);
+        reg.define(IBlobStore, BlobStoreService);
+        reg.define(IFileService, FileServiceImpl);
+      },
+    });
+    const reloaded = ix2.get(IFileService);
+
+    await expect(reloaded.get(expired.id)).rejects.toMatchObject({
+      code: FileErrors.codes.FILE_NOT_FOUND,
+    });
+    await expect(reloaded.get(fresh.id)).resolves.toMatchObject({ meta: { id: fresh.id } });
+    expect(await backend.list('files')).not.toContain(expired.id);
+  });
+
   it('throws file.not_found for an unknown id on get', async () => {
     await expect(store().get('f_does_not_exist')).rejects.toMatchObject({
       code: FileErrors.codes.FILE_NOT_FOUND,
@@ -122,6 +159,25 @@ describe('FileServiceImpl', () => {
     expect(meta.size).toBe(9);
     const { stream } = await store().get(meta.id);
     expect((await readAll(stream())).toString()).toBe('aaabbbbcc');
+  });
+
+  it('keeps concurrent uploads visible in the persisted index', async () => {
+    const metas = await Promise.all([
+      store().save(readable('first'), 'first.txt'),
+      store().save(readable('second'), 'second.txt'),
+    ]);
+
+    const ix2 = createServices(disposables, {
+      additionalServices: (reg) => {
+        reg.defineInstance(IFileSystemStorageService, backend);
+        reg.define(IBlobStore, BlobStoreService);
+        reg.define(IFileService, FileServiceImpl);
+      },
+    });
+    const reloaded = ix2.get(IFileService);
+    for (const meta of metas) {
+      await expect(reloaded.get(meta.id)).resolves.toMatchObject({ meta: { id: meta.id } });
+    }
   });
 
   it('cleans up the blob when the source stream fails mid-upload', async () => {

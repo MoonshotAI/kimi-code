@@ -42,6 +42,13 @@ export interface ImageAttachment {
    * knows it received a downsampled copy. Absent for untouched pastes.
    */
   readonly original?: ImageAttachmentOriginal | undefined;
+  /**
+   * Daemon file-store id, set when the bytes were uploaded at paste time
+   * (v2 engine only). Submit-time expansion then emits a `kimi-file://`
+   * reference plus an `<image path>` tag instead of inline base64; absent
+   * means the inline form is used.
+   */
+  fileId?: string;
   /** Rendered placeholder string, e.g. `[image #1 (640×480)]`. */
   readonly placeholder: string;
 }
@@ -59,9 +66,14 @@ export interface VideoAttachment {
 
 export type MediaAttachment = ImageAttachment | VideoAttachment;
 
+type MutableImageAttachment = {
+  -readonly [Property in keyof ImageAttachment]: ImageAttachment[Property];
+};
+
 export class ImageAttachmentStore {
   private nextId = 1;
   private readonly byId = new Map<number, MediaAttachment>();
+  private readonly stagingUses = new Map<number, number>();
 
   addImage(
     bytes: Uint8Array,
@@ -69,6 +81,7 @@ export class ImageAttachmentStore {
     width: number,
     height: number,
     original?: ImageAttachmentOriginal,
+    fileId?: string,
   ): ImageAttachment {
     const id = this.nextId;
     this.nextId += 1;
@@ -80,6 +93,7 @@ export class ImageAttachmentStore {
       width,
       height,
       original,
+      fileId,
       placeholder: formatPlaceholder(id, width, height),
     };
     this.byId.set(id, attachment);
@@ -106,26 +120,104 @@ export class ImageAttachmentStore {
     return attachment;
   }
 
+  /**
+   * Complete an image that was inserted into the editor before its ingestion
+   * work (compression/original persistence/upload) finished. Returns undefined
+   * when the attachment was cleared while that work was in flight.
+   */
+  completeImage(
+    attachment: ImageAttachment,
+    input: {
+      bytes: Uint8Array;
+      mime: string;
+      width: number;
+      height: number;
+      original?: ImageAttachmentOriginal;
+      fileId?: string;
+    },
+  ): ImageAttachment | undefined {
+    const current = this.byId.get(attachment.id);
+    if (current !== attachment || attachment.kind !== 'image') return undefined;
+    const mutable = attachment as MutableImageAttachment;
+    mutable.bytes = input.bytes;
+    mutable.mime = input.mime;
+    mutable.width = input.width;
+    mutable.height = input.height;
+    mutable.original = input.original;
+    mutable.fileId = input.fileId;
+    mutable.placeholder = formatPlaceholder(attachment.id, input.width, input.height);
+    return attachment;
+  }
+
   get(id: number): MediaAttachment | undefined {
     return this.byId.get(id);
   }
 
-  clear(): void {
+  clear(): readonly string[] {
+    const fileIds = this.fileIds();
     this.byId.clear();
+    this.stagingUses.clear();
     this.nextId = 1;
+    return fileIds;
   }
 
   /**
    * Drop a single attachment, releasing its bytes. Used to reclaim image
    * memory once the transcript entry that references it is trimmed.
    */
-  remove(id: number): void {
+  remove(id: number): string | undefined {
+    const attachment = this.byId.get(id);
+    const fileId = attachment?.kind === 'image' ? attachment.fileId : undefined;
     this.byId.delete(id);
+    this.stagingUses.delete(id);
+    return fileId;
   }
 
   /** Drop many attachments at once. See {@link remove}. */
-  removeMany(ids: Iterable<number>): void {
-    for (const id of ids) this.byId.delete(id);
+  removeMany(ids: Iterable<number>): readonly string[] {
+    const fileIds: string[] = [];
+    for (const id of ids) {
+      const fileId = this.remove(id);
+      if (fileId !== undefined) fileIds.push(fileId);
+    }
+    return fileIds;
+  }
+
+  retainFileIds(ids: Iterable<number>): void {
+    const retained = new Set<number>();
+    for (const id of ids) {
+      if (retained.has(id)) continue;
+      retained.add(id);
+      const attachment = this.byId.get(id);
+      if (attachment?.kind !== 'image' || attachment.fileId === undefined) continue;
+      this.stagingUses.set(id, (this.stagingUses.get(id) ?? 0) + 1);
+    }
+  }
+
+  takeFileIds(ids: Iterable<number>): readonly string[] {
+    const fileIds: string[] = [];
+    const taken = new Set<number>();
+    for (const id of ids) {
+      if (taken.has(id)) continue;
+      taken.add(id);
+      const attachment = this.byId.get(id);
+      if (attachment?.kind !== 'image' || attachment.fileId === undefined) continue;
+      const uses = this.stagingUses.get(id) ?? 0;
+      if (uses > 1) {
+        this.stagingUses.set(id, uses - 1);
+        continue;
+      }
+      this.stagingUses.delete(id);
+      fileIds.push(attachment.fileId);
+      attachment.fileId = undefined;
+    }
+    return fileIds;
+  }
+
+  private fileIds(): readonly string[] {
+    return [...this.byId.values()]
+      .filter((attachment): attachment is ImageAttachment => attachment.kind === 'image')
+      .flatMap((attachment) => attachment.fileId ?? []);
   }
 
   size(): number {

@@ -40,6 +40,71 @@ describe('toProtocolMessage', () => {
     ]);
   });
 
+  it('projects a kimi-file image reference to a structured file source without leaking the path', () => {
+    const msg: ContextMessage = {
+      role: 'user',
+      content: [
+        { type: 'image_url', imageUrl: { url: 'kimi-file://file_9?path=%2Fcache%2Fpic.png' } },
+      ],
+      toolCalls: [],
+    };
+
+    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
+      { type: 'image', source: { kind: 'file', file_id: 'file_9' } },
+    ]);
+  });
+
+  it('folds the upload tag+ref pair into a single image part', () => {
+    // The persisted dual shape (`<image path>` tag text part + daemon-ref
+    // image part) is ONE upload: the tag is machine markup and must not
+    // reach the wire as a text part (clients would render the image twice).
+    const msg: ContextMessage = {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'what is this?' },
+        { type: 'text', text: '<image path="/cache/pic.png"></image>' },
+        { type: 'image_url', imageUrl: { url: 'kimi-file://file_9?path=%2Fcache%2Fpic.png' } },
+      ],
+      toolCalls: [],
+    };
+
+    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
+      { type: 'text', text: 'what is this?' },
+      { type: 'image', source: { kind: 'file', file_id: 'file_9' } },
+    ]);
+  });
+
+  it('keeps a bare <media path> tag as text in user messages', () => {
+    // Without a paired daemon ref the tag is not machine markup the fold may
+    // claim: it passes through as a text part.
+    const msg: ContextMessage = {
+      role: 'user',
+      content: [
+        { type: 'text', text: '<video path="/cache/clip.mp4">' },
+        { type: 'text', text: 'watch this' },
+      ],
+      toolCalls: [],
+    };
+
+    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
+      { type: 'text', text: '<video path="/cache/clip.mp4">' },
+      { type: 'text', text: 'watch this' },
+    ]);
+  });
+
+  it('passes assistant tag-shaped text through verbatim', () => {
+    // The fold applies to user uploads only — model output is never eaten.
+    const msg: ContextMessage = {
+      role: 'assistant',
+      content: [{ type: 'text', text: '<image path="/cache/out.png"></image>' }],
+      toolCalls: [],
+    };
+
+    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
+      { type: 'text', text: '<image path="/cache/out.png"></image>' },
+    ]);
+  });
+
   it('projects a kimi-file video reference to a structured file source without leaking the path', () => {
     const msg: ContextMessage = {
       role: 'user',

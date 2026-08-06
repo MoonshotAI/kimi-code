@@ -36,6 +36,7 @@ export interface AgentFacade {
   prompt(input: {
     input: readonly ContentPart[];
     disabledTools?: readonly string[];
+    promptId?: string;
   }): Promise<PromptLaunchResult>;
   steer(input: { input: readonly ContentPart[] }): Promise<PromptLaunchResult>;
   /**

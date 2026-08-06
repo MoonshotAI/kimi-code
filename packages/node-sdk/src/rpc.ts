@@ -32,6 +32,7 @@ import type {
   ExportSessionInput,
   ExportSessionResult,
   CreateGoalInput,
+  FileMeta,
   ForkSessionInput,
   GetConfigOptions,
   McpServerConfig,
@@ -60,6 +61,7 @@ import type {
   SkillSummary,
   PluginCommandDef,
   Unsubscribe,
+  UploadFileOptions,
   WorkspaceTrustInfo,
 } from '#/types';
 
@@ -74,6 +76,11 @@ export interface SessionPromptRpcInput {
    * `[]` clears the client portion.
    */
   readonly disabledTools?: readonly string[];
+  /**
+   * Client-chosen prompt record id, echoed on the consuming turn's
+   * `turn.started` (`promptId`). Honored by the v2 RPC client only.
+   */
+  readonly promptId?: string;
 }
 
 export interface SessionIdRpcInput {
@@ -301,6 +308,26 @@ export abstract class SDKRpcClientBase {
     throw new KimiError(
       ErrorCodes.NOT_IMPLEMENTED,
       'This SDK client does not support atomic config section replacement.',
+    );
+  }
+
+  /**
+   * Upload media bytes to the engine's daemon file store; pair the returned
+   * meta with `buildDaemonFileUrl` to reference the file from a prompt. Only
+   * the v2 client wires this (through the klient files facade) — the v1
+   * client has no file service and throws `not_implemented`.
+   */
+  uploadFile(_data: Uint8Array, _options: UploadFileOptions): Promise<FileMeta> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support file upload.',
+    );
+  }
+
+  deleteFile(_fileId: string): Promise<void> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support file deletion.',
     );
   }
 

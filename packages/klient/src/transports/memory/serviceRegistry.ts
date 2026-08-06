@@ -22,6 +22,7 @@ import { IPluginService } from '@moonshot-ai/agent-core-v2/app/plugin/plugin';
 import { ICapabilityService } from '@moonshot-ai/agent-core-v2/app/capability/capability';
 import { IBootstrapService } from '@moonshot-ai/agent-core-v2/app/bootstrap/bootstrap';
 import { IEventService } from '@moonshot-ai/agent-core-v2/app/event/event';
+import { IFileService } from '@moonshot-ai/agent-core-v2/app/file/fileService';
 import { IHostFolderBrowser } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
 import { IWorkspaceLifecycleService } from '@moonshot-ai/agent-core-v2/app/workspaceLifecycle/workspaceLifecycle';
 import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/sessionLifecycle';
@@ -56,6 +57,7 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   capabilityService: ICapabilityService,
   hostFolderBrowser: IHostFolderBrowser,
   bootstrapService: IBootstrapService,
+  fileService: IFileService,
   workspaceLifecycleService: IWorkspaceLifecycleService,
   sessionLifecycleService: ISessionLifecycleService,
   sessionMetadata: ISessionMetadata,

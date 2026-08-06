@@ -4,7 +4,7 @@ import { filterOpsForGrade, isAppendOnly, redactSnapshotForGrade } from '#/granu
 import { detachGrades, gradeFor, needsResetOnTransition } from '#/granularity/grade';
 import { paginateTurns } from '#/pagination/paginate';
 import { ViewRegistry } from '#/view/registry';
-import { groupMessagesIntoSnapshot } from '#/history/groupTurns';
+import { groupMessagesIntoSnapshot, type HistoryContentPart } from '#/history/groupTurns';
 import { foldWireRecordFacts, type HistoryWireRecord } from '#/history/foldFacts';
 import {
   transcriptOperationSchema,
@@ -483,6 +483,235 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     const firstTurn = snapshot.items[0];
     if (firstTurn?.kind !== 'turn') throw new Error('expected turn');
     expect(firstTurn.attachmentIds).toEqual(['att_1', 'att_2', 'att_3']);
+  });
+
+  it('folds persisted kimi-file media refs and their <media path> tags into single attachments', () => {
+    // The engine persists an uploaded medium as a kosong `image_url` /
+    // `video_url` part carrying a `kimi-file://<fileId>?path=…` ref, plus an
+    // adjacent `<image|video path=…>` text tag. The pair folds into ONE
+    // attachment (source = the daemon upload, name = the tag path's
+    // basename); the tag is machine markup and never surfaces as prompt text.
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'video_url',
+            videoUrl: { url: 'kimi-file://file_1?path=%2Fcache%2Fclip.mp4' },
+          } as HistoryContentPart,
+          { type: 'text', text: '<video path="/cache/clip.mp4"></video>' },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'what is this?' },
+          { type: 'text', text: '<image path="/cache/shot.png"></image>' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://file_2?path=%2Fcache%2Fshot.png' },
+          } as HistoryContentPart,
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    ]);
+
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'video/*',
+        name: 'clip.mp4',
+        source: { kind: 'file', fileId: 'file_1' },
+      },
+      {
+        attachmentId: 'att_2',
+        mediaType: 'image/*',
+        name: 'shot.png',
+        source: { kind: 'file', fileId: 'file_2' },
+      },
+    ]);
+    const videoTurn = snapshot.items[0];
+    const imageTurn = snapshot.items[1];
+    if (videoTurn?.kind !== 'turn' || imageTurn?.kind !== 'turn') {
+      throw new Error('expected turns');
+    }
+    expect(videoTurn.attachmentIds).toEqual(['att_1']);
+    expect(imageTurn.attachmentIds).toEqual(['att_2']);
+    expect(videoTurn.prompt).toBe('');
+    expect(imageTurn.prompt).toBe('what is this?');
+  });
+
+  it('folds the upload pair in a user-slash turn-opening input like a plain user turn', () => {
+    // A user-slash skill command carrying an uploaded image persists the same
+    // tag+ref pair; the cold rebuild folds it exactly like a plain user turn
+    // (claimed tag out of the prompt text, one attachment on the turn),
+    // mirroring the live `turnPromptText` / `turnPromptAttachments` fold.
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '/gen-docs ' },
+          { type: 'text', text: '<image path="/cache/shot.png"></image>' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://file_4?path=%2Fcache%2Fshot.png' },
+          } as HistoryContentPart,
+        ],
+        toolCalls: [],
+        origin: { kind: 'skill_activation', trigger: 'user-slash', skillName: 'gen-docs' } as {
+          kind: string;
+        },
+      },
+    ]);
+
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'image/*',
+        name: 'shot.png',
+        source: { kind: 'file', fileId: 'file_4' },
+      },
+    ]);
+    expect(snapshot.items.map((item) => item.kind)).toEqual(['marker', 'turn']);
+    const marker = snapshot.items[0];
+    if (marker?.kind !== 'marker') throw new Error('expected marker');
+    expect((marker.payload as { text: string }).text).toBe('/gen-docs ');
+    const turn = snapshot.items[1];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.prompt).toBe('/gen-docs ');
+    expect(turn.attachmentIds).toEqual(['att_1']);
+  });
+
+  it('keeps a bare kimi-file ref as a pathless attachment and inline tags as user text', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'open <image path="/tmp/other.png"></image> please' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://file_3?path=%2Fcache%2Fplain.png' },
+          } as HistoryContentPart,
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    ]);
+
+    // No adjacent tag: the attachment carries no path-derived name; the
+    // inline tag inside real user text stays verbatim (never stripped).
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'image/*',
+        name: undefined,
+        source: { kind: 'file', fileId: 'file_3' },
+      },
+    ]);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.attachmentIds).toEqual(['att_1']);
+    expect(turn.prompt).toBe('open <image path="/tmp/other.png"></image> please');
+  });
+
+  it('keeps standalone <media path> tags as prompt text when no daemon ref pairs with them', () => {
+    // The no-closing-tag and extra-attribute forms both exist in persisted
+    // sessions. Without an adjacent path-matching ref there is no pair: the
+    // tag is user-visible text, not markup the read model may eat.
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '<image path="/cache/shot.png">' },
+          { type: 'text', text: '<image path="/cache/shot.png" content_type="image/png"></image>' },
+          { type: 'text', text: '<video path="/cache/clip.mp4">' },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    ]);
+
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.prompt).toBe(
+      '<image path="/cache/shot.png"><image path="/cache/shot.png" content_type="image/png"></image><video path="/cache/clip.mp4">',
+    );
+    expect(turn.attachmentIds).toBeUndefined();
+    expect(snapshot.attachments).toEqual([]);
+  });
+
+  it('claims the tag for the path-matching ref, not the adjacent bare one', () => {
+    // [bareRefA, tagB, refB]: adjacency alone would misassign tagB to refA.
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://file_1?path=%2Fcache%2Fa.png' },
+          } as HistoryContentPart,
+          { type: 'text', text: '<image path="/cache/b.png"></image>' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://file_2?path=%2Fcache%2Fb.png' },
+          } as HistoryContentPart,
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    ]);
+
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'image/*',
+        name: undefined,
+        source: { kind: 'file', fileId: 'file_1' },
+      },
+      {
+        attachmentId: 'att_2',
+        mediaType: 'image/*',
+        name: 'b.png',
+        source: { kind: 'file', fileId: 'file_2' },
+      },
+    ]);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.prompt).toBe('');
+    expect(turn.attachmentIds).toEqual(['att_1', 'att_2']);
+  });
+
+  it('keeps a standalone tag as prompt text when the adjacent ref carries a different path', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '<image path="/cache/other.png"></image>' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://file_1?path=%2Fcache%2Fshot.png' },
+          } as HistoryContentPart,
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    ]);
+
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'image/*',
+        name: undefined,
+        source: { kind: 'file', fileId: 'file_1' },
+      },
+    ]);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.prompt).toBe('<image path="/cache/other.png"></image>');
+    expect(turn.attachmentIds).toEqual(['att_1']);
   });
 
   it('keeps cold tool calls running until a result is persisted', () => {

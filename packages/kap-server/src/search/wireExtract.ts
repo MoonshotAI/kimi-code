@@ -25,6 +25,8 @@
  * Kept free of any service / filesystem dependency so it is unit-testable.
  */
 
+import { foldMediaPathTagRefs, type ContentPart } from '@moonshot-ai/agent-core-v2';
+
 export interface ExtractedWireMessage {
   readonly role: 'user' | 'assistant';
   readonly text: string;
@@ -153,18 +155,46 @@ interface ContentPartLike {
   readonly text?: unknown;
 }
 
+/**
+ * Coerce one raw JSON part into a fold-safe `ContentPart`: well-formed parts
+ * pass through, anything malformed becomes an inert empty text part (indices
+ * — and therefore pairing adjacency — are preserved). The engine's fold is
+ * not defensive against malformed holders, and wire lines are tolerated to be
+ * corrupt.
+ */
+function foldSafePart(part: unknown): ContentPart {
+  if (part === null || typeof part !== 'object') return { type: 'text', text: '' };
+  const p = part as ContentPartLike & {
+    readonly imageUrl?: unknown;
+    readonly videoUrl?: unknown;
+  };
+  if (p.type === 'text') {
+    return { type: 'text', text: typeof p.text === 'string' ? p.text : '' };
+  }
+  if (p.type === 'image_url' || p.type === 'video_url') {
+    const holder = p.type === 'image_url' ? p.imageUrl : p.videoUrl;
+    const url =
+      holder !== null && typeof holder === 'object'
+        ? (holder as { readonly url?: unknown }).url
+        : undefined;
+    if (typeof url !== 'string') return { type: 'text', text: '' };
+  }
+  return part as ContentPart;
+}
+
+/**
+ * The user-visible text of a persisted message: text parts concatenated, with
+ * the upload pair (`<media path>` tag + daemon-ref media part) folded the same
+ * way as every other read model — a claimed tag is machine markup (and carries
+ * the materialization path), so it must never reach the index. An unpaired
+ * standalone tag stays as text.
+ */
 function textOfContent(content: unknown): string {
   if (!Array.isArray(content)) return '';
   let text = '';
-  for (const part of content as readonly ContentPartLike[]) {
-    if (
-      part !== null &&
-      typeof part === 'object' &&
-      part.type === 'text' &&
-      typeof part.text === 'string'
-    ) {
-      text += part.text;
-    }
+  const parts = (content as readonly unknown[]).map(foldSafePart);
+  for (const part of foldMediaPathTagRefs(parts).parts) {
+    if (part.type === 'text') text += part.text;
   }
   return text;
 }

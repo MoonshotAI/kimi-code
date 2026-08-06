@@ -13,7 +13,9 @@
  *   2. Detect impl files = source files containing a top-level
  *      `registerScopedService(...)` call; the 3rd argument is the impl class.
  *   3. In each impl file's emitted `.d.ts`, drop the registered class
- *      declaration(s) and keep everything else.
+ *      declaration(s) and keep everything else, then drop re-export
+ *      specifiers elsewhere in the tree that name a dropped class
+ *      (deprecated alias modules) — they would otherwise dangle.
  *   4. Copy the scrubbed tree to the output directory.
  */
 
@@ -133,6 +135,48 @@ for (const [dtsPath, names] of dropByDts) {
   }
 }
 log(`scrubbed ${scrubbedClasses} impl class(es) across ${scrubbedFiles} file(s)`);
+
+// 3b. Scrub re-exports of scrubbed classes. A deprecated alias module (e.g.
+// `export { Impl as OldName } from './implService'`) would otherwise keep
+// naming a class its declaring file no longer exports — a dangling reference
+// for consumers and an impl-name leak. `export *` needs nothing: it only
+// re-exports what survives.
+function resolveReexportTarget(dtsPath, spec) {
+  const clean = spec.endsWith('.js') ? spec.slice(0, -'.js'.length) : spec;
+  if (clean.startsWith('.')) return join(dirname(dtsPath), `${clean}.d.ts`);
+  if (clean.startsWith('#/')) return join(TMP, `${clean.slice(2)}.d.ts`);
+  return undefined;
+}
+
+let scrubbedReexports = 0;
+const emittedDts = [];
+walk(TMP, emittedDts);
+const reexportProject = new Project();
+for (const dtsPath of emittedDts) {
+  if (!dtsPath.endsWith('.d.ts')) continue;
+  const dts = reexportProject.addSourceFileAtPath(dtsPath);
+  let changed = false;
+  for (const exp of dts.getExportDeclarations()) {
+    const spec = exp.getModuleSpecifierValue();
+    if (spec === undefined) continue;
+    const target = resolveReexportTarget(dtsPath, spec);
+    const names = target === undefined ? undefined : dropByDts.get(target);
+    if (names === undefined) continue;
+    let removedHere = false;
+    for (const specifier of exp.getNamedExports()) {
+      const name = specifier.getNameNode().getText();
+      if (names.has('*') || names.has(name)) {
+        specifier.remove();
+        removedHere = true;
+        scrubbedReexports++;
+      }
+    }
+    if (removedHere && exp.getNamedExports().length === 0) exp.remove();
+    changed = changed || removedHere;
+  }
+  if (changed) dts.saveSync();
+}
+log(`scrubbed ${scrubbedReexports} re-export(s) of impl classes from alias modules`);
 
 // 4. Copy the scrubbed tree to the output directory.
 rmSync(OUT, { recursive: true, force: true });

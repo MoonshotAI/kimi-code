@@ -25,7 +25,8 @@
  * that holds watermark N converge without a full refresh.
  *
  * `GET /sessions/{session_id}/transcript/user-messages` projects every
- * turn-opening input (turns with a defined `prompt`) out of the transcript,
+ * turn-opening input (turns with a defined `prompt`, plus attachment-only
+ * prompts normalized to `""`) out of the transcript,
  * grouped per agent — agents are separate transcripts, so user messages are
  * per-agent by construction. It reads the same live-store / cold-rebuild
  * paths as the paged route, but unpaginated (user messages are few compared
@@ -347,7 +348,7 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
         [ErrorCode.SESSION_NOT_FOUND]: {},
       },
       description:
-        'All turn-opening inputs ("user messages") of a session, grouped per agent: every turn with a defined prompt (real user text, user-slash skill/plugin commands, cron prompts — distinguish via origin). agent_id optional: present reads one agent, absent reads every rostered agent. Live sessions answer from the in-memory store (history backfill awaited per agent), cold sessions rebuild from the persisted wire records. Unpaginated; attachment entities referenced by the messages ride along (metadata only)',
+        'All turn-opening inputs ("user messages") of a session, grouped per agent: every turn with a defined prompt (real user text, user-slash skill/plugin commands, cron prompts — distinguish via origin), plus attachment-only prompts projected with an empty prompt string. agent_id optional: present reads one agent, absent reads every rostered agent. Live sessions answer from the in-memory store (history backfill awaited per agent), cold sessions rebuild from the persisted wire records. Unpaginated; attachment entities referenced by the messages ride along (metadata only)',
       tags: ['transcript'],
     },
     async (req, reply) => {
@@ -484,9 +485,13 @@ interface UserMessageEntry {
 
 /**
  * Project the user messages out of one agent's full timeline: every turn with
- * a defined prompt, in timeline order. `resolveAttachment` looks up the
- * referenced entities (live: the store's attachment map; cold: the snapshot's
- * array) so the response carries their metadata alongside the ids.
+ * a defined prompt, in timeline order. An attachment-only prompt folds to no
+ * text — live turns then carry `prompt: undefined` while the cold rebuild
+ * yields `""`; both normalize to `""` here so the two paths list the same
+ * messages. A genuinely promptless turn (no text, no attachments) stays
+ * projected out. `resolveAttachment` looks up the referenced entities (live:
+ * the store's attachment map; cold: the snapshot's array) so the response
+ * carries their metadata alongside the ids.
  */
 function projectUserMessages(
   items: readonly TranscriptItem[],
@@ -495,13 +500,15 @@ function projectUserMessages(
   const messages: UserMessageEntry[] = [];
   const attachments = new Map<string, TranscriptAttachment>();
   for (const item of items) {
-    if (item.kind !== 'turn' || item.prompt === undefined) continue;
+    if (item.kind !== 'turn') continue;
+    const hasAttachments = item.attachmentIds !== undefined && item.attachmentIds.length > 0;
+    if (item.prompt === undefined && !hasAttachments) continue;
     messages.push({
       turn_id: item.turnId,
       ordinal: item.ordinal,
       state: item.state,
       origin: item.origin,
-      prompt: item.prompt,
+      prompt: item.prompt ?? '',
       attachment_ids: item.attachmentIds,
       started_at: item.startedAt,
     });

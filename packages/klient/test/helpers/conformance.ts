@@ -210,6 +210,29 @@ export function defineKlientConformance(
       expect(Array.isArray(browse.entries)).toBe(true);
     });
 
+    it('files save/get/delete round-trips bytes through the file store', async () => {
+      const files = target.klient.global.files;
+      const bytes = new Uint8Array([0, 1, 127, 128, 254, 255]);
+      const meta = await files.save({
+        data: bytes,
+        filename: 'conformance.bin',
+        mimeType: 'application/octet-stream',
+        expiresInSec: 3600,
+      });
+      expect(meta.id.startsWith('f_')).toBe(true);
+      expect(meta.name).toBe('conformance.bin');
+      expect(meta.media_type).toBe('application/octet-stream');
+      expect(meta.size).toBe(bytes.length);
+      expect(typeof meta.expires_at).toBe('string');
+
+      const downloaded = await files.get(meta.id);
+      expect(downloaded.meta).toEqual(meta);
+      expect([...downloaded.data]).toEqual([...bytes]);
+
+      await files.delete(meta.id);
+      await expect(files.get(meta.id)).rejects.toThrow();
+    });
+
     it('kosong lists models/providers and anonymous provider round-trips', async () => {
       const kosong = target.klient.global.kosong;
       expect(Array.isArray(await kosong.listModels())).toBe(true);

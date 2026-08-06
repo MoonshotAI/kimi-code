@@ -3,10 +3,13 @@
  *
  * Shared by prompt submission and undo projection so `lastPrompt` uses one
  * normalization, redaction, and length limit, with image captions supplied by
- * the `media` domain.
+ * the `media` domain. An upload's `<media path>` tag text part is machine
+ * markup paired with its daemon-ref media part (`foldMediaPathTagRefs`) —
+ * stripping it keeps the materialization path out of titles / lastPrompt.
  */
 
 import type { ContentPart } from '#/kosong/contract/message';
+import { foldMediaPathTagRefs } from '#/agent/media/mediaRef';
 import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
 
 const MAX_TITLE_LENGTH = 200;
@@ -20,7 +23,7 @@ export function promptMetadataTextFromContentParts(
   parts: readonly ContentPart[],
 ): string | undefined {
   const texts: string[] = [];
-  for (const part of parts) {
+  for (const part of foldMediaPathTagRefs(parts).parts) {
     const text = promptPartText(part);
     if (text !== undefined) texts.push(text);
   }

@@ -8,7 +8,8 @@
 import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { mkdir, stat, writeFile } from 'node:fs/promises';
-import { extname, join } from 'node:path';
+import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import {
@@ -22,8 +23,7 @@ import {
   IEventService,
   IFileService,
   ISessionMetadata,
-  buildKimiFileUrl,
-  parseKimiFileUrl,
+  buildDaemonFileUrl,
   promptMetadataTextFromContentParts,
   ProfileError,
   type ContentPart,
@@ -53,6 +53,7 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../protocol/error-codes';
+import { projectPromptContentParts } from '../services/messages/messageProjection';
 import {
   promptAbortResponseSchema,
   promptListResponseSchema,
@@ -96,14 +97,6 @@ const sessionIdParamSchema = z.object({
 const validationDetailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 const authProviderDetailsSchema = z.object({ provider_id: z.string() });
 const authModelDetailsSchema = z.object({ model_id: z.string(), provider_id: z.string() }).partial();
-const VIDEO_EXT_BY_MIME: Record<string, string> = {
-  'video/mp4': '.mp4',
-  'video/quicktime': '.mov',
-  'video/webm': '.webm',
-  'video/x-msvideo': '.avi',
-  'video/x-matroska': '.mkv',
-  'video/mpeg': '.mpeg',
-};
 
 async function resolveSession(core: Scope, sessionId: string): Promise<ISessionScopeHandle> {
   // `resume` (not `get`) so a persisted-but-cold session — created by a previous
@@ -245,6 +238,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       const { session_id } = req.params;
+      let preparedMedia: PromptMediaPreparation | undefined;
+      let enqueued = false;
       try {
         // Fail fast on stale file references before anything is resolved or
         // mutated: a bad `file_id` must not create the agent, register `main`
@@ -255,12 +250,13 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
 
         // Media resolution runs BEFORE any control mutation, so a failed
         // submission leaves the session's controls untouched. Prompt videos
-        // are materialized to a local copy and carried into context as an
-        // internal `kimi-file://` reference; the engine resolves them to a
-        // provider form (upload / inline / `<video path>` tag) at request
+        // and uploaded images are carried into context as bare internal
+        // `kimi-file://` references; the engine's prompt intake materializes
+        // the session copy, authors the paired media-path tag, and resolves
+        // them to a provider form (upload / inline / path tag) at request
         // time, so the edge no longer uploads.
         const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
-        const resolvedBody = await resolvePromptMediaFiles(
+        preparedMedia = await resolvePromptMediaFiles(
           req.body,
           core.accessor.get(IFileService),
           core.accessor.get(IBootstrapService).cacheDir,
@@ -278,6 +274,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             },
           },
         );
+        const resolvedBody = preparedMedia.body;
 
         // Media prepared successfully — only now do the overrides bind.
         let thinkingConsumed = false;
@@ -313,14 +310,23 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           eventService: core.accessor.get(IEventService),
           sessionId: session_id,
         }, promptMetadataTextFromContentParts(parts));
-        const handle = await resolved.prompt.enqueue({ message: {
-          role: 'user',
-          content: parts,
-          toolCalls: [],
-          origin: { kind: 'user' },
-        } });
+        const handle = await resolved.prompt.enqueue({
+          id: req.body.prompt_id,
+          message: {
+            role: 'user',
+            content: parts,
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+        });
+        enqueued = true;
         reply.send(okEnvelope(projectPromptHandle(handle), req.id));
       } catch (error) {
+        // A submission that failed before the engine took the prompt projected
+        // no upload ids to the client — roll back the uploads the preparation
+        // created. After a successful enqueue the compressed re-save must stay
+        // retrievable: read models project its id.
+        if (!enqueued) await preparedMedia?.discard();
         sendMappedError(reply, req, error);
       }
     },
@@ -416,40 +422,18 @@ function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][number]) {
   const status = prompt.state === 'running' || prompt.state === 'steered'
     ? 'running'
     : prompt.state === 'blocked' ? 'blocked' : 'queued';
+  // The prompt queue holds user prompts only; the shared projection folds the
+  // upload pair (`<media path>` tag + daemon-ref media part) into the single
+  // media part, mirroring the message projection: the tag is machine markup
+  // and would otherwise leak the materialization path to REST callers while
+  // rendering the same upload twice.
   return {
     prompt_id: prompt.id,
     user_message_id: prompt.userMessageId,
     status,
-    content: corePartsToProtocol(prompt.message.content),
+    content: projectPromptContentParts(prompt.message.content),
     created_at: prompt.createdAt,
   };
-}
-
-function corePartsToProtocol(content: readonly ContentPart[]): PromptSubmission['content'] {
-  const parts: PromptSubmission['content'] = [];
-  for (const part of content) {
-    if (part.type === 'text') parts.push({ type: 'text', text: part.text });
-    else if (part.type === 'image_url') {
-      const match = /^data:([^;]+);base64,(.*)$/.exec(part.imageUrl.url);
-      parts.push(match === null
-        ? { type: 'image', source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id } }
-        : { type: 'image', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
-    } else if (part.type === 'video_url') {
-      // An internal `kimi-file://<id>?path=…` reference projects back to the
-      // daemon upload it came from — the materialization path never leaks to
-      // the client.
-      const kimiFile = parseKimiFileUrl(part.videoUrl.url);
-      if (kimiFile !== undefined) {
-        parts.push({ type: 'video', source: { kind: 'file', file_id: kimiFile.fileId } });
-        continue;
-      }
-      const match = /^data:([^;]+);base64,(.*)$/.exec(part.videoUrl.url);
-      parts.push(match === null
-        ? { type: 'video', source: { kind: 'url', url: part.videoUrl.url, id: part.videoUrl.id } }
-        : { type: 'video', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
-    }
-  }
-  return parts;
 }
 
 function contentToCoreParts(content: PromptSubmission['content']): ContentPart[] {
@@ -483,12 +467,32 @@ interface ResolvePromptMediaOptions {
   readonly telemetry?: ITelemetryService;
 }
 
+interface PromptMediaPreparation {
+  readonly body: PromptSubmission;
+  /**
+   * Delete the daemon uploads this preparation created (the compressed
+   * re-save). Failure rollback only: once a submission reaches the engine,
+   * client read models project these upload ids, so they must stay
+   * retrievable like any client upload.
+   */
+  readonly discard: () => Promise<void>;
+}
+
 async function resolvePromptMediaFiles(
   body: PromptSubmission,
   store: IFileService,
   cacheDir: string,
   options: ResolvePromptMediaOptions = {},
-): Promise<PromptSubmission> {
+): Promise<PromptMediaPreparation> {
+  const ownedFileIds = new Set<string>();
+  let discarded = false;
+  const discard = async (): Promise<void> => {
+    if (discarded) return;
+    discarded = true;
+    await Promise.all(
+      [...ownedFileIds].map((fileId) => store.delete(fileId).catch(() => undefined)),
+    );
+  };
   let changed = false;
   let originalsDir: string | undefined;
   let originalsDirResolved = false;
@@ -511,209 +515,228 @@ async function resolvePromptMediaFiles(
   const telemetryFor = (source: string): ImageCompressionTelemetry | undefined =>
     options.telemetry === undefined ? undefined : { client: options.telemetry, source };
   const content: PromptSubmission['content'] = [];
-  for (const part of body.content) {
-    // Inline base64 image: compress the payload in place. This mirrors the v1
-    // server path for REST clients that submit an image without uploading it.
-    if (part.type === 'image' && part.source.kind === 'base64') {
-      // Formats the provider cannot accept must never enter the session
-      // history — one unsupported image_url makes every later request fail.
-      // The bytes are authoritative: an image labeled image/png that is
-      // actually AVIF is gated on the sniffed format, not the label. The
-      // bytes are still the user's content, though: persist them as a
-      // path-referenced attachment so the model can read and convert them
-      // itself (best effort — the plain notice stands in when persisting
-      // fails). Inline base64 has no original name, so the file is addressed
-      // by content hash with a name derived from the sniffed format.
-      const effectiveMime = resolveEffectiveImageMime(
-        part.source.media_type,
-        decodeBase64Prefix(part.source.data),
-      );
-      if (!isModelAcceptedImageMime(effectiveMime)) {
-        const bytes = Buffer.from(part.source.data, 'base64');
-        const name = `image.${imageExtensionForMime(effectiveMime)}`;
-        const persisted = await persistAttachmentBytes(
-          bytes,
-          `${createHash('sha256').update(bytes).digest('hex').slice(0, 32)}-${name}`,
-          await resolveAttachmentsDir(),
+  try {
+    for (const part of body.content) {
+      // Inline base64 image: compress the payload in place. This mirrors the v1
+      // server path for REST clients that submit an image without uploading it.
+      if (part.type === 'image' && part.source.kind === 'base64') {
+        // Formats the provider cannot accept must never enter the session
+        // history — one unsupported image_url makes every later request fail.
+        // The bytes are authoritative: an image labeled image/png that is
+        // actually AVIF is gated on the sniffed format, not the label. The
+        // bytes are still the user's content, though: persist them as a
+        // path-referenced attachment so the model can read and convert them
+        // itself (best effort — the plain notice stands in when persisting
+        // fails). Inline base64 has no original name, so the file is addressed
+        // by content hash with a name derived from the sniffed format.
+        const effectiveMime = resolveEffectiveImageMime(
+          part.source.media_type,
+          decodeBase64Prefix(part.source.data),
         );
+        if (!isModelAcceptedImageMime(effectiveMime)) {
+          const bytes = Buffer.from(part.source.data, 'base64');
+          const name = `image.${imageExtensionForMime(effectiveMime)}`;
+          const persisted = await persistAttachmentBytes(
+            bytes,
+            `${createHash('sha256').update(bytes).digest('hex').slice(0, 32)}-${name}`,
+            await resolveAttachmentsDir(),
+          );
+          content.push({
+            type: 'text',
+            text: persisted === null
+              ? buildUnsupportedImageNotice(effectiveMime)
+              : buildAttachedFileNotice(name, effectiveMime, bytes.length, persisted),
+          });
+          changed = true;
+          continue;
+        }
+        const canonicalMime = normalizeImageMime(effectiveMime);
+        const compressed = await compressBase64ForModel(part.source.data, canonicalMime, {
+          telemetry: telemetryFor('prompt_inline'),
+        });
+        if (compressed.changed) {
+          const dir = await resolveOriginalsDir();
+          const originalPath = await persistOriginalImage(
+            Buffer.from(part.source.data, 'base64'),
+            part.source.media_type,
+            { dir },
+          );
+          content.push({
+            type: 'text',
+            text: buildImageCompressionCaption({
+              original: {
+                width: compressed.originalWidth,
+                height: compressed.originalHeight,
+                byteLength: compressed.originalByteLength,
+                mimeType: part.source.media_type,
+              },
+              final: {
+                width: compressed.width,
+                height: compressed.height,
+                byteLength: compressed.finalByteLength,
+                mimeType: compressed.mimeType,
+              },
+              originalPath,
+            }),
+          });
+          content.push({
+            type: 'image',
+            source: { kind: 'base64', media_type: compressed.mimeType, data: compressed.base64 },
+          });
+          changed = true;
+        } else {
+          content.push(part);
+        }
+        continue;
+      }
+
+      // Remote image URL: no bytes to sniff, so reject when its path extension
+      // names a format providers reject (e.g. a link ending in `.avif`) — the
+      // notice keeps the URL so the model can still fetch and convert the
+      // image. Extensionless / unknown URLs pass through to the provider and
+      // the 400 recovery. Image+URL parts that pass are re-emitted unchanged.
+      if (part.type === 'image' && part.source.kind === 'url') {
+        const extMime = unsupportedImageMimeFromUrl(part.source.url);
+        if (extMime !== null) {
+          content.push({ type: 'text', text: buildUnsupportedImageNotice(extMime, part.source.url) });
+          changed = true;
+          continue;
+        }
+        content.push(part);
+        continue;
+      }
+
+      // Arbitrary file attachment: materialize the uploaded bytes next to the
+      // session and replace the part with a path reference — the model opens it
+      // with the Read tool instead of receiving it as a media part.
+      if (part.type === 'file') {
+        const file = await store.get(part.file_id);
+        const attachedPath = await materializeAttachmentToDir(file, await resolveAttachmentsDir());
         content.push({
           type: 'text',
-          text: persisted === null
-            ? buildUnsupportedImageNotice(effectiveMime)
-            : buildAttachedFileNotice(name, effectiveMime, bytes.length, persisted),
+          text: buildAttachedFileNotice(file.meta.name, file.meta.media_type, file.meta.size, attachedPath),
         });
         changed = true;
         continue;
       }
-      const canonicalMime = normalizeImageMime(effectiveMime);
-      const compressed = await compressBase64ForModel(part.source.data, canonicalMime, {
-        telemetry: telemetryFor('prompt_inline'),
-      });
-      if (compressed.changed) {
-        const dir = await resolveOriginalsDir();
-        const originalPath = await persistOriginalImage(
-          Buffer.from(part.source.data, 'base64'),
-          part.source.media_type,
-          { dir },
-        );
-        content.push({
-          type: 'text',
-          text: buildImageCompressionCaption({
-            original: {
-              width: compressed.originalWidth,
-              height: compressed.originalHeight,
-              byteLength: compressed.originalByteLength,
-              mimeType: part.source.media_type,
-            },
-            final: {
-              width: compressed.width,
-              height: compressed.height,
-              byteLength: compressed.finalByteLength,
-              mimeType: compressed.mimeType,
-            },
-            originalPath,
-          }),
+
+      if ((part.type !== 'image' && part.type !== 'video') || part.source.kind !== 'file') {
+        content.push(part);
+        continue;
+      }
+
+      const file = await store.get(part.source.file_id);
+      assertMediaFile(file, part.type);
+      if (part.type === 'image') {
+        const data = await readFileOrStream(file);
+        let mediaType = file.meta.media_type;
+        // Same format gate as the inline path above, and again the bytes are
+        // authoritative: an upload whose Content-Type lies (AVIF bytes sent
+        // as image/png) is gated on the sniffed format. Like the inline path,
+        // keep the bytes as a path-referenced attachment instead of dropping
+        // them (best effort — the plain notice stands in when persisting
+        // fails).
+        mediaType = resolveEffectiveImageMime(mediaType, data);
+        if (!isModelAcceptedImageMime(mediaType)) {
+          const persisted = await persistAttachmentBytes(
+            data,
+            `${file.meta.id}-${sanitizeAttachmentName(file.meta.name)}`,
+            await resolveAttachmentsDir(),
+          );
+          content.push({
+            type: 'text',
+            text: persisted === null
+              ? buildUnsupportedImageNotice(mediaType, file.meta.name)
+              : buildAttachedFileNotice(file.meta.name, mediaType, file.meta.size, persisted),
+          });
+          changed = true;
+          continue;
+        }
+        // Forward the canonical MIME (image/jpg → image/jpeg, case/whitespace)
+        // — strict provider whitelists reject the raw alias.
+        mediaType = normalizeImageMime(mediaType);
+        const compressed = await compressImageForModel(data, mediaType, {
+          telemetry: telemetryFor('prompt_file'),
         });
+        if (compressed.changed) {
+          const dir = await resolveOriginalsDir();
+          const originalPath = await persistOriginalImage(data, mediaType, { dir });
+          content.push({
+            type: 'text',
+            text: buildImageCompressionCaption({
+              original: {
+                width: compressed.originalWidth,
+                height: compressed.originalHeight,
+                byteLength: compressed.originalByteLength,
+                mimeType: mediaType,
+              },
+              final: {
+                width: compressed.width,
+                height: compressed.height,
+                byteLength: compressed.finalByteLength,
+                mimeType: compressed.mimeType,
+              },
+              originalPath,
+            }),
+          });
+        }
+        // Like an uploaded video, the image enters context as a bare internal
+        // `kimi-file://<id>` reference: the engine's prompt intake
+        // materializes the session-canonical copy and authors the paired
+        // `<image path>` tag, then resolves the reference at request time.
+        // When compression changed the bytes, the reference addresses a NEW
+        // daemon upload holding the final bytes — the client's original
+        // upload stays untouched. The re-save is an ordinary upload (no
+        // expiry): read models project its id, so it must keep serving bytes
+        // for the session's history.
+        let finalFile = file;
+        if (compressed.changed) {
+          const saved = await store.save(
+            Readable.from(Buffer.from(compressed.data)),
+            compressedUploadName(file.meta.name, compressed.mimeType),
+            { mimeType: compressed.mimeType },
+          );
+          // Owned until the body reaches the engine: a preparation failure
+          // rolls the re-save back (the outer catch), a successful submission
+          // keeps it alive.
+          ownedFileIds.add(saved.id);
+          finalFile = await store.get(saved.id);
+        }
         content.push({
           type: 'image',
-          source: { kind: 'base64', media_type: compressed.mimeType, data: compressed.base64 },
-        });
-        changed = true;
-      } else {
-        content.push(part);
-      }
-      continue;
-    }
-
-    // Remote image URL: no bytes to sniff, so reject when its path extension
-    // names a format providers reject (e.g. a link ending in `.avif`) — the
-    // notice keeps the URL so the model can still fetch and convert the
-    // image. Extensionless / unknown URLs pass through to the provider and
-    // the 400 recovery. Image+URL parts that pass are re-emitted unchanged.
-    if (part.type === 'image' && part.source.kind === 'url') {
-      const extMime = unsupportedImageMimeFromUrl(part.source.url);
-      if (extMime !== null) {
-        content.push({ type: 'text', text: buildUnsupportedImageNotice(extMime, part.source.url) });
-        changed = true;
-        continue;
-      }
-      content.push(part);
-      continue;
-    }
-
-    // Arbitrary file attachment: materialize the uploaded bytes next to the
-    // session and replace the part with a path reference — the model opens it
-    // with the Read tool instead of receiving it as a media part.
-    if (part.type === 'file') {
-      const file = await store.get(part.file_id);
-      const attachedPath = await materializeAttachmentToDir(file, await resolveAttachmentsDir());
-      content.push({
-        type: 'text',
-        text: buildAttachedFileNotice(file.meta.name, file.meta.media_type, file.meta.size, attachedPath),
-      });
-      changed = true;
-      continue;
-    }
-
-    if ((part.type !== 'image' && part.type !== 'video') || part.source.kind !== 'file') {
-      content.push(part);
-      continue;
-    }
-
-    const file = await store.get(part.source.file_id);
-    assertMediaFile(file, part.type);
-    if (part.type === 'image') {
-      const data = await readFileOrStream(file);
-      let mediaType = file.meta.media_type;
-      let bytes: Uint8Array = data;
-      // Same format gate as the inline path above, and again the bytes are
-      // authoritative: an upload whose Content-Type lies (AVIF bytes sent
-      // as image/png) is gated on the sniffed format. Like the inline path,
-      // keep the bytes as a path-referenced attachment instead of dropping
-      // them (best effort — the plain notice stands in when persisting
-      // fails).
-      mediaType = resolveEffectiveImageMime(mediaType, data);
-      if (!isModelAcceptedImageMime(mediaType)) {
-        const persisted = await persistAttachmentBytes(
-          data,
-          `${file.meta.id}-${sanitizeAttachmentName(file.meta.name)}`,
-          await resolveAttachmentsDir(),
-        );
-        content.push({
-          type: 'text',
-          text: persisted === null
-            ? buildUnsupportedImageNotice(mediaType, file.meta.name)
-            : buildAttachedFileNotice(file.meta.name, mediaType, file.meta.size, persisted),
+          source: { kind: 'url', url: buildDaemonFileUrl(finalFile.meta.id) },
         });
         changed = true;
         continue;
       }
-      // Forward the canonical MIME (image/jpg → image/jpeg, case/whitespace)
-      // — strict provider whitelists reject the raw alias.
-      mediaType = normalizeImageMime(mediaType);
-      const compressed = await compressImageForModel(data, mediaType, {
-        telemetry: telemetryFor('prompt_file'),
-      });
-      if (compressed.changed) {
-        const dir = await resolveOriginalsDir();
-        const originalPath = await persistOriginalImage(data, mediaType, { dir });
-        content.push({
-          type: 'text',
-          text: buildImageCompressionCaption({
-            original: {
-              width: compressed.originalWidth,
-              height: compressed.originalHeight,
-              byteLength: compressed.originalByteLength,
-              mimeType: mediaType,
-            },
-            final: {
-              width: compressed.width,
-              height: compressed.height,
-              byteLength: compressed.finalByteLength,
-              mimeType: compressed.mimeType,
-            },
-            originalPath,
-          }),
-        });
-      }
-      bytes = compressed.data;
-      mediaType = compressed.mimeType;
+
+      // Uploaded video: carried into context as a bare internal
+      // `kimi-file://<id>` reference. The engine's prompt intake materializes
+      // the session copy and authors the paired `<video path>` tag, then
+      // resolves the reference to a provider form (upload / inline / tag) at
+      // request time, so the edge never uploads and never blocks on the
+      // provider.
       content.push({
-        type: 'image',
-        source: {
-          kind: 'base64',
-          media_type: mediaType,
-          data: Buffer.from(bytes).toString('base64'),
-        },
+        type: 'video',
+        source: { kind: 'url', url: buildDaemonFileUrl(file.meta.id) },
       });
       changed = true;
-      continue;
     }
-
-    // Uploaded video: materialize a local copy the model can open as a
-    // fallback, and carry the upload into context as an internal
-    // `kimi-file://<id>?path=<materialized path>` reference. The engine
-    // resolves it to a provider form (upload / inline / `<video path>` tag) at
-    // request time, so the edge never uploads and never blocks on the provider.
-    const cachePath = await materializeVideoToCache(file, cacheDir);
-    content.push({
-      type: 'video',
-      source: { kind: 'url', url: buildKimiFileUrl(file.meta.id, cachePath) },
-    });
-    changed = true;
+    return { body: changed ? { ...body, content } : body, discard };
+  } catch (error) {
+    await discard();
+    throw error;
   }
-  return changed ? { ...body, content } : body;
 }
 
-async function materializeVideoToCache(file: GetResult, cacheDir: string): Promise<string> {
-  await mkdir(cacheDir, { recursive: true });
-  const ext = extname(file.meta.name) || (VIDEO_EXT_BY_MIME[file.meta.media_type.toLowerCase()] ?? '.bin');
-  const target = join(cacheDir, `${file.meta.id}${ext}`);
-  const info = await stat(target).catch(() => undefined);
-  if (info?.size === file.meta.size) return target;
-
-  await pipeline(file.stream(), createWriteStream(target));
-  return target;
+/**
+ * Name for the daemon upload holding compressed image bytes: keep the
+ * original base name but take the extension from the final MIME, since the
+ * encoder may have switched formats (png ↔ jpeg).
+ */
+function compressedUploadName(originalName: string, mimeType: string): string {
+  const base = originalName.replace(/\.[^./\\]*$/, '');
+  return `${base.length > 0 ? base : 'image'}.${imageExtensionForMime(mimeType)}`;
 }
 
 const ATTACHMENT_NAME_MAX = 100;

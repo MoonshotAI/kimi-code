@@ -59,6 +59,7 @@ import {
   normalizeImageMime,
   unsupportedImageMimeFromUrl,
 } from '#/agent/media/image-format-policy';
+import { buildDaemonFileUrl } from '#/agent/media/mediaRef';
 
 
 async function solidPng(width: number, height: number, color = 0x3366ccff): Promise<Uint8Array> {
@@ -763,6 +764,18 @@ describe('gateImageFormatParts', () => {
       'https://cdn.example.com/v2/image?id=123',
     ]) {
       const part = { type: 'image_url' as const, imageUrl: { url: ok } };
+      expect(gateImageFormatParts([part])).toEqual([part]);
+    }
+  });
+
+  it('passes daemon file references (kimi-file://) through untouched', () => {
+    const fileId = 'f_9b2f7c1e4a2d4f3a8c1e0b6d5a493827';
+    // The gate's unsupported-extension check strips the `?path=` query before
+    // looking for an extension, so a daemon reference survives as-is — even
+    // one whose path suffix (`.heic`) a remote URL would be rejected for,
+    // because the resolver sniffs the real bytes downstream.
+    for (const path of ['/tmp/upload/photo.png', '/tmp/upload/photo.heic']) {
+      const part = { type: 'image_url' as const, imageUrl: { url: buildDaemonFileUrl(fileId, path) } };
       expect(gateImageFormatParts([part])).toEqual([part]);
     }
   });

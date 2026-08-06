@@ -320,6 +320,34 @@ describe('KimiTUI resume message replay', () => {
     expect(transcript).not.toContain('Goal complete');
   });
 
+  it('folds an upload tag+ref pair out of the replayed user message', async () => {
+    // An uploaded image persists as `<image path>` tag text + a `kimi-file://`
+    // image part; on replay the claimed tag is machine markup (carrying the
+    // materialization path) and the ref renders as a bare `[image]`
+    // placeholder — neither the path nor the internal url may surface.
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          { type: 'text', text: 'what is this? ' },
+          { type: 'text', text: '<image path="/Users/alice/media/f_1.png"></image>' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
+          },
+        ],
+        { origin: { kind: 'user' } },
+      ),
+    ]);
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).toContain('what is this?');
+    expect(transcript).toContain('[image]');
+    expect(transcript).not.toContain('/Users/alice');
+    expect(transcript).not.toContain('kimi-file');
+    expect(transcript).not.toContain('<image path=');
+  });
+
   it('unescapes bash tag delimiters when replaying shell output', async () => {
     const driver = await replayIntoDriver([
       message(

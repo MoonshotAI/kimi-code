@@ -668,6 +668,7 @@ export const turnStartedEventSchema = z.object({
   turnId: z.number(),
   origin: promptOriginSchema,
   prompt: z.string().optional(),
+  promptId: z.string().optional(),
 });
 
 export const turnEndedEventSchema = z.object({

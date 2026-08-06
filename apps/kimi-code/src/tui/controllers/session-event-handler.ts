@@ -118,6 +118,8 @@ export interface SessionEventHost {
   updateTerminalTitle(): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
+  handleTurnStarted?(event: TurnStartedEvent): void;
+  handleTurnEnded?(event: TurnEndedEvent): void;
   readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
 }
@@ -316,6 +318,7 @@ export class SessionEventHandler {
   // ---------------------------------------------------------------------------
 
   private handleTurnBegin(event: TurnStartedEvent): void {
+    this.host.handleTurnStarted?.(event);
     this.currentTurnHasAssistantText = false;
     if (event.origin?.kind === 'plugin_command') {
       this.pluginCommandTurns.set(String(event.turnId), event.origin.pluginId);
@@ -353,6 +356,7 @@ export class SessionEventHandler {
   }
 
   private handleTurnEnd(event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {
+    this.host.handleTurnEnded?.(event);
     this.host.streamingUI.flushNow();
     if (event.reason === 'cancelled') {
       this.markActiveAgentSwarmsCancelled();

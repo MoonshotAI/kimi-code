@@ -48,6 +48,9 @@ export const promptPayloadSchema = z.object({
   // Mirrors `PromptPayload.disabledTools` in the engine (client-managed
   // session denylist, full-replace).
   disabledTools: z.array(z.string()).optional(),
+  // Mirrors `PromptPayload.promptId` in the engine (client-chosen prompt
+  // record id, echoed on the consuming turn's `turn.started`).
+  promptId: z.string().optional(),
 });
 
 /** Same shape as `SteerPayload` in the engine. */

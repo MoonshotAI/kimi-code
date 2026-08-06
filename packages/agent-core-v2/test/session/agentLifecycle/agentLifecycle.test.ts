@@ -51,6 +51,7 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
@@ -160,6 +161,7 @@ describe('AgentLifecycleService', () => {
   let loopPendingTurnIds: number[];
   let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
   let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
+  let promptDrain: ReturnType<typeof vi.fn<IAgentPromptService['drain']>>;
   let beforeExecuteListeners: number;
   let didExecuteHookIds: string[];
 
@@ -289,6 +291,11 @@ describe('AgentLifecycleService', () => {
       cancel: loopCancel,
       settled: loopSettled,
     } as unknown as IAgentLoopService);
+    promptDrain = vi.fn<IAgentPromptService['drain']>(async () => {});
+    ix.stub(IAgentPromptService, {
+      _serviceBrand: undefined,
+      drain: promptDrain,
+    } as unknown as IAgentPromptService);
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
       track2: () => {},
@@ -400,6 +407,35 @@ describe('AgentLifecycleService', () => {
     await svc.remove('main');
 
     expect(stopAllOnExit).toHaveBeenCalledWith('Session closed');
+    expect(promptDrain).toHaveBeenCalledOnce();
+  });
+
+  it('remove waits for prompt intake to drain before disposing the agent scope', async () => {
+    let releaseDrain!: () => void;
+    let markDrainStarted!: () => void;
+    const drainStarted = new Promise<void>((resolve) => {
+      markDrainStarted = resolve;
+    });
+    promptDrain.mockImplementationOnce(() => {
+      markDrainStarted();
+      return new Promise<void>((resolve) => {
+        releaseDrain = resolve;
+      });
+    });
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    const disposed: string[] = [];
+    disposables.add(svc.onDidDispose((agentId) => disposed.push(agentId)));
+
+    const removal = svc.remove('main');
+    await drainStarted;
+    await Promise.resolve();
+
+    expect(disposed).toEqual([]);
+
+    releaseDrain();
+    await removal;
+    expect(disposed).toEqual(['main']);
   });
 
   it('remove cancels queued turns before waiting for the active turn to settle', async () => {

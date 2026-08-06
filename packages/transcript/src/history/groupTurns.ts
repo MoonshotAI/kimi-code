@@ -11,7 +11,10 @@
  *    context messages do not carry them (turn end facts DO persist as
  *    `turn.ended` records and are folded in by `foldWireRecordFacts`);
  *  - media content parts become attachment entities (metadata only — base64
- *    bytes are dropped, never shipped); mid-turn media is not anchored;
+ *    bytes are dropped, never shipped); mid-turn media is not anchored. An
+ *    upload persists as the pair `<media path>` tag text part + `kimi-file://`
+ *    media part: the pair folds into a single attachment, and the tag —
+ *    machine markup — never surfaces as prompt text;
  *  - streamed-vs-persisted duplication is assumed already resolved upstream;
  *  - only the turn tree is built here: tasks / interactions / todos / meta
  *    (goal, plan, swarm) are NOT context messages — the companion fold
@@ -33,6 +36,10 @@ import type { TranscriptAttachment } from '../model/attachment';
 import type { TranscriptFrame } from '../model/frame';
 import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import type { TurnOrigin } from '../model/turn';
+import {
+  daemonFileRefFromPairingPart,
+  pairMediaPathTagRefs,
+} from '../contract/mediaRef';
 
 export type HistoryMediaSource =
   | { readonly kind: 'url'; readonly url: string }
@@ -114,12 +121,29 @@ export function groupMessagesIntoSnapshot(
   let nextOrdinal = 0;
   let markerCount = 0;
 
-  /** Media parts of a turn-opening user message → attachment entities (+ ids). */
-  const collectAttachments = (message: HistoryMessage): string[] | undefined => {
+  /**
+   * Turn-opening user message → prompt text + attachment ids. The upload pair
+   * (`<media path>` tag text part + `kimi-file://` media part) folds into a
+   * single attachment per the shared pairing (`pairMediaPathTagRefs`): a
+   * CLAIMED tag is machine markup and never surfaces as prompt text, while an
+   * unpaired standalone tag stays as text; a bare ref still yields an
+   * attachment, without a path-derived name.
+   */
+  const foldTurnOpeningInput = (
+    message: HistoryMessage,
+  ): { text: string; attachmentIds?: string[] } => {
+    const parts = message.content ?? [];
+    const pairing = pairMediaPathTagRefs(parts);
     const ids: string[] = [];
-    for (const part of message.content ?? []) {
+    const texts: string[] = [];
+    parts.forEach((part, index) => {
+      if (pairing.claimedTagIndices.has(index)) return;
+      if (part.type === 'text' && 'text' in part && typeof part.text === 'string') {
+        texts.push(part.text);
+        return;
+      }
       if (part.type === 'image' || part.type === 'video' || part.type === 'audio') {
-        if (!('source' in part) || part.source === undefined) continue;
+        if (!('source' in part) || part.source === undefined) return;
         const source = part.source as HistoryMediaSource;
         const entity: TranscriptAttachment = {
           attachmentId: `att_${attachments.length + 1}`,
@@ -135,7 +159,9 @@ export function groupMessagesIntoSnapshot(
         };
         attachments.push(entity);
         ids.push(entity.attachmentId);
-      } else if (part.type === 'file' && 'file_id' in part) {
+        return;
+      }
+      if (part.type === 'file' && 'file_id' in part) {
         const entity: TranscriptAttachment = {
           attachmentId: `att_${attachments.length + 1}`,
           mediaType: part.media_type as string,
@@ -145,9 +171,22 @@ export function groupMessagesIntoSnapshot(
         };
         attachments.push(entity);
         ids.push(entity.attachmentId);
+        return;
       }
-    }
-    return ids.length > 0 ? ids : undefined;
+      const ref = daemonFileRefFromPairingPart(part);
+      if (ref !== undefined) {
+        const path = pairing.claimedPathByRefIndex.get(index);
+        const entity: TranscriptAttachment = {
+          attachmentId: `att_${attachments.length + 1}`,
+          mediaType: `${ref.kind}/*`,
+          name: path === undefined ? undefined : pathBaseName(path),
+          source: { kind: 'file', fileId: ref.fileId },
+        };
+        attachments.push(entity);
+        ids.push(entity.attachmentId);
+      }
+    });
+    return { text: texts.join(''), attachmentIds: ids.length > 0 ? ids : undefined };
   };
 
   const ensureTurn = (origin: TurnOrigin = FALLBACK_ORIGIN): TurnDraft => {
@@ -190,17 +229,22 @@ export function groupMessagesIntoSnapshot(
       }
       const markerKey = originKind !== undefined ? MARKER_USER_ORIGINS[originKind] : undefined;
       if (markerKey !== undefined) {
-        pushMarker(markerKey, { text: textOf(message), origin: message.origin });
         // A user-slash skill/plugin command is a real user prompt (mirrors
         // the engine's `isRealUserPrompt`): it opened its own turn, so
         // advance the grouping instead of folding the response into the
         // previous turn. Other triggers are mid-turn context — marker only.
-        if (isUserSlashPrompt(message)) {
-          startTurn(mapOrigin(message), textOf(message));
+        // A slash turn-opening input folds like any other user's (upload
+        // tag+ref pair → attachment, claimed tag out of the text), mirroring
+        // the live `turnPromptText` / `turnPromptAttachments` projection.
+        const opening = isUserSlashPrompt(message) ? foldTurnOpeningInput(message) : undefined;
+        pushMarker(markerKey, { text: opening?.text ?? textOf(message), origin: message.origin });
+        if (opening !== undefined) {
+          startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
         }
         continue;
       }
-      startTurn(mapOrigin(message), textOf(message), collectAttachments(message));
+      const opening = foldTurnOpeningInput(message);
+      startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
       continue;
     }
 
@@ -327,6 +371,14 @@ function textOf(message: HistoryMessage): string {
     .filter((part): part is { readonly type: 'text'; readonly text: string } => part.type === 'text' && 'text' in part)
     .map((part) => part.text)
     .join('');
+}
+
+/**
+ * Basename of a materialization path for an attachment's display name.
+ */
+function pathBaseName(path: string): string {
+  const sep = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  return sep === -1 ? path : path.slice(sep + 1);
 }
 
 function parseArguments(raw: string | null): unknown {
