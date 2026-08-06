@@ -204,6 +204,16 @@ describe('SessionOutcomeRecorder (Session scope)', () => {
     expect(writes).toEqual(['failed']);
   });
 
+  it('never backfills a restored cancellation', async () => {
+    lifecycle.addMain();
+    await tick();
+    lifecycle.bus.publish({
+      type: 'agent.activity.updated',
+      lastTurn: { turnId: 4, reason: 'cancelled', at: 0 },
+    } as unknown as DomainEvent);
+    expect(writes).toEqual([]);
+  });
+
   it('does not backfill over a newer persisted outcome', async () => {
     lifecycle.addMain();
     await tick();

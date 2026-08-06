@@ -95,8 +95,9 @@ export class SessionOutcomeRecorder extends Disposable implements ISessionOutcom
         if (this.lastPersisted !== undefined) return;
         const lastTurn = (event as { lastTurn?: { reason?: unknown } }).lastTurn;
         const reason = lastTurn?.reason;
+        // 'cancelled' is never backfilled: a restored cancel cannot be told
+        // apart from a programmatic abort, and those are never persisted.
         if (reason === 'completed') this.write('completed');
-        else if (reason === 'cancelled') this.write('cancelled');
         else if (reason === 'failed' || reason === 'blocked') this.write('failed');
       }),
     );
