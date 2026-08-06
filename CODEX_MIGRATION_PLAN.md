@@ -91,6 +91,11 @@ codex 全 Rust 分层的规模 = 我们迁移目标的下限参考：
 **G-4 分片细则（参照 codex tui 结构）**：`kimi-tui` 现为 chat REPL(5 文件/3.4k，ratatui)。按 codex `tui/`（app/ chatwidget/ bottom_pane/ render/ streaming/ status/）分片：先 `components/messages` 渲染树（tool 卡片/审批/媒体，**tool 卡片已起步 ✅**），再 `controllers` 事件路由，最后 `theme`/`markdown` 收口。**每片以 TestBackend 冒烟 + 与 TS 版行为对拍为完成标准。**
 
 **G-2 缺口盘点（2026-08-06，kap-server 20 路由 vs kimi-server 13 processor）**：
+> **✅ G-2 HTTP 投影层已补全（2026-08-06 完成并提交）**：`kimi-server-transport/src/http.rs` 现覆盖
+> sessions 全套 / fs(list/read/search/browse/home) / config / skills / tools / snapshot / transcript /
+> usage / plan / mcp-servers / export / workspaces / auth / models / providers / ws / **meta** /
+> **shutdown** / **oauth/login(start/poll/cancel)** / **connections**——kap-server 除
+> guiStore/webAssets（宿主专属，随分发薄壳）外全部路由有 Rust 投影。web 前端零改动可连 Rust server。
 
 | kap-server 路由 | 规模 | kimi-server 现状 |
 |---|---|---|
