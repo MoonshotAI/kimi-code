@@ -1,5 +1,5 @@
 /**
- * Scenario: /secondary_model command behavior in the interactive TUI.
+ * Scenario: /secondary-model command behavior in the interactive TUI.
  * Responsibilities: picker filtering, persistence of `[subagent] default_model`
  * (keeping existing pool descriptions), and error paths.
  * Wiring: real command and selector with the SDK/session boundaries stubbed by a small host rig.

@@ -306,7 +306,7 @@ To simply point every subagent at one model by default, no models table is neede
 default_model = "kimi-hs"
 ```
 
-In the interactive TUI, the [`/secondary_model`](../reference/slash-commands.md) command opens a model selector for this: the choice is written to `default_model` (when a models table exists and the picked alias is not in it, an entry with an empty description is added), and newly spawned subagents pick up the new default immediately — no session restart needed.
+In the interactive TUI, the [`/secondary-model`](../reference/slash-commands.md) command opens a model selector for this: the choice is written to `default_model` (when a models table exists and the picked alias is not in it, an entry with an empty description is added), and newly spawned subagents pick up the new default immediately — no session restart needed.
 
 A configured pool — an explicit `[subagent.models]` table or a lone `default_model` — enables model selection: the `Agent` / `AgentSwarm` tools gain a `model` parameter, and the tool description lists the pool (the default marked `[default]`) so the main agent can choose per spawn. Model definitions stay in [`[models]`](#models) — the pool only references them and attaches the selection hints:
 

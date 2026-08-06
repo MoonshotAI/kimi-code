@@ -101,7 +101,7 @@ export function applySecondaryModelConfig(config: KimiConfig, env: Env = process
  * the env-injected recipe fields (restored from raw when the value being
  * written still equals the env value, so a `getConfig` -> `setConfig`
  * round-trip cannot persist shell overrides, while a genuinely new selection
- * — e.g. a `/secondary_model` pick made under `KIMI_SECONDARY_MODEL` — does
+ * — e.g. a `/secondary-model` pick made under `KIMI_SECONDARY_MODEL` — does
  * reach the disk, mirroring the pointer check in `stripEnvModelConfig`).
  */
 export function stripSecondaryModelConfig(

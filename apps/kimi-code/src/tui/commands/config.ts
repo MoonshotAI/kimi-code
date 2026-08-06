@@ -609,7 +609,7 @@ async function persistModelSelection(
 }
 
 // ---------------------------------------------------------------------------
-// Secondary model (`/secondary_model`) — persists `[subagent] default_model`
+// Secondary model (`/secondary-model`) — persists `[subagent] default_model`
 // ---------------------------------------------------------------------------
 
 function showSecondaryModelPicker(

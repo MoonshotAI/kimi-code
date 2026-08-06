@@ -810,7 +810,7 @@ export class Session {
    * `[secondary_model]` change: the spawn
    * binding (`subagent-host`), the startup-warning computation, and every live
    * agent's `kimiConfig` (tool descriptions, loop control) all read the
-   * session snapshot, so a mid-session `/secondary_model` switch takes effect
+   * session snapshot, so a mid-session `/secondary-model` switch takes effect
    * for the next subagent spawn without recreating the session. The core owns
    * config reload, environment overlays, and derived-model synthesis. Copying
    * that complete recipe and its model entries keeps spawn binding and provider

@@ -155,7 +155,7 @@ describe('stripSecondaryModelConfig', () => {
   });
 
   it('keeps a genuinely new selection that differs from the env values', () => {
-    // `/secondary_model` under KIMI_SECONDARY_MODEL: the picked recipe must
+    // `/secondary-model` under KIMI_SECONDARY_MODEL: the picked recipe must
     // reach the disk; only overlay round-trips are restored from raw.
     const onDisk = parseConfigString(
       ['[secondary_model]', 'model = "cheap"', 'default_effort = "low"'].join('\n'),

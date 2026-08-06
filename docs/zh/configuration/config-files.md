@@ -306,7 +306,7 @@ max_output_size = 8192
 default_model = "kimi-hs"
 ```
 
-在交互式 TUI 中，也可以用 [`/secondary_model`](../reference/slash-commands.md) 命令打开模型选择器来设置：选择后写入 `default_model`（已有 models 表而所选别名不在其中时，会一并补一条空描述条目），之后派生的子 Agent 立即按新默认值绑定，无需重启会话。
+在交互式 TUI 中，也可以用 [`/secondary-model`](../reference/slash-commands.md) 命令打开模型选择器来设置：选择后写入 `default_model`（已有 models 表而所选别名不在其中时，会一并补一条空描述条目），之后派生的子 Agent 立即按新默认值绑定，无需重启会话。
 
 配置模型池（显式的 `[subagent.models]` 表，或仅一行 `default_model` 形成的隐式单条目池）即启用模型选择：`Agent` / `AgentSwarm` 工具会获得 `model` 参数，工具描述中会列出模型池（默认模型标注 `[default]`），主 Agent 可按次派生选择模型。模型本身的定义仍在 [`[models]`](#models) 中——模型池只引用它们，并附上挑选提示：
 
