@@ -235,7 +235,7 @@ export function groupMessagesIntoSnapshot(
         // previous turn. Other triggers are mid-turn context — marker only.
         // A slash turn-opening input folds like any other user's (upload
         // tag+ref pair → attachment, claimed tag out of the text), mirroring
-        // the live `turnPromptText` / `turnPromptAttachments` projection.
+        // the live `projectTurnPrompt` projection.
         const opening = isUserSlashPrompt(message) ? foldTurnOpeningInput(message) : undefined;
         pushMarker(markerKey, { text: opening?.text ?? textOf(message), origin: message.origin });
         if (opening !== undefined) {

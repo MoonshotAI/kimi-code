@@ -548,7 +548,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     // A user-slash skill command carrying an uploaded image persists the same
     // tag+ref pair; the cold rebuild folds it exactly like a plain user turn
     // (claimed tag out of the prompt text, one attachment on the turn),
-    // mirroring the live `turnPromptText` / `turnPromptAttachments` fold.
+    // mirroring the live `projectTurnPrompt` fold.
     const snapshot = groupMessagesIntoSnapshot([
       {
         role: 'user',

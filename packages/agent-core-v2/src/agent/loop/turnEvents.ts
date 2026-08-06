@@ -57,24 +57,34 @@ export interface TurnStartedEvent {
   readonly promptId?: string;
 }
 
-export function turnPromptText(input: readonly ContentPart[]): string | undefined {
-  const text = foldMediaPathTagRefs(input)
-    .parts.filter((part): part is TextPart => part.type === 'text')
-    .map((part) => part.text)
-    .join('');
-  return text.length > 0 ? text : undefined;
+/**
+ * The displayable projection of the turn-opening input: the prompt text with
+ * machine markup folded out, plus one entry per referenced upload. Both
+ * halves come from a single `foldMediaPathTagRefs` pass, so callers take the
+ * pair rather than re-running the pairing per field.
+ */
+export interface TurnPromptProjection {
+  readonly text?: string;
+  readonly attachments?: readonly TurnPromptAttachment[];
 }
 
-export function turnPromptAttachments(
-  input: readonly ContentPart[],
-): readonly TurnPromptAttachment[] | undefined {
-  const { media } = foldMediaPathTagRefs(input);
-  if (media.length === 0) return undefined;
-  return media.map((entry) => ({
-    kind: entry.kind,
-    fileId: entry.ref.fileId,
-    name: entry.path === undefined ? undefined : pathBaseName(entry.path),
-  }));
+export function projectTurnPrompt(input: readonly ContentPart[]): TurnPromptProjection {
+  const { parts, media } = foldMediaPathTagRefs(input);
+  const text = parts
+    .filter((part): part is TextPart => part.type === 'text')
+    .map((part) => part.text)
+    .join('');
+  return {
+    text: text.length > 0 ? text : undefined,
+    attachments:
+      media.length === 0
+        ? undefined
+        : media.map((entry) => ({
+            kind: entry.kind,
+            fileId: entry.ref.fileId,
+            name: entry.path === undefined ? undefined : pathBaseName(entry.path),
+          })),
+  };
 }
 
 function pathBaseName(path: string): string {
