@@ -24,6 +24,8 @@ use kimi_protocol::rpc::JsonRpcRequest;
 use kimi_server::processor::MessageProcessor;
 use serde_json::{json, Value};
 
+use crate::v1;
+
 /// `{ code, msg, data, request_id }` envelope (kap-server `okEnvelope`).
 fn ok(data: Value) -> Value {
     json!({ "code": 0, "msg": "success", "data": data, "request_id": "" })
@@ -57,6 +59,8 @@ pub struct HttpState {
     shutdown: Option<Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>>,
     /// Active OAuth device flow for `/api/v1/oauth/login` (start/poll/cancel).
     oauth_flow: Arc<tokio::sync::Mutex<Option<OAuthFlowState>>>,
+    /// Shared v1-contract turn state (async prompt submit ↔ WS projector).
+    v1: Arc<v1::V1Shared>,
 }
 
 /// In-flight OAuth device flow state (POST start stores it; GET polls it).
@@ -86,6 +90,7 @@ impl HttpState {
                 .unwrap_or_default(),
             shutdown: None,
             oauth_flow: Arc::new(tokio::sync::Mutex::new(None)),
+            v1: v1::V1Shared::new(),
         }
     }
 
@@ -114,6 +119,7 @@ impl HttpState {
                 .unwrap_or_default(),
             shutdown: None,
             oauth_flow: Arc::new(tokio::sync::Mutex::new(None)),
+            v1: v1::V1Shared::new(),
         }
     }
 
@@ -163,24 +169,30 @@ pub fn router(state: HttpState) -> Router {
     let middleware = axum::middleware::from_fn_with_state(state.clone(), require_auth);
     Router::new()
         .route("/api/v1/health", get(health))
+        .route("/api/v1/healthz", get(health))
         .route("/api/v1/meta", get(meta))
         .route("/api/v1/shutdown", post(shutdown))
         .route("/api/v1/oauth/login", post(oauth_login_start).get(oauth_login_poll).delete(oauth_login_cancel))
         .route("/api/v1/connections", get(connections))
         .route("/api/v1/config", get(config_get).post(config_set))
-        .route("/api/v1/sessions", get(sessions_list).post(sessions_create))
+        // v1-contract session surface (the browser wire): WireSession-shaped
+        // list/create/detail + the runtime-status projection the web client
+        // reads separately. The engine-shaped `/status` stays available.
+        .route("/api/v1/sessions", get(sessions_list_v1).post(sessions_create_v1))
         .route(
             "/api/v1/sessions/{id}",
-            get(session_status).post(session_update).delete(session_delete),
+            get(session_detail_v1).post(session_update).delete(session_delete),
         )
+        .route("/api/v1/sessions/{id}/status", get(session_runtime_status))
         .route("/api/v1/sessions/{id}/prompt", post(session_prompt))
+        .route("/api/v1/sessions/{id}/prompts", post(session_prompt_async))
         .route("/api/v1/sessions/{id}/cancel", post(session_cancel))
         .route("/api/v1/sessions/{id}/fork", post(session_fork))
         .route("/api/v1/sessions/{id}/archive", post(session_archive))
         .route("/api/v1/sessions/{id}/skills", get(session_skills))
         .route("/api/v1/sessions/{id}/tools", get(session_tools))
         .route("/api/v1/sessions/{id}/context", get(session_context))
-        .route("/api/v1/sessions/{id}/snapshot", get(session_snapshot))
+        .route("/api/v1/sessions/{id}/snapshot", get(session_snapshot_v1))
         .route("/api/v1/sessions/{id}/transcript", get(session_transcript))
         .route("/api/v1/sessions/{id}/usage", get(session_usage))
         .route("/api/v1/sessions/{id}/plan", get(session_plan))
@@ -407,21 +419,195 @@ async fn config_set(State(state): State<HttpState>, Json(body): Json<Value>) -> 
     Json(state.rpc(kimi_protocol::methods::CONFIG_SET, json!({ "patch": patch })).await)
 }
 
-/// `GET /api/v1/sessions` — persisted sessions (`{ limit }` query).
-async fn sessions_list(State(state): State<HttpState>, Query(query): Query<Value>) -> Json<Value> {
-    let limit = query.get("limit").and_then(|v| v.as_u64()).unwrap_or(50);
-    Json(state.rpc(kimi_protocol::methods::SESSION_LIST, json!({ "limit": limit })).await)
+/// Fetch the raw engine envelopes backing one session's v1 wire record:
+/// `(list_entry, status, context)`.
+async fn session_detail_rpc(
+    state: &HttpState,
+    id: &str,
+) -> Option<(Value, Value, Value)> {
+    let list = state
+        .rpc(kimi_protocol::methods::SESSION_LIST, json!({ "limit": 500 }))
+        .await;
+    let list_entry = list["data"]["sessions"]
+        .as_array()?
+        .iter()
+        .find(|s| s["id"] == id)?
+        .clone();
+    let status = state
+        .rpc(kimi_protocol::methods::SESSION_GET_STATUS, json!({ "session_id": id }))
+        .await;
+    let context = state
+        .rpc(kimi_protocol::methods::SESSION_GET_CONTEXT, json!({ "session_id": id }))
+        .await;
+    if status["code"].as_i64() != Some(0) {
+        return None;
+    }
+    Some((list_entry, status, context))
 }
 
-/// `POST /api/v1/sessions` — create a session (`{ session_id }` body).
-async fn sessions_create(State(state): State<HttpState>, Json(body): Json<Value>) -> Json<Value> {
-    let session_id = body.get("session_id").and_then(|v| v.as_str()).unwrap_or_default();
-    Json(state.rpc(kimi_protocol::methods::SESSION_CREATE, json!({ "session_id": session_id })).await)
+/// `GET /api/v1/sessions` — persisted sessions as v1 `WireSession` records
+/// (`{ items, has_more }`), the shape kimi-web's session list expects.
+async fn sessions_list_v1(State(state): State<HttpState>) -> Json<Value> {
+    let list = state
+        .rpc(kimi_protocol::methods::SESSION_LIST, json!({ "limit": 500 }))
+        .await;
+    if list["code"].as_i64() != Some(0) {
+        return Json(list);
+    }
+    let Some(entries) = list["data"]["sessions"].as_array().cloned() else {
+        return Json(ok(v1::wire_page(Vec::new())));
+    };
+    let mut items = Vec::with_capacity(entries.len());
+    for entry in &entries {
+        let id = entry["id"].as_str().unwrap_or_default();
+        let status = state
+            .rpc(kimi_protocol::methods::SESSION_GET_STATUS, json!({ "session_id": id }))
+            .await;
+        let context = state
+            .rpc(kimi_protocol::methods::SESSION_GET_CONTEXT, json!({ "session_id": id }))
+            .await;
+        let busy = state.v1.is_busy(id);
+        items.push(v1::wire_session(entry, &status, &context, busy));
+    }
+    Json(ok(v1::wire_page(items)))
 }
 
-/// `GET /api/v1/sessions/{id}` — session status.
-async fn session_status(State(state): State<HttpState>, Path(id): Path<String>) -> Json<Value> {
-    Json(state.rpc(kimi_protocol::methods::SESSION_GET_STATUS, json!({ "session_id": id })).await)
+/// `POST /api/v1/sessions` — create a session from the v1 body
+/// (`{ metadata: { cwd }, title?, agent_config: { model } }`). The engine
+/// `session/create` takes `homedir`/`model`; a missing `metadata.cwd` is an
+/// error (kap-server parity) — the browser always sends one.
+async fn sessions_create_v1(State(state): State<HttpState>, Json(body): Json<Value>) -> Json<Value> {
+    let cwd = body["metadata"]["cwd"].as_str().unwrap_or_default();
+    if cwd.is_empty() {
+        return Json(err(-32602, "metadata.cwd is required"));
+    }
+    let path = std::path::Path::new(cwd);
+    if !path.is_dir() {
+        return Json(err(-40001, &format!("workspace directory not found: {cwd}")));
+    }
+    let mut params = json!({ "homedir": cwd });
+    if let Some(title) = body.get("title").and_then(|v| v.as_str()) {
+        params["title"] = json!(title);
+    }
+    if let Some(model) = body["agent_config"]["model"].as_str() {
+        params["model"] = json!(model);
+    }
+    let created = state.rpc(kimi_protocol::methods::SESSION_CREATE, params).await;
+    if created["code"].as_i64() != Some(0) {
+        return Json(created);
+    }
+    let id = created["data"]["session_id"]
+        .as_str()
+        .or_else(|| created["data"]["id"].as_str())
+        .unwrap_or_default();
+    if let Some((entry, status, context)) = session_detail_rpc(&state, id).await {
+        return Json(ok(v1::wire_session(&entry, &status, &context, false)));
+    }
+    Json(ok(json!({ "id": id })))
+}
+
+/// `GET /api/v1/sessions/{id}` — one session as a v1 `WireSession`.
+async fn session_detail_v1(State(state): State<HttpState>, Path(id): Path<String>) -> Json<Value> {
+    match session_detail_rpc(&state, &id).await {
+        Some((entry, status, context)) => {
+            let busy = state.v1.is_busy(&id);
+            Json(ok(v1::wire_session(&entry, &status, &context, busy)))
+        }
+        None => Json(err(-40401, "session not found")),
+    }
+}
+
+/// `GET /api/v1/sessions/{id}/status` — the v1 runtime-status projection
+/// (`WireSessionRuntimeStatus`) the web client reads separately from the
+/// session record.
+async fn session_runtime_status(State(state): State<HttpState>, Path(id): Path<String>) -> Json<Value> {
+    let status = state
+        .rpc(kimi_protocol::methods::SESSION_GET_STATUS, json!({ "session_id": id }))
+        .await;
+    if status["code"].as_i64() != Some(0) {
+        return Json(status);
+    }
+    Json(ok(v1::wire_session_runtime_status(&status)))
+}
+
+/// `POST /api/v1/sessions/{id}/prompt` — run one prompt (`{ input }`),
+/// blocking until the turn completes (engine RPC direct).
+async fn session_prompt(State(state): State<HttpState>, Path(id): Path<String>, Json(body): Json<Value>) -> Json<Value> {
+    let input = body.get("input").cloned().unwrap_or(Value::Null);
+    Json(state.rpc(kimi_protocol::methods::SESSION_PROMPT, json!({ "session_id": id, "input": input })).await)
+}
+
+/// `POST /api/v1/sessions/{id}/prompts` — v1 async prompt submission. Returns
+/// immediately with `{ prompt_id, user_message_id }` and runs the turn in the
+/// background; progress streams over the WS `event.*` envelopes (the kimi-web
+/// chat flow).
+async fn session_prompt_async(
+    State(state): State<HttpState>,
+    Path(id): Path<String>,
+    Json(body): Json<Value>,
+) -> Json<Value> {
+    let content = body.get("content").cloned().unwrap_or(Value::Null);
+    if !content.is_array() {
+        return Json(err(-32602, "content must be a WireMessageContent[]"));
+    }
+    let prompt_text: String = content
+        .as_array()
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|p| {
+                    if p["type"].as_str() == Some("text") {
+                        p["text"].as_str().map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
+    let prompt_id = v1::gen_id("prompt_");
+    let user_message_id = v1::gen_id("msg_");
+    let assistant_msg_id = v1::gen_id("msg_");
+    let processor = state.processor.clone();
+    let v1 = state.v1.clone();
+    let sid = id.clone();
+    let session_key = sid.clone();
+    v1.begin_turn(
+        &sid,
+        v1::TurnContext {
+            prompt_id: prompt_id.clone(),
+            user_message_id: user_message_id.clone(),
+            assistant_msg_id,
+            prompt_text,
+            buffer: String::new(),
+        },
+    );
+    // Run the turn in the background; the engine's events (turn.started /
+    // llm.delta / turn.ended) are projected onto the WS v1 event stream by
+    // the transport. The WS projector clears the turn bookkeeping on
+    // `turn.ended`; when no WS client consumed the stream we clear it here
+    // (after a short grace so a subscribed projector wins the context) so the
+    // busy flag can never wedge.
+    tokio::spawn(async move {
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: json!(2),
+            method: kimi_protocol::methods::SESSION_PROMPT.into(),
+            params: json!({ "session_id": sid, "input": content }),
+        };
+        let response = processor.handle(request).await;
+        if response.get("error").is_some() {
+            eprintln!("v1 prompt turn failed: {response}");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let _ = v1.take_turn(&session_key);
+    });
+    Json(ok(json!({
+        "prompt_id": prompt_id,
+        "user_message_id": user_message_id,
+        "status": "accepted",
+    })))
 }
 
 /// `POST /api/v1/sessions/{id}` — session update (metadata / model).
@@ -434,12 +620,6 @@ async fn session_update(State(state): State<HttpState>, Path(id): Path<String>, 
         err(-32602, "no recognized update field")
     };
     Json(method)
-}
-
-/// `POST /api/v1/sessions/{id}/prompt` — run one prompt (`{ input }`).
-async fn session_prompt(State(state): State<HttpState>, Path(id): Path<String>, Json(body): Json<Value>) -> Json<Value> {
-    let input = body.get("input").cloned().unwrap_or(Value::Null);
-    Json(state.rpc(kimi_protocol::methods::SESSION_PROMPT, json!({ "session_id": id, "input": input })).await)
 }
 
 /// `DELETE /api/v1/sessions/{id}` — permanently delete a session.
@@ -479,22 +659,33 @@ async fn session_archive(State(state): State<HttpState>, Path(id): Path<String>)
     Json(state.rpc(kimi_protocol::methods::SESSION_ARCHIVE, json!({ "session_id": id })).await)
 }
 
-/// `GET /api/v1/sessions/{id}/snapshot` — IM-style initial sync: the session
-/// status plus its accumulated context messages (kap-server snapshot
-/// projection over the engine).
-async fn session_snapshot(State(state): State<HttpState>, Path(id): Path<String>) -> Json<Value> {
-    let status = state.rpc(kimi_protocol::methods::SESSION_GET_STATUS, json!({ "session_id": id })).await;
-    if status["code"].as_i64() != Some(0) {
-        return Json(status);
-    }
-    let context = state.rpc(kimi_protocol::methods::SESSION_GET_CONTEXT, json!({ "session_id": id })).await;
-    let messages = context["data"].get("messages").cloned().unwrap_or(Value::Null);
+/// `GET /api/v1/sessions/{id}/snapshot` — v1 IM-style initial sync: the
+/// `WireSession` record + `WireMessage` list + empty pending queues (the
+/// kimi-web snapshot contract; missing `pending_*` arrays crash the client).
+async fn session_snapshot_v1(State(state): State<HttpState>, Path(id): Path<String>) -> Json<Value> {
+    let Some((entry, status, context)) = session_detail_rpc(&state, &id).await else {
+        return Json(err(-40401, "session not found"));
+    };
+    let busy = state.v1.is_busy(&id);
+    let session = v1::wire_session(&entry, &status, &context, busy);
+    let messages: Vec<Value> = context["data"]["history"]
+        .as_array()
+        .map(|msgs| {
+            msgs.iter()
+                .enumerate()
+                .map(|(i, m)| v1::wire_message_from_context(m, &id, i))
+                .collect()
+        })
+        .unwrap_or_default();
     let snapshot = json!({
         "as_of_seq": 0,
         "epoch": "engine",
-        "session": status["data"],
+        "session": session,
         "messages": { "items": messages, "has_more": false },
         "in_flight_turn": null,
+        "pending_approvals": [],
+        "pending_questions": [],
+        "subagents": [],
     });
     Json(ok(snapshot))
 }
@@ -506,7 +697,7 @@ async fn session_transcript(State(state): State<HttpState>, Path(id): Path<Strin
     if context["code"].as_i64() != Some(0) {
         return Json(context);
     }
-    let messages = context["data"].get("messages").and_then(|m| m.as_array()).cloned().unwrap_or_default();
+    let messages = context["data"].get("history").and_then(|m| m.as_array()).cloned().unwrap_or_default();
     let items: Vec<Value> = messages
         .into_iter()
         .map(|m| json!({
@@ -798,10 +989,11 @@ async fn provider_delete(State(state): State<HttpState>, Path(id): Path<String>)
     Json(state.rpc(kimi_protocol::methods::CONFIG_SET, json!({ "patch": patch })).await)
 }
 
-/// `GET /api/v1/ws` — upgrade to the WebSocket JSON-RPC transport; when the
-/// engine event source is attached, live session events are also fanned out
-/// to the connection as text frames. Auth: the client offers the
-/// `kimi-code.bearer.<credential>` subprotocol (kap-server parity).
+/// `GET /api/v1/ws` — upgrade to the WebSocket v1 facade: `server_hello` /
+/// `client_hello` / `subscribe` / `ack` control frames plus `event.*` event
+/// envelopes projected from the engine stream (the kimi-web wire). Auth: the
+/// client offers the `kimi-code.bearer.<credential>` subprotocol (kap-server
+/// parity).
 async fn ws_upgrade(
     State(state): State<HttpState>,
     ws: axum::extract::WebSocketUpgrade,
@@ -816,80 +1008,11 @@ async fn ws_upgrade(
         }
         return ws
             .protocols([expected_protocol])
-            .on_upgrade(move |socket| {
-                serve_ws(socket, state.processor.clone(), state.events.clone())
-            });
+            .on_upgrade(move |socket| v1::serve_v1_ws(socket, state.events.clone(), state.v1.clone()));
     }
-    let processor = state.processor.clone();
     let events = state.events.clone();
-    ws.on_upgrade(move |socket| serve_ws(socket, processor, events))
-}
-
-/// Serve one upgraded WebSocket connection (JSON-RPC frames, same as
-/// `websocket::serve_connection` but over an axum socket), plus engine-event
-/// fan-out when an event source is attached.
-async fn serve_ws(
-    socket: axum::extract::ws::WebSocket,
-    processor: Arc<MessageProcessor>,
-    events: Option<tokio::sync::broadcast::Sender<serde_json::Value>>,
-) {
-    use axum::extract::ws::Message as AxumMessage;
-    use futures_util::{SinkExt, StreamExt};
-    let (sink, mut source) = socket.split();
-    let sink = Arc::new(tokio::sync::Mutex::new(sink));
-
-    // Forward engine events to this client (fire-and-forget task; ends when
-    // the channel closes or the connection drops).
-    if let Some(events) = events {
-        let sink = sink.clone();
-        tokio::spawn(async move {
-            let mut rx = events.subscribe();
-            loop {
-                match rx.recv().await {
-                    Ok(event) => {
-                        let mut sink = sink.lock().await;
-                        if sink
-                            .send(AxumMessage::Text(serde_json::to_string(&event).unwrap_or_default().into()))
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                }
-            }
-        });
-    }
-
-    while let Some(msg) = source.next().await {
-        let Ok(msg) = msg else { break };
-        match msg {
-            AxumMessage::Text(text) => {
-                let line = text.trim().to_string();
-                if line.is_empty() {
-                    continue;
-                }
-                let processor = processor.clone();
-                let sink = sink.clone();
-                tokio::spawn(async move {
-                    let response = match serde_json::from_str::<JsonRpcRequest>(&line) {
-                        Ok(request) => processor.handle(request).await,
-                        Err(_) => json!({
-                            "jsonrpc": "2.0",
-                            "id": null,
-                            "error": { "code": -32700, "message": "Parse error" },
-                        }),
-                    };
-                    let mut sink = sink.lock().await;
-                    let _ = sink.send(AxumMessage::Text(response.to_string().into())).await;
-                });
-            }
-            AxumMessage::Close(_) => break,
-            _ => {}
-        }
-    }
+    let shared = state.v1.clone();
+    ws.on_upgrade(move |socket| v1::serve_v1_ws(socket, events, shared))
 }
 
 #[cfg(test)]

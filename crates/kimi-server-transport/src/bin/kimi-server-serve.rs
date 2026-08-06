@@ -14,20 +14,17 @@ use kimi_server::Server;
 
 /// Resolve the expected bearer credential (kap-server parity): the
 /// `KIMI_CODE_PASSWORD` env wins, then `<KIMI_CODE_HOME>/server.token`; when
-/// neither exists the server runs lenient unless `--no-auth` is absent and
-/// auth is forced. `no_auth` disables validation entirely (dev mode).
+/// neither exists a fresh token is generated and persisted (kap-server
+/// `persistentToken` parity) so `kimi web` — which reads `server.token` to
+/// build the browser URL — stays in sync. `--no-auth` disables validation
+/// entirely (dev mode).
 fn auth_config(no_auth: bool) -> kimi_server_transport::http::AuthConfig {
     let token = if no_auth {
         None
     } else {
+        let home = kimi_code_home();
+        let path = format!("{home}/server.token");
         let resolved = std::env::var("KIMI_CODE_PASSWORD").ok().or_else(|| {
-            let home = std::env::var("KIMI_CODE_HOME").unwrap_or_else(|_| {
-                std::env::var("HOME")
-                    .or_else(|_| std::env::var("USERPROFILE"))
-                    .map(|h| format!("{h}/.kimi-code"))
-                    .unwrap_or_default()
-            });
-            let path = format!("{home}/server.token");
             let value = std::fs::read_to_string(&path)
                 .ok()
                 // Strip a UTF-8 BOM (some editors/tools write one); Rust's
@@ -39,12 +36,52 @@ fn auth_config(no_auth: bool) -> kimi_server_transport::http::AuthConfig {
             }
             value
         });
-        eprintln!(
-            "kimi-server-serve: auth required (KIMI_CODE_PASSWORD or server.token)"
-        );
-        resolved
+        match resolved {
+            Some(token) => {
+                eprintln!("kimi-server-serve: auth required (KIMI_CODE_PASSWORD or server.token)");
+                Some(token)
+            }
+            None => {
+                // Neither source present: mint + persist one so the web flow
+                // (which hands the browser `#token=<server.token>`) works.
+                let token = generate_token();
+                if let Some(parent) = std::path::Path::new(&path).parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if std::fs::write(&path, &token).is_ok() {
+                    eprintln!("kimi-server-serve: generated server.token at {path}");
+                    Some(token)
+                } else {
+                    eprintln!(
+                        "kimi-server-serve: could not persist server.token at {path}; running lenient"
+                    );
+                    None
+                }
+            }
+        }
     };
     kimi_server_transport::http::AuthConfig { token }
+}
+
+/// Resolve `<KIMI_CODE_HOME>` (default `~/.kimi-code`).
+fn kimi_code_home() -> String {
+    std::env::var("KIMI_CODE_HOME").unwrap_or_else(|_| {
+        std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .map(|h| format!("{h}/.kimi-code"))
+            .unwrap_or_default()
+    })
+}
+
+/// Generate a random-looking bearer token without a rand dependency.
+fn generate_token() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("kimi-{:016x}{:08x}{:08x}", now.as_nanos() as u64, std::process::id(), n)
 }
 
 #[tokio::main]

@@ -159,8 +159,9 @@ impl SessionManager {
 
     /// Record the session's working directory (set at creation so
     /// `session/list` can filter by workspace). The first non-empty value
-    /// wins; later calls are ignored. Cache-only: the store copy keeps its
-    /// durable agent state until the next full save.
+    /// wins; later calls are ignored. Persisted immediately: the store copy
+    /// written at creation carries an empty work_dir, and `session/list`
+    /// reads from the store, so a cache-only update would never surface.
     pub fn set_work_dir(&mut self, id: &str, work_dir: &str) {
         if work_dir.is_empty() {
             return;
@@ -168,6 +169,10 @@ impl SessionManager {
         if let Some(record) = self.sessions.get_mut(id) {
             if record.work_dir.is_empty() {
                 record.work_dir = work_dir.to_string();
+                let updated = record.clone();
+                if let Err(e) = self.save_to_store(&updated) {
+                    eprintln!("[session] failed to persist work_dir for {}: {e}", id);
+                }
             }
         }
     }
