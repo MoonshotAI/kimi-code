@@ -14,6 +14,11 @@ export interface ContextCompactionInput {
    *  size); preferred over the summary-text estimate in the `tokensAfter`
    *  fallback when present. */
   readonly summaryOutputTokens?: number;
+  /** Estimated fixed request overhead (system prompt + non-deferred tool
+   *  schemas) that every post-compaction exchange still carries. Counted into
+   *  the `tokensAfter` fallback so the result stays on the same full-request
+   *  basis as the measured exchange anchors. */
+  readonly requestOverheadTokens?: number;
   readonly keptUserMessageCount?: number;
   readonly keptHeadUserMessageCount?: number;
   readonly droppedCount?: number;

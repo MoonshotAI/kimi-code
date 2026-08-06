@@ -367,7 +367,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         'Cannot compact while a turn is active. Wait for it to finish, then retry.',
       );
     }
-    return this.tokenCounting.estimateMessages(history);
+    return this.requestTokens(history);
   }
 
   private createActiveCompaction(
@@ -595,7 +595,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   ): Promise<CompactionResult> {
     const startedAt = Date.now();
     const originalHistory = [...this.context.get()];
-    const tokensBefore = this.tokenCounting.estimateMessages(originalHistory);
+    const tokensBefore = this.requestTokens(originalHistory);
     let retryCount = 0;
     let thinkingEffort = this.profile.data().thinkingLevel;
 
@@ -719,6 +719,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         compactedCount: originalHistory.length,
         tokensBefore,
         summaryOutputTokens: attempt.usage?.output,
+        requestOverheadTokens: this.requestTokens([]),
         droppedCount: droppedCount === 0 ? undefined : droppedCount,
       });
 

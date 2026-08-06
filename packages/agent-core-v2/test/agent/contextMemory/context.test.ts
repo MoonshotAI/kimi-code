@@ -812,6 +812,31 @@ describe('Agent context', () => {
       );
       expect(withMeasured.messages).toEqual(withEstimate.messages);
     });
+
+    it('counts the request overhead into tokensAfter on the full-request basis', () => {
+      const history = [userMessage('u1'), {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'a1' }],
+        toolCalls: [],
+      } as ContextMessage];
+
+      const withOverhead = buildContextCompactionShape(history, {
+        summary: 'summary',
+        compactedCount: 2,
+        tokensBefore: 0,
+        summaryOutputTokens: 500,
+        requestOverheadTokens: 3_000,
+      });
+      const withoutOverhead = buildContextCompactionShape(history, {
+        summary: 'summary',
+        compactedCount: 2,
+        tokensBefore: 0,
+        summaryOutputTokens: 500,
+      });
+
+      expect(withOverhead.tokensAfter).toBe(withoutOverhead.tokensAfter + 3_000);
+      expect(withOverhead.messages).toEqual(withoutOverhead.messages);
+    });
   });
 });
 
