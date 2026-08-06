@@ -37,8 +37,6 @@ describe('built-in slash command registry', () => {
     expect(findBuiltInSlashCommand('bug')?.name).toBe('feedback');
     expect(findBuiltInSlashCommand('btw')?.name).toBe('btw');
     expect(findBuiltInSlashCommand('mcp')?.name).toBe('mcp');
-    expect(findBuiltInSlashCommand('secondary-model')?.name).toBe('secondary-model');
-    expect(findBuiltInSlashCommand('secondary_model')).toBeUndefined();
     expect(findBuiltInSlashCommand('status')?.name).toBe('status');
     expect(findBuiltInSlashCommand('usage')?.aliases).not.toContain('status');
     expect(findBuiltInSlashCommand('unknown')).toBeUndefined();
@@ -169,7 +167,6 @@ describe('built-in slash command registry', () => {
         'plan',
         'reload',
         'reload-tui',
-        'secondary-model',
         'sessions',
         'settings',
         'status',
