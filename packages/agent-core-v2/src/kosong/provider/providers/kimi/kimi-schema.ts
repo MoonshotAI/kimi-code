@@ -1,9 +1,14 @@
 /**
  * `kosong/provider` domain — Kimi tool-schema dialect normalization.
  *
- * Pure functions: dereference local `$ref` pointers by inlining definitions,
- * then complete missing `type` fields from enum/const values or structural
- * keys — the schema dialect the Kimi tool endpoint accepts.
+ * Pure functions that rewrite a tool's JSON Schema into the dialect the Kimi
+ * tool endpoint accepts — provider-compatibility normalization, not a
+ * general-purpose schema compiler: local `$ref` pointers are inlined, the
+ * parameters root (which Moonshot requires to be a typed object) flattens
+ * `anyOf`/`oneOf` unions into one object schema, a `type` declared next to a
+ * nested `anyOf`/`oneOf` (a shape Moonshot rejects) is folded into the union
+ * branches, and missing or value-contradicting `type` fields are repaired
+ * from enum/const values or structural keys.
  *
  * Circular references are detected and left as `$ref` to avoid infinite
  * recursion; in that case the referenced definition bucket is preserved so the
@@ -46,6 +51,8 @@ const TYPE_COMPLETION_SKIP_KEYS = new Set([
   'oneOf',
   'then',
 ]);
+
+const TYPE_HOISTING_COMBINATOR_KEYS = ['anyOf', 'oneOf'] as const;
 
 const CHILD_SCHEMA_SLOTS = [
   { key: '$defs', kind: 'map' },
@@ -119,8 +126,365 @@ function ensureKimiPropertyTypes(schema: Record<string, unknown>): Record<string
       'JSON Schema root must normalize to an object.',
     );
   }
+  flattenRootUnion(normalized);
+  hoistCombinatorTypes(normalized);
   recurseSchema(normalized);
   return normalized;
+}
+
+function flattenRootUnion(root: Record<string, unknown>): void {
+  const variants: VariantEntry[] = [];
+  let flattened = false;
+  let exclusive = true;
+  for (const key of TYPE_HOISTING_COMBINATOR_KEYS) {
+    const value = root[key];
+    if (!Array.isArray(value)) continue;
+    flattened = true;
+    if (key === 'anyOf') exclusive = false;
+    for (const branch of value) {
+      if (mayAcceptAnyObject(branch)) {
+        variants.push({ kind: 'any' });
+      } else if (isObjectBranch(branch)) {
+        variants.push({ kind: 'object', schema: branch });
+      }
+      // Anything else cannot match an object and contributes nothing.
+    }
+    delete root[key];
+  }
+  if (!flattened) return;
+  // One unrestricted variant means no branch-derived constraint can be
+  // imposed on the root: for `anyOf` the union accepts any object, and for
+  // `oneOf` it makes the other variants invalid rather than more permissive —
+  // widening is the only representable outcome either way.
+  const unrestricted = variants.some((variant) => variant.kind === 'any');
+  const branches = unrestricted
+    ? []
+    : variants.flatMap((variant) => (variant.kind === 'object' ? [variant.schema] : []));
+
+  const properties: Record<string, unknown> = isRecord(root['properties'])
+    ? root['properties']
+    : {};
+  const requiredSets: string[][] = [];
+  const branchKeys = new Set<string>();
+  for (const branch of branches) {
+    const branchProperties = branch['properties'];
+    if (isRecord(branchProperties)) {
+      for (const name of Object.keys(branchProperties)) branchKeys.add(name);
+    }
+    requiredSets.push(
+      Array.isArray(branch['required'])
+        ? branch['required'].filter((name): name is string => typeof name === 'string')
+        : [],
+    );
+  }
+  for (const name of branchKeys) {
+    // The root's own property constraint already applied to every branch.
+    if (hasOwn(properties, name)) continue;
+    const variants = new Map<string, Record<string, unknown>>();
+    let unconstrained = false;
+    for (const branch of branches) {
+      const branchProperties = branch['properties'];
+      const patternProperties = branch['patternProperties'];
+      let constraint: unknown;
+      if (isRecord(branchProperties) && hasOwn(branchProperties, name)) {
+        constraint = branchProperties[name];
+      } else if (isRecord(patternProperties) && Object.keys(patternProperties).length > 0) {
+        constraint = true;
+      } else if (hasOwn(branch, 'additionalProperties')) {
+        constraint = branch['additionalProperties'];
+      } else {
+        constraint = true;
+      }
+      if (constraint === false) continue;
+      if (constraint === true || (isRecord(constraint) && Object.keys(constraint).length === 0)) {
+        unconstrained = true;
+        break;
+      }
+      if (!isRecord(constraint)) continue;
+      if (!hasOwn(constraint, 'type') && !hasExactValueType(constraint)) {
+        unconstrained = true;
+        break;
+      }
+      variants.set(canonicalJson(constraint), constraint);
+    }
+    if (unconstrained) continue;
+    const merged = [...variants.values()];
+    const [first] = merged;
+    if (merged.length === 1 && first !== undefined) {
+      properties[name] = first;
+    } else if (merged.length > 1) {
+      properties[name] = { anyOf: merged };
+    }
+  }
+
+  root['type'] = 'object';
+  root['properties'] = properties;
+  const alwaysRequired =
+    requiredSets.length > 0
+      ? requiredSets.reduce((acc, cur) => acc.filter((name) => cur.includes(name)))
+      : [];
+  const rootRequired = Array.isArray(root['required'])
+    ? root['required'].filter((name): name is string => typeof name === 'string')
+    : [];
+  // A `required` naming a property that is not in `properties` is rejected
+  // outright, and dropping one only widens what the wire accepts.
+  const required = [...new Set([...rootRequired, ...alwaysRequired])].filter((name) =>
+    hasOwn(properties, name),
+  );
+  if (required.length > 0) {
+    root['required'] = required;
+  } else {
+    delete root['required'];
+  }
+  const summary = summarizeVariants(variants, properties, exclusive);
+  if (summary !== undefined) {
+    const existing = root['description'];
+    root['description'] =
+      typeof existing === 'string' && existing.trim() !== '' ? `${existing}\n\n${summary}` : summary;
+  }
+}
+
+type VariantEntry = { kind: 'any' } | { kind: 'object'; schema: Record<string, unknown> };
+
+function summarizeVariants(
+  variants: VariantEntry[],
+  properties: Record<string, unknown>,
+  exclusive: boolean,
+): string | undefined {
+  if (variants.length < 2) return undefined;
+  const lines: string[] = [];
+  const described: string[] = [];
+  const dropped = new Map<string, string>();
+  for (const [index, variant] of variants.entries()) {
+    if (variant.kind === 'any') {
+      described.push(`(${index + 1}) any object.`);
+      continue;
+    }
+    const branch = variant.schema;
+    const branchProperties = isRecord(branch['properties']) ? branch['properties'] : {};
+    const declared = Object.keys(branchProperties);
+    const required = (Array.isArray(branch['required']) ? branch['required'] : []).filter(
+      (name): name is string => typeof name === 'string',
+    );
+    for (const name of [...required, ...declared]) {
+      if (hasOwn(properties, name) || dropped.has(name)) continue;
+      const entry = branchProperties[name];
+      const description = isRecord(entry) ? entry['description'] : undefined;
+      dropped.set(name, typeof description === 'string' ? description : '');
+    }
+    const parts: string[] = [];
+    if (required.length > 0) parts.push(`required: ${required.join(', ')}`);
+    const optional = declared.filter((name) => !required.includes(name));
+    if (optional.length > 0) parts.push(`optional: ${optional.join(', ')}`);
+    if (parts.length > 0) described.push(`(${index + 1}) ${parts.join('; ')}.`);
+  }
+  // An `anyOf` with an unrestricted variant accepts any object, so listing
+  // combinations would only mislead; the dropped field names still help.
+  const unrestricted = variants.some((variant) => variant.kind === 'any');
+  if (described.length >= 2 && (exclusive || !unrestricted)) {
+    lines.push(
+      `Valid argument variants (${exclusive ? 'exactly' : 'at least'} one must match): ${described.join(' ')}`,
+    );
+  }
+  if (dropped.size > 0) {
+    lines.push(
+      ['Fields without their own schema entry:']
+        .concat(
+          [...dropped].map(([name, description]) =>
+            description === '' ? `- ${name}` : `- ${name} — ${description}`,
+          ),
+        )
+        .join('\n'),
+    );
+  }
+  return lines.length > 0 ? lines.join('\n\n') : undefined;
+}
+
+function mayAcceptAnyObject(branch: unknown): boolean {
+  if (branch === true) return true;
+  if (!isRecord(branch)) return false;
+  if (hasOwn(branch, 'type')) {
+    const type = branch['type'];
+    const includesObject =
+      type === 'object' || (Array.isArray(type) && type.includes('object'));
+    if (!includesObject) return false;
+  }
+  const values = Array.isArray(branch['enum'])
+    ? branch['enum']
+    : hasOwn(branch, 'const')
+      ? [branch['const']]
+      : undefined;
+  if (values !== undefined) {
+    // Fixed values only match an object when one of them is an object.
+    return values.some((value) => isRecord(value));
+  }
+  return !hasAnyKey(branch, OBJECT_STRUCTURE_KEYS);
+}
+
+function groupValuesByType(values: unknown[]): Map<JsonSchemaType, unknown[]> | undefined {
+  const groups = new Map<JsonSchemaType, unknown[]>();
+  for (const value of values) {
+    const valueType = inferValueType(value);
+    if (valueType === undefined) return undefined;
+    const bucket = groups.get(valueType);
+    if (bucket === undefined) {
+      groups.set(valueType, [value]);
+    } else {
+      bucket.push(value);
+    }
+  }
+  return groups;
+}
+
+function hasExactValueType(schema: Record<string, unknown>): boolean {
+  const enumValues = schema['enum'];
+  if (Array.isArray(enumValues) && enumValues.length > 0) return true;
+  return hasOwn(schema, 'const');
+}
+
+function isObjectBranch(branch: unknown): branch is Record<string, unknown> {
+  if (!isRecord(branch)) return false;
+  const type = branch['type'];
+  if (type === 'object' || (Array.isArray(type) && type.includes('object'))) return true;
+  return !hasOwn(branch, 'type') && hasAnyKey(branch, OBJECT_STRUCTURE_KEYS);
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(',')}]`;
+  }
+  if (isRecord(value)) {
+    const entries = Object.keys(value)
+      .toSorted()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+function hoistCombinatorTypes(node: Record<string, unknown>): void {
+  for (const key of TYPE_HOISTING_COMBINATOR_KEYS) {
+    const branches = node[key];
+    if (!hasOwn(node, 'type') || !Array.isArray(branches)) continue;
+    const parentType = node['type'];
+    for (let i = branches.length - 1; i >= 0; i--) {
+      const branch: unknown = branches[i];
+      if (branch === true) {
+        branches[i] = { type: cloneJsonValue(parentType) };
+        continue;
+      }
+      // A boolean `false` (or any non-schema) branch is not accepted on the
+      // wire; dropping it only widens the union.
+      if (!isRecord(branch)) {
+        branches.splice(i, 1);
+        continue;
+      }
+      if (constrainBranchType(parentType, branch) === 'dead') {
+        branches.splice(i, 1);
+      }
+    }
+    if (branches.length === 0) {
+      // No live branch left: drop the union and keep the parent constraint —
+      // neither an empty array nor a boolean branch is a legal union member.
+      delete node[key];
+    } else {
+      delete node['type'];
+    }
+  }
+  visitChildSchemas(node, (child) => {
+    if (isRecord(child)) {
+      hoistCombinatorTypes(child);
+    }
+  });
+}
+
+function constrainBranchType(
+  parentType: unknown,
+  branch: Record<string, unknown>,
+): 'kept' | 'dead' {
+  const parent = toTypeSet(parentType);
+  if (parent === undefined) {
+    if (!hasOwn(branch, 'type')) {
+      branch['type'] = cloneJsonValue(parentType);
+    }
+    return 'kept';
+  }
+  let effective = parent;
+  if (hasOwn(branch, 'type')) {
+    const own = toTypeSet(branch['type']);
+    if (own === undefined) return 'kept';
+    effective = intersectTypeSets(effective, own);
+  }
+  if (effective.size === 0) return 'dead';
+
+  const enumValues = branch['enum'];
+  if (Array.isArray(enumValues) && enumValues.length > 0) {
+    const kept = enumValues.filter((value) => valueSatisfiesTypeSet(value, effective));
+    if (kept.length === 0) return 'dead';
+    const groups = groupValuesByType(kept);
+    if (groups !== undefined && groups.size > 1 && !hasOwn(branch, 'anyOf')) {
+      // A mixed-type enum cannot carry one `type`; split it into one typed
+      // variant per value type instead of emitting a mixed declaration.
+      delete branch['type'];
+      delete branch['enum'];
+      branch['anyOf'] = [...groups].map(([type, values]) => ({ type, enum: values }));
+      return 'kept';
+    }
+    branch['enum'] = kept;
+    branch['type'] = typeForValues(kept, effective);
+    return 'kept';
+  }
+  if (hasOwn(branch, 'const')) {
+    if (!valueSatisfiesTypeSet(branch['const'], effective)) return 'dead';
+    branch['type'] = typeForValues([branch['const']], effective);
+    return 'kept';
+  }
+
+  const types = [...effective];
+  const [only] = types;
+  branch['type'] = types.length === 1 && only !== undefined ? only : types;
+  return 'kept';
+}
+
+function typeForValues(values: unknown[], effective: Set<string>): unknown {
+  try {
+    return inferTypeFromValues(values);
+  } catch {}
+  const types = [...effective];
+  const [only] = types;
+  return types.length === 1 && only !== undefined ? only : types;
+}
+
+function valueSatisfiesTypeSet(value: unknown, types: Set<string>): boolean {
+  const valueType = inferValueType(value);
+  if (valueType === undefined) return false;
+  if (types.has(valueType)) return true;
+  return valueType === 'integer' && types.has('number');
+}
+
+function intersectTypeSets(a: Set<string>, b: Set<string>): Set<string> {
+  const result = new Set<string>();
+  for (const type of b) {
+    if (a.has(type)) {
+      result.add(type);
+    } else if (
+      (type === 'number' && a.has('integer')) ||
+      (type === 'integer' && a.has('number'))
+    ) {
+      result.add('integer');
+    }
+  }
+  return result;
+}
+
+function toTypeSet(value: unknown): Set<string> | undefined {
+  if (typeof value === 'string') {
+    return new Set([value]);
+  }
+  if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
+    return new Set(value);
+  }
+  return undefined;
 }
 
 function hasUnresolvedDefinitionRef(node: unknown, bucketKey: string): boolean {
