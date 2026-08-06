@@ -898,13 +898,28 @@ impl App {
                 }
                 "/sessions" => {
                     let sessions = self.harness.list_sessions(50).await?;
-                    if sessions.is_empty() {
+                    let items: Vec<(String, String)> = sessions
+                        .iter()
+                        .filter_map(|s| {
+                            let id = s["id"].as_str()?.to_string();
+                            let title = s["title"].as_str().unwrap_or("(untitled)").to_string();
+                            Some((id, title))
+                        })
+                        .collect();
+                    if items.is_empty() {
                         self.transcript.push(TranscriptLine::status("no sessions"));
-                    }
-                    for s in sessions.iter().take(20) {
-                        let id = s["id"].as_str().unwrap_or("");
-                        let title = s["title"].as_str().unwrap_or("(untitled)");
-                        self.transcript.push(TranscriptLine::status(format!("{id}  {title}")));
+                    } else {
+                        match crate::picker::select(
+                            terminal,
+                            self.theme,
+                            "select a session",
+                            &items,
+                        )? {
+                            Some(id) => self.switch_to_session(&id).await?,
+                            None => self
+                                .transcript
+                                .push(TranscriptLine::status("session selection cancelled")),
+                        }
                     }
                 }
                 "/export" => {
