@@ -1,6 +1,6 @@
 ---
-"@moonshot-ai/kimi-code": minor
-"@moonshot-ai/kimi-code-sdk": minor
+"@moonshot-ai/kimi-code": patch
+"@moonshot-ai/kimi-code-sdk": patch
 ---
 
-Add `default_swarm_mode` config option: when set to `true` in `config.toml`, every freshly created session starts in swarm mode (equivalent to `/swarm on`). Resumed sessions restore their own swarm state from records and are unaffected; `/swarm off` still overrides per session. Mirrors the existing `default_plan_mode` behavior.
+Add the `default_swarm_mode` config option to start new sessions in swarm mode. Set `default_swarm_mode = true` in `config.toml` to try it.
