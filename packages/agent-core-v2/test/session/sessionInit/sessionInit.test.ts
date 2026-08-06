@@ -12,7 +12,7 @@ import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSyste
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
-import { IAgentReminderQueueService } from '#/agent/reminderQueue/reminderQueue';
+import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IWireService } from '#/wire/wire';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -30,7 +30,7 @@ describe('SessionInitService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let events: unknown[];
-  let enqueue: ReturnType<typeof vi.fn>;
+  let appendReminder: ReturnType<typeof vi.fn>;
   let seedInjected: ReturnType<typeof vi.fn>;
   let flush: ReturnType<typeof vi.fn>;
   let republishStatus: ReturnType<typeof vi.fn>;
@@ -42,7 +42,7 @@ describe('SessionInitService', () => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     events = [];
-    enqueue = vi.fn(() => 'reminder-id');
+    appendReminder = vi.fn(() => 'reminder-id');
     seedInjected = vi.fn();
     flush = vi.fn(async () => {});
     republishStatus = vi.fn(() => {
@@ -83,7 +83,7 @@ describe('SessionInitService', () => {
           if (id === ISessionSubagentService) return lifecycle;
           if (id === IAgentProfileService) return profile;
           if (id === IAgentPermissionModeService) return permissionMode;
-          if (id === IAgentReminderQueueService) return { enqueue };
+          if (id === IAgentSystemReminderService) return { appendSystemReminder: appendReminder };
           if (id === IAgentAgentsMdReminderService) return { seedInjected };
           if (id === IWireService) return { flush };
           if (id === IEventBus) return eventBus;
@@ -150,12 +150,15 @@ describe('SessionInitService', () => {
     expect(runArgs[1]).toMatchObject({ kind: 'prompt' });
     expect((runArgs[1] as { prompt: string }).prompt).toContain('Task requirements:');
 
-    expect(enqueue).toHaveBeenCalledTimes(1);
-    const [input] = enqueue.mock.calls[0] as [{ variant: string; content: string }];
-    expect(input.variant).toBe('init');
-    expect(input.content).toContain('The user just ran `/init` slash command.');
-    expect(input.content).toContain('Latest AGENTS.md file content:');
-    expect(input.content).toContain(AGENTS_MD);
+    expect(appendReminder).toHaveBeenCalledTimes(1);
+    const [content, origin] = appendReminder.mock.calls[0] as [
+      string,
+      { kind: string; variant: string },
+    ];
+    expect(origin).toEqual({ kind: 'injection', variant: 'init' });
+    expect(content).toContain('The user just ran `/init` slash command.');
+    expect(content).toContain('Latest AGENTS.md file content:');
+    expect(content).toContain(AGENTS_MD);
 
     expect(seedInjected).toHaveBeenCalledWith([AGENTS_MD_PATH], WORK_DIR);
 

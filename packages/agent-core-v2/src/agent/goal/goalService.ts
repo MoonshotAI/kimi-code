@@ -16,7 +16,7 @@
  * `StepRequest`s onto `loop` (the continuation message materializes when the
  * loop pops it), accounts live
  * turn usage through `usage`, observes terminal goal tool results through
- * `toolExecutor`, enqueues one-time reminder events through `reminderQueue`, reports
+ * `toolExecutor`, appends one-time reminder events through `systemReminder`, reports
  * telemetry through `telemetry`, and checks main-agent eligibility through
  * `scopeContext`. Measures time and arms hard deadlines through `goal`'s
  * App-scoped deadline scheduler. Two `onBeforeExecuteTool` veto listeners
@@ -58,9 +58,9 @@ import {
 import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
 import { LoopErrors } from '#/agent/loop/errors';
 import { ContinuationStepRequest, MessageStepRequest } from '#/agent/loop/stepRequest';
-import { IAgentReminderQueueService } from '#/agent/reminderQueue/reminderQueue';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
@@ -284,7 +284,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   constructor(
     @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
-    @IAgentReminderQueueService private readonly reminderQueue: IAgentReminderQueueService,
+    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentLoopService private readonly loopService: IAgentLoopService,
@@ -625,9 +625,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     }
     this.clearInternal(actor);
     if (actor === 'user') {
-      this.reminderQueue.enqueue({
+      this.reminders.appendSystemReminder(GOAL_CANCELLED_REMINDER, {
+        kind: 'injection',
         variant: 'goal_cancelled',
-        content: GOAL_CANCELLED_REMINDER,
       });
     }
     return snapshot;
@@ -803,9 +803,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       hasStepBudgetRemaining(maxSteps, ctx.step)
     ) {
       this.budgetGraceTurns.add(ctx.turnId);
-      this.reminderQueue.enqueue({
+      this.reminders.appendSystemReminder(GOAL_BUDGET_STOP_REMINDER, {
+        kind: 'injection',
         variant: GOAL_BUDGET_STOP_REMINDER_NAME,
-        content: GOAL_BUDGET_STOP_REMINDER,
       });
       return true;
     }
@@ -1017,9 +1017,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
 
   private appendForkClearedReminder(): void {
     if (!this.wire.getModel(GoalForkNoticeModel).reminderPending) return;
-    this.reminderQueue.enqueue({
+    this.reminders.appendSystemReminder(GOAL_FORK_CLEARED_REMINDER, {
+      kind: 'injection',
       variant: GOAL_FORK_CLEARED_REMINDER_NAME,
-      content: GOAL_FORK_CLEARED_REMINDER,
     });
   }
 

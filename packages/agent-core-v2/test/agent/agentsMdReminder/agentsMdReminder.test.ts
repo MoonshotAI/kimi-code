@@ -46,10 +46,8 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import { AgentToolDedupeService } from '#/agent/toolDedupe/toolDedupeService';
-import {
-  IAgentReminderQueueService,
-  type OnceReminderInput,
-} from '#/agent/reminderQueue/reminderQueue';
+import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { OrderedHookSlot } from '#/hooks';
 import { IWireService } from '#/wire/wire';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
@@ -78,13 +76,18 @@ afterEach(async () => {
   await rm(workDir, { recursive: true, force: true });
 });
 
+interface CapturedReminder {
+  readonly content: string;
+  readonly origin: PromptOrigin;
+}
+
 interface Harness {
   readonly ix: TestInstantiationService;
   readonly events: ToolExecutorEventStubs;
   readonly reminder: IAgentAgentsMdReminderService;
   readonly wire: IWireService;
   readonly telemetryEvents: TelemetryRecord[];
-  readonly enqueued: OnceReminderInput[];
+  readonly reminders: CapturedReminder[];
 }
 
 function createHarness(
@@ -102,7 +105,7 @@ function createHarness(
   } = {},
 ): Harness {
   const telemetryEvents: TelemetryRecord[] = [];
-  const enqueued: OnceReminderInput[] = [];
+  const reminders: CapturedReminder[] = [];
   const events = stubToolExecutorEvents();
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
@@ -140,13 +143,13 @@ function createHarness(
       reg.defineInstance(IWireService, wire);
       reg.defineInstance(IBootstrapService, { homeDir } as unknown as IBootstrapService);
       reg.defineInstance(IAgentStateService, new AgentStateService());
-      reg.defineInstance(IAgentReminderQueueService, {
+      reg.defineInstance(IAgentSystemReminderService, {
         _serviceBrand: undefined,
-        enqueue: (input) => {
-          enqueued.push(input);
+        appendSystemReminder: (content: string, origin: PromptOrigin) => {
+          reminders.push({ content, origin });
+          return { role: 'user', content: [], toolCalls: [], origin };
         },
-        drain: () => {},
-      } satisfies IAgentReminderQueueService);
+      } satisfies IAgentSystemReminderService);
       reg.defineInstance(ISessionContext, {
         _serviceBrand: undefined,
         sessionId: 'session-1',
@@ -178,7 +181,7 @@ function createHarness(
   });
   const reminder = ix.get(IAgentAgentsMdReminderService);
   const wire = ix.get(IWireService);
-  return { ix, events, reminder, wire, telemetryEvents, enqueued };
+  return { ix, events, reminder, wire, telemetryEvents, reminders };
 }
 
 function didCtx(
@@ -239,8 +242,8 @@ function outputText(result: ExecutableToolResult): string {
     .join('');
 }
 
-function enqueuedText(h: Harness): string {
-  return h.enqueued.map((entry) => entry.content).join('\n');
+function reminderText(h: Harness): string {
+  return h.reminders.map((entry) => entry.content).join('\n');
 }
 
 async function writeAgentsMd(dir: string, content = 'instructions'): Promise<string> {
@@ -251,7 +254,7 @@ async function writeAgentsMd(dir: string, content = 'instructions'): Promise<str
 }
 
 describe('agentsMdReminder path-carrying tools', () => {
-  it('enqueues a reminder listing the uninjected AGENTS.md when Read touches its directory', async () => {
+  it('appends a reminder listing the uninjected AGENTS.md when Read touches its directory', async () => {
     const h = createHarness();
     const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
     const subDir = join(workDir, 'packages', 'kap-server');
@@ -261,13 +264,13 @@ describe('agentsMdReminder path-carrying tools', () => {
     const result = await fire(h, didCtx('Read', { path: join(subDir, 'src', 'index.ts') }));
 
     expect(outputText(result)).toBe('original result');
-    expect(h.enqueued).toHaveLength(1);
-    expect(h.enqueued[0]?.variant).toBe('agents_md');
-    expect(h.enqueued[0]?.content.startsWith('The path(s) touched by a recent tool call')).toBe(
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.origin).toEqual({ kind: 'injection', variant: 'agents_md' });
+    expect(h.reminders[0]?.content.startsWith('The path(s) touched by a recent tool call')).toBe(
       true,
     );
-    expect(h.enqueued[0]?.content).not.toContain('<system-reminder>');
-    const text = enqueuedText(h);
+    expect(h.reminders[0]?.content).not.toContain('<system-reminder>');
+    const text = reminderText(h);
     expect(text).toContain(subAgentsMd);
     expect(text).not.toContain(rootAgentsMd);
   });
@@ -282,8 +285,8 @@ describe('agentsMdReminder path-carrying tools', () => {
 
     expect(outputText(first)).toBe('original result');
     expect(outputText(second)).toBe('original result');
-    expect(h.enqueued).toHaveLength(1);
-    expect(enqueuedText(h)).toContain(subAgentsMd);
+    expect(h.reminders).toHaveLength(1);
+    expect(reminderText(h)).toContain(subAgentsMd);
   });
 
   it('marks an AGENTS.md known when read directly and never suggests it afterwards', async () => {
@@ -293,11 +296,11 @@ describe('agentsMdReminder path-carrying tools', () => {
 
     const direct = await fire(h, didCtx('Read', { path: subAgentsMd }));
     expect(outputText(direct)).toBe('original result');
-    expect(h.enqueued).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
 
     const after = await fire(h, didCtx('Read', { path: join(subDir, 'src', 'index.ts') }));
     expect(outputText(after)).toBe('original result');
-    expect(h.enqueued).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
   });
 
   it('discovers the .kimi-code/AGENTS.md variant alongside the plain one', async () => {
@@ -310,7 +313,7 @@ describe('agentsMdReminder path-carrying tools', () => {
     const result = await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
 
     expect(outputText(result)).toBe('original result');
-    const text = enqueuedText(h);
+    const text = reminderText(h);
     expect(text).toContain(dotKimi);
     expect(text).toContain(plain);
   });
@@ -327,7 +330,7 @@ describe('agentsMdReminder path-carrying tools', () => {
     );
 
     expect(outputText(result)).toBe('original result');
-    expect(enqueuedText(h)).toContain(rootAgentsMd);
+    expect(reminderText(h)).toContain(rootAgentsMd);
   });
 
   it('does not remind for seeded paths on the injected chain', async () => {
@@ -338,7 +341,7 @@ describe('agentsMdReminder path-carrying tools', () => {
     const result = await fire(h, didCtx('Glob', { pattern: '**/*.ts' }));
 
     expect(outputText(result)).toBe('original result');
-    expect(h.enqueued).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
   });
 
   it('tracks the shown event through telemetry', async () => {
@@ -366,7 +369,7 @@ describe('agentsMdReminder Bash coverage', () => {
     const result = await fire(h, didCtx('Bash', { command: 'ls packages/kap-server' }));
 
     expect(outputText(result)).toBe('original result');
-    expect(enqueuedText(h)).toContain(subAgentsMd);
+    expect(reminderText(h)).toContain(subAgentsMd);
   });
 
   it('rebases relative operands across a literal cd', async () => {
@@ -376,7 +379,7 @@ describe('agentsMdReminder Bash coverage', () => {
     const result = await fire(h, didCtx('Bash', { command: 'cd packages && ls kap-server' }));
 
     expect(outputText(result)).toBe('original result');
-    expect(enqueuedText(h)).toContain(subAgentsMd);
+    expect(reminderText(h)).toContain(subAgentsMd);
   });
 
   it('extracts find roots and stops at the expression', async () => {
@@ -389,7 +392,7 @@ describe('agentsMdReminder Bash coverage', () => {
     );
 
     expect(outputText(result)).toBe('original result');
-    expect(enqueuedText(h)).toContain(subAgentsMd);
+    expect(reminderText(h)).toContain(subAgentsMd);
   });
 
   it('extracts quoted directory operands', async () => {
@@ -399,7 +402,7 @@ describe('agentsMdReminder Bash coverage', () => {
     const result = await fire(h, didCtx('Bash', { command: 'ls "packages/kap-server"' }));
 
     expect(outputText(result)).toBe('original result');
-    expect(enqueuedText(h)).toContain(subAgentsMd);
+    expect(reminderText(h)).toContain(subAgentsMd);
   });
 
   it('probes an explicit cwd even when the command lists nothing', async () => {
@@ -412,7 +415,7 @@ describe('agentsMdReminder Bash coverage', () => {
     );
 
     expect(outputText(result)).toBe('original result');
-    expect(enqueuedText(h)).toContain(subAgentsMd);
+    expect(reminderText(h)).toContain(subAgentsMd);
   });
 
   it('skips operands that are not statically resolvable', async () => {
@@ -423,7 +426,7 @@ describe('agentsMdReminder Bash coverage', () => {
       const result = await fire(h, didCtx('Bash', { command }));
       expect(outputText(result)).toBe('original result');
     }
-    expect(h.enqueued).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
   });
 });
 
@@ -442,8 +445,8 @@ describe('agentsMdReminder result shapes and edge cases', () => {
     );
 
     expect(result.output).toEqual([{ type: 'text', text: 'part one' }]);
-    expect(h.enqueued).toHaveLength(1);
-    expect(enqueuedText(h)).toContain(subAgentsMd);
+    expect(h.reminders).toHaveLength(1);
+    expect(reminderText(h)).toContain(subAgentsMd);
   });
 
   it('does not mark an AGENTS.md known when the direct read failed', async () => {
@@ -456,12 +459,12 @@ describe('agentsMdReminder result shapes and edge cases', () => {
       didCtx('Read', { path: agentsMdPath }, { result: { output: 'not found', isError: true } }),
     );
     expect(outputText(failed)).toBe('not found');
-    expect(h.enqueued).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
 
     await writeAgentsMd(subDir);
     const after = await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
     expect(outputText(after)).toBe('original result');
-    expect(enqueuedText(h)).toContain(agentsMdPath);
+    expect(reminderText(h)).toContain(agentsMdPath);
   });
 });
 
@@ -476,8 +479,8 @@ describe('agentsMdReminder duplicate calls', () => {
 
     expect(outputText(first)).toBe('original result');
     expect(outputText(second)).toBe('original result');
-    expect(h.enqueued).toHaveLength(1);
-    expect(enqueuedText(h)).toContain(subAgentsMd);
+    expect(h.reminders).toHaveLength(1);
+    expect(reminderText(h)).toContain(subAgentsMd);
   });
 
   it('leaves the vetoed placeholder untouched and reminds exactly once on the visible results', async () => {
@@ -515,8 +518,8 @@ describe('agentsMdReminder duplicate calls', () => {
     for (const item of results) {
       expect(outputText(item.result)).toBe('file contents');
     }
-    expect(h.enqueued).toHaveLength(1);
-    expect(enqueuedText(h)).toContain(subAgentsMd);
+    expect(h.reminders).toHaveLength(1);
+    expect(reminderText(h)).toContain(subAgentsMd);
     const shown = h.telemetryEvents.filter((e) => e.event === 'agents_md_reminder_shown');
     expect(shown).toHaveLength(1);
   });
@@ -534,7 +537,7 @@ describe('agentsMdReminder lazy seeding after a restore', () => {
     );
 
     expect(outputText(result)).toBe('original result');
-    const text = enqueuedText(h);
+    const text = reminderText(h);
     expect(text).toContain(subAgentsMd);
     expect(text).not.toContain(rootAgentsMd);
   });
@@ -546,7 +549,7 @@ describe('agentsMdReminder lazy seeding after a restore', () => {
     const result = await fire(h, didCtx('Read', { path: join(homeDir, 'notes.txt') }));
 
     expect(outputText(result)).toBe('original result');
-    expect(h.enqueued).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
     expect(h.telemetryEvents).toHaveLength(0);
   });
 });
@@ -567,7 +570,7 @@ describe('agentsMdReminder persisted restore provenance', () => {
     const result = await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
 
     expect(outputText(result)).toBe('original result');
-    expect(enqueuedText(h)).toContain(subAgentsMd);
+    expect(reminderText(h)).toContain(subAgentsMd);
   });
 
   it('recovers injected paths from a legacy restored prompt without path provenance', async () => {
@@ -582,7 +585,7 @@ describe('agentsMdReminder persisted restore provenance', () => {
     const result = await fire(h, didCtx('Read', { path: join(workDir, 'index.ts') }));
 
     expect(outputText(result)).toBe('original result');
-    expect(h.enqueued).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
   });
 });
 
@@ -595,7 +598,7 @@ describe('agentsMdReminder Bash operand hygiene', () => {
     const result = await fire(h, didCtx('Bash', { command: 'ls -w 80 packages/kap-server' }));
 
     expect(outputText(result)).toBe('original result');
-    const text = enqueuedText(h);
+    const text = reminderText(h);
     expect(text).toContain(subAgentsMd);
     expect(text).not.toContain(eighty);
   });
@@ -610,7 +613,7 @@ describe('agentsMdReminder Bash operand hygiene', () => {
     );
 
     expect(outputText(result)).toBe('original result');
-    expect(enqueuedText(h)).toContain(subAgentsMd);
+    expect(reminderText(h)).toContain(subAgentsMd);
   });
 });
 
@@ -624,7 +627,7 @@ describe('agentsMdReminder probing boundaries', () => {
     const result = await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
 
     expect(outputText(result)).toBe('original result');
-    expect(h.enqueued).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
   });
 
   it('still reminds when the triggering call ended in an error result', async () => {
@@ -640,7 +643,7 @@ describe('agentsMdReminder probing boundaries', () => {
     );
 
     expect(outputText(result)).toBe('not found');
-    expect(enqueuedText(h)).toContain(subAgentsMd);
+    expect(reminderText(h)).toContain(subAgentsMd);
   });
 
   it('marks an AGENTS.md known when it is written directly', async () => {
@@ -651,11 +654,11 @@ describe('agentsMdReminder probing boundaries', () => {
 
     const written = await fire(h, didCtx('Write', { path: agentsMdPath, content: 'x' }));
     expect(outputText(written)).toBe('original result');
-    expect(h.enqueued).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
 
     const after = await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
     expect(outputText(after)).toBe('original result');
-    expect(h.enqueued).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
   });
 
   it('reminds at most once for two parallel touches of the same directory', async () => {
@@ -670,7 +673,7 @@ describe('agentsMdReminder probing boundaries', () => {
 
     expect(outputText(first)).toBe('original result');
     expect(outputText(second)).toBe('original result');
-    expect(h.enqueued).toHaveLength(1);
+    expect(h.reminders).toHaveLength(1);
   });
 
   it('re-judges the project root at a nested repository', async () => {
@@ -683,7 +686,7 @@ describe('agentsMdReminder probing boundaries', () => {
     const result = await fire(h, didCtx('Read', { path: join(nested, 'index.ts') }));
 
     expect(outputText(result)).toBe('original result');
-    const text = enqueuedText(h);
+    const text = reminderText(h);
     expect(text).toContain(nestedAgentsMd);
     expect(text).not.toContain(rootAgentsMd);
   });
@@ -699,7 +702,7 @@ describe('agentsMdReminder probing boundaries', () => {
       const result = await fire(h, didCtx('Read', { path: join(leaf, 'index.ts') }));
 
       expect(outputText(result)).toBe('original result');
-      const text = enqueuedText(h);
+      const text = reminderText(h);
       expect(text).toContain(leafAgentsMd);
       expect(text).not.toContain(outerAgentsMd);
     } finally {
@@ -717,7 +720,7 @@ describe('agentsMdReminder probing boundaries', () => {
       const result = await fire(h, didCtx('Read', { path: join(workDir, 'link', 'index.ts') }));
 
       expect(outputText(result)).toBe('original result');
-      const text = enqueuedText(h);
+      const text = reminderText(h);
       expect(text).toContain(normalize(join(workDir, 'link', 'AGENTS.md')));
       expect(text).not.toContain(targetAgentsMd);
     } finally {
@@ -738,7 +741,7 @@ describe('agentsMdReminder round-2 hardening', () => {
     );
 
     expect(outputText(result)).toBe('original result');
-    expect(h.enqueued).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
     expect(h.telemetryEvents).toHaveLength(0);
   });
 
@@ -751,11 +754,11 @@ describe('agentsMdReminder round-2 hardening', () => {
     const result = await fire(h, didCtx('Bash', { command: 'true' }));
 
     expect(outputText(result)).toBe('original result');
-    expect(h.enqueued).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
 
     const listed = await fire(h, didCtx('Bash', { command: 'ls packages' }));
     expect(outputText(listed)).toBe('original result');
-    expect(enqueuedText(h)).toContain(subAgentsMd);
+    expect(reminderText(h)).toContain(subAgentsMd);
   });
 
   it('ignores a whitespace-only AGENTS.md just like the init-time load', async () => {
@@ -767,7 +770,7 @@ describe('agentsMdReminder round-2 hardening', () => {
     const result = await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
 
     expect(outputText(result)).toBe('original result');
-    expect(h.enqueued).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
   });
 
   it('keeps known-sets isolated between agents', async () => {
@@ -781,10 +784,10 @@ describe('agentsMdReminder round-2 hardening', () => {
 
     expect(outputText(firstResult)).toBe('original result');
     expect(outputText(secondResult)).toBe('original result');
-    expect(first.enqueued).toHaveLength(1);
-    expect(second.enqueued).toHaveLength(1);
-    expect(enqueuedText(first)).toContain(subAgentsMd);
-    expect(enqueuedText(second)).toContain(subAgentsMd);
+    expect(first.reminders).toHaveLength(1);
+    expect(second.reminders).toHaveLength(1);
+    expect(reminderText(first)).toContain(subAgentsMd);
+    expect(reminderText(second)).toContain(subAgentsMd);
   });
 
   it('releases the claim when attaching the reminder fails, so the next touch retries', async () => {
@@ -801,13 +804,13 @@ describe('agentsMdReminder round-2 hardening', () => {
 
     const failed = await fire(h, didCtx('Read', { path: join(subDir, 'a.ts') }));
     expect(outputText(failed)).toBe('original result');
-    expect(h.enqueued).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
 
     shouldThrow = false;
     const retried = await fire(h, didCtx('Read', { path: join(subDir, 'b.ts') }));
     expect(outputText(retried)).toBe('original result');
-    expect(h.enqueued).toHaveLength(1);
-    expect(enqueuedText(h)).toContain(subAgentsMd);
+    expect(h.reminders).toHaveLength(1);
+    expect(reminderText(h)).toContain(subAgentsMd);
   });
 
   it('leaves oversized results to the truncation pipeline and enqueues the reminder instead', async () => {
@@ -848,8 +851,8 @@ describe('agentsMdReminder round-2 hardening', () => {
     expect(text).toContain('output_path:');
     expect(text).not.toContain('<system-reminder>');
     expect(text).not.toContain(subAgentsMd);
-    expect(h.enqueued).toHaveLength(1);
-    expect(enqueuedText(h)).toContain(subAgentsMd);
+    expect(h.reminders).toHaveLength(1);
+    expect(reminderText(h)).toContain(subAgentsMd);
   });
 
   it('uses the resolved file access instead of reparsing the raw path', async () => {
@@ -889,8 +892,8 @@ describe('agentsMdReminder round-2 hardening', () => {
 
     expect(results).toHaveLength(1);
     expect(outputText(results[0]!.result)).toBe('home file contents');
-    expect(h.enqueued).toHaveLength(1);
-    expect(enqueuedText(h)).toContain(homeAgentsMd);
+    expect(h.reminders).toHaveLength(1);
+    expect(reminderText(h)).toContain(homeAgentsMd);
   });
 
   it('does not probe or remind when permission vetoes an access-bearing call', async () => {
@@ -938,7 +941,7 @@ describe('agentsMdReminder round-2 hardening', () => {
 
     expect(results).toHaveLength(1);
     expect(outputText(results[0]!.result)).toBe('permission denied');
-    expect(h.enqueued).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
     expect(stat).not.toHaveBeenCalled();
     expect(readText).not.toHaveBeenCalled();
     expect(
@@ -1028,7 +1031,7 @@ describe('agentsMdReminder cancellation outcomes', () => {
     const results = await pending;
     const queued = results.find((item) => item.toolCallId === 'call-queued-read');
     expect(queued).toBeDefined();
-    expect(h.enqueued).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
     expect(
       h.telemetryEvents.filter((event) => event.event === 'agents_md_reminder_shown'),
     ).toEqual([]);
@@ -1051,8 +1054,8 @@ describe('agentsMdReminder cancellation outcomes', () => {
       real.push(item);
     }
     expect(outputText(real[0]!.result)).toBe('read result');
-    expect(h.enqueued).toHaveLength(1);
-    expect(enqueuedText(h)).toContain(subAgentsMd);
+    expect(h.reminders).toHaveLength(1);
+    expect(reminderText(h)).toContain(subAgentsMd);
   });
 });
 
@@ -1067,7 +1070,7 @@ describe('agentsMdReminder Bash parse degradation', () => {
     );
 
     expect(outputText(result)).toBe('original result');
-    expect(enqueuedText(h)).toContain(subAgentsMd);
+    expect(reminderText(h)).toContain(subAgentsMd);
   });
 
   it('skips entirely when an unparseable command has no explicit cwd', async () => {
@@ -1077,7 +1080,7 @@ describe('agentsMdReminder Bash parse degradation', () => {
     const result = await fire(h, didCtx('Bash', { command: "ls '" }));
 
     expect(outputText(result)).toBe('original result');
-    expect(h.enqueued).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
   });
 });
 
@@ -1122,7 +1125,7 @@ describe('agentsMdReminder Windows Bash paths', () => {
       const result = await fire(h, didCtx('Bash', args));
 
       expect(outputText(result)).toBe('original result');
-      expect(enqueuedText(h)).toContain(agentsMdPath);
+      expect(reminderText(h)).toContain(agentsMdPath);
     }
   });
 });

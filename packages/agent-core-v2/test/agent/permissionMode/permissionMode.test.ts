@@ -35,7 +35,6 @@ let registeredInjection:
 
 const injectorStub: IAgentContextInjectorService = {
   _serviceBrand: undefined,
-  registerOnceChannel: () => ({ dispose: () => {} }),
   register: (name, provider) => {
     registeredInjection = { name, provider: provider as ContextInjectionProvider };
     return {

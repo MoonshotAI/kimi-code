@@ -21,7 +21,7 @@
 // owning model offloads inline media to blob storage), cross-reducers
 // (foreign models that also reduce this record on dispatch and replay).
 
-// Index (50 record types)
+// Index (48 record types)
 //   config.update                      profile               persisted  src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory         persisted  src/agent/contextMemory/contextOps.ts
 //   context.append_message             contextMemory         persisted  src/agent/contextMemory/contextOps.ts
@@ -52,8 +52,6 @@
 //   plan_mode.exit                     plan                  persisted  src/agent/plan/planOps.ts
 //   plan.revision                      plan                  persisted  src/agent/plan/planOps.ts
 //   profile.bind                       profile               persisted  src/agent/profile/profileOps.ts
-//   reminderQueue.delivered            reminderQueue         persisted  src/agent/reminderQueue/reminderQueueOps.ts
-//   reminderQueue.enqueue              reminderQueue         persisted  src/agent/reminderQueue/reminderQueueOps.ts
 //   skill.activate                     skill                 transient  src/agent/skill/skillOps.ts
 //   swarm_mode.enter                   swarm                 persisted  src/agent/swarm/swarmOps.ts
 //   swarm_mode.exit                    swarm                 persisted  src/agent/swarm/swarmOps.ts
@@ -474,28 +472,6 @@ interface ProfileBindPayload {
 }
 
 /**
- * model: reminderQueue · persisted
- * owner: src/agent/reminderQueue/reminderQueueOps.ts
- */
-interface ReminderQueueDeliveredPayload {
-  _name: 'reminderQueue.delivered';
-  id: string;
-}
-
-/**
- * model: reminderQueue · persisted
- * owner: src/agent/reminderQueue/reminderQueueOps.ts
- */
-interface ReminderQueueEnqueuePayload {
-  _name: 'reminderQueue.enqueue';
-  entry: {
-    id: string;
-    variant: string;
-    content: string;
-  };
-}
-
-/**
  * model: skill · toEvent
  * owner: src/agent/skill/skillOps.ts
  */
@@ -771,8 +747,6 @@ interface WirePayloadMap {
   "plan_mode.exit": PlanModeExitPayload;
   "plan.revision": PlanRevisionPayload;
   "profile.bind": ProfileBindPayload;
-  "reminderQueue.delivered": ReminderQueueDeliveredPayload;
-  "reminderQueue.enqueue": ReminderQueueEnqueuePayload;
   "skill.activate": SkillActivatePayload;
   "swarm_mode.enter": SwarmModeEnterPayload;
   "swarm_mode.exit": SwarmModeExitPayload;

@@ -15,7 +15,6 @@ import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { IGoalDeadlineScheduler } from '#/agent/goal/goalDeadlineScheduler';
 import { type AgentGoalService } from '#/agent/goal/goalService';
-import { IAgentReminderQueueService } from '#/agent/reminderQueue/reminderQueue';
 import { UpdateGoalToolInputSchema } from '#/agent/tools/goal/update-goal/update-goal';
 import { UpdateGoalTool } from '#/agent/tools/goal/update-goal/updateGoalTool';
 import {
@@ -503,12 +502,10 @@ describe('AgentGoalService', () => {
       const removed = await goals.cancelGoal();
       expect(removed.status).toBe('active');
       expect(goals.getGoal()).toEqual({ goal: null });
-      ctx.get(IAgentReminderQueueService).drain();
       const reminder = context.get().at(-1);
       expect(reminder?.origin).toEqual({
         kind: 'injection',
         variant: 'goal_cancelled',
-        disclosure: { kind: 'once_reminder', id: expect.any(String) },
       });
       expect(JSON.stringify(reminder?.content)).toContain('Ignore earlier active-goal reminders');
       await expect(goals.cancelGoal()).rejects.toMatchObject({ code: ErrorCodes.GOAL_NOT_FOUND });
@@ -2326,12 +2323,10 @@ describe('AgentGoalService fork boundaries', () => {
     ]);
 
     expect(goals.getGoal().goal).toBeNull();
-    ctx.get(IAgentReminderQueueService).drain();
     const reminder = context.get().at(-1);
     expect(reminder?.origin).toEqual({
       kind: 'injection',
       variant: 'goal_fork_cleared',
-      disclosure: { kind: 'once_reminder', id: expect.any(String) },
     });
     const text = JSON.stringify(reminder?.content);
     expect(text).toContain('This fork does not have a current goal.');
@@ -2356,7 +2351,6 @@ describe('AgentGoalService fork boundaries', () => {
       },
     ]);
 
-    ctx.get(IAgentReminderQueueService).drain();
     expect(context.get()).toHaveLength(1);
     expect(context.get()[0]?.origin).toEqual({ kind: 'system_trigger', name: 'goal_fork_cleared' });
   });

@@ -31,7 +31,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { loadAgentsMdDetailed } from '#/agent/profile/context';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentReminderQueueService } from '#/agent/reminderQueue/reminderQueue';
+import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IWireService } from '#/wire/wire';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -116,8 +116,11 @@ export class SessionInitService implements ISessionInitService {
         .get(IAgentAgentsMdReminderService)
         .seedInjected(agentsMdPaths, this.sessionContext.cwd);
       main.accessor
-        .get(IAgentReminderQueueService)
-        .enqueue({ variant: 'init', content: initCompletionReminder(agentsMd) });
+        .get(IAgentSystemReminderService)
+        .appendSystemReminder(initCompletionReminder(agentsMd), {
+          kind: 'injection',
+          variant: 'init',
+        });
       await main.accessor.get(IWireService).flush();
     } catch (error) {
       if (isUserCancellation(error) || isAbortError(error)) {

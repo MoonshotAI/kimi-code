@@ -4,9 +4,9 @@
  *
  * Self-wiring plugin: registers an `onDidExecuteTool` hook on `toolExecutor`
  * that probes the directories a tool call touches for AGENTS.md files the
- * system prompt did not inject, and enqueues a once-per-agent reminder
- * through the `reminderQueue` once-channel, delivered as a standalone
- * `<system-reminder>` at the next injection boundary. The hook only
+ * system prompt did not inject, and appends a once-per-agent
+ * `<system-reminder>` through `systemReminder` right at the tool-execution
+ * point. The hook only
  * observes — it never rewrites the tool result, so results stay verbatim
  * for the truncation pipeline and the reminder can never be truncated away
  * with an oversized output. `Read`/`Edit`/`Write` consume the canonical
@@ -27,9 +27,9 @@
  * file into an in-memory `claimed` set (parallel calls can never duplicate a
  * reminder and a failed attempt releases the claim), while `agentState`
  * (`agentsMdReminder.known`) is only ever whole-value replaced after the
- * telemetry emitted and the reminder enqueued — never mutated in place, and
+ * telemetry emitted and the reminder appended — never mutated in place, and
  * never ahead of the reminder it records. The telemetry event fires before
- * the enqueue so a telemetry failure simply retries the reminder on the next
+ * the append so a telemetry failure simply retries the reminder on the next
  * qualifying touch. Probing anchors at the nearest existing ancestor (so
  * `Write` into a not-yet-created directory still resolves), walks
  * `findProjectRoot → touched dir`, skips chain
@@ -41,7 +41,7 @@
  * picked up on the next touch; there is no negative cache. Probing is
  * lexical like the tools' own path policy: a symlinked directory's AGENTS.md
  * is discovered through the link at its lexical address, never by realpath.
- * The hook never throws — a probe failure enqueues nothing.
+ * The hook never throws — a probe failure appends nothing.
  *
  * Seeding: `profile` reports the injected paths after every successful
  * bind/apply/refresh and `sessionInit` re-seeds after `/init`. A prompt can
@@ -54,17 +54,14 @@
  * `agentState` as well; restored provenance comes from `wire`/`profile`; fs
  * probes go through the os `IHostFileSystem`, the home directory through
  * `IHostEnvironment`, the brand home through `bootstrap`, syntax
- * trees through `bashParser`, and the shown-event
- * through `telemetry`. The `reminderQueue` is resolved lazily through
- * `instantiation` at enqueue time — a constructor dependency would close the
- * `contextInjector → loop → llmRequester → profile → agentsMdReminder`
- * cycle. Bound at Agent scope.
+ * trees through `bashParser`, the shown-event
+ * through `telemetry`, and the reminder write head through
+ * `systemReminder`. Bound at Agent scope.
  */
 
 import { basename, dirname, isAbsolute, join, normalize } from 'pathe';
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { IInstantiationService } from '#/_base/di/instantiation';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IBashParserService } from '#/app/bashParser/bashParser';
@@ -86,7 +83,7 @@ import {
 } from '#/agent/profile/context';
 import { ProfileModel } from '#/agent/profile/profileOps';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentReminderQueueService } from '#/agent/reminderQueue/reminderQueue';
+import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IWireService } from '#/wire/wire';
@@ -119,7 +116,7 @@ export class AgentAgentsMdReminderService
 
   constructor(
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
-    @IInstantiationService private readonly instantiation: IInstantiationService,
+    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IHostFileSystem private readonly fs: IHostFileSystem,
@@ -143,7 +140,7 @@ export class AgentAgentsMdReminderService
       }),
     );
     const handler = async (ctx: ToolDidExecuteContext, next: () => Promise<void>): Promise<void> => {
-      await this.probeAndEnqueue(ctx);
+      await this.probeAndRemind(ctx);
       await next();
     };
     this._register(toolExecutor.hooks.onDidExecuteTool.register('agentsMdReminder', handler));
@@ -177,7 +174,7 @@ export class AgentAgentsMdReminderService
     this.seedInjected(paths, this.agentCwd);
   }
 
-  private async probeAndEnqueue(ctx: ToolDidExecuteContext): Promise<void> {
+  private async probeAndRemind(ctx: ToolDidExecuteContext): Promise<void> {
     if (ctx.outcome !== 'executed') return;
     const discovered: string[] = [];
     try {
@@ -202,22 +199,16 @@ export class AgentAgentsMdReminderService
         trace_id: ctx.trace?.traceId,
       };
       this.telemetry.track2('agents_md_reminder_shown', properties);
-      this.reminderQueue.enqueue({ variant: 'agents_md', content: reminderText(discovered) });
+      this.reminders.appendSystemReminder(reminderText(discovered), {
+        kind: 'injection',
+        variant: 'agents_md',
+      });
       this.publishKnown([...selfKnown, ...discovered]);
     } catch {
-      // A probe or enqueue failure simply retries on the next qualifying touch.
+      // A probe or append failure simply retries on the next qualifying touch.
     } finally {
       for (const path of discovered) this.claimed.delete(path);
     }
-  }
-
-  private reminderQueueService: IAgentReminderQueueService | undefined;
-
-  private get reminderQueue(): IAgentReminderQueueService {
-    this.reminderQueueService ??= this.instantiation.invokeFunction((accessor) =>
-      accessor.get(IAgentReminderQueueService),
-    );
-    return this.reminderQueueService;
   }
 
   private publishKnown(paths: readonly string[]): void {

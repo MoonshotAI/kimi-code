@@ -6,7 +6,6 @@ import {
   IAgentContextMemoryService,
   IAgentTokenCountingService,
   IAgentGoalService,
-  IAgentReminderQueueService,
   type ContextMessage,
   type WireRecord,
 } from '#/index';
@@ -89,8 +88,6 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'interaction.resolved',
   'plan.revision',
   'interruptionReminder.recorded',
-  'reminderQueue.enqueue',
-  'reminderQueue.delivered',
   'turn.ended',
 ]);
 
@@ -407,12 +404,10 @@ describe('AgentRecords persistence metadata', () => {
       'forked',
     ]);
     expect(ctx.get(IAgentGoalService).getGoal().goal).toBeNull();
-    ctx.get(IAgentReminderQueueService).drain();
     const reminder = context.get().at(-1);
     expect(reminder?.origin).toEqual({
       kind: 'injection',
       variant: 'goal_fork_cleared',
-      disclosure: { kind: 'once_reminder', id: expect.any(String) },
     });
     expect(JSON.stringify(reminder?.content)).toContain('This fork does not have a current goal.');
   });
@@ -438,11 +433,9 @@ describe('AgentRecords persistence metadata', () => {
       goalId: 'fork-goal',
       objective: 'fork work',
     });
-    ctx.get(IAgentReminderQueueService).drain();
     expect(context.get().at(-1)?.origin).toEqual({
       kind: 'injection',
       variant: 'goal_fork_cleared',
-      disclosure: { kind: 'once_reminder', id: expect.any(String) },
     });
   });
 

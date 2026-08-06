@@ -61,6 +61,15 @@ Business code must not `import 'node:fs'`, write SQL, hand-roll append-logs / at
 
 `context.undo` is the only persisted undo fact. `contextMemory/conversationTime.ts` owns the conversation clock (`isUndoAnchor` — the single tick predicate used by `computeUndoCut`, the checkpoint reducers, and the transcript reducer) and the checkpoint protocol. A wire Model whose state must follow conversation undo (todo, plan, task-notification delivery, …) **MUST** be defined with `defineCheckpointedModel` — never hand-roll the push/clear/restore reducers — which also registers it into `CHECKPOINTED_MODELS` for the undo pipeline's pre-cut depth check. World-time state (turn counters, task registries, revision counters) must stay outside checkpointed Models.
 
+## Model-facing reminders
+
+Two sanctioned paths, chosen by fact shape — do not introduce a third (no deferred-delivery queues, no mid-step splice channels):
+
+- **Present-tense state** (goal state, plan mode, todo staleness, date change, …) → register a provider with `contextInjector` (`register` / `registerAtTurnStart`). It reconciles at every injection boundary and may re-emit after compaction or undo.
+- **Past-tense one-off facts** (goal cancelled, AGENTS.md discovered, `/init` finished, …) → append at the event point through `IAgentSystemReminderService.appendSystemReminder` with origin `{ kind: 'injection', variant: '<domain_fact>' }`. The event point must be a safe position on its own (a step/restore hook, an idle moment, or rely on the loop-event fold's deferred append).
+
+`kind: 'injection'` is a lifecycle classification (hidden from the UI, not an undo anchor, dropped by compaction), not a provenance claim; prompt-owned attachments additionally carry `ownerPromptId` so undo treats them as part of their host prompt.
+
 ## Docs
 
 Per-domain references live in `docs/`.

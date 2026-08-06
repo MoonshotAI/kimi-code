@@ -1,43 +1,42 @@
 /**
  * `contextInjector` domain — `IAgentContextInjectorService` implementation.
  *
- * The unified boundary scheduler for every model-facing reminder. At each
- * injection boundary (turn start, step, compaction follow-up, wire restore)
- * it first drains the registered once-channels (`registerOnceChannel`) —
- * past-tense, exactly-once deliveries such as the `reminderQueue`'s
- * persisted once-reminders — then reconciles the registered context
- * providers (present-tense state) through `loop` and `systemReminder`. A
- * once-channel drain that throws or returns a Promise is logged and
- * skipped, so one bad channel cannot starve the providers. A provider that
- * throws or rejects at a step or compaction boundary is likewise logged and
- * skipped, so one bad provider can neither starve the rest nor fail the
- * turn. Provider positions are never cached: each provider call derives
- * them by scanning `contextMemory` for its own surviving injection
- * messages, so splices, compaction folds, and `wire` restoration need no
- * index bookkeeping. Each
- * provider call receives the newest surviving injection of its own variant
- * (`lastInjection`) and the typed disclosure recorded on it (`lastDisclosure`),
- * so providers never read context layout or position indexes themselves.
- * Provider results route by shape: strings become `<system-reminder>`
- * messages through `systemReminder`, content parts append as bare user
- * messages, and tagged raw messages (`{ message }`) append verbatim with the
- * injection origin stamped — the form for structured payloads such as the
- * dynamic-tool schema declaration's `tools` field. Turn-start providers run
- * synchronously after `turn.started` — before the turn's first step request
- * materializes its prompt — and must stay synchronous (a provider that throws
- * or returns a Promise is logged and skipped, so one bad provider cannot
- * starve the rest); they are also reconciled at every later step
- * boundary as a fallback for facts that arrive after `turn.started` (for
- * example, a queued turn cancelled while another turn is already running).
- * `isNewTurn` is derived per boundary and never stored: the step hook reads
- * it from the loop's own step counter (`BeforeStepContext.firstStepOfTurn`),
- * and the compaction follow-up passes it explicitly, so interleaved triggers
- * cannot consume or steal a shared flag. A compaction follow-up that lands
- * inside a step hook chain (the auto-compaction path) doubles as that
- * step's new-turn delivery — the enclosing step then injects with
- * `isNewTurn: false`, so the upcoming request receives one new-turn
- * injection, not two. `entries` and `onceChannels` stay plain instance
- * fields (their values hold functions, not plain data).
+ * The reconcile scheduler for the registered context providers
+ * (present-tense state reminders). At each injection boundary (turn start,
+ * step, compaction follow-up) it reconciles the registered providers
+ * through `loop` hooks and routes their results into the conversation:
+ * strings become `<system-reminder>` messages through `systemReminder`,
+ * content parts append as bare user messages, and tagged raw messages
+ * (`{ message }`) append verbatim with the injection origin stamped — the
+ * form for structured payloads such as the dynamic-tool schema
+ * declaration's `tools` field. Past-tense one-off reminders (a cancelled
+ * goal, a discovered AGENTS.md, …) do NOT pass through this service:
+ * their producers append them at the event point through `systemReminder`,
+ * sharing the same `injection` origin vocabulary. A provider that throws
+ * or rejects at a step or compaction boundary is logged and skipped, so
+ * one bad provider can neither starve the rest nor fail the turn.
+ * Provider positions are never cached: each provider call derives them by
+ * scanning `contextMemory` for its own surviving injection messages, so
+ * splices, compaction folds, and `wire` restoration need no index
+ * bookkeeping. Each provider call receives the newest surviving injection
+ * of its own variant (`lastInjection`) and the typed disclosure recorded
+ * on it (`lastDisclosure`), so providers never read context layout or
+ * position indexes themselves. Turn-start providers run synchronously
+ * after `turn.started` — before the turn's first step request materializes
+ * its prompt — and must stay synchronous (a provider that throws or
+ * returns a Promise is logged and skipped, so one bad provider cannot
+ * starve the rest); they are also reconciled at every later step boundary
+ * as a fallback for facts that arrive after `turn.started` (for example, a
+ * queued turn cancelled while another turn is already running).
+ * `isNewTurn` is derived per boundary and never stored: the step hook
+ * reads it from the loop's own step counter
+ * (`BeforeStepContext.firstStepOfTurn`), and the compaction follow-up
+ * passes it explicitly, so interleaved triggers cannot consume or steal a
+ * shared flag. A compaction follow-up that lands inside a step hook chain
+ * (the auto-compaction path) doubles as that step's new-turn delivery —
+ * the enclosing step then injects with `isNewTurn: false`, so the upcoming
+ * request receives one new-turn injection, not two. `entries` stays a
+ * plain instance field (its values hold functions, not plain data).
  * Bound at Agent scope.
  */
 
@@ -50,7 +49,6 @@ import { IAgentLoopService, type BeforeStepContext } from '#/agent/loop/loop';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IWireService } from '#/wire/wire';
 import {
   IAgentContextInjectorService,
   type ContextInjectionContent,
@@ -67,15 +65,9 @@ interface ContextInjectionEntry {
   readonly boundary: 'step' | 'turn-start';
 }
 
-interface OnceChannelEntry {
-  readonly name: string;
-  readonly drain: () => unknown;
-}
-
 export class AgentContextInjectorService extends Disposable implements IAgentContextInjectorService {
   declare readonly _serviceBrand: undefined;
   private readonly entries = new Set<ContextInjectionEntry>();
-  private readonly onceChannels = new Set<OnceChannelEntry>();
   private enclosingStep: BeforeStepContext | undefined;
   private newTurnDeliveredTo: BeforeStepContext | undefined;
 
@@ -85,7 +77,6 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IEventBus private readonly eventBus: IEventBus,
     @ILogService private readonly log: ILogService,
-    @IWireService wire: IWireService,
   ) {
     super();
     this._register(
@@ -101,14 +92,7 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     );
     this._register(
       this.eventBus.subscribe('turn.started', () => {
-        this.runOnceChannels();
         this.injectAtTurnStart();
-      }),
-    );
-    this._register(
-      wire.hooks.onDidRestore.register('context-injector', async (_ctx, next) => {
-        this.runOnceChannels();
-        await next();
       }),
     );
   }
@@ -125,29 +109,6 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     provider: SyncContextInjectionProvider<D>,
   ): IDisposable {
     return this.registerProvider(name, provider, 'turn-start');
-  }
-
-  registerOnceChannel(name: string, drain: () => void): IDisposable {
-    const entry: OnceChannelEntry = { name, drain };
-    this.onceChannels.add(entry);
-    return toDisposable(() => {
-      this.onceChannels.delete(entry);
-    });
-  }
-
-  private runOnceChannels(): void {
-    for (const entry of this.onceChannels) {
-      try {
-        const result: unknown = entry.drain();
-        if (isThenable(result)) {
-          this.log.error('once-channel drain returned a Promise; skipping it', {
-            name: entry.name,
-          });
-        }
-      } catch (error) {
-        this.log.error('once-channel drain failed; skipping it', { name: entry.name, error });
-      }
-    }
   }
 
   private registerProvider<D>(
@@ -175,7 +136,6 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     boundary: ContextInjectionEntry['boundary'] | undefined,
     isNewTurn: boolean,
   ): Promise<void> {
-    this.runOnceChannels();
     for (const entry of this.entries) {
       if (boundary !== undefined && !shouldRunAtBoundary(entry, boundary)) continue;
       let content: Awaited<ReturnType<ContextInjectionProvider>>;
