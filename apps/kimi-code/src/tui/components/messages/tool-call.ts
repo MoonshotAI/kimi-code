@@ -95,7 +95,7 @@ export interface ToolCallSubagentSnapshot {
   readonly agentName: string | undefined;
   /** Display name of the model the subagent is bound to, when known (live only). */
   readonly model?: string;
-  /** Thinking effort, present only when it differs from the main session's. */
+  /** Thinking effort, present only for concrete levels (on/off hidden). */
   readonly effort?: string;
   readonly phase: SubagentPhase | undefined;
   readonly toolCount: number;
@@ -601,7 +601,7 @@ export class ToolCallComponent extends Container {
   private subagentUsage: TokenUsage | undefined;
   /** Display name of the model the subagent is bound to (from its `agent.status.updated`). */
   private subagentModel: string | undefined;
-  /** Thinking effort, set only when it differs from the main session's. */
+  /** Thinking effort, set only for concrete levels (boolean on/off hidden). */
   private subagentEffort: string | undefined;
   private subagentResultSummary: string | undefined;
   private subagentError: string | undefined;

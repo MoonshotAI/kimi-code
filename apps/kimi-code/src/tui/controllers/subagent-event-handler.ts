@@ -453,12 +453,12 @@ export class SubAgentEventHandler {
     return modelDisplayName(event.model, this.host.state.appState.availableModels[event.model]);
   }
 
-  /** Effort is shown only when it differs from the main session's current
-   *  effort — a subagent inheriting the session's level adds no information.
-   *  'off' (no thinking) is never shown. */
+  /** Concrete effort levels are always shown; the boolean states carry no
+   *  level information — 'off' (no thinking) and 'on' (generic thinking) are
+   *  both hidden. */
   private subagentEffortDisplay(effort: string | undefined): string | undefined {
-    if (effort === undefined || effort === 'off') return undefined;
-    return effort === this.host.state.appState.thinkingEffort ? undefined : effort;
+    if (effort === undefined || effort === 'off' || effort === 'on') return undefined;
+    return effort;
   }
 
   private handleForegroundSubagentStarted(

@@ -238,8 +238,8 @@ export class AgentSwarmProgressComponent implements Component {
 
   /**
    * Show the thinking effort next to the model, same first-wins rule. Only
-   * ever called with a level that differs from the main session's (the
-   * handler filters), so its presence already implies a divergent binding.
+   * ever called with a concrete level (the handler filters the boolean
+   * states), so its presence already implies a real effort tier.
    */
   setEffortDisplay(effortDisplay: string): void {
     if (this.effortDisplay.length > 0 || effortDisplay.length === 0) return;

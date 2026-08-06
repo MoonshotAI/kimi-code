@@ -130,7 +130,7 @@ export interface BackgroundAgentMetadata {
   readonly description?: string;
   /** Display name of the model the agent is bound to (resolved at spawn). */
   readonly model?: string;
-  /** Thinking effort, present only when it differs from the main session. */
+  /** Thinking effort, set only for concrete levels (boolean on/off hidden). */
   readonly effort?: string;
 }
 

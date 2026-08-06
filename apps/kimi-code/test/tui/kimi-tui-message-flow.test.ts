@@ -4692,12 +4692,12 @@ command = "vim"
     expect(stripSgr(renderTranscript(driver))).toContain('k2-cheap');
   });
 
-  it('shows the spawned effort only when it differs from the session effort', async () => {
+  it('shows any concrete spawned effort, same as the session or not', async () => {
     const { driver } = await makeDriver();
     const sendQueued = vi.fn();
     driver.state.appState.thinkingEffort = 'high';
 
-    // Same as the main session — hidden (adds no information).
+    // Same level as the main session — still shown (level info is level info).
     driver.sessionEventHandler.handleEvent(
       {
         type: 'subagent.spawned',
@@ -4713,49 +4713,34 @@ command = "vim"
       } as Event,
       sendQueued,
     );
-    expect(stripSgr(renderTranscript(driver))).not.toContain('· high');
-
-    // A divergent effort — shown next to the model.
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'subagent.spawned',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        parentToolCallId: 'call_agent',
-        subagentId: 'agent-1',
-        subagentName: 'explore',
-        description: 'explore project',
-        runInBackground: false,
-        model: 'k2-cheap',
-        thinkingEffort: 'low',
-      } as Event,
-      sendQueued,
-    );
-    expect(stripSgr(renderTranscript(driver))).toContain('· low');
+    expect(stripSgr(renderTranscript(driver))).toContain('· high');
   });
 
-  it('never shows a subagent effort of off', async () => {
+  it('hides the boolean effort states on and off', async () => {
     const { driver } = await makeDriver();
     const sendQueued = vi.fn();
-    driver.state.appState.thinkingEffort = 'high';
 
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'subagent.spawned',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        parentToolCallId: 'call_agent',
-        subagentId: 'agent-1',
-        subagentName: 'explore',
-        description: 'explore project',
-        runInBackground: false,
-        model: 'k2-cheap',
-        thinkingEffort: 'off',
-      } as Event,
-      sendQueued,
-    );
+    for (const effort of ['on', 'off']) {
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'subagent.spawned',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          parentToolCallId: `call_agent_${effort}`,
+          subagentId: `agent-${effort}`,
+          subagentName: 'explore',
+          description: `explore ${effort}`,
+          runInBackground: false,
+          model: 'k2-cheap',
+          thinkingEffort: effort,
+        } as Event,
+        sendQueued,
+      );
+    }
 
-    expect(stripSgr(renderTranscript(driver))).not.toContain('· off');
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).not.toContain('· on');
+    expect(transcript).not.toContain('· off');
   });
 
   it('keeps the child status update as the model fallback when spawned omits it', async () => {
