@@ -428,7 +428,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.announceWillClose({ sessionId, handle, reason: 'exit' });
     this.sessions.delete(sessionId);
     await this.drainAgents(handle);
-    // Event-driven metadata writes (e.g. the outcome recorder) must settle
+    // Event-driven metadata writes (e.g. the outcome mirror) must settle
     // before the scope — and for delete(), the session dir — goes away.
     await drainSessionMetadataWrites();
     handle.dispose();

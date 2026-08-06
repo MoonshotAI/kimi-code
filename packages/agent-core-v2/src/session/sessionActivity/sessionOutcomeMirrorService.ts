@@ -1,5 +1,5 @@
 /**
- * `sessionActivity` domain — `ISessionOutcomeRecorder` implementation.
+ * `sessionActivity` domain — `ISessionOutcomeMirror` implementation.
  *
  * Persists the main agent's terminal turn outcomes through `ISessionMetadata`
  * (observed via `agentLifecycle` and the main agent's `eventBus`), so the
@@ -18,9 +18,9 @@ import {
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import type { SessionTurnOutcome } from './sessionActivity';
-import { ISessionOutcomeRecorder } from './sessionOutcomeRecorder';
+import { ISessionOutcomeMirror } from './sessionOutcomeMirror';
 
-export class SessionOutcomeRecorder extends Disposable implements ISessionOutcomeRecorder {
+export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeMirror {
   declare readonly _serviceBrand: undefined;
 
   private lastPersisted: SessionTurnOutcome | undefined;
@@ -116,8 +116,8 @@ export class SessionOutcomeRecorder extends Disposable implements ISessionOutcom
 
 registerScopedService(
   LifecycleScope.Session,
-  ISessionOutcomeRecorder,
-  SessionOutcomeRecorder,
+  ISessionOutcomeMirror,
+  SessionOutcomeMirror,
   ScopeActivation.OnScopeCreated,
   'sessionActivity',
 );

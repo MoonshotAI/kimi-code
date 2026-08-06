@@ -19,8 +19,8 @@ import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
 } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionOutcomeRecorder } from '#/session/sessionActivity/sessionOutcomeRecorder';
-import { SessionOutcomeRecorder } from '#/session/sessionActivity/sessionOutcomeRecorderService';
+import { ISessionOutcomeMirror } from '#/session/sessionActivity/sessionOutcomeMirror';
+import { SessionOutcomeMirror } from '#/session/sessionActivity/sessionOutcomeMirrorService';
 
 class FakeBus {
   private readonly handlers = new Map<string, Array<(e: DomainEvent) => void>>();
@@ -86,7 +86,7 @@ class FakeAgentLifecycle implements IAgentLifecycleService {
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
-describe('SessionOutcomeRecorder (Session scope)', () => {
+describe('SessionOutcomeMirror (Session scope)', () => {
   let disposables: DisposableStore;
   let host: ScopedTestHost;
   let session: Scope;
@@ -97,7 +97,7 @@ describe('SessionOutcomeRecorder (Session scope)', () => {
   beforeEach(() => {
     _clearScopedRegistryForTests();
     registerScopedService(LifecycleScope.Session, IAgentLifecycleService, FakeAgentLifecycle, ScopeActivation.OnDemand, 'agentLifecycle');
-    registerScopedService(LifecycleScope.Session, ISessionOutcomeRecorder, SessionOutcomeRecorder, ScopeActivation.OnScopeCreated, 'sessionActivity');
+    registerScopedService(LifecycleScope.Session, ISessionOutcomeMirror, SessionOutcomeMirror, ScopeActivation.OnScopeCreated, 'sessionActivity');
 
     writes = [];
     failNextWrite = false;
@@ -119,7 +119,7 @@ describe('SessionOutcomeRecorder (Session scope)', () => {
     ]);
     lifecycle = session.accessor.get(IAgentLifecycleService) as unknown as FakeAgentLifecycle;
     // Construct the scope-created recorder.
-    session.accessor.get(ISessionOutcomeRecorder);
+    session.accessor.get(ISessionOutcomeMirror);
   });
 
   afterEach(() => {
@@ -180,7 +180,7 @@ describe('SessionOutcomeRecorder (Session scope)', () => {
       } as unknown as ISessionMetadata),
     ]);
     const secondLifecycle = second.accessor.get(IAgentLifecycleService) as unknown as FakeAgentLifecycle;
-    second.accessor.get(ISessionOutcomeRecorder);
+    second.accessor.get(ISessionOutcomeMirror);
     secondLifecycle.addMain();
     await tick();
     secondLifecycle.bus.publish({ type: 'turn.ended', turnId: 1, reason: 'failed' } as unknown as DomainEvent);
