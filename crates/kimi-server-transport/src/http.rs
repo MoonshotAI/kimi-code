@@ -55,6 +55,14 @@ pub struct HttpState {
     /// `/api/v1/shutdown` fires this channel when configured. `Arc<Mutex>`
     /// so handler clones (per request) share the same sender.
     shutdown: Option<Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>>,
+    /// Active OAuth device flow for `/api/v1/oauth/login` (start/poll/cancel).
+    oauth_flow: Arc<tokio::sync::Mutex<Option<OAuthFlowState>>>,
+}
+
+/// In-flight OAuth device flow state (POST start stores it; GET polls it).
+struct OAuthFlowState {
+    config: kimi_oauth::OAuthFlowConfig,
+    auth: kimi_oauth::DeviceAuthorization,
 }
 
 impl HttpState {
@@ -77,6 +85,7 @@ impl HttpState {
                 .map(|d| d.as_secs().to_string())
                 .unwrap_or_default(),
             shutdown: None,
+            oauth_flow: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
@@ -104,6 +113,7 @@ impl HttpState {
                 .map(|d| d.as_secs().to_string())
                 .unwrap_or_default(),
             shutdown: None,
+            oauth_flow: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
@@ -155,6 +165,7 @@ pub fn router(state: HttpState) -> Router {
         .route("/api/v1/health", get(health))
         .route("/api/v1/meta", get(meta))
         .route("/api/v1/shutdown", post(shutdown))
+        .route("/api/v1/oauth/login", post(oauth_login_start).get(oauth_login_poll).delete(oauth_login_cancel))
         .route("/api/v1/config", get(config_get).post(config_set))
         .route("/api/v1/sessions", get(sessions_list).post(sessions_create))
         .route(
@@ -315,6 +326,65 @@ async fn shutdown(State(state): State<HttpState>) -> Json<Value> {
         }
     }
     Json(ok(json!({ "shutting_down": true })))
+}
+
+/// `POST /api/v1/oauth/login` — start a kimi device-code flow and return the
+/// verification info (URI + user code) for the caller to show the user.
+async fn oauth_login_start(State(state): State<HttpState>) -> Json<Value> {
+    let config = kimi_oauth::OAuthFlowConfig::kimi();
+    match kimi_oauth::request_device_authorization(&config).await {
+        Ok(auth) => {
+            *state.oauth_flow.lock().await = Some(OAuthFlowState {
+                config,
+                auth: auth.clone(),
+            });
+            Json(ok(json!({
+                "verification_uri": auth.verification_uri,
+                "verification_uri_complete": auth.verification_uri_complete,
+                "user_code": auth.user_code,
+                "expires_in": auth.expires_in,
+                "interval": auth.interval,
+                "device_code": auth.device_code,
+            })))
+        }
+        Err(e) => Json(err(50001, &format!("oauth start failed: {e}"))),
+    }
+}
+
+/// `GET /api/v1/oauth/login` — poll the active flow. Resolves with the token
+/// pair on success; otherwise the current status (`pending`/`expired`/
+/// `denied`). Mirrors kap-server's login poll route.
+async fn oauth_login_poll(State(state): State<HttpState>) -> Json<Value> {
+    let (config, device_code) = {
+        let guard = state.oauth_flow.lock().await;
+        match guard.as_ref() {
+            Some(f) => (f.config.clone(), f.auth.device_code.clone()),
+            None => return Json(err(40401, "no active oauth flow")),
+        }
+    };
+    match kimi_oauth::poll_device_token(&config, &device_code).await {
+        Ok(kimi_oauth::DevicePollResult::Success {
+            access_token,
+            refresh_token,
+            expires_in,
+        }) => Json(ok(json!({
+            "status": "success",
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expires_in": expires_in,
+        }))),
+        Ok(kimi_oauth::DevicePollResult::Pending) => Json(ok(json!({ "status": "pending" }))),
+        Ok(kimi_oauth::DevicePollResult::Expired) => Json(ok(json!({ "status": "expired" }))),
+        Ok(kimi_oauth::DevicePollResult::Denied) => Json(ok(json!({ "status": "denied" }))),
+        Err(e) => Json(err(50002, &format!("oauth poll failed: {e}"))),
+    }
+}
+
+/// `DELETE /api/v1/oauth/login` — cancel any pending flow.
+async fn oauth_login_cancel(State(state): State<HttpState>) -> Json<Value> {
+    let mut guard = state.oauth_flow.lock().await;
+    let cancelled = guard.take().is_some();
+    Json(ok(json!({ "cancelled": cancelled, "status": "cancelled" })))
 }
 
 /// `GET /api/v1/config` — the engine's parsed config.

@@ -10,6 +10,7 @@ anyhow = "1"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+kimi-oauth = { path = "../kimi-oauth" }
 kimi-protocol = { path = "../kimi-protocol" }
 kimi-server = { path = "../kimi-server" }
 serde_json = { workspace = true }

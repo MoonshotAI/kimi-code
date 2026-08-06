@@ -1746,6 +1746,7 @@ dependencies = [
  "axum",
  "base64",
  "futures-util",
+ "kimi-oauth",
  "kimi-protocol",
  "kimi-server",
  "kimi-server-client",
