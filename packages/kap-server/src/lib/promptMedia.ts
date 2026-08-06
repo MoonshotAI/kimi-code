@@ -24,7 +24,6 @@ import { pipeline } from 'node:stream/promises';
 
 import {
   buildKimiFileUrl,
-  parseKimiFileUrl,
   buildImageCompressionCaption,
   buildUnsupportedImageNotice,
   compressBase64ForModel,
