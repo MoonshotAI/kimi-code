@@ -53,7 +53,7 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元——可以
 
 ### 注意事项
 
-- Plugin 变更在新会话或 `/reload` 后生效：安装、启用、禁用或移除 plugin 后，运行 `/new` 或 `/reload` 应用变更。运行中的会话永远不会吸收 plugin 变更——它保持启动时的系统提示词和工具，并会在 plugin 集变化时收到一条 system reminder。新安装 plugin 的 MCP 工具不会注册到已打开的会话中；被移除 plugin 的 MCP 工具在已打开的会话中仍然可见，但调用会失败并返回移除提示。
+- Plugin 变更需要通过 `/reload` 或新会话生效。安装、启用/禁用、移除后，运行 `/reload` 或 `/new`；当前会话不会更新。
 - 本地安装会被拷贝到 `$KIMI_CODE_HOME/plugins/managed/<id>/`，CLI 始终从这份托管副本运行。安装后编辑原始源目录不会生效，需重新安装。
 - 移除 plugin 只会删除安装记录，托管副本和原始源文件仍保留在磁盘上。
 - Plugin 目前按用户安装，对所有项目生效，暂不支持项目级安装范围。
@@ -79,7 +79,7 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元——可以
 
 官方插件是 Kimi 官方维护的 plugin 和内置产品能力，目前有以下三种：
 
-- **[Kimi Datasource](#kimi-datasource)**：用自然语言查询金融行情、宏观经济、企业工商、学术文献和法律法规数据
+- **[Kimi Datasource](#kimi-datasource)**：用自然语言查询金融行情、宏观经济、企业工商、学术文献和法律法规
 - **[Kimi WebBridge](#kimi-webbridge)**：让 AI 直接操控你自己的浏览器，完成各类网页操作
 - **[Kimi Computer Use](#kimi-computer-use)**：让 AI 操作你的桌面应用（macOS 和 Windows）
 
@@ -198,7 +198,6 @@ Kimi Computer Use 让 AI 直接操作你的桌面应用，可以完成点击、�
 
 #### Windows 版注意事项
 
-Windows 版（WinCU）的安装方式与 macOS 版不同：在 Kimi Code 中运行 `/plugins install https://cdn.kimi.com/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip`，安装完成后重启即可。使用前注意以下几点：
 
 - **会短暂占用键鼠**：Windows 版无法像 macOS 版那样稳定地全程后台输入，执行操作时可能短暂激活目标窗口并使用你的鼠标键盘
 - **系统要求**：Windows 10 version 1903（Build 18362）或更新版本 / Windows 11，x64；需要真实交互式桌面会话，Windows Server 需要 Desktop Experience
@@ -207,14 +206,13 @@ Windows 版（WinCU）的安装方式与 macOS 版不同：在 Kimi Code 中运�
 
 #### 能做什么
 
-- **整理和录入信息**：让 AI 把散落在各处的信息整理进备忘录、表格或笔记软件，不用手动逐条输入
-- **走查网站和应用流程**：改完页面让 AI 把关键流程点一遍，逐步截图确认渲染和跳转是否正常
-- **处理重复操作**：反复打开、复制、粘贴、检查这类活儿交给它，在后台静默完成，不抢你的鼠标
-- **按固定步骤跑任务**：步骤明确的流程说清楚它就能照着做，例如让 AI 打开网易云音乐播放指定歌曲
+- **在桌面软件整理和录入信息**：让 AI 把散落在各处的信息整理进备忘录、表格或笔记软件，不用手动逐条输入
+- **测试网站和应用流程**：将重复的测试步骤交给AI，截图确认渲染和跳转是否正常
+- **处理重复操作**：反复打开、复制、粘贴、检查类型的工作，让AI在后台静默完成，不抢占鼠标
 - **搞定没有接口的软件**：操作没有 CLI 或 API 的桌面端应用，例如让它把剪映里这段视频的片头剪掉三秒再导出
 
 ::: warning 注意
-涉及资金、账号和对外发布的操作不要直接交给它，例如付款转账、删除重要文件、修改密码、发布内容。判断一个任务适不适合交给它，看三点：结果可检查、操作可撤回、出错风险低。
+涉及资金、账号和对外发布的操作不建议使用此能力。
 :::
 
 ## Plugin manifest
@@ -281,7 +279,7 @@ Plugin 是一个带 manifest 的目录或 zip 文件。Manifest 可以放在以�
 
 `systemPrompt` 字段与 `systemPromptPath` 文件各限制为 32 KB（UTF-8 字节）：超限内容会被忽略，并显示在 plugin 的 diagnostics 中。一次提示词构建最多注入所有已启用 plugin 合计 64 KB 的指令；超出预算的贡献会被跳过并给出警告——单个 plugin 的内联文本与文件合计超过该预算时同样整体跳过。
 
-新会话和新建 Agent 会读取当前已启用 plugin 的指令。每个 Agent 在首次构建系统提示词时快照 plugin 指令和 Skill 列表，因此运行中的会话永远不会吸收 plugin 变更——安装、启用、禁用或移除 plugin 都不会改写活跃会话的提示词，之后的提示词重建（例如压缩上下文或修改工具策略后）也会复用这份快照。运行 `/new` 或 `/reload` 即可让新会话读取当前的 plugin 指令。从磁盘恢复的会话会先使用持久化的提示词，后续重建遵循相同的快照规则。切换 plugin 的 MCP server 不会改变系统提示词指令。
+新会话和新建 Agent 会读取当前已启用 plugin 的指令。正在进行的请求会继续使用已有的系统提示词。`/plugins reload` 会刷新 plugin Skill 列表，并请求重建活跃 Agent 的提示词；如果需要让变更在下一轮前明确收敛，请使用这个命令。在 v2 引擎中，安装、启用、禁用或移除 plugin 会立即更新 catalog，后续的提示词重建（例如压缩上下文或修改工具策略后）可能会读取新的指令。legacy 引擎会让每个活跃 session 保留自己的 plugin 快照，直到 `/plugins reload` 或创建新 session。从磁盘恢复的 session 会先使用持久化的提示词，后续重建再遵循对应引擎的行为。切换 plugin 的 MCP server 不会改变系统提示词指令。
 
 内置 Agent 提示词会自动包含已启用 plugin 的指令。自定义 `SYSTEM.md` 或 Agent 文件完全拥有自己的模板，因此应在希望出现 plugin 指令的位置加入 `${plugin_sections}`。如果自定义模板包含 `${base_prompt}`，且该有效默认提示词已经包含 plugin 块，就不要再重复加入 `${plugin_sections}`。完整变量表见 [自定义 Agent 与 SYSTEM.md](./agents.md#用-system-md-覆盖主-agent-的系统提示词)。
 
@@ -376,7 +374,7 @@ my-plugin/
     reviewer.md
 ```
 
-Plugin Agent 的优先级低于其他文件来源：同名时用户级、额外目录、项目级和 `--agent-file` 的 Agent 都会覆盖 plugin 提供的版本；替换内置 Agent 同样需要在 frontmatter 里显式写 `override: true`。安装、启用、禁用或移除 plugin 后，Agent 列表在新会话或 `/reload` 后刷新。
+Plugin Agent 的优先级低于其他文件来源：同名时用户级、额外目录、项目级和 `--agent-file` 的 Agent 都会覆盖 plugin 提供的版本；替换内置 Agent 同样需要在 frontmatter 里显式写 `override: true`。安装、启用、禁用或移除 plugin 后，Agent 列表在新会话（或 `/reload`）时刷新；v2 引擎的当前会话还会在 `/plugins reload` 后刷新。
 
 ## Plugin 中的 MCP servers
 
@@ -409,7 +407,7 @@ HTTP server（远程服务）：
 
 对于 stdio servers，`command` 可以是 `PATH` 上的命令，也可以是 plugin 根目录内以 `./` 开头的路径。`cwd` 同理，必须以 `./` 开头并位于 plugin 根目录内，否则该 server 会被忽略。
 
-Plugin MCP servers 在新会话或 `/reload` 后生效。启用或禁用某个 server：
+Plugin MCP servers 会在 `/reload` 后或新会话中启动。启用或禁用某个 server：
 
 ```sh
 /plugins mcp disable kimi-finance finance
@@ -418,8 +416,6 @@ Plugin MCP servers 在新会话或 `/reload` 后生效。启用或禁用某个 s
 /plugins mcp enable kimi-finance finance
 /reload
 ```
-
-plugin 的 server 被移除或禁用后，它已加载到进行中的会话中的工具仍然可见，但调用会失败并返回移除提示；新会话完全不会注册这些工具。
 
 ## 插件中的 Hooks
 
@@ -452,5 +448,5 @@ Plugin 的加载范围有限，以下操作不会在安装或会话启动时发�
 
 - 不会执行命令型 plugin tools 或旧式工具运行时
 - 所有路径在解析符号链接后仍必须位于 plugin 根目录内
-- 已启用 plugin 的 MCP servers 在新会话或 `/reload` 后启动，且可随时从 `/plugins` 禁用
+- 已启用 plugin 的 MCP servers 会在 `/reload` 后或新会话中启动，且可随时从 `/plugins` 禁用
 - 损坏的 manifest 或不安全路径会显示在 `/plugins info <id>` 的 diagnostics 中，不影响其他会话
