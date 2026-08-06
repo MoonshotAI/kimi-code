@@ -123,7 +123,7 @@ import { registerReverseRPCHandlers } from './reverse-rpc/index';
 import { QuestionController } from './reverse-rpc/question/controller';
 import { createQuestionAskHandler } from './reverse-rpc/question/handler';
 import type { ApprovalPanelData, QuestionPanelData } from './reverse-rpc/types';
-import { currentTheme, getColorPalette, getBuiltInPalette, isBuiltInTheme } from './theme';
+import { currentTheme, getColorPalette, getBuiltInPaletteForTerminal, isBuiltInTheme } from './theme';
 import type { ColorToken, ResolvedTheme, ThemeName } from './theme';
 import { createTUIState, type TUIState } from './tui-state';
 import {
@@ -2972,7 +2972,7 @@ export class KimiTUI {
 
   private async applyResolvedAutoTheme(resolved: ResolvedTheme): Promise<void> {
     if (this.state.appState.theme !== 'auto') return;
-    const palette = getBuiltInPalette(resolved);
+    const palette = getBuiltInPaletteForTerminal(resolved);
     if (currentTheme.palette === palette) return;
     currentTheme.setPalette(palette);
     this.updateEditorBorderHighlight();

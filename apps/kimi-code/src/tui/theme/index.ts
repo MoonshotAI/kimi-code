@@ -2,16 +2,16 @@
  * Theme system public API.
  */
 
-import { getBuiltInPalette } from './colors';
+import { getBasicPalette, getBuiltInPalette } from './colors';
 import type { ColorPalette, ResolvedTheme } from './colors';
 import { loadCustomThemeMerged } from './custom-theme-loader';
-import { detectTerminalTheme } from './detect';
+import { detectTerminalTheme, isBasicColorTerminal } from './detect';
 
 export { currentTheme, Theme } from './theme';
 export type { ColorToken } from './theme';
 export { darkColors, lightColors, getBuiltInPalette } from './colors';
 export type { ColorPalette, ResolvedTheme } from './colors';
-export { detectTerminalTheme } from './detect';
+export { detectTerminalTheme, isBasicColorTerminal } from './detect';
 export { loadCustomTheme, loadCustomThemeMerged, listCustomThemes } from './custom-theme-loader';
 
 /**
@@ -39,17 +39,21 @@ export function isThemeName(_value: string): _value is ThemeName {
  * - `'dark'` / `'light'` return the built-in palette.
  * - Any other string loads a custom theme from `~/.kimi-code/themes/`;
  *   missing / invalid files fall back to dark palette.
+ *
+ * Built-in palettes are swapped for their ANSI-16 `basic*` variants on
+ * terminals that only support basic colors (`isBasicColorTerminal`); custom
+ * themes always load as written.
  */
 export async function getColorPalette(theme: ThemeName): Promise<ColorPalette> {
-  if (theme === 'light') return getBuiltInPalette('light');
-  if (theme === 'dark') return getBuiltInPalette('dark');
+  if (theme === 'light') return getBuiltInPaletteForTerminal('light');
+  if (theme === 'dark') return getBuiltInPaletteForTerminal('dark');
   if (theme === 'auto') {
     const detected = await detectTerminalTheme();
-    return getBuiltInPalette(detected);
+    return getBuiltInPaletteForTerminal(detected);
   }
   // custom theme
   const custom = await loadCustomThemeMerged(theme);
-  return custom ?? getBuiltInPalette('dark');
+  return custom ?? getBuiltInPaletteForTerminal('dark');
 }
 
 /**
@@ -58,6 +62,11 @@ export async function getColorPalette(theme: ThemeName): Promise<ColorPalette> {
  * Custom themes are not supported here — falls back to dark.
  */
 export function getColorPaletteSync(theme: ThemeName): ColorPalette {
-  if (theme === 'light') return getBuiltInPalette('light');
-  return getBuiltInPalette('dark');
+  if (theme === 'light') return getBuiltInPaletteForTerminal('light');
+  return getBuiltInPaletteForTerminal('dark');
+}
+
+/** Built-in palette lookup with the ANSI-16 fallback applied. */
+export function getBuiltInPaletteForTerminal(resolved: ResolvedTheme): ColorPalette {
+  return isBasicColorTerminal() ? getBasicPalette(resolved) : getBuiltInPalette(resolved);
 }
