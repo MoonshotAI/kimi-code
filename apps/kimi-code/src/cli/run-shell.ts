@@ -155,17 +155,22 @@ export async function runShell(
   };
 
   let savedStty: string | undefined;
-  try {
-    // stty operates on the terminal behind stdin, so stdin must be the TTY —
-    // piping /dev/null (ignore) makes stty fail with "not a tty".
-    const saved = execSync('stty -g', {
-      encoding: 'utf8',
-      stdio: ['inherit', 'pipe', 'ignore'],
-    });
-    savedStty = typeof saved === 'string' ? saved.trim() : undefined;
-    execSync('stty -ixon', { stdio: ['inherit', 'ignore', 'ignore'] });
-  } catch {
-    /* ignore */
+  // stty is a POSIX command and never works on Windows; skip it there instead
+  // of relying on the catch — a bare command name would resolve a planted
+  // `stty.exe` from the current directory before the workspace trust gate.
+  if (process.platform !== 'win32') {
+    try {
+      // stty operates on the terminal behind stdin, so stdin must be the TTY —
+      // piping /dev/null (ignore) makes stty fail with "not a tty".
+      const saved = execSync('stty -g', {
+        encoding: 'utf8',
+        stdio: ['inherit', 'pipe', 'ignore'],
+      });
+      savedStty = typeof saved === 'string' ? saved.trim() : undefined;
+      execSync('stty -ixon', { stdio: ['inherit', 'ignore', 'ignore'] });
+    } catch {
+      /* ignore */
+    }
   }
   const restoreStty = (): void => {
     if (savedStty === undefined) return;

@@ -297,7 +297,13 @@ describe('runShell', () => {
     expect(mocks.harnessEnsureConfigFile.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.harnessGetConfig.mock.invocationCallOrder[0]!,
     );
-    expect(execSync).toHaveBeenCalledWith('stty -ixon', { stdio: ['inherit', 'ignore', 'ignore'] });
+    // stty is POSIX-only; on Windows the save/restore block is skipped
+    // entirely (a bare `stty` name would resolve into the untrusted cwd).
+    if (process.platform !== 'win32') {
+      expect(execSync).toHaveBeenCalledWith('stty -ixon', { stdio: ['inherit', 'ignore', 'ignore'] });
+    } else {
+      expect(execSync).not.toHaveBeenCalled();
+    }
     expect(mocks.kimiTuiConstructor).toHaveBeenCalledTimes(1);
     expect(mocks.createKimiDeviceId).toHaveBeenCalledWith(
       '/tmp/kimi-code-test-home',
@@ -337,6 +343,18 @@ describe('runShell', () => {
       init_ms: expect.any(Number),
       mcp_ms: 47,
     });
+  });
+
+  it('never runs stty on Windows, where it would resolve into the untrusted cwd', async () => {
+    stubTuiStartup();
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      await runShell(minimalCliOptions, '1.2.3-test');
+      expect(execSync).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+    }
   });
 
   it('resolves the --agent profile into the TUI startup input', async () => {
