@@ -27,6 +27,7 @@ function message(
   content: ContentPart[],
   options: {
     readonly toolCalls?: ToolCall[];
+    readonly toolCallDisplays?: ReplayMessage["toolCallDisplays"];
     readonly toolCallId?: string;
     readonly isError?: boolean;
     readonly origin?: ReplayMessage["origin"];
@@ -36,6 +37,7 @@ function message(
     role,
     content,
     toolCalls: options.toolCalls ?? [],
+    toolCallDisplays: options.toolCallDisplays,
     toolCallId: options.toolCallId,
     isError: options.isError,
     origin: options.origin,
@@ -295,6 +297,52 @@ describe("replay adapter (renders the public SDK resume state for the Webview)",
       },
       _sessionId: "session-1",
     });
+  });
+
+  it("binds a resumed plan review to its host-issued file reference", () => {
+    const agent = resumedAgent([
+      record(message("user", [{ type: "text", text: "Review the plan" }], {
+        origin: { kind: "user" },
+      })),
+      record(message("assistant", [], {
+        toolCalls: [{
+          type: "function",
+          id: "plan-1",
+          name: "ExitPlanMode",
+          arguments: "{}",
+        }],
+        toolCallDisplays: {
+          "plan-1": {
+            kind: "plan_review",
+            plan: "# Historical plan",
+            path: "/tmp/kimi-code/plans/historical.md",
+          },
+        },
+      }), 2),
+      record(message("tool", [{ type: "text", text: "Plan approved" }], {
+        toolCallId: "plan-1",
+      }), 3),
+    ]);
+
+    const events = replayToWebviewEvents(
+      agent,
+      "session-1",
+      (filePath) => `reference:${filePath}`,
+    );
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "ToolResult",
+      payload: expect.objectContaining({
+        return_value: expect.objectContaining({
+          display: [{
+            type: "plan",
+            plan: "# Historical plan",
+            path: "/tmp/kimi-code/plans/historical.md",
+            reference: "reference:/tmp/kimi-code/plans/historical.md",
+          }],
+        }),
+      }),
+    }));
   });
 
   it("renders a failed tool result in the open turn", () => {

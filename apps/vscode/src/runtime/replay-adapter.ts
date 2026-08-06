@@ -16,7 +16,7 @@ import type {
 } from "../../shared/legacy-sdk";
 import type { UIStreamEvent } from "../../shared/types";
 import { toLegacyToolName } from "./event-adapter";
-import { toLegacyDisplay } from "./tool-display";
+import { toLegacyDisplay, type PlanFileRegistrar } from "./tool-display";
 
 interface SubagentReplayInvocation {
   readonly parentAgentId: string;
@@ -35,24 +35,32 @@ interface SubagentReplayIndex {
 export function replaySessionToWebviewEvents(
   state: ResumedSessionState,
   sessionId: string,
+  registerPlanFile?: PlanFileRegistrar,
 ): UIStreamEvent[] {
   const main = state.agents["main"];
   if (main === undefined) throw new Error("Session history is unavailable.");
-  return replayAgentToWebviewEvents(main, sessionId, buildSubagentReplayIndex(state));
+  return replayAgentToWebviewEvents(
+    main,
+    sessionId,
+    buildSubagentReplayIndex(state),
+    registerPlanFile,
+  );
 }
 
 /** Projects the public SDK resume replay into the released Webview protocol. */
 export function replayToWebviewEvents(
   agent: ResumedAgentState,
   sessionId: string,
+  registerPlanFile?: PlanFileRegistrar,
 ): UIStreamEvent[] {
-  return replayAgentToWebviewEvents(agent, sessionId);
+  return replayAgentToWebviewEvents(agent, sessionId, undefined, registerPlanFile);
 }
 
 function replayAgentToWebviewEvents(
   agent: ResumedAgentState,
   sessionId: string,
   subagents?: SubagentReplayIndex,
+  registerPlanFile?: PlanFileRegistrar,
 ): UIStreamEvent[] {
   const events: UIStreamEvent[] = [];
   let turnOpen = false;
@@ -130,7 +138,7 @@ function replayAgentToWebviewEvents(
           for (const call of message.toolCalls) {
             const display = message.toolCallDisplays?.[call.id];
             if (display !== undefined) {
-              toolDisplays.set(call.id, toLegacyDisplay(display));
+              toolDisplays.set(call.id, toLegacyDisplay(display, registerPlanFile));
             }
             const toolCall: ToolCall = {
               type: "function",
@@ -148,6 +156,7 @@ function replayAgentToWebviewEvents(
                 call.id,
                 [],
                 new Set(),
+                registerPlanFile,
               )) {
                 events.push(withSession(nested, sessionId));
               }
@@ -314,6 +323,7 @@ function renderSubagentInvocations(
   parentToolCallId: string,
   parentChain: readonly SubagentReplayInvocation[],
   visited: ReadonlySet<string>,
+  registerPlanFile?: PlanFileRegistrar,
 ): LegacyWireEvent[] {
   const result: LegacyWireEvent[] = [];
   const invocations = index.byParentCall.get(parentCallKey(parentAgentId, parentToolCallId)) ?? [];
@@ -322,7 +332,13 @@ function renderSubagentInvocations(
     if (visited.has(invocationKey)) continue;
     const nextVisited = new Set([...visited, invocationKey]);
     result.push(
-      ...renderSubagentInvocation(index, invocation, [invocation, ...parentChain], nextVisited),
+      ...renderSubagentInvocation(
+        index,
+        invocation,
+        [invocation, ...parentChain],
+        nextVisited,
+        registerPlanFile,
+      ),
     );
   }
   return result;
@@ -333,6 +349,7 @@ function renderSubagentInvocation(
   invocation: SubagentReplayInvocation,
   chain: readonly SubagentReplayInvocation[],
   visited: ReadonlySet<string>,
+  registerPlanFile?: PlanFileRegistrar,
 ): LegacyWireEvent[] {
   const events: LegacyWireEvent[] = [];
   const toolDisplays = new Map<string, readonly DisplayBlock[]>();
@@ -359,7 +376,9 @@ function renderSubagentInvocation(
           for (const call of message.toolCalls) {
             const toolCallId = scopedReplayToolCallId(invocation.childAgentId, call.id);
             const display = message.toolCallDisplays?.[call.id];
-            if (display !== undefined) toolDisplays.set(toolCallId, toLegacyDisplay(display));
+            if (display !== undefined) {
+              toolDisplays.set(toolCallId, toLegacyDisplay(display, registerPlanFile));
+            }
             emit({
               type: "ToolCall",
               payload: {
@@ -378,6 +397,7 @@ function renderSubagentInvocation(
                 call.id,
                 chain,
                 visited,
+                registerPlanFile,
               ),
             );
           }

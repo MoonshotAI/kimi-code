@@ -255,6 +255,10 @@ class Bridge {
     return this.call<{ ok: boolean }>(Methods.OpenFile, { filePath });
   }
 
+  openPlanFile(reference: string) {
+    return this.call<{ ok: boolean }>(Methods.OpenPlanFile, { reference });
+  }
+
   openFileDiff(filePath: string) {
     return this.call<{ ok: boolean }>(Methods.OpenFileDiff, { filePath });
   }

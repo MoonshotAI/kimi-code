@@ -57,7 +57,7 @@ function getRichDisplayBlocks(display?: DisplayBlock[]): DisplayBlock[] {
   if (!display) {
     return [];
   }
-  return display.filter((b) => b.type === "diff");
+  return display.filter((b) => b.type === "diff" || b.type === "plan");
 }
 
 function CodeBlock({ content, maxLines = 10 }: { content: string; maxLines?: number }) {

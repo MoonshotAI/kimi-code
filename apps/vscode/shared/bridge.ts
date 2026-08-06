@@ -50,6 +50,7 @@ export const Methods = {
   GetProjectFiles: "getProjectFiles",
   PickMedia: "pickMedia",
   OpenFile: "openFile",
+  OpenPlanFile: "openPlanFile",
   CheckFileExists: "checkFileExists",
   CheckFilesExist: "checkFilesExist",
   OpenFileDiff: "openFileDiff",
@@ -211,6 +212,8 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
     case Methods.CheckFileExists:
     case Methods.GetImageDataUri:
       return hasString(params, "filePath");
+    case Methods.OpenPlanFile:
+      return hasNonEmptyString(params, "reference");
     case Methods.CheckFilesExist:
     case Methods.TrackFiles:
       return hasStringArray(params, "paths");

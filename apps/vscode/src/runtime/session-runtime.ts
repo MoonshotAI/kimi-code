@@ -35,6 +35,7 @@ export interface SessionRuntimeOptions {
     filePath: string,
     webviewIds: readonly string[],
   ) => void;
+  readonly registerPlanFile?: (filePath: string) => string;
   readonly log: (message: string, error?: unknown) => void;
 }
 
@@ -72,6 +73,7 @@ export class SessionRuntime {
 
   private readonly broadcast: RuntimeBroadcast;
   private readonly captureBaseline: SessionRuntimeOptions["captureBaseline"];
+  private readonly registerPlanFile: SessionRuntimeOptions["registerPlanFile"];
   private readonly log: SessionRuntimeOptions["log"];
   private readonly webviewIds = new Set<string>();
   private readonly reverseRpc: ReverseRpcController;
@@ -94,6 +96,7 @@ export class SessionRuntime {
     this.session = options.session;
     this.broadcast = options.broadcast;
     this.captureBaseline = options.captureBaseline;
+    this.registerPlanFile = options.registerPlanFile;
     this.log = options.log;
     this.legacyApproval = options.legacyApproval;
     this.reverseRpc = new ReverseRpcController((event) => this.emitStreamEvent(event));
@@ -470,6 +473,7 @@ export class SessionRuntime {
     const adapted = adaptSdkEvent(this.adapterState, event, {
       pendingInput,
       errorPhase: this.activePrompt?.started === false ? "preflight" : "runtime",
+      registerPlanFile: this.registerPlanFile,
     });
     this.adapterState = adapted.state;
 

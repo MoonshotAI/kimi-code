@@ -8,7 +8,7 @@ import type {
   TurnBegin,
 } from '../../shared/legacy-sdk';
 import type { ErrorPhase, UIStreamEvent } from '../../shared/types';
-import { toLegacyDisplay } from './tool-display';
+import { toLegacyDisplay, type PlanFileRegistrar } from './tool-display';
 
 const DEFAULT_MAIN_AGENT_ID = 'main';
 
@@ -66,6 +66,7 @@ export interface AdaptSdkEventOptions {
   readonly pendingInput?: TurnBegin['user_input'];
   readonly mainAgentId?: string;
   readonly errorPhase?: ErrorPhase;
+  readonly registerPlanFile?: PlanFileRegistrar;
 }
 
 export function createEventAdapterState(): EventAdapterState {
@@ -154,7 +155,12 @@ export function adaptSdkEvent(
     };
   }
 
-  const mapped = mapLegacyWireEvent(state, sdkEvent, mainAgentId);
+  const mapped = mapLegacyWireEvent(
+    state,
+    sdkEvent,
+    mainAgentId,
+    options.registerPlanFile,
+  );
   if (mapped.event === undefined) return { state: mapped.state };
 
   const routed = routeSubagentEvent(
@@ -197,6 +203,7 @@ function mapLegacyWireEvent(
   state: EventAdapterState,
   sdkEvent: Event,
   mainAgentId: string,
+  registerPlanFile?: PlanFileRegistrar,
 ): MappedLegacyWireEvent {
   switch (sdkEvent.type) {
     case 'turn.step.started':
@@ -245,7 +252,9 @@ function mapLegacyWireEvent(
         sdkEvent.toolCallId,
         mainAgentId,
       );
-      const display = sdkEvent.display === undefined ? undefined : toLegacyDisplay(sdkEvent.display);
+      const display = sdkEvent.display === undefined
+        ? undefined
+        : toLegacyDisplay(sdkEvent.display, registerPlanFile);
       return {
         state: display === undefined
           ? state

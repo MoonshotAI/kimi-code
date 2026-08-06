@@ -2,6 +2,8 @@ import type { ToolInputDisplay } from "@moonshot-ai/kimi-code-sdk";
 
 import type { DisplayBlock } from "../../shared/legacy-sdk";
 
+export type PlanFileRegistrar = (filePath: string) => string;
+
 export function describeToolDisplay(display: ToolInputDisplay): string {
   switch (display.kind) {
     case "command":
@@ -33,7 +35,10 @@ export function describeToolDisplay(display: ToolInputDisplay): string {
   }
 }
 
-export function toLegacyDisplay(display: ToolInputDisplay): DisplayBlock[] {
+export function toLegacyDisplay(
+  display: ToolInputDisplay,
+  registerPlanFile?: PlanFileRegistrar,
+): DisplayBlock[] {
   switch (display.kind) {
     case "command":
       return [{ type: "shell", language: display.language ?? "bash", command: display.command }];
@@ -67,9 +72,17 @@ export function toLegacyDisplay(display: ToolInputDisplay): DisplayBlock[] {
     case "skill_call":
     case "task":
     case "task_stop":
-    case "plan_review":
     case "goal_start":
     case "generic":
       return [{ type: "brief", text: describeToolDisplay(display) }];
+    case "plan_review":
+      return [{
+        type: "plan",
+        plan: display.plan,
+        path: display.path,
+        ...(display.path === undefined || registerPlanFile === undefined
+          ? {}
+          : { reference: registerPlanFile(display.path) }),
+      }];
   }
 }
