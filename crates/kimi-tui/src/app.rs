@@ -1366,11 +1366,11 @@ impl App {
     fn draw(&mut self, frame: &mut ratatui::Frame<'_>) {
         // The chat pane is the area minus the fixed 3-line input pane.
         let pane_height = frame.area().height.saturating_sub(3);
-        let max = max_scroll(self.transcript.len(), pane_height);
+        let max = crate::chatwidget::max_scroll(self.transcript.len(), pane_height);
         if self.scroll as usize > max {
             self.scroll = max as u16;
         }
-        render_frame(
+        crate::chatwidget::render_frame(
             frame,
             &self.transcript,
             &self.input,
@@ -1383,90 +1383,6 @@ impl App {
     }
 }
 
-/// Render the two-pane chat layout into the frame. Pure over the app state
-/// so smoke tests can drive it with a `TestBackend`.
-fn render_frame(
-    frame: &mut ratatui::Frame<'_>,
-    transcript: &[TranscriptLine],
-    input: &str,
-    cursor: usize,
-    session_id: &str,
-    status: &str,
-    scroll: u16,
-    theme: crate::theme::Theme,
-) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(3)])
-        .split(frame.area());
-    let chat = Paragraph::new(styled_lines(transcript, theme))
-        .block(Block::default().borders(Borders::ALL).title("chat"))
-        .scroll((scroll, 0));
-    let input_widget = Paragraph::new(input)
-        .block(Block::default().borders(Borders::ALL).title(format!("input — {session_id} | {status}")));
-    frame.render_widget(chat, chunks[0]);
-    frame.render_widget(input_widget, chunks[1]);
-    // Place the terminal cursor at the input editing position (inside the
-    // border). A cursor beyond the pane width is safe — it just stays hidden
-    // until horizontal scrolling lands (later batch).
-    let input_row = chunks[1].y + 1;
-    let input_col = chunks[1].x + 1 + cursor as u16;
-    frame.set_cursor_position((input_col, input_row));
-}
-
-/// Largest scroll offset that still keeps the last transcript line visible
-/// in a `pane_height`-tall chat pane (minus its borders).
-fn max_scroll(total: usize, pane_height: u16) -> usize {
-    total.saturating_sub(pane_height.saturating_sub(2) as usize)
-}
-
-/// Map transcript entries to styled render lines (role → prefix + style).
-/// Assistant (and live-streaming) text is markdown-rendered; everything else
-/// stays plain. Colors come from the resolved theme palette.
-fn styled_lines(
-    transcript: &[TranscriptLine],
-    theme: crate::theme::Theme,
-) -> Vec<RenderLine<'static>> {
-    let mut out = Vec::new();
-    for entry in transcript {
-        match entry.kind {
-            TranscriptKind::Assistant | TranscriptKind::Streaming => {
-                out.extend(crate::markdown::render_markdown_themed(&entry.text, theme));
-            }
-            TranscriptKind::User => out.push(RenderLine::from(Span::styled(
-                format!("▶ {}", entry.text),
-                Style::default().fg(theme.user).add_modifier(Modifier::BOLD),
-            ))),
-            // Reasoning is transient and dimmer than the visible stream.
-            TranscriptKind::Thinking => out.push(RenderLine::from(Span::styled(
-                entry.text.clone(),
-                Style::default().fg(theme.thinking).add_modifier(Modifier::ITALIC),
-            ))),
-            TranscriptKind::Tool => {
-                // AskUserQuestion lines are surfaced as a question prompt
-                // (❓) rather than a plain tool progress line, so the user
-                // sees at a glance that the model is waiting for an answer.
-                let is_question = entry.text.contains("AskUserQuestion");
-                out.push(RenderLine::from(Span::styled(
-                    format!("  {} {}", if is_question { "❓" } else { "⚙" }, entry.text),
-                    Style::default().fg(if is_question { theme.status } else { theme.tool }),
-                )));
-            }
-            TranscriptKind::Status => out.push(RenderLine::from(Span::styled(
-                entry.text.clone(),
-                Style::default().fg(theme.status),
-            ))),
-            TranscriptKind::Error => out.push(RenderLine::from(Span::styled(
-                entry.text.clone(),
-                Style::default().fg(theme.error),
-            ))),
-        }
-    }
-    out
-}
-
-/// Resolve a Tab press against `base` (the input when the cycle started, or
-/// the current input). Returns the completed input and the next cycle index.
 fn complete_line(base: &str, model_aliases: &[String], tab_idx: Option<usize>) -> (String, Option<usize>) {
     // Argument completion: `/plan `, `/swarm `, `/thinking `, `/model `.
     if let Some((cmd, arg)) = base.split_once(' ') {
@@ -1601,7 +1517,7 @@ mod tests {
 
     #[test]
     fn thinking_renders_dimmed() {
-        let lines = styled_lines(&[TranscriptLine::thinking("reasoning")], crate::theme::Theme::dark());
+        let lines = crate::chatwidget::styled_lines(&[TranscriptLine::thinking("reasoning")], crate::theme::Theme::dark());
         assert_eq!(lines[0].spans[0].content, "reasoning");
         assert_eq!(lines[0].spans[0].style.fg, Some(Color::DarkGray));
         assert!(lines[0].spans[0].style.add_modifier.contains(Modifier::ITALIC));
@@ -1635,7 +1551,7 @@ mod tests {
 
     #[test]
     fn streaming_renders_distinct() {
-        let lines = styled_lines(&[TranscriptLine::streaming("growing")], crate::theme::Theme::dark());
+        let lines = crate::chatwidget::styled_lines(&[TranscriptLine::streaming("growing")], crate::theme::Theme::dark());
         let text: String = lines[0].spans.iter().map(|s| s.content.clone()).collect();
         assert_eq!(text, "growing");
     }
@@ -1701,7 +1617,7 @@ mod tests {
             TranscriptLine::status("plan mode on"),
             TranscriptLine::error("boom"),
         ];
-        let lines = styled_lines(&transcript, crate::theme::Theme::dark());
+        let lines = crate::chatwidget::styled_lines(&transcript, crate::theme::Theme::dark());
         assert_eq!(lines.len(), 5);
         // User lines are prefixed and bold.
         assert_eq!(lines[0].spans[0].content, "▶ hi");
@@ -1777,7 +1693,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(60, 12)).unwrap();
         terminal
             .draw(|frame| {
-                render_frame(frame, &transcript, "/help", 2, "sess-1", "plan=off swarm=off", 0, crate::theme::Theme::dark());
+                crate::chatwidget::render_frame(frame, &transcript, "/help", 2, "sess-1", "plan=off swarm=off", 0, crate::theme::Theme::dark());
             })
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
@@ -1809,9 +1725,9 @@ mod tests {
     #[test]
     fn max_scroll_matches_viewport() {
         // A 12-row terminal: chat pane is 9 rows, minus borders = 7 visible.
-        assert_eq!(max_scroll(10, 9), 3);
-        assert_eq!(max_scroll(7, 9), 0);
+        assert_eq!(crate::chatwidget::max_scroll(10, 9), 3);
+        assert_eq!(crate::chatwidget::max_scroll(7, 9), 0);
         // Empty transcript never underflows.
-        assert_eq!(max_scroll(0, 9), 0);
+        assert_eq!(crate::chatwidget::max_scroll(0, 9), 0);
     }
 }
