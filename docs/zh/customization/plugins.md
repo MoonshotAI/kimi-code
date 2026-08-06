@@ -33,7 +33,12 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元——可以
 | `/plugins mcp enable <id> <server>` | 启用 plugin 声明的 MCP server |
 | `/plugins mcp disable <id> <server>` | 禁用 plugin 声明的 MCP server |
 
-**Installed** tab 列出已安装的 plugin，并在 marketplace 有更新版本时显示更新徽章。当一个使用了过时 plugin（其 MCP 工具或 `/<plugin>:<command>` 斜杠命令）的 turn 结束后，也会出现一次性提示，引导你到 `/plugins` 更新；每个新的 marketplace 版本只提醒一次。在默认 marketplace 中，**Official** 和 **Curated** tab 分别列出 Kimi 官方和合作伙伴 plugin；自定义 marketplace 的非官方条目也会放在 **Curated** 下，但不会显示为 Kimi 合作伙伴。**Custom** tab 从 URL 安装。在 v2 引擎下，**Official** tab 还会列出内置产品能力（Kimi Computer Use——仅限 macOS——和 Kimi WebBridge）。条目的身份和安装操作由客户端提供，marketplace 可以提供版本号，用于普通的 `install` / `installed` / `update` 状态；详细的运行时检查和安装进度写入日志，不再改变已安装状态。对可安装或可更新的条目按回车，会同时刷新二进制运行时和接线 plugin。安装或更新 Kimi WebBridge 时，旧的 standalone Skill 会先移动到 `$KIMI_CODE_HOME/backups/kimi-webbridge-skills/`，再由托管 plugin 接管；旧文件只备份，不删除。marketplace 目录会在需要时自动加载。每个安装会显示信任徽章：`kimi-official`（来自官方地址）、`curated`（来自精选地址）、`third-party`（其他所有情况）。安装第三方 plugin（任何非官方地址的 plugin，包括 Custom 安装）会先显示一个默认「取消」的确认提示，只有在你选择信任该来源后才会继续安装。
+**Installed** tab 列出已安装的 plugin，marketplace 有更新版本时会显示更新徽章；使用了过时 plugin 的 turn 结束后，还会出现一次性更新提示（每个 marketplace 新版本只提醒一次）。其余 tab 和安装行为的规则如下：
+
+- **Official / Curated**：分别列出 Kimi 官方和合作伙伴 plugin，各官方能力的详细介绍见[官方插件](#官方插件)一节。自定义 marketplace 的非官方条目也会放在 **Curated** 下，但不会显示为 Kimi 合作伙伴
+- **Custom**：从 URL 安装
+- **信任徽章**：每个安装会显示来源徽章，`kimi-official`（官方地址）、`curated`（精选地址）、`third-party`（其他所有情况）。安装第三方 plugin（包括 Custom 安装）会先显示一个默认**取消**的确认提示，选择信任该来源后才会继续
+- **WebBridge 旧版迁移**：安装或更新 Kimi WebBridge 时，旧的 standalone Skill 会先移动到 `$KIMI_CODE_HOME/backups/kimi-webbridge-skills/`（只备份，不删除），再由托管 plugin 接管
 
 ### 从 GitHub 安装
 
