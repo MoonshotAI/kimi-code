@@ -125,4 +125,61 @@ describe('wire.jsonl round-trip', () => {
     );
     expect(replayTarget.wire.getModel(TagsModel)).toEqual(live.wire.getModel(TagsModel));
   });
+
+  it('replays past legacy record types without reporting them', async () => {
+    const dir = await makeDir();
+    const storage = new FileStorageService(dir);
+    const target = makeContainer(storage, 'legacy-replay');
+    const records: WireRecord[] = [
+      { type: 'micro_compaction.apply', cutoff: 2, time: 1 },
+      { type: 'context.update_token_count', tokenCount: 5, time: 2 },
+      { type: 'compat.counter.set', value: 3, time: 3 },
+    ];
+
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      await restoreTestAgentWire(
+        target.wire,
+        target.log,
+        testWireScope(SCOPE, 'legacy-replay'),
+        records,
+      );
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
+
+    expect(unexpected).toEqual([]);
+    expect(target.wire.getModel(CounterModel)).toEqual({ value: 3 });
+  });
+
+  it('skips legacy records in a metadata-first journal and preserves them through the healing rewrite', async () => {
+    const dir = await makeDir();
+    const storage = new FileStorageService(dir);
+    const target = makeContainer(storage, 'legacy-metadata');
+    const scope = testWireScope(SCOPE, 'legacy-metadata');
+    const records: WireRecord[] = [
+      { type: 'metadata', protocol_version: '1.4', created_at: 1 },
+      { type: 'micro_compaction.apply', cutoff: 2, time: 1 },
+      { type: 'compat.counter.set', value: 3, time: 2 },
+    ];
+
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      await restoreTestAgentWire(target.wire, target.log, scope, records);
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
+
+    expect(unexpected).toEqual([]);
+    expect(target.wire.getModel(CounterModel)).toEqual({ value: 3 });
+
+    const rewritten: WireRecord[] = [];
+    for await (const record of target.log.read<WireRecord>(scope, AGENT_WIRE_RECORD_KEY)) {
+      rewritten.push(record);
+    }
+    expect(rewritten[0]).toMatchObject({ type: 'metadata', protocol_version: '1.5' });
+    expect(rewritten.some((record) => record.type === 'micro_compaction.apply')).toBe(true);
+  });
 });
