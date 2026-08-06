@@ -558,6 +558,15 @@ export class Agent {
 
   async resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }> {
     const result = await this.records.replay(options);
+    // A standalone Agent (no Session) replays persisted tool state here but
+    // never routes through Session.restoreAgentProfileHandle, so re-apply the
+    // global [tools].disabled denylist non-persistently (mirrors useProfile).
+    // Without this a config deny added before resuming an existing Agent has
+    // no effect until the next useProfile / setActiveTools RPC. #2534.
+    const toolsDisabled = this.configDisabledTools();
+    if (toolsDisabled.length > 0) {
+      this.tools.addDisallowedTools(toolsDisabled);
+    }
     this.flushPendingAnthropicThinkingEffortWarnings();
     try {
       this.replayBuilder.postRestoring = true;
