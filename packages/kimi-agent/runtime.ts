@@ -81,7 +81,19 @@ export function limitAgentReplayByTurns(_limit?: number): number {
 }
 
 // ── HTTP proxy ──────────────────────────────────────────────────────────
-export function installGlobalProxyDispatcher(): void {}
+export {
+  createProxyDispatcher,
+  installGlobalProxyDispatcher,
+  isProxyConfigured,
+  makeNoProxyMatcher,
+  proxyEnvForChild,
+  reconcileChildNoProxy,
+  resolveNoProxy,
+  resolveSocksProxy,
+  type InstallProxyDeps,
+  type ProxyAgentFactories,
+  type SocksProxyConfig,
+} from './runtime/proxy';
 
 // ── Schemas (zod) ───────────────────────────────────────────────────────
 import { z } from 'zod';

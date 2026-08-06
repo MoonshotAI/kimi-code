@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 // Load the native module
-const native = require('../index.js');
+const native = require('../index');
 
 // ── Test data ────────────────────────────────────────────────────────────────
 
@@ -214,9 +214,10 @@ describe('nativeTranslateBatchCached', () => {
 
 describe('nativeTranslateClearCache', () => {
   it('is safe to call on an empty cache', () => {
-    native.nativeTranslateClearCache();
-    native.nativeTranslateClearCache();
-    // Should not throw
+    expect(() => {
+      native.nativeTranslateClearCache();
+      native.nativeTranslateClearCache();
+    }).not.toThrow();
   });
 
   it('clears the cache without breaking subsequent calls', () => {

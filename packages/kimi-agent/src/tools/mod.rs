@@ -7,6 +7,7 @@
 //! caller fall back to the host path — the host then applies its full
 //! permission system. Write-capable tools are never handled here.
 
+pub mod ask_user;
 pub mod bash;
 pub mod fetch_url;
 pub mod fs_search;
@@ -246,6 +247,7 @@ impl NativeToolset {
                 description: todo::description().into(),
                 input_schema: Some(todo::input_schema()),
             },
+            ask_user::tool_definition(),
             crate::context::types::ToolDefinition {
                 name: fs_search::FS_SEARCH_TOOL_NAME.into(),
                 description: fs_search::description().into(),
@@ -289,6 +291,10 @@ impl NativeToolset {
             // TodoList: pure in-memory session state (no filesystem, no
             // network) — always safe to run natively.
             "todolist" => Some(todo::execute_todo_list(&self.todo, args)),
+            // AskUserQuestion: ask the user a structured question. The turn
+            // stops and the host surfaces the question; the answer arrives as
+            // the next user message (no reverse-RPC needed).
+            "askuserquestion" => Some(ask_user::execute_ask_user_question(args)),
             // FsSearch: filename search for the @ file-mention picker
             // (read-class, ungated like `read`/`glob`).
             "fssearch" => self.fs_search(args),

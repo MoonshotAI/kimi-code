@@ -81,4 +81,10 @@ impl ServerState {
     pub fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<serde_json::Value> {
         self.events.subscribe()
     }
+
+    /// Clone the engine event sender, so transports (e.g. the HTTP/WS
+    /// projection) can fan engine events out to every connected client.
+    pub fn event_sender(&self) -> tokio::sync::broadcast::Sender<serde_json::Value> {
+        self.events.sender()
+    }
 }

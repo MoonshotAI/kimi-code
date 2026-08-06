@@ -18,7 +18,7 @@ import type { ColorPalette } from '#/tui/theme/colors';
 import { formatPluginSourceLabel, pluginTrustLabel } from '#/tui/utils/plugin-source-label';
 import { printableChar } from '#/tui/utils/printable-key';
 import { renderTabStrip } from '#/tui/utils/tab-strip';
-import { computeUpdateStatus, type PluginMarketplaceEntry, type PluginUpdateStatus } from '#/utils/plugin-marketplace';
+import { computeUpdateStatus, type PluginMarketplaceEntry } from '#/utils/plugin-marketplace';
 
 import { ChoicePickerComponent } from './choice-picker';
 

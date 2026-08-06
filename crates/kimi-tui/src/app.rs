@@ -20,6 +20,7 @@ const SLASH_COMMANDS: &[&str] = &[
     "/approvals",
     "/approve",
     "/archive",
+    "/auto",
     "/clear",
     "/compact",
     "/config",
@@ -35,8 +36,12 @@ const SLASH_COMMANDS: &[&str] = &[
     "/help",
     "/import",
     "/info",
+    "/init",
+    "/mcp",
     "/model",
     "/models",
+    "/new",
+    "/permission",
     "/plan",
     "/plugins",
     "/quit",
@@ -48,9 +53,14 @@ const SLASH_COMMANDS: &[&str] = &[
     "/status",
     "/steer",
     "/swarm",
+    "/tasks",
+    "/theme",
     "/thinking",
+    "/title",
     "/undo",
     "/usage",
+    "/version",
+    "/yolo",
 ];
 
 /// Closed argument sets for Tab completion of a few commands.
@@ -214,9 +224,52 @@ enum InterruptAction {
     CancelTurn,
 }
 
+/// Render a `session/get_status` result as a one-line human summary
+/// (model · mode · permission · thinking · context) instead of raw JSON.
+fn format_status(status: &serde_json::Value) -> String {
+    let model = status["model"].as_str().unwrap_or("-");
+    let permission = status["permission"].as_str().unwrap_or("-");
+    let plan = status["plan_mode"].as_bool().unwrap_or(false);
+    let swarm = status["swarm_mode"].as_bool().unwrap_or(false);
+    let thinking = status["thinking_effort"].as_str().unwrap_or("-");
+    let mode = match (plan, swarm) {
+        (true, true) => "plan+swarm",
+        (true, false) => "plan",
+        (false, true) => "swarm",
+        (false, false) => "chat",
+    };
+    let ctx = status["context_tokens"].as_u64().unwrap_or(0);
+    let max_ctx = status["max_context_tokens"].as_u64().unwrap_or(0);
+    format!("model: {model} | mode: {mode} | permission: {permission} | thinking: {thinking} | ctx: {ctx}/{max_ctx}")
+}
+
+/// Render a token-usage snapshot (`{total: {input/output/total_tokens}}`) as
+/// a one-line summary instead of raw JSON.
+fn format_usage(usage: &serde_json::Value) -> String {
+    let field = |name: &str| -> u64 {
+        usage["total"][name].as_u64().unwrap_or(0)
+    };
+    let (input, output, total) = (field("input_tokens"), field("output_tokens"), field("total_tokens"));
+    if total == 0 && input == 0 && output == 0 {
+        "usage: no tokens recorded".to_string()
+    } else {
+        format!("usage: {total} total ({input} in / {output} out)")
+    }
+}
+
+/// Generate a fresh session id for `/new` (timestamp-based, unique enough for
+/// an interactive session).
+fn fresh_session_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("{millis:x}")
+}
+
 /// Map a pressed key to an interrupt action (pure, tested).
-fn interrupt_action(code: KeyCode, modifiers: event::KeyModifiers) -> Option<InterruptAction> {
-    match code {
+fn interrupt_action(code: KeyCode, modifiers: event::KeyModifiers) -> Option<InterruptAction> {    match code {
         KeyCode::Esc => Some(InterruptAction::CancelTurn),
         KeyCode::Char('c') if modifiers.contains(event::KeyModifiers::CONTROL) => {
             Some(InterruptAction::CancelTurn)
@@ -346,6 +399,8 @@ pub struct App {
     status: String,
     /// Semantic color palette resolved from `tui.toml`.
     theme: crate::theme::Theme,
+    /// Whether the dark palette is active (`/theme` toggles this).
+    dark_mode: bool,
 }
 
 impl App {
@@ -366,6 +421,7 @@ impl App {
             scroll: 0,
             status: String::new(),
             theme: crate::theme::load_theme(),
+            dark_mode: true,
         }
     }
 
@@ -469,7 +525,7 @@ impl App {
                         if line.trim().is_empty() {
                             continue;
                         }
-                        if self.dispatch(&line).await? {
+                        if self.dispatch(terminal, &line).await? {
                             return Ok(());
                         }
                         self.history.push(line);
@@ -496,7 +552,11 @@ impl App {
 
     /// Handle one submitted line (slash command or prompt). Returns `true`
     /// when the app should quit.
-    async fn dispatch(&mut self, line: &str) -> anyhow::Result<bool> {
+    async fn dispatch(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        line: &str,
+    ) -> anyhow::Result<bool> {
         if line.starts_with('/') {
             let (cmd, rest) = line.split_once(' ').map(|(c, r)| (c, r.trim())).unwrap_or((line, ""));
             match cmd {
@@ -543,10 +603,8 @@ impl App {
                 }
                 "/status" => {
                     let status = self.session.as_mut().expect("session").get_status().await;
-                    self.transcript.push(TranscriptLine::status(format!(
-                        "status: {}",
-                        serde_json::to_string_pretty(&status["result"]).unwrap_or_default()
-                    )));
+                    let summary = format_status(&status["result"]);
+                    self.transcript.push(TranscriptLine::status(summary));
                 }
                 "/info" => {
                     match self.harness.core_version().await {
@@ -661,21 +719,41 @@ impl App {
                     let skills = self.session.as_mut().expect("session").list_skills().await;
                     match skills {
                         Ok(skills) => {
-                            let names: Vec<&str> = skills["skills"]
+                            let entries: Vec<(String, String)> = skills["skills"]
                                 .as_array()
                                 .map(|arr| {
                                     arr.iter()
-                                        .filter_map(|s| s["name"].as_str())
+                                        .map(|s| {
+                                            let name = s["name"].as_str().unwrap_or("?").to_string();
+                                            let desc = s["description"].as_str().unwrap_or("").to_string();
+                                            (name, desc)
+                                        })
                                         .collect()
                                 })
                                 .unwrap_or_default();
-                            if names.is_empty() {
+                            if entries.is_empty() {
                                 self.transcript.push(TranscriptLine::status("no skills registered"));
                             } else {
-                                self.transcript.push(TranscriptLine::status(format!(
-                                    "skills: {}",
-                                    names.join(", ")
-                                )));
+                                match crate::picker::select(
+                                    terminal,
+                                    self.theme,
+                                    "select a skill",
+                                    &entries,
+                                )? {
+                                    Some(name) => {
+                                        let desc = entries
+                                            .iter()
+                                            .find(|(n, _)| *n == name)
+                                            .map(|(_, d)| d.clone())
+                                            .unwrap_or_default();
+                                        self.transcript.push(TranscriptLine::status(format!(
+                                            "{name}: {desc}"
+                                        )));
+                                    }
+                                    None => self
+                                        .transcript
+                                        .push(TranscriptLine::status("skill selection cancelled")),
+                                }
                             }
                         }
                         Err(e) => self
@@ -709,6 +787,144 @@ impl App {
                         self.transcript.push(TranscriptLine::status(format!("thinking effort set to {rest}")));
                     }
                 }
+                "/permission" => {
+                    if rest.is_empty() {
+                        // No arg: pick a permission mode (TS picker parity).
+                        let items: Vec<(String, String)> = ["manual", "plan", "auto", "yolo"]
+                            .iter()
+                            .map(|m| (m.to_string(), String::new()))
+                            .collect();
+                        match crate::picker::select(terminal, self.theme, "select permission mode", &items)? {
+                            Some(mode) => {
+                                self.session.as_mut().expect("session").set_permission(&mode).await?;
+                                self.transcript
+                                    .push(TranscriptLine::status(format!("permission mode: {mode}")));
+                            }
+                            None => self
+                                .transcript
+                                .push(TranscriptLine::status("permission selection cancelled")),
+                        }
+                    } else {
+                        let mode = rest;
+                        self.session.as_mut().expect("session").set_permission(mode).await?;
+                        self.transcript
+                            .push(TranscriptLine::status(format!("permission mode: {mode}")));
+                    }
+                }
+                "/yolo" => {
+                    let current = self.session.as_mut().expect("session").get_status().await;
+                    let on = current["result"]["permission"].as_str() != Some("yolo");
+                    self.session
+                        .as_mut()
+                        .expect("session")
+                        .set_permission(if on { "yolo" } else { "manual" })
+                        .await?;
+                    self.transcript.push(TranscriptLine::status(format!(
+                        "yolo mode {}",
+                        if on { "on" } else { "off" }
+                    )));
+                }
+                "/auto" => {
+                    let current = self.session.as_mut().expect("session").get_status().await;
+                    let on = current["result"]["permission"].as_str() != Some("auto");
+                    self.session
+                        .as_mut()
+                        .expect("session")
+                        .set_permission(if on { "auto" } else { "manual" })
+                        .await?;
+                    self.transcript.push(TranscriptLine::status(format!(
+                        "auto mode {}",
+                        if on { "on" } else { "off" }
+                    )));
+                }
+                "/new" => {
+                    let fresh = format!("session-{}", fresh_session_id());
+                    self.switch_to_session(&fresh).await?;
+                }
+                "/init" => {
+                    self.session.as_mut().expect("session").init().await?;
+                    self.transcript
+                        .push(TranscriptLine::status("session initialized (agents.md)"));
+                }
+                "/title" => {
+                    if rest.is_empty() {
+                        self.transcript
+                            .push(TranscriptLine::status("usage: /title <title>"));
+                    } else {
+                        self.session.as_mut().expect("session").rename(rest).await?;
+                        self.transcript
+                            .push(TranscriptLine::status(format!("session title: {rest}")));
+                    }
+                }
+                "/mcp" => {
+                    match self.session.as_mut().expect("session").list_mcp_servers().await {
+                        Ok(servers) => {
+                            let list = servers["mcp_servers"]
+                                .as_array()
+                                .or_else(|| servers["result"]["mcp_servers"].as_array())
+                                .or_else(|| servers["servers"].as_array())
+                                .cloned()
+                                .unwrap_or_default();
+                            let names: Vec<&str> = list
+                                .iter()
+                                .filter_map(|s| s["name"].as_str().or_else(|| s["server_name"].as_str()))
+                                .collect();
+                            if names.is_empty() {
+                                self.transcript
+                                    .push(TranscriptLine::status("no MCP servers configured"));
+                            } else {
+                                self.transcript.push(TranscriptLine::status(format!(
+                                    "MCP servers: {}",
+                                    names.join(", ")
+                                )));
+                            }
+                        }
+                        Err(e) => self
+                            .transcript
+                            .push(TranscriptLine::error(format!("mcp failed: {e}"))),
+                    }
+                }
+                "/tasks" => {
+                    let tasks = self.session.as_mut().expect("session").list_background_tasks().await;
+                    let list = tasks["tasks"]
+                        .as_array()
+                        .or_else(|| tasks["result"]["tasks"].as_array())
+                        .cloned()
+                        .unwrap_or_default();
+                    if list.is_empty() {
+                        self.transcript.push(TranscriptLine::status("no background tasks"));
+                    } else {
+                        for t in list.iter().take(10) {
+                            let id = t["id"].as_str().unwrap_or("?");
+                            let label = t["label"].as_str().unwrap_or("");
+                            let state = t["state"].as_str().unwrap_or("?");
+                            self.transcript
+                                .push(TranscriptLine::status(format!("{id}  {label}  [{state}]")));
+                        }
+                    }
+                }
+                "/theme" => {
+                    self.dark_mode = !self.dark_mode;
+                    self.theme = if self.dark_mode {
+                        crate::theme::Theme::dark()
+                    } else {
+                        crate::theme::Theme::light()
+                    };
+                    self.transcript.push(TranscriptLine::status(format!(
+                        "theme: {}",
+                        if self.dark_mode { "dark" } else { "light" }
+                    )));
+                }
+                "/version" => {
+                    match self.harness.core_version().await {
+                        Ok(v) => self
+                            .transcript
+                            .push(TranscriptLine::status(format!("kimi version: {v}"))),
+                        Err(e) => self
+                            .transcript
+                            .push(TranscriptLine::error(format!("version failed: {e}"))),
+                    }
+                }
                 "/models" => {
                     let (aliases, default_model) = self.harness.list_models().await?;
                     if aliases.is_empty() {
@@ -723,7 +939,30 @@ impl App {
                 }
                 "/model" => {
                     if rest.is_empty() {
-                        self.transcript.push(TranscriptLine::status("usage: /model <model-id>"));
+                        // No arg: interactively pick a model from the aliases
+                        // (TS `/model` picker parity) instead of a usage error.
+                        let items: Vec<(String, String)> = self
+                            .model_aliases
+                            .iter()
+                            .cloned()
+                            .map(|alias| (alias.clone(), String::new()))
+                            .collect();
+                        if items.is_empty() {
+                            self.transcript.push(TranscriptLine::status(
+                                "no model aliases configured",
+                            ));
+                        } else {
+                            match crate::picker::select(terminal, self.theme, "select a model", &items)? {
+                                Some(model) => {
+                                    self.session.as_mut().expect("session").set_model(&model).await?;
+                                    self.transcript
+                                        .push(TranscriptLine::status(format!("model set to {model}")));
+                                }
+                                None => self
+                                    .transcript
+                                    .push(TranscriptLine::status("model selection cancelled")),
+                            }
+                        }
                     } else {
                         self.session.as_mut().expect("session").set_model(rest).await?;
                         self.transcript.push(TranscriptLine::status(format!("model set to {rest}")));
@@ -794,10 +1033,8 @@ impl App {
                 }
                 "/usage" => {
                     let usage = self.session.as_mut().expect("session").get_usage().await?;
-                    self.transcript.push(TranscriptLine::status(format!(
-                        "usage: {}",
-                        serde_json::to_string(&usage).unwrap_or_default()
-                    )));
+                    let summary = format_usage(&usage["result"]);
+                    self.transcript.push(TranscriptLine::status(summary));
                 }
                 "/undo" => {
                     let undone = self.session.as_mut().expect("session").undo_history(1).await?;
@@ -1048,6 +1285,23 @@ impl App {
         Ok(())
     }
 
+    /// Switch to another session: persist + close the current one, then open
+    /// `id` (create + load persisted context). Used by `/new` and the resume
+    /// picker.
+    async fn switch_to_session(&mut self, id: &str) -> anyhow::Result<()> {
+        if let Some(mut s) = self.session.take() {
+            let _ = s.save().await;
+        }
+        self.session_id = id.to_string();
+        let mut session = self.harness.create_session(id).await?;
+        let _ = session.load().await;
+        self.session = Some(session);
+        self.transcript
+            .push(TranscriptLine::status(format!("session: {id}")));
+        self.refresh_status().await;
+        Ok(())
+    }
+
     /// Resolve the front of the pending approval queue (`allow`, or `deny`
     /// with a user reason).
     async fn answer_approval(&mut self, allow: bool) -> anyhow::Result<()> {
@@ -1269,6 +1523,7 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> an
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::backend::Backend;
     use ratatui::style::Color;
 
     /// Reconstruct each buffer row as a string (for substring assertions).
@@ -1472,6 +1727,39 @@ mod tests {
     }
 
     #[test]
+    fn status_summary_is_readable() {
+        let status = serde_json::json!({
+            "model": "kimi-k2",
+            "permission": "manual",
+            "plan_mode": true,
+            "swarm_mode": false,
+            "thinking_effort": "high",
+            "context_tokens": 120,
+            "max_context_tokens": 1000,
+        });
+        let line = format_status(&status);
+        assert!(line.contains("model: kimi-k2"), "line: {line}");
+        assert!(line.contains("mode: plan"), "line: {line}");
+        assert!(line.contains("permission: manual"), "line: {line}");
+        assert!(line.contains("thinking: high"), "line: {line}");
+        assert!(line.contains("ctx: 120/1000"), "line: {line}");
+
+        let bare = format_status(&serde_json::json!({}));
+        assert!(bare.contains("mode: chat"), "bare: {bare}");
+        assert!(bare.contains("model: -"), "bare: {bare}");
+    }
+
+    #[test]
+    fn usage_summary_is_readable() {
+        let usage = serde_json::json!({
+            "total": { "input_tokens": 10, "output_tokens": 20, "total_tokens": 30 },
+        });
+        let line = format_usage(&usage);
+        assert_eq!(line, "usage: 30 total (10 in / 20 out)");
+        assert_eq!(format_usage(&serde_json::json!({})), "usage: no tokens recorded");
+    }
+
+    #[test]
     fn smoke_renders_two_panes() {
         use ratatui::backend::TestBackend;
 
@@ -1508,7 +1796,8 @@ mod tests {
         assert_eq!(gear_cell.style().fg, Some(Color::Blue));
         // The terminal cursor sits at the input editing position: inside the
         // input pane border (row 10 of 12; col = 1 border + 2 chars in).
-        assert_eq!(terminal.backend().get_cursor_position(), Some((3, 10)));
+        let pos = terminal.get_cursor_position().unwrap();
+        assert_eq!((pos.x, pos.y), (3, 10));
     }
 
     #[test]

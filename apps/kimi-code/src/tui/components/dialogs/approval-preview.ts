@@ -177,9 +177,6 @@ export class ApprovalPreviewViewer extends Container implements Focusable {
   }
 
   private renderFooter(width: number, bodyHeight: number): string {
-    const key = (text: string): string => currentTheme.boldFg('primary', text);
-    const dim = (text: string): string => currentTheme.fg('textMuted', text);
-
     const total = this.bodyLines.length;
     const viewRows = Math.max(1, bodyHeight - 2);
     const maxScroll = Math.max(0, total - viewRows);

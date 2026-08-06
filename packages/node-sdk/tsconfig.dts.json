@@ -11,8 +11,6 @@
   },
   "include": [
     "src/**/*.ts",
-    "../agent-core/src/**/*.ts",
-    "../agent-core/src/prompt-modules.d.ts",
     "../kaos/src/**/*.ts",
     "../kosong/src/**/*.ts",
     "../oauth/src/**/*.ts",

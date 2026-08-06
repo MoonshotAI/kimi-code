@@ -4,9 +4,11 @@
 //! `Session` handles; interface layers (TUI controllers, ACP adapter, future
 //! SDK consumers) code against this instead of raw RPC.
 
+pub mod auth;
 pub mod catalog;
 pub mod session;
 
+pub use auth::KimiAuth;
 pub use session::Session;
 
 use std::sync::Arc;

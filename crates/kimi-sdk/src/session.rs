@@ -39,6 +39,16 @@ impl Session {
             .await
     }
 
+    /// Start a swarm-discussion turn: enter swarm mode with a `task` trigger,
+    /// then run the prompt (node-sdk `Session.swarm` parity). Resolves with
+    /// the full wire response body of the prompt turn.
+    pub async fn swarm(&mut self, text: &str) -> serde_json::Value {
+        if let Err(error) = self.set_swarm_mode(true, Some("task")).await {
+            return serde_json::json!({ "error": { "message": error.to_string() } });
+        }
+        self.prompt(text).await
+    }
+
     /// The last assistant message's text from the session context, if any.
     pub async fn transcript(&mut self) -> anyhow::Result<Option<String>> {
         let body = self.client.session_get_context(&self.id).await;

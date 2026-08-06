@@ -6,7 +6,6 @@ import type {
   EngineGoalUpdatedEvent,
   EngineHookResultEvent,
   EngineLlmDeltaEvent,
-  EngineShellOutputEvent,
   EngineToolSettledEvent,
   EngineToolStartedEvent,
   EngineTurnEndedEvent,
@@ -53,11 +52,9 @@ import {
   type McpServerStatusSnapshot,
   selectMcpStartupStatusRows,
 } from '../utils/mcp-server-status';
-import { openUrl } from '#/utils/open-url';
 import { currentTheme } from '#/tui/theme';
 import type { ColorToken } from '#/tui/theme';
 import { errorReportHintLine } from '../constant/feedback';
-import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
 import { t } from '#/i18n';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { BtwPanelController } from './btw-panel';
@@ -778,7 +775,7 @@ export class SessionEventHandler {
     state.ui.requestRender();
   }
 
-  private handleCompactionBegin(event: EngineCompactionStartedEvent): void {
+  private handleCompactionBegin(_event: EngineCompactionStartedEvent): void {
     this.host.streamingUI.finalizeLiveTextBuffers('waiting');
     this.host.setAppState({
       isCompacting: true,

@@ -112,21 +112,30 @@ impl SessionCronStore {
 
     fn generate_unique_id(&self) -> String {
         for _ in 0..MAX_ID_ATTEMPTS {
-            let id: String = (0..8)
-                .map(|_| {
-                    let v = fastrand::u8(0..16);
-                    std::char::from_digit(v as u32, 16).unwrap()
-                })
-                .collect();
+            let id = random_hex_id(8);
             if !self.tasks.contains_key(&id) {
                 return id;
             }
         }
-        panic!(
-            "SessionCronStore: failed to generate a unique 8-hex id after {} attempts",
-            MAX_ID_ATTEMPTS
-        );
+        // A collision burst is astronomically unlikely (32-bit space over
+        // 65k tries), but if it ever happens the store must not crash: fall
+        // back to a 16-hex (64-bit) id, which cannot collide in practice.
+        loop {
+            let id = random_hex_id(16);
+            if !self.tasks.contains_key(&id) {
+                return id;
+            }
+        }
     }
+}
+
+fn random_hex_id(len: usize) -> String {
+    (0..len)
+        .map(|_| {
+            let v = fastrand::u8(0..16);
+            std::char::from_digit(u32::from(v), 16).unwrap_or('0')
+        })
+        .collect()
 }
 
 #[cfg(test)]

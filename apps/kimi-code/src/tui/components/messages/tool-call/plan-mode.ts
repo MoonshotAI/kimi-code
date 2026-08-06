@@ -5,8 +5,6 @@
  * UI or state dependencies.
  */
 
-import { t } from '#/i18n';
-
 const APPROVED_PLAN_MARKER = '## Approved Plan:';
 const AUTO_APPROVED_PLAN_MARKER = '## Plan (auto-approved, not user-reviewed):';
 const AUTO_APPROVED_NOTE = 'auto-approved without user review';

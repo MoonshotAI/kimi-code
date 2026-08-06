@@ -27,7 +27,7 @@ export class CodingPlanConfigComponent extends Container implements Focusable {
     ];
     for (const key of this.fieldOrder) {
       const value = opts.currentConfig[key];
-      this.fields[key] = value !== undefined ? String(value) : '';
+      this.fields[key] = value !== undefined ? stringifyConfigValue(value) : '';
     }
   }
 
@@ -108,6 +108,15 @@ export class CodingPlanConfigComponent extends Container implements Focusable {
     lines.push(currentTheme.fg('primary', '─'.repeat(width)));
     return lines.map((line) => line.slice(0, width));
   }
+}
+
+function stringifyConfigValue(value: unknown): string {
+  if (value === null) return 'null';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+  return JSON.stringify(value);
 }
 
 function fieldLabel(key: string): string {

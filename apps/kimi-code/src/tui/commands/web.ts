@@ -6,7 +6,7 @@ import { parseServerOptions, tryResolveServerToken } from '#/cli/sub/web/shared'
 import { openUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
 
-import { getLlmNotSetMessage, getNoActiveSessionMessage, MAIN_AGENT_ID, PRODUCT_NAME } from '../constant/kimi-tui';
+import { getNoActiveSessionMessage } from '../constant/kimi-tui';
 import { darkColors } from '../theme/colors';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { SlashCommandHost } from './dispatch';

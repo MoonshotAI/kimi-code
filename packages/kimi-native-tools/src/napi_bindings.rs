@@ -2841,14 +2841,12 @@ pub async fn pkce_start_loopback() -> napi::Result<LoopbackHandle> {
 /// abandons the flow doesn't wedge the agent.
 #[napi]
 pub async fn pkce_await_callback(handle: &LoopbackHandle) -> napi::Result<CallbackPayload> {
-    // The `#[napi]` macro hands us `&LoopbackHandle`; we need `&mut` to
-    // call `wait_for_callback`. Convert via raw pointer — safe because
-    // napi guarantees JS-side serialization keeps the handle pinned for
-    // the duration of this future.
-    let handle_ptr = handle as *const LoopbackHandle as *mut LoopbackHandle;
-    let server_ref = unsafe { &mut (*handle_ptr).server };
-    let server = server_ref
-        .as_mut()
+    // `wait_for_callback` takes `&self` (the oneshot receiver is behind a
+    // Mutex), so no raw-pointer `&mut` aliasing is needed and concurrent
+    // calls on the same handle are serialized safely.
+    let server = handle
+        .server
+        .as_ref()
         .ok_or_else(|| napi::Error::from_reason("loopback server already awaited"))?;
     let params = server
         .wait_for_callback()

@@ -251,9 +251,9 @@ export abstract class SDKRpcClientBase {
   }
 
   async createSessionWithKaos(
-    input: CreateSessionOptions,
-    kaos: Kaos,
-    persistenceKaos?: Kaos,
+    _input: CreateSessionOptions,
+    _kaos: Kaos,
+    _persistenceKaos?: Kaos,
   ): Promise<SessionSummary> {
     throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Kaos overrides not supported');
   }
@@ -264,9 +264,9 @@ export abstract class SDKRpcClientBase {
   }
 
   async resumeSessionWithKaos(
-    input: ResumeSessionInput,
-    kaos: Kaos,
-    persistenceKaos?: Kaos,
+    _input: ResumeSessionInput,
+    _kaos: Kaos,
+    _persistenceKaos?: Kaos,
   ): Promise<ResumedSessionSummary> {
     throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Kaos overrides not supported');
   }

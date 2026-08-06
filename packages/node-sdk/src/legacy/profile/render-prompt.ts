@@ -16,7 +16,7 @@ export function renderPrompt(template: string, vars: Record<string, unknown>): s
     if (value === undefined) {
       throw new Error(`Missing template variable: ${name}`);
     }
-    return String(value);
+    return stringifyTemplateValue(value);
   });
 
   // Then resolve `{% if NAME %}...{% endif %}` truthiness blocks.
@@ -36,4 +36,13 @@ export function renderPrompt(template: string, vars: Record<string, unknown>): s
   }
 
   return out;
+}
+
+function stringifyTemplateValue(value: unknown): string {
+  if (value === null) return 'null';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+  return JSON.stringify(value);
 }

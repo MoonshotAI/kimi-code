@@ -7,12 +7,16 @@ description = "Kimi Code host protocol transports — stdio/unix-socket/websocke
 
 [dependencies]
 anyhow = "1"
+axum = { version = "0.8", features = ["ws"] }
+base64 = "0.22"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 kimi-protocol = { path = "../kimi-protocol" }
 kimi-server = { path = "../kimi-server" }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["net"] }
 tokio-tungstenite = "0.24"
+tower-http = { version = "0.6", features = ["fs"] }
 
 [dev-dependencies]
 kimi-server-client = { path = "../kimi-server-client" }
+reqwest = { workspace = true }

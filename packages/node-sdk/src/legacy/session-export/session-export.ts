@@ -36,7 +36,7 @@ export async function exportSessionDirectory(input: {
     readonly version: string;
     readonly includeGlobalLog?: boolean | undefined;
     readonly installSource?: string | undefined;
-    readonly shellEnv?: unknown | undefined;
+    readonly shellEnv?: unknown;
   };
   readonly summary: SessionSummary;
   readonly homeDir?: string | undefined;

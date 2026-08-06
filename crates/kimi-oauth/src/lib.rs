@@ -141,6 +141,51 @@ pub async fn refresh_access_token(
         .ok_or_else(|| anyhow::anyhow!("refresh response missing access_token"))
 }
 
+/// A granted token pair from a completed device flow.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceToken {
+    pub access_token: String,
+    #[serde(default)]
+    pub refresh_token: Option<String>,
+    #[serde(default)]
+    pub expires_in: Option<u64>,
+}
+
+/// Run the full device authorization flow: request a device code, surface the
+/// verification info via `on_prompt`, then poll until the user approves (or
+/// `max_polls` is exhausted). Returns the granted token pair.
+pub async fn run_device_flow(
+    config: &OAuthFlowConfig,
+    max_polls: Option<u32>,
+    on_prompt: &mut impl FnMut(&DeviceAuthorization),
+) -> anyhow::Result<DeviceToken> {
+    let auth = request_device_authorization(config).await?;
+    on_prompt(&auth);
+    let interval = auth.interval.unwrap_or(5);
+    let polls = max_polls.unwrap_or(u32::MAX);
+    for _ in 0..polls {
+        match poll_device_token(config, &auth.device_code).await? {
+            DevicePollResult::Success {
+                access_token,
+                refresh_token,
+                expires_in,
+            } => {
+                return Ok(DeviceToken {
+                    access_token,
+                    refresh_token,
+                    expires_in,
+                });
+            }
+            DevicePollResult::Pending => {
+                tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+            }
+            DevicePollResult::Expired => anyhow::bail!("device code expired before approval"),
+            DevicePollResult::Denied => anyhow::bail!("authorization denied by the user"),
+        }
+    }
+    anyhow::bail!("device flow timed out after {polls} polls")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -6,7 +6,7 @@ use ratatui::style::Color;
 use std::path::PathBuf;
 
 /// Semantic color tokens the renderer uses (no hardcoded ratatui colors).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Theme {
     /// User prompt prefix.
     pub user: Color,

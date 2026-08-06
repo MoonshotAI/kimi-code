@@ -1,5 +1,7 @@
 //! Cancel semantics against a hanging LLM step: `session/cancel` must
-//! interrupt an in-progress prompt turn.
+//! interrupt an in-progress prompt turn, and a cancellation that landed
+//! before a turn starts must abort that turn (the flag is swapped — read and
+//! cleared — at the turn boundary, never blindly reset).
 //!
 //! Pointer-consistency of the cancel flag: `session/create` registers the
 //! agent's `cancellation` `Arc` in the server's per-session map, and the
@@ -47,22 +49,38 @@ async fn wait_for_event(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn cancel_aborts_a_hung_prompt_turn() {
-    home("cancel");
+async fn pre_cancel_aborts_the_next_turn() {
+    home("pre-cancel");
+    let harness = Harness::embedded_with_llm_step(Some(hanging_llm())).expect("embedded");
+
+    let mut session = harness.create_session("s-pre").await.expect("create");
+
+    // Cancel on an idle session reports the flag set (registered at create).
+    let pre = session.cancel().await;
+    assert_eq!(pre["result"]["cancelled"], true, "pre-cancel: {pre}");
+
+    // The flag is swapped (read + cleared) at the turn boundary: a cancel
+    // that landed before the turn started aborts this turn instead of being
+    // swallowed — the hung LLM is never even entered.
+    let body = tokio::time::timeout(std::time::Duration::from_secs(10), session.prompt("should abort"))
+        .await
+        .expect("prompt settles");
+    assert_eq!(
+        body["result"]["stop_reason"], "Aborted",
+        "pre-cancelled turn aborts: {body}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mid_turn_cancel_aborts_the_hung_prompt_turn() {
+    home("mid-cancel");
     let harness = Harness::embedded_with_llm_step(Some(hanging_llm())).expect("embedded");
     let mut guard = harness.events().await;
     let mut events = guard.as_mut().expect("event source");
 
     let mut session = harness.create_session("s-probe").await.expect("create");
 
-    // Pre-cancel: the cancel flag is registered at session/create, so an
-    // idle session reports `cancelled: true` before any turn has run.
-    let pre = session.cancel().await;
-    assert_eq!(pre["result"]["cancelled"], true, "pre-cancel: {pre}");
-
-    // The flag is reset at turn start (`run_turn_with_origin` stores false),
-    // so the pre-cancel does not prevent the turn from starting — the LLM
-    // then hangs, keeping the turn active.
+    // Start a turn with the hanging LLM, which keeps it active.
     let mut prompt_session = session.clone();
     let prompt_task = tokio::spawn(async move {
         prompt_session.prompt("start a turn that will be cancelled").await
@@ -86,4 +104,3 @@ async fn cancel_aborts_a_hung_prompt_turn() {
         .expect("prompt settles after cancel")
         .expect("no panic");
     assert_eq!(body["result"]["stop_reason"], "Aborted", "prompt: {body}");
-}

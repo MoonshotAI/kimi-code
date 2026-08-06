@@ -100,22 +100,20 @@ describe('i18n', () => {
 
   describe('no single-brace placeholders', () => {
     it('all toolsV2 value strings use {{param}} not {param}', () => {
-      const raw = (en as unknown as Record<string, unknown>).toolsV2 as Record<string, unknown>;
-      const visited = new Set<string>();
+      const violations: string[] = [];
 
       function walk(obj: unknown, path: string): void {
         if (obj === null || typeof obj !== 'object') return;
         for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
           const fullKey = path ? `${path}.${key}` : key;
           if (typeof value === 'string') {
-            visited.add(fullKey);
             // Match single-brace {word} that is NOT a JSX/React pattern
             const singleBrace = value.match(/(?<!\{)\{([a-zA-Z_][a-zA-Z0-9_]*)\}(?!\})/);
             if (singleBrace) {
               // Exception: only JS escape sequences like \n should not be flagged
               const prefix = value.substring(0, Math.max(0, singleBrace.index! - 1));
               if (!prefix.endsWith('\\')) {
-                expect.unreachable(`toolsV2.${fullKey} has single-brace placeholder "${singleBrace[0]}" in "${value}"`);
+                violations.push(`toolsV2.${fullKey} has single-brace placeholder "${singleBrace[0]}" in "${value}"`);
               }
             }
           } else {
@@ -125,6 +123,7 @@ describe('i18n', () => {
       }
 
       walk(en, '');
+      expect(violations).toEqual([]);
     });
   }); // no single-brace placeholders
 

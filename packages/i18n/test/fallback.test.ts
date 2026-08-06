@@ -112,20 +112,18 @@ describe('i18n fallback (KIMI_I18N_FORCE_JS=1)', () => {
 
   describe('no single-brace placeholders', () => {
     it('all toolsV2 value strings use {{param}} not {param}', () => {
-      const raw = (en as unknown as Record<string, unknown>).toolsV2 as Record<string, unknown>;
-      const visited = new Set<string>();
+      const violations: string[] = [];
 
       function walk(obj: unknown, path: string): void {
         if (obj === null || typeof obj !== 'object') return;
         for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
           const fullKey = path ? `${path}.${key}` : key;
           if (typeof value === 'string') {
-            visited.add(fullKey);
             const singleBrace = value.match(/(?<!\{)\{([a-zA-Z_][a-zA-Z0-9_]*)\}(?!\})/);
             if (singleBrace) {
               const prefix = value.substring(0, Math.max(0, singleBrace.index! - 1));
               if (!prefix.endsWith('\\')) {
-                expect.unreachable(`toolsV2.${fullKey} has single-brace placeholder "${singleBrace[0]}" in "${value}"`);
+                violations.push(`toolsV2.${fullKey} has single-brace placeholder "${singleBrace[0]}" in "${value}"`);
               }
             }
           } else {
@@ -135,6 +133,7 @@ describe('i18n fallback (KIMI_I18N_FORCE_JS=1)', () => {
       }
 
       walk(en, '');
+      expect(violations).toEqual([]);
     });
   });
 

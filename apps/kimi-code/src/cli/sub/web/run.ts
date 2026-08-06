@@ -8,6 +8,8 @@
  * `startServer`).
  */
 
+import { existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 
 import { createServerLogger, startServer, type ServerLogger } from '@moonshot-ai/kap-server';
@@ -147,7 +149,12 @@ export async function handleWebCommand(
   deps: WebCommandDeps = DEFAULT_WEB_COMMAND_DEPS,
 ): Promise<void> {
   const parsed = parseServerOptions(opts);
-  const run = deps.startServerForeground ?? startServerForeground;
+  // Rust-server cutover (env-gated): when `KIMI_WEB_RUST_SERVER` is set, run
+  // the Rust `kimi-server-serve --http` binary instead of in-process kap-server.
+  const useRustServer = process.env['KIMI_WEB_RUST_SERVER'] === '1';
+  const run =
+    deps.startServerForeground ??
+    (useRustServer ? startRustServerForeground : startServerForeground);
   await run(parsed, {
     onReady: (origin) => {
       // Resolve the persistent token only once the server is up: a fresh
@@ -207,6 +214,75 @@ export async function startServerForeground(
   hooks: StartForegroundHooks = {},
 ): Promise<never> {
   return runServerInProcess(options, hooks.onReady);
+}
+
+/**
+ * Run the Rust `kimi-server-serve` binary in the foreground (the "only web is
+ * TS" cutover: the Rust server replaces kap-server for REST/WS + the SPA).
+ * Gated by `KIMI_WEB_RUST_SERVER=1`; falls back to kap-server otherwise.
+ */
+export async function startRustServerForeground(
+  options: ParsedServerOptions,
+  hooks: StartForegroundHooks = {},
+): Promise<never> {
+  const bin = resolveRustServeBin();
+  if (!bin) {
+    process.stderr.write(
+      'kimi web: KIMI_WEB_RUST_SERVER is set but kimi-server-serve was not found; falling back to kap-server\n',
+    );
+    return runServerInProcess(options, hooks.onReady);
+  }
+  const args = ['--http', `${options.host}:${options.port}`];
+  if (options.dangerousBypassAuth) args.push('--no-auth');
+  if (!options.dangerousBypassAuth) {
+    const assets = serverWebAssetsDir();
+    if (assets) args.push('--assets', assets);
+  }
+  process.stderr.write(`kimi web: starting Rust server: ${bin} ${args.join(' ')}\n`);
+  const child = spawn(bin, args, { stdio: 'inherit' });
+
+  let stopping = false;
+  async function shutdown(): Promise<void> {
+    if (stopping) return;
+    stopping = true;
+    child.kill('SIGTERM');
+    process.exit(0);
+  }
+  process.once('SIGINT', () => void shutdown());
+  process.once('SIGTERM', () => void shutdown());
+
+  const origin = `http://${options.host}:${options.port}`;
+  await waitForHealth(origin);
+  hooks.onReady?.(origin);
+  return new Promise<never>(() => {
+    child.once('exit', () => process.exit(0));
+  });
+}
+
+/** Locate the Rust server binary: env override, repo build output, or PATH. */
+function resolveRustServeBin(): string | null {
+  const fromEnv = process.env['KIMI_RUST_SERVE_BIN'];
+  if (fromEnv && existsSync(fromEnv)) return fromEnv;
+  const candidate = join(__dirname, '..', '..', '..', '..', 'target', 'debug', `kimi-server-serve${process.platform === 'win32' ? '.exe' : ''}`);
+  if (existsSync(candidate)) return candidate;
+  return null;
+}
+
+/** Probe `GET /api/v1/health` until the server answers (or 15s elapse). */
+async function waitForHealth(origin: string): Promise<void> {
+  const deadline = Date.now() + 15_000;
+  for (;;) {
+    if (Date.now() > deadline) {
+      throw new Error(`kimi web: Rust server did not become healthy at ${origin}`);
+    }
+    try {
+      const res = await fetch(`${origin}/api/v1/health`);
+      if (res.ok) return;
+    } catch {
+      // not up yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
 }
 
 /**

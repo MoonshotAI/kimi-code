@@ -1535,7 +1535,7 @@ describe('SSHKaos.close lifecycle', () => {
 
     await kaos.close();
 
-    await expect(() => kaos.exec('pwd')).toThrow(/has been closed/);
+    expect(() => kaos.exec('pwd')).toThrow(/has been closed/);
   });
 
   it('resolves after the 5s timeout when the close event never fires', async () => {

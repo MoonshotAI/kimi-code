@@ -152,7 +152,6 @@ function buildDiscussionResultSummary(result: ToolResultBlockData): Component[] 
   const dim = (s: string): string => currentTheme.fg('textDim', s);
   const accent = (s: string): string => currentTheme.fg('primary', s);
 
-  const summaryMatch = result.output.match(/<summary>([^<]+)<\/summary>/);
   const transcriptMatch = result.output.match(/<transcript>([\s\S]*?)<\/transcript>/);
   const summaryTextMatch = result.output.match(/<final_summary>([\s\S]*?)<\/final_summary>/);
 
@@ -180,7 +179,7 @@ function buildDiscussionResultSummary(result: ToolResultBlockData): Component[] 
   ];
 
   const summaryText = summaryTextMatch?.[1];
-  if (summaryText != null && summaryText.trim().length > 0) {
+  if (summaryText !== undefined && summaryText !== null && summaryText.trim().length > 0) {
     components.push(new Text('', 2, 0));
     components.push(new Text(accent(t('tui.messages.toolCall.discussionSummary')), 2, 0));
     for (const line of summaryText.trim().split('\n')) {

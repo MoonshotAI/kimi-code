@@ -12,12 +12,12 @@ it('renders the coder system prompt', () => {
       shellName: 'bash',
       shellPath: 'C:/Program Files/Git/bin/bash.exe',
     },
-    cwd: 'D:/kimi/kimi-code',
+    cwd: 'G:/kimi-code',
     cwdListing: 'src/\ntests/\n',
     agentsMd: 'project instructions',
     additionalDirsInfo: '',
   } as never);
   expect(prompt.length).toBeGreaterThan(100);
-  expect(prompt).toContain('D:/kimi/kimi-code');
+  expect(prompt).toContain('G:/kimi-code');
   console.log('prompt chars:', prompt.length);
 });

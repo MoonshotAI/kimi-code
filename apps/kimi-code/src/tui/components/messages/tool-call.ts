@@ -26,7 +26,7 @@ import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 import { t } from '#/i18n';
 
 import { ShellExecutionComponent } from './shell-execution';
-import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
+import { pickChip } from './tool-renderers/chip';
 import { buildGoalToolHeader } from './tool-renderers/goal';
 import { isGenericToolResult } from './tool-renderers/registry';
 

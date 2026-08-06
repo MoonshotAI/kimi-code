@@ -29,6 +29,8 @@
   "dependencies": {
     "@moonshot-ai/kimi-i18n": "workspace:*",
     "pathe": "catalog:",
+    "socks": "^2.8.9",
+    "undici": "^8.5.0",
     "zod": "catalog:"
   },
   "devDependencies": {

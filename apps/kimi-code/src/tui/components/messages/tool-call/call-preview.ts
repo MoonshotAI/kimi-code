@@ -54,7 +54,7 @@ export interface CallPreviewContext {
  * Tools without a dedicated preview produce an empty list.
  */
 export function buildCallPreview(ctx: CallPreviewContext): Component[] {
-  const { toolCall, result, expanded, markdownTheme } = ctx;
+  const { toolCall, result, expanded } = ctx;
   const name = toolCall.name;
 
   if (name === 'ExitPlanMode') {

@@ -14,7 +14,6 @@ import { z } from 'zod';
 
 import { getDataDir } from '#/utils/paths';
 
-import type { Locale } from '#/i18n';
 import { t } from '#/i18n';
 
 export function getInvalidTuiConfigMessage(): string {

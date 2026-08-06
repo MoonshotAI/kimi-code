@@ -185,7 +185,7 @@ fn is_win32_drive_relative(path: &str) -> bool {
 fn is_absolute(path: &str, path_class: PathClass) -> bool {
     if path_class == PathClass::Win32 {
         // C:\path, \\server\share, or /path (POSIX-style on Win32 host)
-        path.len() >= 2 && path[..2].chars().next().unwrap().is_ascii_alphabetic()
+        path.len() >= 2 && path.as_bytes()[0].is_ascii_alphabetic()
             && path.as_bytes()[1] == b':'
             || path.starts_with("\\\\")
             || path.starts_with('/')
@@ -457,6 +457,15 @@ mod tests {
     #[test]
     fn test_canonicalize_drive_relative_win32() {
         assert!(canonicalize_path("C:path", "C:\\cwd", PathClass::Win32).is_err());
+    }
+
+    #[test]
+    fn test_is_absolute_win32_multibyte_first_char_no_panic() {
+        // Regression: a path whose first char is multi-byte (e.g. Chinese)
+        // must not panic on a byte-index slice that is not a char boundary.
+        assert!(!is_absolute("中文:path", PathClass::Win32));
+        assert!(!is_absolute("用户\\file", PathClass::Win32));
+        assert!(is_absolute("C:\\file", PathClass::Win32));
     }
 
     #[test]

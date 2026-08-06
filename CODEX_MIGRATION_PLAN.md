@@ -1,9 +1,120 @@
 # Rust-First 迁移计划（Codex 方向）— 详细版
 
 > **📌 本文档是"TS 壳 → 纯 Rust 核心"迁移的唯一权威。**
-> 状态：**框架定稿（2026-08-03），待逐阶段填充。**
+> 状态：**框架定稿（2026-08-03），方向收紧（2026-08-06），待逐阶段填充。**
 > 方向（用户确认 2026-08-03）：**走 Codex 方向——核心全部 Rust，TS 只留前端与分发薄壳**。
+> 方向（用户收紧 2026-08-06）：**只有 web 是 TS。除浏览器前端外，一切 TS 迁 Rust 或退役。**（本修订节优先于旧表述）
 > 参考资产：`D:/kimi/参考目录/_extracted_codex_full/codex-main`（codex-rs，60+ crates）。
+
+---
+
+# 2026-08-06 修订：只有 web 是 TS（权威版）
+
+## R-1. 目标定义（收紧自 2026-08-03 版）
+
+旧目标允许"前端与分发薄壳"留在 TS。本次收紧为：
+
+> **最终只有浏览器前端是 TS。** 其余所有 TypeScript——CLI/TUI 宿主、server、SDK、协议、OAuth、ACP、LLM 抽象、i18n 数据、rust-loop 桥——全部迁入 Rust 或退役。
+
+| 类别 | 保留 TS | 说明 |
+|---|---|---|
+| ✅ 保留（web 前端） | `kimi-web`(Vue3, 25.9k) / `kimi-inspect`(8.6k) / `vis/web`(≈6k) | 浏览器 UI，纯前端 |
+| ✅ 保留（前端壳，非引擎逻辑） | `vscode`(18.7k) / npm bin 包装(`kimi.mjs` 几 KB) | VS Code 宿主 API 必须 JS；webview 归 web。仅壳，逻辑全走 Rust RPC |
+| ❌ 迁 Rust | 见 R-3 迁移三态表 | 全部宿主层 |
+| ❌ 退役 | `pi-tui`(13.2k) / `transcript` / `migration-legacy` / `klient`(已退) / TS i18n 数据 | TUI 迁 Rust 后 pi-tui 无存在意义 |
+
+**明确不建**：`sdk/typescript`。codex 保留了一个 2.9k 的 TS SDK，但按本决策我们不建——外部消费者使用 `kimi-sdk`(Rust) 或 HTTP 协议。`i18n` 文案沉淀为 JSON 数据文件（非 TS 源码）。
+
+## R-2. codex 校准规模（2026-08-06 实测）
+
+codex 全 Rust 分层的规模 = 我们迁移目标的下限参考：
+
+| codex crate | Rust 行数 | 我们的对应 | 现状（实测） |
+|---|---|---|---|
+| `core` | 161k | kimi-agent（保留） | **99k** ✅ |
+| `tui` | **206.8k** | kimi-tui | TS 41k → **Rust 3.4k**（长杆） |
+| `cli` | 19.7k | kimi-cli | TS 9k → Rust 2.8k |
+| `app-server(+protocol/transport/client/daemon)` | 88k | kimi-server 系 | TS 16k → Rust 7.5k |
+| `exec` + `exec-server` | 20.1k | kimi-exec | TS 2k → Rust 0.2k |
+| `codex-api` | 10.3k | kimi-sdk | TS 16k → Rust 2.4k |
+| `protocol` / `config` / `state` | 54.6k | kimi-protocol/config/state | TS 5.2k → Rust 2.2k |
+| `login` | 8.4k | kimi-oauth | TS 5.5k → Rust 0.3k |
+| **`sdk/typescript`** | 2.9k | **不建** | 按 R-1 决策取消 |
+
+**当前语言构成（实测，排除 dist/生成物）**：TS src **232k** + TS test 167k；Rust **147k**（含内联测试）。迁移完成后：TS 仅剩 web+壳 ≈ **60k**，Rust ≈ **240k+**，比例从 1.6:1 反转为 **Rust 主导（≈75%+）**，TS 全部为前端 UI 与分发包装。
+
+## R-3. 迁移三态表（全部 TS 按此归类）
+
+| 现 TS 包 | 行数 | 处理 | 目标 |
+|---|---|---|---|
+| `apps/kimi-code` TUI | 41k | 迁 Rust | kimi-tui（长杆，见 R-4 分片） |
+| `apps/kimi-code` CLI | 9k | 迁 Rust | kimi-cli（大部分已落地） |
+| `apps/kimi-code` i18n/utils/constant | 9.4k | 迁/数据化 | kimi-tui + JSON 数据 |
+| `kap-server` | 16.2k | 迁 Rust | kimi-server（骨架已有 6.3k） |
+| `node-sdk` | 16.2k | 迁 Rust | kimi-sdk（骨架已有 2.4k） |
+| `kosong` | 11.1k | 迁 Rust | kimi-sdk LLM 面 |
+| `oauth` | 5.5k | 迁 Rust | kimi-oauth（device flow ✅） |
+| `acp-adapter` | 5.4k | 迁 Rust | kimi-acp（✅ 已落地） |
+| `protocol` | 5.2k | 迁 Rust | kimi-protocol |
+| `kaos` | 3.1k | 退役/并 | SSH 面评估后裁并 |
+| `transcript` / `telemetry` | 5k | 退役/并 | 引擎回调 / 并入 kimi-core |
+| `migration-legacy` | 4.2k | 退役 | 数据迁移一次性，退役 |
+| `pi-tui` | 13.2k | 退役 | kimi-tui 完成后删除 |
+| `kimi-agent` 内 TS（rust-loop 3.4k + runtime 兼容 4k） | 7.4k | 退役 | Rust transport 已覆盖；runtime 兼容层缩至最小或删 |
+| `kimi-web`/`kimi-inspect`/`vis/web`/`vscode` | 60k | **保留** | 唯一 web/壳 |
+
+## R-4. 收口路线（在阶段 A–F 之上新增，最终指向 web-only）
+
+> 阶段 A–E 已完成/大部分完成（见 §6/§8 历史）。R-4 是**把 TS 宿主从 232k 清到 ≈60k** 的执行顺序，按"杠杆 × 自包含 × 消费依赖"排序：
+
+| 步 | 内容 | 规模 | 前置 |
+|---|---|---|---|
+| **G-0** | 基线锁定：`cargo test --workspace` 全绿 + TS 侧存量冻结（新增 TS 逻辑先与 Rust 核对） | — | — |
+| **G-1** | `node-sdk → kimi-sdk` 补齐（session/harness/auth/catalog/legacy 全部面）→ `apps` 消费点(221 refs) 逐个切 Rust | 16k | 消最大消费面，解锁包退役 |
+| **G-2** | `kap-server → kimi-server`（routes/services/protocol 全量）→ `kimi web`/kimi-inspect 改连 Rust server | 16k | G-1（共用 client 面） |
+| **G-3** | `apps/kimi-code` CLI 消费面切 `kimi-cli`（auth/provider/telemetry 面，native-session 已完成 plugin/cron/archive） | 9k | G-1/G-2 |
+| **G-4** | `apps/kimi-code` TUI → `kimi-tui` 分片搬运（**长杆**）：① app 主循环/事件源 ✅ → ② chatwidget 组件树（components/messages 20k）→ ③ bottom_pane/controllers → ④ theme/media/reverse_rpc → ⑤ 对拍测试 | 41k | G-3 |
+| **G-5** | `kosong/kaos/protocol` LLM 面并入 kimi-sdk/kimi-protocol；`transcript/telemetry` 收编 | 20k | G-1 |
+| **G-6** | 退役：`node-sdk/kap-server/acp-adapter/oauth/protocol/kaos` → `retired/`；删 `rust-loop.ts`、TS i18n、TS 入口 `dist/main.mjs`、`pi-tui` | — | G-1..G-5 全部 |
+| **G-7** | web-only 验证：CLI/TUI/API 全 Rust 端到端；`kimi-web`/`kimi-inspect`/`vscode` 直连 Rust server；删除全部旧 TS 测试 | — | G-6 |
+
+**G-4 TUI 推进（2026-08-06，chatwidget 组件树起步）**：
+- **历史 transcript 渲染 tool-call 卡片 ✅**（`crates/kimi-tui/src/transcript.rs`）：`parse_history` 从 text 二元组改为 `HistoryPart`（Text/ToolCall/ToolResult），解析 `tool_use`/`tool_result` 内容部件——恢复会话时显示 `⚙ name(args)` / `⚙ → result` 卡片（参数/结果压到 120 字符单行）。修 2 个解析 bug（tool_result 被并进 text、缺 input 时 args="null"）。kimi-tui **56/56 绿**
+- **实时 tool 事件渲染增强 ✅**（`crates/kimi-ui/src/render.rs`）：`session.tool.started` 显示参数 `tool Read({...})`、`session.tool.settled` 显示结果 `tool Read -> ok: file contents`（80 字符预览）。kimi-ui 11/11 绿
+- **通用 Selector 组件 ✅**（`crates/kimi-tui/src/picker.rs`）：交互选择器（↑/↓ 移动、Enter 选择、Esc/Ctrl-C 取消，空列表直接 None）；已接线 **4 处**：`/model`（无参弹别名选择器）、`/skills`（name+description 选择器，选中显示详情）、`/sessions`（picker 切换会话，与 `/resume` 共用 `switch_to_session` 提取方法，消除重复）、启动 session picker（重构复用，删除重复 `PickerState`/`render_picker`）。kimi-tui **57/57 绿**
+- **状态/用量可读化 ✅**：`/status` 渲染 `model · mode · permission · thinking · ctx` 单行摘要（`format_status`）、`/usage` 渲染 `total (in/out)`（`format_usage`），不再裸 JSON；各 +1 纯函数测试。kimi-tui **59/59 绿**
+- **B3 事件渲染全覆盖 ✅**（`crates/kimi-ui/src/render.rs` + app 事件循环）：`render_event` 支持 `kind` 判别（cron 调度器发 `CronFireEvent` 用 `kind` 无 `type`——此前裸 JSON 漏判）；丰富 `session.goal.updated`（status+objective/cleared）、`session.approval.requested`（tool_name+args）、新增 `cron.fired`（job+schedule+prompt）；app 未知事件静默跳过（TS 对齐）。**所有引擎会话事件均有意义渲染**
+- **B4 命令面对齐 ✅**（+10 命令 → 46 总）：新增 `/permission`（set_permission）/ `/yolo` / `/auto` / `/new`（fresh session）/ `/init`（agents.md）/ `/title`（重命名）/ `/mcp`（MCP 列表）/ `/tasks`（后台任务）/ `/theme` / `/version`；同步 SLASH_COMMANDS + COMMAND_HELP + needs_session。TS 42 命令剩余多为架构明确不支持（workflow/dispatch/web）或纯前端（editor/theme 选择器）
+- **B5 交互流 ✅（可达部分）**：`/permission` 无参弹模式选择器（manual/plan/auto/yolo）；`/theme` 真正切换 dark/light（App 增 `dark_mode` 字段，Theme 加 PartialEq）；审批流已有（y/n、v 详情、/approve /deny /approvals）
+- **⚠️ AskUserQuestion 提问流 = 引擎级缺口**：`AskUserQuestion` 工具**未注册进引擎 NativeToolset**（`packages/kimi-agent/src/tools/mod.rs` 工具集无它），模型无法调用 → TUI 提问弹窗无从触发。需引擎侧先注册工具 + host 回调路径，再补 TUI 提问对话框（列入后续）
+
+**G-4 分片细则（参照 codex tui 结构）**：`kimi-tui` 现为 chat REPL(5 文件/3.4k，ratatui)。按 codex `tui/`（app/ chatwidget/ bottom_pane/ render/ streaming/ status/）分片：先 `components/messages` 渲染树（tool 卡片/审批/媒体，**tool 卡片已起步 ✅**），再 `controllers` 事件路由，最后 `theme`/`markdown` 收口。**每片以 TestBackend 冒烟 + 与 TS 版行为对拍为完成标准。**
+
+**G-2 缺口盘点（2026-08-06，kap-server 20 路由 vs kimi-server 13 processor）**：
+
+| kap-server 路由 | 规模 | kimi-server 现状 |
+|---|---|---|
+| `rustSessions.ts` / `fs.ts` / `config.ts` / `files.ts` / `sessionExport.ts` / `skills.ts` / `tools.ts` / `shutdown.ts` | ~2.3k | RPC 面已由 session/fs/config/skill 等 processor 覆盖 ✅；缺 **HTTP 投影层** |
+| `snapshot.ts` / `transcript.ts` / `workspaces.ts` / `connections.ts` / `meta.ts` | ~780 | vis/kimi-inspect 的 replay/workspace 面——**Rust 无对应** |
+| `modelCatalog.ts` | 651 | kimi-sdk::catalog 已有模型目录逻辑；**HTTP 投影缺失** |
+| `oauth.ts` / `auth.ts` | 301 | kimi-oauth + kimi-sdk::auth 已具备逻辑；**HTTP 投影缺失** |
+| `guiStore.ts` / `webAssets.ts` / `action-suffix.ts` / `registerApiV1Routes.ts` | 555 | 宿主专属（GUI 状态/静态资源/路由注册），随分发薄壳处置 |
+
+**关键结论**：kimi-server 的 **RPC processor 面已基本齐全**；G-2 的真正缺口是 **HTTP/REST 投影层**（web 前端要连的东西）。kimi-server-transport 目前只有 stdio + WS JSON-RPC。这引出一个设计决策：
+- **A：在 Rust 复刻 kap-server 的 REST `/api/v1` 投影**（axum 路由），web 前端不改协议；
+- **B：web 前端改走 JSON-RPC-over-WS**（kimi-server-transport 已有），免建 REST 层，但 kimi-web/vscode/vis 要改连接层。
+倾向 A（前端零改动、投影薄、复用现有 processor）；B 可作长期收敛方向。**待用户定案。**
+
+## R-5. 与旧目标的差异点（冲突时以 R 节为准）
+
+1. **取消 TS SDK**：不建 `sdk/typescript`（codex 保留，我们不保留）。
+2. **rust-loop.ts 退役**：旧计划把它"保留为桥接层"；现在 Rust transport 已全链路可用，直接退役。
+3. **npm 薄壳缩到纯 bin 包装**：`kimi-code-rust-bin` 的 JS 只做 spawn 转发（几 KB），不承载任何逻辑。
+4. **i18n 数据化**：4.2k 文案 → JSON，非 TS 源码。
+5. **`transcript`/`telemetry` 不再"保持薄 TS"**：收编进 Rust 或退役。
+6. **阶段 F 的"TS 前端保留"范围**从"全部前端"缩到"仅 web/壳"。
+
+---
 
 ## 1. 现状盘点（迁移输入）
 
@@ -386,6 +497,8 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 
 ## 8. 状态
 
+> **2026-08-06：方向收紧为"只有 web 是 TS"（见顶部 R 节）。后续推进以 R-4 的 G-0..G-7 收口路线为准；A–F 阶段为历史进度。**
+
 - [x] 阶段 A 框架落地（kimi-protocol + workspace + wire 类型下沉）✅
 - [x] 阶段 B 宿主协议层（kimi-server 52 测试 + transport/serve 二进制 + client InProcess/Remote 全链路）✅
 - [x] 阶段 C CLI + exec（31 集成测试 + typed client + 配置读写闭环 + chat REPL + acp 命令 + print/resume 目标模式 + 全旗标对称）✅
@@ -394,6 +507,25 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - [ ] 阶段 F 退役（**npm 分发薄壳 ✅ 已验证**：kimi-code-rust-bin 包装 + pack.mjs CI 打包；**入口切换 wrapper ✅ 已落代码**：apps/kimi-code `bin` → `bin/kimi.mjs` 优先 Rust 回退 TS，`smoke:entry` 冒烟两条路径通过；web/vis/upgrade 已识别；TS 删除待续）
 
 ## 9. 迁移推进会话快照（2026-08，分支 feat/rust-agent-engine-migration）
+
+**2026-08-06 G-2 进展（kimi-server-transport HTTP/REST 投影）**：
+- **web 前端切 Rust 三件套 ✅（2026-08-06）**：
+  1. **静态资源托管**：`router_with_assets` + `serve_web`（axum `ServeDir`，SPA 兜底 index.html），`--http ... --assets <dir>` 一条命令同时服务 API + SPA + WS（冒烟：`/`→200、`/app.js`→200、`/api/v1/health`→ok）
+  2. **Bearer 认证**：`AuthConfig` + `require_auth` 中间件（REST `Authorization: Bearer`，拒绝返回 envelope `code:40101`，kap-server 契约）+ WS `kimi-code.bearer.*` 子协议校验；serve 二进制读 `KIMI_CODE_PASSWORD` / `<KIMI_CODE_HOME>/server.token`（**修 BOM 坑**：PowerShell UTF8 BOM 不被 Rust trim 移除，需 `trim_start_matches('\uFEFF')`）；`--no-auth` 门控。实测三态：无 token→40101 / 正确→0 ok / 错误→40101
+  3. **`kimi web` 切换**：`startRustServerForeground`（spawn `kimi-server-serve --http --assets` + 健康探测 + SIGINT 清理），`KIMI_WEB_RUST_SERVER=1` 门控启用（默认仍 kap-server）；kimi-code typecheck 通过
+- **待浏览器验证**：`KIMI_WEB_RUST_SERVER=1 kimi web` 跑一遍，确认 SPA 加载 + WS 事件流 + auth token 流全链路
+- **`http.rs` HTTP 投影层 ✅**（`crates/kimi-server-transport/src/http.rs`，axum 0.8）：`/api/v1` 路由 → 同一 `MessageProcessor` 的 JSON-RPC 投影，响应复用 kap-server `{ code, msg, data, request_id }` envelope。已实现 **40+ 路由**：health / config get+set / sessions list+create / session status+update+delete+fork+archive+prompt+cancel+skills+tools+context+usage+plan+mcp-servers+export（zip 二进制下载）+approval resolve+snapshot+transcript / fs:action 三件套 + fs:browse+fs:home / auth readiness + models + providers（list/create/replace/delete）+ workspaces / **`/api/v1/ws`：JSON-RPC + 引擎事件广播**（`ServerState::event_sender` → 每 WS 连接 fan-out）。serve 二进制新增 `--http <addr>` 模式（`serve_with_events` 挂事件源）。
+- **测试**：lib 8（health envelope + 404）+ `http_e2e.rs`（内嵌 Server + reqwest 全流程）→ transport 全绿 **15/15**；`kimi-server-serve --http` 二进制实跑冒烟（health/create/list 全通）
+- **验证**：`cargo check --workspace` 通过
+- **剩余**：① web 前端连接层切 `--http`（kimi-web/vscode/vis 从 kap-server 改连 Rust server，逐路由对拍——这是把"Rust server 存在"变成"前端真在用"的关键，涉及保留 TS 前端）② G-3 CLI 消费面 ③ G-4 TUI 长杆 ④ G-5 收编 ⑤ G-6 退役 ⑥ G-7 验证
+
+**2026-08-06 G-1 进展（kimi-sdk 补齐，node-sdk → kimi-sdk）**：
+- **`Session::reload_session` ✅**（node-sdk `reloadSession` parity：load + get_status + transcript 组合，`session.rs`）+ 2 集成测试（保存后重载恢复上下文 / 新鲜会话重载报状态）。测试驱动确认：引擎 `session/load` 对「已创建未保存」会话也返回 `found:true`（判断内存 agent 存在性），not-found 分支仅为防御
+- **`KimiAuth` 门面 ✅**（`crates/kimi-sdk/src/auth.rs`，node-sdk `KimiAuthFacade` parity）：`login`（kimi-oauth `run_device_flow` → `config/set` 持久化 `providers.kimi.apiKey`）/ `logout`（null-patch 删除）/ `status`（读 config 判断）——复用 Harness 现有 config 面，零引擎改动；1 集成测试（mock OAuth 服务器 + 内嵌 Harness，login→status→logout 闭环）
+- **`Session::swarm` ✅**（node-sdk `swarm` parity：set_swarm_mode(trigger=task) + prompt）+ 1 集成测试（swarm turn 无 wire error + 上下文落地）
+- **基线**：kimi-sdk lib 2 + auth 1 + harness 11 + runtime 22 + probe_cancel 2 **全绿 38/38**
+- **probe_cancel 修复 ✅（2026-08-06）**：并行引擎改动把 cancel 语义改为「swap 读取——turn 开始前已置位的取消中止本次 turn」（`agent.rs::run_turn_with_origin` + 单测 `cancel_landed_before_turn_aborts_it`），但未同步集成测试。已按新语义重写 `probe_cancel.rs` 为两个测试：`pre_cancel_aborts_the_next_turn`（pre-cancel 后 prompt 立即 Aborted，不进入挂起 LLM）+ `mid_turn_cancel_aborts_the_hung_prompt_turn`（原中段 cancel 断言），2/2 通过
+- **kimi-sdk 剩余缺口**（相对 node-sdk Session 60 方法）：`onEvent`/`setApprovalHandler`/`setQuestionHandler`（事件/审批面——Rust 走拉取模型，属设计差异非缺口）、`getResumeState`（Session 无状态缓存）、`emitMetaUpdated`/`waitForBackgroundTasksOnPrint`/`handlePrintMainTurnCompleted`（TS 宿主合成/print 模式专用）——**可移植 Session 方法面已补齐**
 
 **2026-08-05 追加（Rust 端补全 goal 会话，未提交）**：
 - **kap-server 测试缺口 A1–A7**：export web_log 256KiB 引擎侧校验（`MAX_WEB_LOG_BYTES`，export.rs）+ 注入/拒绝测试、fs:search 3 测试、prompt 成功路径（`with_llm_step` fake LLM）、config 容错、approval 缺 decision、bg/list 空态、Remote stdio 方法族冒烟 → kimi-server 53→**63**

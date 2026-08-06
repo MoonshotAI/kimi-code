@@ -6,14 +6,14 @@
  * Run: node test/knowledge-e2e.cjs
  */
 
-const { join } = require('node:path');
+const path = require('node:path');
 const { mkdtempSync, rmSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 
 const native = require('../kimi-native-tools.win32-x64-msvc.node');
 
-const tmpDir = mkdtempSync(join(tmpdir(), 'kimi-knowledge-test-'));
-const dbPath = join(tmpDir, 'knowledge.db');
+const tmpDir = mkdtempSync(path.join(tmpdir(), 'kimi-knowledge-test-'));
+const dbPath = path.join(tmpDir, 'knowledge.db');
 
 let pass = 0;
 let fail = 0;

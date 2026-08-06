@@ -2,10 +2,37 @@
 //! transcript text. Ported from the kimi-cli binary so the future TUI can
 //! share them.
 
+/// Cap for a tool event's rendered argument / result preview.
+const TOOL_PREVIEW_CAP: usize = 80;
+
+/// Compact a tool event payload (arguments or result content) into a single
+/// short line. Strings pass through; objects/arrays serialize to JSON; the
+/// result is truncated to `TOOL_PREVIEW_CAP` chars with an ellipsis.
+fn compact_event_value(value: Option<&serde_json::Value>) -> String {
+    let Some(value) = value else { return String::new() };
+    let raw = match value {
+        serde_json::Value::String(s) => s.clone(),
+        other => serde_json::to_string(other).unwrap_or_default(),
+    };
+    let single = raw.replace('\n', " ");
+    let trimmed = single.trim().to_string();
+    if trimmed.chars().count() > TOOL_PREVIEW_CAP {
+        let mut out: String = trimmed.chars().take(TOOL_PREVIEW_CAP).collect();
+        out.push('…');
+        out
+    } else {
+        trimmed
+    }
+}
+
 /// Render an engine event as a compact human-readable progress line. Returns
 /// `None` for unknown event types so the caller can fall back to raw output.
 pub fn render_event(event: &serde_json::Value) -> Option<String> {
-    let r#type = event.get("type")?.as_str()?;
+    // Most events carry `type`; the cron scheduler emits `kind` (CronFireEvent).
+    let r#type = event
+        .get("type")
+        .or_else(|| event.get("kind"))
+        .and_then(|v| v.as_str())?;
     // Field accessor tolerant of both string and number payloads (turn_id,
     // task_id are numbers; tool_name, session_id are strings).
     let field = |name: &str| -> String {
@@ -48,11 +75,24 @@ pub fn render_event(event: &serde_json::Value) -> Option<String> {
                 Some(format!("llm: {total} tokens, {tool_calls} tool calls ({reason})"))
             }
         }
-        "session.tool.started" => Some(format!("tool {} started", field("tool_name"))),
+        "session.tool.started" => {
+            let name = field("tool_name");
+            let args = compact_event_value(event.get("arguments"));
+            if args.is_empty() {
+                Some(format!("tool {name} started"))
+            } else {
+                Some(format!("tool {name}({args})"))
+            }
+        }
         "session.tool.settled" => {
             let ok = !event.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
             let label = if ok { "ok" } else { "error" };
-            Some(format!("tool {} -> {label}", field("tool_name")))
+            let content = compact_event_value(event.get("content"));
+            if content.is_empty() {
+                Some(format!("tool {} -> {label}", field("tool_name")))
+            } else {
+                Some(format!("tool {} -> {label}: {content}", field("tool_name")))
+            }
         }
         "session.usage.updated" => {
             let total = event.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -66,8 +106,42 @@ pub fn render_event(event: &serde_json::Value) -> Option<String> {
             Some(format!("shell: {text}"))
         }
         "session.compaction.started" => Some("context compaction started".to_string()),
-        "session.approval.requested" => Some("approval requested".to_string()),
-        "session.goal.updated" => Some("goal updated".to_string()),
+        "session.approval.requested" => {
+            let name = field("tool_name");
+            let args = compact_event_value(event.get("arguments"));
+            if args.is_empty() {
+                Some(format!("approval requested: {name}"))
+            } else {
+                Some(format!("approval requested: {name}({args})"))
+            }
+        }
+        "session.goal.updated" => {
+            // `snapshot` carries the full goal or null; `status` is a quick
+            // diagnostic string. Render status + objective when available.
+            let status = field("status");
+            let snapshot = event.get("snapshot");
+            let objective = snapshot
+                .and_then(|s| s.get("objective"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if snapshot.is_none() || snapshot.is_some_and(|s| s.is_null()) {
+                Some(if status.is_empty() { "goal cleared".to_string() } else { format!("goal: {status}") })
+            } else if objective.is_empty() {
+                Some(format!("goal: {status}"))
+            } else {
+                Some(format!("goal: {status} — {objective}"))
+            }
+        }
+        "cron.fired" => {
+            let job = field("job_id");
+            let schedule = field("cron");
+            let prompt = compact_event_value(event.get("prompt"));
+            if prompt.is_empty() {
+                Some(format!("cron {job} fired ({schedule})"))
+            } else {
+                Some(format!("cron {job} fired ({schedule}): {prompt}"))
+            }
+        }
         "session.hook.result" => Some(format!("hook ran: {}", field("name"))),
         _ => None,
     }
@@ -139,12 +213,53 @@ mod tests {
                 "turn 3 ended (session s1)",
             ),
             (
-                serde_json::json!({ "type": "session.tool.started", "tool_name": "Read" }),
-                "tool Read started",
+                serde_json::json!({ "type": "session.tool.started", "tool_name": "Read", "arguments": { "path": "/tmp/a.txt" } }),
+                r#"tool Read({"path":"/tmp/a.txt"})"#,
             ),
             (
-                serde_json::json!({ "type": "session.tool.settled", "tool_name": "Read", "is_error": true }),
-                "tool Read -> error",
+                serde_json::json!({ "type": "session.tool.started", "tool_name": "Grep" }),
+                "tool Grep started",
+            ),
+            (
+                serde_json::json!({ "type": "session.tool.settled", "tool_name": "Read", "is_error": true, "content": "no such file" }),
+                "tool Read -> error: no such file",
+            ),
+            (
+                serde_json::json!({ "type": "session.tool.settled", "tool_name": "Read", "is_error": false, "content": "file contents" }),
+                "tool Read -> ok: file contents",
+            ),
+            (
+                serde_json::json!({
+                    "type": "session.approval.requested",
+                    "tool_name": "Write",
+                    "arguments": { "path": "/tmp/x" },
+                }),
+                r#"approval requested: Write({"path":"/tmp/x"})"#,
+            ),
+            (
+                serde_json::json!({
+                    "type": "session.goal.updated",
+                    "status": "Active",
+                    "snapshot": { "objective": "fix the bug", "status": "Active" },
+                }),
+                "goal: Active — fix the bug",
+            ),
+            (
+                serde_json::json!({ "type": "session.goal.updated", "status": "none", "snapshot": null }),
+                "goal: none",
+            ),
+            (
+                serde_json::json!({
+                    "kind": "cron.fired",
+                    "job_id": "j1",
+                    "cron": "0 9 * * *",
+                    "prompt": "morning reminder",
+                }),
+                "cron j1 fired (0 9 * * *): morning reminder",
+            ),
+            (
+                serde_json::json!({ "kind": "cron.fired", "job_id": "j2", "cron": "* * * * *" }),
+                "cron j2 fired (* * * * *)",
             ),
             (
                 serde_json::json!({ "type": "session.usage.updated", "total_tokens": 42 }),

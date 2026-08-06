@@ -562,6 +562,69 @@ async fn save_then_resume_restores_context() {
 }
 
 #[tokio::test]
+async fn reload_session_restores_context_and_reports_status() {
+    home("reload");
+    let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
+    let mut session = harness.create_session("s-reload").await.expect("create");
+
+    let body = session.prompt("remember this turn").await;
+    assert!(body.get("error").is_none(), "prompt: {body}");
+    session.save().await.expect("save");
+    session.destroy().await.expect("destroy");
+
+    // Reload re-applies the persisted context and reports the status —
+    // node-sdk `Session.reloadSession` parity.
+    let mut resumed = harness.create_session("s-reload").await.expect("recreate");
+    let summary = resumed.reload_session().await.expect("reload session");
+    assert_eq!(summary["id"].as_str(), Some("s-reload"), "summary: {summary}");
+    assert!(
+        summary["status"].is_object(),
+        "status present in summary: {summary}"
+    );
+    assert!(
+        summary["transcript"]
+            .as_str()
+            .map(|t| t.contains("hello from fake llm"))
+            .unwrap_or(false),
+        "context restored into transcript: {summary}"
+    );
+}
+
+#[tokio::test]
+async fn reload_session_on_fresh_session_reports_status() {
+    home("reload-fresh");
+    let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
+    let mut session = harness.create_session("s-fresh").await.expect("create");
+
+    // A created-but-never-persisted session still loads in the engine (the
+    // in-memory agent exists), so reload is a no-op summary — matches the
+    // node-sdk `reloadSession` behavior on a live session.
+    let summary = session.reload_session().await.expect("reload session");
+    assert_eq!(summary["id"].as_str(), Some("s-fresh"), "summary: {summary}");
+    assert!(
+        summary["status"].is_object(),
+        "status present in summary: {summary}"
+    );
+}
+
+#[tokio::test]
+async fn swarm_enters_task_mode_and_runs_the_prompt() {
+    home("swarm");
+    let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
+    let mut session = harness.create_session("s-swarm").await.expect("create");
+
+    // node-sdk `Session.swarm` parity: set_swarm_mode(trigger=task) then
+    // prompt. The turn must complete without a wire error.
+    let body = session.swarm("run a swarm discussion").await;
+    assert!(body.get("error").is_none(), "swarm: {body}");
+
+    // The swarm turn's output lands in the session context like a normal turn.
+    let context = session.get_context().await;
+    let raw = serde_json::to_string(&context["result"]).unwrap_or_default();
+    assert!(raw.contains("hello from fake llm"), "swarm context: {raw}");
+}
+
+#[tokio::test]
 async fn prompt_parts_send_multi_part_input() {
     home("parts");
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");

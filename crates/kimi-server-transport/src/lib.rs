@@ -5,5 +5,6 @@
 //! current entry), unix socket, and websocket. The in-process path needs no
 //! transport — `kimi_server::in_process` bridges the same envelope directly.
 
+pub mod http;
 pub mod stdio;
 pub mod websocket;

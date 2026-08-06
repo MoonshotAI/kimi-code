@@ -121,10 +121,10 @@ pub fn derive_challenge(verifier: &str) -> String {
 ///   3. Calling `wait_for_callback()` to block until the user completes
 ///      (or cancels) the flow.
 ///
-/// `wait_for_callback` takes `&mut self` rather than `self` so the handle
-/// can be passed by reference from JS without consuming it. The underlying
-/// `oneshot::Receiver` is wrapped in a `Mutex<Option<…>>` so subsequent
-/// calls observe the consumed state and return a friendly error.
+/// `wait_for_callback` takes `&self`: the oneshot receiver lives behind a
+/// `Mutex<Option<…>>`, so the data is serialized even if the handle is shared
+/// (napi-rs passes `&LoopbackHandle`). Calling it more than once on the same
+/// handle returns a friendly error via the already-taken `Option`.
 pub struct LoopbackServer {
     /// TCP port the listener bound to. Pass into the `redirect_uri`.
     pub port: u16,
@@ -167,12 +167,12 @@ impl LoopbackServer {
     }
 
     /// Block until the IdP redirects the user back, or the caller cancels
-    /// by dropping this future. Takes `&mut self` so it can be called via
-    /// `&LoopbackHandle` from napi-rs without consuming the handle.
+    /// by dropping this future. Takes `&self`; the receiver is behind a
+    /// `Mutex<Option<…>>` so concurrent calls are serialized safely.
     ///
     /// Calling `wait_for_callback` more than once on the same handle
     /// returns an error — the oneshot receiver has already been taken.
-    pub async fn wait_for_callback(&mut self) -> Result<CallbackParams, String> {
+    pub async fn wait_for_callback(&self) -> Result<CallbackParams, String> {
         let rx = self
             .oneshot_rx
             .lock()
@@ -398,7 +398,7 @@ mod tests {
 
     #[tokio::test]
     async fn loopback_server_round_trip() {
-        let mut server = LoopbackServer::start().await.unwrap();
+        let server = LoopbackServer::start().await.unwrap();
         let port = server.port;
         let redirect_uri = server.redirect_uri.clone();
         assert_eq!(redirect_uri, format!("http://127.0.0.1:{port}/callback"));

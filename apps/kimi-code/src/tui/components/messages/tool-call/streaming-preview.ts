@@ -7,38 +7,9 @@
  * convenience since tool-call.ts previously duplicated it locally.
  */
 
-import {
-  STREAMING_ARGS_FIELD_RE,
-  STREAMING_ARGS_PREVIEW_MAX_CHARS,
-} from '#/tui/constant/streaming';
 import { parseStreamingArgs } from '#/tui/utils/event-payload';
 
 export { parseStreamingArgs as parseArgsPreview };
-
-function unescapeJsonString(s: string): string {
-  return s.replaceAll(/\\(["\\/bfnrt])/g, (_, ch: string) => {
-    switch (ch) {
-      case 'n':
-        return '\n';
-      case 't':
-        return '\t';
-      case 'r':
-        return '\r';
-      case 'b':
-        return '\b';
-      case 'f':
-        return '\f';
-      case '"':
-        return '"';
-      case '\\':
-        return '\\';
-      case '/':
-        return '/';
-      default:
-        return ch;
-    }
-  });
-}
 
 /**
  * Pull the live value of a JSON string field out of partially-streamed

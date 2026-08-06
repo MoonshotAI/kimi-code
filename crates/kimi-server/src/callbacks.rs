@@ -41,6 +41,12 @@ impl EventBus {
         self.tx.subscribe()
     }
 
+    /// Clone the underlying sender, so transports (e.g. the HTTP/WS
+    /// projection) can fan engine events out to every connected client.
+    pub fn sender(&self) -> broadcast::Sender<serde_json::Value> {
+        self.tx.clone()
+    }
+
     /// Broadcast an event to all subscribers (lagging receivers are dropped,
     /// matching the engine's bounded fan-out).
     pub fn emit(&self, event: serde_json::Value) {

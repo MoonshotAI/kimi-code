@@ -537,9 +537,9 @@ export class SessionRuntime {
       return;
     }
 
-    const code = terminal.error?.code ?? `turn.${terminal.reason}`;
+    const code = terminal.error?.code ?? `turn.${String(terminal.reason)}`;
     this.reverseRpc.cancelAll("Turn ended");
-    const detail = terminal.error?.message ?? `Turn ended with reason: ${terminal.reason}`;
+    const detail = terminal.error?.message ?? `Turn ended with reason: ${String(terminal.reason)}`;
     const message = getUserMessage(code, detail);
     this.log("Session turn failed", new Error(`${code}: ${detail}`));
     this.emitStreamEvent({

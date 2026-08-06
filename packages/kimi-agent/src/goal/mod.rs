@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 /// Lifecycle status of a goal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "camelCase")]
 pub enum GoalStatus {
     /// The goal is live and may run continuation turns.
     Active,

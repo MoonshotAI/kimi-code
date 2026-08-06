@@ -1,6 +1,5 @@
 import type {
   BackgroundTaskInfo,
-  Event,
 } from '@moonshot-ai/kimi-code-sdk';
 import type { Component } from '@moonshot-ai/pi-tui';
 
@@ -9,10 +8,8 @@ import {
   agentSwarmDescriptionFromArgs,
   agentSwarmGridHeightForTerminalRows,
 } from '../components/messages/agent-swarm-progress';
-import { t } from '#/i18n';
 import type {
   BackgroundAgentMetadata,
-  ToolCallBlockData,
   ToolResultBlockData,
 } from '../types';
 import type { SessionEventHost } from './session-event-handler';

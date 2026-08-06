@@ -77,4 +77,4 @@ async function test() {
     console.log('Result:', JSON.stringify(r));
   } catch(e) { console.log('Error:', e.message); }
 }
-test();
+await test();
