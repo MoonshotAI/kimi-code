@@ -185,14 +185,7 @@ export class CacheHintController {
     // `summary.updatedAt` ≈ last user prompt — a coarser but valid fallback.
     if (lastActiveAt === 0) lastActiveAt = session.summary?.updatedAt ?? 0;
     if (lastActiveAt === 0) return;
-    const decision = evaluateCacheHint({
-      now: Date.now(),
-      lastActiveAt,
-      totalTokens: main?.context.tokenCount,
-      modelId: this.upstreamModelId(),
-      config: await this.resolveConfig(),
-      dismissed: host.state.appState.cacheExpiryHint === false,
-    });
+    const config = await this.resolveConfig();
     // The config fetch above can outlive the user's patience: if they switched
     // sessions meanwhile, this dialog (and its actions) would target the wrong
     // session — drop it. Likewise, if they already sent the first prompt and
@@ -201,12 +194,22 @@ export class CacheHintController {
     if (host.state.appState.streamingPhase !== 'idle' || host.state.appState.isCompacting) {
       return;
     }
-    // Seed the in-process baseline from the replay even when no dialog shows:
-    // a resume inside the cache window can still expire while the user idles
-    // in the TUI, and the idle-submit path only evaluates once this is set.
-    // Never regress a fresher baseline — a turn may have completed while the
-    // config fetch was in flight.
-    this.lastActivityAt = Math.max(this.lastActivityAt ?? 0, lastActiveAt);
+    // Fold in-process activity into the replay-derived baseline before
+    // judging: a turn may have completed during the fetch, and a completed
+    // turn refreshes the server-side cache — the stale replay timestamp would
+    // warn about an expiration the user just paid to fix. Seeding the
+    // baseline either way also lets a resume inside the cache window expire
+    // via the idle-submit path while the user idles in the TUI.
+    lastActiveAt = Math.max(lastActiveAt, this.lastActivityAt ?? 0);
+    this.lastActivityAt = lastActiveAt;
+    const decision = evaluateCacheHint({
+      now: Date.now(),
+      lastActiveAt,
+      totalTokens: main?.context.tokenCount,
+      modelId: this.upstreamModelId(),
+      config,
+      dismissed: host.state.appState.cacheExpiryHint === false,
+    });
     if (decision.kind === 'skip') return;
     this.resumedSessions.add(session.id);
     // The resume dialog also covers this idle cycle: the first submit right
@@ -234,6 +237,9 @@ export class CacheHintController {
       return false;
     }
     if (host.state.appState.cacheExpiryHint === false) return false;
+    // Providers that can never match a cache rule (apiKey / self-hosted) must
+    // not pay the cold-fetch stall below — no hint can ever come of it.
+    if (this.upstreamModelId() === undefined) return false;
     // Coarse floor: configured cache durations are 10min+, so anything
     // fresher than a minute can never hint.
     if (Date.now() - this.lastActivityAt < 60_000) return false;

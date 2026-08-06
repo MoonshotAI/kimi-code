@@ -116,6 +116,24 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     vi.restoreAllMocks();
   });
 
+  it('does not cold-fetch for providers that can never match a rule', async () => {
+    // Config cache cold (peek returns undefined by default): without the
+    // applicability gate this submit would be swallowed for a fetch that can
+    // never produce a hint.
+    const { host } = makeHost({
+      appState: {
+        availableProviders: { 'managed:kimi-code': {} }, // apiKey form: no oauth
+      },
+    });
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+    expect(controller.maybeInterceptOnSubmit('hello')).toBe(false);
+    await flush();
+    expect(getMock).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
   it('swallows a cold-cache submit, fetches, and releases when no rule matches', async () => {
     const { host } = makeHost();
     const controller = new CacheHintController(host);
@@ -522,6 +540,30 @@ describe('CacheHintController scenario 1 (resume)', () => {
     await flush();
     // The user sent the first prompt while the fetch was in flight.
     state.appState.streamingPhase = 'waiting';
+    resolveFetch(CONFIG);
+    await pending;
+    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
+  });
+
+  it('re-evaluates against fresh activity when a turn completed during the config fetch', async () => {
+    let resolveFetch!: (config: CacheHintConfig) => void;
+    getMock.mockImplementation(
+      () =>
+        new Promise<CacheHintConfig>((res) => {
+          resolveFetch = res;
+        }),
+    );
+    // Idle long past the window when the resume check started…
+    const session = resumeSession([Date.now() - 1200_000], 150000);
+    const { host } = makeHost({ session });
+    const controller = new CacheHintController(host);
+
+    const pending = controller.maybeShowOnResume();
+    await flush(); // let the fetch start (resolveFetch gets assigned)
+    // …but the user's first prompt ran to completion while the config was in
+    // flight, refreshing the server-side cache — the stale replay timestamp
+    // must not trigger the dialog.
+    controller.recordActivity();
     resolveFetch(CONFIG);
     await pending;
     expect(host.mountEditorReplacement).not.toHaveBeenCalled();

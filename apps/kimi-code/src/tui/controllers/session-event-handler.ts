@@ -1049,8 +1049,10 @@ export class SessionEventHandler {
     );
     // A completed compaction just refreshed and shrank the cached context —
     // count it as activity so the next submit isn't judged against the
-    // pre-compaction timestamp. (Cancellations don't count.)
+    // pre-compaction timestamp, and reset the cache-break baseline (the drop
+    // is expected). Cancellations do neither: the context was not cut.
     this.host.recordSessionActivity();
+    this.host.noteCompactionFinished();
     this.finishCompaction(sendQueued);
   }
 
@@ -1063,7 +1065,6 @@ export class SessionEventHandler {
   }
 
   private finishCompaction(sendQueued: (item: QueuedMessage) => void): void {
-    this.host.noteCompactionFinished();
     const hasActiveTurn = this.host.streamingUI.hasActiveTurn();
     if (!hasActiveTurn) {
       const next = this.host.shiftQueuedMessage();
