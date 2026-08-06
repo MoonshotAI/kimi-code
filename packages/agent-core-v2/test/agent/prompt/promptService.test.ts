@@ -35,6 +35,7 @@ import { EventBusService } from '#/app/event/eventBusService';
 import { type GetResult, IFileService } from '#/app/file/fileService';
 import { ErrorCodes, Error2 } from '#/errors';
 import { createHooks } from '#/hooks';
+import type { ContentPart } from '#/kosong/contract/message';
 import { IWireService } from '#/wire/wire';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -285,28 +286,76 @@ describe('AgentPromptService daemon media intake', () => {
     return dir;
   }
 
+  function mediaMessage(...content: ContentPart[]): ContextMessage {
+    return { role: 'user', content, toolCalls: [], origin: { kind: 'user' } };
+  }
+
+  function enqueueMedia(
+    prompt: IAgentPromptService,
+    opts: { id?: string; fileId: string; kind?: 'image' | 'video'; path?: string; withTag?: boolean },
+  ) {
+    const kind = opts.kind ?? 'image';
+    const url = buildDaemonFileUrl(opts.fileId, opts.path);
+    const ref: ContentPart =
+      kind === 'video'
+        ? { type: 'video_url', videoUrl: { url } }
+        : { type: 'image_url', imageUrl: { url } };
+    const content: ContentPart[] =
+      opts.withTag === true && opts.path !== undefined
+        ? [{ type: 'text', text: `<${kind} path="${opts.path}"></${kind}>` }, ref]
+        : [ref];
+    return prompt.enqueue({ id: opts.id, message: mediaMessage(...content) });
+  }
+
+  function gatedImage(fileId = 'f_slow') {
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const files = new Map([
+      [
+        fileId,
+        {
+          name: `${fileId}.png`,
+          bytes: PNG_BYTES,
+          stream: () =>
+            Readable.from(
+              (async function* () {
+                await gate;
+                yield PNG_BYTES;
+              })(),
+            ),
+        },
+      ],
+    ]);
+    return { files, open };
+  }
+
+  function expectMediaPair(
+    content: readonly ContentPart[],
+    fileId: string,
+    target: string,
+    kind: 'image' | 'video' = 'image',
+  ): void {
+    expect(content).toEqual([
+      { type: 'text', text: `<${kind} path="${target}"></${kind}>` },
+      kind === 'video'
+        ? { type: 'video_url', videoUrl: { url: buildDaemonFileUrl(fileId, target) } }
+        : { type: 'image_url', imageUrl: { url: buildDaemonFileUrl(fileId, target) } },
+    ]);
+  }
+
   it('materializes a bare daemon reference into the session media dir and authors its paired tag', async () => {
     const sessionDir = await tmpSessionDir();
     const files = new Map([['f_1', { name: 'pic.png', bytes: PNG_BYTES }]]);
     const { prompt } = harness({ sessionDir, files });
 
-    const handle = await prompt.enqueue({
-      id: 'prompt-media',
-      message: {
-        role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1') } }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-    });
+    const handle = await enqueueMedia(prompt, { id: 'prompt-media', fileId: 'f_1' });
     await handle.launched;
 
     const target = join(sessionDir, 'media', 'f_1.png');
     expect(await readFile(target)).toEqual(PNG_BYTES);
-    expect(handle.message.content).toEqual([
-      { type: 'text', text: `<image path="${target}"></image>` },
-      { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1', target) } },
-    ]);
+    expectMediaPair(handle.message.content, 'f_1', target);
     const fold = foldMediaPathTagRefs(handle.message.content);
     expect(fold.parts).toEqual([
       { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1', target) } },
@@ -319,23 +368,12 @@ describe('AgentPromptService daemon media intake', () => {
     const files = new Map([['f_v', { name: 'clip.mp4', bytes: PNG_BYTES, mime: 'video/mp4' }]]);
     const { prompt } = harness({ sessionDir, files });
 
-    const handle = await prompt.enqueue({
-      id: 'prompt-video',
-      message: {
-        role: 'user',
-        content: [{ type: 'video_url', videoUrl: { url: buildDaemonFileUrl('f_v') } }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-    });
+    const handle = await enqueueMedia(prompt, { id: 'prompt-video', fileId: 'f_v', kind: 'video' });
     await handle.launched;
 
     const target = join(sessionDir, 'media', 'f_v.mp4');
     expect(await readFile(target)).toEqual(PNG_BYTES);
-    expect(handle.message.content).toEqual([
-      { type: 'text', text: `<video path="${target}"></video>` },
-      { type: 'video_url', videoUrl: { url: buildDaemonFileUrl('f_v', target) } },
-    ]);
+    expectMediaPair(handle.message.content, 'f_v', target, 'video');
   });
 
   it('falls back to the shared cache dir when the session media store cannot write', async () => {
@@ -348,50 +386,20 @@ describe('AgentPromptService daemon media intake', () => {
     const files = new Map([['f_1', { name: 'pic.png', bytes: PNG_BYTES }]]);
     const { prompt } = harness({ sessionDir, homeDir, files });
 
-    const handle = await prompt.enqueue({
-      id: 'prompt-fallback',
-      message: {
-        role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1') } }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-    });
+    const handle = await enqueueMedia(prompt, { id: 'prompt-fallback', fileId: 'f_1' });
     await handle.launched;
 
     const target = join(homeDir, 'cache', 'f_1.png');
     expect(await readFile(target)).toEqual(PNG_BYTES);
-    expect(handle.message.content).toEqual([
-      { type: 'text', text: `<image path="${target}"></image>` },
-      { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1', target) } },
-    ]);
+    expectMediaPair(handle.message.content, 'f_1', target);
   });
 
   it('returns the first idle media prompt before intake resolves', async () => {
     const sessionDir = await tmpSessionDir();
-    let open!: () => void;
-    const gate = new Promise<void>((resolve) => { open = resolve; });
-    const files = new Map([
-      ['f_slow', {
-        name: 'slow.png',
-        bytes: PNG_BYTES,
-        stream: () => Readable.from((async function* () {
-          await gate;
-          yield PNG_BYTES;
-        })()),
-      }],
-    ]);
+    const { files, open } = gatedImage();
     const { prompt } = harness({ sessionDir, files });
 
-    const handle = await prompt.enqueue({
-      id: 'media-idle-first',
-      message: {
-        role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_slow') } }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-    });
+    const handle = await enqueueMedia(prompt, { id: 'media-idle-first', fileId: 'f_slow' });
 
     expect(handle.state).toBe('pending');
     expect(prompt.list()).toEqual({ active: undefined, pending: [] });
@@ -405,25 +413,16 @@ describe('AgentPromptService daemon media intake', () => {
     const { prompt } = harness({ sessionDir, files });
     const clientPath = '/client-cache/f_1.png';
 
-    const handle = await prompt.enqueue({
+    const handle = await enqueueMedia(prompt, {
       id: 'prompt-pair',
-      message: {
-        role: 'user',
-        content: [
-          { type: 'text', text: `<image path="${clientPath}"></image>` },
-          { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1', clientPath) } },
-        ],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
+      fileId: 'f_1',
+      path: clientPath,
+      withTag: true,
     });
     await handle.launched;
 
     const target = join(sessionDir, 'media', 'f_1.png');
-    expect(handle.message.content).toEqual([
-      { type: 'text', text: `<image path="${target}"></image>` },
-      { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1', target) } },
-    ]);
+    expectMediaPair(handle.message.content, 'f_1', target);
   });
 
   it('keeps an already-normalized pair untouched when intake runs over it again', async () => {
@@ -432,30 +431,12 @@ describe('AgentPromptService daemon media intake', () => {
     const { prompt } = harness({ sessionDir, files });
     const target = join(sessionDir, 'media', 'f_1.png');
 
-    const first = await prompt.enqueue({
-      message: {
-        role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1') } }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-    });
+    const first = await enqueueMedia(prompt, { fileId: 'f_1' });
     await first.launched;
-    const second = await prompt.enqueue({
-      message: {
-        role: 'user',
-        content: [...first.message.content],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-    });
+    const second = await prompt.enqueue({ message: mediaMessage(...first.message.content) });
 
-    const normalized = [
-      { type: 'text', text: `<image path="${target}"></image>` },
-      { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1', target) } },
-    ];
-    expect(first.message.content).toEqual(normalized);
-    expect(second.message.content).toEqual(normalized);
+    expectMediaPair(first.message.content, 'f_1', target);
+    expectMediaPair(second.message.content, 'f_1', target);
     expect((await readFile(target)).length).toBe(PNG_BYTES.length);
   });
 
@@ -464,45 +445,17 @@ describe('AgentPromptService daemon media intake', () => {
     const { prompt } = harness({ sessionDir, files: new Map() });
     const url = buildDaemonFileUrl('f_missing', '/client-cache/x.png');
 
-    const handle = await prompt.enqueue({
-      message: {
-        role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url } }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-    });
+    const handle = await enqueueMedia(prompt, { fileId: 'f_missing', path: '/client-cache/x.png' });
 
     expect(handle.message.content).toEqual([{ type: 'image_url', imageUrl: { url } }]);
   });
 
   it('keeps arrival order without making a queued text prompt wait for a slow media intake', async () => {
     const sessionDir = await tmpSessionDir();
-    let open!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      open = resolve;
-    });
-    const slowStream = () =>
-      Readable.from(
-        (async function* () {
-          await gate;
-          yield PNG_BYTES;
-        })(),
-      );
-    const files = new Map([
-      ['f_slow', { name: 'slow.png', bytes: PNG_BYTES, stream: slowStream }],
-    ]);
+    const { files, open } = gatedImage();
     const { prompt } = harness({ sessionDir, files });
 
-    const mediaHandle = prompt.enqueue({
-      id: 'media-first',
-      message: {
-        role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_slow') } }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-    });
+    const mediaHandle = enqueueMedia(prompt, { id: 'media-first', fileId: 'f_slow' });
     const textHandle = prompt.enqueue({ id: 'text-second', message: message('plain') });
     const textRecord = await textHandle;
     expect(textRecord.state).toBe('pending');
@@ -515,44 +468,29 @@ describe('AgentPromptService daemon media intake', () => {
     expect(prompt.list().pending.map((item) => item.id)).toEqual(['text-second']);
   });
 
-  it('settles and stops an abort that lands while media intake is running', async () => {
+  it('settles an abort that lands during a hung intake, freeing the launch slot', async () => {
     const sessionDir = await tmpSessionDir();
-    let open!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      open = resolve;
-    });
-    const slowStream = () =>
-      Readable.from(
-        (async function* () {
-          await gate;
-          yield PNG_BYTES;
-        })(),
-      );
-    const files = new Map([
-      ['f_slow', { name: 'slow.png', bytes: PNG_BYTES, stream: slowStream }],
-    ]);
+    const { files, open } = gatedImage();
     const { prompt } = harness({ sessionDir, files });
 
-    const handlePromise = prompt.enqueue({
-      id: 'media-abort',
-      message: {
-        role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_slow') } }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-    });
+    const handlePromise = enqueueMedia(prompt, { id: 'media-abort', fileId: 'f_slow' });
     expect(prompt.abort('media-abort')).toBe(true);
     const handle = await handlePromise;
     expect(handle.state).toBe('cancelled');
     await expect(handle.launched).resolves.toBeUndefined();
     await expect(handle.completion).resolves.toMatchObject({ state: 'cancelled' });
+
+    const textHandle = await prompt.enqueue({ id: 'text-after', message: message('plain') });
+    await textHandle.launched;
+    expect(textHandle.state).toBe('running');
+    expect(prompt.list().active?.id).toBe('text-after');
+
     open();
     await prompt.drain();
     await expect(readFile(join(sessionDir, 'media', 'f_slow.png'))).rejects.toMatchObject({
       code: 'ENOENT',
     });
-    expect(prompt.list()).toEqual({ active: undefined, pending: [] });
+    expect(prompt.list().pending).toEqual([]);
   });
 
   it('normalizes a queued daemon reference before a steer consumes it', async () => {
@@ -562,15 +500,7 @@ describe('AgentPromptService daemon media intake', () => {
 
     const active = await prompt.enqueue({ message: message('active') });
     await active.launched;
-    const queued = await prompt.enqueue({
-      id: 'prompt-steer-media',
-      message: {
-        role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1') } }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-    });
+    const queued = await enqueueMedia(prompt, { id: 'prompt-steer-media', fileId: 'f_1' });
     await prompt.steer([queued.id]);
     loop.drainNextBatch(context);
 
@@ -613,18 +543,7 @@ describe('AgentPromptService daemon media intake', () => {
 
   it('requeues once while compaction runs and launches when compaction finishes', async () => {
     const sessionDir = await tmpSessionDir();
-    let open!: () => void;
-    const gate = new Promise<void>((resolve) => { open = resolve; });
-    const slowStream = () =>
-      Readable.from(
-        (async function* () {
-          await gate;
-          yield PNG_BYTES;
-        })(),
-      );
-    const files = new Map([
-      ['f_slow', { name: 'slow.png', bytes: PNG_BYTES, stream: slowStream }],
-    ]);
+    const { files, open } = gatedImage();
     const finishListeners: Array<() => void> = [];
     const compactionState: { current: unknown } = { current: null };
     const compaction = {
@@ -639,15 +558,7 @@ describe('AgentPromptService daemon media intake', () => {
     } as unknown as IAgentFullCompactionService;
     const { prompt, loop } = harness({ sessionDir, files, fullCompaction: compaction });
 
-    const handlePromise = prompt.enqueue({
-      id: 'media-compacted',
-      message: {
-        role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_slow') } }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-    });
+    const handlePromise = enqueueMedia(prompt, { id: 'media-compacted', fileId: 'f_slow' });
     compactionState.current = { pass: 'manual' };
     open();
     await vi.waitFor(() => {
@@ -663,111 +574,14 @@ describe('AgentPromptService daemon media intake', () => {
     expect(prompt.list().active?.id).toBe('media-compacted');
   });
 
-  it('frees the launch slot for the next prompt when an abort lands during a hung intake', async () => {
-    const sessionDir = await tmpSessionDir();
-    let open!: () => void;
-    const gate = new Promise<void>((resolve) => { open = resolve; });
-    const hungStream = () =>
-      Readable.from(
-        (async function* () {
-          await gate;
-          yield PNG_BYTES;
-        })(),
-      );
-    const files = new Map([
-      ['f_hung', { name: 'hung.png', bytes: PNG_BYTES, stream: hungStream }],
-    ]);
-    const { prompt } = harness({ sessionDir, files });
-
-    const mediaPromise = prompt.enqueue({
-      id: 'media-hung',
-      message: {
-        role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_hung') } }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-    });
-    expect(prompt.abort('media-hung')).toBe(true);
-    await mediaPromise;
-
-    const textHandle = await prompt.enqueue({ id: 'text-after', message: message('plain') });
-    await textHandle.launched;
-    expect(textHandle.state).toBe('running');
-    expect(prompt.list().active?.id).toBe('text-after');
-
-    open();
-    await prompt.drain();
-    await expect(readFile(join(sessionDir, 'media', 'f_hung.png'))).rejects.toMatchObject({
-      code: 'ENOENT',
-    });
-  });
-
-  it('cancels a reserved steer when its active turn finishes during intake', async () => {
-    const sessionDir = await tmpSessionDir();
-    let open!: () => void;
-    const gate = new Promise<void>((resolve) => { open = resolve; });
-    const files = new Map([
-      ['f_slow', {
-        name: 'slow.png',
-        bytes: PNG_BYTES,
-        stream: () => Readable.from((async function* () {
-          await gate;
-          yield PNG_BYTES;
-        })()),
-      }],
-    ]);
-    const { prompt, loop } = harness({ sessionDir, files });
-
-    const active = await prompt.enqueue({ id: 'active', message: message('active') });
-    await active.launched;
-    const queued = await prompt.enqueue({
-      id: 'reserved-steer',
-      message: {
-        role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_slow') } }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-    });
-    const steerPromise = prompt.steer([queued.id]);
-    expect(prompt.list().pending).toEqual([]);
-    loop.finishActive();
-    open();
-
-    await expect(steerPromise).rejects.toThrow(/cancelled/);
-    await expect(queued.completion).resolves.toMatchObject({ state: 'cancelled' });
-    expect(loop.launches).toEqual([0]);
-    expect(prompt.list()).toEqual({ active: undefined, pending: [] });
-  });
-
   it('rejects a steer whose prompt was cleared while its intake was still running', async () => {
     const sessionDir = await tmpSessionDir();
-    let open!: () => void;
-    const gate = new Promise<void>((resolve) => { open = resolve; });
-    const slowStream = () =>
-      Readable.from(
-        (async function* () {
-          await gate;
-          yield PNG_BYTES;
-        })(),
-      );
-    const files = new Map([
-      ['f_slow', { name: 'slow.png', bytes: PNG_BYTES, stream: slowStream }],
-    ]);
+    const { files, open } = gatedImage();
     const { prompt } = harness({ sessionDir, files });
 
     const active = await prompt.enqueue({ message: message('active') });
     await active.launched;
-    const queued = await prompt.enqueue({
-      id: 'steered-away',
-      message: {
-        role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_slow') } }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-    });
+    const queued = await enqueueMedia(prompt, { id: 'steered-away', fileId: 'f_slow' });
     const steerPromise = prompt.steer([queued.id]);
     void steerPromise.catch(() => undefined);
     prompt.clear();

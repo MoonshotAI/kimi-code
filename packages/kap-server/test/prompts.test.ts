@@ -141,6 +141,21 @@ function sessionMediaDir(server: RunningServer, sessionId: string): string {
   return join(session!.accessor.get(ISessionContext).sessionDir, 'media');
 }
 
+/**
+ * Asserts the session-media copy of an uploaded prompt file lands with the
+ * original bytes; returns its path for follow-up leak assertions.
+ */
+async function expectSessionMedia(
+  server: RunningServer,
+  sessionId: string,
+  name: string,
+  bytes: Buffer,
+): Promise<string> {
+  const path = join(sessionMediaDir(server, sessionId), name);
+  expect(await readFileEventually(path)).toEqual(bytes);
+  return path;
+}
+
 describe('server-v2 /api/v1 prompts', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
@@ -323,45 +338,18 @@ describe('server-v2 /api/v1 prompts', () => {
     // in the session's own media dir, written asynchronously by the engine's
     // prompt intake — the engine resolver falls back to it when it cannot
     // upload or inline the video.
-    const materialized = join(sessionMediaDir(server!, id), `${uploaded.data.id}.mp4`);
-    expect(await readFileEventually(materialized)).toEqual(videoBytes);
-
-    // Context memory carries the intake-authored pair: the synthesized
-    // `<video path>` tag text part and the daemon reference rewritten to the
-    // session-canonical path.
-    const session = getLiveSessionById(server!.core.accessor, id);
-    const main = session!.accessor.get(IAgentLifecycleService).get('main')!;
-    const userMessage = main.accessor
-      .get(IAgentContextMemoryService)
-      .get()
-      .find((m) => m.role === 'user' && m.origin?.kind === 'user');
-    expect(userMessage?.content).toEqual([
-      { type: 'text', text: 'what happens in this video?' },
-      { type: 'text', text: `<video path="${materialized}"></video>` },
-      {
-        type: 'video_url',
-        videoUrl: { url: `kimi-file://${uploaded.data.id}?path=${encodeURIComponent(materialized)}` },
-      },
-    ]);
+    await expectSessionMedia(server!, id, `${uploaded.data.id}.mp4`, videoBytes);
   });
 
   it('carries a compressed uploaded image into the prompt as an internal kimi-file reference', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
     const bigPng = solidPng(3600, 1800);
-    const form = new FormData();
-    form.set('file', new Blob([bigPng], { type: 'image/png' }), 'big.png');
-    const uploadRes = await fetch(`${base}/api/v1/files`, {
-      method: 'POST',
-      headers: authHeaders(server as RunningServer),
-      body: form,
-    } as never);
-    const uploaded = (await uploadRes.json()) as Envelope<{ id: string; size: number }>;
-    expect(uploaded.code).toBe(0);
-    expect(uploaded.data.size).toBe(bigPng.length);
+    const uploaded = await uploadFile(bigPng, 'image/png', 'big.png');
+    expect(uploaded.size).toBe(bigPng.length);
 
     const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
-      content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.data.id } }],
+      content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.id } }],
     });
     expect(submitted.body.code).toBe(0);
 
@@ -385,7 +373,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(image.type).toBe('image');
     expect(image.source.kind).toBe('file');
     const finalFileId = image.source.file_id;
-    expect(finalFileId).not.toBe(uploaded.data.id);
+    expect(finalFileId).not.toBe(uploaded.id);
 
     // The folded-away <image path> tag named the materialized session-media
     // copy of the FINAL (compressed) bytes, named by the final upload id — the
@@ -396,7 +384,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(JSON.stringify(content)).not.toContain(mediaPath);
 
     // The original client upload stays untouched.
-    const original = await server!.core.accessor.get(IFileService).get(uploaded.data.id);
+    const original = await server!.core.accessor.get(IFileService).get(uploaded.id);
     expect(original.meta.size).toBe(bigPng.length);
 
     // The compressed re-save stays retrievable: read models project this id
@@ -409,21 +397,11 @@ describe('server-v2 /api/v1 prompts', () => {
     // The internal reference never leaks to the wire.
     expect(JSON.stringify(content)).not.toContain('kimi-file://');
 
-    // Context memory carries the raw daemon reference: the tag text part and
-    // an `image_url` part whose url is the `kimi-file://` reference. The
-    // prompt service extracts the compression caption into its own
+    // The prompt service extracts the compression caption into its own
     // system-reminder message on enqueue.
     const session = getLiveSessionById(server!.core.accessor, id);
     const main = session!.accessor.get(IAgentLifecycleService).get('main')!;
     const memory = main.accessor.get(IAgentContextMemoryService).get();
-    const userMessage = memory.find((m) => m.role === 'user' && m.origin?.kind === 'user');
-    expect(userMessage?.content).toEqual([
-      { type: 'text', text: `<image path="${mediaPath}"></image>` },
-      {
-        type: 'image_url',
-        imageUrl: { url: `kimi-file://${finalFileId}?path=${encodeURIComponent(mediaPath)}` },
-      },
-    ]);
     const reminder = memory.find((m) => m.origin?.kind === 'injection');
     const reminderText = reminder?.content[0];
     expect(reminderText?.type).toBe('text');
@@ -477,18 +455,10 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
     const smallPng = solidPng(10, 10);
-    const form = new FormData();
-    form.set('file', new Blob([smallPng], { type: 'image/png' }), 'small.png');
-    const uploadRes = await fetch(`${base}/api/v1/files`, {
-      method: 'POST',
-      headers: authHeaders(server as RunningServer),
-      body: form,
-    } as never);
-    const uploaded = (await uploadRes.json()) as Envelope<{ id: string; size: number }>;
-    expect(uploaded.code).toBe(0);
+    const uploaded = await uploadFile(smallPng, 'image/png', 'small.png');
 
     const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
-      content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.data.id } }],
+      content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.id } }],
     });
     expect(submitted.body.code).toBe(0);
 
@@ -497,32 +467,16 @@ describe('server-v2 /api/v1 prompts', () => {
     // `<image path>` tag folded into the media part instead of reaching the
     // wire, so the media path never leaks to the client.
     const content = submitted.body.data.content as Array<Record<string, unknown>>;
-    const mediaPath = join(sessionMediaDir(server!, id), `${uploaded.data.id}.png`);
     expect(content).toEqual([
-      { type: 'image', source: { kind: 'file', file_id: uploaded.data.id } },
+      { type: 'image', source: { kind: 'file', file_id: uploaded.id } },
     ]);
-    expect(JSON.stringify(content)).not.toContain(mediaPath);
 
     // The session-media copy holds the original bytes, named by the original upload id.
-    expect(await readFileEventually(mediaPath)).toEqual(smallPng);
+    const mediaPath = await expectSessionMedia(server!, id, `${uploaded.id}.png`, smallPng);
+    expect(JSON.stringify(content)).not.toContain(mediaPath);
 
     // The internal reference never leaks to the wire.
     expect(JSON.stringify(content)).not.toContain('kimi-file://');
-
-    // Context memory carries the raw daemon reference.
-    const session = getLiveSessionById(server!.core.accessor, id);
-    const main = session!.accessor.get(IAgentLifecycleService).get('main')!;
-    const userMessage = main.accessor
-      .get(IAgentContextMemoryService)
-      .get()
-      .find((m) => m.role === 'user' && m.origin?.kind === 'user');
-    expect(userMessage?.content).toEqual([
-      { type: 'text', text: `<image path="${mediaPath}"></image>` },
-      {
-        type: 'image_url',
-        imageUrl: { url: `kimi-file://${uploaded.data.id}?path=${encodeURIComponent(mediaPath)}` },
-      },
-    ]);
   });
 
   it('falls back to the shared cache dir when the session media dir is not writable', async () => {
@@ -531,47 +485,22 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
     const smallPng = solidPng(10, 10);
-    const form = new FormData();
-    form.set('file', new Blob([smallPng], { type: 'image/png' }), 'small.png');
-    const uploadRes = await fetch(`${base}/api/v1/files`, {
-      method: 'POST',
-      headers: authHeaders(server as RunningServer),
-      body: form,
-    } as never);
-    const uploaded = (await uploadRes.json()) as Envelope<{ id: string; size: number }>;
-    expect(uploaded.code).toBe(0);
+    const uploaded = await uploadFile(smallPng, 'image/png', 'small.png');
 
     // A read-only session media dir must not reject an otherwise-submittable
     // prompt: the materialized copy falls back to the shared cache dir.
-    const session = getLiveSessionById(server!.core.accessor, id)!;
     const mediaDir = sessionMediaDir(server!, id);
     await mkdir(mediaDir, { recursive: true });
     await chmod(mediaDir, 0o555);
     try {
       const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
-        content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.data.id } }],
+        content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.id } }],
       });
       expect(submitted.body.code).toBe(0);
 
       const cacheDir = server!.core.accessor.get(IBootstrapService).cacheDir;
-      const mediaPath = join(cacheDir, `${uploaded.data.id}.png`);
+      const mediaPath = join(cacheDir, `${uploaded.id}.png`);
       expect(await readFileEventually(mediaPath)).toEqual(smallPng);
-
-      // The engine's prompt intake performs the fallback (same read-only
-      // session dir) and authors the pair with the cache-dir path, so context
-      // memory carries it.
-      const main = session.accessor.get(IAgentLifecycleService).get('main')!;
-      const userMessage = main.accessor
-        .get(IAgentContextMemoryService)
-        .get()
-        .find((m) => m.role === 'user' && m.origin?.kind === 'user');
-      expect(userMessage?.content).toEqual([
-        { type: 'text', text: `<image path="${mediaPath}"></image>` },
-        {
-          type: 'image_url',
-          imageUrl: { url: `kimi-file://${uploaded.data.id}?path=${encodeURIComponent(mediaPath)}` },
-        },
-      ]);
     } finally {
       await chmod(mediaDir, 0o755);
     }

@@ -3,7 +3,6 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import {
   deleteAllKittyImages,
@@ -431,6 +430,38 @@ async function makeTempHome(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'kimi-code-tui-'));
   tempDirs.push(dir);
   return dir;
+}
+
+/** Runs `run` with a temp clip.mp4 source, removing the temp dir afterwards. */
+async function withTempVideo(run: (srcVideo: string) => Promise<void>): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
+  try {
+    const srcVideo = join(dir, 'clip.mp4');
+    await writeFile(srcVideo, 'video-bytes');
+    await run(srcVideo);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+function stagedImage(imageStore: ImageAttachmentStore, fileId: string) {
+  return imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1, undefined, fileId);
+}
+
+/**
+ * Emits the turn.started/turn.ended pair that claims and then releases a
+ * staged-media lease; `between` runs assertions after the claim.
+ */
+function emitTurn(driver: MessageDriver, turnId: number, between?: () => void): void {
+  driver.sessionEventHandler.handleEvent(
+    { type: 'turn.started', agentId: 'main', turnId, origin: { kind: 'user' } } as Event,
+    () => {},
+  );
+  between?.();
+  driver.sessionEventHandler.handleEvent(
+    { type: 'turn.ended', agentId: 'main', turnId, reason: 'completed' } as Event,
+    () => {},
+  );
 }
 
 async function makeExportedSessionZip(content = 'session zip'): Promise<string> {
@@ -2493,98 +2524,54 @@ command = "vim"
     const session = makeSession({ prompt: vi.fn(() => promptSettled) });
     const { driver } = await makeDriver(session);
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
     try {
-      const srcVideo = join(dir, 'clip.mp4');
-      await writeFile(srcVideo, 'video-bytes');
-      const attachment = imageStore.addVideo('video/mp4', srcVideo);
+      await withTempVideo(async (srcVideo) => {
+        const attachment = imageStore.addVideo('video/mp4', srcVideo);
 
-      // Submission is fully synchronous: the paste is copied to the cache and
-      // referenced by a `file://` video_url the engine resolves in-turn.
-      driver.handleUserInput(`watch ${attachment.placeholder}`);
+        // Submission is fully synchronous: the paste is copied to the cache and
+        // referenced by a `file://` video_url the engine resolves in-turn.
+        driver.handleUserInput(`watch ${attachment.placeholder}`);
 
-      const parts = vi.mocked(session.prompt).mock.calls[0]?.[0] as
-        | Array<{
-            type: string;
-            text?: string;
-            videoUrl?: { url: string };
-          }>
-        | undefined;
-      expect(parts?.[0]).toEqual({ type: 'text', text: 'watch ' });
-      expect(parts?.[1]?.type).toBe('video_url');
-      expect(parts?.[1]?.videoUrl?.url).toMatch(/^file:\/\/.*clip\.mp4$/);
-      const stagingPath = driver.state.queuedMessages[0]?.stagingPaths?.[0]
-        ?? new URL(parts![1]!.videoUrl!.url).pathname;
-      expect(existsSync(stagingPath)).toBe(true);
+        const parts = vi.mocked(session.prompt).mock.calls[0]?.[0] as
+          | Array<{
+              type: string;
+              text?: string;
+              videoUrl?: { url: string };
+            }>
+          | undefined;
+        expect(parts?.[0]).toEqual({ type: 'text', text: 'watch ' });
+        expect(parts?.[1]?.type).toBe('video_url');
+        expect(parts?.[1]?.videoUrl?.url).toMatch(/^file:\/\/.*clip\.mp4$/);
+        const stagingPath = driver.state.queuedMessages[0]?.stagingPaths?.[0]
+          ?? new URL(parts![1]!.videoUrl!.url).pathname;
+        expect(existsSync(stagingPath)).toBe(true);
 
-      driver.sessionEventHandler.handleEvent(
-        { type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event,
-        () => {},
-      );
-      finishPrompt();
-      expect(existsSync(stagingPath)).toBe(true);
-      driver.sessionEventHandler.handleEvent(
-        { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
-        () => {},
-      );
-      // The cache copy survives the consuming turn: a v1 degrade persists a
-      // `<video path>` tag carrying this exact path into history, and later
-      // turns re-open it with ReadMediaFile.
-      await new Promise((resolve) => {
-        setTimeout(resolve, 20);
-      });
-      expect(existsSync(stagingPath)).toBe(true);
+        driver.sessionEventHandler.handleEvent(
+          { type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event,
+          () => {},
+        );
+        finishPrompt();
+        expect(existsSync(stagingPath)).toBe(true);
+        driver.sessionEventHandler.handleEvent(
+          { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+          () => {},
+        );
+        // The cache copy survives the consuming turn: a v1 degrade persists a
+        // `<video path>` tag carrying this exact path into history, and later
+        // turns re-open it with ReadMediaFile.
+        await new Promise((resolve) => {
+          setTimeout(resolve, 20);
+        });
+        expect(existsSync(stagingPath)).toBe(true);
 
-      // Session close retires it.
-      await driver.closeSession('test');
-      await vi.waitFor(() => {
-        expect(existsSync(stagingPath)).toBe(false);
+        // Session close retires it.
+        await driver.closeSession('test');
+        await vi.waitFor(() => {
+          expect(existsSync(stagingPath)).toBe(false);
+        });
       });
     } finally {
       finishPrompt();
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('releases a retired video cache copy when switching sessions', async () => {
-    process.env['KIMI_CODE_HOME'] = await makeTempHome();
-    let finishPrompt!: () => void;
-    const promptSettled = new Promise<void>((resolve) => {
-      finishPrompt = resolve;
-    });
-    const session = makeSession({ prompt: vi.fn(() => promptSettled) });
-    const { driver } = await makeDriver(session);
-    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const dir = await mkdtemp(join(tmpdir(), 'tui-video-switch-'));
-    try {
-      const srcVideo = join(dir, 'clip.mp4');
-      await writeFile(srcVideo, 'video-bytes');
-      const attachment = imageStore.addVideo('video/mp4', srcVideo);
-      driver.handleUserInput(attachment.placeholder);
-      const parts = vi.mocked(session.prompt).mock.calls[0]?.[0] as
-        | Array<{ type: string; videoUrl?: { url: string } }>
-        | undefined;
-      const videoPart = parts?.find((part) => part.type === 'video_url');
-      const stagingPath = fileURLToPath(videoPart?.videoUrl?.url ?? 'file:///missing');
-      expect(existsSync(stagingPath)).toBe(true);
-      driver.sessionEventHandler.handleEvent(
-        { type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event,
-        () => {},
-      );
-      finishPrompt();
-      driver.sessionEventHandler.handleEvent(
-        { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
-        () => {},
-      );
-
-      const nextSession = makeSession({ id: 'ses-2' });
-      await driver.setSession(nextSession);
-      await vi.waitFor(() => {
-        expect(existsSync(stagingPath)).toBe(false);
-      });
-      await driver.closeSession('test');
-    } finally {
-      await rm(dir, { recursive: true, force: true });
     }
   });
 
@@ -2593,10 +2580,7 @@ command = "vim"
     const session = makeSession();
     const { driver } = await makeDriver(session);
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
-    try {
-      const srcVideo = join(dir, 'clip.mp4');
-      await writeFile(srcVideo, 'video-bytes');
+    await withTempVideo(async (srcVideo) => {
       const attachment = imageStore.addVideo('video/mp4', srcVideo);
       driver.state.appState.streamingPhase = 'waiting';
 
@@ -2614,27 +2598,7 @@ command = "vim"
 
       driver.sendQueuedMessage(session, queued!);
       expect(vi.mocked(session.prompt).mock.calls[0]?.[0]).toEqual(parts);
-      driver.sessionEventHandler.handleEvent(
-        { type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event,
-        () => {},
-      );
-      driver.sessionEventHandler.handleEvent(
-        { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
-        () => {},
-      );
-      // Turn end keeps the cache copy (persisted history references it);
-      // session close retires it.
-      await new Promise((resolve) => {
-        setTimeout(resolve, 20);
-      });
-      expect(existsSync(queued!.stagingPaths![0]!)).toBe(true);
-      await driver.closeSession('test');
-      await vi.waitFor(() => {
-        expect(existsSync(queued!.stagingPaths![0]!)).toBe(false);
-      });
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    });
   });
 
 
@@ -2666,27 +2630,14 @@ command = "vim"
   it('keeps an image staging upload until the consuming turn ends', async () => {
     const { driver, session, harness } = await makeDriver();
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const attachment = imageStore.addImage(
-      new Uint8Array([0xaa, 0xbb]),
-      'image/png',
-      1,
-      1,
-      undefined,
-      'file-1',
-    );
+    const attachment = stagedImage(imageStore, 'file-1');
 
     driver.handleUserInput(attachment.placeholder);
 
     expect(session.prompt).toHaveBeenCalledOnce();
-    driver.sessionEventHandler.handleEvent(
-      { type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event,
-      () => {},
-    );
-    expect(harness.deleteFile).not.toHaveBeenCalled();
-    driver.sessionEventHandler.handleEvent(
-      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
-      () => {},
-    );
+    emitTurn(driver, 1, () => {
+      expect(harness.deleteFile).not.toHaveBeenCalled();
+    });
     await vi.waitFor(() => {
       expect(harness.deleteFile).toHaveBeenCalledWith('file-1');
     });
@@ -2702,14 +2653,7 @@ command = "vim"
     });
     const { driver, harness } = await makeDriver(session);
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const attachment = imageStore.addImage(
-      new Uint8Array([0xaa, 0xbb]),
-      'image/png',
-      1,
-      1,
-      undefined,
-      'file-reject',
-    );
+    const attachment = stagedImage(imageStore, 'file-reject');
 
     driver.handleUserInput(attachment.placeholder);
 
@@ -2721,14 +2665,7 @@ command = "vim"
 
     // The released lease must not be claimed or deleted again by later turn
     // events or by session close.
-    driver.sessionEventHandler.handleEvent(
-      { type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event,
-      () => {},
-    );
-    driver.sessionEventHandler.handleEvent(
-      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
-      () => {},
-    );
+    emitTurn(driver, 1);
     await driver.closeSession('test');
     expect(harness.deleteFile).toHaveBeenCalledTimes(1);
   });
@@ -2736,14 +2673,7 @@ command = "vim"
   it('releases goal-steered staging media when the running goal turn ends', async () => {
     const { driver, session, harness } = await makeDriver();
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const attachment = imageStore.addImage(
-      new Uint8Array([0xaa, 0xbb]),
-      'image/png',
-      1,
-      1,
-      undefined,
-      'file-goal',
-    );
+    const attachment = stagedImage(imageStore, 'file-goal');
     // The goal driver's continuation turn (origin system_trigger — it never
     // claims leases through handleTurnStarted) is streaming when the queued
     // steer dispatch lands.
@@ -2774,14 +2704,7 @@ command = "vim"
     process.env['KIMI_CODE_HOME'] = await makeTempHome();
     const { driver, harness } = await makeDriver();
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const attachment = imageStore.addImage(
-      new Uint8Array([0xaa, 0xbb]),
-      'image/png',
-      1,
-      1,
-      undefined,
-      'file-queued',
-    );
+    const attachment = stagedImage(imageStore, 'file-queued');
     driver.state.appState.streamingPhase = 'waiting';
 
     driver.handleUserInput(`first ${attachment.placeholder}`);
@@ -2807,14 +2730,7 @@ command = "vim"
     const { driver, harness } = await makeDriver(session);
     driver.state.appState.model = 'k2';
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const attachment = imageStore.addImage(
-      new Uint8Array([0xaa, 0xbb]),
-      'image/png',
-      1,
-      1,
-      undefined,
-      'file-shared-turn',
-    );
+    const attachment = stagedImage(imageStore, 'file-shared-turn');
 
     driver.handleUserInput(`first ${attachment.placeholder}`);
     driver.sessionEventHandler.handleEvent(
@@ -3178,14 +3094,7 @@ command = "vim"
     driver.state.appState.streamingPhase = 'waiting';
     driver.streamingUI.setTurnId('1');
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const attachment = imageStore.addImage(
-      new Uint8Array([0xaa, 0xbb]),
-      'image/png',
-      1,
-      1,
-      undefined,
-      'file-batched',
-    );
+    const attachment = stagedImage(imageStore, 'file-batched');
     driver.handleUserInput(`first ${attachment.placeholder}`);
     driver.handleUserInput(`second ${attachment.placeholder}`);
     expect(driver.state.queuedMessages).toHaveLength(2);

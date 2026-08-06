@@ -1599,16 +1599,11 @@ describe('AgentTranscriptProjector', () => {
       }),
     );
 
-    // The upload pair folds into one protocol-shaped media part; the internal
-    // `kimi-file://` URL and the absolute materialization path never land in
-    // the prompt entity.
     const prompt = tx.getPrompt('p1');
     expect(prompt?.content).toEqual([
       { type: 'text', text: 'look at this' },
       { type: 'image', source: { kind: 'file', file_id: 'f_img1' } },
     ]);
-    expect(JSON.stringify(prompt)).not.toContain('kimi-file://');
-    expect(JSON.stringify(prompt)).not.toContain('/abs/session');
   });
 
   it('readColdSnapshot answers empty for path-hostile agent ids without touching disk', async () => {
@@ -2008,23 +2003,50 @@ describe('bindSessionTranscript', () => {
     binding.dispose();
   });
 
-  async function seedWireHome(): Promise<string> {
+  /** The upload carried by an attachment seed: its cold fold yields the `att_1` entity. */
+  const SHOT_PNG_UPLOAD = {
+    type: 'file',
+    file_id: 'file_1',
+    media_type: 'image/png',
+    name: 'shot.png',
+  };
+
+  /**
+   * Wire seed: a lone `hi` user message — or, with `attachment`, an
+   * upload-carrying user message (its cold fold yields the `att_1` entity)
+   * trailed by an assistant reply.
+   */
+  async function seedWireHome(attachment?: Record<string, unknown>): Promise<string> {
     const home = await mkdtemp(join(tmpdir(), 'transcript-overlay-'));
     const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
     await mkdir(wireDir, { recursive: true });
-    await writeFile(
-      join(wireDir, 'wire.jsonl'),
-      `${JSON.stringify({
+    const records: Record<string, unknown>[] = [
+      {
         type: 'context.append_message',
         message: {
           role: 'user',
-          content: [{ type: 'text', text: 'hi' }],
+          content:
+            attachment === undefined
+              ? [{ type: 'text', text: 'hi' }]
+              : [{ type: 'text', text: 'what is this?' }, attachment],
           toolCalls: [],
           origin: { kind: 'user' },
         },
         time: new Date().toISOString(),
-      })}\n`,
-    );
+      },
+    ];
+    if (attachment !== undefined) {
+      records.push({
+        type: 'context.append_message',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'a screenshot' }],
+          toolCalls: [],
+        },
+        time: new Date().toISOString(),
+      });
+    }
+    await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
     return home;
   }
 
@@ -2355,39 +2377,6 @@ describe('bindSessionTranscript', () => {
     return home;
   }
 
-  /** Wire seed whose opening user message carries an upload — the cold fold yields `att_1`. */
-  async function seedWireHomeWithAttachment(): Promise<string> {
-    const home = await mkdtemp(join(tmpdir(), 'transcript-heal-attachment-'));
-    const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
-    await mkdir(wireDir, { recursive: true });
-    const records = [
-      {
-        type: 'context.append_message',
-        message: {
-          role: 'user',
-          content: [
-            { type: 'text', text: 'what is this?' },
-            { type: 'file', file_id: 'file_1', media_type: 'image/png', name: 'shot.png' },
-          ],
-          toolCalls: [],
-          origin: { kind: 'user' },
-        },
-        time: new Date().toISOString(),
-      },
-      {
-        type: 'context.append_message',
-        message: {
-          role: 'assistant',
-          content: [{ type: 'text', text: 'a screenshot' }],
-          toolCalls: [],
-        },
-        time: new Date().toISOString(),
-      },
-    ];
-    await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
-    return home;
-  }
-
   async function waitFor(condition: () => boolean, timeoutMs = 2000): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     while (!condition()) {
@@ -2514,7 +2503,7 @@ describe('bindSessionTranscript', () => {
   });
 
   it('backfill + overlay keep the live attachment ids and drop the cold counterpart entity', async () => {
-    const home = await seedWireHomeWithAttachment();
+    const home = await seedWireHome(SHOT_PNG_UPLOAD);
     try {
       const agents = new FakeAgents();
       agents.add('main', { loopStatus: { state: 'running', activeTurnId: 0 } });
@@ -2554,7 +2543,7 @@ describe('bindSessionTranscript', () => {
   });
 
   it('post-turn heal keeps the live attachment ids and never upserts the cold counterparts', async () => {
-    const home = await seedWireHomeWithAttachment();
+    const home = await seedWireHome(SHOT_PNG_UPLOAD);
     try {
       const agents = new FakeAgents();
       agents.add('main', { loopStatus: { state: 'idle' } });

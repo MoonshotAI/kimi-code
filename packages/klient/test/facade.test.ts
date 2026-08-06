@@ -543,9 +543,10 @@ describe('files routing', () => {
     created_at: '2026-01-01T00:00:00.000Z',
   };
 
-  it('files.save base64-encodes bytes into positional wire args', async () => {
+  it('routes the files save/get/delete lifecycle through fileService', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
+
     channel.result = META;
     const meta = await klient.global.files.save({
       data: new Uint8Array([1, 2, 3, 4]),
@@ -559,29 +560,21 @@ describe('files routing', () => {
       method: 'save',
       args: ['AQIDBA==', 'a.png', { mimeType: 'image/png' }],
     });
-  });
 
-  it('files.get decodes the base64 wire payload back to bytes', async () => {
-    const channel = new FakeChannel();
-    const klient = createKlientFromChannel(channel);
     channel.result = { meta: META, data: 'AQIDBA==' };
     const got = await klient.global.files.get('f_1');
     expect(got.meta).toEqual(META);
     expect([...got.data]).toEqual([1, 2, 3, 4]);
-    expect(channel.calls[0]).toMatchObject({
+    expect(channel.calls[1]).toMatchObject({
       scope: {},
       service: 'fileService',
       method: 'get',
       args: ['f_1'],
     });
-  });
 
-  it('files.delete routes with a void result', async () => {
-    const channel = new FakeChannel();
-    const klient = createKlientFromChannel(channel);
     channel.result = undefined;
     await expect(klient.global.files.delete('f_1')).resolves.toBeUndefined();
-    expect(channel.calls[0]).toMatchObject({
+    expect(channel.calls[2]).toMatchObject({
       scope: {},
       service: 'fileService',
       method: 'delete',

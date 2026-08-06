@@ -92,51 +92,31 @@ describe('extractFromWireLine', () => {
     expect(out).toEqual([]);
   });
 
-  it('does not index an upload-only user message (the paired <media path> tag folds away)', () => {
-    // An uploaded image persists as `<image path>` tag text + a `kimi-file://`
-    // image part; the tag is machine markup paired with the ref, so the
-    // message stays text-less for the index — and the materialization path
-    // must never become searchable.
-    const out = extractFromWireLine(
-      line({
-        type: 'context.append_message',
-        time: 1_700_000_000_000,
-        message: {
-          role: 'user',
-          content: [
-            { type: 'text', text: '<image path="/Users/alice/media/f_1.png"></image>' },
-            {
-              type: 'image_url',
-              imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
-            },
-          ],
-          origin: { kind: 'user' },
-        },
-      }),
-    );
-    expect(out).toEqual([]);
-  });
-
   it('indexes only the real text of an upload-carrying user message', () => {
-    const out = extractFromWireLine(
+    // An uploaded image persists as `<image path>` tag text + a `kimi-file://`
+    // image part; the tag is machine markup paired with the ref, so it never
+    // becomes searchable — an upload-only message drops out of the index, and
+    // a real text beside the pair is indexed on its own.
+    const uploadPair = [
+      { type: 'text', text: '<image path="/Users/alice/media/f_1.png"></image>' },
+      {
+        type: 'image_url',
+        imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
+      },
+    ];
+    const record = (content: unknown[]): string =>
       line({
         type: 'context.append_message',
         time: 1_700_000_000_000,
-        message: {
-          role: 'user',
-          content: [
-            { type: 'text', text: 'what is this? ' },
-            { type: 'text', text: '<image path="/Users/alice/media/f_1.png"></image>' },
-            {
-              type: 'image_url',
-              imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
-            },
-          ],
-          origin: { kind: 'user' },
-        },
-      }),
-    );
-    expect(out).toEqual([{ role: 'user', text: 'what is this?', time: 1_700_000_000_000 }]);
+        message: { role: 'user', content, origin: { kind: 'user' } },
+      });
+
+    // Upload-only: nothing indexable (the materialization path included).
+    expect(extractFromWireLine(record(uploadPair))).toEqual([]);
+    // With a real text part alongside, exactly that text is indexed.
+    expect(
+      extractFromWireLine(record([{ type: 'text', text: 'what is this? ' }, ...uploadPair])),
+    ).toEqual([{ role: 'user', text: 'what is this?', time: 1_700_000_000_000 }]);
   });
 
   it('keeps an unpaired standalone <media path> tag as user text', () => {

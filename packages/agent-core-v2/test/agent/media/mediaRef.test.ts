@@ -26,7 +26,6 @@ import {
   mediaKindForMime,
   mediaKindForPath,
   mediaKindOfPart,
-  pairMediaPathTagRefs,
   parseDaemonFileUrl,
 } from '#/agent/media/mediaRef';
 
@@ -329,40 +328,5 @@ describe('foldMediaPathTagRefs', () => {
     const fold = foldMediaPathTagRefs([text]);
     expect(fold.parts).toEqual([text]);
     expect(fold.media).toEqual([]);
-  });
-});
-
-describe('pairMediaPathTagRefs', () => {
-  const daemonImage = (fileId: string, path?: string): ContentPart => ({
-    type: 'image_url',
-    imageUrl: { url: buildDaemonFileUrl(fileId, path) },
-  });
-
-  it('reports the claimed tag indices and the per-ref claimed paths', () => {
-    const ref = daemonImage('file_1', '/cache/shot.png');
-    const pairing = pairMediaPathTagRefs([
-      { type: 'text', text: '<image path="/cache/shot.png"></image>' },
-      ref,
-    ]);
-    expect(pairing.claimedTagIndices).toEqual(new Set([0]));
-    expect(pairing.claimedPathByRefIndex).toEqual(new Map([[1, '/cache/shot.png']]));
-  });
-
-  it('claims nothing when the adjacent tag carries a different path', () => {
-    const pairing = pairMediaPathTagRefs([
-      { type: 'text', text: '<image path="/cache/other.png"></image>' },
-      daemonImage('file_1', '/cache/shot.png'),
-    ]);
-    expect(pairing.claimedTagIndices.size).toBe(0);
-    expect(pairing.claimedPathByRefIndex.size).toBe(0);
-  });
-
-  it('claims nothing for a reference without a path', () => {
-    const pairing = pairMediaPathTagRefs([
-      { type: 'text', text: '<image path="/cache/shot.png"></image>' },
-      daemonImage('file_1'),
-    ]);
-    expect(pairing.claimedTagIndices.size).toBe(0);
-    expect(pairing.claimedPathByRefIndex.size).toBe(0);
   });
 });

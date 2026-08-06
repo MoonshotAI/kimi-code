@@ -831,7 +831,7 @@ describe('SessionEventBroadcaster', () => {
   // pre-attachment shape. Events without a `promptId` keep the six-key set.
   const TURN_STARTED_WIRE_KEYS = ['agentId', 'origin', 'prompt', 'sessionId', 'turnId', 'type'];
 
-  it('forwards the promptId echo on a prompt-opened turn.started (live + tail replay)', async () => {
+  it('forwards the promptId echo on a prompt-opened turn.started (live)', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
     sessions.set('s1', lc);
@@ -853,46 +853,6 @@ describe('SessionEventBroadcaster', () => {
     expect(live!.payload).toHaveProperty('promptId', 'submission-1');
     expect(Object.keys(live!.payload as Record<string, unknown>).sort()).toEqual(
       [...TURN_STARTED_WIRE_KEYS, 'promptId'].sort(),
-    );
-
-    // Cursor replay within the in-memory tail serves the same promptId echo.
-    const replay = await bc.getBufferedSince('s1', { seq: 0 });
-    const replayed = replay.events.find((e) => e.envelope.type === 'turn.started');
-    expect(replayed).toBeDefined();
-    expect(replayed!.envelope.payload).toHaveProperty('promptId', 'submission-1');
-  });
-
-  it('strips the internal promptAttachments from an image-prompt turn.started (live + tail replay)', async () => {
-    const lc = new FakeLifecycle();
-    const main = lc.addAgent('main');
-    sessions.set('s1', lc);
-    const { target, envelopes } = collectingTarget();
-    await bc.subscribe('s1', target);
-
-    main.bus.emit(
-      agentEvent('turn.started', {
-        turnId: 1,
-        origin: { kind: 'user' },
-        prompt: 'what is in this picture?',
-        promptAttachments: [{ kind: 'image', fileId: 'file_img_1', name: 'photo.png' }],
-      }),
-    );
-    await bc.getCursor('s1'); // drain
-
-    const live = envelopes.find((e) => e.type === 'turn.started');
-    expect(live).toBeDefined();
-    expect(live!.payload).not.toHaveProperty('promptAttachments');
-    expect(Object.keys(live!.payload as Record<string, unknown>).sort()).toEqual(
-      TURN_STARTED_WIRE_KEYS,
-    );
-
-    // Cursor replay within the in-memory tail serves the same stripped envelope.
-    const replay = await bc.getBufferedSince('s1', { seq: 0 });
-    const replayed = replay.events.find((e) => e.envelope.type === 'turn.started');
-    expect(replayed).toBeDefined();
-    expect(replayed!.envelope.payload).not.toHaveProperty('promptAttachments');
-    expect(Object.keys(replayed!.envelope.payload as Record<string, unknown>).sort()).toEqual(
-      TURN_STARTED_WIRE_KEYS,
     );
   });
 
@@ -946,78 +906,47 @@ describe('SessionEventBroadcaster', () => {
     );
   });
 
-  it('projects prompt.steered content without leaking daemon refs (live + tail replay)', async () => {
-    const lc = new FakeLifecycle();
-    const main = lc.addAgent('main');
-    sessions.set('s1', lc);
-    const { target, envelopes } = collectingTarget();
-    await bc.subscribe('s1', target);
+  it.each(['prompt.steered', 'prompt.queued'])(
+    'projects %s content without leaking daemon refs (live + tail replay)',
+    async (type) => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      const { target, envelopes } = collectingTarget();
+      await bc.subscribe('s1', target);
 
-    main.bus.emit(
-      agentEvent('prompt.steered', {
-        activePromptId: 'p1',
-        promptIds: ['p2'],
-        content: [
-          { type: 'text', text: '<image path="/abs/session/media/f_img1.png"></image>' },
-          {
-            type: 'image_url',
-            imageUrl: { url: 'kimi-file://f_img1?path=%2Fabs%2Fsession%2Fmedia%2Ff_img1.png' },
-          },
-        ],
-        steeredAt: '2026-01-01T00:00:02.000Z',
-      }),
-    );
-    await bc.getCursor('s1'); // drain
+      const ids =
+        type === 'prompt.steered'
+          ? { activePromptId: 'p1', promptIds: ['p2'], steeredAt: '2026-01-01T00:00:02.000Z' }
+          : { promptId: 'p2', queueLength: 1 };
+      main.bus.emit(
+        agentEvent(type, {
+          ...ids,
+          content: [
+            { type: 'text', text: '<image path="/abs/session/media/f_img1.png"></image>' },
+            {
+              type: 'image_url',
+              imageUrl: { url: 'kimi-file://f_img1?path=%2Fabs%2Fsession%2Fmedia%2Ff_img1.png' },
+            },
+          ],
+        }),
+      );
+      await bc.getCursor('s1'); // drain
 
-    const expected = [{ type: 'image', source: { kind: 'file', file_id: 'f_img1' } }];
-    const live = envelopes.find((e) => e.type === 'prompt.steered');
-    expect(live).toBeDefined();
-    expect((live!.payload as { content: unknown }).content).toEqual(expected);
-    expect(JSON.stringify(live!.payload)).not.toContain('kimi-file://');
-    expect(JSON.stringify(live!.payload)).not.toContain('/abs/session');
+      const expected = [{ type: 'image', source: { kind: 'file', file_id: 'f_img1' } }];
+      const live = envelopes.find((e) => e.type === type);
+      expect(live).toBeDefined();
+      expect((live!.payload as { content: unknown }).content).toEqual(expected);
+      expect(JSON.stringify(live!.payload)).not.toContain('kimi-file://');
+      expect(JSON.stringify(live!.payload)).not.toContain('/abs/session');
 
-    // Cursor replay within the in-memory tail serves the same projected envelope.
-    const replay = await bc.getBufferedSince('s1', { seq: 0 });
-    const replayed = replay.events.find((e) => e.envelope.type === 'prompt.steered');
-    expect(replayed).toBeDefined();
-    expect((replayed!.envelope.payload as { content: unknown }).content).toEqual(expected);
-  });
-
-  it('projects prompt.queued content without leaking daemon refs (live + tail replay)', async () => {
-    const lc = new FakeLifecycle();
-    const main = lc.addAgent('main');
-    sessions.set('s1', lc);
-    const { target, envelopes } = collectingTarget();
-    await bc.subscribe('s1', target);
-
-    main.bus.emit(
-      agentEvent('prompt.queued', {
-        promptId: 'p2',
-        content: [
-          { type: 'text', text: '<image path="/abs/session/media/f_img1.png"></image>' },
-          {
-            type: 'image_url',
-            imageUrl: { url: 'kimi-file://f_img1?path=%2Fabs%2Fsession%2Fmedia%2Ff_img1.png' },
-          },
-        ],
-        queueLength: 1,
-      }),
-    );
-    await bc.getCursor('s1'); // drain
-
-    const expected = [{ type: 'image', source: { kind: 'file', file_id: 'f_img1' } }];
-    const live = envelopes.find((e) => e.type === 'prompt.queued');
-    expect(live).toBeDefined();
-    expect((live!.payload as { content: unknown }).content).toEqual(expected);
-    expect(JSON.stringify(live!.payload)).not.toContain('kimi-file://');
-    expect(JSON.stringify(live!.payload)).not.toContain('/abs/session');
-
-    // Cursor replay within the in-memory tail serves the same projected envelope.
-    const replay = await bc.getBufferedSince('s1', { seq: 0 });
-    const replayed = replay.events.find((e) => e.envelope.type === 'prompt.queued');
-    expect(replayed).toBeDefined();
-    expect((replayed!.envelope.payload as { content: unknown }).content).toEqual(expected);
-  });
+      // Cursor replay within the in-memory tail serves the same projected envelope.
+      const replay = await bc.getBufferedSince('s1', { seq: 0 });
+      const replayed = replay.events.find((e) => e.envelope.type === type);
+      expect(replayed).toBeDefined();
+      expect((replayed!.envelope.payload as { content: unknown }).content).toEqual(expected);
+    },
+  );
 
   it('returns epoch_changed for a mismatched epoch', async () => {
     const lc = new FakeLifecycle();

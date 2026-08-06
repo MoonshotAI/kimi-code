@@ -15,13 +15,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   buildDaemonFileUrl,
-  buildMediaPathTag,
   createKimiHarnessV2,
   ErrorCodes,
   isDaemonFileUrl,
   KimiError,
   KimiHarness,
-  parseDaemonFileUrl,
   removeProviderFromConfig,
   SDKRpcClientV2,
   type KimiConfig,
@@ -98,13 +96,9 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
       expect(typeof meta.created_at).toBe('string');
       expect(typeof meta.expires_at).toBe('string');
 
-      // The re-exported daemon-file helpers round-trip the returned meta.
-      const url = buildDaemonFileUrl(meta.id, '/tmp/pixel.png');
-      expect(isDaemonFileUrl(url)).toBe(true);
-      expect(parseDaemonFileUrl(url)).toEqual({ fileId: meta.id, path: '/tmp/pixel.png' });
-      expect(buildMediaPathTag('image', '/tmp/pixel.png')).toBe(
-        '<image path="/tmp/pixel.png"></image>',
-      );
+      // Re-export smoke only — helper behavior is pinned by agent-core-v2's
+      // mediaRef tests.
+      expect(isDaemonFileUrl(buildDaemonFileUrl(meta.id, '/tmp/pixel.png'))).toBe(true);
       await harness.deleteFile(meta.id);
       await expect(harness.deleteFile(meta.id)).rejects.toThrow(/file not found/);
     } finally {

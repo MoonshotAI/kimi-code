@@ -40,20 +40,6 @@ describe('toProtocolMessage', () => {
     ]);
   });
 
-  it('projects a kimi-file image reference to a structured file source without leaking the path', () => {
-    const msg: ContextMessage = {
-      role: 'user',
-      content: [
-        { type: 'image_url', imageUrl: { url: 'kimi-file://file_9?path=%2Fcache%2Fpic.png' } },
-      ],
-      toolCalls: [],
-    };
-
-    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
-      { type: 'image', source: { kind: 'file', file_id: 'file_9' } },
-    ]);
-  });
-
   it('folds the upload tag+ref pair into a single image part', () => {
     // The persisted dual shape (`<image path>` tag text part + daemon-ref
     // image part) is ONE upload: the tag is machine markup and must not

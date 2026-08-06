@@ -192,34 +192,37 @@ describe('StagingLeaseTracker', () => {
   });
 
   describe('abandonment', () => {
-    it('release deletes daemon uploads and cache copies immediately', () => {
+    // Every abandonment entry point deletes daemon uploads and cache copies
+    // immediately, whether or not a turn ever consumed the lease.
+    it.each([
+      [
+        'release',
+        (tracker: StagingLeaseTracker) => {
+          tracker.release(tracker.create([1], ['/cache/a'], 'user'));
+          tracker.release(tracker.create([2], ['/cache/b'], 'user'));
+        },
+      ],
+      [
+        'releaseMedia and releaseQueued',
+        (tracker: StagingLeaseTracker) => {
+          tracker.releaseMedia([1], ['/cache/a']);
+          tracker.releaseQueued([
+            { text: 'q', agentId: 'main', imageAttachmentIds: [2], stagingPaths: ['/cache/b'] },
+          ]);
+        },
+      ],
+      [
+        'releaseAll',
+        (tracker: StagingLeaseTracker) => {
+          tracker.create([1], ['/cache/a'], 'user');
+          tracker.bindToTurn(tracker.create([2], ['/cache/b'], 'user'), '1');
+          tracker.releaseAll();
+        },
+      ],
+    ] as const)('%s deletes daemon uploads and cache copies immediately', (_name, abandon) => {
       const { tracker, deleted } = makeTracker();
-      const lease = tracker.create([1], ['/cache/a'], 'user');
 
-      tracker.release(lease);
-
-      expect(deleted.fileIds).toEqual(['file-1']);
-      expect(deleted.paths).toEqual(['/cache/a']);
-    });
-
-    it('releaseMedia and releaseQueued delete immediately', () => {
-      const { tracker, deleted } = makeTracker();
-      tracker.releaseMedia([1], ['/cache/a']);
-      tracker.releaseQueued([
-        { text: 'q', agentId: 'main', imageAttachmentIds: [2], stagingPaths: ['/cache/b'] },
-      ]);
-
-      expect(deleted.fileIds).toEqual(['file-1', 'file-2']);
-      expect(deleted.paths).toEqual(['/cache/a', '/cache/b']);
-    });
-
-    it('releaseAll fully deletes leases that were never consumed', () => {
-      const { tracker, deleted } = makeTracker();
-      tracker.create([1], ['/cache/a'], 'user');
-      const bound = tracker.create([2], ['/cache/b'], 'user');
-      tracker.bindToTurn(bound, '1');
-
-      tracker.releaseAll();
+      abandon(tracker);
 
       expect(deleted.fileIds).toEqual(['file-1', 'file-2']);
       expect(deleted.paths).toEqual(['/cache/a', '/cache/b']);
