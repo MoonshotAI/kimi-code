@@ -87,7 +87,12 @@ describe('registerDeepLinkScheme', () => {
     Object.defineProperty(process, 'platform', { value: 'win32', enumerable: true, configurable: true });
   }
 
+  function asMac(): void {
+    Object.defineProperty(process, 'platform', { value: 'darwin', enumerable: true, configurable: true });
+  }
+
   it('no-ops in packaged builds on macOS/Linux (Info.plist / desktop file register it)', () => {
+    asMac(); // the host runner may be Windows, where packaged builds self-register
     mocks.app.isPackaged = true;
     registerDeepLinkScheme();
     expect(mocks.app.setAsDefaultProtocolClient).not.toHaveBeenCalled();

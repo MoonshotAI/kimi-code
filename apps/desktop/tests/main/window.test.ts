@@ -299,6 +299,10 @@ describe('window lifecycle telemetry', () => {
     vi.resetModules();
     vi.clearAllMocks();
     mocks.windows.length = 0;
+    // Pin the platform: on a Windows host the real win32 branch (icon options
+    // via process.resourcesPath, undefined outside Electron) activates and
+    // derails these telemetry assertions.
+    Object.defineProperty(process, 'platform', { value: 'darwin', enumerable: true, configurable: true });
   });
 
   afterEach(() => {

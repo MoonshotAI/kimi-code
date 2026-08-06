@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { join } from 'node:path';
 
 import { createTraceRecorder, traceFileName } from '../../src/main/trace';
 import type { TraceRecorderDeps } from '../../src/main/trace';
@@ -42,7 +43,8 @@ describe('createTraceRecorder', () => {
     expect(recorder.isRecording()).toBe(false);
     // Save dialog pre-fills the downloads dir + suggested filename.
     const defaultPath = vi.mocked(deps.showSaveDialog).mock.calls[0]?.[0] as string;
-    expect(defaultPath.startsWith('/downloads/kimi-code-trace-')).toBe(true);
+    // The product joins with node:path — match it so the literal survives Windows hosts.
+    expect(defaultPath.startsWith(join('/downloads', 'kimi-code-trace-'))).toBe(true);
     expect(defaultPath.endsWith('.json')).toBe(true);
     expect(deps.moveFile).toHaveBeenCalledWith('/tmp/trace-abc.json', '/chosen/kimi-code-trace.json');
     expect(deps.removeFile).not.toHaveBeenCalled();
