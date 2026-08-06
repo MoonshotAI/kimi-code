@@ -37,7 +37,7 @@ export interface SessionMeta {
   readonly forkedFrom?: string;
   readonly agents?: Readonly<Record<string, AgentMeta>>;
   readonly custom?: Record<string, unknown>;
-  readonly lastTurnOutcome?: 'completed' | 'cancelled' | 'failed';
+  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
 export type SessionMetaPatch = Partial<Omit<SessionMeta, 'id' | 'createdAt'>>;

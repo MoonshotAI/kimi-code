@@ -164,7 +164,7 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
         updatedAt: this.data.updatedAt,
         archived: this.data.archived === true,
         custom: this.data.custom,
-        lastTurnReason: this.data.lastTurnOutcome,
+        lastTurnReason: this.data.lastTurnReason,
       }),
     );
   }

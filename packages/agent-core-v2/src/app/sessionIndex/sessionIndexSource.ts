@@ -160,7 +160,7 @@ export async function readSessionSummary(
     updatedAt: parseTime(meta['updatedAt']),
     archived: meta['archived'] === true,
     custom,
-    lastTurnReason: parseTurnOutcome(meta['lastTurnOutcome']),
+    lastTurnReason: parseTurnOutcome(meta['lastTurnReason']),
   });
 }
 

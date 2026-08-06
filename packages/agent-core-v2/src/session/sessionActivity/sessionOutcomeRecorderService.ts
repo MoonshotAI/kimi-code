@@ -35,7 +35,7 @@ export class SessionOutcomeRecorder extends Disposable implements ISessionOutcom
     void this.metadata
       .read()
       .then((meta) => {
-        if (!this.adopted) this.lastPersisted = meta.lastTurnOutcome;
+        if (!this.adopted) this.lastPersisted = meta.lastTurnReason;
       })
       .catch(() => {});
     this.attachMain();
@@ -93,7 +93,7 @@ export class SessionOutcomeRecorder extends Disposable implements ISessionOutcom
     this.adopted = true;
     const previous = this.lastPersisted;
     this.lastPersisted = outcome;
-    void this.metadata.update({ lastTurnOutcome: outcome }).catch(() => {
+    void this.metadata.update({ lastTurnReason: outcome }).catch(() => {
       if (this.lastPersisted === outcome) this.lastPersisted = previous;
     });
   }

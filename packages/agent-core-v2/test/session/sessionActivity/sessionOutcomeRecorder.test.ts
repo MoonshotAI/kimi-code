@@ -91,7 +91,7 @@ describe('SessionOutcomeRecorder (Session scope)', () => {
   let host: ScopedTestHost;
   let session: Scope;
   let lifecycle: FakeAgentLifecycle;
-  let writes: (SessionMeta['lastTurnOutcome'])[];
+  let writes: (SessionMeta['lastTurnReason'])[];
   let failNextWrite: boolean;
 
   beforeEach(() => {
@@ -102,13 +102,13 @@ describe('SessionOutcomeRecorder (Session scope)', () => {
     writes = [];
     failNextWrite = false;
     const metadata = {
-      read: async () => ({ lastTurnOutcome: writes.at(-1) }) as SessionMeta,
-      update: async (patch: { lastTurnOutcome?: SessionMeta['lastTurnOutcome'] }) => {
+      read: async () => ({ lastTurnReason: writes.at(-1) }) as SessionMeta,
+      update: async (patch: { lastTurnReason?: SessionMeta['lastTurnReason'] }) => {
         if (failNextWrite) {
           failNextWrite = false;
           throw new Error('write failed');
         }
-        writes.push(patch.lastTurnOutcome);
+        writes.push(patch.lastTurnReason);
       },
     };
 
@@ -173,9 +173,9 @@ describe('SessionOutcomeRecorder (Session scope)', () => {
     // and skips the duplicate write.
     const second = host.child(LifecycleScope.Session, 'session-b', [
       stubPair(ISessionMetadata, {
-        read: async () => ({ lastTurnOutcome: 'failed' }) as SessionMeta,
-        update: async (patch: { lastTurnOutcome?: SessionMeta['lastTurnOutcome'] }) => {
-          writes.push(patch.lastTurnOutcome);
+        read: async () => ({ lastTurnReason: 'failed' }) as SessionMeta,
+        update: async (patch: { lastTurnReason?: SessionMeta['lastTurnReason'] }) => {
+          writes.push(patch.lastTurnReason);
         },
       } as unknown as ISessionMetadata),
     ]);
