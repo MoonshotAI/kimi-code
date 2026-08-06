@@ -24,8 +24,9 @@ export type CacheHintConfig = z.infer<typeof cacheHintConfigSchema>;
 export type CacheHintConfigFetchOptions = ClientConfigFetchOptions;
 
 /**
- * Returns the cache-hint config, preferring the in-process cache (1 day).
- * Any failure resolves to `undefined` — callers treat that as "do not hint".
+ * Returns the cache-hint config, preferring the cache (1 day, persisted
+ * across restarts). Any failure resolves to `undefined` — callers treat
+ * that as "do not hint".
  */
 export async function getCacheHintConfig(
   options: CacheHintConfigFetchOptions = {},

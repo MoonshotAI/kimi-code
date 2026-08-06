@@ -1,4 +1,8 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   fetchClientConfig,
@@ -129,10 +133,12 @@ describe('getClientConfig', () => {
     const first = await getClientConfig('estimated_cache_duration', configSchema, {
       fetchImpl: fetchImpl as typeof fetch,
       now,
+      cacheFile: null,
     });
     const second = await getClientConfig('estimated_cache_duration', configSchema, {
       fetchImpl: fetchImpl as typeof fetch,
       now: now + 60_000,
+      cacheFile: null,
     });
 
     expect(first).toEqual(CONFIG);
@@ -147,10 +153,12 @@ describe('getClientConfig', () => {
     await getClientConfig('estimated_cache_duration', configSchema, {
       fetchImpl: fetchImpl as typeof fetch,
       now,
+      cacheFile: null,
     });
     const result = await getClientConfig('estimated_cache_duration', configSchema, {
       fetchImpl: fetchImpl as typeof fetch,
       now: now + 25 * 60 * 60 * 1000,
+      cacheFile: null,
     });
 
     expect(result).toEqual(CONFIG);
@@ -167,10 +175,12 @@ describe('getClientConfig', () => {
     await getClientConfig('estimated_cache_duration', configSchema, {
       fetchImpl: fetchImpl as typeof fetch,
       now,
+      cacheFile: null,
     });
     const second = await getClientConfig('other_config', configSchema, {
       fetchImpl: fetchImpl as typeof fetch,
       now,
+      cacheFile: null,
     });
 
     expect(second).toEqual(CONFIG);
@@ -183,6 +193,7 @@ describe('getClientConfig', () => {
     await expect(
       getClientConfig('estimated_cache_duration', configSchema, {
         fetchImpl: fetchImpl as typeof fetch,
+        cacheFile: null,
       }),
     ).resolves.toBeUndefined();
   });
@@ -195,6 +206,7 @@ describe('peekClientConfig', () => {
     await getClientConfig('estimated_cache_duration', configSchema, {
       fetchImpl: fetchImpl as typeof fetch,
       now,
+      cacheFile: null,
     });
 
     expect(peekClientConfig('estimated_cache_duration', configSchema, now + 60_000)).toEqual(CONFIG);
@@ -205,5 +217,140 @@ describe('peekClientConfig', () => {
 
   it('returns undefined for a config that was never fetched', () => {
     expect(peekClientConfig('estimated_cache_duration', configSchema)).toBeUndefined();
+  });
+});
+
+describe('getClientConfig disk cache', () => {
+  let dir: string;
+  let file: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'client-configs-'));
+    file = join(dir, 'estimated_cache_duration.json');
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('serves a fresh disk entry without network and warms the in-process cache', async () => {
+    const now = Date.now();
+    await writeFile(file, JSON.stringify({ version: 1, fetchedAt: now, config: CONFIG }));
+    const fetchImpl = vi.fn(async () => jsonResponse(ENVELOPE));
+
+    const result = await getClientConfig('estimated_cache_duration', configSchema, {
+      fetchImpl: fetchImpl as typeof fetch,
+      now: now + 60_000,
+      cacheFile: file,
+    });
+
+    expect(result).toEqual(CONFIG);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    // The in-process layer was warmed with the original fetch time.
+    expect(peekClientConfig('estimated_cache_duration', configSchema, now + 60_000)).toEqual(CONFIG);
+  });
+
+  it('serves the disk entry after the in-process cache is dropped (restart)', async () => {
+    const now = Date.now();
+    const fetchImpl = vi.fn(async () => jsonResponse(ENVELOPE));
+    await getClientConfig('estimated_cache_duration', configSchema, {
+      fetchImpl: fetchImpl as typeof fetch,
+      now,
+      cacheFile: file,
+    });
+
+    resetClientConfigCache();
+    const offline = vi.fn(async (): Promise<Response> => {
+      throw new Error('offline');
+    });
+    const result = await getClientConfig('estimated_cache_duration', configSchema, {
+      fetchImpl: offline as typeof fetch,
+      now: now + 60_000,
+      cacheFile: file,
+    });
+
+    expect(result).toEqual(CONFIG);
+    expect(offline).not.toHaveBeenCalled();
+  });
+
+  it('keeps the original fetch time when warming from disk (no TTL extension)', async () => {
+    const now = Date.now();
+    await writeFile(
+      file,
+      JSON.stringify({ version: 1, fetchedAt: now - 23 * 60 * 60 * 1000, config: CONFIG }),
+    );
+    const fetchImpl = vi.fn(async () => jsonResponse(ENVELOPE));
+
+    // 23h old on disk: still fresh.
+    await getClientConfig('estimated_cache_duration', configSchema, {
+      fetchImpl: fetchImpl as typeof fetch,
+      now,
+      cacheFile: file,
+    });
+    // 2h later (25h since the actual fetch): the warmed entry must be stale.
+    expect(peekClientConfig('estimated_cache_duration', configSchema, now + 2 * 60 * 60 * 1000)).toBeUndefined();
+  });
+
+  it('refetches and rewrites the file when the disk entry is stale', async () => {
+    const now = Date.now();
+    await writeFile(
+      file,
+      JSON.stringify({ version: 1, fetchedAt: now - 25 * 60 * 60 * 1000, config: CONFIG }),
+    );
+    const fetchImpl = vi.fn(async () => jsonResponse(ENVELOPE));
+
+    const result = await getClientConfig('estimated_cache_duration', configSchema, {
+      fetchImpl: fetchImpl as typeof fetch,
+      now,
+      cacheFile: file,
+    });
+
+    expect(result).toEqual(CONFIG);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const onDisk = JSON.parse(await readFile(file, 'utf-8')) as { fetchedAt: number };
+    expect(onDisk.fetchedAt).toBe(now);
+  });
+
+  it('treats a malformed cache file as missing', async () => {
+    await writeFile(file, 'not json');
+    const fetchImpl = vi.fn(async () => jsonResponse(ENVELOPE));
+
+    const result = await getClientConfig('estimated_cache_duration', configSchema, {
+      fetchImpl: fetchImpl as typeof fetch,
+      cacheFile: file,
+    });
+
+    expect(result).toEqual(CONFIG);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a disk entry whose payload fails the caller schema', async () => {
+    await writeFile(
+      file,
+      JSON.stringify({ version: 1, fetchedAt: Date.now(), config: { version: 2 } }),
+    );
+    const fetchImpl = vi.fn(async () => jsonResponse(ENVELOPE));
+
+    const result = await getClientConfig('estimated_cache_duration', configSchema, {
+      fetchImpl: fetchImpl as typeof fetch,
+      cacheFile: file,
+    });
+
+    expect(result).toEqual(CONFIG);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('still resolves when the cache file cannot be written', async () => {
+    // The parent path is a regular file, so mkdir for the cache file fails.
+    const blocker = join(dir, 'blocker');
+    await writeFile(blocker, 'x');
+    const fetchImpl = vi.fn(async () => jsonResponse(ENVELOPE));
+
+    const result = await getClientConfig('estimated_cache_duration', configSchema, {
+      fetchImpl: fetchImpl as typeof fetch,
+      cacheFile: join(blocker, 'nested', 'config.json'),
+    });
+
+    expect(result).toEqual(CONFIG);
   });
 });
