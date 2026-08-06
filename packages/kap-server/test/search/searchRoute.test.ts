@@ -2,6 +2,11 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+// Keep these server boots on the WORKER search host (the suite-level setup
+// disables the flag to spare non-search suites the background worker load):
+// this file is the end-to-end coverage of the production worker path.
+process.env['KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER'] = '1';
+
 import { ISessionIndex, type SessionSummary } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 

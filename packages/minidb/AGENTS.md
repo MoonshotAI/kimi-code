@@ -1,6 +1,6 @@
 # minidb Agent Guide
 
-The embedded JSON document store (`MiniDb`) behind kap-server's search index — snapshot + WAL persistence with an exclusive write lock (losers open read-only and catch up from the WAL), plus a larger-than-RAM full-text layer.
+The embedded JSON document store (`MiniDb`) behind kap-server's search index — snapshot + WAL persistence with an exclusive write lock (losers open read-only and catch up from the WAL; `OpenOptions.onLockAcquired` reports the held lock token right after acquisition, before recovery work — supervisors hosting MiniDb in a worker thread need it because worker threads share the host process pid, so the pid in the lock line alone cannot drive stale reclamation), plus a larger-than-RAM full-text layer.
 
 ## Text index
 

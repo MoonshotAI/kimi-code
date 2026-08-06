@@ -195,6 +195,20 @@ export async function openMiniDb<V>(db: LifecycleHost<V>, opts: OpenOptions, hoo
       } else {
         throw new LockError(`database is locked by another process: ${db.dir}`);
       }
+    } else {
+      // Report the held token BEFORE the heavy recovery work below: a
+      // supervisor (another thread orchestrating this open) learns the lock
+      // identity immediately and can reap the lock if this opener dies
+      // mid-recovery. The callback is purely observational — a throwing
+      // supervisor must not fail this open with the lock already held.
+      const heldToken = db.lock.heldToken;
+      if (heldToken !== undefined) {
+        try {
+          opts.onLockAcquired?.({ token: heldToken });
+        } catch {
+          // Intentionally swallowed — see above.
+        }
+      }
     }
   }
 

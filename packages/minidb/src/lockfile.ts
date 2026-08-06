@@ -74,10 +74,18 @@ function hookExit(): void {
 export class LockFile {
   readonly path: string;
   held = false;
-  /** Identity of the current acquire() attempt: minted fresh per attempt,
+  /** Token of the current acquire attempt: minted fresh per attempt,
    *  carried by every file this instance publishes (lock/bid/watch), and the
    *  sole ownership criterion (`mine`). Null before the first acquire(). */
   private token: string | null = null;
+
+  /** The held instance's ownership token (undefined unless currently held).
+   *  Lets a host supervising this database from another thread learn WHO
+   *  holds the lock file without parsing it — worker threads share the main
+   *  process pid, so the pid in the lock line cannot distinguish them. */
+  get heldToken(): string | undefined {
+    return this.held && this.token !== null ? this.token : undefined;
+  }
   /** Serializes acquire/renew/release (the shared promise-chain pattern of
    *  serialize.ts): each op's whole read-check-write completes before the next
    *  one starts, so a renew already in flight finishes before a release

@@ -16,3 +16,14 @@ for (const key of Object.keys(process.env)) {
     delete process.env[key];
   }
 }
+
+// Stage-4 note: default the `search_worker` flag OFF for server-booting
+// suites. Every startServer would otherwise lazily spawn a real search
+// worker thread, and in dev/test the entry loads its TypeScript closure via
+// Node's type stripping — CPU-heavy enough that the accumulated background
+// load pushed unrelated heavy tests (e.g. prompts image compression) past
+// the 5s default timeout under full-suite parallelism. Suites that exercise
+// the search surface pin their host explicitly: searchService.test.ts
+// injects flag stubs per service, and searchRoute.test.ts re-enables the
+// env var for its end-to-end worker coverage.
+process.env['KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER'] = 'false';

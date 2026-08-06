@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
+import { monitorEventLoopDelay, performance, type IntervalHistogram } from 'node:perf_hooks';
+import { Worker } from 'node:worker_threads';
 
 import type {
   IBootstrapService,
+  IFlagService,
   ILogService,
   ISessionIndex,
   SessionSummary,
@@ -14,12 +16,21 @@ import { MiniDb } from '@moonshot-ai/minidb';
 import { TranscriptStore, type TranscriptOperation } from '@moonshot-ai/transcript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { SyncSessionInput } from '../../src/search/indexCore';
 import {
   GlobalSearchError,
   GlobalSearchService,
+  InlineSearchBackend,
+  SEARCH_WORKER_FLAG_ID,
   drainGlobalSearchDisposals,
   type LiveTranscriptSource,
+  type SearchBackend,
 } from '../../src/search/searchService';
+import {
+  SearchWorkerError,
+  SearchWorkerHost,
+} from '../../src/search/worker/host';
+import type { SearchWorkerRequest } from '../../src/search/worker/protocol';
 
 // ---------------------------------------------------------------------------
 // fixtures & stubs
@@ -118,10 +129,74 @@ const noopLog = {
   debug: () => {},
 } as unknown as ILogService;
 
+function makeFlags(workerEnabled: boolean): IFlagService {
+  return {
+    enabled: (id: string) => id === SEARCH_WORKER_FLAG_ID && workerEnabled,
+  } as unknown as IFlagService;
+}
+
+/**
+ * Worker-host service (the production default): the index core runs in a
+ * dedicated worker thread. Most behavior tests run against this host.
+ */
 function makeService(home: string, index: ISessionIndex): GlobalSearchService {
-  const service = new GlobalSearchService(index, makeBootstrap(home), noopLog);
+  const service = new GlobalSearchService(index, makeBootstrap(home), noopLog, makeFlags(true));
   service.syncDebounceMs = 0;
   return service;
+}
+
+/**
+ * Inline-host service (the rollback host): the index core runs in-process so
+ * tests can drive its internals (direct db writes, patched probes) — the
+ * worker thread's core is not reachable from the test thread.
+ */
+function makeInlineService(home: string, index: ISessionIndex): GlobalSearchService {
+  const service = new GlobalSearchService(index, makeBootstrap(home), noopLog, makeFlags(false));
+  service.syncDebounceMs = 0;
+  return service;
+}
+
+/** Loose db handle shape for direct fixture writes (same as the pre-split suite). */
+interface TestDb {
+  get(key: string): Record<string, unknown> | undefined;
+  set(key: string, value: unknown): Promise<void>;
+  del(key: string): Promise<void>;
+  batch(ops: { op: 'set' | 'del'; key: string; value?: unknown }[]): Promise<void>;
+  query(criteria: { key: { prefix: string }; project?: string[] }): {
+    key: string;
+    value: Record<string, unknown>;
+  }[];
+  compact(): Promise<void>;
+  close(): Promise<void>;
+}
+
+/** The inline backend's index core (test drive point; worker mode has none). */
+type TestableCore = {
+  db: TestDb | null;
+  doRefreshReadonly(): Promise<void>;
+  computeFingerprint(): Promise<string>;
+  openSearchDb(): Promise<unknown>;
+  deleteSessionDocs(db: TestDb, sessionId: string): Promise<void>;
+  syncSession(db: TestDb, summary: SyncSessionInput): Promise<void>;
+};
+
+function coreOf(service: GlobalSearchService): TestableCore {
+  const backend = (service as unknown as { backend: SearchBackend }).backend;
+  if (!(backend instanceof InlineSearchBackend)) {
+    throw new Error('this test drives core internals and must use makeInlineService');
+  }
+  return backend.core as unknown as TestableCore;
+}
+
+/** SessionSummary → the core's sync input (dir resolved like the service does). */
+function syncInput(homeDir: string, s: SessionSummary): SyncSessionInput {
+  return {
+    id: s.id,
+    workspaceId: s.workspaceId,
+    title: s.title,
+    updatedAt: s.updatedAt,
+    dir: join(homeDir, 'sessions', s.workspaceId, s.id),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -150,25 +225,7 @@ function refreshNow(service: GlobalSearchService): Promise<void> {
 }
 
 interface ServiceInternals {
-  db: {
-    get(key: string): Record<string, unknown> | undefined;
-    set(key: string, value: unknown): Promise<void>;
-    del(key: string): Promise<void>;
-    batch(ops: { op: 'set' | 'del'; key: string; value?: unknown }[]): Promise<void>;
-    query(criteria: { key: { prefix: string }; project?: string[] }): {
-      key: string;
-      value: Record<string, unknown>;
-    }[];
-    compact(): Promise<void>;
-    close(): Promise<void>;
-  } | null;
-  generation: number;
   syncPromise: Promise<void> | null;
-  fileMetaMigrated: boolean;
-  doRefreshReadonly(): Promise<void>;
-  syncSession(db: NonNullable<ServiceInternals['db']>, summary: SessionSummary): Promise<void>;
-  openSearchDb(): Promise<unknown>;
-  computeFingerprint(): Promise<string>;
 }
 
 function internals(service: GlobalSearchService): ServiceInternals {
@@ -187,12 +244,13 @@ async function flush(rounds = 20): Promise<void> {
 }
 
 /**
- * Patch a private async method to signal its first entry and hold it until
- * released — the deterministic "dispose lands mid-op" interleaving for the
- * lifecycle tests. Later calls pass through to the original.
+ * Patch a private async method of the inline core to signal its first entry
+ * and hold it until released — the deterministic "dispose lands mid-op"
+ * interleaving for the lifecycle tests. Later calls pass through to the
+ * original.
  */
 function blockFirstCall(
-  service: GlobalSearchService,
+  core: TestableCore,
   method: 'deleteSessionDocs' | 'computeFingerprint',
 ): { entered: Promise<void>; release: () => void } {
   let enteredResolve!: () => void;
@@ -203,7 +261,7 @@ function blockFirstCall(
   const gate = new Promise<void>((resolve) => {
     releaseResolve = resolve;
   });
-  const host = service as unknown as Record<string, unknown>;
+  const host = core as unknown as Record<string, unknown>;
   const orig = host[method] as (this: unknown, ...args: unknown[]) => Promise<unknown>;
   let first = true;
   host[method] = async function (this: unknown, ...args: unknown[]) {
@@ -552,12 +610,12 @@ describe('GlobalSearchService', () => {
     const file = await writeWire(home!, 's1', 'main', [userLine('苹果 base', T1)]);
     const index = staticIndex([s1]);
 
-    const writer = track(makeService(home!, index));
+    const writer = track(makeInlineService(home!, index));
     await writer.reindex();
 
     // Same process, same homeDir: the lock is held by `writer`, so this
     // instance must downgrade to read-only instead of rebuilding.
-    const reader = track(makeService(home!, index));
+    const reader = track(makeInlineService(home!, index));
     const status = await reader.status();
     expect(status.documents).toBe(2); // replayed at open: message + title
 
@@ -581,14 +639,14 @@ describe('GlobalSearchService', () => {
 
     // WAL rotation on the writer forces the reader's reopen path (open the
     // replacement, then swap); results stay correct afterwards.
-    const writerDb = internals(writer).db;
+    const writerDb = coreOf(writer).db;
     await writerDb?.compact();
     await refreshNow(reader);
     const afterRotation = await reader.search({ query: '苹果' });
     expect(afterRotation.items.length).toBe(2);
   });
 
-  it('rejects reindex on a read-only instance', async () => {
+  it('rejects reindex on a read-only instance', { timeout: 30_000 }, async () => {
     const s1 = summary('s1', 'lock', T1);
     await writeWire(home!, 's1', 'main', [userLine('苹果 lock', T1)]);
     const index = staticIndex([s1]);
@@ -604,13 +662,13 @@ describe('GlobalSearchService', () => {
   it('serves the building page while the index base is rebuilding, real hits after commit', async () => {
     const s1 = summary('s1', 'shared', T1);
     await writeWire(home!, 's1', 'main', [userLine('苹果 base', T1)]);
-    const service = track(makeService(home!, staticIndex([s1])));
+    const service = track(makeInlineService(home!, staticIndex([s1])));
     await service.reindex();
 
     // Force the base-building state on the served handle (the deferred
     // open-time build sets exactly this): searches must return the building
     // page — never throw, never silently serve partial results.
-    const db = internals(service).db as unknown as { textIndexBuilding(name: string): boolean };
+    const db = coreOf(service).db as unknown as { textIndexBuilding(name: string): boolean };
     const original = db.textIndexBuilding.bind(db);
     db.textIndexBuilding = () => true;
     try {
@@ -637,12 +695,12 @@ describe('GlobalSearchService', () => {
     const s1 = summary('s1', 'shared', T1);
     await writeWire(home!, 's1', 'main', [userLine('苹果 base', T1)]);
     const index = staticIndex([s1]);
-    const writer = track(makeService(home!, index));
+    const writer = track(makeInlineService(home!, index));
     await writer.reindex();
-    const reader = track(makeService(home!, index));
+    const reader = track(makeInlineService(home!, index));
     await reader.status(); // forces the read-only open
 
-    const db = internals(reader).db as unknown as { textIndexBuilding(name: string): boolean };
+    const db = coreOf(reader).db as unknown as { textIndexBuilding(name: string): boolean };
     const original = db.textIndexBuilding.bind(db);
     db.textIndexBuilding = () => true;
     try {
@@ -938,12 +996,12 @@ describe('GlobalSearchService', () => {
       stepBeginLine('u1', 1, T1 + 100),
       assistantStepLine('苹果 reply one', 'u1', T1 + 200),
     ]);
-    const service = track(makeService(home!, staticIndex([s1])));
+    const service = track(makeInlineService(home!, staticIndex([s1])));
     await service.reindex();
 
     // Simulate a file meta written before step tracking existed by stripping
     // stepState from the persisted meta.
-    const db = internals(service).db;
+    const db = coreOf(service).db;
     expect(db).not.toBeNull();
     const metaRows = db!.query({ key: { prefix: '\0meta\\file\\' } });
     expect(metaRows.length).toBe(1);
@@ -1157,12 +1215,12 @@ describe('GlobalSearchService', () => {
     it('scopes one session sync to its own file-meta keys among 10k sessions', async () => {
       const s1 = summary('s1', 'scoped', T1);
       await writeWire(home!, 's1', 'main', [userLine('苹果 scoped', T1)]);
-      const service = track(makeService(home!, staticIndex([s1])));
+      const service = track(makeInlineService(home!, staticIndex([s1])));
       await service.reindex();
 
       // Seed 10k foreign sessions × 3 file-meta rows directly (no wire files
       // on disk), simulating a large pre-existing index.
-      const db = internals(service).db!;
+      const db = coreOf(service).db!;
       for (let from = 0; from < 10_000; from += 2_500) {
         const ops: { op: 'set'; key: string; value: unknown }[] = [];
         for (let i = from; i < from + 2_500; i++) {
@@ -1195,7 +1253,7 @@ describe('GlobalSearchService', () => {
         if (criteria.key.prefix.startsWith('\0meta\\file\\')) metaRowsScanned += rows.length;
         return rows;
       };
-      await internals(service).syncSession(db, s1);
+      await coreOf(service).syncSession(db, syncInput(home!, s1));
       expect(metaRowsScanned).toBeLessThanOrEqual(5); // s1 has exactly 1 meta
     });
 
@@ -1203,13 +1261,13 @@ describe('GlobalSearchService', () => {
       const s1 = summary('s1', 'migration', T1);
       const main = await writeWire(home!, 's1', 'main', [userLine('苹果 main', T1)]);
       await writeWire(home!, 's1', 'agent-1', [userLine('苹果 sub', T2)]);
-      const first = track(makeService(home!, staticIndex([s1])));
+      const first = track(makeInlineService(home!, staticIndex([s1])));
       await first.reindex();
       expect((await first.search({ query: '苹果' })).items.length).toBe(2);
 
       // Rewrite every file meta under its pre-v2 hash-only key (same value),
       // simulating an index written before the key migration.
-      const db = internals(first).db!;
+      const db = coreOf(first).db!;
       const metas = db.query({ key: { prefix: '\0meta\\file\\' } });
       expect(metas.length).toBe(2);
       const legacyOffsets = new Map<string, number>();
@@ -1225,9 +1283,9 @@ describe('GlobalSearchService', () => {
       await drainGlobalSearchDisposals();
 
       // A fresh instance migrates on its first background pass.
-      const second = track(makeService(home!, staticIndex([s1])));
+      const second = track(makeInlineService(home!, staticIndex([s1])));
       await settleSync(second);
-      const db2 = internals(second).db!;
+      const db2 = coreOf(second).db!;
       const after = db2.query({ key: { prefix: '\0meta\\file\\' } });
       expect(after.length).toBe(2);
       for (const row of after) {
@@ -1265,7 +1323,10 @@ describe('GlobalSearchService', () => {
         Buffer.from(page1.pageToken!, 'base64url').toString('utf8'),
       ) as Record<string, unknown>;
       expect(decoded['v']).toBe(2);
-      expect(typeof decoded['g']).toBe('number');
+      // The pinned generation is `<bootSalt>:<counter>` — the salt makes
+      // tokens fail validation across a worker/process restart.
+      expect(typeof decoded['g']).toBe('string');
+      expect(decoded['g']).toMatch(/:\d+$/);
       expect(Array.isArray(decoded['b'])).toBe(true);
 
       // Additive writes land mid-pagination: they do NOT change the
@@ -1351,14 +1412,14 @@ describe('GlobalSearchService', () => {
       const s1 = summary('s1', 'degraded', T1);
       const file = await writeWire(home!, 's1', 'main', [userLine('苹果 base', T1)]);
       const index = staticIndex([s1]);
-      const writer = track(makeService(home!, index));
+      const writer = track(makeInlineService(home!, index));
       await writer.reindex();
-      const reader = track(makeService(home!, index));
+      const reader = track(makeInlineService(home!, index));
       await reader.status();
       expect((await reader.search({ query: '苹果' })).items.length).toBe(1);
 
-      const original = internals(reader).doRefreshReadonly;
-      internals(reader).doRefreshReadonly = async () => {
+      const original = coreOf(reader).doRefreshReadonly;
+      coreOf(reader).doRefreshReadonly = async () => {
         throw new Error('refresh boom');
       };
       await appendFile(file, `${userLine('苹果 delta', T2)}\n`, 'utf8');
@@ -1375,7 +1436,7 @@ describe('GlobalSearchService', () => {
       expect(degraded.items.length).toBe(1); // still the stale generation
 
       // Restoring the refresh path self-heals the flag.
-      internals(reader).doRefreshReadonly = original;
+      coreOf(reader).doRefreshReadonly = original;
       await refreshNow(reader);
       const healed = await reader.search({ query: '苹果' });
       expect(healed.indexState.degraded).toBeUndefined();
@@ -1469,16 +1530,16 @@ describe('GlobalSearchService', () => {
     it('self-heals a failed open through search traffic', async () => {
       const s1 = summary('s1', 'heal', T1);
       await writeWire(home!, 's1', 'main', [userLine('苹果 heal', T1)]);
-      const service = track(makeService(home!, staticIndex([s1])));
+      const service = track(makeInlineService(home!, staticIndex([s1])));
 
       // The db open fails transiently (e.g. a read-only open racing a
       // writer's compaction).
-      const si = internals(service);
-      const origOpen = si.openSearchDb;
+      const core = coreOf(service);
+      const origOpen = core.openSearchDb;
       let failOpen = true;
-      si.openSearchDb = async () => {
+      core.openSearchDb = async () => {
         if (failOpen) throw new Error('open boom');
-        return origOpen.call(service);
+        return origOpen.call(core);
       };
 
       // First search: building semantics while the (doomed) pass runs.
@@ -1511,20 +1572,20 @@ describe('GlobalSearchService', () => {
       const s1 = summary('s1', 'swap', T1);
       await writeWire(home!, 's1', 'main', [userLine('苹果 base', T1)]);
       const index = staticIndex([s1]);
-      const writer = track(makeService(home!, index));
+      const writer = track(makeInlineService(home!, index));
       await writer.reindex();
-      const reader = track(makeService(home!, index));
+      const reader = track(makeInlineService(home!, index));
       await reader.status();
       expect((await reader.search({ query: '苹果' })).items.length).toBe(1);
 
       // Rotate the writer's WAL so the reader's refresh must take the reopen
       // path (which swaps the handle and closes the previous one).
-      await internals(writer).db!.compact();
+      await coreOf(writer).db!.compact();
 
       // Park the search's fingerprint probe at a gate; while it is parked, a
       // background refresh completes the reopen and closes the handle the
       // search captured.
-      const ri = internals(reader);
+      const ri = coreOf(reader);
       const origFp = ri.computeFingerprint.bind(ri);
       let fpCalls = 0;
       let releaseProbe!: () => void;
@@ -2200,7 +2261,7 @@ describe('GlobalSearchService', () => {
     it('closes the handle when post-open index setup fails, and the next open becomes the writer again (review #19)', async () => {
       const s1 = summary('s1', 'open failure', T1);
       await writeWire(home!, 's1', 'main', [userLine('苹果 recovery', T1)]);
-      const service = track(makeService(home!, staticIndex([s1])));
+      const service = track(makeInlineService(home!, staticIndex([s1])));
 
       // Inject a failure into the writer-side text-index creation that runs
       // after MiniDb.open has handed out the handle.
@@ -2214,11 +2275,11 @@ describe('GlobalSearchService', () => {
       // must be closed — otherwise the leaked writer keeps the lock for the
       // rest of the process lifetime and every later open degrades to
       // read-only (the review #19 self-lock).
-      expect(internals(service).db).toBeNull();
+      expect(coreOf(service).db).toBeNull();
 
       // The very next open takes the write lock again (same process).
       await service.reindex();
-      const db = internals(service).db;
+      const db = coreOf(service).db;
       expect(db).not.toBeNull();
       expect((db as unknown as { readOnly: boolean }).readOnly).toBe(false);
       expect((await service.search({ query: '苹果' })).items.length).toBe(1);
@@ -2233,6 +2294,7 @@ describe('GlobalSearchService', () => {
         makeSessionIndex(async () => ({ items: sessions, nextCursor: undefined })),
         makeBootstrap(home!),
         log,
+        makeFlags(false),
       );
       service.syncDebounceMs = 0;
       track(service);
@@ -2243,7 +2305,7 @@ describe('GlobalSearchService', () => {
       await settleSync(service);
 
       // Record trailing writes; the gated pass must skip its STATS_KEY write.
-      const db = internals(service).db!;
+      const db = coreOf(service).db!;
       const setKeys: string[] = [];
       const origSet = db.set.bind(db);
       db.set = async (key: string, value: unknown) => {
@@ -2254,7 +2316,7 @@ describe('GlobalSearchService', () => {
       // The next pass deletes the disappeared session; block it inside the
       // deleteSessionDocs window, then dispose mid-pass.
       sessions.length = 0;
-      const blocked = blockFirstCall(service, 'deleteSessionDocs');
+      const blocked = blockFirstCall(coreOf(service), 'deleteSessionDocs');
       const sync = syncNow(service);
       await blocked.entered;
       service.dispose();
@@ -2270,7 +2332,7 @@ describe('GlobalSearchService', () => {
       await sync;
       await drain;
       expect(drained).toBe(true);
-      expect(internals(service).db).toBeNull();
+      expect(coreOf(service).db).toBeNull();
       // The gate closed before the trailing stats write: it was skipped, and
       // no background write ever hit the closed handle.
       expect(setKeys).not.toContain('\0meta\\stats');
@@ -2280,20 +2342,20 @@ describe('GlobalSearchService', () => {
     it('dispose drains an in-flight read-only refresh before closing the db (review #20)', async () => {
       const s1 = summary('s1', 'drain refresh', T1);
       await writeWire(home!, 's1', 'main', [userLine('苹果 refresh', T1)]);
-      const writer = track(makeService(home!, staticIndex([s1])));
+      const writer = track(makeInlineService(home!, staticIndex([s1])));
       await writer.reindex();
 
       // A second instance on the same home opens read-only (the writer holds
       // the lock) and catches up by refreshing from the writer's commits.
       const { log, warnings } = recordingLog();
-      const reader = new GlobalSearchService(staticIndex([s1]), makeBootstrap(home!), log);
+      const reader = new GlobalSearchService(staticIndex([s1]), makeBootstrap(home!), log, makeFlags(false));
       reader.syncDebounceMs = 0;
       track(reader);
       await syncNow(reader); // join the constructor-kicked pass: opens the read-only handle
-      expect((internals(reader).db as unknown as { readOnly: boolean } | null)?.readOnly).toBe(true);
+      expect((coreOf(reader).db as unknown as { readOnly: boolean } | null)?.readOnly).toBe(true);
 
       // Block the next refresh inside its fingerprint probe, then dispose.
-      const blocked = blockFirstCall(reader, 'computeFingerprint');
+      const blocked = blockFirstCall(coreOf(reader), 'computeFingerprint');
       const refresh = refreshNow(reader);
       await blocked.entered;
       reader.dispose();
@@ -2309,7 +2371,7 @@ describe('GlobalSearchService', () => {
       await refresh;
       await drain;
       expect(drained).toBe(true);
-      expect(internals(reader).db).toBeNull();
+      expect(coreOf(reader).db).toBeNull();
       expect(warnings.filter((w) => w.includes('closed'))).toEqual([]);
     });
 
@@ -2324,12 +2386,13 @@ describe('GlobalSearchService', () => {
           makeSessionIndex(async () => ({ items: sessions, nextCursor: undefined })),
           makeBootstrap(root),
           noopLog,
+          makeFlags(false),
         );
         service.syncDebounceMs = 0;
         track(service);
         await service.reindex();
         sessions.length = 0;
-        const blocked = blockFirstCall(service, 'deleteSessionDocs');
+        const blocked = blockFirstCall(coreOf(service), 'deleteSessionDocs');
         const sync = syncNow(service);
         await blocked.entered;
         return { service, blocked, sync };
@@ -2353,7 +2416,7 @@ describe('GlobalSearchService', () => {
 
         // Let the first service finish: a snapshot-only drain (Promise.all
         // over the set at call time) would return here, leaving b behind.
-        const aDb = internals(a.service).db!;
+        const aDb = coreOf(a.service).db!;
         a.blocked.release();
         await a.sync;
         // Join A's in-pending close (close is idempotent and shared) so its
@@ -2366,12 +2429,501 @@ describe('GlobalSearchService', () => {
         await b.sync;
         await drain;
         expect(drained).toBe(true);
-        expect(internals(a.service).db).toBeNull();
-        expect(internals(b.service).db).toBeNull();
+        expect(coreOf(a.service).db).toBeNull();
+        expect(coreOf(b.service).db).toBeNull();
       } finally {
         await rm(homeB, { recursive: true, force: true });
       }
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// stage-4: search worker host lifecycle
+// ---------------------------------------------------------------------------
+// The worker-mode service runs the index core in a dedicated worker thread.
+// These tests cover the host's lifecycle contracts: crash restart with the
+// token-guarded lock reap, corruption rebuild inside the worker, cross-worker
+// lock contention, read-only reopen after WAL/snapshot replacement, in-flight
+// request convergence, dispose backstop, and the main-thread latency probe.
+
+describe('search worker host (stage 4)', () => {
+  // These tests spawn real worker threads (≈200ms each, several per test);
+  // the explicit 30s timeouts keep them load-proof under a saturated
+  // full-suite CI run (vitest's 5s default is meant for in-process work).
+  let home: string | undefined;
+  const services: GlobalSearchService[] = [];
+  const hosts: SearchWorkerHost[] = [];
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-kap-search-worker-'));
+  });
+
+  afterEach(async () => {
+    for (const service of services.splice(0)) service.dispose();
+    for (const host of hosts.splice(0)) await host.dispose().catch(() => {});
+    await drainGlobalSearchDisposals();
+    if (home !== undefined) {
+      await rm(home, { recursive: true, force: true });
+      home = undefined;
+    }
+  });
+
+  function track(service: GlobalSearchService): GlobalSearchService {
+    services.push(service);
+    return service;
+  }
+
+  function hostOf(service: GlobalSearchService): SearchWorkerHost {
+    const backend = (service as unknown as { backend: SearchBackend }).backend;
+    if (!(backend instanceof SearchWorkerHost)) {
+      throw new Error('expected the worker backend');
+    }
+    return backend;
+  }
+
+  const lockPath = (): string => join(home!, 'search-index', 'db.lock');
+
+  async function waitForGone(path: string): Promise<void> {
+    await vi.waitFor(async () => {
+      await expect(stat(path)).rejects.toThrow();
+    });
+  }
+
+  it('restarts a killed worker, reaps its lock, and keeps serving', { timeout: 30_000 }, async () => {
+    const s1 = summary('s1', 'crash', T1);
+    await writeWire(home!, 's1', 'main', [userLine('苹果 crash', T1)]);
+    const service = track(makeService(home!, staticIndex([s1])));
+    await service.reindex();
+    expect((await service.search({ query: '苹果' })).items.length).toBe(1);
+
+    // The worker holds the write lock with THIS process's pid (worker threads
+    // share it) — the stale-by-pid rule alone could never reclaim it here.
+    const lockRaw = JSON.parse(await readFile(lockPath(), 'utf8')) as { pid: number };
+    expect(lockRaw.pid).toBe(process.pid);
+
+    await hostOf(service).killWorkerForTest();
+    // The dead worker's lock line is reaped (guarded by its token).
+    await waitForGone(lockPath());
+
+    // Inside the backoff window the search reports a recognizable degraded
+    // page instead of hanging or silently serving nothing.
+    const degraded = await service.search({ query: '苹果' });
+    expect(degraded.items).toEqual([]);
+    expect(degraded.indexState.state).toBe('building');
+    expect(degraded.indexState.degraded).toContain('worker');
+
+    // After the backoff the coordinator's retry respawns the worker, reopens
+    // the index and serves real hits again.
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    await settleSync(service);
+    const page = await service.search({ query: '苹果' });
+    expect(page.items.length).toBe(1);
+    expect(page.indexState.state).toBe('ready');
+  });
+
+  it('reports the lock token at acquire time; a mid-open kill leaves a reapable lock', { timeout: 30_000 }, async () => {
+    // Seed a corpus with an inline writer so the worker's first open has a
+    // real WAL/generation to chew — the kill lands while the open RPC is
+    // still in flight, so the token could only have arrived via the early
+    // `lockToken` event (no response had a chance to carry it).
+    const summaries: SessionSummary[] = [];
+    for (let i = 0; i < 300; i++) {
+      const s = summary(`midopen-${i}`, `midopen 会话 ${i}`, T1 + i);
+      summaries.push(s);
+      const lines: string[] = [];
+      for (let j = 0; j < 30; j++) lines.push(userLine(`中途退出 ${i}-${j} 检索`, T1 + i * 100 + j));
+      await writeWire(home!, s.id, 'main', lines);
+    }
+    const inline = track(makeInlineService(home!, staticIndex(summaries)));
+    await inline.reindex();
+    inline.dispose();
+    await drainGlobalSearchDisposals();
+
+    const dir = join(home!, 'search-index');
+    const host = new SearchWorkerHost({ dir, log: noopLog });
+    hosts.push(host);
+    let openSettled = false;
+    const opening = host.ensureOpen().then(
+      () => {
+        openSettled = true;
+      },
+      () => {
+        openSettled = true;
+      },
+    );
+    await vi.waitFor(
+      () => {
+        expect(host.reportedLockToken).toBeDefined();
+      },
+      { interval: 5, timeout: 10_000 },
+    );
+    // The token event fired at lock-acquire time, long before the replay
+    // finishes — this is the property the mid-open reap depends on.
+    expect(openSettled).toBe(false);
+
+    await host.killWorkerForTest();
+    await opening; // settled (rejected as crashed) — captured above
+    await waitForGone(lockPath());
+
+    // After the backoff the replacement worker reopens as the WRITER — never
+    // a silent permanent read-only.
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    const reopened = await host.ensureOpen();
+    expect(reopened.readOnly).toBe(false);
+  });
+
+  it('recovers a read-only open caused by an orphaned same-pid lock', { timeout: 30_000 }, async () => {
+    const dir = join(home!, 'search-index');
+    await mkdir(dir, { recursive: true });
+    // An orphan lock line as a crashed worker would leave it: this process's
+    // (alive) pid, but a token no live worker can claim.
+    await writeFile(
+      join(dir, 'db.lock'),
+      JSON.stringify({ pid: process.pid, ts: Date.now(), token: 'orphan-token' }),
+      'utf8',
+    );
+    const host = new SearchWorkerHost({ dir, log: noopLog });
+    hosts.push(host);
+    const first = await host.ensureOpen();
+    expect(first.readOnly).toBe(true); // the planted lock looks alive (same pid)
+
+    // The orphan detector reaps it (the token belongs to no live worker) and
+    // restarts the worker, which reopens as the writer.
+    await vi.waitFor(
+      async () => {
+        const status = await host.status();
+        expect(status.readOnly).toBe(false);
+      },
+      { timeout: 10_000, interval: 200 },
+    );
+  });
+
+  it('beginClose abandons an in-flight worker sync and dispose stays bounded', { timeout: 30_000 }, async () => {
+    // 200 sessions × 30 lines: the first full pass takes hundreds of ms in
+    // the worker — long enough that beginClose lands before the pass can
+    // complete, with orders of magnitude of margin.
+    const summaries: SessionSummary[] = [];
+    for (let i = 0; i < 200; i++) {
+      const s = summary(`drain-${i}`, `drain 会话 ${i}`, T1 + i);
+      summaries.push(s);
+      const lines: string[] = [];
+      for (let j = 0; j < 30; j++) lines.push(userLine(`排空 ${i}-${j} 检索`, T1 + i * 100 + j));
+      await writeWire(home!, s.id, 'main', lines);
+    }
+    const inputs = summaries.map((s) => syncInput(home!, s));
+    const host = new SearchWorkerHost({ dir: join(home!, 'search-index'), log: noopLog });
+    hosts.push(host);
+
+    await host.ensureOpen(); // worker up first, so the sync posts before beginClose
+    const sync = host.sync(inputs); // first full pass (open + index)
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    host.beginClose();
+    // The pass saw the closing gate and returned early as a no-op instead of
+    // running to completion.
+    const outcome = await sync;
+    expect(outcome.noop).toBe(true);
+
+    const startedAt = performance.now();
+    await host.dispose();
+    expect(performance.now() - startedAt).toBeLessThan(5_000);
+    expect((host as unknown as { worker: unknown }).worker).toBeNull();
+  });
+
+  it('times out a wedged request and terminates the worker (watchdog)', { timeout: 30_000 }, async () => {
+    const dir = join(home!, 'search-index');
+    // Swallow `status` while the gate is up: the request is never delivered,
+    // so only the watchdog can settle it. The respawned worker is ungated.
+    let gate = true;
+    const host = new SearchWorkerHost({
+      dir,
+      log: noopLog,
+      requestTimeoutMs: 300,
+      workerFactory: ({ url, data, execArgv }) => {
+        const worker = new Worker(url, { workerData: data, execArgv });
+        const original = worker.postMessage.bind(worker);
+        worker.postMessage = ((message: unknown, ...rest: unknown[]) => {
+          if (gate && (message as { type?: string } | null)?.type === 'status') return true;
+          return original(message as Parameters<Worker['postMessage']>[0], ...(rest as never[]));
+        }) as Worker['postMessage'];
+        return worker;
+      },
+    });
+    hosts.push(host);
+    await host.ensureOpen();
+
+    const wedged = host.status();
+    wedged.catch(() => {});
+    await expect(wedged).rejects.toMatchObject({ code: 'crashed' });
+    await expect(wedged).rejects.toThrow(/timed out/);
+
+    // The wedged worker was terminated; after the backoff the next call
+    // respawns a healthy (ungated) one.
+    gate = false;
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    const status = await host.status();
+    expect(status.readOnly).toBe(false);
+  });
+
+  it('rejects in-flight requests as disposed during a clean close', { timeout: 30_000 }, async () => {
+    const dir = join(home!, 'search-index');
+    const host = new SearchWorkerHost({
+      dir,
+      log: noopLog,
+      workerFactory: ({ url, data, execArgv }) => {
+        const worker = new Worker(url, { workerData: data, execArgv });
+        const original = worker.postMessage.bind(worker);
+        // Park `sync` in the channel; `close` flows through normally, so the
+        // worker drains and exits while the sync is still host-side pending.
+        worker.postMessage = ((message: unknown, ...rest: unknown[]) => {
+          if ((message as { type?: string } | null)?.type === 'sync') return true;
+          return original(message as Parameters<Worker['postMessage']>[0], ...(rest as never[]));
+        }) as Worker['postMessage'];
+        return worker;
+      },
+    });
+    hosts.push(host);
+    await host.ensureOpen();
+
+    const sync = host.sync([]);
+    sync.catch(() => {});
+    await host.dispose();
+    // A clean close rejects the racing request as 'disposed', not 'crashed'.
+    await expect(sync).rejects.toMatchObject({ code: 'disposed' });
+  });
+
+  it('reports index_unavailable for searches after dispose', { timeout: 30_000 }, async () => {
+    const s1 = summary('s1', 'disposed', T1);
+    await writeWire(home!, 's1', 'main', [userLine('苹果 disposed', T1)]);
+    const service = track(makeService(home!, staticIndex([s1])));
+    await service.reindex();
+
+    service.dispose();
+    // Same fail-fast contract as the inline host: a typed index_unavailable,
+    // never a bare channel error.
+    await expect(service.search({ query: '苹果' })).rejects.toMatchObject({
+      reason: 'index_unavailable',
+      message: 'search service is disposed',
+    });
+    await drainGlobalSearchDisposals();
+  });
+
+  it('invalidates page tokens across a worker restart (boot salt)', { timeout: 30_000 }, async () => {
+    const s1 = summary('s1', 'boot', T1);
+    const lines: string[] = [];
+    for (let i = 0; i < 30; i++) lines.push(userLine(`苹果 boot ${i}`, T1 + i));
+    await writeWire(home!, 's1', 'main', lines);
+    const service = track(makeService(home!, staticIndex([s1])));
+    await service.reindex();
+    const page1 = await service.search({ query: '苹果', sort: 'time_asc', pageSize: 10 });
+    expect(page1.pageToken).toBeDefined();
+
+    await hostOf(service).killWorkerForTest();
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    await settleSync(service); // respawn + reopen + resync
+
+    // The respawned worker's local generation counter restarted from 0; the
+    // boot salt makes the dead worker's token fail validation instead of
+    // colliding with the fresh counter.
+    await expect(
+      service.search({ query: '苹果', sort: 'time_asc', pageSize: 10, pageToken: page1.pageToken }),
+    ).rejects.toMatchObject({ reason: 'invalid_page_token' });
+    const restarted = await service.search({ query: '苹果', sort: 'time_asc', pageSize: 10 });
+    expect(restarted.items.length).toBe(10);
+  });
+
+  it('rebuilds a corrupt database inside the worker', { timeout: 30_000 }, async () => {
+    const s1 = summary('s1', 'corrupt', T1);
+    await writeWire(home!, 's1', 'main', [userLine('苹果 corrupt', T1)]);
+    const first = track(makeService(home!, staticIndex([s1])));
+    await first.reindex();
+    expect((await first.search({ query: '苹果' })).items.length).toBe(1);
+    first.dispose();
+    await drainGlobalSearchDisposals();
+
+    // Corrupt the snapshot: the worker's open must detect it and rebuild
+    // (the index is derived data — never repaired, only rebuilt).
+    await writeFile(join(home!, 'search-index', 'db.snapshot'), 'not a snapshot {{{', 'utf8');
+
+    const second = track(makeService(home!, staticIndex([s1])));
+    await settleSync(second);
+    const page = await second.search({ query: '苹果' });
+    expect(page.items.length).toBe(1);
+    expect(page.indexState.state).toBe('ready');
+  });
+
+  it('runs a second worker read-only and a fresh worker becomes the writer after the writer dies', { timeout: 30_000 }, async () => {
+    const s1 = summary('s1', 'election', T1);
+    const file = await writeWire(home!, 's1', 'main', [userLine('苹果 election', T1)]);
+    const index = staticIndex([s1]);
+
+    const writer = track(makeService(home!, index));
+    await writer.reindex();
+    const reader = track(makeService(home!, index));
+    await reader.status();
+    const ro = await reader.search({ query: '苹果' });
+    expect(ro.indexState.state).toBe('readonly');
+    expect(ro.items.length).toBe(1);
+
+    // WAL catch-up across two workers of one process.
+    await appendFile(file, `${userLine('苹果 delta', T2)}\n`, 'utf8');
+    await settleSync(writer);
+    await refreshNow(reader);
+    expect((await reader.search({ query: '苹果' })).items.length).toBe(2);
+
+    // The writer's worker dies; its lock is reaped. A fresh instance's worker
+    // then acquires the write lock (the election) and can reindex.
+    await hostOf(writer).killWorkerForTest();
+    await waitForGone(lockPath());
+    writer.dispose();
+    await drainGlobalSearchDisposals();
+
+    const third = track(makeService(home!, index));
+    await settleSync(third);
+    const ready = await third.search({ query: '苹果' });
+    expect(ready.indexState.state).toBe('ready');
+    expect(ready.items.length).toBe(2);
+    await third.reindex(); // would throw readonly_index without the write lock
+    expect((await third.search({ query: '苹果' })).items.length).toBe(2);
+  });
+
+  it('reader worker reopens when the writer replaces the WAL/snapshot (reindex)', { timeout: 30_000 }, async () => {
+    const s1 = summary('s1', 'rotate', T1);
+    const file = await writeWire(home!, 's1', 'main', [userLine('苹果 rotate', T1)]);
+    const index = staticIndex([s1]);
+
+    const writer = track(makeService(home!, index));
+    await writer.reindex();
+    const reader = track(makeService(home!, index));
+    await reader.status();
+    expect((await reader.search({ query: '苹果' })).items.length).toBe(1);
+
+    // Reindex wipes and rebuilds the whole directory: the reader's watermark
+    // no longer aligns, so its refresh takes the reopen-and-swap path.
+    await appendFile(file, `${userLine('苹果 rotated', T2)}\n`, 'utf8');
+    await writer.reindex();
+    await refreshNow(reader);
+    const page = await reader.search({ query: '苹果' });
+    expect(page.indexState.state).toBe('readonly');
+    expect(page.items.length).toBe(2);
+    expect(page.items.some((h) => h.snippet.includes('rotated'))).toBe(true);
+  });
+
+  it('rejects in-flight requests when the worker dies', { timeout: 30_000 }, async () => {
+    const dir = join(home!, 'search-index');
+    let gateSync = false;
+    const held: SearchWorkerRequest[] = [];
+    const host = new SearchWorkerHost({
+      dir,
+      log: noopLog,
+      workerFactory: ({ url, data, execArgv }) => {
+        const worker = new Worker(url, { workerData: data, execArgv });
+        const original = worker.postMessage.bind(worker);
+        // Park `sync` requests in the channel: never delivered to the worker,
+        // so the request is guaranteed in-flight when the worker dies.
+        worker.postMessage = ((message: unknown, ...rest: unknown[]) => {
+          if (gateSync && (message as { type?: string } | null)?.type === 'sync') {
+            held.push(message as SearchWorkerRequest);
+            return true;
+          }
+          return original(message as Parameters<Worker['postMessage']>[0], ...(rest as never[]));
+        }) as Worker['postMessage'];
+        return worker;
+      },
+    });
+    hosts.push(host);
+    await host.ensureOpen();
+
+    gateSync = true;
+    const sync = host.sync([]);
+    sync.catch(() => {}); // settle handling below
+    await vi.waitFor(() => {
+      expect(held.length).toBe(1);
+    });
+
+    await host.killWorkerForTest();
+    await expect(sync).rejects.toBeInstanceOf(SearchWorkerError);
+    await expect(sync).rejects.toMatchObject({ code: 'crashed' });
+    await waitForGone(join(dir, 'db.lock'));
+  });
+
+  it('dispose terminates a wedged worker after the close timeout', { timeout: 30_000 }, async () => {
+    const dir = join(home!, 'search-index');
+    const host = new SearchWorkerHost({
+      dir,
+      log: noopLog,
+      closeTimeoutMs: 300,
+      workerFactory: ({ url, data, execArgv }) => {
+        const worker = new Worker(url, { workerData: data, execArgv });
+        const original = worker.postMessage.bind(worker);
+        // Swallow `close`: the drain can never complete, so the host's
+        // terminate() backstop must end the worker within the timeout.
+        worker.postMessage = ((message: unknown, ...rest: unknown[]) => {
+          if ((message as { type?: string } | null)?.type === 'close') return true;
+          return original(message as Parameters<Worker['postMessage']>[0], ...(rest as never[]));
+        }) as Worker['postMessage'];
+        return worker;
+      },
+    });
+    hosts.push(host);
+    await host.ensureOpen();
+
+    const startedAt = performance.now();
+    await host.dispose();
+    const elapsed = performance.now() - startedAt;
+    expect(elapsed).toBeGreaterThan(250);
+    expect(elapsed).toBeLessThan(10_000);
+    expect((host as unknown as { worker: unknown }).worker).toBeNull();
+  });
+
+  it('keeps the main thread responsive while the worker opens and syncs a corpus', { timeout: 30_000 }, async () => {
+    // 120 sessions × 30 lines — enough for the worker's open + first full
+    // sync to take measurable time, small enough for CI.
+    const summaries: SessionSummary[] = [];
+    for (let i = 0; i < 120; i++) {
+      const s = summary(`probe-${i}`, `probe 会话 ${i}`, T1 + i);
+      summaries.push(s);
+      const lines: string[] = [];
+      for (let j = 0; j < 30; j++) {
+        lines.push(userLine(`检索词 probe ${i}-${j} 持久化`, T1 + i * 100 + j));
+      }
+      await writeWire(home!, s.id, 'main', lines);
+    }
+
+    const eld = monitorEventLoopDelay({ resolution: 5 });
+    let probing = true;
+    let ticks = 0;
+    const probe = (async () => {
+      while (probing) {
+        await new Promise((resolve) => setImmediate(resolve));
+        ticks++;
+      }
+    })();
+    eld.enable();
+
+    const service = track(makeService(home!, staticIndex(summaries)));
+    // A search issued while the worker boots/opens/syncs answers with
+    // building semantics instead of waiting for the heavy work.
+    const early = await service.search({ query: '检索词' });
+    expect(early.indexState.state).toBe('building');
+    await settleSync(service);
+
+    probing = false;
+    await probe;
+    eld.disable();
+    const p99Ms = eld.percentile(99) / 1e6;
+    const maxMs = eld.max / 1e6;
+    // Logged for phase-to-phase comparison; asserted against CI-safe
+    // ceilings that still catch a main-thread stall regression — the point
+    // is "no main-thread stall", not speed.
+    console.log('[stage-4 worker probe]', JSON.stringify({ p99Ms, maxMs, ticks }));
+    expect(ticks).toBeGreaterThan(0);
+    expect(p99Ms).toBeLessThan(20);
+    expect(maxMs).toBeLessThan(100);
+
+    const page = await service.search({ query: '检索词' });
+    expect(page.items.length).toBeGreaterThan(0);
+    expect(page.indexState.state).toBe('ready');
   });
 });
 
