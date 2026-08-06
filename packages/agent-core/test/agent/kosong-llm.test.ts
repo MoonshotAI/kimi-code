@@ -445,18 +445,20 @@ describe('downgradeUnsupportedMedia', () => {
     expect(downgradeUnsupportedMedia(input, undefined)[0]?.content).toEqual([videoPart]);
   });
 
-  it('strips media for UNKNOWN_CAPABILITY (image_in/video_in/audio_in are false)', () => {
-    // Custom OpenAI-compatible text-only providers are often uncatalogued;
-    // replaying image_url to them returns 400 and bricks the session (#2669).
+  it('preserves media for UNKNOWN_CAPABILITY (uncatalogued ≠ text-only)', () => {
+    // UNKNOWN is the SingleModelProvider / unresolved default: the model may
+    // still be multimodal. Explicit text-only matrices are covered below.
     const input = [mediaMessage([imagePart, videoPart, audioPart])];
     expect(downgradeUnsupportedMedia(input, UNKNOWN_CAPABILITY)[0]?.content).toEqual([
-      { type: 'text', text: '[image omitted: current model has no image input]' },
-      { type: 'text', text: '[video omitted: current model has no video input]' },
-      { type: 'text', text: '[audio omitted: current model has no audio input]' },
+      imagePart,
+      videoPart,
+      audioPart,
     ]);
   });
 
-  it('strips images when capabilities declare thinking/tool_use but not image_in', () => {
+  it('strips images when an explicit matrix has no image_in (#2669)', () => {
+    // ProviderManager resolves declared capabilities into a plain object
+    // (not the UNKNOWN marker), e.g. capabilities = ["thinking", "tool_use"].
     const capability: ModelCapability = {
       image_in: false,
       video_in: false,

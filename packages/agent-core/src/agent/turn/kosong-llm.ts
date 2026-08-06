@@ -19,6 +19,7 @@ import {
   emptyUsage,
   generate as kosongGenerate,
   isRetryableGenerateError,
+  isUnknownCapability,
   type ChatProvider,
   type ContentPart,
   type GenerateCallbacks,
@@ -300,13 +301,19 @@ export function downgradeUnsupportedMedia(
   messages: readonly Message[],
   capability: ModelCapability | undefined,
 ): Message[] {
-  // Undefined = host did not supply a capability matrix; leave history alone.
-  // UNKNOWN_CAPABILITY and any known matrix with image_in/video_in/audio_in
-  // false must strip those parts: replaying image_url to a text-only
-  // OpenAI-compatible provider returns 400 and poisons every subsequent turn
-  // (#2669). UNKNOWN was previously exempt, which left custom providers that
-  // declare no vision (or are uncatalogued) unprotected.
-  if (capability === undefined) return [...messages];
+  // Leave history alone when the host omitted a matrix (undefined) or only
+  // knows the model is uncatalogued (UNKNOWN_CAPABILITY). UNKNOWN means "we
+  // do not know", not "text-only" — a multimodal custom model can still use
+  // that marker (SingleModelProvider default, KimiForCodingProvider).
+  //
+  // Explicit matrices still strip: ProviderManager merges declared
+  // capabilities with the catalog into a plain ModelCapability object, so a
+  // text-only custom model configured as capabilities = ["thinking",
+  // "tool_use"] gets image_in: false without the UNKNOWN marker and is
+  // protected against image_url 400s that brick later turns (#2669).
+  if (capability === undefined || isUnknownCapability(capability)) {
+    return [...messages];
+  }
   const dropImage = !capability.image_in;
   const dropVideo = !capability.video_in;
   const dropAudio = !capability.audio_in;
