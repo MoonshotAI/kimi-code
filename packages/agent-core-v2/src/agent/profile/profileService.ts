@@ -37,16 +37,20 @@
  * workspace handler's shared, watch-refreshed snapshot — the working
  * directory is always the session's frozen cwd, so the snapshot always
  * applies), and the provider's change event drives a `refreshSystemPrompt`. Prompt builds inject the enabled plugins'
- * system-prompt sections (budget-capped, see `PLUGIN_SECTIONS_MAX_BYTES`);
- * plugin changes reach the prompt when the skill catalog re-pulls its plugin
- * source on explicit plugin reload (the Workspace-scope catalog forwards the
- * plugin source's change through the session seed) — the same point where
- * plugin skills take effect. The builtin source is refreshed on the same
- * signal: it changes only when its config switch is toggled, so it costs what
- * a config edit costs, unlike the file-backed sources whose fs watches would
- * rebuild every agent's prompt on each edit. Subscribing to the catalog rather
- * than to the config section matters — the catalog fires after the
- * contribution is replaced, so the rebuilt prompt cannot read the old listing. `refreshSystemPrompt` never rejects: a
+ * system-prompt sections (budget-capped, see `PLUGIN_SECTIONS_MAX_BYTES`) and
+ * the model skill listing; both are snapshotted at the agent's first
+ * successful build and frozen for the agent's lifetime, so plugin install /
+ * enable / disable / remove / reload never rewrites a live agent's prompt —
+ * the same keep-live-sessions-stable philosophy as the MCP tombstone. New
+ * agents (new sessions, new subagents) snapshot the then-current state. The
+ * Workspace-scope catalog still re-pulls its plugin source on plugin reload
+ * (new agents and runtime skill lookups read it) and its change event still
+ * drives `refreshSystemPrompt`, but the rebuild reuses the frozen values, so
+ * the prompt only moves when non-plugin inputs change (AGENTS.md, the
+ * `[tools]` section, session tool policy, compaction). A side effect of the
+ * freeze: skills added mid-session to file-backed sources, and builtin-source
+ * config toggles, no longer ride an unrelated refresh into a live agent's
+ * prompt. `refreshSystemPrompt` never rejects: a
  * failed context build keeps the current prompt and surfaces a warning,
  * because the `[tools]` config watcher fires it voided (an unhandled
  * rejection would crash kap-server) and the Session tool-policy fan-out
@@ -61,8 +65,11 @@
  * The mutable plain-data state (`activeToolNamesOverlay` / `agentsMdWarning`
  * / the three emitted-warning dedupe sets) is registered into `agentState`
  * (`IAgentStateService`) and read/written through it; `optionsValue` (holds
- * the `cwd` / `emitStatusUpdated` callbacks) and `activeProfile`
- * (a `ResolvedAgentProfile` carrying the `systemPrompt` function) stay plain
+ * the `cwd` / `emitStatusUpdated` callbacks), `activeProfile`
+ * (a `ResolvedAgentProfile` carrying the `systemPrompt` function), and the
+ * frozen plugin-derived prompt inputs (`frozenSkillListing` /
+ * `frozenPluginSections` — one-shot snapshots, so there is nothing to
+ * restore) stay plain
  * fields because the container only holds pure data structures. After every
  * successful bind / apply / refresh (never before the new prompt commits,
  * so a failed build cannot poison the set), the injected AGENTS.md paths are
@@ -224,6 +231,14 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   private activeProfile: ResolvedAgentProfile | undefined;
+
+  // Plugin-derived prompt inputs, snapshotted on first successful build and
+  // frozen for the agent's lifetime (see the file header): a live agent's
+  // prompt must not move when plugins are installed / enabled / disabled /
+  // removed / reloaded. Never reset by applyProfile / useProfile /
+  // applyBindingSnapshot / refreshSystemPrompt.
+  private frozenSkillListing: string | undefined;
+  private frozenPluginSections: string | undefined;
 
   constructor(
     @IWireService private readonly wire: IWireService,
@@ -977,15 +992,21 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   private async resolveSkillListing(): Promise<string> {
+    if (this.frozenSkillListing !== undefined) return this.frozenSkillListing;
     try {
       await this.skillCatalog.ready;
-      return this.skillCatalog.catalog.getModelSkillListing();
+      const listing = this.skillCatalog.catalog.getModelSkillListing();
+      // Freeze only on success — a not-yet-ready catalog must not pin an
+      // empty listing for the agent's lifetime.
+      this.frozenSkillListing = listing;
+      return listing;
     } catch {
       return '';
     }
   }
 
   private async resolvePluginSections(): Promise<string> {
+    if (this.frozenPluginSections !== undefined) return this.frozenPluginSections;
     const sections = await this.plugins.enabledSystemPrompts();
     const parts: string[] = [];
     const skipped: string[] = [];
@@ -1013,7 +1034,11 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         });
       }
     }
-    return parts.join('\n\n');
+    const resolved = parts.join('\n\n');
+    // Freeze only on success — a failed `enabledSystemPrompts()` read must
+    // not pin an empty section set for the agent's lifetime.
+    this.frozenPluginSections = resolved;
+    return resolved;
   }
 }
 
