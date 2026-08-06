@@ -951,6 +951,42 @@ describe('SessionEventBroadcaster', () => {
     expect((replayed!.envelope.payload as { content: unknown }).content).toEqual(expected);
   });
 
+  it('projects prompt.queued content without leaking daemon refs (live + tail replay)', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(
+      agentEvent('prompt.queued', {
+        promptId: 'p2',
+        content: [
+          { type: 'text', text: '<image path="/abs/session/media/f_img1.png"></image>' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://f_img1?path=%2Fabs%2Fsession%2Fmedia%2Ff_img1.png' },
+          },
+        ],
+        queueLength: 1,
+      }),
+    );
+    await bc.getCursor('s1'); // drain
+
+    const expected = [{ type: 'image', source: { kind: 'file', file_id: 'f_img1' } }];
+    const live = envelopes.find((e) => e.type === 'prompt.queued');
+    expect(live).toBeDefined();
+    expect((live!.payload as { content: unknown }).content).toEqual(expected);
+    expect(JSON.stringify(live!.payload)).not.toContain('kimi-file://');
+    expect(JSON.stringify(live!.payload)).not.toContain('/abs/session');
+
+    // Cursor replay within the in-memory tail serves the same projected envelope.
+    const replay = await bc.getBufferedSince('s1', { seq: 0 });
+    const replayed = replay.events.find((e) => e.envelope.type === 'prompt.queued');
+    expect(replayed).toBeDefined();
+    expect((replayed!.envelope.payload as { content: unknown }).content).toEqual(expected);
+  });
+
   it('returns epoch_changed for a mismatched epoch', async () => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');
