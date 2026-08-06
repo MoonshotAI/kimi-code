@@ -732,6 +732,52 @@ describe('FileMentionProvider', () => {
       expect(values).toContain('mcp-config');
     });
 
+    it('triggers inline skill picker mid-text after a leading slash command', async () => {
+      const provider = new FileMentionProvider(
+        SKILL_COMMANDS,
+        workDir,
+        NO_FD,
+        [],
+        () => 'prompt',
+        SKILL_COMMAND_NAMES,
+      );
+      // Cursor sits right after the inserted `/`; more text follows it. The
+      // slash-argument suppression must not swallow the inline skill trigger.
+      const text = '/skill:agent-fleet args / more text';
+      const cursorCol = '/skill:agent-fleet args /'.length;
+      const result = await provider.getSuggestions([text], 0, cursorCol, { signal: ctrl() });
+      expect(result).not.toBeNull();
+      const values = result!.items.map((item) => item.value);
+      expect(values).toContain('skill:review');
+      expect(values).toContain('skill:security');
+      expect(values).toContain('mcp-config');
+    });
+
+    it('still suppresses slash argument completion mid-command when the cursor is not on an inline slash token', async () => {
+      const commands = [
+        ...SKILL_COMMANDS,
+        {
+          name: 'model',
+          aliases: [],
+          description: 'Switch model',
+          getArgumentCompletions: () => [{ value: 'claude-opus', label: 'claude-opus' }],
+        },
+      ];
+      const provider = new FileMentionProvider(
+        commands,
+        workDir,
+        NO_FD,
+        [],
+        () => 'prompt',
+        SKILL_COMMAND_NAMES,
+      );
+      // Cursor is mid-command with text after it and no inline `/` token: the
+      // upstream suppression still wins over the command's argument completion.
+      const text = '/model cla more text';
+      const result = await provider.getSuggestions([text], 0, '/model cla'.length, { signal: ctrl() });
+      expect(result).toBeNull();
+    });
+
     it('returns skill-only suggestions for `/` at the start of a non-first line', async () => {
       const provider = new FileMentionProvider(
         SKILL_COMMANDS,

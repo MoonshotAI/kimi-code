@@ -107,7 +107,15 @@ export class FileMentionProvider implements AutocompleteProvider {
       return null;
     }
 
+    // An inline skill token the cursor is still on stays eligible for skill
+    // selection even when the input begins with a slash command and has text
+    // after the cursor — the argument suppression below guards the command's
+    // own arguments, not an inline skill the user inserts mid-text. Computed
+    // once here and reused by the inline skill branch further down.
+    const inlineSkillPrefix = extractInlineSkillPrefix(textBeforeCursor, cursorLine);
+
     if (
+      inlineSkillPrefix === null &&
       shouldSuppressSlashArgumentCompletion(
         textBeforeCursor,
         currentLine.slice(cursorCol),
@@ -208,7 +216,6 @@ export class FileMentionProvider implements AutocompleteProvider {
     // `/add-dir /` continue to show their own argument completions. Skipped
     // when `force` is true, since the caller is explicitly asking for non-skill
     // completion.
-    const inlineSkillPrefix = extractInlineSkillPrefix(textBeforeCursor, cursorLine);
     if (
       inlineSkillPrefix !== null &&
       this.getInputMode() !== 'bash' &&
