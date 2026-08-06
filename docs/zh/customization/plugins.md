@@ -92,7 +92,7 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元——可以
 3. 安装完成后运行 `/reload` 或 `/new` 激活
 
 ::: info 说明
-Kimi WebBridge 分两步安装：完成上述步骤后，还需要[安装浏览器扩展](#安装浏览器扩展)才能使用。
+Kimi WebBridge 分两步安装：完成上述步骤后，还需要[安装浏览器扩展](#install-the-browser-extension)才能使用。
 :::
 
 官方插件更新后会在使用旧版时提示更新，不会自动更新，要升级到新版本，重复上述安装步骤即可。
@@ -143,6 +143,8 @@ Kimi Datasource 是 Kimi Code 官方数据插件，让你用自然语言直接�
 ### Kimi WebBridge <Badge type="tip" text="v1.11.3" />
 
 Kimi WebBridge 让 AI 直接操控你的浏览器，带着你的登录状态和 Cookie，AI 可以像你一样打开网页、阅读内容、点击按钮、填写表单、截图保存，把重复繁琐的网页操作交给它完成。产品介绍见 [Kimi WebBridge 官网](https://www.kimi.com/zh-cn/features/webbridge)。
+
+<a id="install-the-browser-extension"></a>
 
 #### 安装浏览器扩展
 
