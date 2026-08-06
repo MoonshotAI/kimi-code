@@ -104,3 +104,4 @@ async fn mid_turn_cancel_aborts_the_hung_prompt_turn() {
         .expect("prompt settles after cancel")
         .expect("no panic");
     assert_eq!(body["result"]["stop_reason"], "Aborted", "prompt: {body}");
+}

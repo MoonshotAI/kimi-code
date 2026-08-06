@@ -108,6 +108,20 @@ impl Session {
         Ok(())
     }
 
+    /// Re-apply the persisted context and report a summary — node-sdk
+    /// `Session.reloadSession` parity. Returns `{ id, status, transcript }`.
+    /// A live (never-persisted) session still resolves with a no-op summary.
+    pub async fn reload_session(&mut self) -> anyhow::Result<serde_json::Value> {
+        self.load().await?;
+        let status = self.get_status().await;
+        let transcript = self.transcript().await?;
+        Ok(serde_json::json!({
+            "id": self.id(),
+            "status": status["result"].clone(),
+            "transcript": transcript.unwrap_or_default(),
+        }))
+    }
+
     /// Switch the session's model.
     pub async fn set_model(&mut self, model: &str) -> anyhow::Result<()> {
         let body = self

@@ -1105,7 +1105,30 @@ impl Agent {
     ) -> Result<TurnResult, Box<dyn std::error::Error + Send + Sync>> {
         let turn_id = self.next_turn_id();
         self.has_active_turn = true;
-        self.cancellation.store(false, Ordering::Relaxed);
+        // Swap (read + clear) the cancel flag at the turn boundary: a cancel
+        // that landed before this turn starts aborts this turn instead of
+        // being swallowed (probe_cancel parity — never blindly reset).
+        let pre_cancelled = self.cancellation.swap(false, Ordering::Relaxed);
+        if pre_cancelled {
+            self.callbacks.emit_event(serde_json::json!({
+                "type": "session.turn.started",
+                "session_id": self.session_id,
+                "turn_id": turn_id,
+            }));
+            let result = crate::agent::types::TurnResult {
+                stop_reason: loop_types::LoopTurnStopReason::Aborted,
+                steps: 0,
+                usage: crate::rpc::types::TokenUsage::default(),
+                hit_step_cap: false,
+            };
+            self.callbacks.emit_event(serde_json::json!({
+                "type": "session.turn.ended",
+                "session_id": self.session_id,
+                "turn_id": turn_id,
+                "stop_reason": "Aborted",
+            }));
+            return Ok(result);
+        }
         // Lifecycle event for thin clients (session-owned surface): the host
         // renders from these instead of owning the loop.
         self.callbacks.emit_event(serde_json::json!({
