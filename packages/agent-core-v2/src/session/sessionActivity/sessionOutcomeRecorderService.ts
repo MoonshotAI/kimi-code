@@ -86,6 +86,20 @@ export class SessionOutcomeRecorder extends Disposable implements ISessionOutcom
         if (this.lastPersisted !== undefined) this.write(undefined);
       }),
     );
+    subscription.add(
+      bus.subscribe('agent.activity.updated', (event) => {
+        // The restored lastTurn (wire replay on cold resume) never gets a
+        // turn.ended fact, so backfill it into the metadata when nothing is
+        // persisted yet — otherwise pre-field sessions stay blank in cold
+        // listings even after a resume restored their outcome.
+        if (this.lastPersisted !== undefined) return;
+        const lastTurn = (event as { lastTurn?: { reason?: unknown } }).lastTurn;
+        const reason = lastTurn?.reason;
+        if (reason === 'completed') this.write('completed');
+        else if (reason === 'cancelled') this.write('cancelled');
+        else if (reason === 'failed' || reason === 'blocked') this.write('failed');
+      }),
+    );
   }
 
   private write(outcome: SessionTurnOutcome | undefined): void {

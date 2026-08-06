@@ -189,6 +189,32 @@ describe('SessionOutcomeRecorder (Session scope)', () => {
     expect(writes).toEqual(['failed', 'completed']);
   });
 
+  it('backfills a restored outcome that never got a turn.ended fact', async () => {
+    lifecycle.addMain();
+    await tick();
+    // A cold resume restores the outcome through the wire seed and publishes
+    // it as agent.activity.updated — no turn.ended ever fires.
+    lifecycle.bus.publish({
+      type: 'agent.activity.updated',
+      lastTurn: { turnId: 3, reason: 'failed', at: 0 },
+    } as unknown as DomainEvent);
+    expect(writes).toEqual(['failed']);
+    // The same outcome arriving live afterwards stays deduped.
+    ended('failed');
+    expect(writes).toEqual(['failed']);
+  });
+
+  it('does not backfill over a newer persisted outcome', async () => {
+    lifecycle.addMain();
+    await tick();
+    ended('completed');
+    lifecycle.bus.publish({
+      type: 'agent.activity.updated',
+      lastTurn: { turnId: 9, reason: 'failed', at: 0 },
+    } as unknown as DomainEvent);
+    expect(writes).toEqual(['completed']);
+  });
+
   it('reattaches when the main agent is disposed and recreated', async () => {
     lifecycle.addMain();
     await tick();
