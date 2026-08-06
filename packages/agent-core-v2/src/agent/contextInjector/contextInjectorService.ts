@@ -11,10 +11,10 @@
  * skipped, so one bad channel cannot starve the providers. A provider that
  * throws or rejects at a step or compaction boundary is likewise logged and
  * skipped, so one bad provider can neither starve the rest nor fail the
- * turn. Provider
- * positions are never cached: each provider call derives them by scanning
- * `contextMemory` for its own surviving injection messages, so splices,
- * compaction folds, and `wire` restoration need no index bookkeeping. Each
+ * turn. Provider positions are never cached: each provider call derives
+ * them by scanning `contextMemory` for its own surviving injection
+ * messages, so splices, compaction folds, and `wire` restoration need no
+ * index bookkeeping. Each
  * provider call receives the newest surviving injection of its own variant
  * (`lastInjection`) and the typed disclosure recorded on it (`lastDisclosure`),
  * so providers never read context layout or position indexes themselves.
@@ -29,20 +29,24 @@
  * starve the rest); they are also reconciled at every later step
  * boundary as a fallback for facts that arrive after `turn.started` (for
  * example, a queued turn cancelled while another turn is already running).
- * The plain-data `isNewTurn` flag is registered
- * into `agentState` (`IAgentStateService`) and read/written through it;
- * `entries` and `onceChannels` stay plain instance fields (their values
- * hold functions, not plain data). Bound at Agent scope.
+ * `isNewTurn` is derived per boundary and never stored: the step hook reads
+ * it from the loop's own step counter (`BeforeStepContext.firstStepOfTurn`),
+ * and the compaction follow-up passes it explicitly, so interleaved triggers
+ * cannot consume or steal a shared flag. A compaction follow-up that lands
+ * inside a step hook chain (the auto-compaction path) doubles as that
+ * step's new-turn delivery — the enclosing step then injects with
+ * `isNewTurn: false`, so the upcoming request receives one new-turn
+ * injection, not two. `entries` and `onceChannels` stay plain instance
+ * fields (their values hold functions, not plain data).
+ * Bound at Agent scope.
  */
 
 import { Disposable, toDisposable, type IDisposable } from "#/_base/di/lifecycle";
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
-import { defineState } from '#/_base/state/stateRegistry';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentLoopService, type BeforeStepContext } from '#/agent/loop/loop';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -68,15 +72,12 @@ interface OnceChannelEntry {
   readonly drain: () => unknown;
 }
 
-export const contextInjectorIsNewTurnKey = defineState<boolean>(
-  'contextInjector.isNewTurn',
-  () => true,
-);
-
 export class AgentContextInjectorService extends Disposable implements IAgentContextInjectorService {
   declare readonly _serviceBrand: undefined;
   private readonly entries = new Set<ContextInjectionEntry>();
   private readonly onceChannels = new Set<OnceChannelEntry>();
+  private enclosingStep: BeforeStepContext | undefined;
+  private newTurnDeliveredTo: BeforeStepContext | undefined;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -85,20 +86,22 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     @IEventBus private readonly eventBus: IEventBus,
     @ILogService private readonly log: ILogService,
     @IWireService wire: IWireService,
-    @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
-    this.states.register(contextInjectorIsNewTurnKey);
     this._register(
-      loopService.hooks.onWillBeginStep.register('context-injector', async (_ctx, next) => {
-        await next();
-        await this.inject('step');
+      loopService.hooks.onWillBeginStep.register('context-injector', async (ctx, next) => {
+        this.enclosingStep = ctx;
+        try {
+          await next();
+        } finally {
+          this.enclosingStep = undefined;
+        }
+        await this.inject('step', ctx.firstStepOfTurn && this.newTurnDeliveredTo !== ctx);
       }),
     );
     this._register(
       this.eventBus.subscribe('turn.started', () => {
         this.runOnceChannels();
-        this.isNewTurn = true;
         this.injectAtTurnStart();
       }),
     );
@@ -108,14 +111,6 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
         await next();
       }),
     );
-  }
-
-  private get isNewTurn(): boolean {
-    return this.states.get(contextInjectorIsNewTurnKey);
-  }
-
-  private set isNewTurn(value: boolean) {
-    this.states.set(contextInjectorIsNewTurnKey, value);
   }
 
   register<D = unknown>(
@@ -172,14 +167,15 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
   }
 
   async injectAfterCompaction(): Promise<void> {
-    this.isNewTurn = true;
-    await this.inject();
+    this.newTurnDeliveredTo = this.enclosingStep;
+    await this.inject(undefined, true);
   }
 
-  private async inject(boundary?: ContextInjectionEntry['boundary']): Promise<void> {
+  private async inject(
+    boundary: ContextInjectionEntry['boundary'] | undefined,
+    isNewTurn: boolean,
+  ): Promise<void> {
     this.runOnceChannels();
-    const isNewTurn = this.isNewTurn;
-    this.isNewTurn = false;
     for (const entry of this.entries) {
       if (boundary !== undefined && !shouldRunAtBoundary(entry, boundary)) continue;
       let content: Awaited<ReturnType<ContextInjectionProvider>>;

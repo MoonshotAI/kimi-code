@@ -39,7 +39,7 @@ import {
 } from '../loop/stubs';
 
 type InjectableContextInjector = IAgentContextInjectorService & {
-  inject(): Promise<void>;
+  inject(boundary: undefined, isNewTurn: boolean): Promise<void>;
 };
 
 function injector(ix: TestInstantiationService): InjectableContextInjector {
@@ -97,8 +97,8 @@ describe('AgentContextInjectorService', () => {
     disposables.dispose();
   });
 
-  async function runInjectionStep(): Promise<void> {
-    await runWillBeginStepHooks(loop);
+  async function runInjectionStep(firstStepOfTurn = false): Promise<void> {
+    await runWillBeginStepHooks(loop, firstStepOfTurn);
   }
 
   function spliceContext(
@@ -323,7 +323,7 @@ describe('AgentContextInjectorService', () => {
       return isNewTurn ? 'per-turn reminder' : undefined;
     });
 
-    await runInjectionStep();
+    await runInjectionStep(true);
     await runInjectionStep();
     spliceContext(0, 1, [compactionSummary('Compacted summary.')]);
     await injector(ix).injectAfterCompaction();
@@ -333,6 +333,40 @@ describe('AgentContextInjectorService', () => {
       { kind: 'compaction_summary' },
       { kind: 'injection', variant: 'per_turn_test' },
     ]);
+  });
+
+  it('keeps the first step marked as a new turn when compaction lands in between', async () => {
+    const seen: boolean[] = [];
+    injector(ix).register('per_turn_test', ({ isNewTurn }) => {
+      seen.push(isNewTurn);
+      return undefined;
+    });
+
+    ix.get(IEventBus).publish({
+      type: 'turn.started',
+      turnId: 0,
+      origin: { kind: 'user' },
+    });
+    await injector(ix).injectAfterCompaction();
+    await runInjectionStep(true);
+
+    expect(seen).toEqual([true, true]);
+  });
+
+  it('delivers one new-turn injection when compaction fires inside the step hook chain', async () => {
+    const seen: boolean[] = [];
+    injector(ix).register('per_turn_test', ({ isNewTurn }) => {
+      seen.push(isNewTurn);
+      return undefined;
+    });
+    loop.hooks.onWillBeginStep.register('test-compaction', async (_ctx, next) => {
+      await injector(ix).injectAfterCompaction();
+      await next();
+    });
+
+    await runInjectionStep(true);
+
+    expect(seen).toEqual([true, false]);
   });
 
   it('drains once-channels before running the providers', async () => {
@@ -345,7 +379,7 @@ describe('AgentContextInjectorService', () => {
       return undefined;
     });
 
-    await injector(ix).inject();
+    await injector(ix).inject(undefined, false);
 
     expect(calls).toEqual(['once-channel', 'provider']);
   });
@@ -363,7 +397,7 @@ describe('AgentContextInjectorService', () => {
       return undefined;
     });
 
-    await injector(ix).inject();
+    await injector(ix).inject(undefined, false);
 
     expect(calls).toEqual(['surviving', 'provider']);
   });

@@ -216,11 +216,13 @@ async function runGoalStep(loopService: StubLoop, turn: Turn): Promise<boolean> 
   const step = {
     turnId: turn.id,
     step: 1,
+    firstStepOfTurn: true,
     signal: turn.signal,
   };
   const afterStep: AfterStepContext = {
     turnId: turn.id,
     step: 1,
+    firstStepOfTurn: true,
     signal: turn.signal,
     usage: zeroUsage,
     finishReason: 'completed' as const,
@@ -908,6 +910,7 @@ describe('AgentGoalService core workflow hooks', () => {
       await loopService.hooks.onWillBeginStep.run({
         turnId: turn.id,
         step: 1,
+        firstStepOfTurn: true,
         signal: turn.signal,
       });
 
@@ -933,6 +936,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await loopService.hooks.onWillBeginStep.run({
       turnId: turn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: turn.signal,
     });
 
@@ -978,6 +982,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await loopService.hooks.onWillBeginStep.run({
       turnId: turn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: turn.signal,
     });
     const toolCall: ToolCall = {
@@ -1009,6 +1014,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await loopService.hooks.onWillBeginStep.run({
       turnId: turn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: turn.signal,
     });
     const toolCall: ToolCall = {
@@ -1036,6 +1042,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await loopService.hooks.onWillBeginStep.run({
       turnId: oldTurn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: oldTurn.signal,
     });
     recordStepUsage(usageService, goals, oldTurn, { ...zeroUsage, output: 5 });
@@ -1061,6 +1068,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await loopService.hooks.onDidFinishStep.run({
       turnId: oldTurn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: oldTurn.signal,
       usage: zeroUsage,
       finishReason: 'completed',
@@ -1147,6 +1155,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await loopService.hooks.onWillBeginStep.run({
       turnId: continuationTurn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: continuationTurn.signal,
     });
     recordStepUsage(usageService, goals, continuationTurn, { ...zeroUsage, output: 7 });
@@ -1310,6 +1319,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await loopService.hooks.onWillBeginStep.run({
       turnId: turn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: turn.signal,
     });
 
@@ -1321,6 +1331,7 @@ describe('AgentGoalService core workflow hooks', () => {
     const afterStep: AfterStepContext = {
       turnId: turn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: turn.signal,
       usage: zeroUsage,
       finishReason: 'completed',
@@ -1360,6 +1371,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await loopService.hooks.onWillBeginStep.run({
       turnId: continuation.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: continuation.signal,
     });
 
@@ -1380,6 +1392,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await loopService.hooks.onWillBeginStep.run({
       turnId: turn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: turn.signal,
     });
     await goals.markBlocked({}, 'model');
@@ -1388,6 +1401,7 @@ describe('AgentGoalService core workflow hooks', () => {
     const afterStep: AfterStepContext = {
       turnId: turn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: turn.signal,
       usage: zeroUsage,
       finishReason: 'completed',
@@ -1511,11 +1525,13 @@ describe('AgentGoalService core workflow hooks', () => {
     const step = {
       turnId: turn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: turn.signal,
     };
     const afterStep: AfterStepContext = {
       turnId: turn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: turn.signal,
       usage: zeroUsage,
       finishReason: 'completed' as const,
@@ -1537,6 +1553,7 @@ describe('AgentGoalService core workflow hooks', () => {
     const secondAfterStep: AfterStepContext = {
       turnId: turn.id,
       step: 2,
+      firstStepOfTurn: false,
       signal: turn.signal,
       usage: zeroUsage,
       finishReason: 'completed' as const,

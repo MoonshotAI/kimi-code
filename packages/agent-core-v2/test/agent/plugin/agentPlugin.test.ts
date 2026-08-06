@@ -53,6 +53,7 @@ async function runInjectionBoundary(ctx: TestAgentContext): Promise<void> {
   await ctx.get(IAgentLoopService).hooks.onWillBeginStep.run({
     turnId: 0,
     step: 1,
+    firstStepOfTurn: true,
     signal: new AbortController().signal,
   });
 }

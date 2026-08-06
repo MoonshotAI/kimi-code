@@ -71,7 +71,7 @@ import { createTestAgent } from '../../harness';
 const signal = new AbortController().signal;
 
 async function runInjectionBoundary(loop: IAgentLoopService): Promise<void> {
-  await loop.hooks.onWillBeginStep.run({ turnId: 0, step: 1, signal });
+  await loop.hooks.onWillBeginStep.run({ turnId: 0, step: 1, firstStepOfTurn: true, signal });
 }
 
 function context<Input>(

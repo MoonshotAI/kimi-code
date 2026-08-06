@@ -422,6 +422,7 @@ async function announce(h: Harness, step = 1): Promise<string | undefined> {
   await h.loop.hooks.onWillBeginStep.run({
     turnId: 1,
     step,
+    firstStepOfTurn: step === 1,
     signal: new AbortController().signal,
   });
   const announcement = h.contextMemory.appended.slice(before).find(isNewAnnouncement);
@@ -447,6 +448,7 @@ async function declareSchemas(h: Harness, step = 1): Promise<ContextMessage | un
   await h.loop.hooks.onWillBeginStep.run({
     turnId: 1,
     step,
+    firstStepOfTurn: step === 1,
     signal: new AbortController().signal,
   });
   const fresh = h.contextMemory.appended.splice(before);
