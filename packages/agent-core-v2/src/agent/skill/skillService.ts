@@ -5,10 +5,11 @@
  * records the activation as a `skill.activate` fact through `wire.dispatch`
  * (a stateless, identity-apply Op), derives the `skill.activated` event
  * through the Op's `toEvent`, drives user-slash activations into a new turn via
- * `prompt`, and reports `skill_invoked` / `flow_invoked` through `telemetry`.
- * `wire.replay` reapplies the fact as a no-op, so neither the event nor
- * telemetry fires on resume (matching the former `restoring` guard). Bound at
- * Agent scope.
+ * `prompt` (attachment parts from the caller ride the same user message after
+ * the rendered prompt), and reports `skill_invoked` / `flow_invoked` through
+ * `telemetry`. `wire.replay` reapplies the fact as a no-op, so neither the
+ * event nor telemetry fires on resume (matching the former `restoring` guard).
+ * Bound at Agent scope.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -69,8 +70,6 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
           skillDir: skill.dir,
         }),
       },
-      // Attachments ride the same user message, after the skill prompt, so
-      // the activated turn sees them exactly like a prompt with uploads.
       ...(input.content ?? []),
     ];
 

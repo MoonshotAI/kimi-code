@@ -1,3 +1,13 @@
+/**
+ * `skill` domain — user-slash skill activation contract.
+ *
+ * `SkillActivationInput` carries the slash name and raw args, plus optional
+ * edge-resolved attachment parts (`content`) that the activation appends after
+ * the rendered skill prompt in its user message. `IAgentSkillService` starts
+ * the activation turn (`activate`) and records model-tool activations without
+ * a turn (`recordModelToolActivation`). Bound at Agent scope.
+ */
+
 import { createDecorator } from "#/_base/di/instantiation";
 import type { SkillActivationOrigin } from '#/agent/contextMemory/types';
 import type { Turn } from '#/agent/loop/loop';
@@ -6,10 +16,6 @@ import type { ContentPart } from '#/kosong/contract/message';
 export interface SkillActivationInput {
   readonly name: string;
   readonly args?: string;
-  /**
-   * Extra content parts (already edge-resolved attachments) appended after the
-   * rendered skill prompt text part in the activation's user message.
-   */
   readonly content?: readonly ContentPart[];
 }
 
