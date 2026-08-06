@@ -268,8 +268,6 @@ export class SubagentTool implements ISubagentTool {
       agentId = target.id;
       const resumed = target.accessor.get(IAgentProfileService).data();
       profileName = resumed.profileName ?? RESUMED_LABEL;
-      // A resumed child keeps its original binding; normalize the derived
-      // `__secondary__` entry back to its base alias for display.
       displayModel =
         resumed.modelAlias === undefined
           ? undefined

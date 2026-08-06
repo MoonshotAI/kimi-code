@@ -15,7 +15,11 @@
  *
  * Wire shape note: the signals are still named `subagent.spawned / started /
  * completed / failed` and telemetry still tracks `subagent_created` so existing
- * session recordings and dashboards stay valid.
+ * session recordings and dashboards stay valid. The spawned signal also
+ * reports the child's display-normalized model alias (the derived secondary
+ * entry resolves to its base alias) and its effective thinking effort, so
+ * clients can render both at spawn instead of waiting for the first
+ * `agent.status.updated` frame.
  */
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
@@ -42,12 +46,7 @@ export interface SubagentSpawnedEvent {
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground: boolean;
-  /** Model alias the child is bound to, display-normalized (the derived
-   *  `__secondary__` entry resolves to its base alias). Optional so older
-   *  producers/consumers stay wire-compatible. */
   readonly model?: string;
-  /** The child's effective thinking effort at spawn (same vocabulary as
-   *  `agent.status.updated`). Optional for cross-version tolerance. */
   readonly thinkingEffort?: string;
 }
 
@@ -86,7 +85,6 @@ export interface AgentRunSpawnedMeta {
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground?: boolean;
-  /** Display-normalized model alias the child is bound to (see the event). */
   readonly model?: string;
 }
 
@@ -103,9 +101,6 @@ export function emitAgentRunSpawned(
   targetAgentId: string,
   meta: AgentRunSpawnedMeta,
 ): void {
-  // Resolve the child once: its profile carries the effective thinking level
-  // (same vocabulary as the `agent.status.updated` frame republished below),
-  // which the spawned event reports so clients can show it without waiting.
   const childProfile = requester.accessor
     .get(IAgentLifecycleService)
     ?.get(targetAgentId)

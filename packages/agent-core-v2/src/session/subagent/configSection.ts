@@ -29,8 +29,12 @@
  * and wrap spawn failures with
  * `wrapSubagentModelError`; while the experiment is off they also strip the
  * no-op `model` parameter from their advertised schemas via
- * `stripSubagentModelParameter`. Self-registered at module load via
- * `registerConfigSection`.
+ * `stripSubagentModelParameter`. Spawn reporting reads the display-facing
+ * alias from `subagentDisplayModel`: the derived entry id means nothing to a
+ * user, so it resolves back to the recipe's base alias — flag-independent on
+ * purpose, since interpreting an already-persisted derived binding (resume)
+ * must keep working after the experiment is switched off. Self-registered
+ * at module load via `registerConfigSection`.
  */
 
 import { z } from 'zod';
@@ -128,16 +132,6 @@ export function resolveSubagentBinding(
   return { model: own.modelAlias, thinking: own.thinkingLevel, displayModel: own.modelAlias };
 }
 
-/**
- * Display-facing alias for a bound subagent model: the synthesized
- * `__secondary__` derived entry means nothing to a user, so it resolves back
- * to the base alias the secondary recipe points at. Every other alias is
- * returned unchanged. Falls back to the raw alias when the recipe is gone.
- *
- * Deliberately flag-independent: the experimental flag gates whether NEW
- * spawns bind the secondary model, but interpreting an already-persisted
- * derived binding (resume) must keep working after the flag is flipped off.
- */
 export function subagentDisplayModel(
   config: IConfigService,
   boundAlias: string,

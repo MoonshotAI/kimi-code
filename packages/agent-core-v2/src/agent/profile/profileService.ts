@@ -108,6 +108,7 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { subagentDisplayModel } from '#/session/subagent/configSection';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import {
@@ -724,7 +725,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       custom();
       return;
     }
-    if (!this.hasModel()) return;
+    const modelAlias = this.modelAlias;
+    if (modelAlias === undefined) return;
     // An alias that no longer resolves (e.g. the model entry was removed from
     // config) yields UNKNOWN_CAPABILITY whose max_context_tokens is 0 — the
     // "unknown" marker, not a real limit. Omit the field instead of pushing 0.
@@ -732,7 +734,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const maxContextTokens = capabilities?.max_input_tokens ?? capabilities?.max_context_tokens;
     this.eventBus.publish({
       type: 'agent.status.updated',
-      model: this.modelAlias,
+      model: subagentDisplayModel(this.config, modelAlias),
       thinkingEffort: includeThinkingEffort
         ? this.getEffectiveThinkingLevel()
         : undefined,

@@ -192,8 +192,6 @@ export class SessionSwarmService implements ISessionSwarmService {
       description: options.description,
       swarmIndex: options.swarmIndex,
       runInBackground: options.runInBackground,
-      // Display-facing alias: the derived `__secondary__` entry resolves back
-      // to its base alias (idempotent when the caller already normalized it).
       model: subagentDisplayModel(this.config, binding.model),
     });
     const promptText = await applyProfilePromptPrefix(profile, options.prompt, {
@@ -229,8 +227,6 @@ export class SessionSwarmService implements ISessionSwarmService {
         description: options.description,
         swarmIndex: options.swarmIndex,
         runInBackground: options.runInBackground,
-        // A resumed child keeps its original binding; normalize the derived
-        // `__secondary__` entry back to its base alias for display.
         model:
           resumedModel === undefined
             ? undefined
