@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/components/chat/ConversationPane.vue -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch, type ComponentPublicInstance } from 'vue';
+import { computed, inject, nextTick, onMounted, onUnmounted, provide, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, TurnAttachment, UIQuestion, WorkspaceView } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
@@ -301,6 +301,30 @@ function resolveAgentTaskId(toolCallId: string): string | undefined {
   return undefined;
 }
 provide('resolveAgentTaskId', resolveAgentTaskId);
+// The Agent tool card's model meta: same task resolution as above, then the
+// alias is mapped to a friendly display name through the shared App-level
+// mapper, with the effort riding along whenever a concrete level exists.
+// Undefined for history rows whose lifecycle events predate the session load.
+const modelDisplay = inject<(alias: string | undefined) => string | undefined>('modelDisplay');
+const subagentEffort = inject<(effort: string | undefined) => string | undefined>('subagentEffort');
+function resolveAgentModel(
+  toolCallId: string,
+  agentId?: string,
+): { display?: string; effort?: string } | undefined {
+  // A persisted agent id (from agentRefs / the saved tool result) addresses
+  // the task directly — restored rows may be keyed by agent id with no
+  // parentToolCallId at all.
+  const target = agentId ?? resolveAgentTaskId(toolCallId);
+  if (target === undefined) return undefined;
+  const task = props.tasks.find((tk) => tk.agentId === target || tk.id === target);
+  // Effort is independent of the model label: an undisplayable alias must not
+  // take a concrete effort down with it.
+  const display = modelDisplay?.(task?.model);
+  const effort = subagentEffort?.(task?.thinkingEffort);
+  if (display === undefined && effort === undefined) return undefined;
+  return { display, effort };
+}
+provide('resolveAgentModel', resolveAgentModel);
 // Only manual toggles on SETTLED rows call this: the row is pinned while its
 // body transition runs, breaking the bottom follow on purpose; the follow
 // state is re-decided from real geometry once the pin settles (see

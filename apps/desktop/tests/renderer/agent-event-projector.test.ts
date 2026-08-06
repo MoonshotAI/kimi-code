@@ -259,3 +259,52 @@ describe('agentEventProjector retry from raw step frames', () => {
     expect(events[0]?.type).toBe('turnRetry');
   });
 });
+
+describe('agentEventProjector subagent model', () => {
+  const spawn = (model?: string) => ({
+    subagentId: 'agent-1',
+    subagentName: 'explore',
+    parentToolCallId: 'call_agent',
+    description: 'explore project',
+    runInBackground: false,
+    ...(model === undefined ? {} : { model }),
+  });
+
+  it('stores the spawned display model on the subagent task', () => {
+    const projector = createAgentProjector();
+    const events = projector.project(
+      'subagent.spawned',
+      spawn('provider/secondary'),
+      'session-1',
+    );
+    const created = events.find((e) => e.type === 'taskCreated');
+    expect(created).toMatchObject({
+      task: { id: 'agent-1', kind: 'subagent', model: 'provider/secondary' },
+    });
+  });
+
+  it('stores the spawned thinking effort on the subagent task', () => {
+    const projector = createAgentProjector();
+    const events = projector.project(
+      'subagent.spawned',
+      { ...spawn('provider/secondary'), thinkingEffort: 'low' },
+      'session-1',
+    );
+    const created = events.find((e) => e.type === 'taskCreated');
+    expect(created).toMatchObject({
+      task: { id: 'agent-1', model: 'provider/secondary', thinkingEffort: 'low' },
+    });
+  });
+
+  it('routes the main agent status frame to the session model, not a task row', () => {
+    const projector = createAgentProjector();
+    const events = projector.project(
+      'agent.status.updated',
+      { agentId: 'main', model: 'provider/main', contextTokens: 10 },
+      'session-1',
+    );
+    expect(events.some((e) => e.type === 'taskCreated')).toBe(false);
+    const usage = events.find((e) => e.type === 'sessionUsageUpdated');
+    expect(usage).toMatchObject({ model: 'provider/main' });
+  });
+});

@@ -2421,6 +2421,8 @@ function toUiTask(task: AppTask): TaskItem {
     output,
     runInBackground: task.runInBackground,
     parentToolCallId: task.parentToolCallId,
+    model: task.model,
+    thinkingEffort: task.thinkingEffort,
   };
 }
 

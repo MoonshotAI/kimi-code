@@ -2,7 +2,8 @@
 <!-- The single-subagent `Agent` tool: a quiet IDENTITY CARD — one per call,
      never folded into a tool group (a delegation has a name and a task, it
      deserves its own weight). The card shows the TASK (the short description)
-     as its title and the agent TYPE as a meta line; the orchestrator's full
+     as its title and a meta line with the agent TYPE plus the bound MODEL
+     (when the server reports it); the orchestrator's full
      prompt stays out of the stream on purpose. The whole card is one action:
      click to open the subagent's live progress in the right-side detail
      panel — there is no in-stream expansion.
@@ -54,10 +55,24 @@ const task = computed(() => input.value.description || input.value.subagentType 
 const agentType = computed(() => (input.value.description ? input.value.subagentType : ''));
 
 const resolveAgentTaskId = inject<(toolCallId: string) => string | undefined>('resolveAgentTaskId');
+const resolveAgentModel = inject<
+  (toolCallId: string, agentId?: string) => { display?: string; effort?: string } | undefined
+>('resolveAgentModel');
 const agentTarget = computed(
   () => props.tool.agentId ?? resolveAgentTaskId?.(props.tool.id),
 );
 const canOpenAgent = computed(() => agentTarget.value !== undefined);
+
+// Meta line: agent type · bound model (friendly name) · effort (concrete
+// levels only; boolean on/off hidden). Absent for history rows whose
+// lifecycle events predate the session load. The resolved agent id goes
+// along so restored rows keyed by agent id still resolve.
+const boundModel = computed(() => resolveAgentModel?.(props.tool.id, agentTarget.value));
+const meta = computed(() =>
+  [agentType.value, boundModel.value?.display, boundModel.value?.effort]
+    .filter((part) => part)
+    .join(' · '),
+);
 
 const hasOutput = computed(() => !!props.tool.output && props.tool.output.length > 0);
 const clickable = computed(() => canOpenAgent.value || hasOutput.value);
@@ -86,7 +101,7 @@ function onClick(): void {
       <span class="lead" aria-hidden="true"><Icon name="robot" size="sm" /></span>
       <span class="main">
         <span class="task">{{ task }}</span>
-        <span v-if="agentType" class="type">{{ agentType }}</span>
+        <span v-if="meta" class="type">{{ meta }}</span>
       </span>
       <span class="tail">
         <span class="st" :class="status" role="status" :aria-label="status">

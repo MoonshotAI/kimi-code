@@ -55,6 +55,10 @@ export function keepLiveSubagents(restBased: AppTask[], existing: AppTask[]): Ap
       // freeze the detail panel's Result.
       outputPreview: rest.outputPreview ?? live.outputPreview,
       outputBytes: rest.outputBytes ?? live.outputBytes,
+      // Display metadata: the live row wins when it has it (the event stream
+      // is fresher); a skeleton live row picks it up from the REST record.
+      model: live.model ?? rest.model,
+      thinkingEffort: live.thinkingEffort ?? rest.thinkingEffort,
     };
   });
   const rest = restBased.filter((t) => !foldedRestIds.has(t.id));
@@ -65,7 +69,8 @@ export function keepLiveSubagents(restBased: AppTask[], existing: AppTask[]): Ap
  * Seed the task store from the snapshot's subagent roster. The roster is
  * authoritative for identity/status/phase; keep reducer-owned accumulated
  * output (outputLines/text) from any already-live task, and keep tasks the
- * roster does not know about (background bash tasks from REST).
+ * roster does not know about (background bash tasks from REST). Display
+ * metadata merges the same way, in case either side lacks it.
  */
 export function mergeSnapshotSubagents(roster: AppTask[], existing: AppTask[]): AppTask[] {
   if (roster.length === 0) return existing;
@@ -74,7 +79,13 @@ export function mergeSnapshotSubagents(roster: AppTask[], existing: AppTask[]): 
   const merged = roster.map((task) => {
     const live = existingById.get(task.id);
     if (!live) return task;
-    return { ...task, outputLines: live.outputLines, text: live.text };
+    return {
+      ...task,
+      outputLines: live.outputLines,
+      text: live.text,
+      model: task.model ?? live.model,
+      thinkingEffort: task.thinkingEffort ?? live.thinkingEffort,
+    };
   });
   const kept = existing.filter((t) => !rosterIds.has(t.id));
   return kept.length === 0 ? merged : [...merged, ...kept];

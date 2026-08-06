@@ -285,6 +285,30 @@ describe('reduceAppEvent taskCreated replacement', () => {
     );
     expect(state.tasksBySession[SID]![0]!.agentId).toBe('agent-1');
   });
+
+  it('keeps the restored model and effort when a skeleton re-projection omits them', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: {
+          ...subagentTask('agent-1', 'agent-1'),
+          model: 'provider/secondary',
+          thinkingEffort: 'low',
+        },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCreated', sessionId: SID, task: subagentTask('agent-1', 'agent-1') },
+      meta(),
+    );
+    const task = state.tasksBySession[SID]![0]!;
+    expect(task.model).toBe('provider/secondary');
+    expect(task.thinkingEffort).toBe('low');
+  });
 });
 
 describe('turnErrorBySession', () => {

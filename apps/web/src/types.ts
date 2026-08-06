@@ -142,6 +142,10 @@ export interface AgentMember {
   toolCallId?: string;
   name: string;
   subagentType?: string;
+  /** The bound model alias (display-mapped at render). */
+  model?: string;
+  /** The effective thinking effort (concrete levels shown; on/off hidden). */
+  thinkingEffort?: string;
   phase: AgentPhase;
   status: 'running' | 'completed' | 'failed' | 'cancelled';
   /** The prompt/task the subagent was given (from the Agent tool input). */
@@ -343,6 +347,10 @@ export interface TaskItem {
    *  to its inline tool card, so the card's "Open detail" button can be hidden
    *  when the task is no longer available. */
   parentToolCallId?: string;
+  /** Subagent tasks only: the bound model alias (display-mapped at render). */
+  model?: string;
+  /** Subagent tasks only: the effective thinking effort (concrete levels shown). */
+  thinkingEffort?: string;
 }
 
 export interface ConversationStatus {

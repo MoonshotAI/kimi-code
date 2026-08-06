@@ -468,6 +468,12 @@ export interface AppTask {
   text?: string;
   subagentPhase?: AppSubagentPhase;
   subagentType?: string;
+  /** Display-normalized model alias the subagent is bound to (from
+   *  `subagent.spawned` or the restored snapshot roster / REST task row).
+   *  Subagent tasks only. */
+  model?: string;
+  /** The subagent's effective thinking effort, same provenance as `model`. */
+  thinkingEffort?: string;
   parentToolCallId?: string;
   suspendedReason?: string;
   swarmIndex?: number;

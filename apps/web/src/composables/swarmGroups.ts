@@ -5,6 +5,10 @@ export interface SwarmMember {
   agentId?: string;
   name: string;
   subagentType?: string;
+  /** The bound model alias (display-mapped at render). */
+  model?: string;
+  /** The effective thinking effort (concrete levels shown; on/off hidden). */
+  thinkingEffort?: string;
   phase: AppSubagentPhase;
   summary?: string;
   outputLines?: string[];
@@ -55,6 +59,8 @@ export function buildSwarmGroups(tasks: AppTask[]): SwarmGroup[] {
       agentId: task.agentId,
       name: task.description,
       subagentType: task.subagentType,
+      model: task.model,
+      thinkingEffort: task.thinkingEffort,
       phase: phaseForTask(task),
       summary: task.outputPreview,
       outputLines: task.outputLines,
@@ -111,6 +117,8 @@ export function swarmMembersByToolCall(tasks: AppTask[]): Map<string, SwarmMembe
       agentId: task.agentId,
       name: task.description,
       subagentType: task.subagentType,
+      model: task.model,
+      thinkingEffort: task.thinkingEffort,
       phase: phaseForTask(task),
       summary: task.outputPreview,
       outputLines: task.outputLines,

@@ -57,6 +57,32 @@ const description = computed(() => input.value.description ?? '');
 const members = computed(() => resolveSwarmMembers?.(props.tool.id) ?? []);
 const result = computed(() => parseSwarmResult(props.tool.output));
 
+// Swarm members normally share one binding, so the card shows the bound model
+// once in the overview line, with the effort appended whenever a concrete
+// level exists — but only when every reporting member agrees: a mixed swarm
+// (resumed members keep their own bindings) gets no single label rather than
+// the first member's. A member reports with whichever of model/effort it has
+// (an effort-only member still counts). Result-only rows after a refresh
+// carry neither and simply hide it.
+const modelDisplay = inject<(alias: string | undefined) => string | undefined>('modelDisplay');
+const subagentEffort = inject<(effort: string | undefined) => string | undefined>('subagentEffort');
+const swarmModelLabel = computed(() => {
+  let label: string | undefined;
+  for (const member of members.value) {
+    const display = modelDisplay?.(member.model);
+    const effort = subagentEffort?.(member.thinkingEffort);
+    const parts = [display, effort].filter((part) => part !== undefined);
+    if (parts.length === 0) continue;
+    const current = parts.join(' · ');
+    if (label === undefined) {
+      label = current;
+    } else if (label !== current) {
+      return undefined;
+    }
+  }
+  return label;
+});
+
 const status = computed<'running' | 'ok' | 'error'>(() => props.tool.status as 'running' | 'ok' | 'error');
 const aggregateStatus = computed<'running' | 'ok' | 'error'>(() => {
   if (status.value === 'running') return 'running';
@@ -186,6 +212,7 @@ function phaseLabel(phase: AppSubagentPhase): string {
       <div class="overview">
         <div class="overview-line">
           <span class="big">{{ t('tools.swarm.progress', { done, total }) }}</span>
+          <span v-if="swarmModelLabel" class="lbl">{{ swarmModelLabel }}</span>
           <span v-if="aggregateStatus === 'running' && total > 0" class="lbl">
             {{ t('tools.swarm.runningSub', { count: inProgress }) }}
           </span>

@@ -791,6 +791,10 @@ export function reduceAppEvent(
           swarmIndex: event.task.swarmIndex ?? previous.swarmIndex,
           parentToolCallId: event.task.parentToolCallId ?? previous.parentToolCallId,
           subagentType: event.task.subagentType ?? previous.subagentType,
+          // Skeleton re-projections omit the display metadata too — keep the
+          // roster/REST-seeded model and effort across the replacement.
+          model: event.task.model ?? previous.model,
+          thinkingEffort: event.task.thinkingEffort ?? previous.thinkingEffort,
           runInBackground: event.task.runInBackground ?? previous.runInBackground,
           backgroundTaskId: event.task.backgroundTaskId ?? previous.backgroundTaskId,
           // The roster-seeded agent id anchors transcript resumes; a skeleton

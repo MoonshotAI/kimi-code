@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, provide, ref, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Badge, PanelHeader } from '@moonshot-ai/web-ui';
 
@@ -94,13 +94,25 @@ function phaseLabel(phase: AgentMember['phase']): string {
     case 'failed': return t('tools.swarm.phaseFailed');
   }
 }
+
+// Subtitle: agent type · bound model (friendly name) · effort (concrete levels only).
+const modelDisplay = inject<(alias: string | undefined) => string | undefined>('modelDisplay');
+const subagentEffort = inject<(effort: string | undefined) => string | undefined>('subagentEffort');
+const subtitle = computed(() => {
+  const parts = [
+    props.member.subagentType,
+    modelDisplay?.(props.member.model),
+    subagentEffort?.(props.member.thinkingEffort),
+  ].filter((part): part is string => Boolean(part));
+  return parts.length > 0 ? parts.join(' · ') : undefined;
+});
 </script>
 
 <template>
   <div class="agent-panel">
     <PanelHeader
       :title="member.name"
-      :subtitle="member.subagentType"
+      :subtitle="subtitle"
       :close-label="t('thinking.close')"
       @close="emit('close')"
     >

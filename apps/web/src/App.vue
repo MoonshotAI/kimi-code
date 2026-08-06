@@ -41,6 +41,7 @@ import ServerAuthDialog from './components/ServerAuthDialog.vue';
 import { initServerAuth, onAuthRequired } from './lib/serverAuth';
 import type { AppConfig, ThinkingLevel } from './api/types';
 import { commitLevel, effectiveThinkingLevel, segmentsFor } from './lib/modelThinking';
+import { modelDisplayName, subagentEffortSuffix } from './lib/modelDisplay';
 import { stripSkillPrefix } from './lib/slashCommands';
 import { ActionToast, Icon, IconButton } from '@moonshot-ai/web-ui';
 import InternalBuildBanner from './components/InternalBuildBanner.vue';
@@ -72,7 +73,17 @@ provide(
   'resolveSwarmMembers',
   (toolCallId: string): SwarmMember[] => client.swarmMembersByToolCallId.value.get(toolCallId) ?? [],
 );
+// Alias → friendly model name, shared by every subagent surface (Agent tool
+// card meta, dock task rows, detail panel subtitle, swarm overview).
+provide('modelDisplay', (alias: string | undefined): string | undefined =>
+  modelDisplayName(alias, client.models.value),
+);
 const { t } = useI18n();
+// A subagent's thinking effort segment: concrete levels are always shown;
+// the boolean states ('on'/'off') carry no level and stay hidden.
+provide('subagentEffort', (effort: string | undefined): string | undefined =>
+  subagentEffortSuffix(effort),
+);
 const { confirm } = useConfirmDialog();
 
 // KAP/daemon debug panel — opt-in via ?debug=1 or localStorage kimi-web.debug=1.

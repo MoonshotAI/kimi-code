@@ -32,4 +32,18 @@ describe('subagent task identity', () => {
       agentId: 'agent-2',
     });
   });
+
+  it('carries the bound model alias through (REST rows and snapshot roster alike)', () => {
+    expect(toAppTask({ ...backgroundTask, model: 'provider/secondary' })).toMatchObject({
+      model: 'provider/secondary',
+    });
+    expect(toAppTask(backgroundTask).model).toBeUndefined();
+  });
+
+  it('carries the thinking effort through', () => {
+    expect(
+      toAppTask({ ...backgroundTask, model: 'provider/secondary', thinking_effort: 'low' }),
+    ).toMatchObject({ model: 'provider/secondary', thinkingEffort: 'low' });
+    expect(toAppTask(backgroundTask).thinkingEffort).toBeUndefined();
+  });
 });

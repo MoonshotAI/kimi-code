@@ -422,6 +422,8 @@ export function toAppTask(wire: WireTask, knownAgentId?: string): AppTask {
     outputBytes: wire.output_bytes,
     subagentPhase: wire.subagent_phase,
     subagentType: wire.subagent_type,
+    model: wire.model,
+    thinkingEffort: wire.thinking_effort,
     parentToolCallId: wire.parent_tool_call_id,
     suspendedReason: wire.suspended_reason,
     swarmIndex: wire.swarm_index,

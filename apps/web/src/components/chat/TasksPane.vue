@@ -2,7 +2,7 @@
 <!-- TUI-inspired todo list: clean rows with status glyphs, strikethrough done,
      compact output, minimal chrome. Matches the terminal todo-panel style. -->
 <script setup lang="ts">
-import { reactive } from 'vue';
+import { inject, reactive } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { TaskItem } from '../../types';
 import { copyTextToClipboard } from '../../lib/clipboard';
@@ -50,6 +50,20 @@ function glyphStatus(state: string): StatusGlyphStatus {
   return 'pending';
 }
 
+// Subagent rows show the bound model (friendly name) next to the kind badge;
+// absent for rows restored without lifecycle metadata. The effort appears
+// whenever a concrete level exists.
+const modelDisplay = inject<(alias: string | undefined) => string | undefined>('modelDisplay');
+const subagentEffort = inject<(effort: string | undefined) => string | undefined>('subagentEffort');
+function taskModel(task: TaskItem): string | undefined {
+  if (task.kind !== 'subagent') return undefined;
+  return modelDisplay?.(task.model);
+}
+function taskEffort(task: TaskItem): string | undefined {
+  if (task.kind !== 'subagent') return undefined;
+  return subagentEffort?.(task.thinkingEffort);
+}
+
 async function copyToClipboard(text: string, taskId: string, set: Set<string>): Promise<void> {
   const ok = await copyTextToClipboard(text);
   if (!ok) return;
@@ -91,6 +105,8 @@ async function copyTaskOutput(task: TaskItem): Promise<void> {
             <StatusGlyph :status="glyphStatus(task.state)" />
             <span class="tp-name">{{ task.name }}</span>
             <Badge variant="neutral" size="sm">{{ task.kind }}</Badge>
+            <span v-if="taskModel(task)" class="tp-model">{{ taskModel(task) }}</span>
+            <span v-if="taskEffort(task)" class="tp-model">{{ taskEffort(task) }}</span>
             <span class="tp-time">{{ task.timing }}</span>
             <button
               v-if="task.state === 'run'"
@@ -219,6 +235,18 @@ async function copyTaskOutput(task: TaskItem): Promise<void> {
   flex: none;
   font-size: var(--text-base);
   color: var(--muted);
+}
+
+.tp-model {
+  /* Shrinkable so the ellipsis engages against the row's remaining space —
+     no ad-hoc width cap (token-governed sizing only). */
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: var(--text-base);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tp-stop {

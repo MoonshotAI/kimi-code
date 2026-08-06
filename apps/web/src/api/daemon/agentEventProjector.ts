@@ -1198,6 +1198,12 @@ export function createAgentProjector(): AgentProjector {
           createdAt: new Date().toISOString(),
           subagentPhase: 'queued',
           subagentType: typeof p?.subagentName === 'string' ? p.subagentName : undefined,
+          // Newer cores report the display-normalized bound alias here.
+          model: typeof p?.model === 'string' && p.model.length > 0 ? p.model : undefined,
+          thinkingEffort:
+            typeof p?.thinkingEffort === 'string' && p.thinkingEffort.length > 0
+              ? p.thinkingEffort
+              : undefined,
           parentToolCallId: typeof p?.parentToolCallId === 'string' ? p.parentToolCallId : undefined,
           swarmIndex: typeof p?.swarmIndex === 'number' ? p.swarmIndex : undefined,
           runInBackground: p?.runInBackground === true,

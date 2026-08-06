@@ -363,6 +363,10 @@ export interface WireTask {
   output_bytes?: number;
   subagent_phase?: 'queued' | 'working' | 'suspended' | 'completed' | 'failed';
   subagent_type?: string;
+  /** Subagent tasks only: the display-normalized bound model alias. */
+  model?: string;
+  /** Subagent tasks only: the child's effective thinking effort at spawn. */
+  thinking_effort?: string;
   parent_tool_call_id?: string;
   suspended_reason?: string;
   swarm_index?: number;
